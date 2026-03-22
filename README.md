@@ -1,6 +1,8 @@
 # Celune
 Celune is a real-time AI TTS engine focused on natural voice delivery, low-latency playback, and distinct voice styles.
 
+It has been designed for real-time performance on consumer GPUs.
+
 ## Features
 
 - Real-time speech generation pipeline
@@ -21,6 +23,16 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 Samples were captured directly from the live TTS pipeline with no post-processing applied (only silence trimming).
 
 For details on voice production, check the VOICES.md file.
+
+## Requirements
+
+**GPU (CUDA):**
+- Minimum: 6 GB VRAM (e.g. GTX 1660 / RTX 2060)
+- Recommended: 8 GB+ VRAM (e.g. RTX 3060 or better)
+
+Celune’s core model fits within ~4 GB VRAM, but additional memory is required for runtime overhead, buffering, and stable real-time playback.
+
+Tested on: RTX 5070 (12 GB VRAM)
 
 # Screenshots
 These screenshots show Celune's user interface.
