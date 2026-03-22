@@ -1,8 +1,16 @@
 # Celune
-A celestial TTS engine, that uses AI to produce the finest of speech.
+Celune is a real-time AI TTS engine focused on natural voice delivery, low-latency playback, and distinct voice styles.
 
-# Voices & samples
-Celune can speak in one of the following voices. These samples tell you how they sound
+## Features
+
+- Real-time speech generation pipeline
+- Distinct voice styles (Calm, Neutral, Energetic)
+- Stable long-form narration without drift
+- Source-level audio control (no post-processing)
+- GPU-accelerated inference
+
+## Voices & samples
+Each voice is demonstrated using a short introduction and a longer narration sample to showcase consistency, pacing, and expressiveness.
 
 | Voice     | Intro | Narration |
 |-----------|-------|-----------|
@@ -10,12 +18,12 @@ Celune can speak in one of the following voices. These samples tell you how they
 | Calm      | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc.wav)    | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc.wav)    |
 | Energetic | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/energetic_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/energetic_lc.wav) |
 
-The following samples were recorded directly from Celune with no extra post-processing applied, apart from truncating leading and trailing silence. No extra effects affect those samples.
+Samples were captured directly from the live TTS pipeline with no post-processing applied (only silence trimming).
 
 For details on voice production, check the VOICES.md file.
 
 # Screenshots
-These screenshots show how Celune's user interface looks like.
+These screenshots show Celune's user interface.
 
 ### Before init
 [![Before init](./demos/state_before_init.png)](./demos/state_before_init.png)
