@@ -1,4 +1,6 @@
-# Reference Text
+# Reference text
+These scripts are what Celune says in the reference audio. They were modified from an original script to reduce the hallucination risk.
+
 - Calm
 `My name is... Celune... It is so... quiet.`
 
@@ -8,12 +10,28 @@
 - Energetic
 `My name is Celune! Let's do this, we have to get it done!`
 
+# Reference prompts
+These prompts were used to steer direction of the voice during auditioning.
+
+- Calm
+`A female voice with a soft, velvety, and hushed texture. A slow, sophisticated blend with focused vocal control.`
+
+- Neutral
+`A female voice with a warm, steady, and slightly resonant texture. Calm and articulate with clear, grounded presence.`
+
+- Energetic
+`A female voice with a rich, resonant, and decisive texture. Confident, professional, and clear with a rhythmic drive.`
+
 # Candidates
+The batch size per voice is 50. One voice was selected as the best match.
+
 - Energetic #16 (Seed: 590298652)
 - Neutral #32 (Seed: 418977738)
 - Calm #7 (Seed: 4243102495)
 
 # Post-processing
+These edits were applied to make sure the new references match the initial reference.
+
 - Energetic/Neutral pitch `-1 sem`
 - Calm pitch `-0.5 sem`
 
@@ -21,6 +39,7 @@
 - Neutral - 150ms pause between `pronounced` and `Celune`, for natural pacing
 
 # Effects
+These effects and their settings give Celune's voice its identity.
 
 ## Reverb
 - room size = 15%
@@ -32,11 +51,11 @@
 - wet gain = -20 dB
 - dry gain = 0 dB
 - stereo width = 85%
-- wet only = no 
+- wet only = no
 
 ## High-pass
 - frequency = 200 Hz
-- roll-off (dB per octave) = 12 dB 
+- roll-off (dB per octave) = 12 dB
 
 ## Layering
 - Two tracks: wet and dry
@@ -44,4 +63,6 @@
 - -5dB relative to dry on wet track
 
 # Output format
+This format makes Celune sound the best on your computer.
+
 - 48kHz stereo, signed 16-bit PCM
