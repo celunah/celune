@@ -111,7 +111,6 @@ class Celune:
         self._utterance_done = object()
         self.locked = True
         self.cur_state = "init"
-        self.llm = None
 
     def log(self, msg: str) -> None:
         """Log a message."""
@@ -291,11 +290,6 @@ class Celune:
         self.log(f"Chunks: {len(chunks)}")
         return chunks
 
-    @staticmethod
-    def _normalize_input(text: str):
-        """LLM text normalization stub."""
-        return text
-
     def _generation_worker(self):
         """Generate audio tokens and send them to the audio pipeline."""
         while True:
@@ -313,8 +307,6 @@ class Celune:
 
                 for chunk_index, chunk_text in enumerate(chunks):
                     is_first_chunk = chunk_index == 0
-
-                    chunk_text = self._normalize_input(chunk_text)
 
                     for (
                         audio_chunk,
