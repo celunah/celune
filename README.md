@@ -34,6 +34,27 @@ Celune’s core model fits within ~4 GB VRAM, but additional memory is required 
 
 Tested on: RTX 5070 (12 GB VRAM)
 
+## Installation
+
+```bash
+# Create environment
+python -m venv .venv
+source ./venv/bin/activate
+
+# Or on Windows:
+.venv\Scripts\activate
+
+# Install packages
+pip install -U -r requirements.txt
+
+# Run
+python main.py
+
+# Or on Unix systems:
+chmod +x main.py
+./main.py
+```
+
 # Screenshots
 These screenshots show Celune's user interface.
 
