@@ -1,3 +1,6 @@
+# Voice Design
+This document describes how Celune's voice identities were created, selected, and refined.
+
 # Reference text
 These scripts are what Celune says in the reference audio. They were modified from an original script to reduce the hallucination risk.
 
