@@ -20,9 +20,6 @@ These screenshots show how Celune's user interface looks like.
 ### Before init
 [![Before init](./demos/state_before_init.png)](./demos/state_before_init.png)
 
-### After init
-[![After init](./demos/state_after_init.png)](./demos/state_after_init.png)
-
 ### Ready
 [![Ready](./demos/state_ready.png)](./demos/state_ready.png)
 
