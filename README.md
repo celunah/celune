@@ -39,7 +39,7 @@ Tested on: RTX 5070 (12 GB VRAM)
 ```bash
 # Create environment
 python -m venv .venv
-source ./venv/bin/activate
+source .venv/bin/activate
 
 # Or on Windows:
 .venv\Scripts\activate
