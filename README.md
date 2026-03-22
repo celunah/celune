@@ -2,13 +2,13 @@
 A celestial TTS engine, that uses AI to produce the finest of speech.
 
 # Voices & samples
-Celune can speak in one of the following voices. These samples tell you how they sound.
+Celune can speak in one of the following voices. These samples tell you how they sound
 
-| Voice     | Short Context | Long Context |
-|-----------|--------------|--------------|
-| Neutral   | [▶️ Play](./demos/neutral_sc.wav) | [▶️ Play](./demos/neutral_lc.wav) |
-| Calm      | [▶️ Play](./demos/calm_sc.wav)    | [▶️ Play](./demos/calm_lc.wav)    |
-| Energetic | [▶️ Play](./demos/energetic_sc.wav) | [▶️ Play](./demos/energetic_lc.wav) |
+| Voice     | Intro | Narration |
+|-----------|-------|-----------|
+| Neutral   | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/neutral_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/neutral_lc.wav) |
+| Calm      | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc.wav)    | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc.wav)    |
+| Energetic | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/energetic_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/energetic_lc.wav) |
 
 The following samples were recorded directly from Celune with no extra post-processing applied, apart from truncating leading and trailing silence. No extra effects affect those samples.
 
