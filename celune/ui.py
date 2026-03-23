@@ -3,6 +3,7 @@
 
 import os
 import sys
+import shlex
 import hashlib
 import threading
 import itertools
@@ -389,7 +390,12 @@ class CeluneUI(App):
                 return
 
             if text.startswith("/"):
-                parts = text[1:].strip().split()
+                try:
+                    parts = shlex.split(text[1:])
+                except ValueError as e:
+                    self.safe_log(f"Command parsing error: {e}")
+                    return
+
                 if not parts:
                     return
 
