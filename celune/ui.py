@@ -1,0 +1,523 @@
+# pylint: disable=C0114, R0912, W0718, R0911, R0902
+"""Celune's frontend layer."""
+
+import os
+import sys
+import hashlib
+import threading
+import itertools
+import traceback
+
+from textual import work, events
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Label, RichLog, TextArea, Button
+
+from .celune import Celune
+
+SEVERITY_COLORS = {
+    "info": "#ceaaff",
+    "warning": "#debaff",
+    "error": "#ff6b6b",
+}
+
+
+class CeluneUI(App):
+    """Celune's user interface."""
+
+    CSS = """
+    Screen {
+        layout: vertical;
+        background: $surface;
+    }
+
+    #logs {
+        height: 1fr;
+        border: round #ceaaff;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding: 1;
+    }
+
+    /* give scrollbar colors only to the elements that will have a scrollbar */
+    #logs, #input {
+        scrollbar-color: #ceaaff;
+        scrollbar-color-hover: #debaff;
+        scrollbar-color-active: #eecaff;
+        scrollbar-background: $surface;
+        scrollbar-background-hover: $surface;
+        scrollbar-background-active: $surface;
+    }
+
+    #logs:focus {
+        border: round #ceaaff;
+        background: transparent;
+    }
+
+    #input {
+        min-height: 3;
+        height: 3;
+        width: 1fr;
+        border: round #ceaaff;
+    }
+
+    #style {
+        width: 12;
+        height: 3;
+        border: round #ceaaff;
+        margin-right: 1;
+        text-align: center;
+    }
+
+    #input:focus {
+        border: round #ceaaff;
+        background-tint: #ceaaff 10%;
+    }
+
+    #logs, #input {
+        margin-left: 1;
+        margin-right: 1;
+    }
+
+    #status {
+        height: 1;
+        background: $surface;
+        width: 1fr;
+        margin-left: 2;
+        margin-bottom: 1;
+        color: #ceaaff;
+    }
+
+    #header {
+        height: 3;
+        width: 1fr;
+        text-align: center;
+        border: round transparent;  /* v-align hack */
+        color: #ceaaff;
+    }
+
+    #controls {
+        height: auto;
+    }
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.logs = None
+        self.input_box = None
+        self.style_button = None
+        self.status = None
+        self.celune: Celune | None = None
+        self.celune_ready = False
+        self.cur_state = "active"
+        self.celune_styles = ["neutral", "calm", "energetic"]
+        self.celune_voices = None
+        self.style_index = 0
+        self._old_stdout = sys.stdout
+        self._old_stderr = sys.stderr
+        self._log_stdout = None
+        self._log_stderr = None
+        self.consume_on_boundary = False
+        self._suppress_input_change = False
+
+    def compose(self) -> ComposeResult:
+        """Define the UI."""
+        with Vertical(id="container"):
+            yield Label("Celune", id="header")
+            yield RichLog(id="logs", wrap=True, markup=False)
+            with Horizontal(id="controls"):
+                yield TextArea(id="input", placeholder="Please wait")
+                yield Button("Neutral", id="style", disabled=True)
+            yield Label("Initializing", id="status")
+
+    def on_mount(self) -> None:
+        """Prepare Celune."""
+        self.logs = self.query_one("#logs", RichLog)
+        self.input_box = self.query_one("#input", TextArea)
+        self.status = self.query_one("#status", Label)
+        self.style_button = self.query_one("#style", Button)
+
+        self._old_stdout = sys.stdout
+        self._old_stderr = sys.stderr
+        self._log_stdout = LogRedirect(self.safe_log)
+        self._log_stderr = LogRedirect(self.safe_log)
+
+        sys.stdout = self._log_stdout
+        sys.stderr = self._log_stderr
+
+        self.call_after_refresh(self.start_background_init)
+
+    def start_background_init(self) -> None:
+        """Run Celune's initialization function."""
+        self.load_tts()
+
+    @work(thread=True, exclusive=True)
+    def load_tts(self) -> None:
+        """Load Celune."""
+        try:
+            tts_voices = {
+                "neutral": (
+                    "refs/neutral.wav",
+                    "My name is Celune, pronounced Celune. It is a pleasure to meet you.",
+                    4243102495,
+                ),
+                "calm": (
+                    "refs/calm.wav",
+                    "My name is... Celune... It is so... quiet.",
+                    418977738,
+                ),
+                "energetic": (
+                    "refs/energetic.wav",
+                    "My name is Celune! Let's do this, we have to get it done!",
+                    590298652,
+                ),
+            }
+
+            self.celune.set_voices(tts_voices)
+            self.celune_voices = itertools.cycle(tts_voices.values())
+            tts_hashes = {
+                "neutral": "",
+                "calm": "",
+                "energetic": "",
+            }
+
+            for voice_name, (
+                voice_path,
+                _,
+                _,
+            ) in tts_voices.items():  # ignore seed and ref text
+                if not os.path.exists(voice_path):
+                    self.safe_log(f"Reference voice '{voice_name}' not found.")
+                    self.safe_status(f"Missing reference voice '{voice_name}'")
+                    return
+
+                checksum_path = f"{os.path.splitext(voice_path)[0]}.sha256"
+
+                if os.path.exists(checksum_path):
+                    with open(checksum_path, "r", encoding="utf-8") as f:
+                        # the type checker doesn't like this one
+                        tts_hashes[voice_name] = f.read().strip()
+
+                    with open(voice_path, "rb") as f:
+                        voice_hash = hashlib.file_digest(f, "sha256").hexdigest()
+
+                    if voice_hash != tts_hashes[voice_name]:
+                        self.safe_log(
+                            f"Voice file mismatch, voice '{voice_name}' may be affected."
+                        )
+                else:
+                    self.safe_log(f"Reference voice '{voice_name}' has no checksum.")
+
+            if self.celune.load():
+                self.celune_ready = True
+                self.safe_status("Ready")
+                self.style_button.disabled = False
+                self.input_box.placeholder = (
+                    "Enter text to speak here or run /help for commands"
+                )
+
+                if self.celune.extension_manager is not None:
+                    self.safe_log("[EXT] Running extension autostart")
+                    self.celune.extension_manager.autostart_all()
+
+                self.safe_log("Ready to speak.")
+
+        except Exception as e:
+            self.safe_log(f"[INIT ERROR] {traceback.format_exc()}")
+            self.error(f"{e.__class__.__name__}: {e}")
+            self.cur_state = "error"
+
+    def safe_status(self, msg: str, severity: str = "info") -> None:
+        """Update current status."""
+        if self.cur_state == "exiting" or self.status is None:
+            return
+
+        if severity not in SEVERITY_COLORS:
+            self.safe_log(
+                f"[WARNING] Unknown severity '{severity}', defaulting to info"
+            )
+
+        color = SEVERITY_COLORS.get(severity, "#ceaaff")
+
+        def update():
+            self.status.update(msg)
+            self.status.styles.color = color
+
+        if threading.current_thread() is threading.main_thread():
+            update()
+        else:
+            self.call_from_thread(update)
+
+    def safe_log(self, msg: str) -> None:
+        """Log a message."""
+        if self.cur_state == "exiting" or self.logs is None:
+            return
+
+        if threading.current_thread() is threading.main_thread():
+            self.logs.write(msg)
+        else:
+            self.call_from_thread(self.logs.write, msg)
+
+    def tts_voice_changed(self, name: str) -> None:
+        """Set UI state after changing Celune's voice."""
+        if self.cur_state == "exiting":
+            return
+
+        if name in self.celune_styles:
+            self.style_index = self.celune_styles.index(name)
+
+        label = name.capitalize()
+
+        if threading.current_thread() is threading.main_thread():
+            self.style_button.label = label
+        else:
+            self.call_from_thread(lambda: setattr(self.style_button, "label", label))
+
+    def tts_log(self, msg: str) -> None:
+        """Set status from TTS log."""
+        if self.cur_state == "exiting":
+            return
+
+        if msg.startswith("[QUEUE]"):
+            self.safe_status("Queued")
+        elif msg.startswith("[GEN]"):
+            self.safe_status("Generating")
+        elif msg.startswith("[WARMUP]"):
+            self.safe_status("Warming up")
+
+        self.safe_log(msg)
+
+    def process_command(self, command, args):
+        """Process Celune control commands."""
+
+        self.input_box.load_text("")
+        if command == "help":
+            self.safe_log("Available commands:")
+            self.safe_log(
+                "/consumebuf <true/false> - Make Celune consume text from the live buffer without "
+                "pressing CTRL+ENTER."
+            )
+            self.safe_log("Caution: This feature may interfere with typing '...'.")
+            self.safe_log(
+                "/invoke <extension> <args> - Invoke a Celune extension by its name."
+            )
+            self.safe_log("/extensions - List currently available Celune extensions.")
+            self.safe_log("/help - Display this help message.")
+            return
+        if command == "consumebuf":
+            if not args:
+                self.safe_log("Usage: /consumebuf <true/false>")
+                return
+
+            if args[0].lower() in ["true", "false"]:
+                boolean = args[0].lower() == "true"
+                self.consume_on_boundary = boolean
+
+                if boolean:
+                    self.safe_log("Now consuming from live input")
+                else:
+                    self.safe_log("No longer consuming from live input")
+                return
+            self.safe_log(f"Invalid argument for '{command}', must be true/false.")
+            return
+        if command == "invoke":
+            if not args:
+                self.safe_log("Usage: /invoke <extension_name>")
+                return
+
+            if not self.celune or not self.celune.extension_manager:
+                self.safe_log("Extension system not initialized.")
+                return
+
+            name = args[0]
+            invoke_args = args[1:]
+
+            try:
+                self.celune.extension_manager.invoke(name, *invoke_args)
+            except KeyError:
+                self.safe_log(f"Extension not found: {name}")
+            except Exception as e:
+                self.safe_log(f"[EXT ERROR] {e}")
+
+            return
+        if command == "extensions":
+            if not self.celune or not self.celune.extension_manager:
+                self.safe_log("Extension system not initialized.")
+                return
+
+            names = self.celune.extension_manager.list_extensions()
+            if not names:
+                self.safe_log("No extensions loaded.")
+            else:
+                self.safe_log("Extensions: " + ", ".join(names))
+            return
+
+        self.safe_log(f"Unknown command: {command}. Run /help for a list of commands.")
+
+    def consume_buffer(self, tlen):
+        """Consume a sentence from live input and say it."""
+        to_say = self.input_box.text[:tlen].strip()
+
+        self._suppress_input_change = True
+        try:
+            self.input_box.load_text(self.input_box.text[tlen:])
+        # yes, no except:
+        # that is valid python
+        finally:
+            self._suppress_input_change = False
+
+        if not to_say:
+            return
+
+        if all(char in ".!?;:, " for char in to_say):
+            return
+
+        self.celune.say(to_say)
+
+    def on_key(self, event: events.Key) -> None:
+        """Accept input and send text to Celune."""
+        if self.cur_state == "exiting":
+            return
+
+        if event.key == "ctrl+j":
+            if not self.celune:
+                return
+
+            text = self.input_box.text.strip()
+
+            if not text:
+                return
+
+            if text.startswith("/"):
+                parts = text[1:].strip().split()
+                if not parts:
+                    return
+
+                command = parts[0].lower()
+                command_args = parts[1:]
+
+                self.process_command(command, command_args)
+                return
+
+            if self.celune.say(text):
+                self.status.update("Queued")
+                self.style_button.disabled = True
+                self.input_box.placeholder = "Please wait"
+                self.input_box.load_text("")
+                event.prevent_default()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Change Celune's tone."""
+        if self.cur_state == "exiting":
+            return
+
+        if event.button != self.style_button:
+            return
+
+        self.style_index = (self.style_index + 1) % len(self.celune_styles)
+        next_voice = self.celune_styles[self.style_index]
+        self.celune.set_voice(next_voice)
+
+    def on_unmount(self) -> None:
+        """Unload Celune."""
+        self.cur_state = "exiting"
+
+        if self.celune is not None:
+            self.celune.close()
+
+        if hasattr(self, "_old_stdout"):
+            sys.stdout = self._old_stdout
+        if hasattr(self, "_old_stderr"):
+            sys.stderr = self._old_stderr
+
+    def tts_idle(self):
+        """Reset UI state after Celune stops talking."""
+        if self.cur_state == "exiting":
+            return
+        self.celune.locked = False
+        self.celune.cur_state = "idle"
+        self.input_box.placeholder = (
+            "Enter text to speak here or run /help for commands"
+        )
+        self.safe_status("Idle")
+
+    def tts_queue_avail(
+        self,
+    ):  # allow enqueuing new text while speaking but after generation
+        """Unlock input queueing after Celune completes the generation."""
+        if self.cur_state == "exiting":
+            return
+        self.celune.locked = False
+        self.safe_status("Speaking")
+        self.input_box.placeholder = (
+            "Enter text to speak here or run /help for commands"
+        )
+        self.style_button.disabled = False
+
+    def error(self, error: str) -> None:
+        """Set UI status to the error message."""
+        if self.cur_state == "exiting":
+            return
+        self.safe_status(error, "error")
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Monitor text area changes and perform actions."""
+        if self.cur_state == "exiting":
+            return
+
+        if self._suppress_input_change:
+            return
+
+        if event.text_area.id != "input":
+            return
+
+        text = event.text_area.text
+        line_count = text.count("\n") + 1
+        min_lines = 1
+        max_lines = 8
+
+        visible_lines = max(min_lines, min(line_count, max_lines))
+        event.text_area.styles.height = visible_lines + 2
+
+        text = event.text_area.text
+
+        if self.consume_on_boundary:
+            if text and text[-1] in ".!?":
+                if text in ".!?":
+                    return
+                self.consume_buffer(len(text))
+
+
+class LogRedirect:
+    """Redirect logs to the logger."""
+
+    def __init__(self, write_callback):
+        self.write_callback = write_callback
+        self._buffer = ""
+
+    def write(self, text):
+        """Write text to the logger."""
+        if not text:
+            return
+
+        if "`torch_dtype` is deprecated" in text:
+            return
+
+        self._buffer += text
+
+        while "\n" in self._buffer or "\r" in self._buffer:
+            newline_pos = self._buffer.find("\n") if "\n" in self._buffer else 10**9
+            cr_pos = self._buffer.find("\r") if "\r" in self._buffer else 10**9
+            pos = min(newline_pos, cr_pos)
+
+            chunk = self._buffer[:pos].strip()
+            self._buffer = self._buffer[pos + 1 :]
+
+            if chunk:
+                self.write_callback(chunk)
+
+    def flush(self):
+        """Flush the buffers."""
+        if self._buffer.strip():
+            self.write_callback(self._buffer.strip())
+        self._buffer = ""
