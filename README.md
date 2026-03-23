@@ -24,7 +24,18 @@ Samples were captured directly from the live TTS pipeline with no post-processin
 
 For details on voice production, check the VOICES.md file.
 
-## Requirements
+## System Requirements
+
+Celune depends on external system tools that are not installed via `pip`:
+
+- **NVIDIA GPU with CUDA support**
+- **CUDA Toolkit 12.8**
+- **SoX (Sound eXchange)** — required for audio processing
+- **Symbolic link support** (recommended on Windows)
+
+Celune requires CUDA for GPU acceleration. CPU-only execution is not supported.
+
+## GPU requirements
 
 **GPU (CUDA):**
 - Minimum: 6 GB VRAM (e.g. GTX 1660 / RTX 2060)
@@ -58,6 +69,53 @@ chmod +x main.py
 ./main.py
 ```
 
+### SoX installation
+
+**Windows (Chocolatey)**
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+choco install sox
+```
+
+**Linux (Debian/Ubuntu)
+```bash
+sudo apt install sox
+```
+
+**macOS (Homebrew)**
+```
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+brew install sox
+```
+
+### CUDA 12.8 installation
+
+Download and install CUDA Toolkit 12.8 from NVIDIA:
+
+https://developer.nvidia.com/cuda-downloads
+
+Make sure to:
+- Select the correct OS and version
+- Install both **CUDA Toolkit** and **NVIDIA drivers** (if not already installed)
+
+After installation, verify CUDA:
+
+```bash
+nvidia-smi
+```
+
+You should see your GPU listed along with driver information.
+
+### Symbolic links (Windows)
+
+Symbolic links are recommended for best performance and compatibility.
+
+To enable them:
+- Enable **Developer Mode** in Windows settings  
+  (Settings → Privacy & Security → For Developers)
+
+Without this, Celune may require elevated permissions or fall back to slower behavior.
+
 # Screenshots
 These screenshots show Celune's user interface.
 
@@ -72,3 +130,13 @@ These screenshots show Celune's user interface.
 
 ### Change voice
 [![Change voice](./demos/state_change_voice.png)](./demos/state_change_voice.png)
+
+### Commands
+[![Commands](./demos/state_commands.png)](./demos/state_commands.png)
+
+### Extension autostart
+[![Extension autostart](./demos/state_extension_autostart.png)](./demos/state_extension_autostart.png)
+
+### Extension invoke
+[![Extension invoke](./demos/state_extension_invoke.png)](./demos/state_extension_invoke.png)
+

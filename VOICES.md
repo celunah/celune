@@ -26,7 +26,7 @@ These prompts were used to steer direction of the voice during auditioning.
 `A female voice with a rich, resonant, and decisive texture. Confident, professional, and clear with a rhythmic drive.`
 
 # Candidates
-The batch size per voice is 50. One voice was selected as the best match.
+The batch size per voice is 50. One voice was selected as the best match. Voices were generated using [Qwen3-TTS-12Hz-1.7B-VoiceDesign](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign).
 
 - Energetic #16 (Seed: 590298652)
 - Neutral #32 (Seed: 418977738)
