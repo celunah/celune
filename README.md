@@ -77,7 +77,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManage
 choco install sox
 ```
 
-**Linux (Debian/Ubuntu)
+**Linux (Debian/Ubuntu)**
 ```bash
 sudo apt install sox
 ```
