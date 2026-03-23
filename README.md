@@ -92,7 +92,7 @@ brew install sox
 
 Download and install CUDA Toolkit 12.8 from NVIDIA:
 
-https://developer.nvidia.com/cuda-downloads
+https://developer.nvidia.com/cuda-12-8-0-download-archive
 
 Make sure to:
 - Select the correct OS and version
