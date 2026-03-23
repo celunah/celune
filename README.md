@@ -37,6 +37,9 @@ Tested on: RTX 5070 (12 GB VRAM)
 ## Installation
 
 ```bash
+# Download Celune
+git clone https://github.com/celunah/celune
+
 # Create environment
 python -m venv .venv
 source .venv/bin/activate
