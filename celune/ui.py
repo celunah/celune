@@ -470,7 +470,7 @@ class CeluneUI(App):
 
     def tts_queue_avail(
         self,
-    ) -> None:  # allow enqueuing new text while speaking but after generation
+    ) -> None:  # allow enqueuing new inputs while speaking but after generation
         """Unlock input queueing after Celune completes the generation."""
         if self.cur_state == "exiting":
             return
@@ -482,7 +482,7 @@ class CeluneUI(App):
         self.style_button.disabled = False
 
     def error(self, error: str) -> None:
-        """Set UI status to the error message."""
+        """Set the UI status to the error message."""
         if self.cur_state == "exiting":
             return
         self.safe_status(error, "error")

@@ -2,7 +2,7 @@
 # pylint: disable=R0902, R0913, R0917, W0718
 """
 Celune 2.1.0 - A celestial TTS engine.
-She has three tones, and can change them on the fly.
+She has three tones and can change them on the fly.
 She can also run extensions.
 """
 
