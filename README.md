@@ -70,11 +70,15 @@ chmod +x main.py
 ```
 
 ### SoX installation
+If SoX is already installed, you can skip this section.
 
 **Windows (Scoop)**
 ```powershell
+# Install Scoop if you don't already have it
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+irm https://get.scoop.sh | iex
+
+# Install SoX
 scoop install sox
 ```
 
@@ -84,9 +88,20 @@ sudo apt install sox
 ```
 
 **macOS (Homebrew)**
-```
+```bash
+# Install Homebrew if you don't already have it
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install SoX
 brew install sox
+```
+
+**Validate SoX is installed**
+```bash
+sox --version
+
+# Expected output:
+sox:      SoX v14.4.2 (or similar version)
 ```
 
 ### CUDA 12.8 installation
