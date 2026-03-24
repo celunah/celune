@@ -16,7 +16,7 @@ STRINGS: dict[str, dict[str, str]] = {
 
 
 def get_system_locale() -> str:
-    """Get current system locale, fall back to English if not found."""
+    """Get the current system locale, fall back to English if not found."""
     lang, _ = _locale.getlocale()
     if lang:
         return lang
