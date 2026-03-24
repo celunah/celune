@@ -1,7 +1,7 @@
 """Edit this Celune extension to suit your needs."""
 
 import time
-from celune.extensions.base import CeluneExtension
+from celune import CeluneContext
 
 
 class TestExtension(CeluneExtension):

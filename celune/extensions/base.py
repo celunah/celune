@@ -14,7 +14,7 @@ from celune import __version__
 class LogCallable(Protocol):
     """Extension callable logging annotation."""
 
-    def __call__(self, msg: str) -> None: ...
+    def __call__(self, msg: str, severity: str = "info") -> None: ...
 
 
 @runtime_checkable
@@ -76,17 +76,17 @@ class CeluneExtension(ABC):
 
     def autostart(self) -> None:
         """Overridable autostart logic function."""
-        self.log(f"{self.name} has no autostart, skipping")
+        self.log(f"{self.name} has no autostart, skipping", "warning")
 
-    def invoke(self, *args, **kwargs):
+    def invoke(self, *args, **kwargs) -> None:
         """Overridable invocation logic function."""
         raise NotImplementedError(
             f"{self.__class__.__name__}.invoke() is not implemented"
         )
 
-    def log(self, msg: str) -> None:
+    def log(self, msg: str, severity: str = "info") -> None:
         """Log to Celune's logs."""
-        self.ctx.log(f"[{self.name}] {msg}")
+        self.ctx.log(f"[{self.name}] {msg}", severity)
 
     def say(self, text: str) -> None:
         """Make Celune say something."""
