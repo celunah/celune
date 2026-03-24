@@ -71,10 +71,11 @@ chmod +x main.py
 
 ### SoX installation
 
-**Windows (Chocolatey)**
+**Windows (Scoop)**
 ```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-choco install sox
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+scoop install sox
 ```
 
 **Linux (Debian/Ubuntu)**
@@ -92,7 +93,7 @@ brew install sox
 
 Download and install CUDA Toolkit 12.8 from NVIDIA:
 
-https://developer.nvidia.com/cuda-downloads
+https://developer.nvidia.com/cuda-12-8-0-download-archive
 
 Make sure to:
 - Select the correct OS and version
