@@ -32,6 +32,7 @@ class CeluneExtensionManager:
         name = instance.name
 
         if name in self.extensions:
+            self.context.log(f"[Core] {name} is already registered", "warning")
             raise ValueError(f"Extension '{name}' is already registered")
 
         self.extensions[name] = instance
@@ -57,7 +58,7 @@ class CeluneExtensionManager:
                 threading.Thread(target=runner, daemon=True).start()
 
         if not started:
-            self.context.log("[Core] Nothing to autostart.")
+            self.context.log("[Core] Nothing to autostart.", "warning")
 
     def invoke(self, name: str, *args: Any, **kwargs: Any) -> Any:
         """Manually invoke a Celune extension."""
@@ -78,13 +79,15 @@ class CeluneExtensionManager:
         extensions_dir = Path(folder)
 
         if not extensions_dir.exists():
-            self.context.log(f"[Core] Extension folder not found: {extensions_dir}")
+            self.context.log(f"[Core] Extension folder not found: {extensions_dir}", "warning")
+            self.context.log("Extensions will not be available.", "warning")
             return
 
         if not extensions_dir.is_dir():
             self.context.log(
                 f"[Core] Extension path is not a directory: {extensions_dir}"
             )
+            self.context.log("Extensions will not be available.", "warning")
             return
 
         self.context.log(f"[Core] Scanning extension folder: {extensions_dir}")

@@ -7,18 +7,19 @@ import shlex
 import hashlib
 import threading
 import itertools
-import traceback
+from typing import Callable
 
 from textual import work, events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, RichLog, TextArea, Button
+from rich.text import Text
 
 from .celune import Celune
 
 SEVERITY_COLORS = {
-    "info": "#ceaaff",
-    "warning": "#debaff",
+    "info": "#ceaaff",  # Celune accent
+    "warning": "#fcf283",
     "error": "#ff6b6b",
 }
 
@@ -89,12 +90,28 @@ class CeluneUI(App):
         color: #ceaaff;
     }
 
-    #header {
-        height: 3;
+    #header-container {
+        height: 1;
         width: 1fr;
-        text-align: center;
-        border: round transparent;  /* v-align hack */
+        layout: horizontal;
+        align: center middle;
+        margin-bottom: 1;
+        margin-top: 1;
+    }
+    
+    #header {
+        width: auto;
+        content-align: center middle;
         color: #ceaaff;
+        text-style: bold;
+        padding: 0 2;
+    }
+    
+    .line {
+        width: 1fr;
+        height: 1;
+        border-top: solid #ceaaff;
+        margin: 0 2;  /* when zero two works, arno would be proud */
     }
 
     #controls {
@@ -102,7 +119,7 @@ class CeluneUI(App):
     }
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.logs = None
         self.input_box = None
@@ -124,7 +141,10 @@ class CeluneUI(App):
     def compose(self) -> ComposeResult:
         """Define the UI."""
         with Vertical(id="container"):
-            yield Label("Celune", id="header")
+            with Horizontal(id="header-container"):
+                yield Label("", classes="line")
+                yield Label("Celune", id="header")
+                yield Label("", classes="line")
             yield RichLog(id="logs", wrap=True, markup=False)
             with Horizontal(id="controls"):
                 yield TextArea(id="input", placeholder="Please wait")
@@ -140,8 +160,8 @@ class CeluneUI(App):
 
         self._old_stdout = sys.stdout
         self._old_stderr = sys.stderr
-        self._log_stdout = LogRedirect(self.safe_log)
-        self._log_stderr = LogRedirect(self.safe_log)
+        self._log_stdout = LogRedirect(self.safe_log, "info")
+        self._log_stderr = LogRedirect(self.safe_log, "warning")
 
         sys.stdout = self._log_stdout
         sys.stderr = self._log_stderr
@@ -188,8 +208,8 @@ class CeluneUI(App):
                 _,
             ) in tts_voices.items():  # ignore seed and ref text
                 if not os.path.exists(voice_path):
-                    self.safe_log(f"Reference voice '{voice_name}' not found.")
-                    self.safe_status(f"Missing reference voice '{voice_name}'")
+                    self.safe_log(f"Reference voice '{voice_name}' not found.", "error")
+                    self.safe_status(f"Missing reference voice '{voice_name}'", "error")
                     return
 
                 checksum_path = f"{os.path.splitext(voice_path)[0]}.sha256"
@@ -207,7 +227,7 @@ class CeluneUI(App):
                             f"Voice file mismatch, voice '{voice_name}' may be affected."
                         )
                 else:
-                    self.safe_log(f"Reference voice '{voice_name}' has no checksum.")
+                    self.safe_log(f"Reference voice '{voice_name}' has no checksum.", "warning")
 
             if self.celune.load():
                 self.celune_ready = True
@@ -224,8 +244,8 @@ class CeluneUI(App):
                 self.safe_log("Ready to speak.")
 
         except Exception as e:
-            self.safe_log(f"[INIT ERROR] {traceback.format_exc()}")
-            self.error(f"{e.__class__.__name__}: {e}")
+            self.safe_log(f"[INIT ERROR] {self.celune.format_error(e, self.celune.dev)}", "error")
+            self.error("Celune could not start")
             self.cur_state = "error"
 
     def safe_status(self, msg: str, severity: str = "info") -> None:
@@ -235,12 +255,12 @@ class CeluneUI(App):
 
         if severity not in SEVERITY_COLORS:
             self.safe_log(
-                f"[WARNING] Unknown severity '{severity}', defaulting to info"
+                f"[WARNING] Unknown severity '{severity}', defaulting to info", "warning"
             )
 
         color = SEVERITY_COLORS.get(severity, "#ceaaff")
 
-        def update():
+        def update() -> None:
             self.status.update(msg)
             self.status.styles.color = color
 
@@ -249,15 +269,17 @@ class CeluneUI(App):
         else:
             self.call_from_thread(update)
 
-    def safe_log(self, msg: str) -> None:
+    def safe_log(self, msg: str, severity: str = "info") -> None:
         """Log a message."""
         if self.cur_state == "exiting" or self.logs is None:
             return
 
         if threading.current_thread() is threading.main_thread():
-            self.logs.write(msg)
+            self.logs.write(Text(msg, style=SEVERITY_COLORS.get(severity, "#ceaaff")))
         else:
-            self.call_from_thread(self.logs.write, msg)
+            self.call_from_thread(
+                self.logs.write, Text(msg, style=SEVERITY_COLORS.get(severity, "#ceaaff"))
+            )
 
     def tts_voice_changed(self, name: str) -> None:
         """Set UI state after changing Celune's voice."""
@@ -274,21 +296,14 @@ class CeluneUI(App):
         else:
             self.call_from_thread(lambda: setattr(self.style_button, "label", label))
 
-    def tts_log(self, msg: str) -> None:
+    def tts_log(self, msg: str, severity: str = "info") -> None:
         """Set status from TTS log."""
         if self.cur_state == "exiting":
             return
 
-        if msg.startswith("[QUEUE]"):
-            self.safe_status("Queued")
-        elif msg.startswith("[GEN]"):
-            self.safe_status("Generating")
-        elif msg.startswith("[WARMUP]"):
-            self.safe_status("Warming up")
+        self.safe_log(msg, severity)
 
-        self.safe_log(msg)
-
-    def process_command(self, command, args):
+    def process_command(self, command: str, args: list[str]) -> None:
         """Process Celune control commands."""
 
         self.input_box.load_text("")
@@ -298,16 +313,17 @@ class CeluneUI(App):
                 "/consumebuf <true/false> - Make Celune consume text from the live buffer without "
                 "pressing CTRL+ENTER."
             )
-            self.safe_log("Caution: This feature may interfere with typing '...'.")
+            self.safe_log("Caution: This feature may interfere with typing '...'.", "warning")
             self.safe_log(
                 "/invoke <extension> <args> - Invoke a Celune extension by its name."
             )
             self.safe_log("/extensions - List currently available Celune extensions.")
+            self.safe_log("/exit - Exit Celune.")
             self.safe_log("/help - Display this help message.")
             return
         if command == "consumebuf":
             if not args:
-                self.safe_log("Usage: /consumebuf <true/false>")
+                self.safe_log("Usage: /consumebuf <true/false>", "warning")
                 return
 
             if args[0].lower() in ["true", "false"]:
@@ -319,7 +335,7 @@ class CeluneUI(App):
                 else:
                     self.safe_log("No longer consuming from live input")
                 return
-            self.safe_log(f"Invalid argument for '{command}', must be true/false.")
+            self.safe_log(f"Invalid argument for '{command}', must be true/false.", "warning")
             return
         if command == "invoke":
             if not args:
@@ -327,7 +343,7 @@ class CeluneUI(App):
                 return
 
             if not self.celune or not self.celune.extension_manager:
-                self.safe_log("Extension system not initialized.")
+                self.safe_log("Extension system not initialized.", "warning")
                 return
 
             name = args[0]
@@ -336,26 +352,31 @@ class CeluneUI(App):
             try:
                 self.celune.extension_manager.invoke(name, *invoke_args)
             except KeyError:
-                self.safe_log(f"Extension not found: {name}")
+                self.safe_log(f"Extension not found: {name}", "warning")
             except Exception as e:
-                self.safe_log(f"[EXT ERROR] {e}")
+                self.safe_log(f"[EXT ERROR] {e}", "error")
 
             return
         if command == "extensions":
             if not self.celune or not self.celune.extension_manager:
-                self.safe_log("Extension system not initialized.")
+                self.safe_log("Extension system not initialized.", "warning")
                 return
 
             names = self.celune.extension_manager.list_extensions()
             if not names:
-                self.safe_log("No extensions loaded.")
+                self.safe_log("No extensions loaded.", "warning")
             else:
                 self.safe_log("Extensions: " + ", ".join(names))
             return
+        if command == "exit":
+            self.safe_log("Exiting Celune...")
+            self.celune.request_exit()
+            self.exit()
+            return
 
-        self.safe_log(f"Unknown command: {command}. Run /help for a list of commands.")
+        self.safe_log(f"Unknown command: {command}. Run /help for a list of commands.", "warning")
 
-    def consume_buffer(self, tlen):
+    def consume_buffer(self, tlen: int) -> None:
         """Consume a sentence from live input and say it."""
         to_say = self.input_box.text[:tlen].strip()
 
@@ -393,7 +414,7 @@ class CeluneUI(App):
                 try:
                     parts = shlex.split(text[1:])
                 except ValueError as e:
-                    self.safe_log(f"Command parsing error: {e}")
+                    self.safe_log(f"Command parsing error: {e}", "error")
                     return
 
                 if not parts:
@@ -436,7 +457,7 @@ class CeluneUI(App):
         if hasattr(self, "_old_stderr"):
             sys.stderr = self._old_stderr
 
-    def tts_idle(self):
+    def tts_idle(self) -> None:
         """Reset UI state after Celune stops talking."""
         if self.cur_state == "exiting":
             return
@@ -449,7 +470,7 @@ class CeluneUI(App):
 
     def tts_queue_avail(
         self,
-    ):  # allow enqueuing new text while speaking but after generation
+    ) -> None:  # allow enqueuing new text while speaking but after generation
         """Unlock input queueing after Celune completes the generation."""
         if self.cur_state == "exiting":
             return
@@ -497,11 +518,16 @@ class CeluneUI(App):
 class LogRedirect:
     """Redirect logs to the logger."""
 
-    def __init__(self, write_callback):
+    def __init__(
+        self,
+        write_callback: Callable[[str, str], None],
+        default_severity: str = "info",
+    ) -> None:
         self.write_callback = write_callback
+        self.default_severity = default_severity
         self._buffer = ""
 
-    def write(self, text):
+    def write(self, text: str) -> None:
         """Write text to the logger."""
         if not text:
             return
@@ -520,10 +546,10 @@ class LogRedirect:
             self._buffer = self._buffer[pos + 1 :]
 
             if chunk:
-                self.write_callback(chunk)
+                self.write_callback(chunk, self.default_severity)
 
-    def flush(self):
+    def flush(self) -> None:
         """Flush the buffers."""
         if self._buffer.strip():
-            self.write_callback(self._buffer.strip())
+            self.write_callback(self._buffer.strip(), self.default_severity)
         self._buffer = ""
