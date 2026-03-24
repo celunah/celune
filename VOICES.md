@@ -1,6 +1,13 @@
 # Voice Design
 This document describes how Celune's voice identities were created, selected, and refined.
 
+# Pronunciation glossary
+Celune can be pronounced in one of two ways:
+- English-style: Seh-LOON (IPA: /sɛˈluːn/)
+- French-style: Say-LUNE, approximation: Say-LOON, (IPA: /seˈlyn/)
+
+The name is derived from the author's username.
+
 # Reference text
 These scripts are what Celune says in the reference audio. They were modified from an original script to reduce the hallucination risk.
 
