@@ -20,6 +20,9 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 | Calm      | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc.wav)    | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc.wav)    |
 | Energetic | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/energetic_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/energetic_lc.wav) |
 
+> [!CAUTION]
+> Mixing too many languages in input to Celune may cause unexpected output, ie. hallucination.
+
 Samples were captured directly from the live TTS pipeline with no post-processing applied (only silence trimming).
 
 For details on voice production, check the VOICES.md file.
