@@ -21,7 +21,22 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 | Energetic | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/energetic_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/energetic_lc.wav) |
 
 > [!CAUTION]
-> Mixing too many languages in input to Celune may cause unexpected output, ie. hallucination.
+> Do not use markup or tags (e.g. `<...>`).  
+> They may be interpreted as control sequences and break speech output.
+>
+> Do not mix multiple languages in one sentence.  
+> Keep language boundaries clear and explicit.
+>
+> **Good:**
+> ```
+> This is a sentence. This is another sentence.
+> ```
+>
+> **Bad:**
+> ```
+> <think>Thinking text.</think>
+> This is a sentence, 中文, 日本語, 한국어.
+> ```
 
 Samples were captured directly from the live TTS pipeline with no post-processing applied (only silence trimming).
 
