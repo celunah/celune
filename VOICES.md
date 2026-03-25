@@ -4,7 +4,9 @@ This document describes how Celune's voice identities were created, selected, an
 # Pronunciation glossary
 Celune can be pronounced in one of two ways:
 - English-style: Seh-LOON (IPA: /sɛˈluːn/)
-- French-style: Say-LUNE, approximation: Say-LOON, (IPA: /seˈlyn/)
+- French-style: Say-LUNE, approximation: Say-L(Y)OON, (IPA: /seˈlyn/)
+
+Parts in brackets may not be said equally by all speakers.
 
 The name is derived from the author's username.
 
