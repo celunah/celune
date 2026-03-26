@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 # pylint: disable=R0902, R0913, R0917, W0718
 """
-Celune 2.1.0 - A celestial TTS engine.
-She has three tones and can change them on the fly.
-She can also run extensions.
+Celune 2.2.0 - ”It's not just TTS. It's a character.”
+Refer to https://github.com/celunah/celune for information about Celune.
 """
 
 import os
 import sys
 
-DEV = os.getenv("DEV") in {"1", "true", "True"}
+DEV = os.getenv("CELUNE_DEV") in {"1", "true", "on"}
 
 try:
     from celune.celune import Celune
@@ -20,19 +19,18 @@ except ModuleNotFoundError as package:
     print("Try running 'pip install -U -r requirements.txt'.")
     if DEV:
         raise
+    print("Run Celune with CELUNE_DEV=1 to get full traceback.")
     sys.exit(1)
 
 
 def main() -> None:
     """Instantiate and start Celune."""
-    sys.stdout.write("\x1b]2;Celune\x07")
-    sys.stdout.flush()
-
     try:
+        print("\x1b]2;Celune\x07", end="", flush=True)
         ui = CeluneUI()
         celune = Celune(
             model_name="Qwen/Qwen3-TTS-12Hz-1.7B-Base",
-            ref_audio="refs/neutral.wav",
+            ref_audio="refs/balanced.wav",
             ref_text="My name is Celune, pronounced Celune. It is a pleasure to meet you.",
             log_callback=ui.tts_log,
             status_callback=ui.safe_status,
@@ -40,10 +38,9 @@ def main() -> None:
             idle_callback=ui.tts_idle,
             queue_avail_callback=ui.tts_queue_avail,
             voice_changed_callback=ui.tts_voice_changed,
+            chunk_size=16,
         )
-
         celune.setup_extensions()
-
         ui.celune = celune
         ui.run()
     except Exception as e:
@@ -51,10 +48,8 @@ def main() -> None:
         if DEV:
             raise
         print(e)
+        print("Run Celune with CELUNE_DEV=1 to get full traceback.")
         sys.exit(1)
-    finally:
-        sys.stdout.write("\x1b[0m\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l")
-        sys.stdout.flush()
 
 
 if __name__ == "__main__":

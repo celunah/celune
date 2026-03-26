@@ -8,7 +8,11 @@ faster-qwen3-tts
 sounddevice
 hf-xet
 huggingface-hub
+transformers
+bitsandbytes
+accelerate
 
 numpy
 scipy
 textual
+rich

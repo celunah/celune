@@ -1,4 +1,4 @@
-# pylint: disable=R0902, R0912, R0913, R0915, R0917, W0718
+# pylint: disable=R0902, R0912, R0913, R0914, R0915, R0917, W0718
 """Celune's backend layer."""
 
 import os
@@ -6,6 +6,7 @@ import re
 import sys
 import math
 import time
+import glob
 import queue
 import random
 import platform
@@ -18,6 +19,8 @@ import numpy as np
 import sounddevice as sd
 from scipy.signal import resample_poly
 from faster_qwen3_tts import FasterQwen3TTS
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers.utils import logging as hf_logging
 from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub.utils import disable_progress_bars
 
@@ -34,67 +37,81 @@ class Celune:
         model_name: str,
         ref_audio: str,
         ref_text: str,
-        chunk_size: int = 24,
-        prebuffer_chunks: int = 2,
-        sentences_per_chunk: int = 4,
-        language: str = "Auto",
+
+        chunk_size: int = 24,  # approx. 1.92s per chunk
+        sentences_per_chunk: int = 4,  # prevents Celune from running out of context
+        language: str = "Auto",  # if you don't care about multilinguality, set it to "English"
+
         log_callback: Optional[
-            Union[
-                Callable[[str], None],
-                Callable[[str, str], None],
-            ]
+            Union[Callable[[str], None], Callable[[str, str], None]]
         ] = None,
+        status_callback: Optional[
+            Union[Callable[[str], None], Callable[[str, str], None]]
+        ] = None,
+        error_callback: Optional[Callable[[str], None]] = None,
         idle_callback: Optional[Callable[[], None]] = None,
         queue_avail_callback: Optional[Callable[[], None]] = None,
-        error_callback: Optional[Callable[[str], None]] = None,
-            status_callback: Optional[
-                Union[
-                    Callable[[str], None],
-                    Callable[[str, str], None],
-                ]
-            ] = None,
         voice_changed_callback: Optional[Callable[[str], None]] = None,
+
         dev: bool = False,
     ) -> None:
         self.model_name = model_name
         self.ref_audio = ref_audio
         self.ref_text = ref_text
-        self.chunk_size = chunk_size
-        self.prebuffer_chunks = prebuffer_chunks
-        self.sentences_per_chunk = sentences_per_chunk
         self.language = language
-        self.log_callback = log_callback or (lambda msg, severity: None)
-        self.idle_callback = idle_callback or (lambda: None)
-        self.queue_avail_callback = queue_avail_callback or (lambda: None)
-        self.error_callback = error_callback or (lambda error: None)
-        self.status_callback = status_callback or (lambda msg, severity: None)
-        self.voice_changed_callback = voice_changed_callback or (lambda name: None)
-        self.current_voice = "neutral"
-        self.voices: dict[str, tuple[str, str, int]] = {}
-        self.dev = dev
 
         self.model = None
+        self.llm = None
+        self.tokenizer = None
+
+        self.current_voice = "balanced"
+        self.voices: dict[str, tuple[str, str, int]] = {}
+
+        self.chunk_size = chunk_size
+        self.prebuffer_chunks = min(max(self.chunk_size // 8, 1), 3)  # between 1-4 prebuffer chunks
+        self.sentences_per_chunk = sentences_per_chunk
+
+        self.log_callback = log_callback or (lambda msg, severity: None)
+        self.status_callback = status_callback or (lambda msg, severity: None)
+        self.error_callback = error_callback or (lambda error: None)
+        self.idle_callback = idle_callback or (lambda: None)
+        self.queue_avail_callback = queue_avail_callback or (lambda: None)
+        self.voice_changed_callback = voice_changed_callback or (lambda name: None)
+
         self.text_queue = queue.Queue()
         self.audio_queue = queue.Queue()
-        self._sentinel = object()
+
         self._playback_thread = None
         self._generation_thread = None
+
+        self._queue_lock = threading.Lock()
+        self._sentinel = object()  # dispatched upon exit
+        self._utterance_done = object()  # dispatched upon generation end
+
         self._stream: Optional[sd.OutputStream] = None
         self._current_sr: Optional[int] = None
-        self._utterance_done = object()
+
         self.locked = True
         self.loaded = False
-        self.cur_state = "init"
-        self.extension_manager: CeluneExtensionManager | None = None
         self._exit_requested = False
-        self._queue_lock = threading.Lock()
+
+        self.cur_state = "init"
+
+        self.dev = dev
+        self.use_normalization = os.getenv("CELUNE_NO_NORMALIZE") not in {
+            "1",
+            "true",
+            "on",
+        }
+        self.normalization_timeout = 0.5
+
+        self.extension_manager: CeluneExtensionManager | None = None
 
     @staticmethod
-    def _model_is_available_locally() -> tuple[bool, Optional[str]]:
+    def _model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
         """Check if the TTS model is already available."""
         base = HF_HUB_CACHE
-        model_name = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-        model_dir = os.path.join(base, f"models--{model_name.replace('/', '--')}")
+        model_dir = os.path.join(base, f"models--{model.replace('/', '--')}")
 
         refs_main = os.path.join(model_dir, "refs", "main")
         snapshots_dir = os.path.join(model_dir, "snapshots")
@@ -102,11 +119,8 @@ class Celune:
         expected_files = [
             "config.json",
             "generation_config.json",
-            "merges.txt",
-            "model.safetensors",
-            "preprocessor_config.json",
+            "model*.safetensors",
             "tokenizer_config.json",
-            "vocab.json",
         ]
 
         if not os.path.exists(refs_main):
@@ -120,7 +134,7 @@ class Celune:
         if not os.path.isdir(snapshot_path):
             return False, None
 
-        if all(os.path.exists(os.path.join(snapshot_path, f)) for f in expected_files):
+        if all(glob.glob(os.path.join(snapshot_path, f)) for f in expected_files):
             return True, snapshot_path
 
         return False, None
@@ -133,7 +147,6 @@ class Celune:
                 q.get_nowait()
         except queue.Empty:
             pass
-
 
     def _close_stream(self, abort: bool = False) -> None:
         """Close the current audio stream if one exists."""
@@ -155,20 +168,6 @@ class Celune:
 
         self._stream = None
         self._current_sr = None
-
-    def request_exit(self) -> None:
-        """Exit from Celune."""
-        self._exit_requested = True
-
-        with self._queue_lock:
-            self._clear_queue(self.text_queue)
-            self._clear_queue(self.audio_queue)
-
-        self.text_queue.put(self._sentinel)
-        self.audio_queue.put(self._sentinel)
-        self._close_stream(abort=True)
-
-        self.cur_state = "idle"
 
     def set_voices(self, voices: dict[str, tuple[str, str, int]]) -> None:
         """Configure Celune's voice information."""
@@ -224,8 +223,11 @@ class Celune:
     def load(self) -> bool:
         """Load and initialize Celune."""
         disable_progress_bars()
+        hf_logging.set_verbosity_error()
 
-        available, path = self._model_is_available_locally()
+        available, path = self._model_is_available_locally(
+            "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+        )
         if available:
             self.log("TTS model is already available in cache")
             os.environ["HF_HUB_OFFLINE"] = "1"
@@ -280,10 +282,45 @@ class Celune:
             self.locked = False
             self.loaded = True
             self.cur_state = "idle"
-            return True
+        else:
+            self.log("[WARMUP] Warmup failed.", "error")
+            return False
 
-        self.log("[WARMUP] Warmup failed.", "error")
-        return False
+        if self.use_normalization:
+            self._load_normalizer()
+        return True
+
+    def _load_normalizer(self) -> None:
+        """Load normalizer LLM."""
+
+        def _worker():
+            # Qwen 3.5 does exist, but Celune depends on Transformers v4
+            model_id = "Qwen/Qwen3-1.7B"
+
+            try:
+                available, path = self._model_is_available_locally(model_id)
+                if available:
+                    self.log("Normalizer is already available in cache")
+                    self.tokenizer = AutoTokenizer.from_pretrained(path)
+                    self.llm = AutoModelForCausalLM.from_pretrained(
+                        path, torch_dtype=torch.bfloat16, device_map="cuda"
+                    )
+                else:
+                    self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+                    self.llm = AutoModelForCausalLM.from_pretrained(
+                        model_id, torch_dtype=torch.bfloat16, device_map="cuda"
+                    )
+                self.log("Normalizer loaded.")
+            except Exception as e:
+                self.log(
+                    f"[NORMALIZER ERROR] {self.format_error(e, self.dev)}", "error"
+                )
+                self.log("Normalizer failed to load.", "warning")
+                self.log("Normalization will not be available.", "warning")
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        self.log("Loading normalizer...")
 
     def _warmup(self) -> bool:
         """Warm up Celune's speech capabilities."""
@@ -311,6 +348,110 @@ class Celune:
             self.error_callback("Celune could not warm up")
             return False
 
+    def normalize(self, text: str) -> Optional[str]:
+        """Normalize input text."""
+
+        if not self.use_normalization:
+            return None
+
+        if not text or not text.strip():
+            return text
+
+        if self.llm is None or self.tokenizer is None:
+            return None
+
+        messages = [
+            {
+                "role": "system",
+                "content": """
+                    You are a TTS text normalizer.
+                    
+                    You will read the input from the user and do the following:
+                    - Capitalize the first letter of the input
+                    - Add commas, colons and semicolons in the sentence where they would fit naturally
+                    - Add a dot at the end of the sentence
+                    - Add a question mark at the end of the sentence instead, if it is clearly a question
+                    - Add an exclamation mark at the end of the sentence instead, if it is clearly an exclamation
+                    - Capitalize the pronoun "i" as "I"
+                    - Hyphenate words, eg. "run on" or "runon" -> "run-on"
+                    - Capitalize abbreviations, eg. "llm" -> "LLM", "ai" -> "AI"
+                    - Add apostrophes to common English contractions, eg. "lets" -> "let's", "dont" -> "don't"
+                    
+                    DO NOT:
+                    - add or remove words
+                    - change existing words
+                    - change meaning of any sentence
+                
+                    Only output the corrected text, and omit all explanations, etc.
+                """,
+            },
+            {
+                "role": "user",
+                "content": text,
+            },
+        ]
+
+        def _run_inference() -> Optional[str]:
+            inf_start = time.perf_counter()
+            try:
+                prompt = self.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=False,
+                )
+
+                inputs = self.tokenizer(prompt, return_tensors="pt").to(self.llm.device)
+
+                with torch.inference_mode():
+                    output_ids = self.llm.generate(
+                        **inputs,
+                        max_new_tokens=256,
+                        do_sample=False,
+                        pad_token_id=self.tokenizer.pad_token_id
+                        or self.tokenizer.eos_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id,
+                    )
+
+                    prompt_len = inputs["input_ids"].shape[1]
+                    new_ids = output_ids[0][prompt_len:]
+
+                    # Celune can't say nothing
+                    if new_ids.numel() == 0:
+                        self.log("Normalizer returned no tokens.", "warning")
+                        return None
+
+                    out = self.tokenizer.decode(new_ids, skip_special_tokens=True)
+
+                    # strip the <think> tokens as Celune chokes on them if they're present
+                    out = re.sub(r"<think>.*?</think>", "", out, flags=re.DOTALL)
+                    out = re.sub(r"\n\s*\n", "\n", out).strip()
+
+                    # Qwen produced only reasoning, Celune would say nothing, bail out
+                    if not out:
+                        self.log("Normalizer did not produce normal output.", "warning")
+                        return None
+
+                    # preserves casing after the first letter
+                    # .capitalize() destroys formatting, Python is weird
+                    first_char = out[0]
+                    out = first_char.upper() + out[1:]
+
+                    inf_end = time.perf_counter()
+                    inf_total = inf_end - inf_start
+
+                    self.log(f"Normalization took {inf_total:.2f} seconds.")
+
+                    return out or None
+            except Exception as e:
+                self.log(
+                    f"[NORMALIZATION ERROR] {self.format_error(e, self.dev)}", "error"
+                )
+                return None
+
+        result = _run_inference()  # how long does this block for?
+        return result
+
     def say(self, text: str) -> bool:
         """Queue text for Celune to say."""
         if not self.loaded:
@@ -324,7 +465,16 @@ class Celune:
             return False
 
         self.locked = True
-        self.text_queue.put(text)
+        self.status_callback("Normalizing")
+        normalized = self.normalize(text)
+
+        # if normalization did not return a meaningful result, Celune says raw text
+        # Celune will also say raw text if normalization is disabled
+        # set CELUNE_NO_NORMALIZE=1 to disable normalization
+        if normalized is None:
+            self.text_queue.put(text)
+        else:
+            self.text_queue.put(normalized)
         return True
 
     def close(self) -> None:
@@ -526,7 +676,6 @@ class Celune:
 
         while True:
             if self._exit_requested:
-
                 with self._queue_lock:
                     self._clear_queue(self.audio_queue)
 
