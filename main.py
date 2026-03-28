@@ -13,6 +13,10 @@ DEV = os.getenv("CELUNE_DEV") in {"1", "true", "on"}
 try:
     from celune.celune import Celune
     from celune.ui import CeluneUI
+    from transformers.utils import logging as hf_logging
+    from transformers.utils.logging import disable_progress_bar as disable_load_bars
+    from huggingface_hub import logging as hub_logging
+    from huggingface_hub.utils import disable_progress_bars as disable_download_bars
 except ModuleNotFoundError as package:
     print(f"Missing dependency: {package.name}")
     print("Celune requires this library to function.")
@@ -27,6 +31,13 @@ def main() -> None:
     """Instantiate and start Celune."""
     try:
         print("\x1b]2;Celune\x07", end="", flush=True)
+
+        disable_download_bars()  # disable Hugging Face download bars
+        disable_load_bars()  # disable Transformers load bars
+        hf_logging.set_verbosity_error()  # only display errors from Transformers
+        hub_logging.set_verbosity_error()  # only display errors from Hugging Face
+        os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"  # disable Hugging Face implicit token behavior
+
         ui = CeluneUI()
         celune = Celune(
             model_name="Qwen/Qwen3-TTS-12Hz-1.7B-Base",
@@ -39,6 +50,7 @@ def main() -> None:
             queue_avail_callback=ui.tts_queue_avail,
             voice_changed_callback=ui.tts_voice_changed,
             chunk_size=16,
+            dev=DEV,
         )
         celune.setup_extensions()
         ui.celune = celune
