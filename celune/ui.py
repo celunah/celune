@@ -337,6 +337,8 @@ class CeluneUI(App):
                 "/invoke <extension> <args> - Invoke a Celune extension by its name."
             )
             self.safe_log("/extensions - List currently available Celune extensions.")
+            self.safe_log("/voiceprompt - Change Celune's voice steering prompt.")
+            self.safe_log("Caution: Certain prompts may break the intended tone.", "warning")
             self.safe_log("/exit - Exit Celune.")
             self.safe_log("/help - Display this help message.")
             return
@@ -388,6 +390,25 @@ class CeluneUI(App):
                 self.safe_log("No extensions loaded.", "warning")
             else:
                 self.safe_log("Extensions: " + ", ".join(names))
+            return
+        if command == "voiceprompt":
+            if not self.celune:
+                self.safe_log("Celune is not yet ready.", "warning")
+                return
+
+            if not args:
+                self.safe_log("Usage: /voiceprompt <prompt>", "warning")
+                return
+
+            if len(args) > 1:
+                self.safe_log("Too many arguments.", "warning")
+                self.safe_log("Usage: /voiceprompt <prompt>", "warning")
+                return
+
+            val = None if not args[0] else args[0]
+
+            self.celune.custom_prompt = val
+            self.safe_log(f"Celune voice steering prompt set to: {self.celune.custom_prompt}")
             return
         if command == "exit":
             self.safe_log("Exiting Celune...")
