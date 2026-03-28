@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # pylint: disable=R0902, R0913, R0917, W0718
 """
-Celune 2.1.0 - A celestial TTS engine.
+Celune 2.1.1 - A celestial TTS engine.
 She has three tones and can change them on the fly.
 She can also run extensions.
 """
@@ -40,6 +40,7 @@ def main() -> None:
             idle_callback=ui.tts_idle,
             queue_avail_callback=ui.tts_queue_avail,
             voice_changed_callback=ui.tts_voice_changed,
+            dev=DEV,
         )
 
         celune.setup_extensions()
