@@ -59,7 +59,6 @@ class Celune:
         self.ref_audio = ref_audio
         self.ref_text = ref_text
         self.language = language
-        self.custom_prompt = None  # CAUTION: may cause Celune to sound incorrect
 
         self.model = None
         self.llm = None
@@ -69,7 +68,7 @@ class Celune:
         self.voices: dict[str, tuple[str, str, int]] = {}
 
         self.chunk_size = chunk_size
-        self.prebuffer_chunks = min(max(self.chunk_size // 8, 1), 4)  # between 1-4 prebuffer chunks
+        self.prebuffer_chunks = min(max(self.chunk_size // 8, 1), 3)  # between 1-4 prebuffer chunks
         self.sentences_per_chunk = sentences_per_chunk
 
         self.log_callback = log_callback or (lambda msg, severity: None)
@@ -271,13 +270,8 @@ class Celune:
             return False
 
         current_gpu = torch.cuda.get_device_name(0)
-        unused_gpus = torch.cuda.device_count() - 1
-        suffix = "s" if unused_gpus > 1 else ""
         major, minor = torch.cuda.get_device_capability(0)
         self.log(f"GPU: {current_gpu} (Capability: {major}.{minor})")
-        # Celune is a single-GPU application.
-        if unused_gpus > 0:
-            self.log(f"Celune has detected {unused_gpus} additional GPU{suffix} that will not be used.", "warning")
 
         self.log("Compute test...")
         x = torch.rand(256, 256, device="cuda")
@@ -342,7 +336,6 @@ class Celune:
                 ref_audio=self.ref_audio,
                 ref_text=self.ref_text,
                 chunk_size=self.chunk_size,
-                instruct=self.custom_prompt,
             ):
                 pass
             warmup_end = time.perf_counter()
@@ -624,7 +617,6 @@ class Celune:
                         ref_audio=self.ref_audio,
                         ref_text=self.ref_text,
                         chunk_size=self.chunk_size,
-                        instruct=self.custom_prompt,
                     ):
                         if self._exit_requested:
                             break
@@ -726,18 +718,6 @@ class Celune:
                     self.locked = False
                     self.idle_callback()
                     self.log("Ready to speak.")
-
-                    free, total = torch.cuda.mem_get_info(0)
-                    free, total = ( free / 1024**3, total / 1024**3 )
-                    if free <= 2:
-                        self.log(
-                            f"Celune is running out of VRAM ({free:.2f}/{total:.2f} GB remaining).\n"
-                            "Please close any memory-resident applications to improve performance.",
-                            "warning"
-                        )
-                    else:
-                        self.log(f"Remaining VRAM: {free:.2f}/{total:.2f} GB")
-
                 continue
 
             audio_chunk, sr, _ = item
