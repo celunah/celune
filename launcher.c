@@ -1,4 +1,4 @@
-#ifdef __linux__
+#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
 #include <unistd.h>
 #include <sys/wait.h>
 #elif defined(_WIN32)
