@@ -80,12 +80,13 @@ source .venv/bin/activate
 pip install -U -r requirements.txt
 
 # Run
-python main.py
+celune.exe
 
 # Or on Unix systems:
-chmod +x main.py
-./main.py
+celune.AppImage
 ```
+
+You can also open Celune from within your desktop by running the aforementioned executables. They are usable as an entry point.
 
 ### SoX installation
 If SoX is already installed, you can skip this section.
