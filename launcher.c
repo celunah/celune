@@ -14,16 +14,10 @@ int run_unix(void) {
     const char *python = "./.venv/bin/python";
 
     if (access(python, X_OK) != 0) {
-        printfe("Python interpreter not found or is not working.\n");
-        printfe("Celune needs a Python interpreter to operate.\n");
+        printfe("Python virtual environment and/or interpreter was not found or isn't working.\n");
+        printfe("Celune needs a working Python interpreter and virtual environment to operate.\n");
         return 1;
     }
-
-    char *args[] = {
-        "./.venv/bin/python",
-        "main.py",
-        NULL,
-    };
 
     pid_t pid = fork();
     if (pid == -1) {
@@ -33,7 +27,7 @@ int run_unix(void) {
 
     if (pid == 0) {
         char *args[] = {"./.venv/bin/python", "main.py", NULL};
-        execv(python, args);
+        execv(args[0], args);
 
         perror("execv failed");
         _exit(1);
@@ -105,8 +99,8 @@ int main(void) {
 #elif defined(_WIN32)
     return run_windows();
 #else
-    fprintf("Unsupported operating system.\n");
-    fprintf("How do you even run Celune on this thing you have?");
+    printfe("Unsupported operating system.\n");
+    printfe("How do you even run Celune on this thing you have?");
     return 1;
 #endif
 return 1;
