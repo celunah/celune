@@ -4,7 +4,7 @@ torch==2.10.0+cu128
 torchaudio==2.10.0+cu128
 torchvision==0.25.0+cu128
 
-faster-qwen3-tts
+faster-qwen3-tts==0.2.4  # Celune sounds incorrect with 0.2.5, and generates an additional sample rate warning.
 sounddevice
 hf-xet
 huggingface-hub
