@@ -23,6 +23,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.utils import logging as hf_logging
 from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub.utils import disable_progress_bars
+from transformers.utils.logging import disable_progress_bar
 
 from . import __version__
 from .extensions.base import CeluneContext
@@ -98,7 +99,7 @@ class Celune:
         self.cur_state = "init"
 
         self.dev = dev
-        self.use_normalization = os.getenv("CELUNE_NO_NORMALIZE") not in {
+        self.use_normalization = os.getenv("CELUNE_NORMALIZE") in {
             "1",
             "true",
             "on",
@@ -222,6 +223,7 @@ class Celune:
 
     def load(self) -> bool:
         """Load and initialize Celune."""
+        disable_progress_bar()
         disable_progress_bars()
         hf_logging.set_verbosity_error()
 
@@ -470,7 +472,7 @@ class Celune:
 
         # if normalization did not return a meaningful result, Celune says raw text
         # Celune will also say raw text if normalization is disabled
-        # set CELUNE_NO_NORMALIZE=1 to disable normalization
+        # set CELUNE_NORMALIZE=1 to disable normalization
         if normalized is None:
             self.text_queue.put(text)
         else:
@@ -718,6 +720,13 @@ class Celune:
                     self.locked = False
                     self.idle_callback()
                     self.log("Ready to speak.")
+
+                    avail, total = tuple(v / 1024 ** 3 for v in torch.cuda.mem_get_info(0))
+                    if avail <= 2:
+                        self.log(f"Celune is running out of VRAM ({avail:.2f}/{total:.2f} GB available).", "warning")
+                        self.log("Please close any memory-resident applications to improve performance.", "warning")
+                    else:
+                        self.log(f"Available VRAM: {avail:.2f}/{total:.2f} GB")
                 continue
 
             audio_chunk, sr, _ = item

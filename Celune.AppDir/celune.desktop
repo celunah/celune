@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Celune Launcher
+Exec=celune
+Icon=celune
+Terminal=true
+Categories=Utility
+Comment=Start Celune.
