@@ -48,7 +48,7 @@ These edits were applied to make sure the new references match the initial refer
 - Calm pitch `-0.5 sem`
 
 - Energetic - slow down `lune` in `Celune` by 33% (high quality paul stretch), to correct the pronunciation of the name
-- Neutral - 150ms pause between `pronounced` and `Celune`, for natural pacing
+- Neutral - 75ms pause between `pronounced` and `Celune`, for natural pacing
 
 # Effects
 These effects and their settings give Celune's voice its identity.
