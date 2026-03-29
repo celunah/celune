@@ -7,6 +7,7 @@ Refer to https://github.com/celunah/celune for information about Celune.
 
 import os
 import sys
+import contextlib
 
 DEV = os.getenv("CELUNE_DEV") in {"1", "true", "on"}
 
@@ -27,6 +28,13 @@ def main() -> None:
     """Instantiate and start Celune."""
     try:
         print("\x1b]2;Celune\x07", end="", flush=True)
+
+        with contextlib.suppress(ModuleNotFoundError):
+            # AKA
+            # from setproctitle import setproctitle
+            # setproctitle("Celune")
+            __import__("setproctitle").setproctitle("Celune")
+
         ui = CeluneUI()
         celune = Celune(
             model_name="Qwen/Qwen3-TTS-12Hz-1.7B-Base",
