@@ -100,8 +100,7 @@ int main(void) {
     return run_windows();
 #else
     printfe("Unsupported operating system.\n");
-    printfe("How do you even run Celune on this thing you have?");
+    printfe("How do you even run Celune on this thing you have?\n");
     return 1;
 #endif
-return 1;
 }
