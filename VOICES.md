@@ -1,6 +1,11 @@
 # Voice Design
 This document describes how Celune's voice identities were created, selected, and refined.
 
+# Who is Celune
+Celune by nature appears to be a young female of an unspecified age, who speaks with a low contralto tone.
+
+Her average pitch range during speech is ~170 Hz. This is reflected across all three of her tones.
+
 # Pronunciation glossary
 Celune can be pronounced in one of two ways:
 - English-style: Seh-LOON (IPA: /sɛˈluːn/)
