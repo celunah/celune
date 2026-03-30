@@ -91,6 +91,7 @@ class Celune:
 
         self._stream: Optional[sd.OutputStream] = None
         self._current_sr: Optional[int] = None
+        self._audio_unavailable = False
 
         self.locked = True
         self.loaded = False
@@ -732,16 +733,23 @@ class Celune:
             audio_chunk, sr, _ = item
 
             if self._stream is None:
-                self._current_sr = sr
-                self._stream = sd.OutputStream(
-                    samplerate=sr,
-                    channels=2,
-                    dtype="float32",
-                    blocksize=0,
-                )
-                self._stream.start()
-                started = True
-                self.log(f"[PLAY] started stream at {sr} Hz")
+                try:
+                    self._current_sr = sr
+                    self._stream = sd.OutputStream(
+                        samplerate=sr,
+                        channels=2,
+                        dtype="float32",
+                        blocksize=0,
+                    )
+                    self._stream.start()
+                    started = True
+                    self.log(f"[PLAY] started stream at {sr} Hz")
+                except sd.PortAudioError:
+                    if not self._audio_unavailable:
+                        self.log("Celune could not initialize the audio stream.", "error")
+                        self.log("No suitable audio device is available.", "error")
+                        self.error_callback("No suitable audio devices")
+                    self._audio_unavailable = True
 
             if sr != self._current_sr:  # Celune audio stream must be 48 kHz
                 raise RuntimeError(

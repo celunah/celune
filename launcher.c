@@ -1,17 +1,94 @@
-#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
+#if defined(__linux__)
 #include <unistd.h>
 #include <sys/wait.h>
+#elif defined(__APPLE__) && defined(__MACH__)
+#include <unistd.h>
+#include <sys/wait.h>
+#include <mach-o/dyld.h>
 #elif defined(_WIN32)
 #include <windows.h>
-#include <stdlib.h>
 #endif
 
+#include <stdint.h>
 #include <stdio.h>
-#define printfe(...) fprintf(stderr, __VA_ARGS__)
+#include <string.h>
+#include <stdlib.h>
+
+#define printfe(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
+
+#if defined(__linux__)
+int get_exe_dir(char *out, size_t size) {
+    ssize_t len = readlink("/proc/self/exe", out, size - 1);
+
+    if (len == -1 || len >= (ssize_t)(size - 1)) {
+        return 0;
+    }
+
+    out[len] = '\0';
+
+    char *last = strrchr(out, '/');
+    if (last) {
+        *last = '\0';
+        return 1;
+    }
+
+    return 0;
+}
+#elif defined(__APPLE__) && defined(__MACH__)
+int get_exe_dir(char *out, size_t size) {
+    uint32_t sz = (uint32_t)size;
+
+    if (_NSGetExecutablePath(out, &sz) != 0) {
+        return 0;
+    }
+
+    char resolved[1024];
+    if (realpath(out, resolved) == NULL) {
+        return 0;
+    }
+
+    strncpy(out, resolved, size - 1);
+    out[size - 1] = '\0';
+
+    char *last = strrchr(out, '/');
+    if (last) {
+        *last = '\0';
+        return 1;
+    }
+
+    return 0;
+}
+#elif defined(_WIN32)
+int get_exe_dir(char *out, size_t size) {
+    DWORD len = GetModuleFileNameA(NULL, out, (DWORD)size);
+
+    if (len == 0 || len == size) {
+        return 0;
+    }
+
+    char *last = strrchr(out, '\\');
+    if (last) {
+        *last = '\0';
+        return 1;
+    }
+
+    return 0;
+}
+#endif
 
 #if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
 int run_unix(void) {
-    const char *python = "./.venv/bin/python";
+	char base[1024];
+	char python[1024];
+	char main_py[1024];
+
+	if (!get_exe_dir(base, sizeof(base))) {
+	    printfe("Celune could not determine the launcher location.\n");
+	    return 1;
+	}
+
+	snprintf(python, sizeof(python), "%s/.venv/bin/python", base);
+	snprintf(main_py, sizeof(main_py), "%s/main.py", base);
 
     if (access(python, X_OK) != 0) {
         printfe("Python virtual environment and/or interpreter was not found or isn't working.\n");
@@ -26,7 +103,8 @@ int run_unix(void) {
     }
 
     if (pid == 0) {
-        char *args[] = {"./.venv/bin/python", "main.py", NULL};
+        char *args[] = {python, main_py, NULL};
+        chdir(base);
         execv(args[0], args);
 
         perror("execv failed");
@@ -38,13 +116,29 @@ int run_unix(void) {
         if (WIFEXITED(status)) {
             return WEXITSTATUS(status);
         }
+		else if (WIFSIGNALED(status)) {
+			int sig = WTERMSIG(status);
+
+			printfe("Celune was killed by signal %d.\n", sig);
+			return 128 + sig;
+		}
     }
 
     return 1;
 }
 #elif defined(_WIN32)
 int run_windows(void) {
-    const char *python = ".\\.venv\\Scripts\\python.exe";
+	char base[1024];
+	char python[1024];
+	char main_py[1024];
+
+	if (!get_exe_dir(base, sizeof(base))) {
+	    printfe("Celune could not determine the launcher location.\n");
+	    return 1;
+	}
+
+	snprintf(python, sizeof(python), "%s\\.venv\\Scripts\\python.exe", base);
+	snprintf(main_py, sizeof(main_py), "%s\\main.py", base);
 
     DWORD attr = GetFileAttributesA(python);
     if (attr == INVALID_FILE_ATTRIBUTES) {
@@ -60,8 +154,8 @@ int run_windows(void) {
     si.dwFlags = STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_SHOW;
 
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "\"%s\" main.py", python);
+    char cmd[2048];
+	snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\"", python, main_py);
 
     BOOL ok = CreateProcessA(
         NULL,
@@ -71,7 +165,7 @@ int run_windows(void) {
         FALSE,
         0,
         NULL,
-        NULL,
+        base,
         &si,
         &pi
     );
