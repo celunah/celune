@@ -9,7 +9,7 @@ Her average pitch range during speech is ~170 Hz. This is reflected across all t
 # Pronunciation glossary
 Celune can be pronounced in one of two ways:
 - English-style: Seh-LOON (IPA: /sɛˈluːn/)
-- French-style: Say-LUNE or See-LUNE, approximation: Say-L(Y)OON or See-LUNE, (IPA: /seɪˈlyn/ or /seˈlyn/)
+- French-style: Say-LUNE or See-LUNE, approximation: Say-L(Y)OON or See-L(Y)OON, (IPA: /seɪˈlyn/ or /seˈlyn/)
 
 Parts in brackets may not be said equally by all speakers.
 
