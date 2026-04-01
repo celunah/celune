@@ -47,6 +47,7 @@ def main() -> None:
             queue_avail_callback=ui.tts_queue_avail,
             voice_changed_callback=ui.tts_voice_changed,
             chunk_size=16,
+            dev=DEV,
         )
         celune.setup_extensions()
         ui.celune = celune
