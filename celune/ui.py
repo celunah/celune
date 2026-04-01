@@ -100,7 +100,7 @@ class CeluneUI(App):
         margin-bottom: 1;
         margin-top: 1;
     }
-    
+
     #header {
         width: auto;
         content-align: center middle;
@@ -108,7 +108,7 @@ class CeluneUI(App):
         text-style: bold;
         padding: 0 2;
     }
-    
+
     .line {
         width: 1fr;
         height: 1;
