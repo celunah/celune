@@ -131,7 +131,7 @@ class CeluneUI(App):
 
         self.celune: Celune | None = None
         self.celune_ready = False
-        self.celune_styles = ["balanced", "calm", "enthusiastic"]
+        self.celune_styles = ["balanced", "calm", "enthusiastic", "upbeat"]
         self.celune_voices = None
 
         self.style_index = 0
@@ -203,6 +203,11 @@ class CeluneUI(App):
                     "My name is Celune! Let's do this, we have to get it done!",
                     590298652,
                 ),
+                "upbeat": (
+                    "refs/upbeat.wav",
+                    "Hehehe... Hi, I'm Celune. Look, I have something to tell... might as well make it fun. Shall we?",
+                    3771593946
+                )
             }
 
             self.celune.set_voices(tts_voices)
@@ -211,6 +216,7 @@ class CeluneUI(App):
                 "balanced": "",
                 "calm": "",
                 "enthusiastic": "",
+                "upbeat": "",
             }
 
             for voice_name, (
