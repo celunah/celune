@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # pylint: disable=R0902, R0913, R0917, W0718
 """
-Celune 2.2.0 - ”It's not just TTS. It's a character.”
+Celune 2.2.0 - "It's not just TTS. It's a character."
 Refer to https://github.com/celunah/celune for information about Celune.
 """
 
@@ -12,6 +12,7 @@ import contextlib
 DEV = os.getenv("CELUNE_DEV") in {"1", "true", "on"}
 
 try:
+    import psutil
     from celune.celune import Celune
     from celune.ui import CeluneUI
 except ModuleNotFoundError as package:
@@ -34,6 +35,17 @@ def main() -> None:
             # from setproctitle import setproctitle
             # setproctitle("Celune")
             __import__("setproctitle").setproctitle("Celune")
+
+        # check if Celune is already running
+        # this only factors in the Celune launcher
+        # running Celune manually via "python main.py" is not validated with this check
+        active_processes = 0
+        for proc in psutil.process_iter():
+            if proc.name() in ["celune.exe", "celune.AppImage"]:  # Celune launcher
+                active_processes += 1
+                if active_processes > 1:
+                    print("Celune is already running.")
+                    sys.exit(1)
 
         ui = CeluneUI()
         celune = Celune(

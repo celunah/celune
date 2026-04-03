@@ -16,3 +16,4 @@ numpy
 scipy
 textual
 rich
+psutil

@@ -21,9 +21,9 @@ from scipy.signal import resample_poly
 from faster_qwen3_tts import FasterQwen3TTS
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.utils import logging as hf_logging
+from transformers.utils.logging import disable_progress_bar
 from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub.utils import disable_progress_bars
-from transformers.utils.logging import disable_progress_bar
 
 from . import __version__
 from .extensions.base import CeluneContext
@@ -297,8 +297,8 @@ class Celune:
         """Load normalizer LLM."""
 
         def _worker():
-            # Qwen 3.5 does exist, but Celune depends on Transformers v4
-            model_id = "Qwen/Qwen3-1.7B"
+            # CeluneNorm takes care of the input here.
+            model_id = "lunahr/CeluneNorm-0.6B-v1.1"  # please use CeluneNorm or Celune receives bad input
 
             try:
                 available, path = self._model_is_available_locally(model_id)
@@ -352,7 +352,7 @@ class Celune:
             return False
 
     def normalize(self, text: str) -> Optional[str]:
-        """Normalize input text."""
+        """Normalize input text using CeluneNorm."""
 
         if not self.use_normalization:
             return None
@@ -363,97 +363,66 @@ class Celune:
         if self.llm is None or self.tokenizer is None:
             return None
 
-        messages = [
-            {
-                "role": "system",
-                "content": """
-                    You are a TTS text normalizer.
-                    
-                    You will read the input from the user and do the following:
-                    - Capitalize the first letter of the input
-                    - Add commas, colons and semicolons in the sentence where they would fit naturally
-                    - Add a dot at the end of the sentence
-                    - Add a question mark at the end of the sentence instead, if it is clearly a question
-                    - Add an exclamation mark at the end of the sentence instead, if it is clearly an exclamation
-                    - Capitalize the pronoun "i" as "I"
-                    - Hyphenate words, eg. "run on" or "runon" -> "run-on"
-                    - Capitalize abbreviations, eg. "llm" -> "LLM", "ai" -> "AI"
-                    - Add apostrophes to common English contractions, eg. "lets" -> "let's", "dont" -> "don't"
-                    
-                    DO NOT:
-                    - add or remove words
-                    - change existing words
-                    - change meaning of any sentence
-                
-                    Only output the corrected text, and omit all explanations, etc.
-                """,
-            },
-            {
-                "role": "user",
-                "content": text,
-            },
-        ]
-
         def _run_inference() -> Optional[str]:
             inf_start = time.perf_counter()
             try:
-                prompt = self.tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                    enable_thinking=False,
-                )
+                bad_text = text.strip()
+                norm_token = "<NORM>"
 
-                inputs = self.tokenizer(prompt, return_tensors="pt").to(self.llm.device)
+                # Are we using CeluneNorm?
+                norm_token_id = self.tokenizer.convert_tokens_to_ids(norm_token)
+                assert norm_token_id is not None, "not a CeluneNorm normalizer"
+                assert norm_token_id != self.tokenizer.unk_token_id, "not a CeluneNorm normalizer"
+
+                prompt = f"{bad_text}{norm_token}"
+
+                inputs = self.tokenizer(
+                    prompt,
+                    return_tensors="pt",
+                    add_special_tokens=False,
+                ).to(self.llm.device)
 
                 with torch.inference_mode():
                     output_ids = self.llm.generate(
                         **inputs,
-                        max_new_tokens=256,
+                        max_new_tokens=512,
                         do_sample=False,
-                        pad_token_id=self.tokenizer.pad_token_id
-                        or self.tokenizer.eos_token_id,
+                        pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
                         eos_token_id=self.tokenizer.eos_token_id,
                     )
 
-                    prompt_len = inputs["input_ids"].shape[1]
-                    new_ids = output_ids[0][prompt_len:]
+                prompt_len = inputs["input_ids"].shape[1]
+                new_ids = output_ids[0][prompt_len:]
 
-                    # Celune can't say nothing
-                    if new_ids.numel() == 0:
-                        self.log("Normalizer returned no tokens.", "warning")
-                        return None
+                # CeluneNorm shouldn't do this, but if it does happen, stop Celune from saying nothing
+                if new_ids.numel() == 0:
+                    self.log("Normalizer returned no tokens.", "warning")
+                    return None
 
-                    out = self.tokenizer.decode(new_ids, skip_special_tokens=True)
+                out = self.tokenizer.decode(new_ids, skip_special_tokens=True)
 
-                    # strip the <think> tokens as Celune chokes on them if they're present
-                    out = re.sub(r"<think>.*?</think>", "", out, flags=re.DOTALL)
-                    out = re.sub(r"\n\s*\n", "\n", out).strip()
+                # too many <NORM>s can break splitting
+                if "<NORM>" in out:
+                    out = out.split("<NORM>", 1)[0].strip()
 
-                    # Qwen produced only reasoning, Celune would say nothing, bail out
-                    if not out:
-                        self.log("Normalizer did not produce normal output.", "warning")
-                        return None
+                # are we absolutely sure CeluneNorm did produce something before Celune gets to say it?
+                if not out:
+                    self.log("Normalizer did not produce normal output.", "warning")
+                    return None
 
-                    # preserves casing after the first letter
-                    # .capitalize() destroys formatting, Python is weird
-                    first_char = out[0]
-                    out = first_char.upper() + out[1:]
+                inf_total = time.perf_counter() - inf_start
+                self.log(f"Normalization took {inf_total:.2f} seconds.")
 
-                    inf_end = time.perf_counter()
-                    inf_total = inf_end - inf_start
+                return out
 
-                    self.log(f"Normalization took {inf_total:.2f} seconds.")
-
-                    return out or None
             except Exception as e:
                 self.log(
-                    f"[NORMALIZATION ERROR] {self.format_error(e, self.dev)}", "error"
+                    f"[NORMALIZATION ERROR] {self.format_error(e, self.dev)}",
+                    "error",
                 )
                 return None
 
-        result = _run_inference()  # how long does this block for?
-        return result
+        return _run_inference()  # blocks for the duration of normalization, but CeluneNorm should be fast enough
 
     def say(self, text: str) -> bool:
         """Queue text for Celune to say."""
@@ -462,6 +431,7 @@ class Celune:
             self.error_callback("Celune is not currently ready")
             return False
 
+        # if the GPU is experiencing higher activity, Celune may not have unlocked yet
         if self.locked:
             self.log("Tried to speak during generation.", "warning")
             self.error_callback("Celune is currently busy")
@@ -473,11 +443,11 @@ class Celune:
 
         # if normalization did not return a meaningful result, Celune says raw text
         # Celune will also say raw text if normalization is disabled
-        # set CELUNE_NORMALIZE=1 to disable normalization
+        # don't set CELUNE_NORMALIZE=1 to disable normalization
         if normalized is None:
-            self.text_queue.put(text)
+            self.text_queue.put(text)  # say as is
         else:
-            self.text_queue.put(normalized)
+            self.text_queue.put(normalized)  # from CeluneNorm
         return True
 
     def close(self) -> None:
