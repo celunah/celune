@@ -150,7 +150,7 @@ int run_windows(void) {
 	    return 1;
 	}
 
-	int python_len = snprintf(python, sizeof(python), "%s\\.venv\\Scripts\python.exe", base);
+	int python_len = snprintf(python, sizeof(python), "%s\\.venv\\Scripts\\python.exe", base);
 	int main_py_len = snprintf(main_py, sizeof(main_py), "%s\\main.py", base);
 
 	if (python_len < 0 || (size_t)python_len >= sizeof(python) ||
@@ -176,7 +176,7 @@ int run_windows(void) {
     char cmd[2200];
     int written = snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\"", python, main_py);
     if (written < 0 || (size_t)written >= sizeof(cmd)) {
-        printfe(stderr, "Celune cannot start in this location, the command line is too long.\n");
+        printfe("Celune cannot start in this location, the command line is too long.\n");
         return 1;
     }
 
