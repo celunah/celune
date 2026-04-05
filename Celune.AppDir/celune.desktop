@@ -4,5 +4,5 @@ Name=Celune Launcher
 Exec=celune
 Icon=celune
 Terminal=true
-Categories=Utility
+Categories=Utility;
 Comment=Start Celune.
