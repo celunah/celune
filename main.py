@@ -42,15 +42,13 @@ def main() -> None:
         # this only factors in the Celune launcher
         # running Celune manually via "python main.py" is not validated with this check
         active_processes = 0
-        try:
+        with contextlib.suppress(psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
             for proc in psutil.process_iter():
                 if proc.name() in ["celune.exe", "celune.AppImage"]:  # Celune launcher
                     active_processes += 1
                     if active_processes > 1:
                         print("Celune is already running.")
                         sys.exit(1)
-        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
-            pass
 
         if os.getenv("CELUNE_LAUNCHER") != "1":
             print(
