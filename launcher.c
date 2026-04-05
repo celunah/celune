@@ -106,7 +106,10 @@ int run_unix(void) {
 
     if (pid == 0) {
         char *args[] = {python, main_py, NULL};
-        chdir(base);
+        if (chdir(base) != 0) {
+            perror("chdir failed");
+            _exit(1);
+        }
         execv(args[0], args);
 
         perror("execv failed");
