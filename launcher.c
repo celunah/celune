@@ -161,8 +161,12 @@ int run_windows(void) {
     si.dwFlags = STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_SHOW;
 
-    char cmd[2048];
-	snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\"", python, main_py);
+    char cmd[2200];  // python(1024) + main_py(1024) + quotes/space + margin
+    int written = snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\"", python, main_py);
+    if (written < 0 || (size_t)written >= sizeof(cmd)) {
+        fprintf(stderr, "Command line too long.\n");
+        return 1;
+    }
 
     BOOL ok = CreateProcessA(
         NULL,
