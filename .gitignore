@@ -216,6 +216,6 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Celune
-#   Celune produces output .wav files in the output/ directory.
+#   Celune produces output .wav files in the outputs/ directory.
 #   Nobody uploads output files into Git.
 outputs/
