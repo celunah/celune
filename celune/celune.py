@@ -1,13 +1,14 @@
-# pylint: disable=R0902, R0912, R0913, R0915, R0917, W0718
+# pylint: disable=R0902, R0912, R0913, R0914, R0915, R0917, W0718
 """Celune's backend layer."""
 
+import gc
 import os
 import re
 import sys
 import math
 import time
+import glob
 import queue
-import random
 import platform
 import threading
 import traceback
@@ -16,12 +17,17 @@ from typing import Optional, Callable, Union
 import torch
 import numpy as np
 import sounddevice as sd
+import soundfile as sf
 from scipy.signal import resample_poly
 from faster_qwen3_tts import FasterQwen3TTS
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers.utils import logging as hf_logging
+from transformers.utils.logging import disable_progress_bar
 from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub.utils import disable_progress_bars
 
 from . import __version__
+from .exceptions import NotAvailableError, WarmupError, AudioMismatchError
 from .extensions.base import CeluneContext
 from .extensions.manager import CeluneExtensionManager
 
@@ -32,69 +38,90 @@ class Celune:
     def __init__(
         self,
         model_name: str,
-        ref_audio: str,
-        ref_text: str,
-        chunk_size: int = 24,
-        prebuffer_chunks: int = 2,
-        sentences_per_chunk: int = 4,
-        language: str = "Auto",
+        chunk_size: int = 24,  # approx. 1.92s per chunk
+        sentences_per_chunk: int = 4,  # prevents Celune from running out of context
+        language: str = "Auto",  # if you don't care about multilinguality, set it to "English"
         log_callback: Optional[
-            Union[
-                Callable[[str], None],
-                Callable[[str, str], None],
-            ]
+            Union[Callable[[str], None], Callable[[str, str], None]]
         ] = None,
+        status_callback: Optional[
+            Union[Callable[[str], None], Callable[[str, str], None]]
+        ] = None,
+        error_callback: Optional[Callable[[str], None]] = None,
         idle_callback: Optional[Callable[[], None]] = None,
         queue_avail_callback: Optional[Callable[[], None]] = None,
-        error_callback: Optional[Callable[[str], None]] = None,
-            status_callback: Optional[
-                Union[
-                    Callable[[str], None],
-                    Callable[[str, str], None],
-                ]
-            ] = None,
         voice_changed_callback: Optional[Callable[[str], None]] = None,
+        change_input_state_callback: Optional[Callable[[bool], None]] = None,
         dev: bool = False,
     ) -> None:
         self.model_name = model_name
-        self.ref_audio = ref_audio
-        self.ref_text = ref_text
-        self.chunk_size = chunk_size
-        self.prebuffer_chunks = prebuffer_chunks
-        self.sentences_per_chunk = sentences_per_chunk
         self.language = language
-        self.log_callback = log_callback or (lambda msg, severity: None)
-        self.idle_callback = idle_callback or (lambda: None)
-        self.queue_avail_callback = queue_avail_callback or (lambda: None)
-        self.error_callback = error_callback or (lambda error: None)
-        self.status_callback = status_callback or (lambda msg, severity: None)
-        self.voice_changed_callback = voice_changed_callback or (lambda name: None)
-        self.current_voice = "neutral"
-        self.voices: dict[str, tuple[str, str, int]] = {}
-        self.dev = dev
 
         self.model = None
+        self.llm = None
+        self.tokenizer = None
+
+        self.current_voice = "balanced"
+        self.voices: list[str] = []
+        self.voice_prompt: Optional[str] = None
+
+        self.chunk_size = chunk_size
+        self.prebuffer_chunks = min(
+            max(self.chunk_size // 8, 1), 4
+        )  # between 1-4 prebuffer chunks
+        self.sentences_per_chunk = sentences_per_chunk
+
+        self.log_callback = log_callback or (lambda msg, severity: None)
+        self.status_callback = status_callback or (lambda msg, severity: None)
+        self.error_callback = error_callback or (lambda error: None)
+        self.idle_callback = idle_callback or (lambda: None)
+        self.queue_avail_callback = queue_avail_callback or (lambda: None)
+        self.voice_changed_callback = voice_changed_callback or (lambda name: None)
+        self.change_input_state_callback = change_input_state_callback or (
+            lambda locked: None
+        )
+
         self.text_queue = queue.Queue()
         self.audio_queue = queue.Queue()
-        self._sentinel = object()
+
         self._playback_thread = None
         self._generation_thread = None
+
+        self._queue_lock = threading.Lock()
+        self._sentinel = object()  # dispatched upon exit
+        self._utterance_done = object()  # dispatched upon generation end
+
         self._stream: Optional[sd.OutputStream] = None
         self._current_sr: Optional[int] = None
-        self._utterance_done = object()
+        self._audio_unavailable = False
+
         self.locked = True
         self.loaded = False
-        self.cur_state = "init"
-        self.extension_manager: CeluneExtensionManager | None = None
+        self._model_ready = threading.Event()
+        self._model_ready.set()
         self._exit_requested = False
-        self._queue_lock = threading.Lock()
+        self._playback_done = threading.Event()
+        self._playback_done.set()
+        self._say_lock = threading.Lock()
+        self._model_lock = threading.RLock()
+
+        self.cur_state = "init"
+
+        self.dev = dev
+        self.use_normalization = os.getenv("CELUNE_NORMALIZE") in {
+            "1",
+            "true",
+            "on",
+        }
+        self.normalization_timeout = 0.5
+
+        self.extension_manager: CeluneExtensionManager | None = None
 
     @staticmethod
-    def _model_is_available_locally() -> tuple[bool, Optional[str]]:
+    def _model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
         """Check if the TTS model is already available."""
         base = HF_HUB_CACHE
-        model_name = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-        model_dir = os.path.join(base, f"models--{model_name.replace('/', '--')}")
+        model_dir = os.path.join(base, f"models--{model.replace('/', '--')}")
 
         refs_main = os.path.join(model_dir, "refs", "main")
         snapshots_dir = os.path.join(model_dir, "snapshots")
@@ -102,11 +129,8 @@ class Celune:
         expected_files = [
             "config.json",
             "generation_config.json",
-            "merges.txt",
-            "model.safetensors",
-            "preprocessor_config.json",
+            "model*.safetensors",
             "tokenizer_config.json",
-            "vocab.json",
         ]
 
         if not os.path.exists(refs_main):
@@ -120,7 +144,7 @@ class Celune:
         if not os.path.isdir(snapshot_path):
             return False, None
 
-        if all(os.path.exists(os.path.join(snapshot_path, f)) for f in expected_files):
+        if all(glob.glob(os.path.join(snapshot_path, f)) for f in expected_files):
             return True, snapshot_path
 
         return False, None
@@ -133,7 +157,6 @@ class Celune:
                 q.get_nowait()
         except queue.Empty:
             pass
-
 
     def _close_stream(self, abort: bool = False) -> None:
         """Close the current audio stream if one exists."""
@@ -156,21 +179,7 @@ class Celune:
         self._stream = None
         self._current_sr = None
 
-    def request_exit(self) -> None:
-        """Exit from Celune."""
-        self._exit_requested = True
-
-        with self._queue_lock:
-            self._clear_queue(self.text_queue)
-            self._clear_queue(self.audio_queue)
-
-        self.text_queue.put(self._sentinel)
-        self.audio_queue.put(self._sentinel)
-        self._close_stream(abort=True)
-
-        self.cur_state = "idle"
-
-    def set_voices(self, voices: dict[str, tuple[str, str, int]]) -> None:
+    def set_voices(self, voices: list) -> None:
         """Configure Celune's voice information."""
         self.voices = voices
 
@@ -180,8 +189,27 @@ class Celune:
             self.log(f"Unknown voice: {name}")
             return False
 
-        self.change_voice(self.voices[name])
-        self.voice_changed_callback(name)
+        self._model_ready.clear()
+        self.loaded = False
+
+        threading.Thread(
+            target=self.change_voice,
+            args=(name,),
+            daemon=True,
+        ).start()
+        return True
+
+    def _wait_until_idle(self, timeout: float = 30.0) -> None:
+        ok = self._model_ready.wait(timeout=timeout)
+
+        if not ok:
+            self.log("Timed out while waiting to become ready.", "warning")
+            return False
+
+        if not self.loaded:
+            self.log("Model was unloaded while waiting to become ready.", "warning")
+            return False
+
         return True
 
     def setup_extensions(self) -> None:
@@ -193,6 +221,8 @@ class Celune:
             say=self.say,
             status=self.status_callback,
             set_voice=self.set_voice,
+            get_state=lambda: self.cur_state,
+            wait_until_ready=self._wait_until_idle,
             name="Celune",
             version=__version__,
         )
@@ -205,33 +235,78 @@ class Celune:
         """Log a message."""
         self.log_callback(msg, severity)
 
-    def change_voice(self, voice: tuple[str, str, int]) -> None:
+    def change_voice(self, voice: str) -> None:
         """Change Celune's voice parameters."""
-        self.log("Currently selected voice data:")
-        self.log(", ".join([voice[0], voice[1]]))
-        self.log(f"Seed changed to {voice[2]}")
+        self.log("Celune is reloading, please stand by...")
+        self.status_callback("Reloading")
+        self.change_input_state_callback(locked=True)
+        self.cur_state = "reloading"
 
-        self.ref_audio = voice[0]
-        self.ref_text = voice[1]
+        try:
+            torch.cuda.synchronize()
 
-        random.seed(voice[2])
-        np.random.seed(voice[2])
-        torch.cuda.manual_seed_all(voice[2])
+            with self._model_lock:
+                # noinspection PyUnusedLocal
+                old_model = self.model
+                self.model = None
+                del old_model
 
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
+                gc.collect()
+                torch.cuda.empty_cache()
+
+                voice_map = {
+                    "balanced": "lunahr/Celune-1.7B-Neutral",
+                    "calm": "lunahr/Celune-1.7B-Calm",
+                    "enthusiastic": "lunahr/Celune-1.7B-Energetic",
+                    "upbeat": "lunahr/Celune-1.7B-Upbeat",
+                }
+
+                available, path = self._model_is_available_locally(voice_map[voice])
+
+                if available:
+                    os.environ["HF_HUB_OFFLINE"] = "1"
+                    self.model = FasterQwen3TTS.from_pretrained(path)
+                else:
+                    os.environ["HF_HUB_OFFLINE"] = "0"
+                    self.log("Downloading TTS model...")
+                    self.model = FasterQwen3TTS.from_pretrained(voice_map[voice])
+
+                self.log("Rewarming up...")
+                if not self._warmup():
+                    raise WarmupError("Warmup failed after reload")
+
+                self.current_voice = voice
+                self.loaded = True
+
+            self.voice_changed_callback(voice)
+            self.log(f"Voice {voice} loaded.")
+            self.status_callback("Idle")
+
+        except Exception as e:
+            self.loaded = False
+            self.log(f"[RELOAD ERROR] {self.format_error(e, self.dev)}", "error")
+            self.status_callback("Celune could not reload", "error")
+            self.error_callback("Celune could not reload")
+
+        finally:
+            self._model_ready.set()
+            self.cur_state = "idle"
+            self.change_input_state_callback(locked=False)
 
     def load(self) -> bool:
         """Load and initialize Celune."""
+        disable_progress_bar()
         disable_progress_bars()
+        hf_logging.set_verbosity_error()
 
-        available, path = self._model_is_available_locally()
+        available, path = self._model_is_available_locally("lunahr/Celune-1.7B-Neutral")
         if available:
             self.log("TTS model is already available in cache")
             os.environ["HF_HUB_OFFLINE"] = "1"
             self.model = FasterQwen3TTS.from_pretrained(path)
         else:
             self.log("Downloading TTS model...")
+            os.environ["HF_HUB_OFFLINE"] = "0"
             self.model = FasterQwen3TTS.from_pretrained(self.model_name)
 
         self._generation_thread = threading.Thread(
@@ -279,11 +354,47 @@ class Celune:
         if self._warmup():
             self.locked = False
             self.loaded = True
+            self._model_ready.set()
             self.cur_state = "idle"
-            return True
+        else:
+            self.log("[WARMUP] Warmup failed.", "error")
+            return False
 
-        self.log("[WARMUP] Warmup failed.", "error")
-        return False
+        if self.use_normalization:
+            self._load_normalizer()
+        return True
+
+    def _load_normalizer(self) -> None:
+        """Load normalizer LLM."""
+
+        def _worker():
+            # CeluneNorm takes care of the input here.
+            model_id = "lunahr/CeluneNorm-0.6B-v1.1"  # please use CeluneNorm or Celune receives bad input
+
+            try:
+                available, path = self._model_is_available_locally(model_id)
+                if available:
+                    self.log("Normalizer is already available in cache")
+                    self.tokenizer = AutoTokenizer.from_pretrained(path)
+                    self.llm = AutoModelForCausalLM.from_pretrained(
+                        path, torch_dtype=torch.bfloat16, device_map="cuda"
+                    )
+                else:
+                    self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+                    self.llm = AutoModelForCausalLM.from_pretrained(
+                        model_id, torch_dtype=torch.bfloat16, device_map="cuda"
+                    )
+                self.log("Normalizer loaded.")
+            except Exception as e:
+                self.log(
+                    f"[NORMALIZER ERROR] {self.format_error(e, self.dev)}", "error"
+                )
+                self.log("Normalizer failed to load.", "warning")
+                self.log("Normalization will not be available.", "warning")
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        self.log("Loading normalizer...")
 
     def _warmup(self) -> bool:
         """Warm up Celune's speech capabilities."""
@@ -293,23 +404,106 @@ class Celune:
 
         try:
             warmup_start = time.perf_counter()
-            for _, _, _ in self.model.generate_voice_clone_streaming(
-                text=warmup_text,
-                language=self.language,
-                ref_audio=self.ref_audio,
-                ref_text=self.ref_text,
-                chunk_size=self.chunk_size,
-            ):
-                pass
+
+            with self._model_lock:
+                if self.model is None:
+                    raise NotAvailableError("Model is not available during warmup")
+
+                for _, _, _ in self.model.generate_custom_voice_streaming(
+                    text=warmup_text,
+                    language=self.language,
+                    speaker="celune",
+                    chunk_size=self.chunk_size,
+                    instruct=self.voice_prompt,
+                ):
+                    pass
+
             warmup_end = time.perf_counter()
             warmup_took = warmup_end - warmup_start
             self.log(f"[WARMUP] done, took {warmup_took:.2f} seconds")
             return True
+
         except Exception as e:
             self.log(f"[WARMUP ERROR] {self.format_error(e, self.dev)}", "error")
             self.cur_state = "error"
             self.error_callback("Celune could not warm up")
             return False
+
+    def normalize(self, text: str) -> Optional[str]:
+        """Normalize input text using CeluneNorm."""
+
+        if not self.use_normalization:
+            return None
+
+        if not text or not text.strip():
+            return text
+
+        if self.llm is None or self.tokenizer is None:
+            return None
+
+        def _run_inference() -> Optional[str]:
+            inf_start = time.perf_counter()
+            try:
+                bad_text = text.strip()
+                norm_token = "<NORM>"
+
+                # Are we using CeluneNorm?
+                norm_token_id = self.tokenizer.convert_tokens_to_ids(norm_token)
+                assert norm_token_id is not None, "not a CeluneNorm normalizer"
+                assert norm_token_id != self.tokenizer.unk_token_id, (
+                    "not a CeluneNorm normalizer"
+                )
+
+                prompt = f"{bad_text}{norm_token}"
+
+                inputs = self.tokenizer(
+                    prompt,
+                    return_tensors="pt",
+                    add_special_tokens=False,
+                ).to(self.llm.device)
+
+                with torch.inference_mode():
+                    output_ids = self.llm.generate(
+                        **inputs,
+                        max_new_tokens=512,
+                        do_sample=False,
+                        pad_token_id=self.tokenizer.pad_token_id
+                        or self.tokenizer.eos_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id,
+                    )
+
+                prompt_len = inputs["input_ids"].shape[1]
+                new_ids = output_ids[0][prompt_len:]
+
+                # CeluneNorm shouldn't do this, but if it does happen, stop Celune from saying nothing
+                if new_ids.numel() == 0:
+                    self.log("Normalizer returned no tokens.", "warning")
+                    return None
+
+                out = self.tokenizer.decode(new_ids, skip_special_tokens=True)
+
+                # too many <NORM>s can break splitting
+                if "<NORM>" in out:
+                    out = out.split("<NORM>", 1)[0].strip()
+
+                # are we absolutely sure CeluneNorm did produce something before Celune gets to say it?
+                if not out:
+                    self.log("Normalizer did not produce normal output.", "warning")
+                    return None
+
+                inf_total = time.perf_counter() - inf_start
+                self.log(f"Normalization took {inf_total:.2f} seconds.")
+
+                return out
+
+            except Exception as e:
+                self.log(
+                    f"[NORMALIZATION ERROR] {self.format_error(e, self.dev)}",
+                    "error",
+                )
+                return None
+
+        return _run_inference()  # blocks for the duration of normalization, but CeluneNorm should be fast enough
 
     def say(self, text: str) -> bool:
         """Queue text for Celune to say."""
@@ -318,13 +512,37 @@ class Celune:
             self.error_callback("Celune is not currently ready")
             return False
 
-        if self.locked:
-            self.log("Tried to speak during generation.", "warning")
-            self.error_callback("Celune is currently busy")
+        if not self._model_ready.is_set():
+            self.status_callback("Waiting for model")
+            self.log("Speak request is waiting for model reload to finish.", "info")
+
+        self._model_ready.wait()
+
+        if not self.loaded:
+            self.log("Model became unavailable before speaking.", "warning")
+            self.error_callback("Celune is not currently ready")
             return False
 
-        self.locked = True
-        self.text_queue.put(text)
+        # noinspection PyUnusedLocal
+        normalized = None
+        if self.use_normalization:
+            self.status_callback("Normalizing")
+            normalized = self.normalize(text)
+
+        with self._say_lock:
+            if not self.loaded:
+                self.log("Model became unavailable before queueing speech.", "warning")
+                self.error_callback("Celune is not currently ready")
+                return False
+
+            self.locked = True
+            self._playback_done.clear()
+
+            if normalized is None:
+                self.text_queue.put(text)
+            else:
+                self.text_queue.put(normalized)
+
         return True
 
     def close(self) -> None:
@@ -387,7 +605,7 @@ class Celune:
     def _soften_onset(
         audio: np.ndarray, sr: int, duration: float = 0.2, start_gain: float = 0.5
     ) -> np.ndarray:
-        """Soften the leading audio."""
+        """Soften the leading audio. This makes any leading breath-like artifacts sound more natural."""
         samples = int(sr * duration)
         samples = min(samples, len(audio))
 
@@ -445,52 +663,81 @@ class Celune:
                 continue
 
             try:
+                # Wait here if a reload is in progress
+                self._model_ready.wait()
+
+                if not self.loaded:
+                    self.log(
+                        "Skipping generation because model is not ready.", "warning"
+                    )
+                    self.locked = False
+                    continue
+
                 start_time = time.perf_counter()
                 self.log(f"[GEN] {text}")
                 speech_len = 0.0
 
                 chunks = self._split_text(text)
+                buffer = []
 
-                for chunk_index, chunk_text in enumerate(chunks):
-                    if self._exit_requested:
-                        break
+                with self._model_lock:
+                    if self.model is None:
+                        raise NotAvailableError("self.model is None")
 
-                    is_first_chunk = chunk_index == 0
-
-                    for (
-                        audio_chunk,
-                        sr,
-                        timing,
-                    ) in self.model.generate_voice_clone_streaming(
-                        text=chunk_text,
-                        language=self.language,
-                        ref_audio=self.ref_audio,
-                        ref_text=self.ref_text,
-                        chunk_size=self.chunk_size,
-                    ):
+                    for chunk_index, chunk_text in enumerate(chunks):
                         if self._exit_requested:
                             break
 
-                        if hasattr(audio_chunk, "cpu"):
-                            audio_chunk = audio_chunk.cpu().numpy()
+                        is_first_chunk = chunk_index == 0
 
-                        audio_chunk = self._to_48khz(audio_chunk, sr)
+                        for (
+                            audio_chunk,
+                            sr,
+                            timing,
+                        ) in self.model.generate_custom_voice_streaming(
+                            text=chunk_text,
+                            language=self.language,
+                            speaker="celune",
+                            chunk_size=self.chunk_size,
+                            instruct=self.voice_prompt,
+                        ):
+                            if self._exit_requested:
+                                break
 
-                        if is_first_chunk:
-                            audio_chunk = self._soften_onset(audio_chunk, 48000)
+                            if hasattr(audio_chunk, "cpu"):
+                                audio_chunk = audio_chunk.cpu().numpy()
 
-                        if self._exit_requested:
-                            break
+                            audio_chunk = self._to_48khz(audio_chunk, sr)
 
-                        self.audio_queue.put((audio_chunk, 48000, timing))
+                            if is_first_chunk:
+                                audio_chunk = self._soften_onset(audio_chunk, 48000)
+                                is_first_chunk = False
 
-                        chunk_dur = len(audio_chunk) / 48000
-                        speech_len += chunk_dur
+                            if self._exit_requested:
+                                break
 
-                    if self._exit_requested:
-                        break
+                            buffer.append(audio_chunk)
+                            self.audio_queue.put((audio_chunk, 48000, timing))
 
-                    self.audio_queue.put(self._utterance_done)
+                            chunk_dur = len(audio_chunk) / 48000
+                            speech_len += chunk_dur
+
+                if buffer:
+                    wav = np.concatenate(buffer)
+                    timestamp = time.time_ns() // 1000000
+                    if not os.path.exists("outputs"):
+                        self.log("Outputs path not found, creating...", "warning")
+                        try:
+                            os.mkdir("outputs")
+                        except OSError as e:
+                            self.log(
+                                "Cannot create outputs directory, not saving WAV file: "
+                                f"{self.format_error(e, self.dev)}",
+                                "warning",
+                            )
+
+                    if os.path.exists("outputs"):
+                        sf.write(f"outputs/celune_speech_{timestamp}.wav", wav, 48000)
 
                 end_time = time.perf_counter()
                 generation_time = end_time - start_time
@@ -509,6 +756,9 @@ class Celune:
                 self.log("[GEN] done")
                 self.queue_avail_callback()
 
+                if not self._exit_requested:
+                    self.audio_queue.put(self._utterance_done)
+
             except Exception as e:
                 if self._exit_requested:
                     self.cur_state = "idle"
@@ -526,7 +776,6 @@ class Celune:
 
         while True:
             if self._exit_requested:
-
                 with self._queue_lock:
                     self._clear_queue(self.audio_queue)
 
@@ -555,6 +804,8 @@ class Celune:
                 continue
 
             if item is self._utterance_done:
+                self._playback_done.set()
+
                 more_pending = (not self.audio_queue.empty()) or (
                     not self.text_queue.empty()
                 )
@@ -569,28 +820,55 @@ class Celune:
                     self.locked = False
                     self.idle_callback()
                     self.log("Ready to speak.")
+
+                    avail, total = tuple(
+                        v / 1024**3 for v in torch.cuda.mem_get_info(0)
+                    )
+                    if avail <= 2:
+                        self.log(
+                            f"Celune is running out of VRAM ({avail:.2f}/{total:.2f} GB available).",
+                            "warning",
+                        )
+                        self.log(
+                            "Please close any memory-resident applications to improve performance.",
+                            "warning",
+                        )
+                    else:
+                        self.log(f"Available VRAM: {avail:.2f}/{total:.2f} GB")
                 continue
 
             audio_chunk, sr, _ = item
 
             if self._stream is None:
-                self._current_sr = sr
-                self._stream = sd.OutputStream(
-                    samplerate=sr,
-                    channels=2,
-                    dtype="float32",
-                    blocksize=0,
-                )
-                self._stream.start()
-                started = True
-                self.log(f"[PLAY] started stream at {sr} Hz")
-
-            if sr != self._current_sr:  # Celune audio stream must be 48 kHz
-                raise RuntimeError(
-                    f"Sample rate changed from {self._current_sr} to {sr}"
-                )
+                try:
+                    self._current_sr = sr
+                    self._stream = sd.OutputStream(
+                        samplerate=sr,
+                        channels=2,
+                        dtype="float32",
+                        blocksize=0,
+                    )
+                    self._stream.start()
+                    started = True
+                    self.log(f"[PLAY] started stream at {sr} Hz")
+                except sd.PortAudioError:
+                    if not self._audio_unavailable:
+                        self.log(
+                            "Celune could not initialize the audio stream.", "error"
+                        )
+                        self.log("No suitable audio device is available.", "error")
+                        self.error_callback("No suitable audio devices")
+                    self._audio_unavailable = True
 
             if self._exit_requested:
                 continue
 
-            self._stream.write(audio_chunk)
+            try:
+                self._stream.write(audio_chunk)
+            except Exception as e:
+                self.log(f"[PLAY ERROR] {self.format_error(e, self.dev)}", "error")
+                self.error_callback("Playback error")
+                self._close_stream(abort=True)
+                self._stream = None
+                self._current_sr = None
+                continue

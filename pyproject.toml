@@ -1,0 +1,35 @@
+[project]
+name = "celune"
+version = "3.0.0"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "torch==2.11.0+cu128",
+
+    # Celune sounds better with faster-qwen3-tts 0.2.4.
+    # While faster-qwen3-tts 0.2.5 should work relatively correctly with version 3.0.0, 
+    # we've pinned faster-qwen3-tts 0.2.4 for better voice stability.
+    "faster-qwen3-tts==0.2.4", 
+    "sounddevice",
+    "soundfile",
+    "hf-xet",
+    "huggingface-hub",
+    "transformers",
+    "bitsandbytes",
+    "accelerate",
+
+    "numpy",
+    "scipy",
+    "textual",
+    "rich",
+    "psutil",
+]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+torchaudio = [{ index = "pytorch-cu128" }]
+torchvision = [{ index = "pytorch-cu128" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

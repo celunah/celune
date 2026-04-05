@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 # pylint: disable=R0902, R0913, R0917, W0718
 """
-Celune 2.1.1 - A celestial TTS engine.
-She has three tones and can change them on the fly.
-She can also run extensions.
+Celune 3.0.0 - "It's not just a TTS, it's a character."
+Refer to https://github.com/celunah/celune for information about Celune.
+Celune models are available on https://huggingface.co/collections/lunahr/celune.
 """
 
 import os
 import sys
+import time
+import contextlib
 
-DEV = os.getenv("DEV") in {"1", "true", "True"}
+DEV = os.getenv("CELUNE_DEV") in {"1", "true", "on"}
 
 try:
+    import psutil
     from celune.celune import Celune
     from celune.ui import CeluneUI
 except ModuleNotFoundError as package:
@@ -20,31 +23,54 @@ except ModuleNotFoundError as package:
     print("Try running 'pip install -U -r requirements.txt'.")
     if DEV:
         raise
+    print("Run Celune with CELUNE_DEV=1 to get full traceback.")
     sys.exit(1)
 
 
 def main() -> None:
     """Instantiate and start Celune."""
-    sys.stdout.write("\x1b]2;Celune\x07")
-    sys.stdout.flush()
-
     try:
+        print("\x1b]2;Celune\x07", end="", flush=True)
+
+        with contextlib.suppress(ModuleNotFoundError):
+            # AKA
+            # from setproctitle import setproctitle
+            # setproctitle("Celune")
+            __import__("setproctitle").setproctitle("Celune")
+
+        # check if Celune is already running
+        # this only factors in the Celune launcher
+        # running Celune manually via "python main.py" is not validated with this check
+        active_processes = 0
+        for proc in psutil.process_iter():
+            with contextlib.suppress(psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                if proc.name() in ["celune.exe", "celune.AppImage"]:  # Celune launcher
+                    active_processes += 1
+                    if active_processes > 1:
+                        print("Celune is already running.")
+                        sys.exit(1)
+
+        if os.getenv("CELUNE_LAUNCHER") != "1":
+            print(
+                "Warning: Celune is not being launched via the Celune launcher.",
+                flush=True,
+            )
+            time.sleep(5)
+
         ui = CeluneUI()
         celune = Celune(
-            model_name="Qwen/Qwen3-TTS-12Hz-1.7B-Base",
-            ref_audio="refs/neutral.wav",
-            ref_text="My name is Celune, pronounced Celune. It is a pleasure to meet you.",
+            model_name="lunahr/Celune-1.7B-Neutral",
             log_callback=ui.tts_log,
             status_callback=ui.safe_status,
             error_callback=ui.error,
             idle_callback=ui.tts_idle,
             queue_avail_callback=ui.tts_queue_avail,
             voice_changed_callback=ui.tts_voice_changed,
+            change_input_state_callback=ui.change_input_state,
+            chunk_size=16,
             dev=DEV,
         )
-
         celune.setup_extensions()
-
         ui.celune = celune
         ui.run()
     except Exception as e:
@@ -52,10 +78,8 @@ def main() -> None:
         if DEV:
             raise
         print(e)
+        print("Run Celune with CELUNE_DEV=1 to get full traceback.")
         sys.exit(1)
-    finally:
-        sys.stdout.write("\x1b[0m\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l")
-        sys.stdout.flush()
 
 
 if __name__ == "__main__":
