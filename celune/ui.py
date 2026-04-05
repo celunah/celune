@@ -13,6 +13,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, RichLog, TextArea, Button
 from rich.text import Text
 
+from .exceptions import InvalidExtensionError
 from .celune import Celune
 
 SEVERITY_COLORS = {
@@ -213,12 +214,18 @@ class CeluneUI(App):
 
     def change_input_state(self, locked: bool) -> None:
         """Lock or unlock Celune's UI layer."""
-        self.input_box.placeholder = (
-            "Please wait"
-            if locked
-            else "Enter text to speak here or run /help for commands"
-        )
-        self.style_button.disabled = locked
+        def update() -> None:
+            self.input_box.placeholder = (
+                "Please wait"
+                if locked
+                else "Enter text to speak here or run /help for commands"
+            )
+            self.style_button.disabled = locked
+
+        if threading.current_thread() is threading.main_thread():
+            update()
+        else:
+            self.call_from_thread(update)
 
     def safe_status(self, msg: str, severity: str = "info") -> None:
         """Update current status."""
@@ -337,7 +344,7 @@ class CeluneUI(App):
 
             try:
                 self.celune.extension_manager.invoke(name, *invoke_args)
-            except KeyError:
+            except InvalidExtensionError:
                 self.safe_log(f"Extension not found: {name}", "warning")
             except Exception as e:
                 self.safe_log(f"[EXT ERROR] {e}", "error")

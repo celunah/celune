@@ -13,8 +13,14 @@ def get_revision() -> str:
             .decode("utf-8")
             .strip()
         )
-        status = subprocess.call(["git", "diff", "--quiet"], stderr=subprocess.DEVNULL)
-        dirty = "*" if status != 0 else ""
+        status = (
+            subprocess.check_output(
+                ["git", "status", "--porcelain"], stderr=subprocess.DEVNULL
+            )
+            .decode("utf-8")
+            .strip()
+        )
+        dirty = "*" if status else ""
         return f"{rev}{dirty}"
     except (subprocess.CalledProcessError, FileNotFoundError):
         return ""
