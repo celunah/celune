@@ -515,8 +515,9 @@ class Celune:
 
         # noinspection PyUnusedLocal
         normalized = None
-        self.status_callback("Normalizing")
-        normalized = self.normalize(text)
+        if self.use_normalization:
+            self.status_callback("Normalizing")
+            normalized = self.normalize(text)
 
         with self._say_lock:
             if not self.loaded:
