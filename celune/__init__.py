@@ -3,7 +3,9 @@ from .utils import get_revision
 
 REVISION = get_revision()
 if REVISION:
-    __version__ = f"3.0.0 ({REVISION})"  # circular import moment
+    local = REVISION.rstrip("*")
+    dirty = ".dirty" if REVISION.endswith("*") else ""
+    __version__ = f"3.0.0+{local}{dirty}"
 else:
     __version__ = "3.0.0"
 
