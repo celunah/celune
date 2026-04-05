@@ -1,4 +1,4 @@
-# pylint: disable=R0903
+# pylint: disable=R0903, R0902
 """Celune's extension annotations and classes."""
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from celune import __version__
+from celune.exceptions import IncompleteExtensionError
 
 
 @runtime_checkable
@@ -38,6 +39,20 @@ class SetVoiceCallable(Protocol):
     def __call__(self, name: str) -> bool: ...
 
 
+@runtime_checkable
+class GetStateCallable(Protocol):
+    """Extension callable state read annotation."""
+
+    def __call__(self) -> str: ...
+
+
+@runtime_checkable
+class WaitUntilReadyCallable(Protocol):
+    """Extension callable wait until ready annotation."""
+
+    def __call__(self) -> None: ...
+
+
 @dataclass(slots=True)
 class CeluneContext:
     """Celune's extension context."""
@@ -46,6 +61,8 @@ class CeluneContext:
     say: SayCallable
     status: StatusCallable
     set_voice: SetVoiceCallable
+    get_state: GetStateCallable
+    wait_until_ready: WaitUntilReadyCallable
 
     name: str = "Celune"
     version: str = __version__
@@ -74,13 +91,18 @@ class CeluneExtension(ABC):
         """Current Celune extension name."""
         return self.EXTENSION_NAME
 
+    @property
+    def state(self) -> str:
+        """Read Celune's current state."""
+        return self.ctx.get_state()
+
     def autostart(self) -> None:
         """Overridable autostart logic function."""
         self.log(f"{self.name} has no autostart, skipping", "warning")
 
     def invoke(self, *args, **kwargs) -> None:
         """Overridable invocation logic function."""
-        raise NotImplementedError(
+        raise IncompleteExtensionError(
             f"{self.__class__.__name__}.invoke() is not implemented"
         )
 
@@ -90,6 +112,7 @@ class CeluneExtension(ABC):
 
     def say(self, text: str) -> None:
         """Make Celune say something."""
+        self.ctx.wait_until_ready()
         self.ctx.say(text)
 
     def status(self, msg: str, severity: str = "info") -> None:

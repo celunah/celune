@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # pylint: disable=R0902, R0913, R0917, W0718
 """
-Celune 2.2.0 - "It's not just TTS. It's a character."
+Celune 3.0.0 - "It's not just a TTS, it's a character."
 Refer to https://github.com/celunah/celune for information about Celune.
+Celune models are available on https://huggingface.co/collections/lunahr/celune.
 """
 
 import os
 import sys
+import time
 import contextlib
 
 DEV = os.getenv("CELUNE_DEV") in {"1", "true", "on"}
@@ -47,17 +49,23 @@ def main() -> None:
                     print("Celune is already running.")
                     sys.exit(1)
 
+        if os.getenv("CELUNE_LAUNCHER") != "1":
+            print(
+                "Warning: Celune is not being launched via the Celune launcher.",
+                flush=True,
+            )
+            time.sleep(5)
+
         ui = CeluneUI()
         celune = Celune(
-            model_name="Qwen/Qwen3-TTS-12Hz-1.7B-Base",
-            ref_audio="refs/balanced.wav",
-            ref_text="My name is Celune, pronounced Celune. It is a pleasure to meet you.",
+            model_name="lunahr/Celune-1.7B-Neutral",
             log_callback=ui.tts_log,
             status_callback=ui.safe_status,
             error_callback=ui.error,
             idle_callback=ui.tts_idle,
             queue_avail_callback=ui.tts_queue_avail,
             voice_changed_callback=ui.tts_voice_changed,
+            change_input_state_callback=ui.change_input_state,
             chunk_size=16,
             dev=DEV,
         )
