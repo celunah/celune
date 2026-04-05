@@ -50,7 +50,7 @@ def main() -> None:
                         print("Celune is already running.")
                         sys.exit(1)
         except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
-            continue
+            pass
 
         if os.getenv("CELUNE_LAUNCHER") != "1":
             print(
