@@ -89,9 +89,15 @@ int run_unix(void) {
 	    return 1;
 	}
 
-	snprintf(python, sizeof(python), "%s/.venv/bin/python", base);
-	snprintf(main_py, sizeof(main_py), "%s/main.py", base);
+	int python_len = snprintf(python, sizeof(python), "%s/.venv/bin/python", base);
+	int main_py_len = snprintf(main_py, sizeof(main_py), "%s/main.py", base);
 
+	if (python_len < 0 || (size_t)python_len >= sizeof(python) ||
+	    main_py_len < 0 || (size_t)main_py_len >= sizeof(main_py)) {
+	    printfe("Celune cannot start in this location, the path is too long.\n");
+	    return 1;
+	   }
+	
     if (access(python, X_OK) != 0) {
         printfe("Python virtual environment and/or interpreter was not found or isn't working.\n");
         printfe("Celune needs a working Python interpreter and virtual environment to operate.\n");
@@ -144,8 +150,14 @@ int run_windows(void) {
 	    return 1;
 	}
 
-	snprintf(python, sizeof(python), "%s\\.venv\\Scripts\\python.exe", base);
-	snprintf(main_py, sizeof(main_py), "%s\\main.py", base);
+	int python_len = snprintf(python, sizeof(python), "%s\\.venv\\Scripts\python.exe", base);
+	int main_py_len = snprintf(main_py, sizeof(main_py), "%s\\main.py", base);
+
+	if (python_len < 0 || (size_t)python_len >= sizeof(python) ||
+	    main_py_len < 0 || (size_t)main_py_len >= sizeof(main_py)) {
+	    printfe("Celune cannot start in this location, the path is too long.\n");
+	    return 1;
+	}
 
     DWORD attr = GetFileAttributesA(python);
     if (attr == INVALID_FILE_ATTRIBUTES) {
@@ -161,10 +173,10 @@ int run_windows(void) {
     si.dwFlags = STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_SHOW;
 
-    char cmd[2200];  // python(1024) + main_py(1024) + quotes/space + margin
+    char cmd[2200];
     int written = snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\"", python, main_py);
     if (written < 0 || (size_t)written >= sizeof(cmd)) {
-        fprintf(stderr, "Command line too long.\n");
+        printfe(stderr, "Celune cannot start in this location, the command line is too long.\n");
         return 1;
     }
 
