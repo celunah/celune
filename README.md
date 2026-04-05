@@ -6,7 +6,7 @@ It has been designed for real-time performance on consumer GPUs.
 ## Features
 
 - Real-time speech generation pipeline
-- Distinct voice styles (Calm, Neutral, Energetic)
+- Distinct voice styles (Calm, Balanced, Enthusiastic)
 - Stable long-form narration without drift
 - Source-level audio control (no post-processing)
 - GPU-accelerated inference
@@ -14,11 +14,11 @@ It has been designed for real-time performance on consumer GPUs.
 ## Voices & samples
 Each voice is demonstrated using a short introduction and a longer narration sample to showcase consistency, pacing, and expressiveness.
 
-| Voice     | Intro | Narration |
-|-----------|-------|-----------|
-| Neutral   | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/neutral_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/neutral_lc.wav) |
-| Calm      | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc.wav)    | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc.wav)    |
-| Energetic | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/energetic_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/energetic_lc.wav) |
+| Voice        | Intro | Narration |
+|--------------|-------|-----------|
+| Balanced     | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc.wav) |
+| Calm         | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc.wav)    | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc.wav)    |
+| Enthusiastic | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/enthusiastic_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/enthusiastic_lc.wav) |
 
 > [!CAUTION]
 > Do not use markup or tags (e.g. `<...>`).  
@@ -44,7 +44,9 @@ For details on voice production, check the VOICES.md file.
 
 ## System Requirements
 
-Celune depends on external system tools that are not installed via `pip`:
+Celune requires [Python](https://python.org) 3.12 or 3.13.
+
+Celune also depends on external system tools that are not installed via `pip`:
 
 - **NVIDIA GPU with CUDA support**
 - **CUDA Toolkit 12.8**
@@ -68,24 +70,32 @@ Tested on: RTX 5070 (12 GB VRAM)
 ```bash
 # Download Celune
 git clone https://github.com/celunah/celune
+cd celune
 
-# Create environment
-python -m venv .venv
-source .venv/bin/activate
-
-# Or on Windows:
-.venv\Scripts\activate
-
-# Install packages
-pip install -U -r requirements.txt
-
-# Run
-python main.py
+# Install uv
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 # Or on Unix systems:
-chmod +x main.py
-./main.py
+curl -Ls https://astral.sh/uv/install.sh | sh
+
+# Validate uv works
+uv --version
+
+# Expected output:
+# uv 0.11.2 (02036a8ba 2026-03-26 x86_64-pc-windows-msvc) (or similar version)
+
+# Create environment
+# Celune expects Python 3.12 or 3.13
+uv sync --python 3.12
+
+# Run
+celune.exe
+
+# Or on Unix systems:
+celune.AppImage
 ```
+
+You can also open Celune from within your desktop by running the aforementioned executables. They are usable as an entry point.
 
 ### SoX installation
 If SoX is already installed, you can skip this section.

@@ -1,10 +1,8 @@
-# pylint: disable=C0114, R0912, W0718, R0911, R0902
+# pylint: disable=C0114, R0912, W0718, R0911, R0902, R0915
 """Celune's frontend layer."""
 
-import os
 import sys
 import shlex
-import hashlib
 import threading
 import itertools
 from typing import Callable
@@ -15,12 +13,13 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, RichLog, TextArea, Button
 from rich.text import Text
 
+from .exceptions import InvalidExtensionError
 from .celune import Celune
 
 SEVERITY_COLORS = {
-    "info": "#ceaaff",  # Celune accent
-    "warning": "#fcf283",
-    "error": "#ff6b6b",
+    "info": "#ceaaff",  # lunar.css accent 100 - Celune accent
+    "warning": "#fcf283",  # Celune warning
+    "error": "#ff6b6b",  # Celune error
 }
 
 
@@ -30,7 +29,7 @@ class CeluneUI(App):
     CSS = """
     Screen {
         layout: vertical;
-        background: $surface;
+        background: #1d1824;
     }
 
     #logs {
@@ -43,12 +42,13 @@ class CeluneUI(App):
 
     /* give scrollbar colors only to the elements that will have a scrollbar */
     #logs, #input {
-        scrollbar-color: #ceaaff;
-        scrollbar-color-hover: #debaff;
-        scrollbar-color-active: #eecaff;
-        scrollbar-background: $surface;
-        scrollbar-background-hover: $surface;
-        scrollbar-background-active: $surface;
+        scrollbar-color: #9a7fbf; /* lunar.css accent 900 */
+        scrollbar-color-hover: #af90d8; /* lunar.css accent 500 */
+        scrollbar-color-active: #ceaaff; /* lunar.css accent 100 - Celune accent */
+        scrollbar-background: #1d1824; /* lunah.site --toggle-accent (50%) - Celune background */
+        scrollbar-background-hover: #1d1824;
+        scrollbar-background-active: #1d1824;
+        background: #1d1824;
     }
 
     #logs:focus {
@@ -64,11 +64,12 @@ class CeluneUI(App):
     }
 
     #style {
-        width: 12;
+        width: 14;
         height: 3;
         border: round #ceaaff;
         margin-right: 1;
         text-align: center;
+        background: #1d1824;
     }
 
     #input:focus {
@@ -83,7 +84,7 @@ class CeluneUI(App):
 
     #status {
         height: 1;
-        background: $surface;
+        background: #1d1824;
         width: 1fr;
         margin-left: 2;
         margin-bottom: 1;
@@ -98,7 +99,7 @@ class CeluneUI(App):
         margin-bottom: 1;
         margin-top: 1;
     }
-    
+
     #header {
         width: auto;
         content-align: center middle;
@@ -106,7 +107,7 @@ class CeluneUI(App):
         text-style: bold;
         padding: 0 2;
     }
-    
+
     .line {
         width: 1fr;
         height: 1;
@@ -121,20 +122,27 @@ class CeluneUI(App):
 
     def __init__(self) -> None:
         super().__init__()
+
         self.logs = None
         self.input_box = None
         self.style_button = None
         self.status = None
+
         self.celune: Celune | None = None
         self.celune_ready = False
-        self.cur_state = "active"
-        self.celune_styles = ["neutral", "calm", "energetic"]
+        self.celune_styles = ["balanced", "calm", "enthusiastic", "upbeat"]
         self.celune_voices = None
+
         self.style_index = 0
+
         self._old_stdout = sys.stdout
         self._old_stderr = sys.stderr
+
         self._log_stdout = None
         self._log_stderr = None
+
+        self.cur_state = "active"
+
         self.consume_on_boundary = False
         self._suppress_input_change = False
 
@@ -148,7 +156,9 @@ class CeluneUI(App):
             yield RichLog(id="logs", wrap=True, markup=False)
             with Horizontal(id="controls"):
                 yield TextArea(id="input", placeholder="Please wait")
-                yield Button("Neutral", id="style", disabled=True)
+                yield Button(
+                    self.celune_styles[0].capitalize(), id="style", disabled=True
+                )
             yield Label("Initializing", id="status")
 
     def on_mount(self) -> None:
@@ -176,62 +186,14 @@ class CeluneUI(App):
     def load_tts(self) -> None:
         """Load Celune."""
         try:
-            tts_voices = {
-                "neutral": (
-                    "refs/neutral.wav",
-                    "My name is Celune, pronounced Celune. It is a pleasure to meet you.",
-                    4243102495,
-                ),
-                "calm": (
-                    "refs/calm.wav",
-                    "My name is... Celune... It is so... quiet.",
-                    418977738,
-                ),
-                "energetic": (
-                    "refs/energetic.wav",
-                    "My name is Celune! Let's do this, we have to get it done!",
-                    590298652,
-                ),
-            }
+            tts_voices = ["balanced", "calm", "enthusiastic", "upbeat"]
 
             self.celune.set_voices(tts_voices)
-            self.celune_voices = itertools.cycle(tts_voices.values())
-            tts_hashes = {
-                "neutral": "",
-                "calm": "",
-                "energetic": "",
-            }
-
-            for voice_name, (
-                voice_path,
-                _,
-                _,
-            ) in tts_voices.items():  # ignore seed and ref text
-                if not os.path.exists(voice_path):
-                    self.safe_log(f"Reference voice '{voice_name}' not found.", "error")
-                    self.safe_status(f"Missing reference voice '{voice_name}'", "error")
-                    return
-
-                checksum_path = f"{os.path.splitext(voice_path)[0]}.sha256"
-
-                if os.path.exists(checksum_path):
-                    with open(checksum_path, "r", encoding="utf-8") as f:
-                        # the type checker doesn't like this one
-                        tts_hashes[voice_name] = f.read().strip()
-
-                    with open(voice_path, "rb") as f:
-                        voice_hash = hashlib.file_digest(f, "sha256").hexdigest()
-
-                    if voice_hash != tts_hashes[voice_name]:
-                        self.safe_log(
-                            f"Voice file mismatch, voice '{voice_name}' may be affected."
-                        )
-                else:
-                    self.safe_log(f"Reference voice '{voice_name}' has no checksum.", "warning")
+            self.celune_voices = itertools.cycle(tts_voices)
 
             if self.celune.load():
                 self.celune_ready = True
-                self.safe_status("Ready")
+                self.safe_status("Idle")
                 self.style_button.disabled = False
                 self.input_box.placeholder = (
                     "Enter text to speak here or run /help for commands"
@@ -244,9 +206,26 @@ class CeluneUI(App):
                 self.safe_log("Ready to speak.")
 
         except Exception as e:
-            self.safe_log(f"[INIT ERROR] {self.celune.format_error(e, self.celune.dev)}", "error")
+            self.safe_log(
+                f"[INIT ERROR] {self.celune.format_error(e, self.celune.dev)}", "error"
+            )
             self.error("Celune could not start")
             self.cur_state = "error"
+
+    def change_input_state(self, locked: bool) -> None:
+        """Lock or unlock Celune's UI layer."""
+        def update() -> None:
+            self.input_box.placeholder = (
+                "Please wait"
+                if locked
+                else "Enter text to speak here or run /help for commands"
+            )
+            self.style_button.disabled = locked
+
+        if threading.current_thread() is threading.main_thread():
+            update()
+        else:
+            self.call_from_thread(update)
 
     def safe_status(self, msg: str, severity: str = "info") -> None:
         """Update current status."""
@@ -255,7 +234,8 @@ class CeluneUI(App):
 
         if severity not in SEVERITY_COLORS:
             self.safe_log(
-                f"[WARNING] Unknown severity '{severity}', defaulting to info", "warning"
+                f"[WARNING] Unknown severity '{severity}', defaulting to info",
+                "warning",
             )
 
         color = SEVERITY_COLORS.get(severity, "#ceaaff")
@@ -278,7 +258,8 @@ class CeluneUI(App):
             self.logs.write(Text(msg, style=SEVERITY_COLORS.get(severity, "#ceaaff")))
         else:
             self.call_from_thread(
-                self.logs.write, Text(msg, style=SEVERITY_COLORS.get(severity, "#ceaaff"))
+                self.logs.write,
+                Text(msg, style=SEVERITY_COLORS.get(severity, "#ceaaff")),
             )
 
     def tts_voice_changed(self, name: str) -> None:
@@ -313,11 +294,21 @@ class CeluneUI(App):
                 "/consumebuf <true/false> - Make Celune consume text from the live buffer without "
                 "pressing CTRL+ENTER."
             )
-            self.safe_log("Caution: This feature may interfere with typing '...'.", "warning")
+            self.safe_log(
+                "Caution: This feature may interfere with typing '...'.", "warning"
+            )
             self.safe_log(
                 "/invoke <extension> <args> - Invoke a Celune extension by its name."
             )
             self.safe_log("/extensions - List currently available Celune extensions.")
+            self.safe_log(
+                "/voiceprompt - Change Celune's voice prompt. This will allow you to steer her voice."
+            )
+            self.safe_log(
+                "Caution: Some prompts may cause adverse effects. Choose prompts that enhance personality, "
+                "rather than replace it.",
+                "warning",
+            )
             self.safe_log("/exit - Exit Celune.")
             self.safe_log("/help - Display this help message.")
             return
@@ -335,7 +326,9 @@ class CeluneUI(App):
                 else:
                     self.safe_log("No longer consuming from live input")
                 return
-            self.safe_log(f"Invalid argument for '{command}', must be true/false.", "warning")
+            self.safe_log(
+                f"Invalid argument for '{command}', must be true/false.", "warning"
+            )
             return
         if command == "invoke":
             if not args:
@@ -351,7 +344,7 @@ class CeluneUI(App):
 
             try:
                 self.celune.extension_manager.invoke(name, *invoke_args)
-            except KeyError:
+            except InvalidExtensionError:
                 self.safe_log(f"Extension not found: {name}", "warning")
             except Exception as e:
                 self.safe_log(f"[EXT ERROR] {e}", "error")
@@ -368,13 +361,34 @@ class CeluneUI(App):
             else:
                 self.safe_log("Extensions: " + ", ".join(names))
             return
+        if command == "voiceprompt":
+            if not self.celune:
+                self.safe_log("Celune is not initialized.", "warning")
+                return
+
+            if not args:
+                self.safe_log("Usage: /voiceprompt <prompt>", "warning")
+                return
+
+            new_prompt = " ".join(args).strip()
+            self.celune.voice_prompt = new_prompt
+
+            if not new_prompt or new_prompt.lower() == "clear":
+                self.celune.voice_prompt = None
+                self.safe_log("Voice prompt cleared.")
+                return
+
+            self.safe_log(f"Voice prompt set to '{new_prompt}'.")
+            return
         if command == "exit":
             self.safe_log("Exiting Celune...")
-            self.celune.request_exit()
+            self.celune.close()
             self.exit()
             return
 
-        self.safe_log(f"Unknown command: {command}. Run /help for a list of commands.", "warning")
+        self.safe_log(
+            f"Unknown command: {command}. Run /help for a list of commands.", "warning"
+        )
 
     def consume_buffer(self, tlen: int) -> None:
         """Consume a sentence from live input and say it."""
@@ -427,7 +441,6 @@ class CeluneUI(App):
                 return
 
             if self.celune.say(text):
-                self.status.update("Queued")
                 self.style_button.disabled = True
                 self.input_box.placeholder = "Please wait"
                 self.input_box.load_text("")
@@ -443,7 +456,11 @@ class CeluneUI(App):
 
         self.style_index = (self.style_index + 1) % len(self.celune_styles)
         next_voice = self.celune_styles[self.style_index]
-        self.celune.set_voice(next_voice)
+        threading.Thread(
+            target=self.celune.set_voice,
+            args=(next_voice,),
+            daemon=True,
+        ).start()
 
     def on_unmount(self) -> None:
         """Unload Celune."""
@@ -532,7 +549,7 @@ class LogRedirect:
         if not text:
             return
 
-        if "`torch_dtype` is deprecated" in text:
+        if "is deprecated" in text:
             return
 
         self._buffer += text
