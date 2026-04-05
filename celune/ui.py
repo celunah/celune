@@ -1,10 +1,8 @@
-# pylint: disable=C0114, R0912, W0718, R0911, R0902
+# pylint: disable=C0114, R0912, W0718, R0911, R0902, R0915
 """Celune's frontend layer."""
 
-import os
 import sys
 import shlex
-import hashlib
 import threading
 import itertools
 from typing import Callable
@@ -187,66 +185,10 @@ class CeluneUI(App):
     def load_tts(self) -> None:
         """Load Celune."""
         try:
-            tts_voices = {
-                "balanced": (
-                    "refs/balanced.wav",
-                    "My name is Celune, pronounced Celune. It is a pleasure to meet you.",
-                    4243102495,
-                ),
-                "calm": (
-                    "refs/calm.wav",
-                    "My name is... Celune... It is so... quiet.",
-                    418977738,
-                ),
-                "enthusiastic": (
-                    "refs/enthusiastic.wav",
-                    "My name is Celune! Let's do this, we have to get it done!",
-                    590298652,
-                ),
-                "upbeat": (
-                    "refs/upbeat.wav",
-                    "Hehehe... Hi, I'm Celune. Look, I have something to tell... might as well make it fun. Shall we?",
-                    3771593946
-                )
-            }
+            tts_voices = ["balanced", "calm", "enthusiastic", "upbeat"]
 
             self.celune.set_voices(tts_voices)
-            self.celune_voices = itertools.cycle(tts_voices.values())
-            tts_hashes = {
-                "balanced": "",
-                "calm": "",
-                "enthusiastic": "",
-                "upbeat": "",
-            }
-
-            for voice_name, (
-                voice_path,
-                _,
-                _,
-            ) in tts_voices.items():  # ignore seed and ref text
-                if not os.path.exists(voice_path):
-                    self.safe_log(f"Reference voice '{voice_name}' not found.", "error")
-                    self.safe_status(f"Missing reference voice '{voice_name}'", "error")
-                    return
-
-                checksum_path = f"{os.path.splitext(voice_path)[0]}.sha256"
-
-                if os.path.exists(checksum_path):
-                    with open(checksum_path, "r", encoding="utf-8") as f:
-                        # the type checker doesn't like this one
-                        tts_hashes[voice_name] = f.read().strip()
-
-                    with open(voice_path, "rb") as f:
-                        voice_hash = hashlib.file_digest(f, "sha256").hexdigest()
-
-                    if voice_hash != tts_hashes[voice_name]:
-                        self.safe_log(
-                            f"Voice file mismatch, voice '{voice_name}' may be affected."
-                        )
-                else:
-                    self.safe_log(
-                        f"Reference voice '{voice_name}' has no checksum.", "warning"
-                    )
+            self.celune_voices = itertools.cycle(tts_voices)
 
             if self.celune.load():
                 self.celune_ready = True
@@ -268,6 +210,15 @@ class CeluneUI(App):
             )
             self.error("Celune could not start")
             self.cur_state = "error"
+
+    def change_input_state(self, locked: bool) -> None:
+        """Lock or unlock Celune's UI layer."""
+        self.input_box.placeholder = (
+            "Please wait"
+            if locked
+            else "Enter text to speak here or run /help for commands"
+        )
+        self.style_button.disabled = locked
 
     def safe_status(self, msg: str, severity: str = "info") -> None:
         """Update current status."""
@@ -343,6 +294,14 @@ class CeluneUI(App):
                 "/invoke <extension> <args> - Invoke a Celune extension by its name."
             )
             self.safe_log("/extensions - List currently available Celune extensions.")
+            self.safe_log(
+                "/voiceprompt - Change Celune's voice prompt. This will allow you to steer her voice."
+            )
+            self.safe_log(
+                "Caution: Some prompts may cause adverse effects. Choose prompts that enhance personality, "
+                "rather than replace it.",
+                "warning",
+            )
             self.safe_log("/exit - Exit Celune.")
             self.safe_log("/help - Display this help message.")
             return
@@ -394,6 +353,25 @@ class CeluneUI(App):
                 self.safe_log("No extensions loaded.", "warning")
             else:
                 self.safe_log("Extensions: " + ", ".join(names))
+            return
+        if command == "voiceprompt":
+            if not self.celune:
+                self.safe_log("Celune is not initialized.", "warning")
+                return
+
+            if not args:
+                self.safe_log("Usage: /voiceprompt <prompt>", "warning")
+                return
+
+            new_prompt = " ".join(args).strip()
+            self.celune.voice_prompt = new_prompt
+
+            if not new_prompt or new_prompt.lower() == "clear":
+                self.celune.voice_prompt = None
+                self.safe_log("Voice prompt cleared.")
+                return
+
+            self.safe_log(f"Voice prompt set to '{new_prompt}'.")
             return
         if command == "exit":
             self.safe_log("Exiting Celune...")
@@ -471,7 +449,11 @@ class CeluneUI(App):
 
         self.style_index = (self.style_index + 1) % len(self.celune_styles)
         next_voice = self.celune_styles[self.style_index]
-        self.celune.set_voice(next_voice)
+        threading.Thread(
+            target=self.celune.set_voice,
+            args=(next_voice,),
+            daemon=True,
+        ).start()
 
     def on_unmount(self) -> None:
         """Unload Celune."""

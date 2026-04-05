@@ -82,6 +82,8 @@ int run_unix(void) {
 	char python[1024];
 	char main_py[1024];
 
+	setenv("CELUNE_LAUNCHER", "1", 1);
+
 	if (!get_exe_dir(base, sizeof(base))) {
 	    printfe("Celune could not determine the launcher location.\n");
 	    return 1;
@@ -131,6 +133,8 @@ int run_windows(void) {
 	char base[1024];
 	char python[1024];
 	char main_py[1024];
+
+	SetEnvironmentVariableA("CELUNE_LAUNCHER", "1");
 
 	if (!get_exe_dir(base, sizeof(base))) {
 	    printfe("Celune could not determine the launcher location.\n");

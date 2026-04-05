@@ -44,7 +44,9 @@ For details on voice production, check the VOICES.md file.
 
 ## System Requirements
 
-Celune depends on external system tools that are not installed via `pip`:
+Celune requires [Python](https://python.org) 3.12 or 3.13.
+
+Celune also depends on external system tools that are not installed via `pip`:
 
 - **NVIDIA GPU with CUDA support**
 - **CUDA Toolkit 12.8**
@@ -69,15 +71,21 @@ Tested on: RTX 5070 (12 GB VRAM)
 # Download Celune
 git clone https://github.com/celunah/celune
 
+# Install uv
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# Or on Unix systems:
+curl -Ls https://astral.sh/uv/install.sh | sh
+
+# Validate uv works
+uv --version
+
+# Expected output:
+# uv 0.11.2 (02036a8ba 2026-03-26 x86_64-pc-windows-msvc) (or similar version)
+
 # Create environment
-python -m venv .venv
-source .venv/bin/activate
-
-# Or on Windows:
-.venv\Scripts\activate
-
-# Install packages
-pip install -U -r requirements.txt
+# Celune expects Python 3.12 or 3.13
+uv sync --python 3.12
 
 # Run
 celune.exe

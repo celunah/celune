@@ -1,11 +1,10 @@
 --extra-index-url=https://download.pytorch.org/whl/cu128
 
 torch==2.11.0+cu128
-torchaudio==2.11.0+cu128
-torchvision==0.26.0+cu128
 
 faster-qwen3-tts==0.2.4  # Celune sounds incorrect with 0.2.5, and generates an additional sample rate warning.
 sounddevice
+soundfile
 hf-xet
 huggingface-hub
 transformers

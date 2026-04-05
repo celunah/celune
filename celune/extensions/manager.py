@@ -11,6 +11,7 @@ import importlib.util
 from pathlib import Path
 from typing import Any, Type
 
+from celune.exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
 from .base import CeluneContext, CeluneExtension
 
 
@@ -24,7 +25,7 @@ class CeluneExtensionManager:
     def register(self, extension_cls: Type[CeluneExtension]) -> CeluneExtension:
         """Register Celune extensions."""
         if not issubclass(extension_cls, CeluneExtension):
-            raise TypeError(
+            raise InvalidExtensionError(
                 f"{extension_cls.__name__} must inherit from CeluneExtension"
             )
 
@@ -33,7 +34,9 @@ class CeluneExtensionManager:
 
         if name in self.extensions:
             self.context.log(f"[Core] {name} is already registered", "warning")
-            raise ValueError(f"Extension '{name}' is already registered")
+            raise ExtensionAlreadyRegisteredError(
+                f"Extension '{name}' is already registered"
+            )
 
         self.extensions[name] = instance
         self.context.log(f"[Core] Registered extension: {name}")
@@ -64,7 +67,7 @@ class CeluneExtensionManager:
         """Manually invoke a Celune extension."""
         ext = self.extensions.get(name)
         if ext is None:
-            raise KeyError(f"Extension '{name}' is not registered")
+            raise InvalidExtensionError(f"Extension '{name}' is not registered")
 
         threading.Thread(
             target=ext.invoke, daemon=True, args=args, kwargs=kwargs
@@ -79,7 +82,9 @@ class CeluneExtensionManager:
         extensions_dir = Path(folder)
 
         if not extensions_dir.exists():
-            self.context.log(f"[Core] Extension folder not found: {extensions_dir}", "warning")
+            self.context.log(
+                f"[Core] Extension folder not found: {extensions_dir}", "warning"
+            )
             self.context.log("Extensions will not be available.", "warning")
             return
 

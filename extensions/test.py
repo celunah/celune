@@ -25,7 +25,9 @@ class TestExtension(CeluneExtension):
         self.say("Speaking with default voice.")
         time.sleep(1)
         self.set_voice("calm")
-        self.say("Speaking with non-default voice.")
+        self.say(
+            "Speaking with non-default voice."
+        )  # this will wait for Calm to load before speaking
 
     def invoke(self) -> None:
         """Feedback on invoke."""
