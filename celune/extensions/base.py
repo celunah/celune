@@ -50,7 +50,7 @@ class GetStateCallable(Protocol):
 class WaitUntilReadyCallable(Protocol):
     """Extension callable wait until ready annotation."""
 
-    def __call__(self) -> None: ...
+    def __call__(self, timeout: float = 30.0) -> None: ...
 
 
 @dataclass(slots=True)
@@ -110,10 +110,12 @@ class CeluneExtension(ABC):
         """Log to Celune's logs."""
         self.ctx.log(f"[{self.name}] {msg}", severity)
 
-    def say(self, text: str) -> None:
+    def say(self, text: str) -> bool:
         """Make Celune say something."""
-        self.ctx.wait_until_ready()
-        self.ctx.say(text)
+        if not self.ctx.wait_until_ready():
+            return False
+
+        return self.ctx.say(text)
 
     def status(self, msg: str, severity: str = "info") -> None:
         """Update status display."""

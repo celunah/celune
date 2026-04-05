@@ -70,6 +70,7 @@ Tested on: RTX 5070 (12 GB VRAM)
 ```bash
 # Download Celune
 git clone https://github.com/celunah/celune
+cd celune
 
 # Install uv
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"

@@ -199,8 +199,18 @@ class Celune:
         ).start()
         return True
 
-    def _wait_until_idle(self) -> None:
-        self._model_ready.wait()
+    def _wait_until_idle(self, timeout: float = 30.0) -> None:
+        ok = self._model_ready.wait(timeout=timeout)
+
+        if not ok:
+            self.log("Timed out while waiting to become ready.", "warning")
+            return False
+
+        if not self.loaded:
+            self.log("Model was unloaded while waiting to become ready.", "warning")
+            return False
+
+        return True
 
     def setup_extensions(self) -> None:
         """Configure Celune's extension manager."""
@@ -850,12 +860,15 @@ class Celune:
                         self.error_callback("No suitable audio devices")
                     self._audio_unavailable = True
 
-            if sr != self._current_sr:  # Celune audio stream must be 48 kHz
-                raise AudioMismatchError(
-                    f"sample rate changed from {self._current_sr} to {sr}"
-                )
-
             if self._exit_requested:
                 continue
 
-            self._stream.write(audio_chunk)
+            try:
+                self._stream.write(audio_chunk)
+            except Exception as e:
+                self.log(f"[PLAY ERROR] {self.format_error(e, self.dev)}", "error")
+                self.error_callback("Playback error")
+                self._close_stream(abort=True)
+                self._stream = None
+                self._current_sr = None
+                continue
