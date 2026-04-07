@@ -5,7 +5,6 @@ import gc
 import os
 import re
 import sys
-import math
 import time
 import glob
 import queue
@@ -18,7 +17,7 @@ import torch
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
-from scipy.signal import resample_poly
+import pyrubberband as rb
 from faster_qwen3_tts import FasterQwen3TTS
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.utils import logging as hf_logging
@@ -27,7 +26,9 @@ from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub.utils import disable_progress_bars
 
 from . import __version__
-from .exceptions import NotAvailableError, WarmupError, AudioMismatchError
+from .dsp import _soften_onset, _to_48khz, StreamingPedalboardReverb
+from .utils import format_number
+from .exceptions import NotAvailableError, WarmupError
 from .extensions.base import CeluneContext
 from .extensions.manager import CeluneExtensionManager
 
@@ -94,6 +95,9 @@ class Celune:
         self._stream: Optional[sd.OutputStream] = None
         self._current_sr: Optional[int] = None
         self._audio_unavailable = False
+        self.can_use_rubberband = True
+        self.speed: float = 1.0
+        self.reverb = StreamingPedalboardReverb()
 
         self.locked = True
         self.loaded = False
@@ -113,7 +117,6 @@ class Celune:
             "true",
             "on",
         }
-        self.normalization_timeout = 0.5
 
         self.extension_manager: CeluneExtensionManager | None = None
 
@@ -199,7 +202,7 @@ class Celune:
         ).start()
         return True
 
-    def _wait_until_idle(self, timeout: float = 30.0) -> None:
+    def _wait_until_idle(self, timeout: float = 30.0) -> bool:
         ok = self._model_ready.wait(timeout=timeout)
 
         if not ok:
@@ -420,7 +423,7 @@ class Celune:
 
             warmup_end = time.perf_counter()
             warmup_took = warmup_end - warmup_start
-            self.log(f"[WARMUP] done, took {warmup_took:.2f} seconds")
+            self.log(f"[WARMUP] done, took {format_number(warmup_took, 2)} seconds")
             return True
 
         except Exception as e:
@@ -492,7 +495,7 @@ class Celune:
                     return None
 
                 inf_total = time.perf_counter() - inf_start
-                self.log(f"Normalization took {inf_total:.2f} seconds.")
+                self.log(f"Normalization took {format_number(inf_total, 2)} seconds.")
 
                 return out
 
@@ -569,52 +572,6 @@ class Celune:
     def format_error(e: Exception, dev: bool) -> str:
         """Format an error message."""
         return traceback.format_exc() if dev else str(e)
-
-    @staticmethod
-    def _resample_audio(
-        audio: np.ndarray, source_sr: int, target_sr: int = 48000
-    ) -> np.ndarray:
-        """Resample the given audio to the given sample rate."""
-        audio = np.asarray(audio, dtype=np.float32)
-
-        if source_sr == target_sr:
-            return audio
-
-        factor = math.gcd(source_sr, target_sr)
-        up = target_sr // factor
-        down = source_sr // factor
-
-        return np.asarray(
-            resample_poly(audio, up=up, down=down, axis=0), dtype=np.float32
-        )
-
-    def _to_48khz(self, audio: np.ndarray, source_sr: int) -> np.ndarray:
-        """Cast an audio chunk to 48 kHz stereo format."""
-        audio = self._resample_audio(audio, source_sr, 48000)
-
-        audio = np.asarray(audio, dtype=np.float32)
-
-        if audio.ndim == 1:
-            audio = np.column_stack((audio, audio))
-        elif audio.shape[1] == 1:
-            audio = np.repeat(audio, 2, axis=1)
-
-        return audio
-
-    @staticmethod
-    def _soften_onset(
-        audio: np.ndarray, sr: int, duration: float = 0.2, start_gain: float = 0.5
-    ) -> np.ndarray:
-        """Soften the leading audio. This makes any leading breath-like artifacts sound more natural."""
-        samples = int(sr * duration)
-        samples = min(samples, len(audio))
-
-        ramp = np.linspace(start_gain, 1.0, samples, dtype=np.float32)
-
-        audio[:samples, 0] *= ramp
-        audio[:samples, 1] *= ramp
-
-        return audio
 
     def _split_text(self, text: str) -> list[str]:
         """Split text into chunks."""
@@ -707,10 +664,18 @@ class Celune:
                             if hasattr(audio_chunk, "cpu"):
                                 audio_chunk = audio_chunk.cpu().numpy()
 
-                            audio_chunk = self._to_48khz(audio_chunk, sr)
+                            audio_chunk = _to_48khz(audio_chunk, sr)
+                            if self.speed != 1.0 and self.can_use_rubberband:
+                                try:
+                                    audio_chunk = rb.time_stretch(audio_chunk, 48000, self.speed)
+                                except RuntimeError:
+                                    self.log("Rubber Band is unavailable, speed controls disabled.", "warning")
+                                    self.can_use_rubberband = False
+                            if self.reverb.strength > 0.0:
+                                audio_chunk = self.reverb.process(audio_chunk, 48000)
 
                             if is_first_chunk:
-                                audio_chunk = self._soften_onset(audio_chunk, 48000)
+                                audio_chunk = _soften_onset(audio_chunk, 48000)
                                 is_first_chunk = False
 
                             if self._exit_requested:
@@ -748,8 +713,8 @@ class Celune:
                     continue
 
                 self.log(
-                    f"[GEN] {speech_len:.2f} seconds, took {generation_time:.2f} seconds, "
-                    f"RTF: {speech_len / generation_time:.2f}"
+                    f"[GEN] {format_number(speech_len, 2)} seconds, took {format_number(generation_time, 2)} seconds, "
+                    f"RTF: {format_number(speech_len / generation_time, 2)}"
                 )
                 self.status_callback("Speaking")
                 self.cur_state = "speaking"
@@ -757,6 +722,11 @@ class Celune:
                 self.queue_avail_callback()
 
                 if not self._exit_requested:
+                    tail = self.reverb.flush(tail_seconds=1.5)
+                    if len(tail) > 0:
+                        self.audio_queue.put((tail, 48000, None))
+                    self.reverb.reset()
+
                     self.audio_queue.put(self._utterance_done)
 
             except Exception as e:
@@ -826,7 +796,8 @@ class Celune:
                     )
                     if avail <= 2:
                         self.log(
-                            f"Celune is running out of VRAM ({avail:.2f}/{total:.2f} GB available).",
+                            "Celune is running out of VRAM "
+                            f"({format_number(avail, 2)}/{format_number(total, 2)} GB available).",
                             "warning",
                         )
                         self.log(
@@ -834,7 +805,7 @@ class Celune:
                             "warning",
                         )
                     else:
-                        self.log(f"Available VRAM: {avail:.2f}/{total:.2f} GB")
+                        self.log(f"Available VRAM: {format_number(avail, 2)}/{format_number(total, 2)} GB")
                 continue
 
             audio_chunk, sr, _ = item

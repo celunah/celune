@@ -50,7 +50,7 @@ class GetStateCallable(Protocol):
 class WaitUntilReadyCallable(Protocol):
     """Extension callable wait until ready annotation."""
 
-    def __call__(self, timeout: float = 30.0) -> None: ...
+    def __call__(self, timeout: float = 30.0) -> bool: ...
 
 
 @dataclass(slots=True)

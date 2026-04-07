@@ -24,3 +24,15 @@ def get_revision() -> str:
         return f"{rev}{dirty}"
     except (subprocess.CalledProcessError, FileNotFoundError):
         return ""
+
+def format_number(num: float, precision: int = 0) -> str:
+    """Format a number without trailing zeroes."""
+    precision_digits = len(str(num).split(".", maxsplit=1)[1])
+
+    while precision_digits > 0:
+        str_rep = str(round(num, precision or precision_digits))
+        if str_rep[-1] == "0":
+            precision_digits -= 1
+            continue
+        return str_rep
+    return str(int(num))
