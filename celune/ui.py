@@ -2,6 +2,7 @@
 """Celune's frontend layer."""
 
 import sys
+import time
 import shlex
 import threading
 import itertools
@@ -13,8 +14,9 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, RichLog, TextArea, Button
 from rich.text import Text
 
-from .exceptions import InvalidExtensionError
 from .celune import Celune
+from .utils import format_number
+from .exceptions import InvalidExtensionError
 
 SEVERITY_COLORS = {
     "info": "#ceaaff",  # lunar.css accent 100 - Celune accent
@@ -214,6 +216,7 @@ class CeluneUI(App):
 
     def change_input_state(self, locked: bool) -> None:
         """Lock or unlock Celune's UI layer."""
+
         def update() -> None:
             self.input_box.placeholder = (
                 "Please wait"
@@ -309,6 +312,8 @@ class CeluneUI(App):
                 "rather than replace it.",
                 "warning",
             )
+            self.safe_log("/speed - Change speaking speed.")
+            self.safe_log("/reverb - Change reverb strength.")
             self.safe_log("/exit - Exit Celune.")
             self.safe_log("/help - Display this help message.")
             return
@@ -380,9 +385,54 @@ class CeluneUI(App):
 
             self.safe_log(f"Voice prompt set to '{new_prompt}'.")
             return
+        if command == "speed":
+            if not self.celune:
+                self.safe_log("Celune is not initialized.", "warning")
+                return
+
+            if not self.celune.can_use_rubberband:
+                self.safe_log("Celune cannot currently use Rubber Band.", "warning")
+                return
+
+            if not args:
+                self.safe_log("Usage: /speed <speed>", "warning")
+                return
+
+            try:
+                speed = float(args[0])
+                if not 0.8 <= speed <= 1.2:
+                    self.safe_log("Value out of range. Expected 0.8-1.2.", "warning")
+                    return
+                self.celune.speed = speed
+            except ValueError:
+                self.safe_log(f"Invalid argument: {args[0]}", "warning")
+            else:
+                self.safe_log(f"Speaking speed set to x{args[0]}.")
+            return
+        if command == "reverb":
+            if not self.celune:
+                self.safe_log("Celune is not initialized.", "warning")
+                return
+
+            if not args:
+                self.safe_log("Usage: /reverb <strength>", "warning")
+                return
+
+            try:
+                strength = float(args[0])
+                if not 0.0 <= strength <= 1.0:
+                    self.safe_log("Value out of range. Expected 0.0-1.0.", "warning")
+                    return
+                self.celune.reverb.strength = strength
+            except ValueError:
+                self.safe_log(f"Invalid argument: {args[0]}", "warning")
+            else:
+                self.safe_log(f"Reverb strength set to {format_number(strength * 100)}%.")
+            return
         if command == "exit":
             self.safe_log("Exiting Celune...")
             self.celune.close()
+            time.sleep(5)  # UX only
             self.exit()
             return
 

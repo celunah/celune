@@ -24,7 +24,9 @@ class CeluneExtensionManager:
 
     def register(self, extension_cls: Type[CeluneExtension]) -> CeluneExtension:
         """Register Celune extensions."""
-        if not inspect.isclass(extension_cls) or not issubclass(extension_cls, CeluneExtension):
+        if not inspect.isclass(extension_cls) or not issubclass(
+            extension_cls, CeluneExtension
+        ):
             raise InvalidExtensionError(
                 f"{extension_cls.__name__} must inherit from CeluneExtension"
             )
