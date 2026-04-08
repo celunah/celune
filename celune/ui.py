@@ -427,7 +427,9 @@ class CeluneUI(App):
             except ValueError:
                 self.safe_log(f"Invalid argument: {args[0]}", "warning")
             else:
-                self.safe_log(f"Reverb strength set to {format_number(strength * 100)}%.")
+                self.safe_log(
+                    f"Reverb strength set to {format_number(strength * 100)}%."
+                )
             return
         if command == "exit":
             self.safe_log("Exiting Celune...")

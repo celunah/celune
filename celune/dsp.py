@@ -54,6 +54,7 @@ def _soften_onset(
 
     return audio
 
+
 class StreamingPedalboardReverb:
     def __init__(self):
         self.strength = 0.0
@@ -72,7 +73,7 @@ class StreamingPedalboardReverb:
     def _update_params(self):
         s = np.clip(self.strength, 0.0, 1.0)
 
-        wet = 0.16 * (s ** 2)
+        wet = 0.16 * (s**2)
 
         self.reverb.wet_level = wet
         self.reverb.dry_level = 1.0
