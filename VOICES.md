@@ -85,6 +85,10 @@ These effects and their settings give Celune's voice its identity.
 - stereo width = 85%
 - wet only = no
 
+An additional amount of reverb can be applied within Celune. 
+
+Refer to the /reverb command for details.
+
 ## High-pass
 - frequency = 200 Hz
 - roll-off (dB per octave) = 12 dB
