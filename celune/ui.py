@@ -427,9 +427,23 @@ class CeluneUI(App):
             except ValueError:
                 self.safe_log(f"Invalid argument: {args[0]}", "warning")
             else:
-                self.safe_log(
-                    f"Reverb strength set to {format_number(strength * 100)}%."
-                )
+                self.safe_log(f"Reverb strength set to {format_number(strength * 100)}%.")
+            return
+        if command == "play":
+            if not self.celune:
+                self.safe_log("Celune is not initialized.", "warning")
+                return
+
+            if not args:
+                self.safe_log("Usage: /play <filename>", "warning")
+                return
+
+            try:
+                self.log(f"Playing {args[0]}")
+                self.celune.play(args[0])
+            except Exception as e:
+                self.safe_log(f"Cannot play this file: {self.celune.format_error(e, self.celune.dev)}")
+                return
             return
         if command == "exit":
             self.safe_log("Exiting Celune...")
