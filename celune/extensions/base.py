@@ -26,6 +26,13 @@ class SayCallable(Protocol):
 
 
 @runtime_checkable
+class PlayCallable(Protocol):
+    """Extension callable play request annotation."""
+
+    def __call__(self, sound_path: str) -> bool: ...
+
+
+@runtime_checkable
 class StatusCallable(Protocol):
     """Extension callable status update annotation."""
 
@@ -59,6 +66,7 @@ class CeluneContext:
 
     log: LogCallable
     say: SayCallable
+    play: PlayCallable
     status: StatusCallable
     set_voice: SetVoiceCallable
     get_state: GetStateCallable
@@ -116,6 +124,13 @@ class CeluneExtension(ABC):
             return False
 
         return self.ctx.say(text)
+
+    def play(self, sound_path: str) -> bool:
+        """Play arbitrary sound through Celune."""
+        if not self.ctx.wait_until_ready():
+            return False
+
+        return self.ctx.play(sound_path)
 
     def status(self, msg: str, severity: str = "info") -> None:
         """Update status display."""
