@@ -113,8 +113,7 @@ irm https://get.scoop.sh | iex
 scoop install sox
 
 # Install Rubber Band
-scoop bucket add celune https://github.com/celunah/celune  # rest of Celune is not used in scoop, only for dependencies
-scoop install rubberband
+sccop install rubberband
 ```
 
 **Linux (Debian/Ubuntu)**
