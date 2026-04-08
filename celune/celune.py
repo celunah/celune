@@ -667,9 +667,14 @@ class Celune:
                             audio_chunk = _to_48khz(audio_chunk, sr)
                             if self.speed != 1.0 and self.can_use_rubberband:
                                 try:
-                                    audio_chunk = rb.time_stretch(audio_chunk, 48000, self.speed)
+                                    audio_chunk = rb.time_stretch(
+                                        audio_chunk, 48000, self.speed
+                                    )
                                 except RuntimeError:
-                                    self.log("Rubber Band is unavailable, speed controls disabled.", "warning")
+                                    self.log(
+                                        "Rubber Band is unavailable, speed controls disabled.",
+                                        "warning",
+                                    )
                                     self.can_use_rubberband = False
                             if self.reverb.strength > 0.0:
                                 audio_chunk = self.reverb.process(audio_chunk, 48000)
@@ -805,7 +810,9 @@ class Celune:
                             "warning",
                         )
                     else:
-                        self.log(f"Available VRAM: {format_number(avail, 2)}/{format_number(total, 2)} GB")
+                        self.log(
+                            f"Available VRAM: {format_number(avail, 2)}/{format_number(total, 2)} GB"
+                        )
                 continue
 
             audio_chunk, sr, _ = item
