@@ -6,7 +6,7 @@ It has been designed for real-time performance on consumer GPUs.
 ## Features
 
 - Real-time speech generation pipeline
-- Distinct voice styles (Calm, Balanced, Enthusiastic)
+- Distinct voice styles (Calm, Balanced, Enthusiastic, Upbeat)
 - Stable long-form narration without drift
 - Source-level audio control (no post-processing)
 - GPU-accelerated inference
@@ -38,7 +38,7 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 > This is a sentence, 中文, 日本語, 한국어.
 > ```
 
-Samples were captured directly from the live TTS pipeline with no post-processing applied (only silence trimming).
+Samples were captured from Celune's output directory. No extra post-processing was applied.
 
 For details on voice production, check the VOICES.md file.
 
@@ -50,10 +50,13 @@ Celune also depends on external system tools that are not installed via `pip`:
 
 - **NVIDIA GPU with CUDA support**
 - **CUDA Toolkit 12.8**
-- **SoX (Sound eXchange)** — required for audio processing
+- **SoX (Sound eXchange)** - required for audio processing
+- **Rubber Band library** - required to control Celune's speed
 - **Symbolic link support** (recommended on Windows)
 
 Celune requires CUDA for GPU acceleration. CPU-only execution is not supported.
+
+If Rubber Band is not installed, Celune will speak at normal speed, and speed controls will be unavailable.
 
 ## GPU requirements
 
@@ -61,7 +64,7 @@ Celune requires CUDA for GPU acceleration. CPU-only execution is not supported.
 - Minimum: 6 GB VRAM (e.g. GTX 1660 / RTX 2060)
 - Recommended: 8 GB+ VRAM (e.g. RTX 3060 or better)
 
-Celune’s core model fits within ~4 GB VRAM, but additional memory is required for runtime overhead, buffering, and stable real-time playback.
+Celune’s core model fits within ~4 GB VRAM, but additional memory is required for runtime overhead, buffering, stable real-time playback, and input normalization.
 
 Tested on: RTX 5070 (12 GB VRAM)
 
@@ -86,19 +89,19 @@ uv --version
 
 # Create environment
 # Celune expects Python 3.12 or 3.13
-uv sync --python 3.12
+uv sync
 
 # Run
-celune.exe
+celune
 
 # Or on Unix systems:
-celune.AppImage
+./celune.AppImage
 ```
 
 You can also open Celune from within your desktop by running the aforementioned executables. They are usable as an entry point.
 
-### SoX installation
-If SoX is already installed, you can skip this section.
+### SoX & Rubber Band installation
+If SoX & Rubber Band are already installed, you can skip this section.
 
 **Windows (Scoop)**
 ```powershell
@@ -108,11 +111,20 @@ irm https://get.scoop.sh | iex
 
 # Install SoX
 scoop install sox
+
+# Install Rubber Band
+scoop bucket add celune https://github.com/celunah/celune  # rest of Celune is not used in scoop, only for dependencies
+scoop install rubberband
 ```
 
 **Linux (Debian/Ubuntu)**
 ```bash
-sudo apt install sox
+sudo apt install sox rubberband-cli
+```
+
+**Linux (Arch Linux)**
+```bash
+sudo pacman -S sox rubberband
 ```
 
 **macOS (Homebrew)**
@@ -121,19 +133,23 @@ sudo apt install sox
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 # Install SoX
-brew install sox
+brew install sox rubberband
 ```
 
-**Validate SoX is installed**
+**Validate SoX & Rubber Band are installed**
 ```bash
 sox --version
 
 # Expected output:
-sox:      SoX v14.4.2 (or similar version)
+# sox:      SoX v14.4.2 (or similar version)
+
+rubberband --version
+
+# Expected output:
+# 4.0.0 (or similar version)
 ```
 
 ### CUDA 12.8 installation
-
 Download and install CUDA Toolkit 12.8 from NVIDIA:
 
 https://developer.nvidia.com/cuda-12-8-0-download-archive
