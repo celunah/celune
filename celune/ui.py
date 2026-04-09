@@ -460,11 +460,11 @@ class CeluneUI(App):
                 return
 
             try:
-                self.log(f"Playing {args[0]}")
+                self.safe_log(f"Playing {args[0]}")
                 self.celune.play(args[0])
             except Exception as e:
                 self.safe_log(
-                    f"Cannot play this file: {self.celune.format_error(e, self.celune.dev)}"
+                    f"Cannot play this file: {self.celune.format_error(e, self.celune.dev)}", "error"
                 )
                 return
             return

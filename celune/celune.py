@@ -595,7 +595,7 @@ class Celune:
         """Release Celune's shared playback pipeline."""
         with self._say_lock:
             self.locked = False
-            self._playback_done.clear()
+            self._playback_done.set()
             self.cur_state = "idle"
             if self.dev:
                 self.log("[LOCK] released")
@@ -671,6 +671,9 @@ class Celune:
         """Shut off Celune and exit."""
         self.log("Exiting...")
         self._exit_requested = True
+
+        if self.glow is not None:
+            self.glow.stop(reset=True, wait=False)
 
         with self._queue_lock:
             self._clear_queue(self.text_queue)
