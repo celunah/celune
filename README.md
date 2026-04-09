@@ -52,6 +52,7 @@ Celune also depends on external system tools that are not installed via `pip`:
 - **CUDA Toolkit 12.8**
 - **SoX (Sound eXchange)** - required for audio processing
 - **Rubber Band library** - required to control Celune's speed
+- **OpenRGB** - required to glow compatible devices
 - **Symbolic link support** (recommended on Windows)
 
 Celune requires CUDA for GPU acceleration. CPU-only execution is not supported.
@@ -147,6 +148,9 @@ rubberband --version
 # Expected output:
 # 4.0.0 (or similar version)
 ```
+
+### OpenRGB installation
+To install OpenRGB, go to https://openrgb.org/, download and install a package appropriate for your platform. This will allow Celune to glow up your PC as she speaks.
 
 ### CUDA 12.8 installation
 Download and install CUDA Toolkit 12.8 from NVIDIA:
