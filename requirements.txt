@@ -1,8 +1,10 @@
+# Please, just use `uv sync`.
 --extra-index-url=https://download.pytorch.org/whl/cu128
 
 torch==2.11.0+cu128
+torchaudio==2.11.0+cu128
 
-faster-qwen3-tts==0.2.4  # Celune sounds incorrect with 0.2.5, and generates an additional sample rate warning.
+faster-qwen3-tts==0.2.4
 sounddevice
 soundfile
 hf-xet
@@ -16,3 +18,6 @@ scipy
 textual
 rich
 psutil
+pedalboard
+pyrubberband
+openrgb-python

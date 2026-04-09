@@ -7,6 +7,7 @@ import os
 import locale as _locale  # else it gets shadowed
 import ctypes
 import contextlib
+from typing import Optional
 
 DEFAULT_LOCALE = "en"
 
@@ -48,7 +49,7 @@ def get_locale() -> str:
     return _current_locale
 
 
-def string(key: str, locale: str | None = None, **kwargs) -> str:
+def string(key: str, locale: Optional[str] = None, **kwargs) -> str:
     """Get internationalization string in the selected language by key."""
     lang = locale or _current_locale
     text = STRINGS.get(lang, {}).get(key)

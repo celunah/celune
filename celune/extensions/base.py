@@ -26,6 +26,13 @@ class SayCallable(Protocol):
 
 
 @runtime_checkable
+class PlayCallable(Protocol):
+    """Extension callable play request annotation."""
+
+    def __call__(self, sound_path: str) -> bool: ...
+
+
+@runtime_checkable
 class StatusCallable(Protocol):
     """Extension callable status update annotation."""
 
@@ -50,7 +57,7 @@ class GetStateCallable(Protocol):
 class WaitUntilReadyCallable(Protocol):
     """Extension callable wait until ready annotation."""
 
-    def __call__(self, timeout: float = 30.0) -> None: ...
+    def __call__(self, timeout: float = 30.0) -> bool: ...
 
 
 @dataclass(slots=True)
@@ -59,6 +66,7 @@ class CeluneContext:
 
     log: LogCallable
     say: SayCallable
+    play: PlayCallable
     status: StatusCallable
     set_voice: SetVoiceCallable
     get_state: GetStateCallable
@@ -67,6 +75,7 @@ class CeluneContext:
     name: str = "Celune"
     version: str = __version__
     shared: dict[str, Any] = field(default_factory=dict)
+    dev: bool = False
 
     def expose(self, key: str, value: Any) -> None:
         """Expose a shared object."""
@@ -116,6 +125,13 @@ class CeluneExtension(ABC):
             return False
 
         return self.ctx.say(text)
+
+    def play(self, sound_path: str) -> bool:
+        """Play arbitrary sound through Celune."""
+        if not self.ctx.wait_until_ready():
+            return False
+
+        return self.ctx.play(sound_path)
 
     def status(self, msg: str, severity: str = "info") -> None:
         """Update status display."""
