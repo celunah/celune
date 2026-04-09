@@ -332,6 +332,7 @@ class CeluneUI(App):
             )
             self.safe_log("/speed - Change speaking speed.")
             self.safe_log("/reverb - Change reverb strength.")
+            self.safe_log("/play - Play a sound effect by path.")
             self.safe_log("/exit - Exit Celune.")
             self.safe_log("/help - Display this help message.")
             return
@@ -470,7 +471,6 @@ class CeluneUI(App):
         if command == "exit":
             self.safe_log("Exiting Celune...")
             self.celune.close()
-            time.sleep(5)  # UX only
             self.exit()
             return
 

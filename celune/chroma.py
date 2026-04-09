@@ -17,6 +17,7 @@ class AudioRGBGlow:
 
         self.host = host
         self.port = port
+        self.connect_failed = False
         self.client = None
         self.devices = []
 
@@ -48,6 +49,9 @@ class AudioRGBGlow:
         if self.client is not None:
             return True
 
+        if self.connect_failed:
+            return False
+
         try:
             self.client = OpenRGBClient(address=self.host, port=self.port)
             self.devices = list(self.client.ee_devices)
@@ -59,6 +63,7 @@ class AudioRGBGlow:
             return True
         except Exception:
             self.client = None
+            self.connect_failed = True
             self.devices = []
             return False
 
@@ -66,6 +71,7 @@ class AudioRGBGlow:
         """Start the glow effect worker thread."""
         if self._worker is not None and self._worker.is_alive():
             return True
+
         if not self.connect():
             return False
 

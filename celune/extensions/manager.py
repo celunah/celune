@@ -58,7 +58,8 @@ class CeluneExtensionManager:
                         e.autostart()
                     except Exception as ex:
                         self.context.log(
-                            f"[Core] Could not autostart {n}: {traceback.format_exc() if self.context.dev else ex}"
+                            f"[Core] Could not autostart {n}: {traceback.format_exc() if self.context.dev else ex}",
+                            "warning"
                         )
 
                 started += 1

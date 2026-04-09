@@ -28,25 +28,22 @@ def get_revision() -> str:
 
 def format_number(num: float, precision: int = 0) -> str:
     """Format a number without trailing zeroes."""
-    precision_digits = len(str(num).split(".", maxsplit=1)[1])
+    if precision < 0:
+        raise ValueError("precision must be >= 0")
 
-    while precision_digits > 0:
-        str_rep = str(round(num, precision or precision_digits))
-        if str_rep[-1] == "0":
-            precision_digits -= 1
-            continue
-        return str_rep
-    return str(int(num))
+    digits = precision if precision > 0 else 12
+    text = f"{num:.{digits}f}".rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def to_rgb(color: str) -> tuple[int, ...]:
     """Convert hex code to RGB tuple."""
+    color = color.strip()
+    
     if color.startswith("#"):
         color = color[1:]
     elif color.lower().startswith("0x"):
         color = color[2:]
-
-    color = color.strip()
 
     if len(color) == 3:
         color = "".join(ch * 2 for ch in color)
