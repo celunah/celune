@@ -339,8 +339,13 @@ class Celune:
 
         self.log("All Celune voices are available.")
         os.environ["HF_HUB_OFFLINE"] = "1"
-        _, path = self._model_is_available_locally("lunahr/Celune-1.7B-Neutral")
-        self.model = FasterQwen3TTS.from_pretrained(path)
+        available, path = self._model_is_available_locally("lunahr/Celune-1.7B-Neutral")
+        if available:
+            self.model = FasterQwen3TTS.from_pretrained(path)
+        else:
+            self.log("Celune has no default model. Please restart Celune.", "error")
+            self.error_callback("Default model missing")
+            return False
 
         self._generation_thread = threading.Thread(
             target=self._generation_worker, daemon=True
@@ -871,6 +876,7 @@ class Celune:
                 self.log(f"[GEN ERROR] {self.format_error(e, self.dev)}", "error")
                 self.cur_state = "error"
                 self.locked = False
+                self._playback_done.set()
                 self.error_callback("Celune could not generate the input")
 
     def _playback_worker(self) -> None:
