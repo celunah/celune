@@ -20,7 +20,7 @@ try:
 except ModuleNotFoundError as package:
     print(f"Missing dependency: {package.name}")
     print("Celune requires this library to function.")
-    print("Try running 'pip install -U -r requirements.txt'.")
+    print("Try running 'uv sync'.")
     if DEV:
         raise
     print("Run Celune with CELUNE_DEV=1 to get full traceback.")
@@ -43,9 +43,7 @@ def main() -> None:
         # running Celune manually via "python main.py" is not validated with this check
         active_processes = 0
         for proc in psutil.process_iter():
-            with contextlib.suppress(
-                psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess
-            ):
+            with contextlib.suppress(psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
                 if proc.name() in ["celune.exe", "celune.AppImage"]:  # Celune launcher
                     active_processes += 1
                     if active_processes > 1:

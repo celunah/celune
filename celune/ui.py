@@ -6,10 +6,11 @@ import time
 import shlex
 import threading
 import itertools
-from typing import Callable
+from typing import Optional, Callable
 
 from textual import work, events
 from textual.app import App, ComposeResult
+from textual.theme import Theme
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, RichLog, TextArea, Button
 from rich.text import Text
@@ -19,10 +20,24 @@ from .utils import format_number
 from .exceptions import InvalidExtensionError
 
 SEVERITY_COLORS = {
-    "info": "#ceaaff",  # lunar.css accent 100 - Celune accent
-    "warning": "#fcf283",  # Celune warning
-    "error": "#ff6b6b",  # Celune error
+    "info": "#cebaff",  # same as primary
+    "warning": "#f0e68c",  # same as warning
+    "error": "#f07178",  # same as error
 }
+
+# Celune theme
+THEME = Theme(
+    name="celune",
+    primary="#cebaff",  # Celune primary
+    secondary="#a595cc",  # Celune secondary
+    accent="#7c7099",  # Celune tertiary
+    foreground="#cebaff",  # same as primary
+    background="#1d1824",  # Celune background
+    surface="#1d1824",  # same as background
+    warning="#f0e68c",  # Celune warning
+    error="#f07178",  # Celune error
+    dark=True,
+)
 
 
 class CeluneUI(App):
@@ -31,12 +46,12 @@ class CeluneUI(App):
     CSS = """
     Screen {
         layout: vertical;
-        background: #1d1824;
+        background: $background;
     }
 
     #logs {
         height: 1fr;
-        border: round #ceaaff;
+        border: round $primary;
         overflow-y: auto;
         overflow-x: hidden;
         padding: 1;
@@ -44,17 +59,17 @@ class CeluneUI(App):
 
     /* give scrollbar colors only to the elements that will have a scrollbar */
     #logs, #input {
-        scrollbar-color: #9a7fbf; /* lunar.css accent 900 */
-        scrollbar-color-hover: #af90d8; /* lunar.css accent 500 */
-        scrollbar-color-active: #ceaaff; /* lunar.css accent 100 - Celune accent */
-        scrollbar-background: #1d1824; /* lunah.site --toggle-accent (50%) - Celune background */
-        scrollbar-background-hover: #1d1824;
-        scrollbar-background-active: #1d1824;
-        background: #1d1824;
+        scrollbar-color: $accent;
+        scrollbar-color-hover: $secondary;
+        scrollbar-color-active: $primary;
+        scrollbar-background: $surface;
+        scrollbar-background-hover: $surface;
+        scrollbar-background-active: $surface;
+        background: $background;
     }
 
     #logs:focus {
-        border: round #ceaaff;
+        border: round $primary;
         background: transparent;
     }
 
@@ -62,21 +77,21 @@ class CeluneUI(App):
         min-height: 3;
         height: 3;
         width: 1fr;
-        border: round #ceaaff;
+        border: round $primary;
     }
 
     #style {
         width: 14;
         height: 3;
-        border: round #ceaaff;
+        border: round $primary;
         margin-right: 1;
         text-align: center;
-        background: #1d1824;
+        background: $background;
     }
 
     #input:focus {
-        border: round #ceaaff;
-        background-tint: #ceaaff 10%;
+        border: round $primary;
+        background-tint: $primary 10%;
     }
 
     #logs, #input {
@@ -86,11 +101,11 @@ class CeluneUI(App):
 
     #status {
         height: 1;
-        background: #1d1824;
+        background: $background;
         width: 1fr;
         margin-left: 2;
         margin-bottom: 1;
-        color: #ceaaff;
+        color: $primary;
     }
 
     #header-container {
@@ -105,7 +120,7 @@ class CeluneUI(App):
     #header {
         width: auto;
         content-align: center middle;
-        color: #ceaaff;
+        color: $primary;
         text-style: bold;
         padding: 0 2;
     }
@@ -113,7 +128,7 @@ class CeluneUI(App):
     .line {
         width: 1fr;
         height: 1;
-        border-top: solid #ceaaff;
+        border-top: solid $primary;
         margin: 0 2;  /* when zero two works, arno would be proud */
     }
 
@@ -130,9 +145,9 @@ class CeluneUI(App):
         self.style_button = None
         self.status = None
 
-        self.celune: Celune | None = None
+        self.celune: Optional[Celune] = None
         self.celune_ready = False
-        self.celune_styles = ["balanced", "calm", "enthusiastic", "upbeat"]
+        self.celune_styles = ["balanced", "calm", "bold", "upbeat"]
         self.celune_voices = None
 
         self.style_index = 0
@@ -165,6 +180,9 @@ class CeluneUI(App):
 
     def on_mount(self) -> None:
         """Prepare Celune."""
+        self.register_theme(THEME)
+        self.theme = "celune"
+
         self.logs = self.query_one("#logs", RichLog)
         self.input_box = self.query_one("#input", TextArea)
         self.status = self.query_one("#status", Label)
@@ -188,7 +206,7 @@ class CeluneUI(App):
     def load_tts(self) -> None:
         """Load Celune."""
         try:
-            tts_voices = ["balanced", "calm", "enthusiastic", "upbeat"]
+            tts_voices = ["balanced", "calm", "bold", "upbeat"]
 
             self.celune.set_voices(tts_voices)
             self.celune_voices = itertools.cycle(tts_voices)
@@ -427,7 +445,9 @@ class CeluneUI(App):
             except ValueError:
                 self.safe_log(f"Invalid argument: {args[0]}", "warning")
             else:
-                self.safe_log(f"Reverb strength set to {format_number(strength * 100)}%.")
+                self.safe_log(
+                    f"Reverb strength set to {format_number(strength * 100)}%."
+                )
             return
         if command == "play":
             if not self.celune:
@@ -442,7 +462,9 @@ class CeluneUI(App):
                 self.log(f"Playing {args[0]}")
                 self.celune.play(args[0])
             except Exception as e:
-                self.safe_log(f"Cannot play this file: {self.celune.format_error(e, self.celune.dev)}")
+                self.safe_log(
+                    f"Cannot play this file: {self.celune.format_error(e, self.celune.dev)}"
+                )
                 return
             return
         if command == "exit":

@@ -8,10 +8,11 @@ import sys
 import time
 import glob
 import queue
+import random
 import platform
 import threading
 import traceback
-from typing import Optional, Callable, Union
+from typing import Optional, Callable
 
 import torch
 import numpy as np
@@ -22,12 +23,14 @@ from faster_qwen3_tts import FasterQwen3TTS
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.utils import logging as hf_logging
 from transformers.utils.logging import disable_progress_bar
+from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub.utils import disable_progress_bars
 
 from . import __version__, __codename__, __comment__
 from .dsp import _soften_onset, _to_48khz, StreamingPedalboardReverb, _resample_audio
 from .utils import format_number
+from .chroma import AudioRGBGlow
 from .exceptions import NotAvailableError, WarmupError
 from .extensions.base import CeluneContext
 from .extensions.manager import CeluneExtensionManager
@@ -42,12 +45,8 @@ class Celune:
         chunk_size: int = 24,  # approx. 1.92s per chunk
         sentences_per_chunk: int = 4,  # prevents Celune from running out of context
         language: str = "Auto",  # if you don't care about multilinguality, set it to "English"
-        log_callback: Optional[
-            Union[Callable[[str], None], Callable[[str, str], None]]
-        ] = None,
-        status_callback: Optional[
-            Union[Callable[[str], None], Callable[[str, str], None]]
-        ] = None,
+        log_callback: Optional[Callable[[str], None]] = None,
+        status_callback: Optional[Callable[[str], None]] = None,
         error_callback: Optional[Callable[[str], None]] = None,
         idle_callback: Optional[Callable[[], None]] = None,
         queue_avail_callback: Optional[Callable[[], None]] = None,
@@ -118,7 +117,10 @@ class Celune:
             "on",
         }
 
-        self.extension_manager: CeluneExtensionManager | None = None
+        self.extension_manager: Optional[CeluneExtensionManager] = None
+
+        self.glow = AudioRGBGlow(color="#cebaff")
+        self.glow.start()
 
     @staticmethod
     def _model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
@@ -203,9 +205,14 @@ class Celune:
         return True
 
     def _wait_until_idle(self, timeout: float = 30.0) -> bool:
+        # don't wait a timeout while Celune is downloading a model
         ok = self._model_ready.wait(timeout=timeout)
         if not ok:
             self.log("Timed out while waiting to become ready.", "warning")
+            self.log(
+                "If this was not expected, Celune may have been downloading models.",
+                "warning",
+            )
             return False
 
         if not self.loaded:
@@ -214,7 +221,10 @@ class Celune:
 
         ok = self._playback_done.wait(timeout=timeout)
         if not ok:
-            self.log("Timed out while waiting for playback pipeline to become idle.", "warning")
+            self.log(
+                "Timed out while waiting for playback pipeline to become idle.",
+                "warning",
+            )
             return False
 
         with self._say_lock:
@@ -235,12 +245,15 @@ class Celune:
             wait_until_ready=self._wait_until_idle,
             name="Celune",
             version=__version__,
+            dev=self.dev,
         )
         self.extension_manager = CeluneExtensionManager(ctx)
         self.extension_manager.autoload("extensions")
 
         if self.dev:
-            self.log(f"[EXT] Loaded extensions: {self.extension_manager.list_extensions()}")
+            self.log(
+                f"[EXT] Loaded extensions: {self.extension_manager.list_extensions()}"
+            )
 
     def log(self, msg: str, severity: str = "info") -> None:
         """Log a message."""
@@ -268,7 +281,7 @@ class Celune:
                 voice_map = {
                     "balanced": "lunahr/Celune-1.7B-Neutral",
                     "calm": "lunahr/Celune-1.7B-Calm",
-                    "enthusiastic": "lunahr/Celune-1.7B-Energetic",
+                    "bold": "lunahr/Celune-1.7B-Energetic",
                     "upbeat": "lunahr/Celune-1.7B-Upbeat",
                 }
 
@@ -310,15 +323,24 @@ class Celune:
         disable_progress_bars()
         hf_logging.set_verbosity_error()
 
-        available, path = self._model_is_available_locally("lunahr/Celune-1.7B-Neutral")
-        if available:
-            self.log("TTS model is already available in cache")
-            os.environ["HF_HUB_OFFLINE"] = "1"
-            self.model = FasterQwen3TTS.from_pretrained(path)
-        else:
-            self.log("Downloading TTS model...")
-            os.environ["HF_HUB_OFFLINE"] = "0"
-            self.model = FasterQwen3TTS.from_pretrained(self.model_name)
+        for model in [
+            "lunahr/Celune-1.7B-Neutral",
+            "lunahr/Celune-1.7B-Calm",
+            "lunahr/Celune-1.7B-Energetic",
+            "lunahr/Celune-1.7B-Upbeat",
+        ]:
+            available, _ = self._model_is_available_locally(model)
+            if not available:
+                self.log(f"Downloading {model}...")
+                os.environ["HF_HUB_OFFLINE"] = "0"
+                hf_hub_download(model)
+            else:
+                self.log(f"{model} is already available.")
+
+        self.log("All Celune voices are available.")
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        _, path = self._model_is_available_locally("lunahr/Celune-1.7B-Neutral")
+        self.model = FasterQwen3TTS.from_pretrained(path)
 
         self._generation_thread = threading.Thread(
             target=self._generation_worker, daemon=True
@@ -342,24 +364,33 @@ class Celune:
         self.log(f'{__codename__}: "{__comment__}"')
 
         if sys.version_info < (3, 12) or sys.version_info >= (3, 14):
-            self.log(f"Celune does not currently support Python {platform.python_version()}.", "error")
+            self.log(
+                f"Celune does not currently support Python {platform.python_version()}.",
+                "error",
+            )
             self.log(
                 "Run `uv sync` in Celune's directory to set up the environment, then restart Celune.",
-                "error"
+                "error",
             )
             self.cur_state = "error"
             self.error_callback("Incompatible Python version")
             return False
 
         if cuda_version is None:
-            self.log("The currently installed PyTorch build does not include CUDA support.", "error")
+            self.log(
+                "The currently installed PyTorch build does not include CUDA support.",
+                "error",
+            )
             self.cur_state = "error"
             self.error_callback("PyTorch has no CUDA support")
             return False
 
         cuda_version_tuple = tuple(map(int, cuda_version.split(".")))
         if cuda_version_tuple != (12, 8):
-            self.log(f"Celune only supports CUDA 12.8, found version {torch.version.cuda}.", "error")
+            self.log(
+                f"Celune only supports CUDA 12.8, found version {torch.version.cuda}.",
+                "error",
+            )
             self.cur_state = "error"
             self.error_callback("Incompatible CUDA version")
             return False
@@ -387,6 +418,9 @@ class Celune:
             self.cur_state = "error"
             self.error_callback("CUDA device is not usable")
             return False
+
+        if self.glow and self.glow.client is None:
+            self.log("OpenRGB is not available.", "warning")
 
         if self._warmup():
             self.loaded = True
@@ -595,6 +629,8 @@ class Celune:
 
             self.cur_state = "generating"
             self.text_queue.put(normalized if normalized is not None else text)
+
+            self.status_callback("Generating")
             return True
 
         except Exception:
@@ -613,7 +649,9 @@ class Celune:
         try:
             audio, sr = sf.read(sound_path, dtype="float32")
             audio_len = len(audio) / sr
-            self.log(f"Sample rate: {sr} Hz, length: {format_number(audio_len, 2)} seconds")
+            self.log(
+                f"Sample rate: {sr} Hz, length: {format_number(audio_len, 2)} seconds"
+            )
 
             audio = _resample_audio(audio, sr)
 
@@ -688,7 +726,6 @@ class Celune:
     def _generation_worker(self) -> None:
         """Generate audio tokens and send them to the audio pipeline."""
         while True:
-            self.status_callback("Generating")
             text = self.text_queue.get()
 
             if text is self._sentinel:
@@ -729,7 +766,7 @@ class Celune:
 
                         for (
                             audio_chunk,
-                            sr,
+                            _,
                             timing,
                         ) in self.model.generate_custom_voice_streaming(
                             text=chunk_text,
@@ -744,12 +781,17 @@ class Celune:
                             if hasattr(audio_chunk, "cpu"):
                                 audio_chunk = audio_chunk.cpu().numpy()
 
-                            audio_chunk = _to_48khz(audio_chunk, sr)
+                            audio_chunk = _to_48khz(audio_chunk, 24000)
                             if self.speed != 1.0 and self.can_use_rubberband:
                                 try:
-                                    audio_chunk = rb.time_stretch(audio_chunk, 48000, self.speed)
+                                    audio_chunk = rb.time_stretch(
+                                        audio_chunk, 48000, self.speed
+                                    )
                                 except RuntimeError:
-                                    self.log("Rubber Band is unavailable, speed controls disabled.", "warning")
+                                    self.log(
+                                        "Rubber Band is unavailable, speed controls disabled.",
+                                        "warning",
+                                    )
                                     self.can_use_rubberband = False
                             if self.reverb.strength > 0.0:
                                 audio_chunk = self.reverb.process(audio_chunk, 48000)
@@ -785,8 +827,8 @@ class Celune:
 
                 if not self._exit_requested:
                     if self.reverb.strength > 0.0:
-                        # don't force a long reverb delay if reverb strength is low
-                        tail = self.reverb.flush(tail_seconds=self.reverb.strength * 1.5)
+                        # push out a variable reverb tail
+                        tail = self.reverb.flush()
                         if len(tail) > 0:
                             self.audio_queue.put((tail, 48000, None))
                             buffer.append(tail)
@@ -810,7 +852,12 @@ class Celune:
                             )
 
                     if os.path.exists("outputs"):
-                        sf.write(f"outputs/celune_speech_{timestamp}.wav", wav, 48000, subtype="PCM_24")
+                        sf.write(
+                            f"outputs/celune_speech_{timestamp}.wav",
+                            wav,
+                            48000,
+                            subtype="PCM_24",
+                        )
 
             except Exception as e:
                 if self._exit_requested:
@@ -868,7 +915,25 @@ class Celune:
                 else:
                     self._release_pipeline()
                     self.idle_callback()
-                    self.log("Ready to speak.")
+
+                    if random.random() < 0.01:
+                        flavor_texts = [
+                            "I will speak.",
+                            "I'll answer.",
+                            "I'm always listening.",
+                            "I'm all ears.",
+                            "You shall hear."
+                        ]
+
+                        choice = random.choice(flavor_texts)
+
+                        if choice == getattr(self, "_last_flavor", None):
+                            choice = random.choice(flavor_texts)
+
+                        self._last_flavor = choice
+                        self.log(f"Just type. {choice}")
+                    else:
+                        self.log("Ready to speak.")
 
                     avail, total = tuple(
                         v / 1024**3 for v in torch.cuda.mem_get_info(0)
@@ -884,7 +949,9 @@ class Celune:
                             "warning",
                         )
                     else:
-                        self.log(f"Available VRAM: {format_number(avail, 2)}/{format_number(total, 2)} GB")
+                        self.log(
+                            f"Available VRAM: {format_number(avail, 2)}/{format_number(total, 2)} GB"
+                        )
                 continue
 
             audio_chunk, sr, _ = item
@@ -914,6 +981,7 @@ class Celune:
                 continue
 
             try:
+                self.glow.glow(audio_chunk)  # Celune glows up your RGB while she speaks
                 self._stream.write(audio_chunk)
             except Exception as e:
                 self.log(f"[PLAY ERROR] {self.format_error(e, self.dev)}", "error")
