@@ -1,23 +1,26 @@
 # Please, just use `uv sync`.
 --extra-index-url=https://download.pytorch.org/whl/cu128
 
+# AI stack
 torch==2.11.0+cu128
 torchaudio==2.11.0+cu128
-
 faster-qwen3-tts==0.2.4
-sounddevice
-soundfile
 hf-xet
 huggingface-hub
 transformers
-bitsandbytes
-accelerate
 
+# Sound processing
 numpy
 scipy
-textual
-rich
-psutil
+sounddevice
+soundfile
 pedalboard
 pyrubberband
+
+# UX & UI
+textual
+rich
 openrgb-python
+
+# Others
+psutil

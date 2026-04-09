@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # pylint: disable=R0902, R0913, R0917, W0718
 """
-Celune 3.0.0 - "It's not just a TTS, it's a character."
+Celune 3.1.0 - "It's not just a TTS, it's a character."
 Refer to https://github.com/celunah/celune for information about Celune.
 Celune models are available on https://huggingface.co/collections/lunahr/celune.
 """
