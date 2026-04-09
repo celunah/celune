@@ -21,6 +21,10 @@ class AudioMismatchError(RuntimeError, CeluneError):
     """Audio pipeline received data that does not match Celune's current state."""
 
 
+class BadAudioError(ValueError, CeluneError):
+    """Celune cannot process audio in this format."""
+
+
 class IncompleteExtensionError(NotImplementedError, ExtensionError):
     """User did not define a required extension method."""
 

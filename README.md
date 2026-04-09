@@ -6,7 +6,7 @@ It has been designed for real-time performance on consumer GPUs.
 ## Features
 
 - Real-time speech generation pipeline
-- Distinct voice styles (Calm, Balanced, Enthusiastic, Upbeat)
+- Distinct voice styles (Calm, Balanced, Bold, Upbeat)
 - Stable long-form narration without drift
 - Source-level audio control (no post-processing)
 - GPU-accelerated inference
@@ -18,7 +18,7 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 |--------------|-------|-----------|
 | Balanced     | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc.wav) |
 | Calm         | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc.wav)    | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc.wav)    |
-| Enthusiastic | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/enthusiastic_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/enthusiastic_lc.wav) |
+| Bold         | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc.wav) |
 
 > [!CAUTION]
 > Do not use markup or tags (e.g. `<...>`).  
@@ -113,7 +113,7 @@ irm https://get.scoop.sh | iex
 scoop install sox
 
 # Install Rubber Band
-sccop install rubberband
+scoop install rubberband
 ```
 
 **Linux (Debian/Ubuntu)**

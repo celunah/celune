@@ -1,33 +1,37 @@
-# pylint: disable=R0902, R0912, R0913, R0914, R0915, R0917, W0718
+# pylint: disable=R0902, R0911, R0912, R0913, R0914, R0915, R0917, W0718
 """Celune's backend layer."""
 
 import gc
 import os
 import re
 import sys
-import math
 import time
 import glob
 import queue
+import random
 import platform
 import threading
 import traceback
-from typing import Optional, Callable, Union
+from typing import Optional, Callable
 
 import torch
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
-from scipy.signal import resample_poly
+import pyrubberband as rb
 from faster_qwen3_tts import FasterQwen3TTS
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.utils import logging as hf_logging
 from transformers.utils.logging import disable_progress_bar
+from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub.utils import disable_progress_bars
 
-from . import __version__
-from .exceptions import NotAvailableError, WarmupError, AudioMismatchError
+from . import __version__, __codename__, __comment__
+from .dsp import _soften_onset, _to_48khz, StreamingPedalboardReverb, _resample_audio
+from .utils import format_number
+from .chroma import AudioRGBGlow
+from .exceptions import NotAvailableError, WarmupError
 from .extensions.base import CeluneContext
 from .extensions.manager import CeluneExtensionManager
 
@@ -41,12 +45,8 @@ class Celune:
         chunk_size: int = 24,  # approx. 1.92s per chunk
         sentences_per_chunk: int = 4,  # prevents Celune from running out of context
         language: str = "Auto",  # if you don't care about multilinguality, set it to "English"
-        log_callback: Optional[
-            Union[Callable[[str], None], Callable[[str, str], None]]
-        ] = None,
-        status_callback: Optional[
-            Union[Callable[[str], None], Callable[[str, str], None]]
-        ] = None,
+        log_callback: Optional[Callable[[str], None]] = None,
+        status_callback: Optional[Callable[[str], None]] = None,
         error_callback: Optional[Callable[[str], None]] = None,
         idle_callback: Optional[Callable[[], None]] = None,
         queue_avail_callback: Optional[Callable[[], None]] = None,
@@ -94,6 +94,9 @@ class Celune:
         self._stream: Optional[sd.OutputStream] = None
         self._current_sr: Optional[int] = None
         self._audio_unavailable = False
+        self.can_use_rubberband = True
+        self.speed: float = 1.0
+        self.reverb = StreamingPedalboardReverb()
 
         self.locked = True
         self.loaded = False
@@ -113,9 +116,11 @@ class Celune:
             "true",
             "on",
         }
-        self.normalization_timeout = 0.5
 
-        self.extension_manager: CeluneExtensionManager | None = None
+        self.extension_manager: Optional[CeluneExtensionManager] = None
+
+        self.glow = AudioRGBGlow(color="#cebaff")
+        self.glow.start()
 
     @staticmethod
     def _model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
@@ -199,37 +204,56 @@ class Celune:
         ).start()
         return True
 
-    def _wait_until_idle(self, timeout: float = 30.0) -> None:
+    def _wait_until_idle(self, timeout: float = 30.0) -> bool:
+        # don't wait a timeout while Celune is downloading a model
         ok = self._model_ready.wait(timeout=timeout)
-
         if not ok:
             self.log("Timed out while waiting to become ready.", "warning")
+            self.log(
+                "If this was not expected, Celune may have been downloading models.",
+                "warning",
+            )
             return False
 
         if not self.loaded:
             self.log("Model was unloaded while waiting to become ready.", "warning")
             return False
 
-        return True
+        ok = self._playback_done.wait(timeout=timeout)
+        if not ok:
+            self.log(
+                "Timed out while waiting for playback pipeline to become idle.",
+                "warning",
+            )
+            return False
+
+        with self._say_lock:
+            return (not self.locked) and self.loaded
 
     def setup_extensions(self) -> None:
         """Configure Celune's extension manager."""
-        self.log("[EXT] Setting up extension manager")
+        if self.dev:
+            self.log("[EXT] Setting up extension manager")
 
         ctx = CeluneContext(
             log=self.log,
             say=self.say,
+            play=self.play,
             status=self.status_callback,
             set_voice=self.set_voice,
             get_state=lambda: self.cur_state,
             wait_until_ready=self._wait_until_idle,
             name="Celune",
             version=__version__,
+            dev=self.dev,
         )
         self.extension_manager = CeluneExtensionManager(ctx)
         self.extension_manager.autoload("extensions")
 
-        self.log(f"[EXT] Loaded extensions: {self.extension_manager.list_extensions()}")
+        if self.dev:
+            self.log(
+                f"[EXT] Loaded extensions: {self.extension_manager.list_extensions()}"
+            )
 
     def log(self, msg: str, severity: str = "info") -> None:
         """Log a message."""
@@ -257,7 +281,7 @@ class Celune:
                 voice_map = {
                     "balanced": "lunahr/Celune-1.7B-Neutral",
                     "calm": "lunahr/Celune-1.7B-Calm",
-                    "enthusiastic": "lunahr/Celune-1.7B-Energetic",
+                    "bold": "lunahr/Celune-1.7B-Energetic",
                     "upbeat": "lunahr/Celune-1.7B-Upbeat",
                 }
 
@@ -290,7 +314,7 @@ class Celune:
 
         finally:
             self._model_ready.set()
-            self.cur_state = "idle"
+            self._release_pipeline()
             self.change_input_state_callback(locked=False)
 
     def load(self) -> bool:
@@ -299,15 +323,29 @@ class Celune:
         disable_progress_bars()
         hf_logging.set_verbosity_error()
 
+        for model in [
+            "lunahr/Celune-1.7B-Neutral",
+            "lunahr/Celune-1.7B-Calm",
+            "lunahr/Celune-1.7B-Energetic",
+            "lunahr/Celune-1.7B-Upbeat",
+        ]:
+            available, _ = self._model_is_available_locally(model)
+            if not available:
+                self.log(f"Downloading {model}...")
+                os.environ["HF_HUB_OFFLINE"] = "0"
+                snapshot_download(repo_id=model)
+            else:
+                self.log(f"{model} is already available.")
+
+        self.log("All Celune voices are available.")
+        os.environ["HF_HUB_OFFLINE"] = "1"
         available, path = self._model_is_available_locally("lunahr/Celune-1.7B-Neutral")
         if available:
-            self.log("TTS model is already available in cache")
-            os.environ["HF_HUB_OFFLINE"] = "1"
             self.model = FasterQwen3TTS.from_pretrained(path)
         else:
-            self.log("Downloading TTS model...")
-            os.environ["HF_HUB_OFFLINE"] = "0"
-            self.model = FasterQwen3TTS.from_pretrained(self.model_name)
+            self.log("Celune has no default model. Please restart Celune.", "error")
+            self.error_callback("Default model missing")
+            return False
 
         self._generation_thread = threading.Thread(
             target=self._generation_worker, daemon=True
@@ -320,17 +358,46 @@ class Celune:
         self._playback_thread.start()
 
         self.log("Environment test...")
+
+        cuda_version = torch.version.cuda
         self.log(
             f"Celune {__version__}, "
             f"Python {platform.python_version()}, "
             f"PyTorch {torch.__version__}, "
-            f"CUDA {torch.version.cuda}"
+            f"CUDA {cuda_version}"
         )
+        self.log(f'{__codename__}: "{__comment__}"')
 
-        if sys.version_info < (3, 12):
-            self.log("Celune does not work on this version of Python", "error")
+        if sys.version_info < (3, 12) or sys.version_info >= (3, 14):
+            self.log(
+                f"Celune does not currently support Python {platform.python_version()}.",
+                "error",
+            )
+            self.log(
+                "Run `uv sync` in Celune's directory to set up the environment, then restart Celune.",
+                "error",
+            )
             self.cur_state = "error"
             self.error_callback("Incompatible Python version")
+            return False
+
+        if cuda_version is None:
+            self.log(
+                "The currently installed PyTorch build does not include CUDA support.",
+                "error",
+            )
+            self.cur_state = "error"
+            self.error_callback("PyTorch has no CUDA support")
+            return False
+
+        cuda_version_tuple = tuple(map(int, cuda_version.split(".")))
+        if cuda_version_tuple != (12, 8):
+            self.log(
+                f"Celune only supports CUDA 12.8, found version {torch.version.cuda}.",
+                "error",
+            )
+            self.cur_state = "error"
+            self.error_callback("Incompatible CUDA version")
             return False
 
         cuda_avail = torch.cuda.is_available()
@@ -342,20 +409,28 @@ class Celune:
             self.error_callback("CUDA is not available")
             return False
 
-        current_gpu = torch.cuda.get_device_name(0)
-        major, minor = torch.cuda.get_device_capability(0)
-        self.log(f"GPU: {current_gpu} (Capability: {major}.{minor})")
+        try:
+            current_gpu = torch.cuda.get_device_name(0)
+            major, minor = torch.cuda.get_device_capability(0)
+            self.log(f"GPU: {current_gpu} (Capability: {major}.{minor})")
 
-        self.log("Compute test...")
-        x = torch.rand(256, 256, device="cuda")
-        y = x @ x
-        self.log(f"[OK] Compute test succeeded on {y.device}")
+            self.log("Compute test...")
+            x = torch.rand(256, 256, device="cuda")
+            y = x @ x
+            self.log(f"Compute test succeeded on {y.device}")
+        except Exception as e:
+            self.log(f"Compute test failed: {self.format_error(e, self.dev)}", "error")
+            self.cur_state = "error"
+            self.error_callback("CUDA device is not usable")
+            return False
+
+        if self.glow and self.glow.client is None:
+            self.log("OpenRGB is not available.", "warning")
 
         if self._warmup():
-            self.locked = False
             self.loaded = True
             self._model_ready.set()
-            self.cur_state = "idle"
+            self._release_pipeline()
         else:
             self.log("[WARMUP] Warmup failed.", "error")
             return False
@@ -420,7 +495,7 @@ class Celune:
 
             warmup_end = time.perf_counter()
             warmup_took = warmup_end - warmup_start
-            self.log(f"[WARMUP] done, took {warmup_took:.2f} seconds")
+            self.log(f"[WARMUP] done, took {format_number(warmup_took, 2)} seconds")
             return True
 
         except Exception as e:
@@ -492,7 +567,7 @@ class Celune:
                     return None
 
                 inf_total = time.perf_counter() - inf_start
-                self.log(f"Normalization took {inf_total:.2f} seconds.")
+                self.log(f"Normalization took {format_number(inf_total, 2)} seconds.")
 
                 return out
 
@@ -505,13 +580,33 @@ class Celune:
 
         return _run_inference()  # blocks for the duration of normalization, but CeluneNorm should be fast enough
 
+    def _acquire_pipeline(self, action: str) -> bool:
+        """Atomically claim Celune's shared playback pipeline."""
+        with self._say_lock:
+            if self.dev:
+                self.log(f"[LOCK] acquire requested by {action}, locked={self.locked}")
+            if self.locked:
+                self.log(f"Tried to {action} while Celune was busy.", "warning")
+                self.error_callback("Celune is currently busy")
+                return False
+
+            self.locked = True
+            self._playback_done.clear()
+            if self.dev:
+                self.log(f"[LOCK] acquired by {action}")
+            return True
+
+    def _release_pipeline(self) -> None:
+        """Release Celune's shared playback pipeline."""
+        with self._say_lock:
+            self.locked = False
+            self._playback_done.set()
+            self.cur_state = "idle"
+            if self.dev:
+                self.log("[LOCK] released")
+
     def say(self, text: str) -> bool:
         """Queue text for Celune to say."""
-        if not self.loaded:
-            self.log("Tried to speak before model was loaded.", "warning")
-            self.error_callback("Celune is not currently ready")
-            return False
-
         if not self._model_ready.is_set():
             self.status_callback("Waiting for model")
             self.log("Speak request is waiting for model reload to finish.", "info")
@@ -523,32 +618,67 @@ class Celune:
             self.error_callback("Celune is not currently ready")
             return False
 
-        # noinspection PyUnusedLocal
         normalized = None
         if self.use_normalization:
             self.status_callback("Normalizing")
             normalized = self.normalize(text)
 
-        with self._say_lock:
+        if not self._acquire_pipeline("speak"):
+            return False
+
+        try:
             if not self.loaded:
                 self.log("Model became unavailable before queueing speech.", "warning")
                 self.error_callback("Celune is not currently ready")
+                self._release_pipeline()
                 return False
 
-            self.locked = True
-            self._playback_done.clear()
+            self.cur_state = "generating"
+            self.text_queue.put(normalized if normalized is not None else text)
 
-            if normalized is None:
-                self.text_queue.put(text)
-            else:
-                self.text_queue.put(normalized)
+            self.status_callback("Generating")
+            return True
 
-        return True
+        except Exception:
+            self._release_pipeline()
+            raise
+
+    def play(self, sound_path: str) -> bool:
+        """Play a sound via Celune's pipeline."""
+        if not os.path.exists(sound_path):
+            self.log(f"Celune cannot find {sound_path}.", "warning")
+            return False
+
+        if not self._acquire_pipeline("play"):
+            return False
+
+        try:
+            audio, sr = sf.read(sound_path, dtype="float32")
+            audio_len = len(audio) / sr
+            self.log(
+                f"Sample rate: {sr} Hz, length: {format_number(audio_len, 2)} seconds"
+            )
+
+            audio = _resample_audio(audio, sr)
+
+            self.cur_state = "speaking"
+            self.audio_queue.put((audio, 48000, None))
+            self.audio_queue.put(self._utterance_done)
+
+            self.status_callback(f"Playing {sound_path}")
+            return True
+
+        except Exception:
+            self._release_pipeline()
+            raise
 
     def close(self) -> None:
         """Shut off Celune and exit."""
         self.log("Exiting...")
         self._exit_requested = True
+
+        if self.glow is not None:
+            self.glow.stop(reset=True, wait=False)
 
         with self._queue_lock:
             self._clear_queue(self.text_queue)
@@ -569,52 +699,6 @@ class Celune:
     def format_error(e: Exception, dev: bool) -> str:
         """Format an error message."""
         return traceback.format_exc() if dev else str(e)
-
-    @staticmethod
-    def _resample_audio(
-        audio: np.ndarray, source_sr: int, target_sr: int = 48000
-    ) -> np.ndarray:
-        """Resample the given audio to the given sample rate."""
-        audio = np.asarray(audio, dtype=np.float32)
-
-        if source_sr == target_sr:
-            return audio
-
-        factor = math.gcd(source_sr, target_sr)
-        up = target_sr // factor
-        down = source_sr // factor
-
-        return np.asarray(
-            resample_poly(audio, up=up, down=down, axis=0), dtype=np.float32
-        )
-
-    def _to_48khz(self, audio: np.ndarray, source_sr: int) -> np.ndarray:
-        """Cast an audio chunk to 48 kHz stereo format."""
-        audio = self._resample_audio(audio, source_sr, 48000)
-
-        audio = np.asarray(audio, dtype=np.float32)
-
-        if audio.ndim == 1:
-            audio = np.column_stack((audio, audio))
-        elif audio.shape[1] == 1:
-            audio = np.repeat(audio, 2, axis=1)
-
-        return audio
-
-    @staticmethod
-    def _soften_onset(
-        audio: np.ndarray, sr: int, duration: float = 0.2, start_gain: float = 0.5
-    ) -> np.ndarray:
-        """Soften the leading audio. This makes any leading breath-like artifacts sound more natural."""
-        samples = int(sr * duration)
-        samples = min(samples, len(audio))
-
-        ramp = np.linspace(start_gain, 1.0, samples, dtype=np.float32)
-
-        audio[:samples, 0] *= ramp
-        audio[:samples, 1] *= ramp
-
-        return audio
 
     def _split_text(self, text: str) -> list[str]:
         """Split text into chunks."""
@@ -651,7 +735,6 @@ class Celune:
     def _generation_worker(self) -> None:
         """Generate audio tokens and send them to the audio pipeline."""
         while True:
-            self.status_callback("Generating")
             text = self.text_queue.get()
 
             if text is self._sentinel:
@@ -692,7 +775,7 @@ class Celune:
 
                         for (
                             audio_chunk,
-                            sr,
+                            _,
                             timing,
                         ) in self.model.generate_custom_voice_streaming(
                             text=chunk_text,
@@ -707,10 +790,23 @@ class Celune:
                             if hasattr(audio_chunk, "cpu"):
                                 audio_chunk = audio_chunk.cpu().numpy()
 
-                            audio_chunk = self._to_48khz(audio_chunk, sr)
+                            audio_chunk = _to_48khz(audio_chunk, 24000)
+                            if self.speed != 1.0 and self.can_use_rubberband:
+                                try:
+                                    audio_chunk = rb.time_stretch(
+                                        audio_chunk, 48000, self.speed
+                                    )
+                                except RuntimeError:
+                                    self.log(
+                                        "Rubber Band is unavailable, speed controls disabled.",
+                                        "warning",
+                                    )
+                                    self.can_use_rubberband = False
+                            if self.reverb.strength > 0.0:
+                                audio_chunk = self.reverb.process(audio_chunk, 48000)
 
                             if is_first_chunk:
-                                audio_chunk = self._soften_onset(audio_chunk, 48000)
+                                audio_chunk = _soften_onset(audio_chunk, 48000)
                                 is_first_chunk = False
 
                             if self._exit_requested:
@@ -721,6 +817,34 @@ class Celune:
 
                             chunk_dur = len(audio_chunk) / 48000
                             speech_len += chunk_dur
+
+                end_time = time.perf_counter()
+                generation_time = end_time - start_time
+
+                if self._exit_requested:
+                    self._release_pipeline()
+                    continue
+
+                self.log(
+                    f"[GEN] {format_number(speech_len, 2)} seconds, took {format_number(generation_time, 2)} seconds, "
+                    f"RTF: {format_number(speech_len / generation_time, 2)}"
+                )
+                self.status_callback("Speaking")
+                self.cur_state = "speaking"
+                self.log("[GEN] done")
+                self.queue_avail_callback()
+
+                if not self._exit_requested:
+                    if self.reverb.strength > 0.0:
+                        # push out a variable reverb tail
+                        tail = self.reverb.flush()
+                        if len(tail) > 0:
+                            self.audio_queue.put((tail, 48000, None))
+                            buffer.append(tail)
+
+                    self.reverb.reset()
+
+                    self.audio_queue.put(self._utterance_done)
 
                 if buffer:
                     wav = np.concatenate(buffer)
@@ -737,37 +861,22 @@ class Celune:
                             )
 
                     if os.path.exists("outputs"):
-                        sf.write(f"outputs/celune_speech_{timestamp}.wav", wav, 48000)
-
-                end_time = time.perf_counter()
-                generation_time = end_time - start_time
-
-                if self._exit_requested:
-                    self.cur_state = "idle"
-                    self.locked = False
-                    continue
-
-                self.log(
-                    f"[GEN] {speech_len:.2f} seconds, took {generation_time:.2f} seconds, "
-                    f"RTF: {speech_len / generation_time:.2f}"
-                )
-                self.status_callback("Speaking")
-                self.cur_state = "speaking"
-                self.log("[GEN] done")
-                self.queue_avail_callback()
-
-                if not self._exit_requested:
-                    self.audio_queue.put(self._utterance_done)
+                        sf.write(
+                            f"outputs/celune_speech_{timestamp}.wav",
+                            wav,
+                            48000,
+                            subtype="PCM_24",
+                        )
 
             except Exception as e:
                 if self._exit_requested:
-                    self.cur_state = "idle"
-                    self.locked = False
+                    self._release_pipeline()
                     continue
 
                 self.log(f"[GEN ERROR] {self.format_error(e, self.dev)}", "error")
                 self.cur_state = "error"
                 self.locked = False
+                self._playback_done.set()
                 self.error_callback("Celune could not generate the input")
 
     def _playback_worker(self) -> None:
@@ -781,8 +890,7 @@ class Celune:
 
                 self._close_stream(abort=True)
 
-                self.cur_state = "idle"
-                self.locked = False
+                self._release_pipeline()
                 self.idle_callback()
                 return
 
@@ -815,18 +923,35 @@ class Celune:
                     if self._stream is not None and not self._exit_requested:
                         self._stream.write(silence)
                 else:
-                    self.log("[STATE] idle")
-                    self.cur_state = "idle"
-                    self.locked = False
+                    self._release_pipeline()
                     self.idle_callback()
-                    self.log("Ready to speak.")
+
+                    if random.random() < 0.01:
+                        flavor_texts = [
+                            "I will speak.",
+                            "I'll answer.",
+                            "I'm always listening.",
+                            "I'm all ears.",
+                            "You shall hear."
+                        ]
+
+                        choice = random.choice(flavor_texts)
+
+                        if choice == getattr(self, "_last_flavor", None):
+                            choice = random.choice(flavor_texts)
+
+                        self._last_flavor = choice
+                        self.log(f"Just type. {choice}")
+                    else:
+                        self.log("Ready to speak.")
 
                     avail, total = tuple(
                         v / 1024**3 for v in torch.cuda.mem_get_info(0)
                     )
                     if avail <= 2:
                         self.log(
-                            f"Celune is running out of VRAM ({avail:.2f}/{total:.2f} GB available).",
+                            "Celune is running out of VRAM "
+                            f"({format_number(avail, 2)}/{format_number(total, 2)} GB available).",
                             "warning",
                         )
                         self.log(
@@ -834,7 +959,9 @@ class Celune:
                             "warning",
                         )
                     else:
-                        self.log(f"Available VRAM: {avail:.2f}/{total:.2f} GB")
+                        self.log(
+                            f"Available VRAM: {format_number(avail, 2)}/{format_number(total, 2)} GB"
+                        )
                 continue
 
             audio_chunk, sr, _ = item
@@ -864,6 +991,7 @@ class Celune:
                 continue
 
             try:
+                self.glow.glow(audio_chunk)  # Celune glows up your RGB while she speaks
                 self._stream.write(audio_chunk)
             except Exception as e:
                 self.log(f"[PLAY ERROR] {self.format_error(e, self.dev)}", "error")

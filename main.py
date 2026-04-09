@@ -20,7 +20,7 @@ try:
 except ModuleNotFoundError as package:
     print(f"Missing dependency: {package.name}")
     print("Celune requires this library to function.")
-    print("Try running 'pip install -U -r requirements.txt'.")
+    print("Try running 'uv sync'.")
     if DEV:
         raise
     print("Run Celune with CELUNE_DEV=1 to get full traceback.")

@@ -1,4 +1,4 @@
-# pylint: disable=W0718
+# pylint: disable=W0718, R0912
 """Celune's extension manager."""
 
 from __future__ import annotations
@@ -24,7 +24,9 @@ class CeluneExtensionManager:
 
     def register(self, extension_cls: Type[CeluneExtension]) -> CeluneExtension:
         """Register Celune extensions."""
-        if not inspect.isclass(extension_cls) or not issubclass(extension_cls, CeluneExtension):
+        if not inspect.isclass(extension_cls) or not issubclass(
+            extension_cls, CeluneExtension
+        ):
             raise InvalidExtensionError(
                 f"{extension_cls.__name__} must inherit from CeluneExtension"
             )
@@ -39,7 +41,8 @@ class CeluneExtensionManager:
             )
 
         self.extensions[name] = instance
-        self.context.log(f"[Core] Registered extension: {name}")
+        if self.context.dev:
+            self.context.log(f"[Core] Registered extension: {name}")
         return instance
 
     def autostart_all(self) -> None:
@@ -47,21 +50,24 @@ class CeluneExtensionManager:
         started = 0
         for name, ext in self.extensions.items():
             if ext.AUTOSTART:
-                self.context.log(f"[Core] Autostarting: {name}")
+                if self.context.dev:
+                    self.context.log(f"[Core] Autostarting: {name}")
 
                 def runner(e=ext, n=name):
                     try:
                         e.autostart()
-                    except Exception:
+                    except Exception as ex:
                         self.context.log(
-                            f"[Core] Autostart failed for {n}: {traceback.format_exc()}"
+                            f"[Core] Could not autostart {n}: {traceback.format_exc() if self.context.dev else ex}",
+                            "warning"
                         )
 
                 started += 1
                 threading.Thread(target=runner, daemon=True).start()
 
         if not started:
-            self.context.log("[Core] Nothing to autostart.", "warning")
+            if self.context.dev:
+                self.context.log("[Core] No extensions to autostart.")
 
     def invoke(self, name: str, *args: Any, **kwargs: Any) -> Any:
         """Manually invoke a Celune extension."""
@@ -95,7 +101,8 @@ class CeluneExtensionManager:
             self.context.log("Extensions will not be available.", "warning")
             return
 
-        self.context.log(f"[Core] Scanning extension folder: {extensions_dir}")
+        if self.context.dev:
+            self.context.log(f"[Core] Scanning extension folder: {extensions_dir}")
 
         for file_path in sorted(extensions_dir.glob("*.py")):
             if file_path.name.startswith("_"):
@@ -114,9 +121,10 @@ class CeluneExtensionManager:
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[module_name] = module
                 spec.loader.exec_module(module)
-            except Exception:
+            except Exception as e:
                 self.context.log(
-                    f"[Core] Failed to import '{file_path.name}': {traceback.format_exc()}"
+                    f"[Core] Failed to import '{file_path.name}': "
+                    f"{traceback.format_exc() if self.context.dev else e}", "warning"
                 )
                 continue
 
@@ -135,13 +143,13 @@ class CeluneExtensionManager:
                 try:
                     self.register(obj)
                     found_any = True
-                except Exception:
+                except Exception as e:
                     self.context.log(
                         f"[Core] Failed to register '{obj.__name__}' "
-                        f"from '{file_path.name}': {traceback.format_exc()}"
+                        f"from '{file_path.name}': {traceback.format_exc() if self.context.dev else e}", "warning"
                     )
 
             if not found_any:
                 self.context.log(
-                    f"[Core] No extension class found in: {file_path.name}"
+                    f"[Core] {file_path.name} is not a Celune extension, skipping", "warning"
                 )

@@ -1,14 +1,14 @@
 [project]
 name = "celune"
-version = "3.0.0"
+version = "3.1.0"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "torch==2.11.0+cu128",
+    "torchaudio==2.11.0+cu128",
 
-    # Celune sounds better with faster-qwen3-tts 0.2.4.
-    # While faster-qwen3-tts 0.2.5 should work relatively correctly with version 3.0.0, 
-    # we've pinned faster-qwen3-tts 0.2.4 for better voice stability.
-    "faster-qwen3-tts==0.2.4", 
+    # Celune sounds best with faster-qwen3-tts 0.2.4.
+    # You can use version 0.2.5 with Celune 3.0.0 or later, but the speech may end abruptly, depending on the input.
+    "faster-qwen3-tts==0.2.4",
     "sounddevice",
     "soundfile",
     "hf-xet",
@@ -22,6 +22,9 @@ dependencies = [
     "textual",
     "rich",
     "psutil",
+    "pedalboard",
+    "pyrubberband",
+    "openrgb-python",
 ]
 
 [tool.uv.sources]
