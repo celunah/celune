@@ -4,7 +4,7 @@
 torch==2.11.0+cu128
 torchaudio==2.11.0+cu128
 
-faster-qwen3-tts
+faster-qwen3-tts==0.2.4
 sounddevice
 soundfile
 hf-xet
@@ -20,3 +20,4 @@ rich
 psutil
 pedalboard
 pyrubberband
+openrgb-python

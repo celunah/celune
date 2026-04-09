@@ -23,7 +23,7 @@ from faster_qwen3_tts import FasterQwen3TTS
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.utils import logging as hf_logging
 from transformers.utils.logging import disable_progress_bar
-from huggingface_hub import hf_hub_download
+from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub.utils import disable_progress_bars
 
@@ -333,7 +333,7 @@ class Celune:
             if not available:
                 self.log(f"Downloading {model}...")
                 os.environ["HF_HUB_OFFLINE"] = "0"
-                hf_hub_download(model)
+                snapshot_download(repo_id=model)
             else:
                 self.log(f"{model} is already available.")
 
@@ -595,6 +595,7 @@ class Celune:
         """Release Celune's shared playback pipeline."""
         with self._say_lock:
             self.locked = False
+            self._playback_done.clear()
             self.cur_state = "idle"
             if self.dev:
                 self.log("[LOCK] released")
