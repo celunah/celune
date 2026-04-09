@@ -9,11 +9,18 @@ from pedalboard import Pedalboard, Reverb
 
 from celune.exceptions import AudioMismatchError, BadAudioError
 
+
 def _resample_audio(
     audio: np.ndarray, source_sr: int, target_sr: int = 48000
 ) -> np.ndarray:
     """Resample the given audio to the given sample rate."""
-    if source_sr <= 0 or target_sr <= 0:
+    if source_sr == 0:
+        raise BadAudioError("cannot resample from zero sample rate")
+    if target_sr == 0:
+        raise BadAudioError("cannot resample to zero sample rate")
+    if source_sr < 0:
+        raise BadAudioError("cannot resample from negative sample rate")
+    if target_sr < 0:
         raise BadAudioError("cannot resample to negative sample rate")
 
     audio = _make_stereo(audio)
@@ -26,9 +33,9 @@ def _resample_audio(
     down = source_sr // factor
 
     return np.ascontiguousarray(
-        resample_poly(audio, up=up, down=down, axis=0),
-        dtype=np.float32
+        resample_poly(audio, up=up, down=down, axis=0), dtype=np.float32
     )
+
 
 def _make_stereo(audio: np.ndarray) -> np.ndarray:
     """Convert mono input to stereo input."""
@@ -40,7 +47,9 @@ def _make_stereo(audio: np.ndarray) -> np.ndarray:
         if audio.shape[1] == 1:
             audio = np.repeat(audio, 2, axis=1)
         elif audio.shape[1] != 2:
-            raise AudioMismatchError(f"expected mono or stereo time-first audio, got {audio.shape}")
+            raise AudioMismatchError(
+                f"expected mono or stereo time-first audio, got {audio.shape}"
+            )
     else:
         raise AudioMismatchError(f"expected 1D or 2D audio, got {audio.shape}")
 
@@ -48,7 +57,7 @@ def _make_stereo(audio: np.ndarray) -> np.ndarray:
 
 
 def _to_48khz(audio: np.ndarray, source_sr: int) -> np.ndarray:
-    """Cast an audio chunk to 48 kHz stereo format."""
+    """Cast a speech chunk to 48 kHz stereo format."""
     return _resample_audio(audio, source_sr, 48000)
 
 
@@ -66,12 +75,15 @@ def _soften_onset(
 
     return audio
 
+
 class StreamingPedalboardReverb:
     """Stateful reverb based on `pedalboard`."""
+
     def __init__(self):
         self.strength = 0.0
         self._first_chunk = True
 
+        # default Celune reverb, with strength control
         self.reverb = Reverb(
             room_size=0.5,
             damping=0.75,
@@ -86,7 +98,7 @@ class StreamingPedalboardReverb:
         """Update reverb strength."""
         s = np.clip(self.strength, 0.0, 1.0)
 
-        wet = 0.16 * (s ** 2)
+        wet = 0.16 * (s**2)
 
         self.reverb.wet_level = wet
         self.reverb.dry_level = 1.0
@@ -109,10 +121,30 @@ class StreamingPedalboardReverb:
         self._first_chunk = False
         return np.ascontiguousarray(out.T.astype(np.float32, copy=False))
 
-    def flush(self, tail_seconds: float = 1.5, sr: int = 48000) -> np.ndarray:
+    def flush(
+        self, sr: int = 48000, threshold: float = 1e-4, max_secs: float = 3.0
+    ) -> np.ndarray:
         """Extract the remaining reverb by pushing silence."""
-        silence = np.zeros((int(tail_seconds * sr), 2), dtype=np.float32)
-        return self.process(silence, sr)
+        chunk_size = int(0.1 * sr)
+        max_chunks = int(max_secs / 0.1)
+
+        outputs = []
+
+        silence = np.zeros((chunk_size, 2), dtype=np.float32)
+
+        for _ in range(max_chunks):
+            out = self.process(silence, sr)
+
+            rms = np.sqrt(np.mean(out**2))
+
+            if rms < threshold:
+                break
+
+            outputs.append(out)
+
+        if outputs:
+            return np.concatenate(outputs, axis=0)
+        return np.zeros((0, 2), dtype=np.float32)
 
     def reset(self) -> None:
         """Reset reverb state."""

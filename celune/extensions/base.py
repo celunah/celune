@@ -75,6 +75,7 @@ class CeluneContext:
     name: str = "Celune"
     version: str = __version__
     shared: dict[str, Any] = field(default_factory=dict)
+    dev: bool = False
 
     def expose(self, key: str, value: Any) -> None:
         """Expose a shared object."""

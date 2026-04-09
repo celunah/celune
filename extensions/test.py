@@ -29,7 +29,9 @@ class TestExtension(CeluneExtension):
             "Speaking with non-default voice."
         )  # this will wait for Calm to load before speaking
         time.sleep(1)
-        self.play("extensions/NOT_TTS.wav")  # Celune can also play sound effects, regardless of sample rate
+        self.play(
+            "extensions/NOT_TTS.wav"
+        )  # Celune can also play sound effects, regardless of sample rate
 
     def invoke(self) -> None:
         """Feedback on invoke."""

@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "3.0.0"
+version = "3.1.0"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "torch==2.11.0+cu128",
@@ -24,6 +24,7 @@ dependencies = [
     "psutil",
     "pedalboard",
     "pyrubberband",
+    "openrgb-python",
 ]
 
 [tool.uv.sources]
