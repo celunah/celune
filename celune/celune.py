@@ -1,6 +1,6 @@
 # pylint: disable=R0902, R0911, R0912, R0913, R0914, R0915, R0917, W0718
 """Celune's backend layer."""
-
+import contextlib
 import gc
 import os
 import re
@@ -28,7 +28,7 @@ from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub.utils import disable_progress_bars
 
 from . import __version__, __codename__, __comment__
-from .dsp import _soften_onset, _to_48khz, StreamingPedalboardReverb, _resample_audio
+from .dsp import _soften_onset, _to_48khz, StreamingPedalboardReverb, _resample_audio, _split
 from .utils import format_number
 from .chroma import AudioRGBGlow
 from .exceptions import NotAvailableError, WarmupError
@@ -90,6 +90,7 @@ class Celune:
         self._queue_lock = threading.Lock()
         self._sentinel = object()  # dispatched upon exit
         self._utterance_done = object()  # dispatched upon generation end
+        self._utterance_force_stop = threading.Event()
 
         self._stream: Optional[sd.OutputStream] = None
         self._current_sr: Optional[int] = None
@@ -168,18 +169,14 @@ class Celune:
         if self._stream is None:
             return
 
-        try:
+        with contextlib.suppress(Exception):
             if abort:
                 self._stream.abort()
             else:
                 self._stream.stop()
-        except Exception:
-            pass
 
-        try:
+        with contextlib.suppress(Exception):
             self._stream.close()
-        except Exception:
-            pass
 
         self._stream = None
         self._current_sr = None
@@ -317,6 +314,20 @@ class Celune:
             self._release_pipeline()
             self.change_input_state_callback(locked=False)
 
+    def force_stop_speech(self) -> None:
+        """Forcefully stop Celune from speaking."""
+        self.log("Forcefully stopping speech.")
+
+        self._utterance_force_stop.set()
+
+        with self._queue_lock:
+            self._clear_queue(self.text_queue)
+            self._clear_queue(self.audio_queue)
+
+        self._release_pipeline()
+        self._playback_done.set()
+        self.idle_callback()
+
     def load(self) -> bool:
         """Load and initialize Celune."""
         disable_progress_bar()
@@ -424,13 +435,14 @@ class Celune:
             self.error_callback("CUDA device is not usable")
             return False
 
-        if self.glow and self.glow.client is None:
+        if self.glow and self.glow.connect_failed:
             self.log("OpenRGB is not available.", "warning")
 
         if self._warmup():
             self.loaded = True
             self._model_ready.set()
             self._release_pipeline()
+            self.glow.enter()  # Celune has entered your PC
         else:
             self.log("[WARMUP] Warmup failed.", "error")
             return False
@@ -662,7 +674,8 @@ class Celune:
             audio = _resample_audio(audio, sr)
 
             self.cur_state = "speaking"
-            self.audio_queue.put((audio, 48000, None))
+            for chunk in _split(audio, sr):  # ensure that longer SFX can be interrupted earlier
+                self.audio_queue.put((chunk, 48000, None))
             self.audio_queue.put(self._utterance_done)
 
             self.status_callback(f"Playing {sound_path}")
@@ -676,9 +689,6 @@ class Celune:
         """Shut off Celune and exit."""
         self.log("Exiting...")
         self._exit_requested = True
-
-        if self.glow is not None:
-            self.glow.stop(reset=True, wait=False)
 
         with self._queue_lock:
             self._clear_queue(self.text_queue)
@@ -694,6 +704,8 @@ class Celune:
             self._playback_thread.join(timeout=2)
 
         self._close_stream(abort=True)
+        self.glow.leave()
+        self.glow.finished.wait(timeout=5)
 
     @staticmethod
     def format_error(e: Exception, dev: bool) -> str:
@@ -771,6 +783,10 @@ class Celune:
                         if self._exit_requested:
                             break
 
+                        # break out of sentence chunk loop
+                        if self._utterance_force_stop.is_set():
+                            break
+
                         is_first_chunk = chunk_index == 0
 
                         for (
@@ -785,6 +801,10 @@ class Celune:
                             instruct=self.voice_prompt,
                         ):
                             if self._exit_requested:
+                                break
+
+                            # break out of main chunk loop
+                            if self._utterance_force_stop.is_set():
                                 break
 
                             if hasattr(audio_chunk, "cpu"):
@@ -823,6 +843,15 @@ class Celune:
 
                 if self._exit_requested:
                     self._release_pipeline()
+                    continue
+
+                if self._utterance_force_stop.is_set():
+                    self._utterance_force_stop.clear()
+                    self.reverb.reset()
+                    self._playback_done.set()
+                    self._release_pipeline()
+                    self.idle_callback()
+                    self.locked = False
                     continue
 
                 self.log(
@@ -901,6 +930,17 @@ class Celune:
                     time.sleep(0.01)
 
                 if self._exit_requested:
+                    continue
+
+                if self._utterance_force_stop.is_set():
+                    self._utterance_force_stop.clear()
+                    self._close_stream(abort=True)
+                    self._release_pipeline()
+                    self.idle_callback()
+                    self._playback_done.set()
+                    self.audio_queue.put(self._utterance_done)
+                    started = False
+
                     continue
 
             item = self.audio_queue.get()

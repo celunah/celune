@@ -2,6 +2,7 @@
 """Celune audio processing functions."""
 
 import math
+from typing import Iterable
 
 import numpy as np
 from scipy.signal import resample_poly
@@ -74,6 +75,14 @@ def _soften_onset(
     audio[:samples, 1] *= ramp
 
     return audio
+
+def _split(audio: np.ndarray, sr: int, duration: float = 1.92) -> Iterable[np.ndarray]:
+    """Chop up input audio into chunks."""
+    frames = max(1, int(sr * duration))
+
+    for i in range(0, len(audio), frames):
+        yield audio[i:i+frames]
+
 
 
 class StreamingPedalboardReverb:

@@ -3,6 +3,7 @@
 
 import time
 import threading
+import contextlib
 
 import numpy as np
 from openrgb import OpenRGBClient
@@ -18,6 +19,7 @@ class AudioRGBGlow:
         self.host = host
         self.port = port
         self.connect_failed = False
+        self.finished = threading.Event()
         self.client = None
         self.devices = []
 
@@ -28,6 +30,8 @@ class AudioRGBGlow:
         self.fade_in_rate = 0.03
         self.fade_out_rate = 0.02
         self.fps = 60
+
+        self.transition_rate = 0.02
 
         self.idle_brightness = 0.05
         self.max_brightness = 1.0
@@ -40,11 +44,13 @@ class AudioRGBGlow:
         self._stop_event = threading.Event()
         self._worker = None
 
-        self._current_brightness = self.idle_brightness
+        self._current_brightness = 0.0
         self._target_brightness = self.idle_brightness
         self._last_speech_time = 0.0
 
-    def connect(self):
+        self._state = "none"
+
+    def connect(self) -> bool:
         """Connect to the OpenRGB backend and initialize devices."""
         if self.client is not None:
             return True
@@ -56,18 +62,16 @@ class AudioRGBGlow:
             self.client = OpenRGBClient(address=self.host, port=self.port)
             self.devices = list(self.client.ee_devices)
             for device in self.devices:
-                try:
+                with contextlib.suppress(Exception):
                     device.set_custom_mode()
-                except Exception:
-                    pass
             return True
-        except Exception:
+        except TimeoutError:
             self.client = None
             self.connect_failed = True
             self.devices = []
             return False
 
-    def start(self):
+    def start(self) -> bool:
         """Start the glow effect worker thread."""
         if self._worker is not None and self._worker.is_alive():
             return True
@@ -80,8 +84,8 @@ class AudioRGBGlow:
         self._worker.start()
         return True
 
-    def stop(self, reset=True, wait=False):
-        """Stop the glow effect."""
+    def stop(self, reset=True, wait=False) -> None:
+        """Hard-stop the glow effect."""
         self._stop_event.set()
         worker = self._worker
         if wait and worker is not None:
@@ -90,7 +94,27 @@ class AudioRGBGlow:
         if reset:
             self._set_all_devices((0, 0, 0))
 
-    def glow(self, audio):
+    def enter(self) -> None:
+        """Fade in from black to idle presence."""
+        if not self.start():
+            return
+
+        with self._lock:
+            self._state = "entering"
+            self._current_brightness = 0.0
+            self._target_brightness = self.idle_brightness
+
+    def leave(self) -> None:
+        """Fade out from current brightness to black and stop."""
+        if self._worker is None or not self._worker.is_alive():
+            return
+
+        with self._lock:
+            self._state = "leaving"
+            self._target_brightness = 0.0
+            self.finished.clear()
+
+    def glow(self, audio) -> None:
         """Update brightness target based on incoming audio chunk."""
         if not self.start():
             return
@@ -100,10 +124,11 @@ class AudioRGBGlow:
 
         self._level_history[:-1] = self._level_history[1:]
         self._level_history[-1] = level
-        smoothed_level = np.mean(self._level_history)
+        smoothed_level = float(np.mean(self._level_history))
 
         with self._lock:
             if smoothed_level > self.speech_threshold:
+                self._state = "normal"
                 self._target_brightness = self.max_brightness
                 self._last_speech_time = now
 
@@ -144,37 +169,63 @@ class AudioRGBGlow:
         level = level ** (1.0 / self.gamma)
         return float(np.clip(level, 0.0, 1.0))
 
-    def _set_all_devices(self, rgb):
+    def _set_all_devices(self, rgb) -> None:
         """Apply color to all registered OpenRGB devices."""
         rgb = np.clip(rgb, 0, 255).astype(int)
         color = RGBColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))
         for device in self.devices:
-            try:
+            with contextlib.suppress(Exception):
                 device.set_color(color, fast=self.fast)
-            except Exception:
-                pass
 
-    def _run(self):
-        """Worker loop: interpolate brightness and push to hardware."""
+    def _run(self) -> None:
+        """Interpolate brightness and push to hardware."""
         frame_sleep = 1.0 / self.fps
 
         while not self._stop_event.is_set():
             now = time.monotonic()
 
             with self._lock:
+                state = self._state
                 target = self._target_brightness
                 last_speech = self._last_speech_time
 
-            if now - last_speech > self.hold_duration:
+            if state == "entering":
                 target = self.idle_brightness
+                alpha = self.transition_rate
+                self._current_brightness += (target - self._current_brightness) * alpha
 
-            alpha = self.fade_in_rate if target > self._current_brightness else self.fade_out_rate
-            self._current_brightness += (target - self._current_brightness) * alpha
-            self._current_brightness = float(np.clip(
-                self._current_brightness,
-                self.idle_brightness,
-                self.max_brightness,
-            ))
+                if self._current_brightness >= self.idle_brightness - 0.001:
+                    self._current_brightness = self.idle_brightness
+                    with self._lock:
+                        if self._state == "entering":
+                            self._state = "normal"
+
+            elif state == "leaving":
+                target = 0.0
+                alpha = self.transition_rate
+                self._current_brightness += (target - self._current_brightness) * alpha
+
+                if self._current_brightness <= 0.001:
+                    self._current_brightness = 0.0
+                    self._set_all_devices((0, 0, 0))
+                    self._stop_event.set()
+                    self.finished.clear()
+                    break
+
+            elif state == "none":
+                self._set_all_devices((0, 0, 0))
+
+            else:
+                if now - last_speech > self.hold_duration:
+                    target = self.idle_brightness
+
+                alpha = self.fade_in_rate if target > self._current_brightness else self.fade_out_rate
+                self._current_brightness += (target - self._current_brightness) * alpha
+                self._current_brightness = float(np.clip(
+                    self._current_brightness,
+                    self.idle_brightness,
+                    self.max_brightness,
+                ))
 
             current_rgb = self.color * self._current_brightness
             self._set_all_devices(current_rgb)
