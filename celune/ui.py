@@ -2,8 +2,8 @@
 """Celune's frontend layer."""
 
 import sys
-import time
 import shlex
+import signal
 import threading
 import itertools
 from typing import Optional, Callable
@@ -197,6 +197,7 @@ class CeluneUI(App):
         sys.stderr = self._log_stderr
 
         self.call_after_refresh(self.start_background_init)
+        signal.signal(signal.SIGINT, self.signal_handler)
 
     def start_background_init(self) -> None:
         """Run Celune's initialization function."""
@@ -468,10 +469,19 @@ class CeluneUI(App):
                 )
                 return
             return
+        if command == "stop":
+            if not self.celune:
+                self.safe_log("Celune is not initialized.", "warning")
+                return
+
+            if not self.celune.text_queue and not self.celune.audio_queue:
+                self.safe_log("Nothing to stop.")
+                return
+
+            self.celune.force_stop_speech()
+            return
         if command == "exit":
-            self.safe_log("Exiting Celune...")
-            self.celune.close()
-            self.exit()
+            self._graceful_exit()
             return
 
         self.safe_log(
@@ -618,6 +628,15 @@ class CeluneUI(App):
                 if text in ".!?":
                     return
                 self.consume_buffer(len(text))
+
+    def _graceful_exit(self) -> None:
+        """Exit from Celune gracefully."""
+        self.exit()
+        self.celune.close()
+
+    def signal_handler(self, sig, frame) -> None:
+        """Trap CTRL+C and exit Celune if pressed."""
+        self.call_from_thread(self.call_later, self._graceful_exit)
 
 
 class LogRedirect:
