@@ -59,7 +59,7 @@ class CeluneExtensionManager:
                     except Exception as ex:
                         self.context.log(
                             f"[Core] Could not autostart {n}: {traceback.format_exc() if self.context.dev else ex}",
-                            "warning"
+                            "warning",
                         )
 
                 started += 1
@@ -124,7 +124,8 @@ class CeluneExtensionManager:
             except Exception as e:
                 self.context.log(
                     f"[Core] Failed to import '{file_path.name}': "
-                    f"{traceback.format_exc() if self.context.dev else e}", "warning"
+                    f"{traceback.format_exc() if self.context.dev else e}",
+                    "warning",
                 )
                 continue
 
@@ -146,10 +147,12 @@ class CeluneExtensionManager:
                 except Exception as e:
                     self.context.log(
                         f"[Core] Failed to register '{obj.__name__}' "
-                        f"from '{file_path.name}': {traceback.format_exc() if self.context.dev else e}", "warning"
+                        f"from '{file_path.name}': {traceback.format_exc() if self.context.dev else e}",
+                        "warning",
                     )
 
             if not found_any:
                 self.context.log(
-                    f"[Core] {file_path.name} is not a Celune extension, skipping", "warning"
+                    f"[Core] {file_path.name} is not a Celune extension, skipping",
+                    "warning",
                 )

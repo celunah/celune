@@ -14,7 +14,9 @@ from .utils import to_rgb
 
 class AudioRGBGlow:
     def __init__(self, color, host="127.0.0.1", port=6742):
-        self.color = np.array(self._fix_color_rendering(to_rgb(color)), dtype=np.float32)
+        self.color = np.array(
+            self._fix_color_rendering(to_rgb(color)), dtype=np.float32
+        )
 
         self.host = host
         self.port = port
@@ -219,13 +221,19 @@ class AudioRGBGlow:
                 if now - last_speech > self.hold_duration:
                     target = self.idle_brightness
 
-                alpha = self.fade_in_rate if target > self._current_brightness else self.fade_out_rate
+                alpha = (
+                    self.fade_in_rate
+                    if target > self._current_brightness
+                    else self.fade_out_rate
+                )
                 self._current_brightness += (target - self._current_brightness) * alpha
-                self._current_brightness = float(np.clip(
-                    self._current_brightness,
-                    self.idle_brightness,
-                    self.max_brightness,
-                ))
+                self._current_brightness = float(
+                    np.clip(
+                        self._current_brightness,
+                        self.idle_brightness,
+                        self.max_brightness,
+                    )
+                )
 
             current_rgb = self.color * self._current_brightness
             self._set_all_devices(current_rgb)

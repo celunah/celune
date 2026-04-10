@@ -76,13 +76,13 @@ def _soften_onset(
 
     return audio
 
+
 def _split(audio: np.ndarray, sr: int, duration: float = 1.92) -> Iterable[np.ndarray]:
     """Chop up input audio into chunks."""
     frames = max(1, int(sr * duration))
 
     for i in range(0, len(audio), frames):
-        yield audio[i:i+frames]
-
+        yield audio[i : i + frames]
 
 
 class StreamingPedalboardReverb:
