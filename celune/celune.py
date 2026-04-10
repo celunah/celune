@@ -1,5 +1,6 @@
 # pylint: disable=R0902, R0911, R0912, R0913, R0914, R0915, R0917, W0718
 """Celune's backend layer."""
+
 import contextlib
 import gc
 import os
@@ -28,7 +29,13 @@ from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub.utils import disable_progress_bars
 
 from . import __version__, __codename__, __comment__
-from .dsp import _soften_onset, _to_48khz, StreamingPedalboardReverb, _resample_audio, _split
+from .dsp import (
+    _soften_onset,
+    _to_48khz,
+    StreamingPedalboardReverb,
+    _resample_audio,
+    _split,
+)
 from .utils import format_number
 from .chroma import AudioRGBGlow
 from .exceptions import NotAvailableError, WarmupError
@@ -674,7 +681,9 @@ class Celune:
             audio = _resample_audio(audio, sr)
 
             self.cur_state = "speaking"
-            for chunk in _split(audio, sr):  # ensure that longer SFX can be interrupted earlier
+            for chunk in _split(
+                audio, sr
+            ):  # ensure that longer SFX can be interrupted earlier
                 self.audio_queue.put((chunk, 48000, None))
             self.audio_queue.put(self._utterance_done)
 
@@ -972,7 +981,7 @@ class Celune:
                             "I'll answer.",
                             "I'm always listening.",
                             "I'm all ears.",
-                            "You shall hear."
+                            "You shall hear.",
                         ]
 
                         choice = random.choice(flavor_texts)
