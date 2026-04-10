@@ -2,9 +2,9 @@
 This document describes how Celune's voice identities were created, selected, and refined.
 
 # Who is Celune
-Celune by nature appears to be a young female of an unspecified age, who speaks with a low contralto tone.
+Celune by nature appears to be a young female of approximately 28 years of age, who speaks with a low contralto tone.
 
-Her average pitch range during speech is ~170 Hz. This is reflected across all three of her tones.
+Her average pitch range during speech is ~170 Hz. This is reflected across all four of her tones, however her Upbeat tone may modulate more than the rest, contributing to a higher perceived pitch.
 
 # Pronunciation glossary
 Celune can be pronounced in one of two ways:
