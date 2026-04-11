@@ -167,15 +167,19 @@ wheels = [
 
 [[package]]
 name = "celune"
-version = "3.0.0"
+version = "3.1.1"
 source = { virtual = "." }
 dependencies = [
-    { name = "accelerate" },
     { name = "bitsandbytes" },
     { name = "faster-qwen3-tts" },
+    { name = "flash-attn", version = "2.8.3+cu128torch2.11", source = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.8.3+cu128torch2.11-cp312-cp312-linux_x86_64.whl" }, marker = "python_full_version < '3.13' and sys_platform == 'linux'" },
+    { name = "flash-attn", version = "2.8.3+cu128torch2.11", source = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.8.3+cu128torch2.11-cp313-cp313-linux_x86_64.whl" }, marker = "python_full_version >= '3.13' and sys_platform == 'linux'" },
+    { name = "flash-attn", version = "2.8.3+cu128torch2.11", source = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.6/flash_attn-2.8.3+cu128torch2.11-cp312-cp312-win_amd64.whl" }, marker = "python_full_version < '3.13' and sys_platform == 'win32'" },
+    { name = "flash-attn", version = "2.8.3+cu128torch2.11", source = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.6/flash_attn-2.8.3+cu128torch2.11-cp313-cp313-win_amd64.whl" }, marker = "python_full_version >= '3.13' and sys_platform == 'win32'" },
     { name = "hf-xet" },
     { name = "huggingface-hub" },
     { name = "numpy" },
+    { name = "openrgb-python" },
     { name = "pedalboard" },
     { name = "psutil" },
     { name = "pyrubberband" },
@@ -191,12 +195,16 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "accelerate" },
     { name = "bitsandbytes" },
     { name = "faster-qwen3-tts", specifier = "==0.2.4" },
+    { name = "flash-attn", marker = "python_full_version == '3.12.*' and sys_platform == 'linux'", url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.8.3+cu128torch2.11-cp312-cp312-linux_x86_64.whl" },
+    { name = "flash-attn", marker = "python_full_version == '3.13.*' and sys_platform == 'linux'", url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.8.3+cu128torch2.11-cp313-cp313-linux_x86_64.whl" },
+    { name = "flash-attn", marker = "python_full_version == '3.12.*' and sys_platform == 'win32'", url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.6/flash_attn-2.8.3+cu128torch2.11-cp312-cp312-win_amd64.whl" },
+    { name = "flash-attn", marker = "python_full_version == '3.13.*' and sys_platform == 'win32'", url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.6/flash_attn-2.8.3+cu128torch2.11-cp313-cp313-win_amd64.whl" },
     { name = "hf-xet" },
     { name = "huggingface-hub" },
     { name = "numpy" },
+    { name = "openrgb-python" },
     { name = "pedalboard" },
     { name = "psutil" },
     { name = "pyrubberband" },
@@ -449,6 +457,90 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/b8/00651a0f559862f3bb7d6f7477b192afe3f583cc5e26403b44e59a55ab34/filelock-3.25.2.tar.gz", hash = "sha256:b64ece2b38f4ca29dd3e810287aa8c48182bbecd1ae6e9ae126c9b35f1382694", size = 40480, upload-time = "2026-03-11T20:45:38.487Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a4/a5/842ae8f0c08b61d6484b52f99a03510a3a72d23141942d216ebe81fefbce/filelock-3.25.2-py3-none-any.whl", hash = "sha256:ca8afb0da15f229774c9ad1b455ed96e85a81373065fb10446672f64444ddf70", size = 26759, upload-time = "2026-03-11T20:45:37.437Z" },
+]
+
+[[package]]
+name = "flash-attn"
+version = "2.8.3+cu128torch2.11"
+source = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.8.3+cu128torch2.11-cp312-cp312-linux_x86_64.whl" }
+resolution-markers = [
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+dependencies = [
+    { name = "einops", marker = "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "torch", marker = "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'" },
+]
+wheels = [
+    { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.8.3+cu128torch2.11-cp312-cp312-linux_x86_64.whl", hash = "sha256:a16162f436286cc03ebbfb174c0853343ed98ae13c37abf1042947668ec40549" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "einops" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "flash-attn"
+version = "2.8.3+cu128torch2.11"
+source = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.8.3+cu128torch2.11-cp313-cp313-linux_x86_64.whl" }
+resolution-markers = [
+    "python_full_version >= '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+dependencies = [
+    { name = "einops", marker = "python_full_version >= '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "torch", marker = "python_full_version >= '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'" },
+]
+wheels = [
+    { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.8.3+cu128torch2.11-cp313-cp313-linux_x86_64.whl", hash = "sha256:77187e6624e7027869812aff3a989eae69a95e59d0098a45bf867782779f798c" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "einops" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "flash-attn"
+version = "2.8.3+cu128torch2.11"
+source = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.6/flash_attn-2.8.3+cu128torch2.11-cp312-cp312-win_amd64.whl" }
+resolution-markers = [
+    "python_full_version < '3.13' and sys_platform == 'win32'",
+]
+dependencies = [
+    { name = "einops", marker = "python_full_version < '3.13' and sys_platform == 'win32'" },
+    { name = "torch", marker = "python_full_version < '3.13' and sys_platform == 'win32'" },
+]
+wheels = [
+    { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.6/flash_attn-2.8.3+cu128torch2.11-cp312-cp312-win_amd64.whl", hash = "sha256:2a3268e5e50dbf332f21c155a74d1707bd3b7c2e435a460ff9c05aa337cf8f7e" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "einops" },
+    { name = "torch" },
+]
+
+[[package]]
+name = "flash-attn"
+version = "2.8.3+cu128torch2.11"
+source = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.6/flash_attn-2.8.3+cu128torch2.11-cp313-cp313-win_amd64.whl" }
+resolution-markers = [
+    "python_full_version >= '3.13' and sys_platform == 'win32'",
+]
+dependencies = [
+    { name = "einops", marker = "python_full_version >= '3.13' and sys_platform == 'win32'" },
+    { name = "torch", marker = "python_full_version >= '3.13' and sys_platform == 'win32'" },
+]
+wheels = [
+    { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.6/flash_attn-2.8.3+cu128torch2.11-cp313-cp313-win_amd64.whl", hash = "sha256:b30d326aa91554e38af049cbafb164a1ebd9e3d42ed471ed4c089a63787d1351" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "einops" },
+    { name = "torch" },
 ]
 
 [[package]]
@@ -1079,6 +1171,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ad/04/ae2479e9841b64bd2eb44f8a64756c62593f896514369a11243b1b86ca5c/onnxruntime-1.24.4-cp313-cp313-win_arm64.whl", hash = "sha256:71d6a5c1821d6e8586a024000ece458db8f2fc0ecd050435d45794827ce81e19", size = 12269852, upload-time = "2026-03-17T22:05:33.353Z" },
     { url = "https://files.pythonhosted.org/packages/b4/af/a479a536c4398ffaf49fbbe755f45d5b8726bdb4335ab31b537f3d7149b8/onnxruntime-1.24.4-cp313-cp313t-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:1700f559c8086d06b2a4d5de51e62cb4ff5e2631822f71a36db8c72383db71ee", size = 15176861, upload-time = "2026-03-17T22:03:40.143Z" },
     { url = "https://files.pythonhosted.org/packages/be/13/19f5da70c346a76037da2c2851ecbf1266e61d7f0dcdb887c667210d4608/onnxruntime-1.24.4-cp313-cp313t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:4c74e268dc808e61e63784d43f9ddcdaf50a776c2819e8bd1d1b11ef64bf7e36", size = 17247454, upload-time = "2026-03-17T22:04:46.643Z" },
+]
+
+[[package]]
+name = "openrgb-python"
+version = "0.3.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/42/f9/c6c300903da4f2da84728218e93d805c811435a88170d37d8bc6cf39fb93/openrgb-python-0.3.6.tar.gz", hash = "sha256:f3a8f2f21a0e810a1c74279aa6369114ef4f2b1fd35bd91c375e9429258d569b", size = 15611, upload-time = "2025-10-16T00:52:22.663Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f6/50/ebb00b4dae970cf1c45c4ee96e48260daf2b368636bff88fb8045824e7e3/openrgb_python-0.3.6-py3-none-any.whl", hash = "sha256:3f2679a7464155f9bff244613edf8d459e3509e0577ba9b5c36c806cb2576d9c", size = 29864, upload-time = "2025-10-16T00:52:21.62Z" },
 ]
 
 [[package]]
