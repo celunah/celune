@@ -6,6 +6,7 @@ import shlex
 import signal
 import threading
 import itertools
+import time
 from typing import Optional, Callable
 
 from textual import work, events
@@ -16,6 +17,7 @@ from textual.widgets import Label, RichLog, TextArea, Button
 from rich.text import Text
 
 from .celune import Celune
+from .constants import VOICE_MODELS
 from .utils import format_number
 from .exceptions import InvalidExtensionError
 
@@ -147,7 +149,7 @@ class CeluneUI(App):
 
         self.celune: Optional[Celune] = None
         self.celune_ready = False
-        self.celune_styles = ["balanced", "calm", "bold", "upbeat"]
+        self.celune_styles = list(VOICE_MODELS)
         self.celune_voices = None
 
         self.style_index = 0
@@ -181,7 +183,7 @@ class CeluneUI(App):
     def on_mount(self) -> None:
         """Prepare Celune."""
         self.register_theme(THEME)
-        self.theme = "celune"
+        self.theme = "celune"  # pylint: disable=W0201
 
         self.logs = self.query_one("#logs", RichLog)
         self.input_box = self.query_one("#input", TextArea)
@@ -207,7 +209,7 @@ class CeluneUI(App):
     def load_tts(self) -> None:
         """Load Celune."""
         try:
-            tts_voices = ["balanced", "calm", "bold", "upbeat"]
+            tts_voices = list(VOICE_MODELS)
 
             self.celune.set_voices(tts_voices)
             self.celune_voices = itertools.cycle(tts_voices)
@@ -465,7 +467,8 @@ class CeluneUI(App):
                 self.celune.play(args[0])
             except Exception as e:
                 self.safe_log(
-                    f"Cannot play this file: {self.celune.format_error(e, self.celune.dev)}", "error"
+                    f"Cannot play this file: {self.celune.format_error(e, self.celune.dev)}",
+                    "error",
                 )
                 return
             return
@@ -474,11 +477,10 @@ class CeluneUI(App):
                 self.safe_log("Celune is not initialized.", "warning")
                 return
 
-            if not self.celune.text_queue and not self.celune.audio_queue:
+            if not self.celune.force_stop_speech():
                 self.safe_log("Nothing to stop.")
                 return
 
-            self.celune.force_stop_speech()
             return
         if command == "exit":
             self._graceful_exit()
@@ -634,9 +636,53 @@ class CeluneUI(App):
         self.exit()
         self.celune.close()
 
-    def signal_handler(self, sig, frame) -> None:
+    def signal_handler(self, _sig, _frame) -> None:
         """Trap CTRL+C and exit Celune if pressed."""
         self.call_from_thread(self.call_later, self._graceful_exit)
+
+
+class CeluneHeadlessUI:
+    """Celune headless interface methods."""
+
+    def __init__(self):
+        self.colors = {
+            "black": "\x1b[0;30m",
+            "red": "\x1b[0;31m",
+            "green": "\x1b[0;32m",
+            "yellow": "\x1b[0;33m",
+            "blue": "\x1b[0;34m",
+            "magenta": "\x1b[0;35m",
+            "cyan": "\x1b[0;36m",
+            "white": "\x1b[0;37m",
+        }
+        self.celune: Optional[Celune] = None
+
+    def severity_color(self, severity: str) -> str:
+        """Get color from VGA text mode palette."""
+        if severity == "warning":
+            return self.colors["yellow"]
+        if severity == "error":
+            return self.colors["red"]
+        return self.colors["white"]
+
+    def headless_log(self, msg: str, severity: str = "info") -> None:
+        """Log to headless interface."""
+        print(f"{self.severity_color(severity)}{msg}", flush=True)
+
+    def headless_error(self, error: str) -> None:
+        """Log an error to headless interface."""
+        print(f"{self.severity_color('error')}[ERROR] {error}", flush=True)
+
+    def run(self) -> None:
+        """Start the headless interface."""
+        signal.signal(signal.SIGINT, self.signal_handler)
+        while True:
+            time.sleep(1)
+
+    def signal_handler(self, _sig, _frame) -> None:
+        """Exit Celune in headless mode on CTRL+C."""
+        self.celune.close()
+        sys.exit(0)
 
 
 class LogRedirect:

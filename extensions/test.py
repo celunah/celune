@@ -32,7 +32,9 @@ class TestExtension(CeluneExtension):
         )  # this will wait for Calm to load before speaking
         time.sleep(1)
         sfx_path = Path(__file__).resolve().with_name("NOT_TTS.wav")
-        self.play(str(sfx_path))  # Celune can also play sound effects, regardless of sample rate
+        self.play(
+            str(sfx_path)
+        )  # Celune can also play sound effects, regardless of sample rate
 
     def invoke(self) -> None:
         """Feedback on invoke."""

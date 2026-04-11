@@ -39,7 +39,7 @@ def format_number(num: float, precision: int = 0) -> str:
 def to_rgb(color: str) -> tuple[int, ...]:
     """Convert hex code to RGB tuple."""
     color = color.strip()
-    
+
     if color.startswith("#"):
         color = color[1:]
     elif color.lower().startswith("0x"):
