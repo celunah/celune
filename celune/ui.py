@@ -635,7 +635,10 @@ class CeluneUI(App):
 
     def signal_handler(self, _sig, _frame) -> None:
         """Trap CTRL+C and exit Celune if pressed."""
-        self.call_from_thread(self.call_later, self._graceful_exit)
+        if threading.current_thread() is threading.main_thread():
+            self._graceful_exit()
+        else:
+            self.call_from_thread(self.call_later, self._graceful_exit)
 
 
 class CeluneHeadlessUI:
