@@ -85,7 +85,6 @@ def main() -> None:
                 dev=DEV,
             )
             celune.setup_extensions()
-            celune.extension_manager.autostart_all()
             ui.celune = celune
 
             if not celune.load():
