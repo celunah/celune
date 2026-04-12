@@ -1,12 +1,13 @@
 # pylint: disable=C0114, R0912, W0718, R0911, R0902, R0915
 """Celune's frontend layer."""
 
+import os
 import sys
+import time
 import shlex
 import signal
 import threading
 import itertools
-import time
 from typing import Optional, Callable
 
 from textual import work, events
@@ -221,10 +222,6 @@ class CeluneUI(App):
                 self.input_box.placeholder = (
                     "Enter text to speak here or run /help for commands"
                 )
-
-                if self.celune.extension_manager is not None:
-                    self.safe_log("[EXT] Running extension autostart")
-                    self.celune.extension_manager.autostart_all()
 
                 self.safe_log("Ready to speak.")
 
@@ -645,6 +642,7 @@ class CeluneHeadlessUI:
     """Celune headless interface methods."""
 
     def __init__(self):
+        # not using Celune palette for compatibility purposes
         self.colors = {
             "black": "\x1b[0;30m",
             "red": "\x1b[0;31m",
@@ -657,8 +655,14 @@ class CeluneHeadlessUI:
         }
         self.celune: Optional[Celune] = None
 
+        # for Celune terminals not supporting colored text
+        self.no_color = os.getenv("CELUNE_HEADLESS_NOCOLOR") in {"1", "true", "on"} or not sys.stdout.isatty()
+        self.reset: str = "\x1b[0m" if not self.no_color else ""
+
     def severity_color(self, severity: str) -> str:
         """Get color from VGA text mode palette."""
+        if self.no_color:
+            return ""
         if severity == "warning":
             return self.colors["yellow"]
         if severity == "error":
@@ -667,11 +671,16 @@ class CeluneHeadlessUI:
 
     def headless_log(self, msg: str, severity: str = "info") -> None:
         """Log to headless interface."""
-        print(f"{self.severity_color(severity)}{msg}", flush=True)
+        prefix = ""
+        if severity == "warning":
+            prefix = "[WARN] "
+        elif severity == "error":
+            prefix = "[ERROR] "
+        print(f"{prefix}{self.severity_color(severity)}{msg}{self.reset}", flush=True)
 
     def headless_error(self, error: str) -> None:
         """Log an error to headless interface."""
-        print(f"{self.severity_color('error')}[ERROR] {error}", flush=True)
+        self.headless_log(error, "error")
 
     def run(self) -> None:
         """Start the headless interface."""
@@ -681,7 +690,8 @@ class CeluneHeadlessUI:
 
     def signal_handler(self, _sig, _frame) -> None:
         """Exit Celune in headless mode on CTRL+C."""
-        self.celune.close()
+        if self.celune is not None:
+            self.celune.close()
         sys.exit(0)
 
 

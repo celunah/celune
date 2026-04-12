@@ -1,19 +1,19 @@
 # pylint: disable=W0212, W0718, R0912, R0914, R0915
 """Speech pipeline helpers for Celune."""
 
-import contextlib
 import os
-import queue
-import random
 import re
 import time
+import queue
+import random
+import contextlib
 from typing import TYPE_CHECKING
 
-import numpy as np
-import pyrubberband as rb
-import sounddevice as sd
-import soundfile as sf
 import torch
+import numpy as np
+import soundfile as sf
+import sounddevice as sd
+import pyrubberband as rb
 
 from .dsp import _resample_audio, _soften_onset, _split, _to_48khz
 from .exceptions import NotAvailableError

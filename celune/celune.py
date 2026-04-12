@@ -275,14 +275,15 @@ class Celune:
         disable_progress_bars()
         hf_logging.set_verbosity_error()
 
+        log_runtime_banner(self.log)
         preload_models(ALL_VOICE_MODEL_IDS, self.log)
 
         self.log("All Celune voices are available.")
         try:
             self.model = load_tts_model(DEFAULT_MODEL_ID, self.log)
         except Exception:
-            self.log("Celune has no default model. Please restart Celune.", "error")
-            self.error_callback("Default model missing")
+            self.log("Celune could not load the default model.", "error")
+            self.error_callback("Default model failed to load")
             return False
 
         self._generation_thread = threading.Thread(
@@ -295,7 +296,6 @@ class Celune:
         self._generation_thread.start()
         self._playback_thread.start()
 
-        log_runtime_banner(self.log)
         if not validate_runtime(
             log=self.log,
             error=self.error_callback,
@@ -311,6 +311,7 @@ class Celune:
             self._model_ready.set()
             self._release_pipeline()
             self.glow.enter()  # Celune has entered your PC
+            self.extension_manager.autostart_all()  # why did this come to exactly line 314? pi confirmed?
         else:
             self.log("[WARMUP] Warmup failed.", "error")
             return False
