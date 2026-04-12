@@ -49,7 +49,10 @@ class CeluneExtensionManager:
     def autostart_all(self) -> None:
         """Autostart all available Celune extensions."""
         if self.autostarted:
-            self.context.log(f"[Core] Cannot autostart Celune extensions more than one time.", "warning")
+            self.context.log(
+                f"[Core] Cannot autostart Celune extensions more than one time.",
+                "warning",
+            )
             return
 
         started = 0
