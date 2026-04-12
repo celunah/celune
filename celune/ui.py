@@ -659,7 +659,10 @@ class CeluneHeadlessUI:
         self.celune: Optional[Celune] = None
 
         # for Celune terminals not supporting colored text
-        self.no_color = os.getenv("CELUNE_HEADLESS_NOCOLOR") in {"1", "true", "on"} or not sys.stdout.isatty()
+        self.no_color = (
+            os.getenv("CELUNE_HEADLESS_NOCOLOR") in {"1", "true", "on"}
+            or not sys.stdout.isatty()
+        )
         self.reset: str = "\x1b[0m" if not self.no_color else ""
 
     def severity_color(self, severity: str) -> str:

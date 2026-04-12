@@ -14,8 +14,14 @@ from . import __codename__, __comment__, __version__
 def log_runtime_banner(log: Callable[[str, str], None]) -> None:
     """Log high-level version and environment information."""
     cuda_version = torch.version.cuda
-    quotation_marks = ("\u201c", "\u201d") if \
-        (os.getenv("CELUNE_HEADLESS") not in {"1", "true", "on"} or sys.stdout.isatty()) else ('"', '"')
+    quotation_marks = (
+        ("\u201c", "\u201d")
+        if (
+            os.getenv("CELUNE_HEADLESS") not in {"1", "true", "on"}
+            or sys.stdout.isatty()
+        )
+        else ('"', '"')
+    )
 
     log(
         f"Celune {__version__}, "
@@ -24,7 +30,10 @@ def log_runtime_banner(log: Callable[[str, str], None]) -> None:
         f"CUDA {cuda_version}",
         "info",
     )
-    log(f'{__codename__} - {quotation_marks[0]}{__comment__}{quotation_marks[1]}', "info")
+    log(
+        f"{__codename__} - {quotation_marks[0]}{__comment__}{quotation_marks[1]}",
+        "info",
+    )
     log("Environment test...", "info")
 
 
