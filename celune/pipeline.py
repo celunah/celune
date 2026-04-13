@@ -271,6 +271,10 @@ def generation_worker(engine: "Celune") -> None:
                         speaker="celune",
                         chunk_size=engine.chunk_size,
                         instruct=engine.voice_prompt,
+                        temperature=0.15,
+                        top_k=20,
+                        top_p=0.7,
+                        repetition_penalty=1.1,
                     ):
                         if engine._exit_requested:
                             break

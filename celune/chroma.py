@@ -30,7 +30,7 @@ class AudioRGBGlow:
         self.speech_threshold = 0.06
         self._level_history = np.zeros(3, dtype=np.float32)
 
-        self.hold_duration = 1.25
+        self.hold_duration = 1.8
         self.fade_in_rate = 0.03
         self.fade_out_rate = 0.02
         self.fps = 60
