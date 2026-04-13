@@ -310,7 +310,9 @@ class CeluneUI(App):
 
         self.input_box.load_text("")
         if command == "help":
+            self.safe_log("Celune help topics")
             self.safe_log("Available commands:")
+            self.safe_log("Arguments marked in <> are required, those marked in [] are optional.")
             self.safe_log(
                 "/consumebuf <true/false> - Make Celune consume text from the live buffer without "
                 "pressing CTRL+ENTER."
@@ -319,21 +321,23 @@ class CeluneUI(App):
                 "Caution: This feature may interfere with typing '...'.", "warning"
             )
             self.safe_log(
-                "/invoke <extension> <args> - Invoke a Celune extension by its name."
+                "/invoke <extension> [args] - Invoke a Celune extension by its name."
             )
             self.safe_log("/extensions - List currently available Celune extensions.")
             self.safe_log(
-                "/voiceprompt - Change Celune's voice prompt. This will allow you to steer her voice."
+                "/voiceprompt <prompt> - Change Celune's voice prompt. This will allow you to steer her voice."
             )
             self.safe_log(
                 "Caution: Some prompts may cause adverse effects. Choose prompts that enhance personality, "
                 "rather than replace it.",
                 "warning",
             )
-            self.safe_log("/speed - Change speaking speed.")
-            self.safe_log("/reverb - Change reverb strength.")
-            self.safe_log("/play - Play a sound effect by path.")
+            self.safe_log("/speed <speed> - Change speaking speed.")
+            self.safe_log("/reverb <strenth> - Change reverb strength.")
+            self.safe_log("/play <file> - Play a sound effect by path. Only WAV files are supported.")
+            self.safe_log("/stop - Terminate ongoing speech.")
             self.safe_log("/exit - Exit Celune.")
+            self.safe_log("You can also exit Celune by pressing CTRL+C.")
             self.safe_log("/help - Display this help message.")
             return
         if command == "consumebuf":
@@ -356,7 +360,7 @@ class CeluneUI(App):
             return
         if command == "invoke":
             if not args:
-                self.safe_log("Usage: /invoke <extension_name>")
+                self.safe_log("Usage: /invoke <extension> [args]")
                 return
 
             if not self.celune or not self.celune.extension_manager:
@@ -456,7 +460,7 @@ class CeluneUI(App):
                 return
 
             if not args:
-                self.safe_log("Usage: /play <filename>", "warning")
+                self.safe_log("Usage: /play <path>", "warning")
                 return
 
             try:
