@@ -19,6 +19,11 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 | Balanced     | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc.wav) |
 | Calm         | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc.wav)    | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc.wav)    |
 | Bold         | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc.wav) |
+| Upbeat       | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc.wav) |
+
+The voices may exhibit a minor amount of mistakes, this is a limitation of AI and not a problem with Celune.
+
+Check the `demos` directory to check demonstration content from both Celune 3 & Celune 2/older versions.
 
 > [!CAUTION]
 > Do not use markup or tags (e.g. `<...>`).  
@@ -49,11 +54,11 @@ Celune requires [Python](https://python.org) 3.12 or 3.13.
 Celune also depends on external system tools that are not installed via `pip`:
 
 - **NVIDIA GPU with CUDA support**
-- **CUDA Toolkit 12.8**
+- **CUDA Toolkit 12.8** - only if not using pre-built PyTorch wheels
 - **SoX (Sound eXchange)** - required for audio processing
 - **Rubber Band library** - required to control Celune's speed
 - **OpenRGB** - required to glow compatible devices
-- **Symbolic link support** (recommended on Windows)
+- **Symbolic link support** - recommended on Windows for optimal operation
 
 Celune requires CUDA for GPU acceleration. CPU-only execution is not supported.
 
@@ -152,7 +157,9 @@ rubberband --version
 ### OpenRGB installation
 To install OpenRGB, go to https://openrgb.org/, download and install a package appropriate for your platform. This will allow Celune to glow up your PC as she speaks.
 
-### CUDA 12.8 installation
+### CUDA Toolkit 12.8 installation
+This step can be skipped if you are using pre-built PyTorch wheels.
+
 Download and install CUDA Toolkit 12.8 from NVIDIA:
 
 https://developer.nvidia.com/cuda-12-8-0-download-archive
@@ -160,6 +167,8 @@ https://developer.nvidia.com/cuda-12-8-0-download-archive
 Make sure to:
 - Select the correct OS and version
 - Install both **CUDA Toolkit** and **NVIDIA drivers** (if not already installed)
+
+Make sure you install version 12.8, as Celune does not work with older or newer versions of the toolkit.
 
 After installation, verify CUDA:
 
@@ -197,9 +206,5 @@ These screenshots show Celune's user interface.
 ### Commands
 [![Commands](./demos/state_commands.png)](./demos/state_commands.png)
 
-### Extension autostart
-[![Extension autostart](./demos/state_extension_autostart.png)](./demos/state_extension_autostart.png)
-
 ### Extension invoke
 [![Extension invoke](./demos/state_extension_invoke.png)](./demos/state_extension_invoke.png)
-
