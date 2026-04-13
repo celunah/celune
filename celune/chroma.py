@@ -31,6 +31,7 @@ class AudioRGBGlow:
         self._level_history = np.zeros(3, dtype=np.float32)
 
         self.hold_duration = 1.8
+        self.pulse = True  # should Celune stay lit or pulse while speaking?
         self.fade_in_rate = 0.03
         self.fade_out_rate = 0.02
         self.fps = 60
@@ -220,7 +221,8 @@ class AudioRGBGlow:
                 self._set_all_devices((0, 0, 0))
 
             else:
-                if now - last_speech > self.hold_duration:
+                computed_duration = self.hold_duration / 2 if self.pulse else self.hold_duration
+                if now - last_speech > computed_duration:
                     target = self.idle_brightness
 
                 alpha = (

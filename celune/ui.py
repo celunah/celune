@@ -628,10 +628,15 @@ class CeluneUI(App):
                     return
                 self.consume_buffer(len(text))
 
-    def signal_handler(self, _sig, _frame) -> None:
-        """Trap CTRL+C and exit Celune if pressed."""
+    def _graceful_exit(self) -> None:
+        """Exit from Celune gracefully."""
         self.exit()
         self.celune.close()
+
+    def signal_handler(self, _sig, _frame) -> None:
+        """Trap CTRL+C and exit Celune if pressed."""
+        # cannot be wrapped in try-except, or it won't be effective
+        self.call_from_thread(self.call_later, self._graceful_exit)
 
 
 
