@@ -34,17 +34,17 @@ def clear_queue(q: queue.Queue) -> None:
 
 def close_stream(engine: "Celune", abort: bool = False) -> None:
     """Close the current audio stream if one exists."""
-    if engine._stream is None:
+    if engine.stream is None:
         return
 
     with contextlib.suppress(Exception):
         if abort:
-            engine._stream.abort()
+            engine.stream.abort()
         else:
-            engine._stream.stop()
+            engine.stream.stop()
 
     with contextlib.suppress(Exception):
-        engine._stream.close()
+        engine.stream.close()
 
     engine._stream = None
     engine._current_sr = None
@@ -52,27 +52,27 @@ def close_stream(engine: "Celune", abort: bool = False) -> None:
 
 def force_stop_speech(engine: "Celune") -> bool:
     """Forcefully stop Celune from speaking."""
-    with engine._say_lock:
+    with engine.say_lock:
         is_active = engine.locked or (engine.cur_state in {"generating", "speaking"})
 
     if not is_active:
-        engine._utterance_force_stop.clear()
+        engine.utterance_force_stop.clear()
         return False
 
     engine.log("Forcefully stopping speech.")
-    engine._utterance_force_stop.set()
+    engine.utterance_force_stop.set()
 
-    with engine._queue_lock:
+    with engine.queue_lock:
         clear_queue(engine.text_queue)
         clear_queue(engine.audio_queue)
-        engine.audio_queue.put(engine._force_stop_marker)
+        engine.audio_queue.put(engine.force_stop_marker)
 
     return True
 
 
 def acquire_pipeline(engine: "Celune", action: str) -> bool:
     """Atomically claim Celune's shared playback pipeline."""
-    with engine._say_lock:
+    with engine.say_lock:
         if engine.dev:
             engine.log(f"[LOCK] acquire requested by {action}, locked={engine.locked}")
         if engine.locked:
@@ -81,7 +81,7 @@ def acquire_pipeline(engine: "Celune", action: str) -> bool:
             return False
 
         engine.locked = True
-        engine._playback_done.clear()
+        engine.playback_done.clear()
         if engine.dev:
             engine.log(f"[LOCK] acquired by {action}")
         return True
@@ -89,9 +89,9 @@ def acquire_pipeline(engine: "Celune", action: str) -> bool:
 
 def release_pipeline(engine: "Celune") -> None:
     """Release Celune's shared playback pipeline."""
-    with engine._say_lock:
+    with engine.say_lock:
         engine.locked = False
-        engine._playback_done.set()
+        engine.playback_done.set()
         engine.cur_state = "idle"
         if engine.dev:
             engine.log("[LOCK] released")
@@ -99,11 +99,11 @@ def release_pipeline(engine: "Celune") -> None:
 
 def say(engine: "Celune", text: str) -> bool:
     """Queue text for Celune to say."""
-    if not engine._model_ready.is_set():
+    if not engine.model_ready.is_set():
         engine.status_callback("Waiting for model")
         engine.log("Speak request is waiting for model reload to finish.", "info")
 
-    engine._model_ready.wait()
+    engine.model_ready.wait()
 
     if not engine.loaded:
         engine.log("Model became unavailable before speaking.", "warning")
@@ -155,7 +155,7 @@ def play(engine: "Celune", sound_path: str) -> bool:
         engine.cur_state = "speaking"
         for chunk in _split(audio, sr, engine.chunk_size):
             engine.audio_queue.put((chunk, 48000, None))
-        engine.audio_queue.put(engine._utterance_done)
+        engine.audio_queue.put(engine.utterance_done)
 
         engine.status_callback(f"Playing {sound_path}")
         return True
@@ -169,18 +169,18 @@ def close(engine: "Celune") -> None:
     engine.log("Exiting...")
     engine._exit_requested = True
 
-    with engine._queue_lock:
+    with engine.queue_lock:
         clear_queue(engine.text_queue)
         clear_queue(engine.audio_queue)
 
-    engine.text_queue.put(engine._sentinel)
-    engine.audio_queue.put(engine._sentinel)
+    engine.text_queue.put(engine.sentinel)
+    engine.audio_queue.put(engine.sentinel)
 
-    if engine._generation_thread is not None:
-        engine._generation_thread.join(timeout=2)
+    if engine.generation_thread is not None:
+        engine.generation_thread.join(timeout=2)
 
-    if engine._playback_thread is not None:
-        engine._playback_thread.join(timeout=2)
+    if engine.playback_thread is not None:
+        engine.playback_thread.join(timeout=2)
 
     close_stream(engine, abort=True)
     engine.glow.leave()
@@ -225,16 +225,16 @@ def generation_worker(engine: "Celune") -> None:
     while True:
         text = engine.text_queue.get()
 
-        if text is engine._sentinel:
-            engine.audio_queue.put(engine._sentinel)
+        if text is engine.sentinel:
+            engine.audio_queue.put(engine.sentinel)
             break
 
-        if engine._exit_requested:
+        if engine.exit_requested:
             engine.locked = False
             continue
 
         try:
-            engine._model_ready.wait()
+            engine.model_ready.wait()
 
             if not engine.loaded:
                 engine.log("Skipping generation because model is not ready.", "warning")
@@ -248,15 +248,15 @@ def generation_worker(engine: "Celune") -> None:
             chunks = split_text(engine, text)
             buffer = []
 
-            with engine._model_lock:
+            with engine.model_lock:
                 if engine.model is None:
                     raise NotAvailableError("self.model is None")
 
                 for chunk_index, chunk_text in enumerate(chunks):
-                    if engine._exit_requested:
+                    if engine.exit_requested:
                         break
 
-                    if engine._utterance_force_stop.is_set():
+                    if engine.utterance_force_stop.is_set():
                         break
 
                     is_first_chunk = chunk_index == 0
@@ -276,10 +276,10 @@ def generation_worker(engine: "Celune") -> None:
                         top_p=0.7,
                         repetition_penalty=1.1,
                     ):
-                        if engine._exit_requested:
+                        if engine.exit_requested:
                             break
 
-                        if engine._utterance_force_stop.is_set():
+                        if engine.utterance_force_stop.is_set():
                             break
 
                         if hasattr(audio_chunk, "cpu"):
@@ -304,7 +304,7 @@ def generation_worker(engine: "Celune") -> None:
                             audio_chunk = _soften_onset(audio_chunk, 48000)
                             is_first_chunk = False
 
-                        if engine._exit_requested:
+                        if engine.exit_requested:
                             break
 
                         buffer.append(audio_chunk)
@@ -315,11 +315,11 @@ def generation_worker(engine: "Celune") -> None:
 
             generation_time = time.perf_counter() - start_time
 
-            if engine._exit_requested:
+            if engine.exit_requested:
                 release_pipeline(engine)
                 continue
 
-            if engine._utterance_force_stop.is_set():
+            if engine.utterance_force_stop.is_set():
                 engine.reverb.reset()
                 continue
 
@@ -332,7 +332,7 @@ def generation_worker(engine: "Celune") -> None:
             engine.log("[GEN] done")
             engine.queue_avail_callback()
 
-            if not engine._exit_requested:
+            if not engine.exit_requested:
                 if engine.reverb.strength > 0.0:
                     tail = engine.reverb.flush()
                     if len(tail) > 0:
@@ -340,7 +340,7 @@ def generation_worker(engine: "Celune") -> None:
                         buffer.append(tail)
 
                 engine.reverb.reset()
-                engine.audio_queue.put(engine._utterance_done)
+                engine.audio_queue.put(engine.utterance_done)
 
             if buffer:
                 wav = np.concatenate(buffer)
@@ -365,14 +365,14 @@ def generation_worker(engine: "Celune") -> None:
                     )
 
         except Exception as e:
-            if engine._exit_requested:
+            if engine.exit_requested:
                 release_pipeline(engine)
                 continue
 
             engine.log(f"[GEN ERROR] {engine.format_error(e, engine.dev)}", "error")
             engine.cur_state = "error"
             engine.locked = False
-            engine._playback_done.set()
+            engine.playback_done.set()
             engine.error_callback("Celune could not generate the input")
 
 
@@ -381,8 +381,8 @@ def playback_worker(engine: "Celune") -> None:
     started = False
 
     while True:
-        if engine._exit_requested:
-            with engine._queue_lock:
+        if engine.exit_requested:
+            with engine.queue_lock:
                 clear_queue(engine.audio_queue)
 
             close_stream(engine, abort=True)
@@ -392,32 +392,32 @@ def playback_worker(engine: "Celune") -> None:
 
         if not started:
             while engine.audio_queue.qsize() < engine.prebuffer_chunks:
-                if engine._exit_requested:
+                if engine.exit_requested:
                     break
                 time.sleep(0.01)
 
-            if engine._exit_requested:
+            if engine.exit_requested:
                 continue
 
         item = engine.audio_queue.get()
 
-        if item is engine._sentinel:
+        if item is engine.sentinel:
             break
 
-        if item is engine._force_stop_marker:
-            engine._utterance_force_stop.clear()
+        if item is engine.force_stop_marker:
+            engine.utterance_force_stop.clear()
             close_stream(engine, abort=True)
-            engine._playback_done.set()
+            engine.playback_done.set()
             release_pipeline(engine)
             engine.idle_callback()
             started = False
             continue
 
-        if engine._exit_requested:
+        if engine.exit_requested:
             continue
 
-        if item is engine._utterance_done:
-            engine._playback_done.set()
+        if item is engine.utterance_done:
+            engine.playback_done.set()
 
             more_pending = (not engine.audio_queue.empty()) or (
                 not engine.text_queue.empty()
@@ -425,8 +425,8 @@ def playback_worker(engine: "Celune") -> None:
 
             if more_pending:
                 silence = np.zeros((48000, 2), dtype=np.float32)
-                if engine._stream is not None and not engine._exit_requested:
-                    engine._stream.write(silence)
+                if engine.stream is not None and not engine.exit_requested:
+                    engine.stream.write(silence)
             else:
                 release_pipeline(engine)
                 engine.idle_callback()
@@ -469,31 +469,31 @@ def playback_worker(engine: "Celune") -> None:
 
         audio_chunk, sr, _ = item
 
-        if engine._stream is None:
+        if engine.stream is None:
             try:
-                engine._current_sr = sr
-                engine._stream = sd.OutputStream(
+                engine.current_sr = sr
+                engine.stream = sd.OutputStream(
                     samplerate=sr,
                     channels=2,
                     dtype="float32",
                     blocksize=0,
                 )
-                engine._stream.start()
+                engine.stream.start()
                 started = True
                 engine.log(f"[PLAY] started stream at {sr} Hz")
             except sd.PortAudioError:
-                if not engine._audio_unavailable:
+                if not engine.audio_unavailable:
                     engine.log("Celune could not initialize the audio stream.", "error")
                     engine.log("No suitable audio device is available.", "error")
                     engine.error_callback("No suitable audio devices")
                 engine._audio_unavailable = True
 
-        if engine._exit_requested:
+        if engine.exit_requested:
             continue
 
         try:
             engine.glow.glow(audio_chunk)
-            engine._stream.write(audio_chunk)
+            engine.stream.write(audio_chunk)
         except Exception as e:
             engine.log(f"[PLAY ERROR] {engine.format_error(e, engine.dev)}", "error")
             engine.error_callback("Playback error")

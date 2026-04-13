@@ -488,3 +488,63 @@ class Celune:
     def _playback_worker(self) -> None:
         """Receive audio chunks and play them."""
         playback_worker(self)
+
+    @property
+    def stream(self):
+        return self._stream
+
+    @property
+    def say_lock(self):
+        return self._say_lock
+
+    @property
+    def utterance_force_stop(self):
+        return self._utterance_force_stop
+
+    @property
+    def queue_lock(self):
+        return self._queue_lock
+
+    @property
+    def force_stop_marker(self):
+        return self._force_stop_marker
+
+    @property
+    def playback_done(self):
+        return self._playback_done
+
+    @property
+    def model_ready(self):
+        return self._model_ready
+
+    @property
+    def utterance_done(self):
+        return self._utterance_done
+
+    @property
+    def sentinel(self):
+        return self._sentinel
+
+    @property
+    def generation_thread(self):
+        return self._generation_thread
+
+    @property
+    def playback_thread(self):
+        return self._playback_thread
+
+    @property
+    def exit_requested(self):
+        return self._exit_requested
+
+    @property
+    def model_lock(self):
+        return self._model_lock
+
+    @property
+    def audio_unavailable(self):
+        return self._audio_unavailable
+
+    @stream.setter
+    def stream(self, value):
+        self._stream = value
