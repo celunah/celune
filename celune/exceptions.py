@@ -35,3 +35,7 @@ class InvalidExtensionError(TypeError, ExtensionError):
 
 class ExtensionAlreadyRegisteredError(ExtensionError):
     """Extension is already registered."""
+
+
+class No(Exception):
+    """Celune does not want to start today."""

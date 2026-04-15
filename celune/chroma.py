@@ -2,6 +2,7 @@
 """Celune Razer Chroma and OpenRGB-compatible RGB glow effect."""
 
 import time
+import datetime
 import threading
 import contextlib
 
@@ -38,7 +39,13 @@ class AudioRGBGlow:
 
         self.transition_rate = 0.02
 
-        self.idle_brightness = 0.05
+        # Celune glows much brighter on Celune Day
+        current_date = datetime.datetime.now()
+        if current_date.day == 2 and current_date.month == 6:
+            self.idle_brightness = 0.5
+        else:
+            self.idle_brightness = 0.05
+
         self.max_brightness = 1.0
 
         self.input_gain = 4.0
@@ -221,7 +228,9 @@ class AudioRGBGlow:
                 self._set_all_devices((0, 0, 0))
 
             else:
-                computed_duration = self.hold_duration / 2 if self.pulse else self.hold_duration
+                computed_duration = (
+                    self.hold_duration / 2 if self.pulse else self.hold_duration
+                )
                 if now - last_speech > computed_duration:
                     target = self.idle_brightness
 
