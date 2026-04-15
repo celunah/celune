@@ -89,7 +89,7 @@ def main() -> None:
             print(e)
             print("Run Celune with CELUNE_DEV=1 to get full traceback.")
         else:
-            print("I don't feel like starting today.")
+            print("I sense the presence of...her.\nI would rather not.")
         sys.exit(1)
 
 
