@@ -392,7 +392,9 @@ class CeluneUI(App):
         if command == "help":
             self.safe_log("Celune help topics")
             self.safe_log("Available commands:")
-            self.safe_log("Arguments marked in <> are required, those marked in [] are optional.")
+            self.safe_log(
+                "Arguments marked in <> are required, those marked in [] are optional."
+            )
             self.safe_log(
                 "/consumebuf <true/false> - Make Celune consume text from the live buffer without "
                 "pressing CTRL+ENTER."
@@ -414,7 +416,9 @@ class CeluneUI(App):
             )
             self.safe_log("/speed <speed> - Change speaking speed.")
             self.safe_log("/reverb <strenth> - Change reverb strength.")
-            self.safe_log("/play <file> - Play a sound effect by path. Only WAV files are supported.")
+            self.safe_log(
+                "/play <file> - Play a sound effect by path. Only WAV files are supported."
+            )
             self.safe_log("/stop - Terminate ongoing speech.")
             self.safe_log("/exit - Exit Celune.")
             self.safe_log("You can also exit Celune by pressing CTRL+C.")
