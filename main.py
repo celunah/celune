@@ -35,7 +35,7 @@ def main() -> None:
     try:
         date = datetime.datetime.now()
         if namedays.has_nameday("Celine", date):
-            raise No
+            raise No("I sense an entity who I shall not engage with today.")
 
         print("\x1b]2;Celune\x07", end="", flush=True)
 
@@ -89,7 +89,7 @@ def main() -> None:
             print(e)
             print("Run Celune with CELUNE_DEV=1 to get full traceback.")
         else:
-            print("I sense the presence of...her.\nI would rather not.")
+            print("I sense the presence of... her.\nI would rather not.")
         sys.exit(1)
 
 
