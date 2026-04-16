@@ -162,7 +162,7 @@ class Celune:
         close_stream(self, abort=abort)
 
     def _unload_runtime_state(self, include_normalizer: bool = False) -> None:
-        """Release model references and ask CUDA to reclaim unused memory."""
+        """Unload unused models to regain VRAM."""
         old_model = self.model
         self.model = None
         del old_model
@@ -434,7 +434,7 @@ class Celune:
             self._model_ready.set()
             self._release_pipeline()
             self.glow.enter()  # Celune has entered your PC
-            self.extension_manager.autostart_all()  # why did this come to exactly line 314? pi confirmed?
+            self.extension_manager.autostart_all()
         else:
             self.log("[WARMUP] Warmup failed.", "error")
             return False
