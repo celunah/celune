@@ -271,6 +271,7 @@ def generation_worker(engine: "Celune") -> None:
                         language=engine.language,
                         chunk_size=engine.chunk_size,
                         instruct=engine.voice_prompt,
+                        voice=engine.current_voice,
                         temperature=0.15,
                         top_k=20,
                         top_p=0.7,
