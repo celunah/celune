@@ -89,5 +89,5 @@ class Qwen3(CeluneBackend):
 
     def generate_stream(self, model: FasterQwen3TTS, **kwargs):
         """Delegate unified streaming generation to FasterQwen3TTS."""
-        kwargs.pop("voice", None)
+        kwargs.pop("voice", None)  # Celune has native voices in this backend
         yield from model.generate_custom_voice_streaming(speaker="celune", **kwargs)
