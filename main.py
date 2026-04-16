@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # pylint: disable=R0902, R0913, R0917, W0718
 """
-Celune 3.1.2 - "I'm not just a TTS. I'm someone special."
+Celune 3.2.0 - "I'm not just a TTS. I'm someone special."
 Refer to https://github.com/celunah/celune for information about Celune.
 Celune models are available on https://huggingface.co/collections/lunahr/celune.
 """
@@ -16,10 +16,10 @@ DEV = os.getenv("CELUNE_DEV") in {"1", "true", "on"}
 
 try:
     import psutil
-    from celune.celune import Celune
-    from celune.ui import CeluneUI
-    from celune.exceptions import No
     from celune import namedays
+    from celune.ui import CeluneUI
+    from celune.celune import Celune
+    from celune.exceptions import No
 except ModuleNotFoundError as package:
     print(f"Missing dependency: {package.name}")
     print("Celune requires this library to function.")
@@ -68,7 +68,7 @@ def main() -> None:
 
         ui = CeluneUI()
         celune = Celune(
-            model_name="lunahr/Celune-1.7B-Neutral",
+            tts_backend="voxcpm2",
             log_callback=ui.tts_log,
             status_callback=ui.safe_status,
             error_callback=ui.error,
@@ -80,6 +80,7 @@ def main() -> None:
         )
         celune.setup_extensions()
         ui.celune = celune
+        ui.celune_styles = list(celune.backend.voices)
         ui.run()
     except Exception as e:
         if e.__class__ != No:

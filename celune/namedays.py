@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Iterable
+from typing import Generator
 
 NAMEDAYS: dict[str, list[str]] = {
     "01-01": [],
@@ -373,7 +373,7 @@ NAMEDAYS: dict[str, list[str]] = {
     "12-21": [],
     "12-22": ["Beatrice", "Frances"],
     "12-23": ["Victoria"],
-    "12-24": ["Adam", "Adamina", "Adela", "Eve", "Gregory"],
+    "12-24": ["Adam", "Adela", "Eve", "Gregory"],
     "12-25": ["Anastasia", "Eugenia", "Peter", "Nicholas"],
     "12-26": ["Stephen", "Sylvia", "Anna", "Marie"],
     "12-27": ["Caesar", "John"],
@@ -424,7 +424,7 @@ def has_nameday(name: str, value: date | datetime | str) -> bool:
     return any(n.casefold() == needle for n in get_names_for_date(value))
 
 
-def iter_namedays() -> Iterable[tuple[str, list[str]]]:
+def iter_namedays() -> Generator[str | list[str], None, None]:
     """Iterate over (MM-DD, names) pairs."""
     for item in NAMEDAYS.items():
         yield from item

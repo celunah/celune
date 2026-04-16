@@ -7,7 +7,8 @@ import time
 import queue
 import threading
 import traceback
-from typing import Optional, Callable
+import contextlib
+from typing import Optional, Callable, Union
 
 import torch
 import sounddevice as sd
@@ -18,20 +19,15 @@ from transformers.utils.logging import disable_progress_bar
 from huggingface_hub.utils import disable_progress_bars
 
 from . import __version__
-from .constants import (
-    ALL_VOICE_MODEL_IDS,
-    DEFAULT_MODEL_ID,
-    DEFAULT_VOICE,
-    NORMALIZER_MODEL_ID,
-    VOICE_MODELS,
-)
+from .backends import CeluneBackend, resolve_backend
+from .constants import NORMALIZER_MODEL_ID
 from .dsp import StreamingPedalboardReverb
 from .utils import format_number
 from .chroma import AudioRGBGlow
-from .exceptions import NotAvailableError, WarmupError
+from .exceptions import NotAvailableError, WarmupError, BackendError
 from .extensions.base import CeluneContext
 from .extensions.manager import CeluneExtensionManager
-from .modeling import load_normalizer_components, load_tts_model, preload_models
+from .modeling import load_normalizer_components
 from .pipeline import (
     acquire_pipeline,
     clear_queue,
@@ -53,7 +49,7 @@ class Celune:
 
     def __init__(
         self,
-        model_name: str,
+        tts_backend: Optional[Union[CeluneBackend, type(CeluneBackend)]] = None,
         chunk_size: int = 24,  # approx. 1.92s per chunk
         sentences_per_chunk: int = 4,  # prevents Celune from running out of context
         language: str = "Auto",  # if you don't care about multilinguality, set it to "English"
@@ -66,15 +62,29 @@ class Celune:
         change_input_state_callback: Optional[Callable[[bool], None]] = None,
         dev: bool = False,
     ) -> None:
-        self.model_name = model_name
+        if not tts_backend:
+            raise BackendError("no backend set")
+
+        try:
+            self.backend = resolve_backend(tts_backend)
+            self.tts_backend = self.backend.name
+        except ValueError as e:
+            raise BackendError(str(e)) from e
+        except TypeError as e:
+            raise BackendError(f"invalid backend selected: '{tts_backend}'") from e
+        except ModuleNotFoundError as e:
+            raise BackendError(f"backend '{tts_backend}' has unmet dependencies: '{e.name}'") from e
+        except Exception as e:
+            raise BackendError(f"internal backend error: {self.format_error(e, dev)}") from e
+
         self.language = language
 
         self.model = None
         self.llm: Optional[PreTrainedModel] = None
         self.tokenizer: Optional[PreTrainedTokenizerBase] = None
 
-        self.current_voice = DEFAULT_VOICE
-        self.voices: list[str] = list(VOICE_MODELS)
+        self.current_voice = self.backend.default_voice
+        self.voices: list[str] = self.backend.voices
         self.voice_prompt: Optional[str] = None
 
         self.chunk_size = chunk_size
@@ -147,6 +157,30 @@ class Celune:
         """Close the current audio stream if one exists."""
         close_stream(self, abort=abort)
 
+    def _unload_runtime_state(self, include_normalizer: bool = False) -> None:
+        """Release model references and ask CUDA to reclaim unused memory."""
+        old_model = self.model
+        self.model = None
+        del old_model
+
+        self.backend.unload_model()
+
+        if include_normalizer:
+            old_llm = self.llm
+            old_tokenizer = self.tokenizer
+            self.llm = None
+            self.tokenizer = None
+            del old_llm
+            del old_tokenizer
+
+        gc.collect()
+
+        if torch.cuda.is_available():
+            with contextlib.suppress(Exception):
+                torch.cuda.synchronize()
+            with contextlib.suppress(Exception):
+                torch.cuda.empty_cache()
+
     def set_voices(self, voices: list) -> None:
         """Configure Celune's voice information."""
         self.voices = voices
@@ -163,6 +197,20 @@ class Celune:
         threading.Thread(
             target=self.change_voice,
             args=(name,),
+            daemon=True,
+        ).start()
+        return True
+
+    def set_backend(
+        self, backend: Union[str, CeluneBackend, type(CeluneBackend)]
+    ) -> bool:
+        """Switch Celune to a different backend."""
+        self._model_ready.clear()
+        self.loaded = False
+
+        threading.Thread(
+            target=self.change_backend,
+            args=(backend,),
             daemon=True,
         ).start()
         return True
@@ -230,18 +278,12 @@ class Celune:
         self.cur_state = "reloading"
 
         try:
-            torch.cuda.synchronize()
-
             with self._model_lock:
-                # noinspection PyUnusedLocal
-                old_model = self.model
-                self.model = None
-                del old_model
+                self._unload_runtime_state(include_normalizer=False)
 
-                gc.collect()
-                torch.cuda.empty_cache()
-
-                self.model = load_tts_model(VOICE_MODELS[voice], self.log)
+                self.model = self.backend.load_model(
+                    self.backend.model_id_for_voice(voice), self.log
+                )
 
                 self.log("Rewarming up...")
                 if not self._warmup():
@@ -265,6 +307,82 @@ class Celune:
             self._release_pipeline()
             self.change_input_state_callback(locked=False)
 
+    def change_backend(
+        self, backend: Union[str, CeluneBackend, type(CeluneBackend)]
+    ) -> None:
+        """Switch Celune's active TTS backend and reclaim GPU memory."""
+        self.log("Celune is switching backends, please stand by...")
+        self.status_callback("Switching backend")
+        self.change_input_state_callback(locked=True)
+        self.cur_state = "reloading"
+
+        try:
+            new_backend = resolve_backend(backend)
+        except ValueError as e:
+            self.loaded = False
+            self.log(f"[BACKEND ERROR] {e}", "error")
+            self.status_callback("Invalid backend", "error")
+            self.error_callback("Invalid backend")
+            self._model_ready.set()
+            self.change_input_state_callback(locked=False)
+            return
+        except ModuleNotFoundError as e:
+            self.loaded = False
+            self.log(
+                f"[BACKEND ERROR] backend '{backend}' has unmet dependencies: '{e.name}'",
+                "error",
+            )
+            self.status_callback("Backend unavailable", "error")
+            self.error_callback("Backend unavailable")
+            self._model_ready.set()
+            self.change_input_state_callback(locked=False)
+            return
+        except Exception as e:
+            self.loaded = False
+            self.log(f"[BACKEND ERROR] {self.format_error(e, self.dev)}", "error")
+            self.status_callback("Backend switch failed", "error")
+            self.error_callback("Backend switch failed")
+            self._model_ready.set()
+            self.change_input_state_callback(locked=False)
+            return
+
+        try:
+            with self._model_lock:
+                self._unload_runtime_state(include_normalizer=True)
+
+                self.backend = new_backend
+                self.tts_backend = self.backend.name
+                self.current_voice = self.backend.default_voice
+                self.voices = self.backend.voices
+
+                self.backend.preload_models(self.log)
+                self.model = self.backend.load_default_model(self.log)
+
+                self.log("Rewarming up...")
+                if not self._warmup():
+                    raise WarmupError("Warmup failed after backend switch")
+
+                self.loaded = True
+
+            if self.use_normalization:
+                self._load_normalizer()
+
+            if self.current_voice is not None:
+                self.voice_changed_callback(self.current_voice)
+            self.log(f"Backend switched to {self.backend.name}.")
+            self.status_callback("Idle")
+
+        except Exception as e:
+            self.loaded = False
+            self.log(f"[BACKEND ERROR] {self.format_error(e, self.dev)}", "error")
+            self.status_callback("Celune could not switch backend", "error")
+            self.error_callback("Celune could not switch backend")
+
+        finally:
+            self._model_ready.set()
+            self._release_pipeline()
+            self.change_input_state_callback(locked=False)
+
     def force_stop_speech(self) -> bool:
         """Forcefully stop Celune from speaking."""
         return force_stop_pipeline(self)
@@ -275,14 +393,15 @@ class Celune:
         disable_progress_bars()
         hf_logging.set_verbosity_error()
 
-        log_runtime_banner(self.log)
-        preload_models(ALL_VOICE_MODEL_IDS, self.log)
+        log_runtime_banner(self.log, self.backend.name)
+        self.backend.preload_models(self.log)
 
         self.log("All Celune voices are available.")
         try:
-            self.model = load_tts_model(DEFAULT_MODEL_ID, self.log)
-        except Exception:
+            self.model = self.backend.load_default_model(self.log)
+        except Exception as e:
             self.log("Celune could not load the default model.", "error")
+            self.log(self.format_error(e, self.dev), "error")
             self.error_callback("Default model failed to load")
             return False
 
@@ -325,7 +444,7 @@ class Celune:
 
         def _worker():
             try:
-                self.tokenizer, self.llm = load_normalizer_components(self.log)
+                self.tokenizer, self.llm = load_normalizer_components(self.log, self.backend)
                 self.log("Normalizer loaded.")
             except Exception as e:
                 self.log(
@@ -351,12 +470,13 @@ class Celune:
                 if self.model is None:
                     raise NotAvailableError("Model is not available during warmup")
 
-                for _, _, _ in self.model.generate_custom_voice_streaming(
+                for _, _, _ in self.backend.generate_stream(
+                    self.model,
                     text=warmup_text,
                     language=self.language,
-                    speaker="celune",
                     chunk_size=self.chunk_size,
                     instruct=self.voice_prompt,
+                    voice=self.current_voice
                 ):
                     pass
 
@@ -466,6 +586,8 @@ class Celune:
     def close(self) -> None:
         """Shut off Celune and exit."""
         close_pipeline(self)
+        with self._model_lock:
+            self._unload_runtime_state(include_normalizer=True)
 
     @staticmethod
     def format_error(e: Exception, dev: bool) -> str:
@@ -545,6 +667,14 @@ class Celune:
     def audio_unavailable(self):
         return self._audio_unavailable
 
+    @property
+    def current_sr(self):
+        return self._current_sr
+
     @stream.setter
     def stream(self, value):
         self._stream = value
+
+    @current_sr.setter
+    def current_sr(self, value):
+        self._current_sr = value

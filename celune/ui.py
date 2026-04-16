@@ -18,7 +18,6 @@ from textual.widgets import Label, RichLog, TextArea, Button
 from rich.text import Text
 
 from .celune import Celune
-from .constants import VOICE_MODELS
 from .utils import format_number
 from .exceptions import InvalidExtensionError
 
@@ -175,7 +174,7 @@ class CeluneUI(App):
 
         self.celune: Optional[Celune] = None
         self.celune_ready = False
-        self.celune_styles = list(VOICE_MODELS)
+        self.celune_styles = ["balanced"]
         self.celune_voices = None
 
         self.style_index = 0
@@ -286,7 +285,7 @@ class CeluneUI(App):
     def load_tts(self) -> None:
         """Load Celune."""
         try:
-            tts_voices = list(VOICE_MODELS)
+            tts_voices = list(self.celune.backend.voices)
 
             self.celune.set_voices(tts_voices)
             self.celune_voices = itertools.cycle(tts_voices)
@@ -599,6 +598,11 @@ class CeluneUI(App):
     def on_key(self, event: events.Key) -> None:
         """Accept input and send text to Celune."""
         if self.cur_state == "exiting":
+            return
+
+        if event.key == "ctrl+q":
+            event.prevent_default()
+            event.stop()
             return
 
         if event.key == "ctrl+t":
