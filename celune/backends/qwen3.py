@@ -1,4 +1,5 @@
 """Qwen3 backend implementation for Celune."""
+
 from __future__ import annotations
 
 import glob
@@ -52,7 +53,8 @@ class Qwen3(CeluneBackend):
             return False, None
 
         if all(
-            glob.glob(os.path.join(snapshot_path, pattern)) for pattern in expected_files
+            glob.glob(os.path.join(snapshot_path, pattern))
+            for pattern in expected_files
         ):
             return True, snapshot_path
 
@@ -88,7 +90,4 @@ class Qwen3(CeluneBackend):
     def generate_stream(self, model: FasterQwen3TTS, **kwargs):
         """Delegate unified streaming generation to FasterQwen3TTS."""
         kwargs.pop("voice", None)
-        yield from model.generate_custom_voice_streaming(
-            speaker="celune",
-            **kwargs
-        )
+        yield from model.generate_custom_voice_streaming(speaker="celune", **kwargs)

@@ -50,7 +50,7 @@ class CeluneExtensionManager:
         """Autostart all available Celune extensions."""
         if self.autostarted:
             self.context.log(
-                f"[Core] Cannot autostart Celune extensions more than one time.",
+                "[Core] Cannot autostart Celune extensions more than one time.",
                 "warning",
             )
             return

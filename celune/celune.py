@@ -1,4 +1,4 @@
-# pylint: disable=R0902, R0911, R0912, R0913, R0914, R0915, R0917, W0718
+# pylint: disable=R0902, R0904, R0911, R0912, R0913, R0914, R0915, R0917, W0718
 """Celune's backend layer."""
 
 import gc
@@ -73,9 +73,13 @@ class Celune:
         except TypeError as e:
             raise BackendError(f"invalid backend selected: '{tts_backend}'") from e
         except ModuleNotFoundError as e:
-            raise BackendError(f"backend '{tts_backend}' has unmet dependencies: '{e.name}'") from e
+            raise BackendError(
+                f"backend '{tts_backend}' has unmet dependencies: '{e.name}'"
+            ) from e
         except Exception as e:
-            raise BackendError(f"internal backend error: {self.format_error(e, dev)}") from e
+            raise BackendError(
+                f"internal backend error: {self.format_error(e, dev)}"
+            ) from e
 
         self.language = language
 
@@ -444,7 +448,9 @@ class Celune:
 
         def _worker():
             try:
-                self.tokenizer, self.llm = load_normalizer_components(self.log, self.backend)
+                self.tokenizer, self.llm = load_normalizer_components(
+                    self.log, self.backend
+                )
                 self.log("Normalizer loaded.")
             except Exception as e:
                 self.log(
@@ -476,7 +482,7 @@ class Celune:
                     language=self.language,
                     chunk_size=self.chunk_size,
                     instruct=self.voice_prompt,
-                    voice=self.current_voice
+                    voice=self.current_voice,
                 ):
                     pass
 
@@ -613,68 +619,85 @@ class Celune:
 
     @property
     def stream(self):
+        """Property method for self._stream."""
         return self._stream
 
     @property
     def say_lock(self):
+        """Property method for self._say_lock."""
         return self._say_lock
 
     @property
     def utterance_force_stop(self):
+        """Property method for self._utterance_force_stop."""
         return self._utterance_force_stop
 
     @property
     def queue_lock(self):
+        """Property method for self._queue_lock."""
         return self._queue_lock
 
     @property
     def force_stop_marker(self):
+        """Property method for self._force_stop_marker."""
         return self._force_stop_marker
 
     @property
     def playback_done(self):
+        """Property method for self._playback_done."""
         return self._playback_done
 
     @property
     def model_ready(self):
+        """Property method for self._model_ready."""
         return self._model_ready
 
     @property
     def utterance_done(self):
+        """Property method for self._utterance_done."""
         return self._utterance_done
 
     @property
     def sentinel(self):
+        """Property method for self._sentinel."""
         return self._sentinel
 
     @property
     def generation_thread(self):
+        """Property method for self._generation_thread."""
         return self._generation_thread
 
     @property
     def playback_thread(self):
+        """Property method for self._playback_thread."""
         return self._playback_thread
 
     @property
     def exit_requested(self):
+        """Property method for self._exit_requested."""
         return self._exit_requested
 
     @property
     def model_lock(self):
+        """Property method for self._model_lock."""
         return self._model_lock
 
     @property
     def audio_unavailable(self):
+        """Property method for self._audio_unavailable."""
         return self._audio_unavailable
 
     @property
     def current_sr(self):
+        """Property method for self._current_sr."""
         return self._current_sr
 
     @stream.setter
     def stream(self, value):
+        """Setter method for self._stream."""
         self._stream = value
 
     @current_sr.setter
     def current_sr(self, value):
+        """Setter method for self._current_sr."""
         self._current_sr = value

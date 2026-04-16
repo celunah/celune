@@ -1,4 +1,5 @@
 """VoxCPM2 backend implementation for Celune."""
+
 from __future__ import annotations
 
 import contextlib
@@ -14,6 +15,7 @@ from huggingface_hub.constants import HF_HUB_CACHE
 from . import get_version
 from .base import CeluneBackend
 from ..exceptions import BackendError
+
 
 class VoxCPM2(CeluneBackend):
     """Celune VoxCPM2 backend."""
@@ -35,7 +37,7 @@ class VoxCPM2(CeluneBackend):
         "balanced": "My name is Celune, pronounced Celune. It is a pleasure to meet you.",
         "calm": "My name is... Celune... It is so... quiet.",
         "bold": "My name is Celune! Let's do this, we have to get it done!",
-        "upbeat": "Hehehe... Hi, I'm Celune. Look, I have something to tell... might as well make it fun. Shall we?"
+        "upbeat": "Hehehe... Hi, I'm Celune. Look, I have something to tell... might as well make it fun. Shall we?",
     }
     default_voice = "balanced"
 
@@ -75,7 +77,8 @@ class VoxCPM2(CeluneBackend):
             return False, None
 
         if all(
-                glob.glob(os.path.join(snapshot_path, pattern)) for pattern in expected_files
+            glob.glob(os.path.join(snapshot_path, pattern))
+            for pattern in expected_files
         ):
             return True, snapshot_path
 
@@ -93,24 +96,23 @@ class VoxCPM2(CeluneBackend):
                 log(f"{model_id} is already available.", "info")
 
     def load_model(
-        self, model_id: str, log: Callable[[str, str], None], load_denoiser: bool = False
+        self,
+        model_id: str,
+        log: Callable[[str, str], None],
+        load_denoiser: bool = False,
     ) -> VoxCPM:
         available, path = self.model_is_available_locally(model_id)
 
         if available and path is not None:
             os.environ["HF_HUB_OFFLINE"] = "1"
             with self._suppress_backend_output():
-                self.model = VoxCPM.from_pretrained(
-                    path, load_denoiser=load_denoiser
-                )
+                self.model = VoxCPM.from_pretrained(path, load_denoiser=load_denoiser)
             return self.model
 
         os.environ["HF_HUB_OFFLINE"] = "0"
         log("Downloading TTS model...", "info")
         with self._suppress_backend_output():
-            self.model = VoxCPM.from_pretrained(
-                model_id, load_denoiser=load_denoiser
-            )
+            self.model = VoxCPM.from_pretrained(model_id, load_denoiser=load_denoiser)
         return self.model
 
     def generate_stream(self, model: VoxCPM, **kwargs):
@@ -123,7 +125,9 @@ class VoxCPM2(CeluneBackend):
             ref_wav = Path(os.getcwd()) / self.reference_wavs[voice]
             ref_text = self.reference_transcripts[voice]
         except KeyError as e:
-            raise BackendError(f"unknown voice '{voice}' for backend '{self.name}'") from e
+            raise BackendError(
+                f"unknown voice '{voice}' for backend '{self.name}'"
+            ) from e
 
         text = kwargs.pop("text")
 
