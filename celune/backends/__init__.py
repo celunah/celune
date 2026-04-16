@@ -1,13 +1,15 @@
 """Celune backend initialization manager."""
 
-from .base import CeluneBackend
 from importlib import import_module
 from importlib.metadata import version, PackageNotFoundError
+
+from .base import CeluneBackend
 
 BACKENDS = {
     "qwen3": ("celune.backends.qwen3", "Qwen3"),
     "voxcpm2": ("celune.backends.voxcpm2", "VoxCPM2"),
 }
+
 
 def get_version(package) -> str:
     """Get a specified package version."""
@@ -20,6 +22,7 @@ def get_version(package) -> str:
 def resolve_backend(
     backend_name: str | type[CeluneBackend] | CeluneBackend,
 ) -> CeluneBackend:
+    """Find a Celune backend by name, raise if not found."""
     if isinstance(backend_name, CeluneBackend):
         return backend_name
 
@@ -31,8 +34,10 @@ def resolve_backend(
 
         try:
             module_name, class_name = BACKENDS[key]
-        except KeyError:
-            raise ValueError(f"unknown backend: '{backend_name}' (available: {', '.join(BACKENDS.keys())})")
+        except KeyError as e:
+            raise ValueError(
+                f"unknown backend: '{backend_name}' (available: {', '.join(BACKENDS.keys())})"
+            ) from e
 
         module = import_module(module_name)
         backend_cls = getattr(module, class_name)
