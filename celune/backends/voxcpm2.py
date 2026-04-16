@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import contextlib
-import glob
 import os
+import glob
+import contextlib
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -44,7 +44,7 @@ class VoxCPM2(CeluneBackend):
     @staticmethod
     @contextlib.contextmanager
     def _suppress_backend_output():
-        """Mute noisy VoxCPM stdout/stderr unless explicitly requested."""
+        """Suppress unnecessary backend output."""
         with open(os.devnull, "w", encoding="utf-8") as devnull:
             with contextlib.redirect_stdout(devnull):
                 with contextlib.redirect_stderr(devnull):
@@ -101,6 +101,7 @@ class VoxCPM2(CeluneBackend):
         log: Callable[[str, str], None],
         load_denoiser: bool = False,
     ) -> VoxCPM:
+        """Load the given voice model."""
         available, path = self.model_is_available_locally(model_id)
 
         if available and path is not None:
@@ -116,6 +117,8 @@ class VoxCPM2(CeluneBackend):
         return self.model
 
     def generate_stream(self, model: VoxCPM, **kwargs):
+        """Generate Celune compatible audio chunks."""
+        # convert/remove invalid params
         voice = kwargs.pop("voice", self.default_voice)
         instruct = kwargs.pop("instruct", None)
         kwargs.pop("language", None)
@@ -132,6 +135,7 @@ class VoxCPM2(CeluneBackend):
         text = kwargs.pop("text")
 
         if instruct:
+            # if this includes "music" or "singing", Celune may sing
             text = f"({instruct}) {text}"
 
         if hasattr(model, "generate_streaming"):
@@ -140,7 +144,7 @@ class VoxCPM2(CeluneBackend):
                     text,
                     prompt_wav_path=ref_wav,
                     prompt_text=ref_text,
-                ):
+                ):  # Celune wants (audio, sr, timing)
                     yield chunk, 48000, None
         else:
             version = get_version("voxcpm")

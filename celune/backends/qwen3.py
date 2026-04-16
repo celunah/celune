@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import glob
 import os
+import glob
 from typing import Callable, Optional
 
 from faster_qwen3_tts import FasterQwen3TTS
@@ -74,7 +74,7 @@ class Qwen3(CeluneBackend):
     def load_model(
         self, model_id: str, log: Callable[[str, str], None]
     ) -> FasterQwen3TTS:
-        """Load a Qwen3 TTS model from cache when available."""
+        """Load the given voice model."""
         available, path = self.model_is_available_locally(model_id)
 
         if available and path is not None:
@@ -88,6 +88,7 @@ class Qwen3(CeluneBackend):
         return self.model
 
     def generate_stream(self, model: FasterQwen3TTS, **kwargs):
-        """Delegate unified streaming generation to FasterQwen3TTS."""
+        """Generate Celune compatible audio chunks."""
         kwargs.pop("voice", None)  # Celune has native voices in this backend
+        # Celune natively works with Qwen-formatted chunks
         yield from model.generate_custom_voice_streaming(speaker="celune", **kwargs)
