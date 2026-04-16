@@ -13,6 +13,10 @@ class NotAvailableError(RuntimeError, CeluneError):
     """Celune is currently unavailable."""
 
 
+class BackendError(RuntimeError, CeluneError):
+    """Celune backend has failed."""
+
+
 class WarmupError(RuntimeError, CeluneError):
     """Celune cannot warm up at this time."""
 

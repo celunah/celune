@@ -263,12 +263,12 @@ def generation_worker(engine: "Celune") -> None:
 
                     for (
                         audio_chunk,
-                        _,
+                        sr,  # 24 kHz if Qwen3, 48 kHz if VoxCPM2
                         timing,
-                    ) in engine.model.generate_custom_voice_streaming(
+                    ) in engine.backend.generate_stream(
+                        engine.model,
                         text=chunk_text,
                         language=engine.language,
-                        speaker="celune",
                         chunk_size=engine.chunk_size,
                         instruct=engine.voice_prompt,
                         temperature=0.15,
@@ -285,7 +285,8 @@ def generation_worker(engine: "Celune") -> None:
                         if hasattr(audio_chunk, "cpu"):
                             audio_chunk = audio_chunk.cpu().numpy()
 
-                        audio_chunk = _to_48khz(audio_chunk, 24000)
+                        audio_chunk = _to_48khz(audio_chunk, sr)
+
                         if engine.speed != 1.0 and engine.can_use_rubberband:
                             try:
                                 audio_chunk = rb.time_stretch(

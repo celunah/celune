@@ -11,7 +11,7 @@ import torch
 from . import __codename__, __comment__, __version__
 
 
-def log_runtime_banner(log: Callable[[str, str], None]) -> None:
+def log_runtime_banner(log: Callable[[str, str], None], backend_name: str = None) -> None:
     """Log high-level version and environment information."""
     cuda_version = torch.version.cuda
     quotation_marks = (
@@ -24,10 +24,11 @@ def log_runtime_banner(log: Callable[[str, str], None]) -> None:
     )
 
     log(
-        f"Celune {__version__}, "
+        f"Celune {__version__} "
+        f"on backend {backend_name}, "
         f"Python {platform.python_version()}, "
         f"PyTorch {torch.__version__}, "
-        f"CUDA {cuda_version}",
+        f"CUDA {cuda_version} ",
         "info",
     )
     log(
