@@ -4,7 +4,7 @@
 import os
 import sys
 import platform
-from typing import Callable
+from typing import Callable, Optional
 
 import torch
 
@@ -12,7 +12,7 @@ from . import __codename__, __comment__, __version__
 
 
 def log_runtime_banner(
-    log: Callable[[str, str], None], backend_name: str = None
+    log: Callable[[str, str], None], backend_name: str
 ) -> None:
     """Log high-level version and environment information.
 
@@ -38,7 +38,7 @@ def log_runtime_banner(
         f"on backend {backend_name}, "
         f"Python {platform.python_version()}, "
         f"PyTorch {torch.__version__}, "
-        f"CUDA {cuda_version} ",
+        f"CUDA {cuda_version}",
         "info",
     )
     log(

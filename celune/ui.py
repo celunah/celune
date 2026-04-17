@@ -1,4 +1,4 @@
-# pylint: disable=C0114, R0912, W0718, R0911, R0902, R0915
+# pylint: disable=C0114, C0302, R0912, W0718, R0911, R0902, R0915
 """Celune's frontend layer."""
 
 import os

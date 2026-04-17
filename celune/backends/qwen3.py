@@ -81,7 +81,6 @@ class Qwen3(CeluneBackend):
             available, _ = self.model_is_available_locally(model_id)
             if not available:
                 log(f"Downloading {model_id}...", "info")
-                os.environ["HF_HUB_OFFLINE"] = "0"
                 snapshot_download(repo_id=model_id)
             else:
                 log(f"{model_id} is already available.", "info")
@@ -105,7 +104,6 @@ class Qwen3(CeluneBackend):
             self.model = FasterQwen3TTS.from_pretrained(path)
             return self.model
 
-        os.environ["HF_HUB_OFFLINE"] = "0"
         log("Downloading TTS model...", "info")
         self.model = FasterQwen3TTS.from_pretrained(model_id)
         return self.model
