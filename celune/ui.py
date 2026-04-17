@@ -1,4 +1,4 @@
-# pylint: disable=C0114, R0912, W0718, R0911, R0902, R0915
+# pylint: disable=C0114, C0302, R0912, W0718, R0911, R0902, R0915
 """Celune's frontend layer."""
 
 import os
@@ -18,18 +18,17 @@ from textual.widgets import Label, RichLog, TextArea, Button
 from rich.text import Text
 
 from .celune import Celune
-from .constants import VOICE_MODELS
 from .utils import format_number
 from .exceptions import InvalidExtensionError
 
 SEVERITY_COLORS = {
     "celune": {
-        "info": "#ecd8ff",
+        "info": "#ece8ff",
         "warning": "#f0e68c",
         "error": "#f07178",
     },
     "celune_light": {
-        "info": "#4b3a75",
+        "info": "#33293f",
         "warning": "#6b5e00",
         "error": "#7a1f24",
     },
@@ -38,12 +37,12 @@ SEVERITY_COLORS = {
 # Celune theme
 THEME = Theme(
     name="celune",
-    primary="#ecd8ff",  # Celune primary
+    primary="#cebaff",  # Celune primary
     secondary="#a595cc",  # Celune secondary
     accent="#7c7099",  # Celune tertiary
     foreground="#ecd8ff",  # same as primary
-    background="#1d1824",  # Celune background
-    surface="#1d1824",  # same as background
+    background="#1d1826",  # Celune background
+    surface="#1d1826",  # same as background
     warning="#f0e68c",  # Celune warning
     error="#f07178",  # Celune error
     dark=True,
@@ -53,10 +52,10 @@ THEME_LIGHT = Theme(
     name="celune_light",
     primary="#33293f",  # Celune light primary
     secondary="#281732",  # Celune light secondary
-    accent="#1e1125",  # Celune light tertiary
+    accent="#1e1126",  # Celune light tertiary
     foreground="#33293f",  # same as primary
-    background="#ecd8ff",  # Celune light background
-    surface="#ecd8ff",  # same as background
+    background="#ece8ff",  # Celune light background
+    surface="#ece8ff",  # same as background
     warning="#f0e68c",  # Celune warning
     error="#f07178",  # Celune error
 )
@@ -175,7 +174,7 @@ class CeluneUI(App):
 
         self.celune: Optional[Celune] = None
         self.celune_ready = False
-        self.celune_styles = list(VOICE_MODELS)
+        self.celune_styles = ["balanced"]
         self.celune_voices = None
 
         self.style_index = 0
@@ -192,25 +191,49 @@ class CeluneUI(App):
         self._suppress_input_change = False
 
     def _severity_color(self, severity: str = "info") -> str:
-        """Return the current theme color for a log severity."""
+        """Return the current theme color for a log severity.
+
+        Args:
+            severity: The severity label to map to a theme color.
+
+        Returns:
+            str: The configured color string for the requested severity.
+        """
         palette = SEVERITY_COLORS.get(self.active_theme_name, SEVERITY_COLORS["celune"])
         return palette.get(severity, palette["info"])
 
     def _apply_theme(self, theme_name: str) -> None:
-        """Apply theme and repaint theme-sensitive widgets."""
+        """Apply theme and repaint theme-sensitive widgets.
+
+        Args:
+            theme_name: The theme name to activate.
+
+        Returns:
+            None: This method updates theme state and redraws status and logs.
+        """
         self.active_theme_name = theme_name
         self.theme = theme_name  # pylint: disable=W0201
         self._refresh_status()
         self._refresh_logs()
 
     def _refresh_status(self) -> None:
-        """Refresh the status color for the active theme."""
+        """Refresh the status color for the active theme.
+
+        Returns:
+            None: This method reapplies the active severity color to the status
+                widget.
+        """
         if self.status is None:
             return
         self.status.styles.color = self._severity_color(self.status_severity)
 
     def _refresh_logs(self) -> None:
-        """Repaint existing log entries using the active theme colors."""
+        """Repaint existing log entries using the active theme colors.
+
+        Returns:
+            None: This method redraws the log widget while preserving scroll
+                position.
+        """
         if self.logs is None:
             return
 
@@ -235,7 +258,11 @@ class CeluneUI(App):
         )
 
     def compose(self) -> ComposeResult:
-        """Define the UI."""
+        """Define the UI.
+
+        Returns:
+            ComposeResult: The root widget tree for the Celune interface.
+        """
         with Vertical(id="container"):
             with Horizontal(id="header-container"):
                 yield Label("", classes="line")
@@ -250,7 +277,12 @@ class CeluneUI(App):
             yield Label("Initializing", id="status")
 
     def on_mount(self) -> None:
-        """Prepare Celune."""
+        """Prepare Celune.
+
+        Returns:
+            None: This method sets up themes, widgets, output redirection, and
+                background initialization.
+        """
         self.register_theme(THEME)
         self.register_theme(THEME_LIGHT)
         if os.getenv("CELUNE_THEME") == "dark":
@@ -279,14 +311,22 @@ class CeluneUI(App):
         signal.signal(signal.SIGINT, self.signal_handler)
 
     def start_background_init(self) -> None:
-        """Run Celune's initialization function."""
+        """Run Celune's initialization function.
+
+        Returns:
+            None: This method triggers background TTS loading.
+        """
         self.load_tts()
 
     @work(thread=True, exclusive=True)
     def load_tts(self) -> None:
-        """Load Celune."""
+        """Load Celune.
+
+        Returns:
+            None: This worker initializes the engine and updates UI state.
+        """
         try:
-            tts_voices = list(VOICE_MODELS)
+            tts_voices = list(self.celune.backend.voices)
 
             self.celune.set_voices(tts_voices)
             self.celune_voices = itertools.cycle(tts_voices)
@@ -309,7 +349,15 @@ class CeluneUI(App):
             self.cur_state = "error"
 
     def change_input_state(self, locked: bool) -> None:
-        """Lock or unlock Celune's UI layer."""
+        """Lock or unlock Celune's UI layer.
+
+        Args:
+            locked: Whether user input should be disabled.
+
+        Returns:
+            None: This method updates the input placeholder and style button
+                state.
+        """
 
         def update() -> None:
             self.input_box.placeholder = (
@@ -325,7 +373,15 @@ class CeluneUI(App):
             self.call_from_thread(update)
 
     def safe_status(self, msg: str, severity: str = "info") -> None:
-        """Update current status."""
+        """Update current status.
+
+        Args:
+            msg: The status text to display.
+            severity: The status severity level.
+
+        Returns:
+            None: This method safely updates the status widget from any thread.
+        """
         if self.cur_state == "exiting" or self.status is None:
             return
 
@@ -348,7 +404,15 @@ class CeluneUI(App):
             self.call_from_thread(update)
 
     def safe_log(self, msg: str, severity: str = "info") -> None:
-        """Log a message."""
+        """Log a message.
+
+        Args:
+            msg: The log line to append.
+            severity: The log severity level.
+
+        Returns:
+            None: This method safely updates the log widget from any thread.
+        """
         if self.cur_state == "exiting" or self.logs is None:
             return
 
@@ -364,7 +428,14 @@ class CeluneUI(App):
             self.call_from_thread(self.logs.write, entry)
 
     def tts_voice_changed(self, name: str) -> None:
-        """Set UI state after changing Celune's voice."""
+        """Set UI state after changing Celune's voice.
+
+        Args:
+            name: The newly active voice name.
+
+        Returns:
+            None: This method synchronizes the style button label with Celune.
+        """
         if self.cur_state == "exiting":
             return
 
@@ -379,14 +450,30 @@ class CeluneUI(App):
             self.call_from_thread(lambda: setattr(self.style_button, "label", label))
 
     def tts_log(self, msg: str, severity: str = "info") -> None:
-        """Set status from TTS log."""
+        """Handle log messages coming from Celune.
+
+        Args:
+            msg: The log message emitted by Celune.
+            severity: The log severity level.
+
+        Returns:
+            None: This method forwards engine logs to the UI log panel.
+        """
         if self.cur_state == "exiting":
             return
 
         self.safe_log(msg, severity)
 
     def process_command(self, command: str, args: list[str]) -> None:
-        """Process Celune control commands."""
+        """Process Celune control commands.
+
+        Args:
+            command: The slash-command name without the leading slash.
+            args: The parsed command arguments.
+
+        Returns:
+            None: This method mutates UI or engine state based on the command.
+        """
 
         self.input_box.load_text("")
         if command == "help":
@@ -415,7 +502,7 @@ class CeluneUI(App):
                 "warning",
             )
             self.safe_log("/speed <speed> - Change speaking speed.")
-            self.safe_log("/reverb <strenth> - Change reverb strength.")
+            self.safe_log("/reverb <strength> - Change reverb strength.")
             self.safe_log(
                 "/play <file> - Play a sound effect by path. Only WAV files are supported."
             )
@@ -425,9 +512,9 @@ class CeluneUI(App):
             self.safe_log("/help - Display this help message.")
             self.safe_log("Press CTRL+T to toggle light/dark modes.")
             return
-        if command == "consumebuf":
+        if command == "consumebuffer":
             if not args:
-                self.safe_log("Usage: /consumebuf <true/false>", "warning")
+                self.safe_log("Usage: /consumebuffer <true/false>", "warning")
                 return
 
             if args[0].lower() in ["true", "false"]:
@@ -577,7 +664,14 @@ class CeluneUI(App):
         )
 
     def consume_buffer(self, tlen: int) -> None:
-        """Consume a sentence from live input and say it."""
+        """Consume a sentence from live input and say it.
+
+        Args:
+            tlen: The number of characters to consume from the input buffer.
+
+        Returns:
+            None: This method removes the consumed text and queues it for speech.
+        """
         to_say = self.input_box.text[:tlen].strip()
 
         self._suppress_input_change = True
@@ -597,8 +691,20 @@ class CeluneUI(App):
         self.celune.say(to_say)
 
     def on_key(self, event: events.Key) -> None:
-        """Accept input and send text to Celune."""
+        """Accept input and send text to Celune.
+
+        Args:
+            event: The key event received from Textual.
+
+        Returns:
+            None: This handler processes shortcuts, commands, and speech requests.
+        """
         if self.cur_state == "exiting":
+            return
+
+        if event.key == "ctrl+q":
+            event.prevent_default()
+            event.stop()
             return
 
         if event.key == "ctrl+t":
@@ -643,7 +749,14 @@ class CeluneUI(App):
                 event.prevent_default()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Change Celune's tone."""
+        """Change Celune's tone.
+
+        Args:
+            event: The button press event emitted by Textual.
+
+        Returns:
+            None: This handler cycles to the next available voice.
+        """
         if self.cur_state == "exiting":
             return
 
@@ -659,7 +772,11 @@ class CeluneUI(App):
         ).start()
 
     def on_unmount(self) -> None:
-        """Unload Celune."""
+        """Unload Celune.
+
+        Returns:
+            None: This handler shuts down Celune and restores redirected output.
+        """
         self.cur_state = "exiting"
 
         if self.celune is not None:
@@ -671,7 +788,11 @@ class CeluneUI(App):
             sys.stderr = self._old_stderr
 
     def tts_idle(self) -> None:
-        """Reset UI state after Celune stops talking."""
+        """Reset UI state after Celune stops talking.
+
+        Returns:
+            None: This method restores idle UI state when playback finishes.
+        """
         if self.cur_state == "exiting":
             return
         self.celune.locked = False
@@ -684,7 +805,11 @@ class CeluneUI(App):
     def tts_queue_avail(
         self,
     ) -> None:  # allow enqueuing new inputs while speaking but after generation
-        """Unlock input queueing after Celune completes the generation."""
+        """Unlock input queueing after Celune completes generation.
+
+        Returns:
+            None: This method re-enables input while Celune is still speaking.
+        """
         if self.cur_state == "exiting":
             return
         self.celune.locked = False
@@ -695,13 +820,28 @@ class CeluneUI(App):
         self.style_button.disabled = False
 
     def error(self, error: str) -> None:
-        """Set the UI status to the error message."""
+        """Set the UI status to the error message.
+
+        Args:
+            error: The error text to display.
+
+        Returns:
+            None: This method shows the message with error severity.
+        """
         if self.cur_state == "exiting":
             return
         self.safe_status(error, "error")
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        """Monitor text area changes and perform actions."""
+        """Monitor text area changes and perform actions.
+
+        Args:
+            event: The Textual text-area change event.
+
+        Returns:
+            None: This handler resizes the input and optionally consumes
+                sentence-boundary text.
+        """
         if self.cur_state == "exiting":
             return
 
@@ -728,14 +868,28 @@ class CeluneUI(App):
                 self.consume_buffer(len(text))
 
     def _graceful_exit(self) -> None:
-        """Exit from Celune gracefully."""
+        """Exit from Celune gracefully.
+
+        Returns:
+            None: This method requests a normal Textual application exit.
+        """
         self.exit()
-        self.celune.close()
 
     def signal_handler(self, _sig, _frame) -> None:
-        """Trap CTRL+C and exit Celune if pressed."""
+        """Trap CTRL+C and exit Celune if pressed.
+
+        Args:
+            _sig: The received signal number.
+            _frame: The current stack frame from the signal handler.
+
+        Returns:
+            None: This handler schedules a graceful application shutdown.
+        """
         # cannot be wrapped in try-except, or it won't be effective
-        self.call_from_thread(self.call_later, self._graceful_exit)
+        if threading.current_thread() is threading.main_thread():
+            self.call_later(self._graceful_exit)
+        else:
+            self.call_from_thread(self.call_later, self._graceful_exit)
 
 
 class CeluneHeadlessUI:
@@ -763,7 +917,14 @@ class CeluneHeadlessUI:
         self.reset: str = "\x1b[0m" if not self.no_color else ""
 
     def severity_color(self, severity: str) -> str:
-        """Get color from VGA text mode palette."""
+        """Get color from the VGA text mode palette.
+
+        Args:
+            severity: The severity label to map to a terminal color.
+
+        Returns:
+            str: The ANSI color sequence for the requested severity.
+        """
         if self.no_color:
             return ""
         if severity == "warning":
@@ -773,7 +934,15 @@ class CeluneHeadlessUI:
         return self.colors["white"]
 
     def headless_log(self, msg: str, severity: str = "info") -> None:
-        """Log to headless interface."""
+        """Log to the headless interface.
+
+        Args:
+            msg: The log message to print.
+            severity: The log severity level.
+
+        Returns:
+            None: This method prints a formatted line to stdout.
+        """
         prefix = ""
         if severity == "warning":
             prefix = "[WARN] "
@@ -782,17 +951,37 @@ class CeluneHeadlessUI:
         print(f"{prefix}{self.severity_color(severity)}{msg}{self.reset}", flush=True)
 
     def headless_error(self, error: str) -> None:
-        """Log an error to headless interface."""
+        """Log an error to the headless interface.
+
+        Args:
+            error: The error message to print.
+
+        Returns:
+            None: This method forwards the message as an error log.
+        """
         self.headless_log(error, "error")
 
     def run(self) -> None:
-        """Start the headless interface."""
+        """Start the headless interface.
+
+        Returns:
+            None: This method installs the signal handler and keeps the process
+                alive.
+        """
         signal.signal(signal.SIGINT, self.signal_handler)
         while True:
             time.sleep(1)
 
     def signal_handler(self, _sig, _frame) -> None:
-        """Exit Celune in headless mode on CTRL+C."""
+        """Exit Celune in headless mode on CTRL+C.
+
+        Args:
+            _sig: The received signal number.
+            _frame: The current stack frame from the signal handler.
+
+        Returns:
+            None: This handler closes Celune and exits the process.
+        """
         if self.celune is not None:
             self.celune.close()
         sys.exit(0)
@@ -811,7 +1000,14 @@ class LogRedirect:
         self._buffer = ""
 
     def write(self, text: str) -> None:
-        """Write text to the logger."""
+        """Write text to the logger.
+
+        Args:
+            text: The raw text chunk captured from redirected output.
+
+        Returns:
+            None: This method buffers partial lines and forwards complete ones.
+        """
         if not text:
             return
 
@@ -832,7 +1028,11 @@ class LogRedirect:
                 self.write_callback(chunk, self.default_severity)
 
     def flush(self) -> None:
-        """Flush the buffers."""
+        """Flush the buffers.
+
+        Returns:
+            None: This method emits any buffered text and clears the buffer.
+        """
         if self._buffer.strip():
             self.write_callback(self._buffer.strip(), self.default_severity)
         self._buffer = ""

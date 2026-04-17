@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "3.1.2"
+version = "3.2.0"
 requires-python = ">=3.12,<3.14"
 dependencies = [
 	# AI stack
@@ -9,9 +9,12 @@ dependencies = [
     # Celune sounds best with faster-qwen3-tts 0.2.4.
     # You can use version 0.2.5 with Celune 3.0.0 or later, but the speech may end abruptly, depending on the input.
     "faster-qwen3-tts==0.2.4",
+    # If you want Celune to use the alternative VoxCPM2-based backend, install this package.
+    # Note: This will fall back to voice cloning. If you want to use native Celune voices, use the Qwen3 backend.
+    "voxcpm>=2.0.0,<2.1.0",
     "hf-xet",
-    "huggingface-hub",
-    "transformers",
+    "huggingface-hub<1.0.0",
+    "transformers<5.0.0",
 
 	# Audio processing
     "numpy",
