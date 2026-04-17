@@ -24,7 +24,14 @@ if TYPE_CHECKING:
 
 
 def clear_queue(q: queue.Queue) -> None:
-    """Drain all pending items from a queue."""
+    """Drain all pending items from a queue.
+
+    Args:
+        q: The queue to empty.
+
+    Returns:
+        None: This method removes all currently pending items.
+    """
     try:
         while True:
             q.get_nowait()
@@ -33,7 +40,15 @@ def clear_queue(q: queue.Queue) -> None:
 
 
 def close_stream(engine: "Celune", abort: bool = False) -> None:
-    """Close the current audio stream if one exists."""
+    """Close the current audio stream if one exists.
+
+    Args:
+        engine: The Celune engine that owns the audio stream.
+        abort: Whether to abort immediately instead of stopping gracefully.
+
+    Returns:
+        None: This method closes the active output stream and clears stream state.
+    """
     if engine.stream is None:
         return
 
@@ -51,7 +66,14 @@ def close_stream(engine: "Celune", abort: bool = False) -> None:
 
 
 def force_stop_speech(engine: "Celune") -> bool:
-    """Forcefully stop Celune from speaking."""
+    """Forcefully stop Celune from speaking.
+
+    Args:
+        engine: The Celune engine whose queues and playback should be interrupted.
+
+    Returns:
+        bool: ``True`` when an active utterance was stopped, otherwise ``False``.
+    """
     with engine.say_lock:
         is_active = engine.locked or (engine.cur_state in {"generating", "speaking"})
 
@@ -71,7 +93,15 @@ def force_stop_speech(engine: "Celune") -> bool:
 
 
 def acquire_pipeline(engine: "Celune", action: str) -> bool:
-    """Atomically claim Celune's shared playback pipeline."""
+    """Atomically claim Celune's shared playback pipeline.
+
+    Args:
+        engine: The Celune engine that owns the playback pipeline.
+        action: A short label describing the action requesting the lock.
+
+    Returns:
+        bool: ``True`` when the pipeline was claimed, otherwise ``False``.
+    """
     with engine.say_lock:
         if engine.dev:
             engine.log(f"[LOCK] acquire requested by {action}, locked={engine.locked}")
@@ -88,7 +118,14 @@ def acquire_pipeline(engine: "Celune", action: str) -> bool:
 
 
 def release_pipeline(engine: "Celune") -> None:
-    """Release Celune's shared playback pipeline."""
+    """Release Celune's shared playback pipeline.
+
+    Args:
+        engine: The Celune engine that owns the playback pipeline.
+
+    Returns:
+        None: This method clears the busy state and marks playback as done.
+    """
     with engine.say_lock:
         engine.locked = False
         engine.playback_done.set()
@@ -98,7 +135,15 @@ def release_pipeline(engine: "Celune") -> None:
 
 
 def say(engine: "Celune", text: str) -> bool:
-    """Queue text for Celune to say."""
+    """Queue text for Celune to say.
+
+    Args:
+        engine: The Celune engine that should speak the text.
+        text: The input text to queue for synthesis.
+
+    Returns:
+        bool: ``True`` when the text was queued successfully, otherwise ``False``.
+    """
     if not engine.model_ready.is_set():
         engine.status_callback("Waiting for model")
         engine.log("Speak request is waiting for model reload to finish.", "info")
@@ -135,7 +180,15 @@ def say(engine: "Celune", text: str) -> bool:
 
 
 def play(engine: "Celune", sound_path: str) -> bool:
-    """Play a sound via Celune's pipeline."""
+    """Play a sound via Celune's pipeline.
+
+    Args:
+        engine: The Celune engine that should play the sound.
+        sound_path: The path to the audio file to play.
+
+    Returns:
+        bool: ``True`` when playback was queued successfully, otherwise ``False``.
+    """
     if not os.path.exists(sound_path):
         engine.log(f"Celune cannot find {sound_path}.", "warning")
         return False
@@ -165,7 +218,14 @@ def play(engine: "Celune", sound_path: str) -> bool:
 
 
 def close(engine: "Celune") -> None:
-    """Shut off Celune and exit."""
+    """Shut off Celune and exit.
+
+    Args:
+        engine: The Celune engine to shut down.
+
+    Returns:
+        None: This method stops worker threads, closes audio, and fades out RGB.
+    """
     engine.log("Exiting...")
     engine._exit_requested = True
 
@@ -188,7 +248,15 @@ def close(engine: "Celune") -> None:
 
 
 def split_text(engine: "Celune", text: str) -> list[str]:
-    """Split text into chunks."""
+    """Split text into chunks.
+
+    Args:
+        engine: The Celune engine whose chunking settings should be used.
+        text: The input text to split.
+
+    Returns:
+        list[str]: The generated text chunks.
+    """
     sentences = re.split(r"(?<=[.!?])\s+", text)
     chunks = []
 
@@ -221,7 +289,14 @@ def split_text(engine: "Celune", text: str) -> list[str]:
 
 
 def generation_worker(engine: "Celune") -> None:
-    """Generate audio tokens and send them to the audio pipeline."""
+    """Generate audio tokens and send them to the audio pipeline.
+
+    Args:
+        engine: The Celune engine whose generation queue should be processed.
+
+    Returns:
+        None: This worker loop runs until it receives the shutdown sentinel.
+    """
     while True:
         text = engine.text_queue.get()
 
@@ -379,7 +454,14 @@ def generation_worker(engine: "Celune") -> None:
 
 
 def playback_worker(engine: "Celune") -> None:
-    """Receive audio chunks and play them."""
+    """Receive audio chunks and play them.
+
+    Args:
+        engine: The Celune engine whose audio queue should be played back.
+
+    Returns:
+        None: This worker loop runs until playback is shut down.
+    """
     started = False
 
     while True:

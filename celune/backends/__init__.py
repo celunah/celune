@@ -13,7 +13,15 @@ BACKENDS = {
 
 
 def get_version(package) -> str:
-    """Get a specified package version."""
+    """Get an installed package version.
+
+    Args:
+        package: The package name to resolve through import metadata.
+
+    Returns:
+        str: The installed package version, or ``"unknown"`` when the package
+            cannot be found.
+    """
     try:
         return version(package)
     except PackageNotFoundError:
@@ -23,7 +31,14 @@ def get_version(package) -> str:
 def resolve_backend(
     backend_name: Union[str, type[CeluneBackend], CeluneBackend],
 ) -> CeluneBackend:
-    """Find a Celune backend by name, raise if not found."""
+    """Resolve a backend specification into a backend instance.
+
+    Args:
+        backend_name: A backend name, backend class, or backend instance.
+
+    Returns:
+        CeluneBackend: The resolved backend instance.
+    """
     if isinstance(backend_name, CeluneBackend):
         return backend_name
 

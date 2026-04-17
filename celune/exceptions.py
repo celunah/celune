@@ -43,3 +43,7 @@ class ExtensionAlreadyRegisteredError(ExtensionError):
 
 class No(Exception):
     """Celune does not want to start today."""
+
+
+class ChecksumWarning(UserWarning):
+    """Reference audio has no checksum or an incorrect checksum."""

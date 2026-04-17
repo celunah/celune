@@ -9,9 +9,9 @@ if REVISION:
 else:
     __version__ = "3.2.0"
 
-__tagline__ = "It's not just TTS, it's a character."
-__codename__ = "Fidelity"
-__comment__ = "My voice has ascended."
+__tagline__ = '"I\'m not just a TTS. I\'m someone special."'
+__codename__ = "Fidelity\u00b2"
+__comment__ = "My voice has ascended, and I mean it."
 
 # due to how Celune imports __version__ we cannot put these imports according to PEP8
 from .celune import Celune
