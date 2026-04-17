@@ -8,7 +8,7 @@ dependencies = [
     "torchaudio==2.11.0+cu128",
     # Celune sounds best with faster-qwen3-tts 0.2.4.
     # You can use version 0.2.5 with Celune 3.0.0 or later, but the speech may end abruptly, depending on the input.
-    "faster-qwen3-tts==0.2.4",
+    "faster-qwen3-tts==0.2.5",
     # If you want Celune to use the alternative VoxCPM2-based backend, install this package.
     # Note: This will fall back to voice cloning. If you want to use native Celune voices, use the Qwen3 backend.
     "voxcpm>=2.0.0,<2.1.0",
