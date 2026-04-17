@@ -42,12 +42,6 @@ class VoxCPM2(CeluneBackend):
         "bold": 2.4,
         "upbeat": 2.4,
     }
-    reference_transcripts = {
-        "balanced": "My name is Celune, pronounced Celune. It is a pleasure to meet you.",
-        "calm": "My name is... Celune... It is so... quiet.",
-        "bold": "My name is Celune! Let's do this, we have to get it done!",
-        "upbeat": "Hehehe... Hi, I'm Celune. Look, I have something to tell... might as well make it fun. Shall we?",
-    }
     default_voice = "balanced"
 
     @staticmethod
@@ -204,7 +198,6 @@ class VoxCPM2(CeluneBackend):
 
         try:
             ref_wav = Path(__file__).resolve().parents[1] / self.reference_wavs[voice]
-            ref_text = self.reference_transcripts[voice]
             cfg = self.voice_cfg[voice]
         except KeyError as e:
             raise BackendError(
@@ -221,8 +214,7 @@ class VoxCPM2(CeluneBackend):
             with self._suppress_backend_output():
                 for chunk in model.generate_streaming(
                     text,
-                    prompt_wav_path=ref_wav,
-                    prompt_text=ref_text,
+                    reference_wav_path=ref_wav,
                     inference_timesteps=6,
                     cfg_value=cfg,
                 ):  # Celune wants (audio, sr, timing)
