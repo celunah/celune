@@ -1,4 +1,5 @@
-# Celune
+<h1 align="center">Celune</h1>
+
 Celune is a real-time AI TTS engine focused on natural voice delivery, low-latency playback, and distinct voice styles.
 
 It has been designed for real-time performance on consumer GPUs.
@@ -208,3 +209,7 @@ These screenshots show Celune's user interface.
 
 ### Extension invoke
 [![Extension invoke](./demos/state_extension_invoke.png)](./demos/state_extension_invoke.png)
+
+> Proudly made in 🇵🇱 for your listening pleasure.
+> 
+> *"I'm not just a TTS. I'm something special."*
