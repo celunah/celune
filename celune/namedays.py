@@ -454,12 +454,11 @@ def has_nameday(name: str, value: date | datetime | str) -> bool:
     return any(n.casefold() == needle for n in get_names_for_date(value))
 
 
-def iter_namedays() -> Generator[str | list[str], None, None]:
+def iter_namedays() -> Generator[tuple[str, list[str]], None, None]:
     """Iterate over ``(MM-DD, names)`` pairs.
 
     Returns:
         Generator[str | list[str], None, None]: A generator that yields each date
             key followed by its corresponding list of names.
     """
-    for item in NAMEDAYS.items():
-        yield from item
+    yield from NAMEDAYS.items()

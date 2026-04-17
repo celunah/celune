@@ -13,7 +13,7 @@ from .constants import NORMALIZER_MODEL_ID
 
 def load_normalizer_components(
     log: Callable[[str, str], None],
-    backend: Union[CeluneBackend, type(CeluneBackend)],
+    backend: Union[CeluneBackend, type[CeluneBackend]],
 ) -> tuple[PreTrainedTokenizerBase, PreTrainedModel]:
     """Load CeluneNorm and return its tokenizer and model.
 

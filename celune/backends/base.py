@@ -24,6 +24,17 @@ class CeluneBackend(ABC):
 
         self.model = None
 
+    @staticmethod
+    @abstractmethod
+    def model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
+        """Determine if the given model is available and return its path if found.
+
+        Args:
+            model: The model name to check availability of.
+        Returns:
+            tuple[bool, Optional[str]]: Whether the given model is available and relevant path.
+        """
+
     @property
     def default_model_id(self) -> str:
         """Return the default model identifier for this backend.
