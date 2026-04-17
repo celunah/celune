@@ -13,6 +13,10 @@ class NotAvailableError(RuntimeError, CeluneError):
     """Celune is currently unavailable."""
 
 
+class BackendError(RuntimeError, CeluneError):
+    """Celune backend has failed."""
+
+
 class WarmupError(RuntimeError, CeluneError):
     """Celune cannot warm up at this time."""
 
@@ -39,3 +43,7 @@ class ExtensionAlreadyRegisteredError(ExtensionError):
 
 class No(Exception):
     """Celune does not want to start today."""
+
+
+class ChecksumWarning(UserWarning):
+    """Reference audio has no checksum or an incorrect checksum."""

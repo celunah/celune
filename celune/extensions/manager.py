@@ -24,7 +24,14 @@ class CeluneExtensionManager:
         self.autostarted = False
 
     def register(self, extension_cls: Type[CeluneExtension]) -> CeluneExtension:
-        """Register Celune extensions."""
+        """Register a Celune extension class.
+
+        Args:
+            extension_cls: The extension class to instantiate and register.
+
+        Returns:
+            CeluneExtension: The registered extension instance.
+        """
         if not inspect.isclass(extension_cls) or not issubclass(
             extension_cls, CeluneExtension
         ):
@@ -47,10 +54,14 @@ class CeluneExtensionManager:
         return instance
 
     def autostart_all(self) -> None:
-        """Autostart all available Celune extensions."""
+        """Autostart all available Celune extensions.
+
+        Returns:
+            None: Matching extensions are started on background threads.
+        """
         if self.autostarted:
             self.context.log(
-                f"[Core] Cannot autostart Celune extensions more than one time.",
+                "[Core] Cannot autostart Celune extensions more than one time.",
                 "warning",
             )
             return
@@ -80,7 +91,17 @@ class CeluneExtensionManager:
             self.autostarted = True
 
     def invoke(self, name: str, *args: Any, **kwargs: Any) -> Any:
-        """Manually invoke a Celune extension."""
+        """Manually invoke a Celune extension.
+
+        Args:
+            name: The registered extension name to invoke.
+            *args: Positional arguments forwarded to the extension.
+            **kwargs: Keyword arguments forwarded to the extension.
+
+        Returns:
+            Any: The invocation thread is started asynchronously, so this returns
+                ``None``.
+        """
         ext = self.extensions.get(name)
         if ext is None:
             raise InvalidExtensionError(f"Extension '{name}' is not registered")
@@ -90,11 +111,22 @@ class CeluneExtensionManager:
         ).start()
 
     def list_extensions(self) -> list[str]:
-        """List all installed Celune extensions."""
+        """List all installed Celune extensions.
+
+        Returns:
+            list[str]: The registered extension names.
+        """
         return list(self.extensions.keys())
 
     def autoload(self, folder: str = "extensions") -> None:
-        """Load all Celune extensions from a directory."""
+        """Load all Celune extensions from a directory.
+
+        Args:
+            folder: The directory containing extension Python modules.
+
+        Returns:
+            None: This method imports and registers any valid extensions it finds.
+        """
         extensions_dir = Path(folder)
 
         if not extensions_dir.exists():

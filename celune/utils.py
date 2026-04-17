@@ -4,7 +4,12 @@ import subprocess
 
 
 def get_revision() -> str:
-    """Get current Git repo revision."""
+    """Get the current Git repository revision.
+
+    Returns:
+        str: The short commit hash, suffixed with ``*`` when the worktree is dirty,
+            or an empty string when Git metadata is unavailable.
+    """
     try:
         rev = (
             subprocess.check_output(
@@ -27,7 +32,15 @@ def get_revision() -> str:
 
 
 def format_number(num: float, precision: int = 0) -> str:
-    """Format a number without trailing zeroes."""
+    """Format a number without trailing zeroes.
+
+    Args:
+        num: The numeric value to format.
+        precision: The number of decimal places to preserve before trimming.
+
+    Returns:
+        str: The formatted numeric string.
+    """
     if precision < 0:
         raise ValueError("precision must be >= 0")
 
@@ -37,7 +50,15 @@ def format_number(num: float, precision: int = 0) -> str:
 
 
 def to_rgb(color: str) -> tuple[int, ...]:
-    """Convert hex code to RGB tuple."""
+    """Convert a hexadecimal color code to an RGB tuple.
+
+    Args:
+        color: A 3-digit or 6-digit hexadecimal color string, optionally prefixed
+            with ``#`` or ``0x``.
+
+    Returns:
+        tuple[int, ...]: The parsed ``(red, green, blue)`` color components.
+    """
     color = color.strip()
 
     if color.startswith("#"):

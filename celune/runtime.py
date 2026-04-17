@@ -4,15 +4,25 @@
 import os
 import sys
 import platform
-from typing import Callable
+from typing import Callable, Optional
 
 import torch
 
 from . import __codename__, __comment__, __version__
 
 
-def log_runtime_banner(log: Callable[[str, str], None]) -> None:
-    """Log high-level version and environment information."""
+def log_runtime_banner(
+    log: Callable[[str, str], None], backend_name: str
+) -> None:
+    """Log high-level version and environment information.
+
+    Args:
+        log: Logging callback that receives the generated banner lines.
+        backend_name: Optional backend name shown in the runtime banner.
+
+    Returns:
+        None: This function emits startup information through the log callback.
+    """
     cuda_version = torch.version.cuda
     quotation_marks = (
         ("\u201c", "\u201d")
@@ -24,7 +34,8 @@ def log_runtime_banner(log: Callable[[str, str], None]) -> None:
     )
 
     log(
-        f"Celune {__version__}, "
+        f"Celune {__version__} "
+        f"on backend {backend_name}, "
         f"Python {platform.python_version()}, "
         f"PyTorch {torch.__version__}, "
         f"CUDA {cuda_version}",
@@ -45,7 +56,20 @@ def validate_runtime(
     format_error: Callable[[Exception, bool], str],
     dev: bool,
 ) -> bool:
-    """Validate Celune's Python, CUDA, and GPU environment."""
+    """Validate Celune's Python, CUDA, and GPU environment.
+
+    Args:
+        log: Logging callback for informational and error messages.
+        error: Error callback for surfaced user-facing failures.
+        set_state: Callback used to update Celune's runtime state.
+        glow_connect_failed: Whether the OpenRGB glow backend failed to connect.
+        format_error: Error formatter used for exception messages.
+        dev: Whether developer mode is enabled.
+
+    Returns:
+        bool: ``True`` when the runtime environment is supported and usable,
+            otherwise ``False``.
+    """
     cuda_version = torch.version.cuda
 
     if sys.version_info < (3, 12) or sys.version_info >= (3, 14):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Iterable
+from typing import Generator
 
 NAMEDAYS: dict[str, list[str]] = {
     "01-01": [],
@@ -373,7 +373,7 @@ NAMEDAYS: dict[str, list[str]] = {
     "12-21": [],
     "12-22": ["Beatrice", "Frances"],
     "12-23": ["Victoria"],
-    "12-24": ["Adam", "Adamina", "Adela", "Eve", "Gregory"],
+    "12-24": ["Adam", "Adela", "Eve", "Gregory"],
     "12-25": ["Anastasia", "Eugenia", "Peter", "Nicholas"],
     "12-26": ["Stephen", "Sylvia", "Anna", "Marie"],
     "12-27": ["Caesar", "John"],
@@ -389,12 +389,27 @@ def _key(month: int, day: int) -> str:
 
 
 def get_names(month: int, day: int) -> list[str]:
-    """Return the English-only name-day names for a month/day pair."""
+    """Return the English-only name-day names for a month/day pair.
+
+    Args:
+        month: The month number to look up.
+        day: The day number to look up.
+
+    Returns:
+        list[str]: The matching English name-day names.
+    """
     return list(NAMEDAYS.get(_key(month, day), []))
 
 
 def get_names_for_date(value: date | datetime | str) -> list[str]:
-    """Return names for a date, datetime, or YYYY-MM-DD / MM-DD string."""
+    """Return names for a date, datetime, or YYYY-MM-DD / MM-DD string.
+
+    Args:
+        value: A date-like value identifying the day to query.
+
+    Returns:
+        list[str]: The matching English name-day names.
+    """
     if isinstance(value, datetime):
         return get_names(value.month, value.day)
     if isinstance(value, date):
@@ -411,7 +426,14 @@ def get_names_for_date(value: date | datetime | str) -> list[str]:
 
 
 def find_dates_for_name(name: str) -> list[str]:
-    """Return all MM-DD dates where the given English name appears."""
+    """Return all MM-DD dates where the given English name appears.
+
+    Args:
+        name: The English name to search for.
+
+    Returns:
+        list[str]: Every ``MM-DD`` entry that contains the supplied name.
+    """
     needle = name.casefold()
     return [
         d for d, names in NAMEDAYS.items() if any(n.casefold() == needle for n in names)
@@ -419,12 +441,24 @@ def find_dates_for_name(name: str) -> list[str]:
 
 
 def has_nameday(name: str, value: date | datetime | str) -> bool:
-    """Return True if the given English name is present on the supplied date."""
+    """Return whether the given English name is present on the supplied date.
+
+    Args:
+        name: The English name to check.
+        value: A date-like value identifying the day to query.
+
+    Returns:
+        bool: ``True`` when the name appears on that date, otherwise ``False``.
+    """
     needle = name.casefold()
     return any(n.casefold() == needle for n in get_names_for_date(value))
 
 
-def iter_namedays() -> Iterable[tuple[str, list[str]]]:
-    """Iterate over (MM-DD, names) pairs."""
-    for item in NAMEDAYS.items():
-        yield from item
+def iter_namedays() -> Generator[tuple[str, list[str]], None, None]:
+    """Iterate over ``(MM-DD, names)`` pairs.
+
+    Returns:
+        Generator[str | list[str], None, None]: A generator that yields each date
+            key followed by its corresponding list of names.
+    """
+    yield from NAMEDAYS.items()

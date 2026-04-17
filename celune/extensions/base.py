@@ -78,11 +78,27 @@ class CeluneContext:
     dev: bool = False
 
     def expose(self, key: str, value: Any) -> None:
-        """Expose a shared object."""
+        """Expose a shared object.
+
+        Args:
+            key: The name used to store the shared value.
+            value: The object to expose to other extensions.
+
+        Returns:
+            None: This method updates the shared extension context.
+        """
         self.shared[key] = value
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Get a shared object."""
+        """Get a shared object.
+
+        Args:
+            key: The name of the shared value to fetch.
+            default: The fallback value returned when the key is missing.
+
+        Returns:
+            Any: The stored shared value, or ``default`` when absent.
+        """
         return self.shared.get(key, default)
 
 
@@ -97,46 +113,103 @@ class CeluneExtension(ABC):
 
     @property
     def name(self) -> str:
-        """Current Celune extension name."""
+        """Return the extension's display name.
+
+        Returns:
+            str: The extension name exposed to Celune.
+        """
         return self.EXTENSION_NAME
 
     @property
     def state(self) -> str:
-        """Read Celune's current state."""
+        """Read Celune's current state.
+
+        Returns:
+            str: The current Celune runtime state string.
+        """
         return self.ctx.get_state()
 
     def autostart(self) -> None:
-        """Overridable autostart logic function."""
+        """Run extension startup logic.
+
+        Returns:
+            None: The default implementation only logs that autostart is skipped.
+        """
         self.log(f"{self.name} has no autostart, skipping", "warning")
 
     def invoke(self, *args, **kwargs) -> None:
-        """Overridable invocation logic function."""
+        """Run extension invocation logic.
+
+        Args:
+            *args: Positional arguments forwarded by the extension manager.
+            **kwargs: Keyword arguments forwarded by the extension manager.
+
+        Returns:
+            None: Subclasses override this to perform extension work.
+        """
         raise IncompleteExtensionError(
             f"{self.__class__.__name__}.invoke() is not implemented"
         )
 
     def log(self, msg: str, severity: str = "info") -> None:
-        """Log to Celune's logs."""
+        """Log to Celune's logs.
+
+        Args:
+            msg: The message to append to Celune's log output.
+            severity: The message severity level.
+
+        Returns:
+            None: This method forwards the message to Celune's logger.
+        """
         self.ctx.log(f"[{self.name}] {msg}", severity)
 
     def say(self, text: str) -> bool:
-        """Make Celune say something."""
+        """Make Celune say something.
+
+        Args:
+            text: The text to queue for speech synthesis.
+
+        Returns:
+            bool: ``True`` when the speech request was queued, otherwise ``False``.
+        """
         if not self.ctx.wait_until_ready():
             return False
 
         return self.ctx.say(text)
 
     def play(self, sound_path: str) -> bool:
-        """Play arbitrary sound through Celune."""
+        """Play arbitrary sound through Celune.
+
+        Args:
+            sound_path: The path to the audio file to play.
+
+        Returns:
+            bool: ``True`` when playback was queued, otherwise ``False``.
+        """
         if not self.ctx.wait_until_ready():
             return False
 
         return self.ctx.play(sound_path)
 
     def status(self, msg: str, severity: str = "info") -> None:
-        """Update status display."""
+        """Update status display.
+
+        Args:
+            msg: The status message to show.
+            severity: The status severity level.
+
+        Returns:
+            None: This method forwards the status update to Celune.
+        """
         self.ctx.status(msg, severity)
 
     def set_voice(self, voice: str) -> None:
-        """Change Celune's voice."""
+        """Change Celune's voice.
+
+        Args:
+            voice: The voice name to request from Celune.
+
+        Returns:
+            None: This method forwards the voice change request.
+        """
         self.ctx.set_voice(voice)
