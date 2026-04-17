@@ -60,6 +60,7 @@ Celune also depends on external system tools that are not installed via `pip`:
 - **Rubber Band library** - required to control Celune's speed
 - **OpenRGB** - required to glow compatible devices
 - **Symbolic link support** - recommended on Windows for optimal operation
+- **C/C++ compiler** - to compile required dependencies for VoxCPM2
 
 Celune requires CUDA for GPU acceleration. CPU-only execution is not supported.
 
@@ -157,6 +158,23 @@ rubberband --version
 
 ### OpenRGB installation
 To install OpenRGB, go to https://openrgb.org/, download and install a package appropriate for your platform. This will allow Celune to glow up your PC as she speaks.
+
+### C/C++ compiler setup
+Celune's VoxCPM2 backend may require a C/C++ compiler to compile dependencies. To install a suitable compiler, run one of the following commands:
+
+```bash
+# Windows
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+
+# Linux (Ubuntu)
+sudo apt install build-essential
+
+# Linux (Arch Linux)
+sudo pacman -S base-devel
+
+# macOS
+brew install llvm
+```
 
 ### CUDA Toolkit 12.8 installation
 This step can be skipped if you are using pre-built PyTorch wheels.
