@@ -171,13 +171,17 @@ class VoxCPM2(CeluneBackend):
         if available and path is not None:
             os.environ["HF_HUB_OFFLINE"] = "1"
             with self._suppress_backend_output():
-                self.model = VoxCPM.from_pretrained(path, load_denoiser=load_denoiser, optimize=False)
+                self.model = VoxCPM.from_pretrained(
+                    path, load_denoiser=load_denoiser, optimize=False
+                )
             return self.model
 
         os.environ["HF_HUB_OFFLINE"] = "0"
         log("Downloading TTS model...", "info")
         with self._suppress_backend_output():
-            self.model = VoxCPM.from_pretrained(model_id, load_denoiser=load_denoiser, optimize=False)
+            self.model = VoxCPM.from_pretrained(
+                model_id, load_denoiser=load_denoiser, optimize=False
+            )
         return self.model
 
     def generate_stream(self, model: VoxCPM, **kwargs):
