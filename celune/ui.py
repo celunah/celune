@@ -329,12 +329,18 @@ class CeluneUI(App):
             tts_voices = list(self.celune.backend.voices)
 
             self.celune.set_voices(tts_voices)
+            self.celune_styles = tts_voices or ["balanced"]
             self.celune_voices = itertools.cycle(tts_voices)
+            if self.celune.current_voice in self.celune_styles:
+                self.style_index = self.celune_styles.index(self.celune.current_voice)
+            else:
+                self.style_index = 0
 
             if self.celune.load():
                 self.celune_ready = True
                 self.safe_status("Idle")
                 self.style_button.disabled = False
+                self.tts_voice_changed(self.celune.current_voice or self.celune_styles[0])
                 self.input_box.placeholder = (
                     "Enter text to speak here or run /help for commands"
                 )
