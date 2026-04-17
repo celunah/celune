@@ -22,7 +22,7 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 | Bold         | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc.wav) |
 | Upbeat       | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc.wav) |
 
-The voices may exhibit a minor amount of mistakes, this is a limitation of AI and not a problem with Celune.
+The demonstration lines were created using Celune's Qwen3 backend, which may inherit a minor amount of mistakes. This is not a bug.
 
 Check the `demos` directory to check demonstration content from both Celune 3 & Celune 2/older versions.
 
