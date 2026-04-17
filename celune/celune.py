@@ -49,10 +49,10 @@ class Celune:
 
     def __init__(
         self,
-        tts_backend: Optional[Union[CeluneBackend, type(CeluneBackend)]] = None,
-        chunk_size: int = 24,  # approx. 1.92s per chunk
+        tts_backend: Optional[Union[CeluneBackend, type[CeluneBackend]]] = None,
+        chunk_size: int = 24,  # only used in Qwen3 backend; ~1.92s
         sentences_per_chunk: int = 4,  # prevents Celune from running out of context
-        language: str = "Auto",  # if you don't care about multilinguality, set it to "English"
+        language: str = "Auto",  # Qwen3 backend accepts a language, others may not
         log_callback: Optional[Callable[[str, str], None]] = None,
         status_callback: Optional[Callable[[str, str], None]] = None,
         error_callback: Optional[Callable[[str], None]] = None,
@@ -71,7 +71,7 @@ class Celune:
         except ValueError as e:
             raise BackendError(str(e)) from e
         except TypeError as e:
-            raise BackendError(f"invalid backend selected: '{tts_backend}'") from e
+            raise BackendError(f"invalid backend specification: '{tts_backend}'") from e
         except ModuleNotFoundError as e:
             raise BackendError(
                 f"backend '{tts_backend}' has unmet dependencies: '{e.name}'"
@@ -206,7 +206,7 @@ class Celune:
         return True
 
     def set_backend(
-        self, backend: Union[str, CeluneBackend, type(CeluneBackend)]
+        self, backend: Union[str, CeluneBackend, type[CeluneBackend]]
     ) -> bool:
         """Switch Celune to a different backend."""
         self._model_ready.clear()
@@ -312,7 +312,7 @@ class Celune:
             self.change_input_state_callback(locked=False)
 
     def change_backend(
-        self, backend: Union[str, CeluneBackend, type(CeluneBackend)]
+        self, backend: Union[str, CeluneBackend, type[CeluneBackend]]
     ) -> None:
         """Switch Celune's active TTS backend and reclaim GPU memory."""
         self.log("Celune is switching backends, please stand by...")

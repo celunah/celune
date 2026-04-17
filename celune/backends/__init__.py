@@ -1,5 +1,6 @@
 """Celune backend initialization manager."""
 
+from typing import Union
 from importlib import import_module
 from importlib.metadata import version, PackageNotFoundError
 
@@ -20,7 +21,7 @@ def get_version(package) -> str:
 
 
 def resolve_backend(
-    backend_name: str | type[CeluneBackend] | CeluneBackend,
+    backend_name: Union[str, type[CeluneBackend], CeluneBackend],
 ) -> CeluneBackend:
     """Find a Celune backend by name, raise if not found."""
     if isinstance(backend_name, CeluneBackend):
