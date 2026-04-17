@@ -142,7 +142,7 @@ class VoxCPM2(CeluneBackend):
         available, path = self.model_is_available_locally(model_id)
 
         for name, ref in self.reference_wavs.items():
-            full_path = Path(__file__).resolve().parent / ref
+            full_path = Path(__file__).resolve().parents[1] / ref
             try:
                 with open(full_path, "rb") as f:
                     checksum = hashlib.file_digest(f, "sha256").hexdigest()
@@ -203,7 +203,7 @@ class VoxCPM2(CeluneBackend):
         kwargs.pop("chunk_size", None)
 
         try:
-            ref_wav = Path(__file__).resolve().parent / self.reference_wavs[voice]
+            ref_wav = Path(__file__).resolve().parents[1] / self.reference_wavs[voice]
             ref_text = self.reference_transcripts[voice]
             cfg = self.voice_cfg[voice]
         except KeyError as e:
