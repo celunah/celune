@@ -14,7 +14,15 @@ from . import __codename__, __comment__, __version__
 def log_runtime_banner(
     log: Callable[[str, str], None], backend_name: str = None
 ) -> None:
-    """Log high-level version and environment information."""
+    """Log high-level version and environment information.
+
+    Args:
+        log: Logging callback that receives the generated banner lines.
+        backend_name: Optional backend name shown in the runtime banner.
+
+    Returns:
+        None: This function emits startup information through the log callback.
+    """
     cuda_version = torch.version.cuda
     quotation_marks = (
         ("\u201c", "\u201d")
@@ -48,7 +56,20 @@ def validate_runtime(
     format_error: Callable[[Exception, bool], str],
     dev: bool,
 ) -> bool:
-    """Validate Celune's Python, CUDA, and GPU environment."""
+    """Validate Celune's Python, CUDA, and GPU environment.
+
+    Args:
+        log: Logging callback for informational and error messages.
+        error: Error callback for surfaced user-facing failures.
+        set_state: Callback used to update Celune's runtime state.
+        glow_connect_failed: Whether the OpenRGB glow backend failed to connect.
+        format_error: Error formatter used for exception messages.
+        dev: Whether developer mode is enabled.
+
+    Returns:
+        bool: ``True`` when the runtime environment is supported and usable,
+            otherwise ``False``.
+    """
     cuda_version = torch.version.cuda
 
     if sys.version_info < (3, 12) or sys.version_info >= (3, 14):

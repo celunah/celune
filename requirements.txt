@@ -9,8 +9,6 @@ voxcpm>=2.0.0
 hf-xet
 huggingface-hub
 transformers
-triton>=3.3; sys_platform != 'windows'
-triton-windows>=3.3; sys_platform == 'windows'
 
 # Sound processing
 numpy

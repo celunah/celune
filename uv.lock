@@ -315,7 +315,7 @@ dependencies = [
 requires-dist = [
     { name = "faster-qwen3-tts", specifier = "==0.2.4" },
     { name = "hf-xet" },
-    { name = "huggingface-hub" },
+    { name = "huggingface-hub", specifier = "<1.0.0" },
     { name = "numpy" },
     { name = "openrgb-python" },
     { name = "pedalboard" },
@@ -328,8 +328,8 @@ requires-dist = [
     { name = "textual" },
     { name = "torch", specifier = "==2.11.0+cu128", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchaudio", specifier = "==2.11.0+cu128", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "transformers" },
-    { name = "voxcpm", specifier = ">=2.0.0" },
+    { name = "transformers", specifier = "<5.0.0" },
+    { name = "voxcpm", specifier = ">=2.0.0,<2.1.0" },
 ]
 
 [[package]]

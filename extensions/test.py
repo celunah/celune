@@ -13,7 +13,11 @@ class TestExtension(CeluneExtension):
     AUTOSTART = True  # if you do not want Celune to load this, set it to False
 
     def autostart(self) -> None:
-        """Demonstration on autostart."""
+        """Demonstrate extension behavior during autostart.
+
+        Returns:
+            None: This method performs example logging, speech, and playback work.
+        """
         self.log("Log test")
         time.sleep(1)  # due to threading, this does not block
         self.status("Status test")
@@ -37,6 +41,10 @@ class TestExtension(CeluneExtension):
         )  # Celune can also play sound effects, regardless of sample rate
 
     def invoke(self) -> None:
-        """Feedback on invoke."""
+        """Demonstrate manual extension invocation behavior.
+
+        Returns:
+            None: This method logs and speaks a confirmation message.
+        """
         self.log("You invoked the extension.")
         self.say("You invoked the extension.")

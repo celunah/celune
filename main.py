@@ -12,12 +12,18 @@ import time
 import datetime
 import contextlib
 
+# Setting this environment variable will run Celune in dev mode and provide full tracebacks.
 DEV = os.getenv("CELUNE_DEV") in {"1", "true", "on"}
+# Setting this environment variable will run Celune in headless mode (aka CEF, Celune Embedded Framework).
+HEADLESS = os.getenv("CELUNE_HEADLESS") in {"1", "true", "on"}
+
+# Which backend shall Celune use? She can use Qwen3-TTS (qwen3) or VoxCPM2 (voxcpm2).
+BACKEND = os.getenv("CELUNE_BACKEND", "qwen3")
 
 try:
     import psutil
     from celune import namedays
-    from celune.ui import CeluneUI
+    from celune.ui import CeluneUI, CeluneHeadlessUI
     from celune.celune import Celune
     from celune.exceptions import No
 except ModuleNotFoundError as package:
@@ -31,7 +37,11 @@ except ModuleNotFoundError as package:
 
 
 def main() -> None:
-    """Instantiate and start Celune."""
+    """Instantiate and start Celune.
+
+    Returns:
+        None: This function runs the application or exits the process on failure.
+    """
     try:
         date = datetime.datetime.now()
         if namedays.has_nameday("Celine", date):
@@ -45,43 +55,57 @@ def main() -> None:
             # setproctitle("Celune")
             __import__("setproctitle").setproctitle("Celune")
 
-        # check if Celune is already running
-        # this only factors in the Celune launcher
-        # running Celune manually via "python main.py" is not validated with this check
-        active_processes = 0
-        for proc in psutil.process_iter():
-            with contextlib.suppress(
-                psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess
-            ):
-                if proc.name() in ["celune.exe", "celune.AppImage"]:  # Celune launcher
-                    active_processes += 1
-                    if active_processes > 1:
-                        print("Celune is already running.")
-                        sys.exit(1)
-
         if os.getenv("CELUNE_LAUNCHER") != "1":
             print(
                 "Warning: Celune is not being launched via the Celune launcher.",
                 flush=True,
             )
             time.sleep(5)
+        else:
+            active_processes = 0
+            for proc in psutil.process_iter():
+                with contextlib.suppress(
+                        psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess
+                ):
+                    if proc.name() in ["celune.exe", "celune.AppImage"]:  # Celune launcher
+                        active_processes += 1
+                        if active_processes > 1:
+                            print("Celune is already running.")
+                            sys.exit(1)
 
-        ui = CeluneUI()
-        celune = Celune(
-            tts_backend="voxcpm2",
-            log_callback=ui.tts_log,
-            status_callback=ui.safe_status,
-            error_callback=ui.error,
-            idle_callback=ui.tts_idle,
-            queue_avail_callback=ui.tts_queue_avail,
-            voice_changed_callback=ui.tts_voice_changed,
-            change_input_state_callback=ui.change_input_state,
-            dev=DEV,
-        )
-        celune.setup_extensions()
-        ui.celune = celune
-        ui.celune_styles = list(celune.backend.voices)
-        ui.run()
+        if not HEADLESS:  # normal mode
+            ui = CeluneUI()
+            celune = Celune(
+                tts_backend=BACKEND,
+                log_callback=ui.tts_log,
+                status_callback=ui.safe_status,
+                error_callback=ui.error,
+                idle_callback=ui.tts_idle,
+                queue_avail_callback=ui.tts_queue_avail,
+                voice_changed_callback=ui.tts_voice_changed,
+                change_input_state_callback=ui.change_input_state,
+                dev=DEV,
+            )
+            celune.setup_extensions()
+            ui.celune = celune
+            ui.run()
+        else:  # CEF/headless mode
+            ui = CeluneHeadlessUI()
+            celune = Celune(
+                tts_backend=BACKEND,
+                log_callback=ui.headless_log,
+                error_callback=ui.headless_error,
+                dev=DEV,
+            )
+            celune.setup_extensions()
+            ui.celune = celune
+
+            if not celune.load():
+                sys.exit(1)
+
+            print("Celune is running in headless mode.")
+            print("While in this mode, input is only possible via Celune extensions.")
+            ui.run()
     except Exception as e:
         if e.__class__ != No:
             print("Celune early initialization failed.")

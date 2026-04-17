@@ -15,7 +15,16 @@ def load_normalizer_components(
     log: Callable[[str, str], None],
     backend: Union[CeluneBackend, type(CeluneBackend)],
 ) -> tuple[PreTrainedTokenizerBase, PreTrainedModel]:
-    """Load CeluneNorm and return its tokenizer and model."""
+    """Load CeluneNorm and return its tokenizer and model.
+
+    Args:
+        log: Logging callback used to report cache and loading progress.
+        backend: Backend type or instance used to resolve model cache helpers.
+
+    Returns:
+        tuple[PreTrainedTokenizerBase, PreTrainedModel]: The loaded tokenizer and
+            causal language model.
+    """
     available, path = backend.model_is_available_locally(NORMALIZER_MODEL_ID)
     model_ref = path if available and path is not None else NORMALIZER_MODEL_ID
 
