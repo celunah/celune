@@ -11,12 +11,10 @@ dependencies = [
     "faster-qwen3-tts==0.2.4",
     # If you want Celune to use the alternative VoxCPM2-based backend, install this package.
     # Note: This will fall back to voice cloning. If you want to use native Celune voices, use the Qwen3 backend.
-    "voxcpm>=2.0.0",
+    "voxcpm>=2.0.0,<2.1.0",
     "hf-xet",
-    "huggingface-hub",
-    "transformers",
-    "triton>=3.3; sys_platform != 'windows'",
-    "triton-windows>=3.3; sys_platform == 'windows'",
+    "huggingface-hub<1.0.0",
+    "transformers<5.0.0",
 
 	# Audio processing
     "numpy",

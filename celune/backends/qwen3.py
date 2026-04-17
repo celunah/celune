@@ -27,7 +27,15 @@ class Qwen3(CeluneBackend):
 
     @staticmethod
     def model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
-        """Check if a model is already available in the Hugging Face cache."""
+        """Check if a model is already available in the Hugging Face cache.
+
+        Args:
+            model: The Hugging Face repository ID to inspect.
+
+        Returns:
+            tuple[bool, Optional[str]]: A flag indicating cache availability and
+            the resolved snapshot path when present.
+        """
         base = HF_HUB_CACHE
         model_dir = os.path.join(base, f"models--{model.replace('/', '--')}")
 
@@ -61,7 +69,14 @@ class Qwen3(CeluneBackend):
         return False, None
 
     def preload_models(self, log: Callable[[str, str], None]) -> None:
-        """Ensure all known Qwen3 voice models are cached locally."""
+        """Ensure all known Qwen3 voice models are cached locally.
+
+        Args:
+            log: Logging callback used to report cache and download progress.
+
+        Returns:
+            None: This method downloads any missing voice models.
+        """
         for model_id in self.all_model_ids:
             available, _ = self.model_is_available_locally(model_id)
             if not available:
@@ -74,7 +89,15 @@ class Qwen3(CeluneBackend):
     def load_model(
         self, model_id: str, log: Callable[[str, str], None]
     ) -> FasterQwen3TTS:
-        """Load the given voice model."""
+        """Load the given voice model.
+
+        Args:
+            model_id: The Qwen3 model repository ID to load.
+            log: Logging callback used to report downloads.
+
+        Returns:
+            FasterQwen3TTS: The loaded Qwen3 TTS model instance.
+        """
         available, path = self.model_is_available_locally(model_id)
 
         if available and path is not None:
@@ -88,7 +111,15 @@ class Qwen3(CeluneBackend):
         return self.model
 
     def generate_stream(self, model: FasterQwen3TTS, **kwargs):
-        """Generate Celune compatible audio chunks."""
+        """Generate Celune compatible audio chunks.
+
+        Args:
+            model: The loaded Qwen3 model instance.
+            **kwargs: Streaming generation arguments passed to the backend.
+
+        Returns:
+            Iterable[Any]: An iterator of Qwen3 streaming audio chunks.
+        """
         kwargs.pop("voice", None)  # Celune has native voices in this backend
         # Celune natively works with Qwen-formatted chunks
         yield from model.generate_custom_voice_streaming(speaker="celune", **kwargs)

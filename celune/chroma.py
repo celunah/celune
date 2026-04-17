@@ -63,7 +63,12 @@ class AudioRGBGlow:
         self._state = "none"
 
     def connect(self) -> bool:
-        """Connect to the OpenRGB backend and initialize devices."""
+        """Connect to the OpenRGB backend and initialize devices.
+
+        Returns:
+            bool: ``True`` when the client is connected and devices are ready,
+            otherwise ``False``.
+        """
         if self.client is not None:
             return True
 
@@ -84,7 +89,11 @@ class AudioRGBGlow:
             return False
 
     def start(self) -> bool:
-        """Start the glow effect worker thread."""
+        """Start the glow effect worker thread.
+
+        Returns:
+            bool: ``True`` when the worker is running, otherwise ``False``.
+        """
         if self._worker is not None and self._worker.is_alive():
             return True
 
@@ -97,7 +106,15 @@ class AudioRGBGlow:
         return True
 
     def stop(self, reset=True, wait=False) -> None:
-        """Hard-stop the glow effect."""
+        """Hard-stop the glow effect.
+
+        Args:
+            reset: Whether to turn all registered devices off after stopping.
+            wait: Whether to block until the worker thread finishes.
+
+        Returns:
+            None: This method stops the worker and optionally resets device state.
+        """
         self._stop_event.set()
         worker = self._worker
         if wait and worker is not None:
@@ -107,7 +124,11 @@ class AudioRGBGlow:
             self._set_all_devices((0, 0, 0))
 
     def enter(self) -> None:
-        """Fade in from black to idle presence."""
+        """Fade in from black to idle presence.
+
+        Returns:
+            None: This method starts the glow worker and transitions to idle.
+        """
         if not self.start():
             return
 
@@ -117,7 +138,11 @@ class AudioRGBGlow:
             self._target_brightness = self.idle_brightness
 
     def leave(self) -> None:
-        """Fade out from current brightness to black and stop."""
+        """Fade out from current brightness to black and stop.
+
+        Returns:
+            None: This method requests a graceful fade-out and shutdown.
+        """
         if self._worker is None or not self._worker.is_alive():
             return
 
@@ -127,7 +152,14 @@ class AudioRGBGlow:
             self.finished.clear()
 
     def glow(self, audio) -> None:
-        """Update brightness target based on incoming audio chunk."""
+        """Update brightness target based on incoming audio chunk.
+
+        Args:
+            audio: The latest audio chunk used to estimate speaking intensity.
+
+        Returns:
+            None: This method updates the glow target brightness.
+        """
         if not self.start():
             return
 
@@ -146,7 +178,14 @@ class AudioRGBGlow:
 
     @staticmethod
     def _to_mono(audio: np.ndarray) -> np.ndarray:
-        """Convert stereo/multi-channel audio to mono."""
+        """Convert stereo or multi-channel audio to mono.
+
+        Args:
+            audio: The input audio array.
+
+        Returns:
+            np.ndarray: The mono audio signal.
+        """
         audio = np.asarray(audio, dtype=np.float32)
         if audio.ndim == 2:
             return audio.mean(axis=1)
@@ -154,7 +193,14 @@ class AudioRGBGlow:
 
     @staticmethod
     def _fix_color_rendering(rgb: tuple) -> tuple[int, int, int]:
-        """Compensate for LED green dominance and prevent channel clipping."""
+        """Compensate for LED green dominance and prevent channel clipping.
+
+        Args:
+            rgb: The base RGB color tuple.
+
+        Returns:
+            tuple[int, int, int]: The adjusted RGB color tuple.
+        """
         r, g, b = map(float, rgb)
         g *= 0.65
         r *= 1.12
@@ -171,7 +217,14 @@ class AudioRGBGlow:
         return int(np.clip(r, 0, 255)), int(np.clip(g, 0, 255)), int(np.clip(b, 0, 255))
 
     def _speech_level(self, audio: np.ndarray) -> float:
-        """Calculate normalized speech activity level."""
+        """Calculate normalized speech activity level.
+
+        Args:
+            audio: The input audio chunk.
+
+        Returns:
+            float: A normalized speech activity level between 0.0 and 1.0.
+        """
         audio = self._to_mono(audio)
         if audio.size == 0:
             return 0.0
@@ -182,7 +235,14 @@ class AudioRGBGlow:
         return float(np.clip(level, 0.0, 1.0))
 
     def _set_all_devices(self, rgb) -> None:
-        """Apply color to all registered OpenRGB devices."""
+        """Apply color to all registered OpenRGB devices.
+
+        Args:
+            rgb: The RGB values to send to every connected device.
+
+        Returns:
+            None: This method pushes the color update to all known devices.
+        """
         rgb = np.clip(rgb, 0, 255).astype(int)
         color = RGBColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))
         for device in self.devices:
@@ -190,7 +250,11 @@ class AudioRGBGlow:
                 device.set_color(color, fast=self.fast)
 
     def _run(self) -> None:
-        """Interpolate brightness and push to hardware."""
+        """Interpolate brightness and push to hardware.
+
+        Returns:
+            None: This worker loop updates hardware colors until stopped.
+        """
         frame_sleep = 1.0 / self.fps
 
         while not self._stop_event.is_set():
