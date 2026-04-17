@@ -1,7 +1,0 @@
-Traceback (most recent call last):
-  File "C:\Users\user\PycharmProjects\VoiceSpeaker\celune\pipeline.py", line 306, in generation_worker
-    audio_chunk = _soften_onset(audio_chunk, 48000)
-  File "C:\Users\user\PycharmProjects\VoiceSpeaker\celune\dsp.py", line 74, in _soften_onset
-    audio[:samples, 0] *= ramp
-    ~~~~~^^^^^^^^^^^^^
-IndexError: too many indices for array: array is 1-dimensional, but 2 were indexed
