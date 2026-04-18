@@ -4,7 +4,7 @@
 # AI stack
 torch==2.11.0+cu128
 torchaudio==2.11.0+cu128
-faster-qwen3-tts==0.2.4
+faster-qwen3-tts==0.2.6
 voxcpm>=2.0.0,<2.1.0
 hf-xet
 huggingface-hub
