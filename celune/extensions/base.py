@@ -43,7 +43,7 @@ class StatusCallable(Protocol):
 class SetVoiceCallable(Protocol):
     """Extension callable voice setting request annotation."""
 
-    def __call__(self, name: str) -> bool: ...
+    def __call__(self, name: str) -> None: ...
 
 
 @runtime_checkable

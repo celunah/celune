@@ -1,6 +1,6 @@
 """Celune backend initialization manager."""
 
-from typing import Union
+from typing import Callable, Union
 from importlib import import_module
 from importlib.metadata import version, PackageNotFoundError
 
@@ -12,7 +12,7 @@ BACKENDS = {
 }
 
 
-def get_version(package) -> str:
+def get_version(package: str) -> str:
     """Get an installed package version.
 
     Args:
@@ -30,20 +30,24 @@ def get_version(package) -> str:
 
 def resolve_backend(
     backend_name: Union[str, type[CeluneBackend], CeluneBackend],
+    log: Callable[[str, str], None] | None = None,
 ) -> CeluneBackend:
     """Resolve a backend specification into a backend instance.
 
     Args:
         backend_name: A backend name, backend class, or backend instance.
+        log: Optional log callback to expose during backend construction.
 
     Returns:
         CeluneBackend: The resolved backend instance.
     """
+    log = log or (lambda msg, severity="info": None)
+
     if isinstance(backend_name, CeluneBackend):
         return backend_name
 
     if isinstance(backend_name, type) and issubclass(backend_name, CeluneBackend):
-        return backend_name()
+        backend_name(log=log)
 
     if isinstance(backend_name, str):
         key = backend_name.strip().lower()
@@ -57,7 +61,10 @@ def resolve_backend(
 
         module = import_module(module_name)
         backend_cls = getattr(module, class_name)
-        return backend_cls()
+        try:
+            return backend_cls(log=log)
+        except TypeError:
+            return backend_cls()
 
     raise TypeError(
         "'backend_name' must be a backend instance, backend type, or backend name string"

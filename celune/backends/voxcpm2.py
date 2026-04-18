@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import glob
 import hashlib
-import warnings
 import contextlib
 from pathlib import Path
 from typing import Callable, Optional
@@ -17,32 +16,38 @@ from huggingface_hub.constants import HF_HUB_CACHE
 
 from . import get_version
 from .base import CeluneBackend
-from ..exceptions import BackendError, ChecksumWarning
+from ..exceptions import BackendError
 
 
 class VoxCPM2(CeluneBackend):
     """Celune VoxCPM2 backend."""
 
-    name = "voxcpm2"
-    voice_models = {
+    name: str = "voxcpm2"
+    voice_models: dict[str, str] = {
         "balanced": "openbmb/VoxCPM2",
         "calm": "openbmb/VoxCPM2",
         "bold": "openbmb/VoxCPM2",
         "upbeat": "openbmb/VoxCPM2",
     }
-    reference_wavs = {
+    reference_wavs: dict[str, str] = {
         "balanced": "refs/balanced.wav",
         "calm": "refs/calm.wav",
         "bold": "refs/bold.wav",
         "upbeat": "refs/upbeat.wav",
     }
-    voice_cfg = {
+    voice_cfg: dict[str, float] = {
         "balanced": 2.4,
         "calm": 3.6,
         "bold": 2.4,
         "upbeat": 2.4,
     }
-    default_voice = "balanced"
+    default_voice: str = "balanced"
+
+    def __init__(self, log: Callable[[str, str], None]) -> None:
+        super().__init__(log=log)
+        self.log = log
+        self.optimize_enabled = True
+        self._validate_refs()
 
     @staticmethod
     @contextlib.contextmanager
@@ -100,11 +105,8 @@ class VoxCPM2(CeluneBackend):
 
         return False, None
 
-    def preload_models(self, log: Callable[[str, str], None]) -> None:
+    def preload_models(self) -> None:
         """Ensure all known voice models are cached locally.
-
-        Args:
-            log: Logging callback used to report cache and download progress.
 
         Returns:
             None: This method downloads any missing backend models.
@@ -112,29 +114,12 @@ class VoxCPM2(CeluneBackend):
         for model_id in self.all_model_ids:
             available, _ = self.model_is_available_locally(model_id)
             if not available:
-                log(f"Downloading {model_id}...", "info")
+                self.log(f"Downloading {model_id}...", "info")
                 snapshot_download(repo_id=model_id)
             else:
-                log(f"{model_id} is already available.", "info")
+                self.log(f"{model_id} is already available.", "info")
 
-    def load_model(
-        self,
-        model_id: str,
-        log: Callable[[str, str], None],
-        load_denoiser: bool = False,
-    ) -> VoxCPM:
-        """Load the given voice model.
-
-        Args:
-            model_id: The VoxCPM model repository ID to load.
-            log: Logging callback used to report downloads.
-            load_denoiser: Whether to enable the backend denoiser component.
-
-        Returns:
-            VoxCPM: The loaded VoxCPM model instance.
-        """
-        available, path = self.model_is_available_locally(model_id)
-
+    def _validate_refs(self) -> None:
         for name, ref in self.reference_wavs.items():
             full_path = Path(__file__).resolve().parents[1] / ref
             try:
@@ -151,15 +136,38 @@ class VoxCPM2(CeluneBackend):
                     expected = f.read().strip()
 
                 if checksum != expected:
-                    warnings.warn(
-                        f"checksum mismatch for '{name}', output may be affected",
-                        ChecksumWarning,
+                    self.log(
+                        f"Checksum mismatch for '{name}', output may be affected.",
+                        "warning",
                     )
-            else:
-                warnings.warn(
-                    f"checksum not found for '{name}', skipping checksum verification",
-                    ChecksumWarning,
-                )
+                else:
+                    self.log(
+                        f"Checksum not found for '{name}', skipping checksum verification.",
+                        "warning",
+                    )
+
+    def load_model(
+        self,
+        model_id: str,
+        load_denoiser: bool = False,
+        optimize: Optional[bool] = None,
+    ) -> VoxCPM:
+        """Load the given voice model.
+
+        Args:
+            model_id: The VoxCPM model repository ID to load.
+            load_denoiser: Whether to enable the backend denoiser component.
+            optimize: Whether to attempt optimization. When omitted, reuse the
+                backend's current optimization setting.
+
+        Returns:
+            VoxCPM: The loaded VoxCPM model instance.
+        """
+        available, path = self.model_is_available_locally(model_id)
+        if optimize is None:
+            optimize = self.optimize_enabled
+        else:
+            self.optimize_enabled = optimize
 
         torch.cuda.manual_seed_all(3584181039)
         torch.backends.cudnn.deterministic = True
@@ -168,14 +176,18 @@ class VoxCPM2(CeluneBackend):
             os.environ["HF_HUB_OFFLINE"] = "1"
             with self._suppress_backend_output():
                 self.model = VoxCPM.from_pretrained(
-                    path, load_denoiser=load_denoiser, optimize=False
+                    path,
+                    load_denoiser=load_denoiser,
+                    optimize=optimize,
                 )
             return self.model
 
-        log("Downloading TTS model...", "info")
+        self.log("Downloading TTS model...", "info")
         with self._suppress_backend_output():
             self.model = VoxCPM.from_pretrained(
-                model_id, load_denoiser=load_denoiser, optimize=False
+                model_id,
+                load_denoiser=load_denoiser,
+                optimize=optimize,
             )
         return self.model
 
@@ -200,11 +212,13 @@ class VoxCPM2(CeluneBackend):
             ref_wav = Path(__file__).resolve().parents[1] / self.reference_wavs[voice]
             cfg = self.voice_cfg[voice]
         except KeyError as e:
-            raise BackendError(
+            raise ValueError(
                 f"unknown voice '{voice}' for backend '{self.name}'"
             ) from e
 
-        text = kwargs.pop("text")
+        text = kwargs.pop("text", None)
+        if not text:
+            raise ValueError("expected input, nothing found")
 
         if instruct:
             # if this includes "music" or "singing", Celune may sing
@@ -221,6 +235,6 @@ class VoxCPM2(CeluneBackend):
                     yield chunk, 48000, None
         else:
             version = get_version("voxcpm")
-            raise BackendError(
+            raise NotImplementedError(
                 f"streaming support not available (requires voxcpm>=1.5.0, installed: {version})"
             )

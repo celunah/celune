@@ -6,6 +6,7 @@ import re
 import time
 import queue
 import random
+import datetime
 import contextlib
 from typing import TYPE_CHECKING
 
@@ -160,6 +161,11 @@ def say(engine: "Celune", text: str) -> bool:
         engine.status_callback("Normalizing")
         normalized = engine.normalize(text)
 
+    date = datetime.datetime.now()
+    if date.month == 4 and date.day == 1:
+        engine.log("We are about to do a funny!")
+        text = text.replace("celune", "celine").replace("Celune", "Celine")
+
     if not acquire_pipeline(engine, "speak"):
         return False
 
@@ -308,149 +314,203 @@ def generation_worker(engine: "Celune") -> None:
             engine.locked = False
             continue
 
-        try:
-            engine.model_ready.wait()
+        retried_without_optimization = False
+        while True:
+            try:
+                engine.model_ready.wait()
 
-            if not engine.loaded:
-                engine.log("Skipping generation because model is not ready.", "warning")
-                engine.locked = False
-                continue
+                if not engine.loaded:
+                    engine.log(
+                        "Skipping generation because model is not ready.", "warning"
+                    )
+                    engine.locked = False
+                    break
 
-            start_time = time.perf_counter()
-            engine.log(f"[GEN] {text}")
-            speech_len = 0.0
+                start_time = time.perf_counter()
+                engine.log(f"[GEN] {text}")
+                speech_len = 0.0
+                buffered_speech_len = 0.0
+                pushed_audio = False
 
-            chunks = split_text(engine, text)
-            buffer = []
+                chunks = split_text(engine, text)
+                buffer = []
+                full_audio = []
 
-            with engine.model_lock:
-                if engine.model is None:
-                    raise NotAvailableError("self.model is None")
+                with engine.model_lock:
+                    if engine.model is None:
+                        raise NotAvailableError("self.model is None")
 
-                for chunk_index, chunk_text in enumerate(chunks):
-                    if engine.exit_requested:
-                        break
-
-                    if engine.utterance_force_stop.is_set():
-                        break
-
-                    is_first_chunk = chunk_index == 0
-
-                    for (
-                        audio_chunk,
-                        sr,  # 24 kHz if Qwen3, 48 kHz if VoxCPM2
-                        timing,
-                    ) in engine.backend.generate_stream(
-                        engine.model,
-                        text=chunk_text,
-                        language=engine.language,
-                        chunk_size=engine.chunk_size,
-                        instruct=engine.voice_prompt,
-                        voice=engine.current_voice,
-                        temperature=0.15,
-                        top_k=20,
-                        top_p=0.7,
-                        repetition_penalty=1.1,
-                    ):
+                    for chunk_index, chunk_text in enumerate(chunks):
                         if engine.exit_requested:
                             break
 
                         if engine.utterance_force_stop.is_set():
                             break
 
-                        if hasattr(audio_chunk, "cpu"):
-                            audio_chunk = audio_chunk.cpu().numpy()
+                        is_first_chunk = chunk_index == 0
 
-                        audio_chunk = _to_48khz(audio_chunk, sr)
+                        for (
+                            audio_chunk,
+                            sr,  # 24 kHz if Qwen3, 48 kHz if VoxCPM2
+                            _,
+                        ) in engine.backend.generate_stream(
+                            engine.model,
+                            text=chunk_text,
+                            language=engine.language,
+                            chunk_size=engine.chunk_size,
+                            instruct=engine.voice_prompt,
+                            voice=engine.current_voice,
+                            temperature=0.15,
+                            top_k=20,
+                            top_p=0.7,
+                            repetition_penalty=1.1,
+                        ):
+                            if engine.exit_requested:
+                                break
 
-                        if engine.speed != 1.0 and engine.can_use_rubberband:
-                            try:
-                                audio_chunk = rb.time_stretch(
-                                    audio_chunk, 48000, engine.speed
+                            if engine.utterance_force_stop.is_set():
+                                break
+
+                            if hasattr(audio_chunk, "cpu"):
+                                audio_chunk = audio_chunk.cpu().numpy()
+
+                            audio_chunk = _to_48khz(audio_chunk, sr)
+
+                            if engine.speed != 1.0 and engine.can_use_rubberband:
+                                try:
+                                    audio_chunk = rb.time_stretch(
+                                        audio_chunk, 48000, engine.speed
+                                    )
+                                except RuntimeError:
+                                    engine.log(
+                                        "Rubber Band is unavailable, speed controls disabled.",
+                                        "warning",
+                                    )
+                                    engine.can_use_rubberband = False
+                            if engine.reverb.strength > 0.0:
+                                audio_chunk = engine.reverb.process(audio_chunk, 48000)
+
+                            if is_first_chunk:
+                                audio_chunk = _soften_onset(audio_chunk, 48000)
+                                is_first_chunk = False
+
+                            if engine.exit_requested:
+                                break
+
+                            buffer.append(audio_chunk)
+                            full_audio.append(audio_chunk)
+                            chunk_dur = len(audio_chunk) / 48000
+                            speech_len += chunk_dur
+                            buffered_speech_len += chunk_dur
+
+                            if buffered_speech_len >= 10.0:
+                                engine.audio_queue.put(
+                                    (np.concatenate(buffer), 48000, None)
                                 )
-                            except RuntimeError:
-                                engine.log(
-                                    "Rubber Band is unavailable, speed controls disabled.",
-                                    "warning",
-                                )
-                                engine.can_use_rubberband = False
-                        if engine.reverb.strength > 0.0:
-                            audio_chunk = engine.reverb.process(audio_chunk, 48000)
+                                buffer = []
+                                buffered_speech_len = 0.0
 
-                        if is_first_chunk:
-                            audio_chunk = _soften_onset(audio_chunk, 48000)
-                            is_first_chunk = False
+                                if not pushed_audio:
+                                    pushed_audio = True
+                                    engine.status_callback("Speaking")
+                                    engine.cur_state = "speaking"
+                                    engine.queue_avail_callback()
 
-                        if engine.exit_requested:
-                            break
+                generation_time = time.perf_counter() - start_time
 
-                        buffer.append(audio_chunk)
-                        engine.audio_queue.put((audio_chunk, 48000, timing))
+                if engine.exit_requested:
+                    release_pipeline(engine)
+                    break
 
-                        chunk_dur = len(audio_chunk) / 48000
-                        speech_len += chunk_dur
+                if engine.utterance_force_stop.is_set():
+                    engine.reverb.reset()
+                    break
 
-            generation_time = time.perf_counter() - start_time
+                engine.log(
+                    f"[GEN] {format_number(speech_len, 2)} seconds, took {format_number(generation_time, 2)} seconds, "
+                    f"RTF: {format_number(speech_len / generation_time, 2)}"
+                )
 
-            if engine.exit_requested:
-                release_pipeline(engine)
-                continue
+                if buffer:
+                    engine.audio_queue.put((np.concatenate(buffer), 48000, None))
+                    if not pushed_audio:
+                        pushed_audio = True
+                        engine.status_callback("Speaking")
+                        engine.cur_state = "speaking"
+                        engine.queue_avail_callback()
 
-            if engine.utterance_force_stop.is_set():
-                engine.reverb.reset()
-                continue
+                engine.log("[GEN] done")
 
-            engine.log(
-                f"[GEN] {format_number(speech_len, 2)} seconds, took {format_number(generation_time, 2)} seconds, "
-                f"RTF: {format_number(speech_len / generation_time, 2)}"
-            )
-            engine.status_callback("Speaking")
-            engine.cur_state = "speaking"
-            engine.log("[GEN] done")
-            engine.queue_avail_callback()
+                if not engine.exit_requested:
+                    if engine.reverb.strength > 0.0:
+                        tail = engine.reverb.flush()
+                        if len(tail) > 0:
+                            engine.audio_queue.put((tail, 48000, None))
+                            buffer.append(tail)
+                            full_audio.append(tail)
 
-            if not engine.exit_requested:
-                if engine.reverb.strength > 0.0:
-                    tail = engine.reverb.flush()
-                    if len(tail) > 0:
-                        engine.audio_queue.put((tail, 48000, None))
-                        buffer.append(tail)
+                    engine.reverb.reset()
+                    engine.audio_queue.put(engine.utterance_done)
 
-                engine.reverb.reset()
-                engine.audio_queue.put(engine.utterance_done)
+                if full_audio:
+                    wav = np.concatenate(full_audio)
+                    timestamp = time.time_ns() // 1000000
+                    if not os.path.exists("outputs"):
+                        engine.log("Outputs path not found, creating...", "warning")
+                        try:
+                            os.mkdir("outputs")
+                        except OSError as e:
+                            engine.log(
+                                "Cannot create outputs directory, not saving WAV file: "
+                                f"{engine.format_error(e, engine.dev)}",
+                                "warning",
+                            )
 
-            if buffer:
-                wav = np.concatenate(buffer)
-                timestamp = time.time_ns() // 1000000
-                if not os.path.exists("outputs"):
-                    engine.log("Outputs path not found, creating...", "warning")
-                    try:
-                        os.mkdir("outputs")
-                    except OSError as e:
-                        engine.log(
-                            "Cannot create outputs directory, not saving WAV file: "
-                            f"{engine.format_error(e, engine.dev)}",
-                            "warning",
+                    if os.path.exists("outputs"):
+                        sf.write(
+                            f"outputs/celune_speech_{timestamp}.wav",
+                            wav,
+                            48000,
+                            subtype="PCM_24",
                         )
+                break
 
-                if os.path.exists("outputs"):
-                    sf.write(
-                        f"outputs/celune_speech_{timestamp}.wav",
-                        wav,
-                        48000,
-                        subtype="PCM_24",
+            except AssertionError:
+                if engine.backend.name != "voxcpm2" or retried_without_optimization:
+                    raise
+
+                engine.log("Cannot optimize VoxCPM2.", "warning")
+                engine.log("Reloading without optimization...")
+                engine.reverb.reset()
+
+                with engine.queue_lock:
+                    clear_queue(engine.audio_queue)
+
+                close_stream(engine, abort=True)
+
+                with engine.model_lock:
+                    engine.unload_runtime_state(include_normalizer=True)
+                    engine.model = engine.backend.load_model(
+                        engine.backend.model_name,
+                        optimize=False,
                     )
 
-        except Exception as e:
-            if engine.exit_requested:
-                release_pipeline(engine)
-                continue
+                if engine.use_normalization:
+                    engine.load_normalizer()
 
-            engine.log(f"[GEN ERROR] {engine.format_error(e, engine.dev)}", "error")
-            engine.cur_state = "error"
-            engine.locked = False
-            engine.playback_done.set()
-            engine.error_callback("Celune could not generate the input")
+                # NOTE: if you continue here, utterances will be out of order and speak over other utterances
+                break
+            except Exception as e:
+                if engine.exit_requested:
+                    release_pipeline(engine)
+                    break
+
+                engine.log(f"[GEN ERROR] {engine.format_error(e, engine.dev)}", "error")
+                engine.cur_state = "error"
+                engine.locked = False
+                engine.playback_done.set()
+                engine.error_callback("Celune could not generate the input")
+                break
 
 
 def playback_worker(engine: "Celune") -> None:
@@ -477,6 +537,8 @@ def playback_worker(engine: "Celune") -> None:
         if not started:
             while engine.audio_queue.qsize() < engine.prebuffer_chunks:
                 if engine.exit_requested:
+                    break
+                if engine.cur_state == "speaking" and not engine.audio_queue.empty():
                     break
                 time.sleep(0.01)
 

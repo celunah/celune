@@ -1,0 +1,6 @@
+backend: null
+dev: false
+headless: false
+headless_nocolor: false
+theme: dark
+use_normalizer: false
