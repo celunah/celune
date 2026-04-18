@@ -216,6 +216,9 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Celune
-#   Celune produces output .wav files in the outputs/ directory.
-#   Nobody uploads output files into Git.
+#   Celune has configuration and output directories that are not meant to be part of Git.
+#   "config.yaml" will be included in Git, as a default state file.
+#   To prevent further default state edits, it has been gitignored.
 outputs/
+celune_traceback.txt
+config.yaml

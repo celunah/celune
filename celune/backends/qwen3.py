@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import glob
-from typing import Callable, Optional
+from typing import Optional
 
 from faster_qwen3_tts import FasterQwen3TTS
 from huggingface_hub import snapshot_download
@@ -16,14 +16,14 @@ from .base import CeluneBackend
 class Qwen3(CeluneBackend):
     """Celune Qwen3-TTS backend."""
 
-    name = "qwen3"
-    voice_models = {
+    name: str = "qwen3"
+    voice_models: dict[str, str] = {
         "balanced": "lunahr/Celune-1.7B-Neutral",
         "calm": "lunahr/Celune-1.7B-Calm",
         "bold": "lunahr/Celune-1.7B-Energetic",
         "upbeat": "lunahr/Celune-1.7B-Upbeat",
     }
-    default_voice = "balanced"
+    default_voice: str = "balanced"
 
     @staticmethod
     def model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
@@ -68,11 +68,8 @@ class Qwen3(CeluneBackend):
 
         return False, None
 
-    def preload_models(self, log: Callable[[str, str], None]) -> None:
+    def preload_models(self) -> None:
         """Ensure all known Qwen3 voice models are cached locally.
-
-        Args:
-            log: Logging callback used to report cache and download progress.
 
         Returns:
             None: This method downloads any missing voice models.
@@ -80,19 +77,16 @@ class Qwen3(CeluneBackend):
         for model_id in self.all_model_ids:
             available, _ = self.model_is_available_locally(model_id)
             if not available:
-                log(f"Downloading {model_id}...", "info")
+                self.log(f"Downloading {model_id}...", "info")
                 snapshot_download(repo_id=model_id)
             else:
-                log(f"{model_id} is already available.", "info")
+                self.log(f"{model_id} is already available.", "info")
 
-    def load_model(
-        self, model_id: str, log: Callable[[str, str], None]
-    ) -> FasterQwen3TTS:
+    def load_model(self, model_id: str) -> FasterQwen3TTS:
         """Load the given voice model.
 
         Args:
             model_id: The Qwen3 model repository ID to load.
-            log: Logging callback used to report downloads.
 
         Returns:
             FasterQwen3TTS: The loaded Qwen3 TTS model instance.
@@ -104,7 +98,7 @@ class Qwen3(CeluneBackend):
             self.model = FasterQwen3TTS.from_pretrained(path)
             return self.model
 
-        log("Downloading TTS model...", "info")
+        self.log("Downloading TTS model...", "info")
         self.model = FasterQwen3TTS.from_pretrained(model_id)
         return self.model
 

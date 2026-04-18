@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# pylint: disable=R0902, R0913, R0917, W0718
+# pylint: disable=R0902, R0912, R0913, R0915, R0917, W0718
 """
 Celune 3.2.0 - "I'm not just a TTS. I'm someone special."
 Refer to https://github.com/celunah/celune for information about Celune.
@@ -13,26 +13,33 @@ import datetime
 import contextlib
 
 # Setting this environment variable will run Celune in dev mode and provide full tracebacks.
-DEV = os.getenv("CELUNE_DEV") in {"1", "true", "on"}
+INITIAL_DEV = os.getenv("CELUNE_DEV") in {"1", "true", "on", "yes", "enabled"}
 # Setting this environment variable will run Celune in headless mode (aka CEF, Celune Embedded Framework).
-HEADLESS = os.getenv("CELUNE_HEADLESS") in {"1", "true", "on"}
-
+INITIAL_HEADLESS = os.getenv("CELUNE_HEADLESS") in {"1", "true", "on", "yes", "enabled"}
 # Which backend shall Celune use? She can use Qwen3-TTS (qwen3) or VoxCPM2 (voxcpm2).
-BACKEND = os.getenv("CELUNE_BACKEND", "qwen3")
+INITIAL_BACKEND = os.getenv("CELUNE_BACKEND")
 
 try:
+    import yaml
     import psutil
-    from celune import namedays
-    from celune.ui import CeluneUI, CeluneHeadlessUI
     from celune.celune import Celune
     from celune.exceptions import No
+    from celune.namedays import has_nameday
+    from celune.ui import CeluneUI, CeluneHeadlessUI, SelectMenu
+    from celune.config import config_bool, config_value, env_bool
 except ModuleNotFoundError as package:
     print(f"Missing dependency: {package.name}")
     print("Celune requires this library to function.")
-    print("Try running 'uv sync'.")
-    if DEV:
+    print("Install dependencies with:")
+    print("    uv sync")
+    print("or install manually:")
+    print(f"    pip install {package.name}")
+    if INITIAL_DEV:
         raise
     print("Run Celune with CELUNE_DEV=1 to get full traceback.")
+
+    # this error is not controllable by config.yaml due to how Celune exceptions are caught
+    print("Other errors may be displayed by setting 'dev: true' in config.yaml.")
     sys.exit(1)
 
 
@@ -44,18 +51,37 @@ def main() -> None:
     """
     try:
         date = datetime.datetime.now()
-        if namedays.has_nameday("Celine", date):
+        if has_nameday("Celine", date):
             raise No("I sense an entity who I shall not engage with today.")
 
         print("\x1b]2;Celune\x07", end="", flush=True)
 
-        with contextlib.suppress(ModuleNotFoundError):
-            # AKA
-            # from setproctitle import setproctitle
-            # setproctitle("Celune")
-            __import__("setproctitle").setproctitle("Celune")
+        with open("config.yaml", encoding="utf-8") as cfg:
+            config = yaml.safe_load(cfg)
 
-        if os.getenv("CELUNE_LAUNCHER") != "1":
+        dev = config_bool(config, "CELUNE_DEV", "dev")
+        headless = config_bool(config, "CELUNE_HEADLESS", "headless")
+        backend = INITIAL_BACKEND or config_value(config, "backend")
+
+        # ask for default backend if not set yet
+        # Celune will save this preference
+        if not backend:
+            backend = SelectMenu(
+                ["Qwen3 - Fast", "VoxCPM2 - High quality"],
+                ["qwen3", "voxcpm2"],
+                "Which backend should Celune use?",
+            ).start()
+
+            if backend == "Fast":
+                backend = "qwen3"
+            elif backend == "High Quality":
+                backend = "voxcpm2"
+
+            config["backend"] = backend
+            with open("config.yaml", "w", encoding="utf-8") as cfg:
+                yaml.dump(config, cfg)
+
+        if not env_bool("CELUNE_LAUNCHER"):
             print(
                 "Warning: Celune is not being launched via the Celune launcher.",
                 flush=True,
@@ -73,13 +99,15 @@ def main() -> None:
                     ]:  # Celune launcher
                         active_processes += 1
                         if active_processes > 1:
+                            # you do not want to run multiple instances of Celune
+                            # your VRAM doesn't want to either
                             print("Celune is already running.")
                             sys.exit(1)
 
-        if not HEADLESS:  # normal mode
+        if not headless:  # normal mode
             ui = CeluneUI()
             celune = Celune(
-                tts_backend=BACKEND,
+                tts_backend=backend,
                 log_callback=ui.tts_log,
                 status_callback=ui.safe_status,
                 error_callback=ui.error,
@@ -87,7 +115,8 @@ def main() -> None:
                 queue_avail_callback=ui.tts_queue_avail,
                 voice_changed_callback=ui.tts_voice_changed,
                 change_input_state_callback=ui.change_input_state,
-                dev=DEV,
+                dev=dev,
+                config=config,
             )
             celune.setup_extensions()
             ui.celune = celune
@@ -95,15 +124,17 @@ def main() -> None:
         else:  # CEF/headless mode
             ui = CeluneHeadlessUI()
             celune = Celune(
-                tts_backend=BACKEND,
+                tts_backend=backend,
                 log_callback=ui.headless_log,
                 error_callback=ui.headless_error,
-                dev=DEV,
+                dev=dev,
+                config=config,
             )
             celune.setup_extensions()
             ui.celune = celune
 
             if not celune.load():
+                celune.close()
                 sys.exit(1)
 
             print("Celune is running in headless mode.")
@@ -111,14 +142,16 @@ def main() -> None:
             ui.run()
     except Exception as e:
         if e.__class__ != No:
-            print("Celune early initialization failed.")
-            if DEV:
+            print("An internal error occurred running Celune.")
+            if INITIAL_DEV:
                 raise
-            print(e)
+            print(e or "no error description")
             print("Run Celune with CELUNE_DEV=1 to get full traceback.")
+            print("Alternatively, set 'dev: true' in config.yaml")
+            sys.exit(1)
         else:
             print("I sense the presence of... her.\nI would rather not.")
-        sys.exit(1)
+            sys.exit(103)
 
 
 if __name__ == "__main__":

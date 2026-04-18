@@ -10,6 +10,8 @@ import threading
 import itertools
 from typing import Optional, Callable
 
+import yaml
+import readchar
 from textual import work, events
 from textual.app import App, ComposeResult
 from textual.theme import Theme
@@ -18,6 +20,7 @@ from textual.widgets import Label, RichLog, TextArea, Button
 from rich.text import Text
 
 from .celune import Celune
+from .config import config_bool
 from .utils import format_number
 from .exceptions import InvalidExtensionError
 
@@ -285,9 +288,12 @@ class CeluneUI(App):
         """
         self.register_theme(THEME)
         self.register_theme(THEME_LIGHT)
-        if os.getenv("CELUNE_THEME") == "dark":
+
+        theme = os.getenv("CELUNE_THEME") or self.celune.config["theme"]
+
+        if theme == "dark":
             self.active_theme_name = "celune"
-        elif os.getenv("CELUNE_THEME") == "light":
+        elif theme == "light":
             self.active_theme_name = "celune_light"
         else:
             self.active_theme_name = "celune"
@@ -340,7 +346,9 @@ class CeluneUI(App):
                 self.celune_ready = True
                 self.safe_status("Idle")
                 self.style_button.disabled = False
-                self.tts_voice_changed(self.celune.current_voice or self.celune_styles[0])
+                self.tts_voice_changed(
+                    self.celune.current_voice or self.celune_styles[0]
+                )
                 self.input_box.placeholder = (
                     "Enter text to speak here or run /help for commands"
                 )
@@ -489,7 +497,7 @@ class CeluneUI(App):
                 "Arguments marked in <> are required, those marked in [] are optional."
             )
             self.safe_log(
-                "/consumebuf <true/false> - Make Celune consume text from the live buffer without "
+                "/consumebuffer <true/false> - Make Celune consume text from the live buffer without "
                 "pressing CTRL+ENTER."
             )
             self.safe_log(
@@ -720,6 +728,12 @@ class CeluneUI(App):
                 else self.themes[0]
             )
             self._apply_theme(next_theme)
+            self.celune.config["theme"] = (
+                "dark" if self.theme == self.themes[0] else "light"
+            )
+            with open("config.yaml", "w", encoding="utf-8") as f:
+                yaml.dump(self.celune.config, f)
+
             event.prevent_default()
             return
 
@@ -895,7 +909,7 @@ class CeluneUI(App):
         if threading.current_thread() is threading.main_thread():
             self.call_later(self._graceful_exit)
         else:
-            self.call_from_thread(self.call_later, self._graceful_exit)
+            self.call_from_thread(self._graceful_exit)
 
 
 class CeluneHeadlessUI:
@@ -917,7 +931,9 @@ class CeluneHeadlessUI:
 
         # for Celune terminals not supporting colored text
         self.no_color = (
-            os.getenv("CELUNE_HEADLESS_NOCOLOR") in {"1", "true", "on"}
+            config_bool(
+                self.celune.config, "CELUNE_HEADLESS_NOCOLOR", "headless_nocolor"
+            )
             or not sys.stdout.isatty()
         )
         self.reset: str = "\x1b[0m" if not self.no_color else ""
@@ -991,6 +1007,67 @@ class CeluneHeadlessUI:
         if self.celune is not None:
             self.celune.close()
         sys.exit(0)
+
+
+class SelectMenu:
+    """A selection menu.
+
+    Arguments:
+        choices: Human-readable choice names.
+        raw_choices: Internal choice values.
+        prompt: Selection prompt to override the default one.
+    """
+
+    def __init__(
+        self,
+        choices: list[str],
+        raw_choices: list[str],
+        prompt: str = "Select an option",
+    ):
+        self.choices = choices
+        self.raw_choices = raw_choices
+        self.prompt = prompt
+        self.idx = 0
+
+    def render(self) -> None:
+        """Render available selections.
+
+        Returns:
+            None: This function does not return a value.
+        """
+        sys.stdout.write("\r")
+        for n, choice in enumerate(self.choices):
+            if n == self.idx:
+                sys.stdout.write(f"\033[7m -> {choice} \033[0m\n")
+            else:
+                sys.stdout.write(f"    {choice} \n")
+
+        sys.stdout.write(f"\033[{len(self.choices)}A")
+        sys.stdout.flush()
+
+    def start(self) -> str:
+        """Start the selection menu.
+
+        Returns:
+            str: The chosen option.
+        """
+        sys.stdout.write("\033[?25l")
+        sys.stdout.write(self.prompt)
+        sys.stdout.write("\n\n")
+
+        try:
+            while True:
+                self.render()
+                key = readchar.readkey()
+                if key == readchar.key.UP:
+                    self.idx = (self.idx - 1) % len(self.choices)
+                elif key == readchar.key.DOWN:
+                    self.idx = (self.idx + 1) % len(self.choices)
+                elif key == readchar.key.ENTER:
+                    return self.raw_choices[self.idx]
+        finally:
+            sys.stdout.write(f"\033[{len(self.choices)}B")
+            sys.stdout.write("\033[?25h\n")
 
 
 class LogRedirect:

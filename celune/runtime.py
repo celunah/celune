@@ -1,19 +1,17 @@
 # pylint: disable=R0913, R0914, R0917, W0718
 """Runtime and environment validation helpers for Celune."""
 
-import os
 import sys
 import platform
-from typing import Callable, Optional
+from typing import Callable
 
 import torch
 
 from . import __codename__, __comment__, __version__
+from .config import env_bool
 
 
-def log_runtime_banner(
-    log: Callable[[str, str], None], backend_name: str
-) -> None:
+def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> None:
     """Log high-level version and environment information.
 
     Args:
@@ -26,10 +24,7 @@ def log_runtime_banner(
     cuda_version = torch.version.cuda
     quotation_marks = (
         ("\u201c", "\u201d")
-        if (
-            os.getenv("CELUNE_HEADLESS") not in {"1", "true", "on"}
-            or sys.stdout.isatty()
-        )
+        if (not env_bool("CELUNE_HEADLESS") or sys.stdout.isatty())
         else ('"', '"')
     )
 

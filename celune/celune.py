@@ -2,7 +2,6 @@
 """Celune's backend layer."""
 
 import gc
-import os
 import time
 import queue
 import threading
@@ -20,6 +19,7 @@ from huggingface_hub.utils import disable_progress_bars
 
 from . import __version__
 from .backends import CeluneBackend, resolve_backend
+from .config import config_bool
 from .constants import NORMALIZER_MODEL_ID
 from .dsp import StreamingPedalboardReverb
 from .utils import format_number
@@ -61,12 +61,23 @@ class Celune:
         voice_changed_callback: Optional[Callable[[str], None]] = None,
         change_input_state_callback: Optional[Callable[[bool], None]] = None,
         dev: bool = False,
+        config: Optional[dict] = None,
     ) -> None:
-        if not tts_backend:
+        if tts_backend is None:
             raise BackendError("no backend set")
 
+        self.log_callback = log_callback or (lambda msg, severity="info": None)
+        self.status_callback = status_callback or (lambda msg, severity="info": None)
+        self.error_callback = error_callback or (lambda error: None)
+        self.idle_callback = idle_callback or (lambda: None)
+        self.queue_avail_callback = queue_avail_callback or (lambda: None)
+        self.voice_changed_callback = voice_changed_callback or (lambda name: None)
+        self.change_input_state_callback = change_input_state_callback or (
+            lambda locked: None
+        )
+
         try:
-            self.backend = resolve_backend(tts_backend)
+            self.backend = resolve_backend(tts_backend, log=self.log_callback)
             self.tts_backend = self.backend.name
         except ValueError as e:
             raise BackendError(str(e)) from e
@@ -81,6 +92,7 @@ class Celune:
                 f"internal backend error: {self.format_error(e, dev)}"
             ) from e
 
+        self.config = config
         self.language = language
 
         self.model = None
@@ -92,20 +104,8 @@ class Celune:
         self.voice_prompt: Optional[str] = None
 
         self.chunk_size = chunk_size
-        self.prebuffer_chunks = min(
-            max(self.chunk_size // 8, 1), 4
-        )  # between 1-4 prebuffer chunks
+        self.prebuffer_chunks = 5 if self.backend.name == "qwen3" else 10
         self.sentences_per_chunk = sentences_per_chunk
-
-        self.log_callback = log_callback or (lambda msg, severity="info": None)
-        self.status_callback = status_callback or (lambda msg, severity="info": None)
-        self.error_callback = error_callback or (lambda error: None)
-        self.idle_callback = idle_callback or (lambda: None)
-        self.queue_avail_callback = queue_avail_callback or (lambda: None)
-        self.voice_changed_callback = voice_changed_callback or (lambda name: None)
-        self.change_input_state_callback = change_input_state_callback or (
-            lambda locked: None
-        )
 
         self.text_queue = queue.Queue()
         self.audio_queue = queue.Queue()
@@ -141,11 +141,9 @@ class Celune:
         self.cur_state = "init"
 
         self.dev = dev
-        self.use_normalization = os.getenv("CELUNE_NORMALIZE") in {
-            "1",
-            "true",
-            "on",
-        }
+        self.use_normalization = config_bool(
+            config, "CELUNE_NORMALIZE", "use_normalizer"
+        )
 
         self.extension_manager: Optional[CeluneExtensionManager] = None
 
@@ -175,7 +173,7 @@ class Celune:
         """
         close_stream(self, abort=abort)
 
-    def _unload_runtime_state(self, include_normalizer: bool = False) -> None:
+    def unload_runtime_state(self, include_normalizer: bool = False) -> None:
         """Unload unused models to regain VRAM.
 
         Args:
@@ -326,10 +324,10 @@ class Celune:
 
         try:
             with self._model_lock:
-                self._unload_runtime_state(include_normalizer=False)
+                self.unload_runtime_state(include_normalizer=False)
 
                 self.model = self.backend.load_model(
-                    self.backend.model_id_for_voice(voice), self.log
+                    self.backend.model_id_for_voice(voice)
                 )
 
                 self.log("Rewarming up...")
@@ -375,11 +373,11 @@ class Celune:
         hf_logging.set_verbosity_error()
 
         log_runtime_banner(self.log, self.backend.name)
-        self.backend.preload_models(self.log)
+        self.backend.preload_models()
 
         self.log("All Celune voices are available.")
         try:
-            self.model = self.backend.load_default_model(self.log)
+            self.model = self.backend.load_default_model()
         except Exception as e:
             self.log("Celune could not load the default model.", "error")
             self.log(self.format_error(e, self.dev), "error")
@@ -411,16 +409,17 @@ class Celune:
             self._model_ready.set()
             self._release_pipeline()
             self.glow.enter()  # Celune has entered your PC
-            self.extension_manager.autostart_all()
+            if self.extension_manager is not None:
+                self.extension_manager.autostart_all()
         else:
             self.log("[WARMUP] Warmup failed.", "error")
             return False
 
         if self.use_normalization:
-            self._load_normalizer()
+            self.load_normalizer()
         return True
 
-    def _load_normalizer(self) -> None:
+    def load_normalizer(self) -> None:
         """Load the normalizer LLM.
 
         Returns:
@@ -619,7 +618,7 @@ class Celune:
         """
         close_pipeline(self)
         with self._model_lock:
-            self._unload_runtime_state(include_normalizer=True)
+            self.unload_runtime_state(include_normalizer=True)
 
     @staticmethod
     def format_error(e: Exception, dev: bool) -> str:
@@ -637,7 +636,8 @@ class Celune:
             with open("celune_traceback.txt", "w", encoding="utf-8") as f:
                 f.write(trace)
 
-        return traceback.format_exc() if dev else str(e)
+        details = str(e) or "no error description"
+        return traceback.format_exc() if dev else details
 
     def _split_text(self, text: str) -> list[str]:
         """Split text into chunks.
