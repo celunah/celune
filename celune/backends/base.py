@@ -140,7 +140,7 @@ class CeluneBackend(ABC):
 
     @abstractmethod
     def generate_stream(
-        self, model, **kwargs
+        self, model: PreTrainedModel, **kwargs
     ) -> tuple[npt.NDArray[np.float32], int, Optional[dict]]:
         """Yield audio chunks from a loaded backend model.
 
