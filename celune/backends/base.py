@@ -9,6 +9,7 @@ import numpy as np
 import numpy.typing as npt
 from transformers import PreTrainedModel
 
+
 class CeluneBackend(ABC):
     """Base class for Celune speech backends."""
 
@@ -138,7 +139,9 @@ class CeluneBackend(ABC):
         """
 
     @abstractmethod
-    def generate_stream(self, model, **kwargs) -> tuple[npt.NDArray[np.float32], int, Optional[dict]]:
+    def generate_stream(
+        self, model, **kwargs
+    ) -> tuple[npt.NDArray[np.float32], int, Optional[dict]]:
         """Yield audio chunks from a loaded backend model.
 
         Args:

@@ -74,7 +74,9 @@ def _make_stereo(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
     return np.ascontiguousarray(audio, dtype=np.float32)
 
 
-def _to_48khz(audio: npt.NDArray[np.float32], source_sr: int) -> npt.NDArray[np.float32]:
+def _to_48khz(
+    audio: npt.NDArray[np.float32], source_sr: int
+) -> npt.NDArray[np.float32]:
     """Cast a speech chunk to 48 kHz stereo format.
 
     Args:
@@ -88,7 +90,11 @@ def _to_48khz(audio: npt.NDArray[np.float32], source_sr: int) -> npt.NDArray[np.
 
 
 def _soften(
-    audio: npt.NDArray[np.float32], sr: int, duration: float = 0.2, start_gain: float = 0.5, end: bool = False
+    audio: npt.NDArray[np.float32],
+    sr: int,
+    duration: float = 0.2,
+    start_gain: float = 0.5,
+    end: bool = False,
 ) -> npt.NDArray[np.float32]:
     """Soften the leading or trailing audio.
 
@@ -117,7 +123,9 @@ def _soften(
     return audio
 
 
-def _split(audio: npt.NDArray[np.float32], sr: int, chunk_size: float) -> Iterable[npt.NDArray[np.float32]]:
+def _split(
+    audio: npt.NDArray[np.float32], sr: int, chunk_size: float
+) -> Iterable[npt.NDArray[np.float32]]:
     """Chop up input audio into chunks.
 
     Args:
@@ -167,7 +175,9 @@ class StreamingPedalboardReverb:
         self.reverb.wet_level = wet
         self.reverb.dry_level = 1.0
 
-    def process(self, audio: npt.NDArray[np.float32], sr: int = 48000) -> npt.NDArray[np.float32]:
+    def process(
+        self, audio: npt.NDArray[np.float32], sr: int = 48000
+    ) -> npt.NDArray[np.float32]:
         """Apply reverb effect.
 
         Args:
@@ -178,7 +188,9 @@ class StreamingPedalboardReverb:
             npt.NDArray[np.float32]: The processed stereo audio chunk.
         """
         if audio.ndim != 2 or audio.shape[1] != 2:
-            raise AudioMismatchError(f"expected stereo audio shaped (samples, 2), got {audio.shape}")
+            raise AudioMismatchError(
+                f"expected stereo audio shaped (samples, 2), got {audio.shape}"
+            )
 
         self._update_params()
 
