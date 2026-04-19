@@ -5,6 +5,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Callable, Optional
 
+import numpy as np
+import numpy.typing as npt
+from transformers import PreTrainedModel
 
 class CeluneBackend(ABC):
     """Base class for Celune speech backends."""
@@ -96,7 +99,7 @@ class CeluneBackend(ABC):
 
         raise ValueError(f"{self.name} cannot resolve a model for voice '{voice}'")
 
-    def load_default_model(self):
+    def load_default_model(self) -> PreTrainedModel:
         """Load the configured default model for this backend.
 
         Returns:
@@ -124,7 +127,7 @@ class CeluneBackend(ABC):
         """
 
     @abstractmethod
-    def load_model(self, model_id: str):
+    def load_model(self, model_id: str) -> PreTrainedModel:
         """Load a model by backend-specific identifier.
 
         Args:
@@ -135,7 +138,7 @@ class CeluneBackend(ABC):
         """
 
     @abstractmethod
-    def generate_stream(self, model, **kwargs):
+    def generate_stream(self, model, **kwargs) -> tuple[npt.NDArray[np.float32], int, Optional[dict]]:
         """Yield audio chunks from a loaded backend model.
 
         Args:

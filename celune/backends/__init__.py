@@ -1,6 +1,6 @@
 """Celune backend initialization manager."""
 
-from typing import Callable, Union
+from typing import Callable, Union, Optional
 from importlib import import_module
 from importlib.metadata import version, PackageNotFoundError
 
@@ -30,7 +30,7 @@ def get_version(package: str) -> str:
 
 def resolve_backend(
     backend_name: Union[str, type[CeluneBackend], CeluneBackend],
-    log: Callable[[str, str], None] | None = None,
+    log: Optional[Callable[[str, str], None]] = None,
 ) -> CeluneBackend:
     """Resolve a backend specification into a backend instance.
 

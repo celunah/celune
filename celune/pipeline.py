@@ -16,7 +16,7 @@ import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 
-from .dsp import _resample_audio, _soften_onset, _split, _to_48khz
+from .dsp import _resample_audio, _soften, _split, _to_48khz
 from .exceptions import NotAvailableError
 from .utils import format_number
 
@@ -391,7 +391,7 @@ def generation_worker(engine: "Celune") -> None:
                                 audio_chunk = engine.reverb.process(audio_chunk, 48000)
 
                             if is_first_chunk:
-                                audio_chunk = _soften_onset(audio_chunk, 48000)
+                                audio_chunk = _soften(audio_chunk, 48000, end=False)
                                 is_first_chunk = False
 
                             if engine.exit_requested:
