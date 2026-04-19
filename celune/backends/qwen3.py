@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import os
 import glob
-from typing import Optional
+from typing import Optional, Generator
 
+import numpy as np
+import numpy.typing as npt
 from faster_qwen3_tts import FasterQwen3TTS
 from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
@@ -102,7 +104,8 @@ class Qwen3(CeluneBackend):
         self.model = FasterQwen3TTS.from_pretrained(model_id)
         return self.model
 
-    def generate_stream(self, model: FasterQwen3TTS, **kwargs):
+    def generate_stream(
+            self, model: FasterQwen3TTS, **kwargs) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Generate Celune compatible audio chunks.
 
         Args:

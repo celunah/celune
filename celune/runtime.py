@@ -28,12 +28,14 @@ def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> No
         else ('"', '"')
     )
 
+    cuda_line = f", CUDA {cuda_version}" if cuda_version else ""
+
     log(
         f"Celune {__version__} "
         f"on backend {backend_name}, "
         f"Python {platform.python_version()}, "
-        f"PyTorch {torch.__version__}, "
-        f"CUDA {cuda_version}",
+        f"PyTorch {torch.__version__}"
+        f"{cuda_line}",  # NOTE: may concatenate an empty string if CUDA support is not present
         "info",
     )
     log(
