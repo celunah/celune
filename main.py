@@ -9,6 +9,7 @@ Celune models are available on https://huggingface.co/collections/lunahr/celune.
 import os
 import sys
 import time
+import shutil
 import datetime
 import contextlib
 
@@ -55,6 +56,10 @@ def main() -> None:
             raise No("I sense an entity who I shall not engage with today.")
 
         print("\x1b]2;Celune\x07", end="", flush=True)
+
+        if not os.path.exists("config.yaml"):
+            shutil.copy("default_config.yaml", "config.yaml")
+            print("Celune configuration has been created.")
 
         with open("config.yaml", encoding="utf-8") as cfg:
             config = yaml.safe_load(cfg)
