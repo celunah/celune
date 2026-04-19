@@ -337,7 +337,7 @@ requires-dist = [
     { name = "transformers", specifier = "<5.0.0" },
     { name = "triton", marker = "sys_platform != 'win32'", specifier = ">=3.3.0" },
     { name = "triton-windows", marker = "sys_platform == 'win32'", specifier = ">=3.3.0" },
-    { name = "voxcpm", specifier = ">=2.0.0,<2.1.0" },
+    { name = "voxcpm", specifier = ">=2.0.2,<2.1.0" },
 ]
 
 [[package]]
