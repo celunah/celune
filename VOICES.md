@@ -4,7 +4,9 @@ This document describes how Celune's voice identities were created, selected, an
 # Who is Celune
 Celune by nature appears to be a young female of approximately 28 years of age, who speaks with a low contralto tone.
 
-Her average pitch range during speech is ~170 Hz. This is reflected across all four of her tones, however her Upbeat tone may modulate more than the rest, contributing to a higher perceived pitch.
+Her average pitch range during speech is ~170 Hz. This is reflected across all four of her tones, however her Upbeat tone may modulate more than the rest, contributing to a higher perceived pitch of approx. 210 Hz.
+
+The character personality is loosely based on Japanese-style philosophies, and the connected UX practices follow a Korean style. When she speaks, she tends to be slightly hesitant and keeps her responses brief, while naturally pausing in her speech. The interpretation is left to the user to decipher.
 
 # Pronunciation glossary
 Celune can be pronounced in one of two ways:
@@ -16,11 +18,13 @@ Parts in brackets may not be said equally by all speakers.
 The name is derived from the author's username.
 
 # Models
-Models used in Celune no longer use reference audios.
+Qwen-based models used in Celune no longer use reference audios.
 
 Check https://huggingface.co/collections/lunahr/celune for a list of Celune models in use, or these model pages:
 
 [Neutral](https://huggingface.co/lunahr/Celune-1.7B-Neutral)・[Calm](https://huggingface.co/lunahr/Celune-1.7B-Calm)・[Energetic](https://huggingface.co/lunahr/Celune-1.7B-Energetic)・[Upbeat](https://huggingface.co/lunahr/Celune-1.7B-Upbeat)
+
+However, the VoxCPM2 backend does use them. The quality of expression is greatly improved.
 
 # Reference text
 These scripts are what Celune says in the reference audio. They were modified from an original script to reduce the hallucination risk.
@@ -85,6 +89,8 @@ These effects and their settings give Celune's voice its identity.
 - stereo width = 85%
 - wet only = no
 
+The Upbeat voice has an increased amount of default reverb, the TTS model will replicate it during speech.
+
 An additional amount of reverb can be applied within Celune. 
 
 Refer to the /reverb command for details.
@@ -99,6 +105,6 @@ Refer to the /reverb command for details.
 - -5dB relative to dry on wet track
 
 # Output format
-This format makes Celune sound the best on your computer.
+This format makes Celune sound the best on your computer, especially if using VoxCPM2.
 
-- 48kHz stereo, signed 16-bit PCM
+- 48kHz stereo, signed 24-bit PCM
