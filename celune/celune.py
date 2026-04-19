@@ -481,6 +481,7 @@ class Celune:
             self.error_callback("Celune could not warm up")
             return False
 
+    # NOTE: do NOT normalize long inputs, CeluneNorm doesn't support inputs of above 512 tokens, and WILL choke!
     def normalize(self, text: str) -> Optional[str]:
         """Normalize input text using CeluneNorm.
 
