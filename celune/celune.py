@@ -244,9 +244,10 @@ class Celune:
         if not ok:
             self.log("Timed out while waiting to become ready.", "warning")
             self.log(
-                "If this was not expected, Celune may have been downloading models.",
+                "A possible reason for this may be a model download or high GPU activity.",
                 "warning",
             )
+            self.log("This is not a fatal error, the utterance may be retried.", "warning")
             return False
 
         if not self.loaded:

@@ -473,7 +473,12 @@ def generation_worker(engine: "Celune") -> None:
 
                 if full_audio:
                     wav = np.concatenate(full_audio)
-                    timestamp = time.time_ns() // 1000000
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+
+                    # get up to first three words of input and sanitize for use in a file name
+                    first_words = "_".join(text.split()[:3]).lower()
+                    first_words = re.sub(r"[^a-zA-Z0-9_]", "", first_words)
+
                     if not os.path.exists("outputs"):
                         engine.log("Outputs path not found, creating...", "warning")
                         try:
@@ -487,7 +492,7 @@ def generation_worker(engine: "Celune") -> None:
 
                     if os.path.exists("outputs"):
                         sf.write(
-                            f"outputs/celune_speech_{timestamp}.wav",
+                            f"outputs/celune_speech_{timestamp}_{first_words}.wav",
                             wav,
                             48000,
                             subtype="PCM_24",
