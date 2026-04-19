@@ -5,6 +5,7 @@ import math
 from typing import Iterable
 
 import numpy as np
+import numpy.typing as npt
 from scipy.signal import resample_poly
 from pedalboard import Pedalboard, Reverb
 
@@ -12,8 +13,8 @@ from celune.exceptions import AudioMismatchError, BadAudioError
 
 
 def _resample_audio(
-    audio: np.ndarray, source_sr: int, target_sr: int = 48000
-) -> np.ndarray:
+    audio: npt.NDArray[np.float32], source_sr: int, target_sr: int = 48000
+) -> npt.NDArray[np.float32]:
     """Resample the given audio to the given sample rate.
 
     Args:
@@ -22,7 +23,7 @@ def _resample_audio(
         target_sr: The desired output sample rate.
 
     Returns:
-        np.ndarray: The resampled stereo audio array.
+        npt.NDArray[np.float32]: The resampled stereo audio array.
     """
     if source_sr == 0:
         raise BadAudioError("cannot resample from zero sample rate")
@@ -47,14 +48,14 @@ def _resample_audio(
     )
 
 
-def _make_stereo(audio: np.ndarray) -> np.ndarray:
+def _make_stereo(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
     """Convert mono input to stereo input.
 
     Args:
         audio: The input mono or stereo audio array.
 
     Returns:
-        np.ndarray: A contiguous stereo audio array.
+        npt.NDArray[np.float32]: A contiguous stereo audio array.
     """
     audio = np.asarray(audio, dtype=np.float32)
 
@@ -73,7 +74,7 @@ def _make_stereo(audio: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(audio, dtype=np.float32)
 
 
-def _to_48khz(audio: np.ndarray, source_sr: int) -> np.ndarray:
+def _to_48khz(audio: npt.NDArray[np.float32], source_sr: int) -> npt.NDArray[np.float32]:
     """Cast a speech chunk to 48 kHz stereo format.
 
     Args:
@@ -81,15 +82,15 @@ def _to_48khz(audio: np.ndarray, source_sr: int) -> np.ndarray:
         source_sr: The input sample rate.
 
     Returns:
-        np.ndarray: The audio resampled to 48 kHz stereo.
+        npt.NDArray[np.float32]: The audio resampled to 48 kHz stereo.
     """
     return _resample_audio(audio, source_sr, 48000)
 
 
-def _soften_onset(
-    audio: np.ndarray, sr: int, duration: float = 0.2, start_gain: float = 0.5
-) -> np.ndarray:
-    """Soften the leading audio.
+def _soften(
+    audio: npt.NDArray[np.float32], sr: int, duration: float = 0.2, start_gain: float = 0.5, end: bool = False
+) -> npt.NDArray[np.float32]:
+    """Soften the leading or trailing audio.
 
     Args:
         audio: The stereo audio array to modify in place.
@@ -99,20 +100,24 @@ def _soften_onset(
             volume.
 
     Returns:
-        np.ndarray: The softened audio array.
+        npt.NDArray[np.float32]: The softened audio array.
     """
     samples = int(sr * duration)
     samples = min(samples, len(audio))
 
     ramp = np.linspace(start_gain, 1.0, samples, dtype=np.float32)
 
-    audio[:samples, 0] *= ramp
-    audio[:samples, 1] *= ramp
+    if not end:
+        audio[:samples, 0] *= ramp
+        audio[:samples, 1] *= ramp
+    else:
+        audio[-samples:, 0] *= ramp
+        audio[-samples:, 1] *= ramp
 
     return audio
 
 
-def _split(audio: np.ndarray, sr: int, chunk_size: float) -> Iterable[np.ndarray]:
+def _split(audio: npt.NDArray[np.float32], sr: int, chunk_size: float) -> Iterable[npt.NDArray[np.float32]]:
     """Chop up input audio into chunks.
 
     Args:
@@ -121,7 +126,7 @@ def _split(audio: np.ndarray, sr: int, chunk_size: float) -> Iterable[np.ndarray
         chunk_size: Celune's chunk size multiplier used to derive frame counts.
 
     Returns:
-        Iterable[np.ndarray]: An iterator of smaller audio chunks.
+        Iterable[npt.NDArray[np.float32]]: An iterator of smaller audio chunks.
     """
     duration = chunk_size * 0.08
     frames = max(1, int(sr * duration))
@@ -162,7 +167,7 @@ class StreamingPedalboardReverb:
         self.reverb.wet_level = wet
         self.reverb.dry_level = 1.0
 
-    def process(self, audio: np.ndarray, sr: int = 48000) -> np.ndarray:
+    def process(self, audio: npt.NDArray[np.float32], sr: int = 48000) -> npt.NDArray[np.float32]:
         """Apply reverb effect.
 
         Args:
@@ -170,10 +175,10 @@ class StreamingPedalboardReverb:
             sr: The sample rate of the input audio.
 
         Returns:
-            np.ndarray: The processed stereo audio chunk.
+            npt.NDArray[np.float32]: The processed stereo audio chunk.
         """
         if audio.ndim != 2 or audio.shape[1] != 2:
-            raise AudioMismatchError("expected stereo audio shaped (samples, 2)")
+            raise AudioMismatchError(f"expected stereo audio shaped (samples, 2), got {audio.shape}")
 
         self._update_params()
 
@@ -190,7 +195,7 @@ class StreamingPedalboardReverb:
 
     def flush(
         self, sr: int = 48000, threshold: float = 1e-4, max_secs: float = 3.0
-    ) -> np.ndarray:
+    ) -> npt.NDArray[np.float32]:
         """Extract the remaining reverb by pushing silence.
 
         Args:
@@ -199,7 +204,7 @@ class StreamingPedalboardReverb:
             max_secs: The maximum amount of tail audio to extract.
 
         Returns:
-            np.ndarray: The remaining reverb tail as stereo audio.
+            npt.NDArray[np.float32]: The remaining reverb tail as stereo audio.
         """
         chunk_size = int(0.1 * sr)
         max_chunks = int(max_secs / 0.1)

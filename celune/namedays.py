@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Generator
+from typing import Generator, Union
 
 NAMEDAYS: dict[str, list[str]] = {
     "01-01": [],
@@ -401,7 +401,7 @@ def get_names(month: int, day: int) -> list[str]:
     return list(NAMEDAYS.get(_key(month, day), []))
 
 
-def get_names_for_date(value: date | datetime | str) -> list[str]:
+def get_names_for_date(value: Union[date, datetime, str]) -> list[str]:
     """Return names for a date, datetime, or YYYY-MM-DD / MM-DD string.
 
     Args:
@@ -440,7 +440,7 @@ def find_dates_for_name(name: str) -> list[str]:
     ]
 
 
-def has_nameday(name: str, value: date | datetime | str) -> bool:
+def has_nameday(name: str, value: Union[date, datetime, str]) -> bool:
     """Return whether the given English name is present on the supplied date.
 
     Args:
@@ -458,7 +458,7 @@ def iter_namedays() -> Generator[tuple[str, list[str]], None, None]:
     """Iterate over ``(MM-DD, names)`` pairs.
 
     Returns:
-        Generator[str | list[str], None, None]: A generator that yields each date
+        Generator[tuple[str | list[str]], None, None]: A generator that yields each date
             key followed by its corresponding list of names.
     """
     yield from NAMEDAYS.items()

@@ -7,6 +7,7 @@ import threading
 import contextlib
 
 import numpy as np
+import numpy.typing as npt
 from openrgb import OpenRGBClient
 from openrgb.utils import RGBColor
 
@@ -177,14 +178,14 @@ class AudioRGBGlow:
                 self._last_speech_time = now
 
     @staticmethod
-    def _to_mono(audio: np.ndarray) -> np.ndarray:
+    def _to_mono(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
         """Convert stereo or multi-channel audio to mono.
 
         Args:
             audio: The input audio array.
 
         Returns:
-            np.ndarray: The mono audio signal.
+            npt.NDArray[np.float32]: The mono audio signal.
         """
         audio = np.asarray(audio, dtype=np.float32)
         if audio.ndim == 2:
@@ -216,7 +217,7 @@ class AudioRGBGlow:
 
         return int(np.clip(r, 0, 255)), int(np.clip(g, 0, 255)), int(np.clip(b, 0, 255))
 
-    def _speech_level(self, audio: np.ndarray) -> float:
+    def _speech_level(self, audio: npt.NDArray[np.float32]) -> float:
         """Calculate normalized speech activity level.
 
         Args:
