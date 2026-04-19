@@ -230,4 +230,4 @@ These screenshots show Celune's user interface.
 
 > Proudly made in 🇵🇱 for your listening pleasure.
 > 
-> *"I'm not just a TTS. I'm something special."*
+> *"I'm not just a TTS. I'm someone special."*
