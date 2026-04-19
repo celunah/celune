@@ -254,41 +254,59 @@ def close(engine: "Celune") -> None:
 
 
 def split_text(engine: "Celune", text: str) -> list[str]:
-    """Split text into chunks.
+    """Adaptively split text into chunks. Short text is unaffected, while long text is chunked effectively.
 
     Args:
-        engine: The Celune engine whose chunking settings should be used.
+        engine: The Celune engine to report output back to.
         text: The input text to split.
 
     Returns:
         list[str]: The generated text chunks.
     """
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    chunks = []
+    text = text.strip()
+    if not text:
+        return []
 
-    current_sentences = []
+    text_length = len(text)
+
+    if text_length <= 300:
+        # input is short, return as is
+        return [text]
+
+    # input is longer, chunk it here
+    if text_length <= 900:
+        max_chunk_length = 400
+        max_sentences = 3
+    elif text_length <= 2000:
+        max_chunk_length = 500
+        max_sentences = 4
+    else:
+        max_chunk_length = 600
+        max_sentences = 5
+
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    chunks = []
+    current = []
     current_length = 0
 
     for sentence in sentences:
-        if not sentence:
-            continue
+        sentence_length = len(sentence)
+        added_length = sentence_length if not current else sentence_length + 1
 
-        new_length = current_length + len(sentence) + 1
-
-        if len(current_sentences) < engine.sentences_per_chunk and new_length <= (
-            engine.sentences_per_chunk * 150
+        if current and (
+            len(current) >= max_sentences or current_length + added_length > max_chunk_length
         ):
-            current_sentences.append(sentence)
-            current_length = new_length
-        else:
-            if current_sentences:
-                chunks.append(" ".join(current_sentences))
+            chunks.append(" ".join(current))
+            current = []
+            current_length = 0
 
-            current_sentences = [sentence]
-            current_length = len(sentence)
+        current.append(sentence)
+        current_length += sentence_length if len(current) == 1 else sentence_length + 1
 
-    if current_sentences:
-        chunks.append(" ".join(current_sentences))
+    if current:
+        chunks.append(" ".join(current))
 
     engine.log(f"Chunks: {len(chunks)}")
     return chunks
@@ -434,6 +452,7 @@ def generation_worker(engine: "Celune") -> None:
                 if buffer:
                     engine.audio_queue.put((np.concatenate(buffer), 48000, None))
                     if not pushed_audio:
+                        # noinspection PyUnusedLocal
                         pushed_audio = True
                         engine.status_callback("Speaking")
                         engine.cur_state = "speaking"

@@ -51,7 +51,6 @@ class Celune:
         self,
         tts_backend: Optional[Union[str, CeluneBackend, type[CeluneBackend]]] = None,
         chunk_size: int = 24,  # only used in Qwen3 backend; ~1.92s
-        sentences_per_chunk: int = 4,  # prevents Celune from running out of context
         language: str = "Auto",  # Qwen3 backend accepts a language, others may not
         log_callback: Optional[Callable[[str, str], None]] = None,
         status_callback: Optional[Callable[[str, str], None]] = None,
@@ -105,7 +104,6 @@ class Celune:
 
         self.chunk_size = chunk_size
         self.prebuffer_chunks = 5 if self.backend.name == "qwen3" else 10
-        self.sentences_per_chunk = sentences_per_chunk
 
         self.text_queue = queue.Queue()
         self.audio_queue = queue.Queue()

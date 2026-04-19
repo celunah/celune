@@ -21,7 +21,7 @@ class CeluneExtensionManager:
     def __init__(self, context: CeluneContext) -> None:
         self.context = context
         self.extensions: dict[str, CeluneExtension] = {}
-        self.autostarted = False
+        self.auto_started = False
 
     def register(self, extension_cls: Type[CeluneExtension]) -> CeluneExtension:
         """Register a Celune extension class.
@@ -59,7 +59,7 @@ class CeluneExtensionManager:
         Returns:
             None: Matching extensions are started on background threads.
         """
-        if self.autostarted:
+        if self.auto_started:
             self.context.log(
                 "[Core] Cannot autostart Celune extensions more than one time.",
                 "warning",
@@ -70,7 +70,7 @@ class CeluneExtensionManager:
         for name, ext in self.extensions.items():
             if ext.AUTOSTART:
                 if self.context.dev:
-                    self.context.log(f"[Core] Autostarting: {name}")
+                    self.context.log(f"[Core] Auto-starting: {name}")
 
                 def runner(e=ext, n=name):
                     try:
@@ -88,7 +88,7 @@ class CeluneExtensionManager:
             if self.context.dev:
                 self.context.log("[Core] No extensions to autostart.")
         else:
-            self.autostarted = True
+            self.auto_started = True
 
     def invoke(self, name: str, *args: Any, **kwargs: Any) -> Any:
         """Manually invoke a Celune extension.

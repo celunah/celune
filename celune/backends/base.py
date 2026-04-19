@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Callable, Optional
+from typing import Callable, Optional, Generator
 
 import numpy as np
 import numpy.typing as npt
@@ -141,7 +141,7 @@ class CeluneBackend(ABC):
     @abstractmethod
     def generate_stream(
         self, model: PreTrainedModel, **kwargs
-    ) -> tuple[npt.NDArray[np.float32], int, Optional[dict]]:
+    ) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Yield audio chunks from a loaded backend model.
 
         Args:

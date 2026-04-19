@@ -7,9 +7,11 @@ import glob
 import hashlib
 import contextlib
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Generator
 
 import torch
+import numpy as np
+import numpy.typing as npt
 from voxcpm import VoxCPM
 from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
@@ -191,7 +193,9 @@ class VoxCPM2(CeluneBackend):
             )
         return self.model
 
-    def generate_stream(self, model: VoxCPM, **kwargs):
+    def generate_stream(
+            self, model: VoxCPM, **kwargs
+    ) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Generate Celune compatible audio chunks.
 
         Args:
