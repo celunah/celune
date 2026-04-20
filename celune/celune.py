@@ -182,22 +182,20 @@ class Celune:
             None: This method clears model references and frees CUDA memory when
                 possible.
         """
-        old_model = self.model
-        (lambda: old_model)()  # no-op this to shut up the linters
+        _ = self.model
         self.model = None
-        del old_model
+        del _
 
         self.backend.unload_model()
 
         if include_normalizer:
-            old_llm = self.llm
-            old_tokenizer = self.tokenizer
-            (lambda: old_llm)()
-            (lambda: old_tokenizer)()
+            _ = self.llm
             self.llm = None
+            del _
+
+            _ = self.tokenizer
             self.tokenizer = None
-            del old_llm
-            del old_tokenizer
+            del _
 
         gc.collect()
 
@@ -250,7 +248,9 @@ class Celune:
                 "A possible reason for this may be a model download or high GPU activity.",
                 "warning",
             )
-            self.log("This is not a fatal error, the utterance may be retried.", "warning")
+            self.log(
+                "This is not a fatal error, the utterance may be retried.", "warning"
+            )
             return False
 
         if not self.loaded:
@@ -319,9 +319,9 @@ class Celune:
         Returns:
             None: This method reloads the backend model for the requested voice.
         """
-        if not self.model_ready.is_set():
+        if not self._model_ready.is_set():
             self.log("Waiting for models to load...")
-            self.model_ready.wait(timeout=5)
+            self._model_ready.wait(timeout=5)
 
         self.log("Celune is reloading, please stand by...")
         self.status_callback("Reloading")
@@ -414,14 +414,16 @@ class Celune:
             self._model_ready.set()
             self._release_pipeline()
             self.glow.enter()  # Celune has entered your PC
-            if self.extension_manager is not None:
-                self.extension_manager.autostart_all()
         else:
             self.log("[WARMUP] Warmup failed.", "error")
             return False
 
         if self.use_normalization:
             self.load_normalizer()
+
+        if self.extension_manager is not None:
+            self.extension_manager.autostart_all()
+
         return True
 
     def load_normalizer(self) -> None:
@@ -536,7 +538,6 @@ class Celune:
                 if len_tokens > 256:
                     self.log("Input is too long to normalize.", "warning")
                     return None
-
 
                 with torch.inference_mode():
                     output_ids = self.llm.generate(

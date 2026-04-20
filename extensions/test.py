@@ -1,6 +1,7 @@
 import time
 from celune import CeluneExtension
 
+
 class TestExtension(CeluneExtension):
     EXTENSION_NAME = "Greeter"
     AUTOSTART = True
@@ -11,4 +12,6 @@ class TestExtension(CeluneExtension):
         self.say("Hey there. What do you want to make me say today?")
 
     def invoke(self) -> None:
-        self.say("You want me to greet you again? Well, hello. Now, what are you going to make me say?")
+        self.say(
+            "You want me to greet you again? Well, hello. Now, what are you going to make me say?"
+        )
