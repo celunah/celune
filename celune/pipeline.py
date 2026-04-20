@@ -332,7 +332,6 @@ def generation_worker(engine: "Celune") -> None:
             engine.locked = False
             continue
 
-        retried_without_optimization = False
         while True:
             try:
                 engine.model_ready.wait()
@@ -497,32 +496,6 @@ def generation_worker(engine: "Celune") -> None:
                             48000,
                             subtype="PCM_24",
                         )
-                break
-
-            except AssertionError:
-                if engine.backend.name != "voxcpm2" or retried_without_optimization:
-                    raise
-
-                engine.log("Cannot optimize VoxCPM2.", "warning")
-                engine.log("Reloading without optimization...")
-                engine.reverb.reset()
-
-                with engine.queue_lock:
-                    clear_queue(engine.audio_queue)
-
-                close_stream(engine, abort=True)
-
-                with engine.model_lock:
-                    engine.unload_runtime_state(include_normalizer=True)
-                    engine.model = engine.backend.load_model(
-                        engine.backend.model_name,
-                        optimize=False,
-                    )
-
-                if engine.use_normalization:
-                    engine.load_normalizer()
-
-                # NOTE: if you continue here, utterances will be out of order and speak over other utterances
                 break
             except Exception as e:
                 if engine.exit_requested:

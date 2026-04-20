@@ -128,11 +128,12 @@ class CeluneBackend(ABC):
         """
 
     @abstractmethod
-    def load_model(self, model_id: str) -> PreTrainedModel:
+    def load_model(self, model_id: str, optimize: bool = True) -> PreTrainedModel:
         """Load a model by backend-specific identifier.
 
         Args:
             model_id: The backend-specific model identifier to load.
+            optimize: (VoxCPM2 only) Whether to attempt optimizing VoxCPM2.
 
         Returns:
             Any: The loaded backend model instance.

@@ -38,17 +38,17 @@ class VoxCPM2(CeluneBackend):
         "upbeat": "refs/upbeat.wav",
     }
     voice_cfg: dict[str, float] = {
-        "balanced": 2.4,
-        "calm": 3.6,
-        "bold": 2.4,
-        "upbeat": 2.4,
+        "balanced": 2.0,
+        "calm": 3.0,
+        "bold": 2.0,
+        "upbeat": 2.0,
     }
     default_voice: str = "balanced"
 
     def __init__(self, log: Callable[[str, str], None]) -> None:
         super().__init__(log=log)
         self.log = log
-        self.optimize_enabled = True
+        self.optimize_enabled = False
         self._validate_refs()
 
     @staticmethod
@@ -173,6 +173,7 @@ class VoxCPM2(CeluneBackend):
 
         torch.cuda.manual_seed_all(3584181039)
         torch.backends.cudnn.deterministic = True
+        torch.use_deterministic_algorithms(True)
 
         if available and path is not None:
             os.environ["HF_HUB_OFFLINE"] = "1"
