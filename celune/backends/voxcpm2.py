@@ -195,7 +195,7 @@ class VoxCPM2(CeluneBackend):
         return self.model
 
     def generate_stream(
-            self, model: VoxCPM, **kwargs
+        self, model: VoxCPM, **kwargs
     ) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Generate Celune compatible audio chunks.
 

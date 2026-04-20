@@ -296,7 +296,8 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         added_length = sentence_length if not current else sentence_length + 1
 
         if current and (
-            len(current) >= max_sentences or current_length + added_length > max_chunk_length
+            len(current) >= max_sentences
+            or current_length + added_length > max_chunk_length
         ):
             chunks.append(" ".join(current))
             current = []

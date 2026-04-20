@@ -106,7 +106,8 @@ class Qwen3(CeluneBackend):
         return self.model
 
     def generate_stream(
-            self, model: FasterQwen3TTS, **kwargs) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+        self, model: FasterQwen3TTS, **kwargs
+    ) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Generate Celune compatible audio chunks.
 
         Args:
