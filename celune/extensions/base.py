@@ -203,7 +203,7 @@ class CeluneExtension(ABC):
         """
         self.ctx.status(msg, severity)
 
-    def set_voice(self, voice: str) -> None:
+    def set_voice(self, voice: str) -> bool:
         """Change Celune's voice.
 
         Args:
@@ -212,4 +212,7 @@ class CeluneExtension(ABC):
         Returns:
             None: This method forwards the voice change request.
         """
-        self.ctx.set_voice(voice)
+        if not self.ctx.wait_until_ready():
+            return False
+
+        return self.ctx.set_voice(voice)

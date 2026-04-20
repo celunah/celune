@@ -18,7 +18,6 @@ dependencies = [
     "huggingface-hub<1.0.0",
     "transformers<5.0.0",
     # For later usage in VoxCPM2, if the optimization path is fixed.
-    # Celune will gracefully reload if an AssertionError occurs during inference while using VoxCPM2.
     "triton>=3.3.0; sys_platform != 'win32'",
     "triton-windows>=3.3.0; sys_platform == 'win32'",
 

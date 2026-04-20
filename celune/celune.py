@@ -183,6 +183,7 @@ class Celune:
                 possible.
         """
         old_model = self.model
+        (lambda: old_model)()  # no-op this to shut up the linters
         self.model = None
         del old_model
 
@@ -191,6 +192,8 @@ class Celune:
         if include_normalizer:
             old_llm = self.llm
             old_tokenizer = self.tokenizer
+            (lambda: old_llm)()
+            (lambda: old_tokenizer)()
             self.llm = None
             self.tokenizer = None
             del old_llm
@@ -224,6 +227,12 @@ class Celune:
         Returns:
             bool: ``True`` when the reload thread was started, otherwise ``False``.
         """
+        if not self.model_ready.is_set():
+            self.status_callback("Waiting for model")
+            self.log("Waiting for existing models to load...", "info")
+
+        self.model_ready.wait()
+
         if name not in self.voices:
             self.log(f"Unknown voice: {name}")
             return False
@@ -339,7 +348,6 @@ class Celune:
             self.voice_changed_callback(voice)
             self.log(f"Voice {voice} loaded.")
             self.status_callback("Idle")
-
         except Exception as e:
             self.loaded = False
             self.log(f"[RELOAD ERROR] {self.format_error(e, self.dev)}", "error")
