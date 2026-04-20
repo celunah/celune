@@ -227,12 +227,6 @@ class Celune:
         Returns:
             bool: ``True`` when the reload thread was started, otherwise ``False``.
         """
-        if not self.model_ready.is_set():
-            self.status_callback("Waiting for model")
-            self.log("Waiting for existing models to load...", "info")
-
-        self.model_ready.wait()
-
         if name not in self.voices:
             self.log(f"Unknown voice: {name}")
             return False
@@ -325,6 +319,10 @@ class Celune:
         Returns:
             None: This method reloads the backend model for the requested voice.
         """
+        if not self.model_ready.is_set():
+            self.log("Waiting for models to load...")
+            self.model_ready.wait(timeout=5)
+
         self.log("Celune is reloading, please stand by...")
         self.status_callback("Reloading")
         self.change_input_state_callback(locked=True)
@@ -525,11 +523,20 @@ class Celune:
 
                 prompt = f"{bad_text}{norm_token}"
 
-                inputs = self.tokenizer(
+                tokens = self.tokenizer(
                     prompt,
                     return_tensors="pt",
                     add_special_tokens=False,
-                ).to(self.llm.device)
+                )
+
+                inputs = tokens.to(self.llm.device)
+                len_tokens = tokens["input_ids"].shape[1]
+
+                self.log(f"Tokens to normalize: {len_tokens}")
+                if len_tokens > 256:
+                    self.log("Input is too long to normalize.", "warning")
+                    return None
+
 
                 with torch.inference_mode():
                     output_ids = self.llm.generate(
