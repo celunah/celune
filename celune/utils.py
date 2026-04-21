@@ -1,6 +1,11 @@
 """Celune common utility functions."""
 
+import math
+import datetime
 import subprocess
+from typing import Union
+
+from celune.constants import REFERENCE_NEW_MOON
 
 
 def get_revision() -> str:
@@ -72,3 +77,36 @@ def to_rgb(color: str) -> tuple[int, ...]:
         raise ValueError(f"expected a 3 or 6-character hex code, found {color}")
 
     return tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))
+
+def lunar_illumination(dt: datetime.datetime) -> float:
+    """Get overall level of lunar illumination on a specified date.
+
+    Arguments:
+        dt: The date to check lunar illumination of.
+
+    Returns:
+        float: The amount of lunar illumination formatted as a floating-point number.
+    """
+
+    frac_dt = dt.astimezone(datetime.timezone.utc)
+    since_ref = (frac_dt - REFERENCE_NEW_MOON).total_seconds() / 86400
+    phase = (since_ref / 29.530588) % 1.0
+    return 0.5 * (1 - math.cos(2 * math.pi * phase))
+
+def range_interpolated(
+    value: float, lo: Union[int, float], hi: Union[int, float], power: float = 3.0
+) -> Union[int, float]:
+    """Get interpolated number within a specified range.
+
+    Arguments:
+        value: The number (0-1) to convert to interpolated value.
+        lo: The lower bound of the interpolated range.
+        hi: The upper bound of the interpolated range.
+        power: How strongly to interpolate the number.
+
+    Returns:
+        Union[int, float]: The interpolated number.
+    """
+    clamped = max(0.0, min(1.0, value))
+    value = clamped ** power
+    return lo + value * (hi - lo)

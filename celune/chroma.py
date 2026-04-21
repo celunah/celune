@@ -1,6 +1,7 @@
 # pylint: disable=R0902
 """Celune Razer Chroma and OpenRGB-compatible RGB glow effect."""
 
+import os
 import time
 import datetime
 import threading
@@ -11,7 +12,7 @@ import numpy.typing as npt
 from openrgb import OpenRGBClient
 from openrgb.utils import RGBColor
 
-from .utils import to_rgb
+from .utils import to_rgb, lunar_illumination, range_interpolated
 
 
 class AudioRGBGlow:
@@ -40,12 +41,21 @@ class AudioRGBGlow:
 
         self.transition_rate = 0.02
 
-        # Celune glows much brighter on Celune Day
+        self.glow_multiplier = 1.0
+
+        self.max_glow_forced = os.getenv("CELUNE_FORCE_CELUNE_DAY") in {"1", "true", "on", "yes", "enabled"}
+
+        # Celune glows much brighter on Celune Day, else she'll glow according to the lunar phase.
         current_date = datetime.datetime.now()
         if current_date.day == 2 and current_date.month == 6:
-            self.idle_brightness = 0.5
+            self.glow_multiplier *= 3.0
         else:
-            self.idle_brightness = 0.05
+            self.glow_multiplier *= range_interpolated(lunar_illumination(datetime.datetime.now()), 1.0, 2.0)
+
+        if not self.max_glow_forced:
+            self.idle_brightness = 0.05 * self.glow_multiplier
+        else:
+            self.idle_brightness = 0.05 * 2.0 * 3.0  # max glow level
 
         self.max_brightness = 1.0
 
@@ -152,7 +162,7 @@ class AudioRGBGlow:
             self._target_brightness = 0.0
             self.finished.clear()
 
-    def glow(self, audio) -> None:
+    def glow(self, audio: npt.NDArray[np.float32]) -> None:
         """Update brightness target based on incoming audio chunk.
 
         Args:
@@ -174,7 +184,6 @@ class AudioRGBGlow:
         with self._lock:
             if smoothed_level > self.speech_threshold:
                 self._state = "normal"
-                self._target_brightness = self.max_brightness
                 self._last_speech_time = now
 
     @staticmethod
