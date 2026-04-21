@@ -229,6 +229,12 @@ class Celune:
             self.log(f"Unknown voice: {name}")
             return False
 
+        self.change_input_state_callback(locked=True)
+
+        if not self._model_ready.is_set():
+            self.log("Waiting for models to load...")
+            self._model_ready.wait(timeout=5)
+
         self._model_ready.clear()
         self.loaded = False
 
@@ -319,13 +325,9 @@ class Celune:
         Returns:
             None: This method reloads the backend model for the requested voice.
         """
-        if not self._model_ready.is_set():
-            self.log("Waiting for models to load...")
-            self._model_ready.wait(timeout=5)
 
         self.log("Celune is reloading, please stand by...")
         self.status_callback("Reloading")
-        self.change_input_state_callback(locked=True)
         self.cur_state = "reloading"
 
         try:
