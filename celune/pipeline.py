@@ -1,5 +1,6 @@
 # pylint: disable=W0212, W0718, R0912, R0914, R0915
 """Speech pipeline helpers for Celune."""
+
 import os
 import re
 import time
@@ -635,7 +636,7 @@ def playback_worker(engine: "Celune") -> None:
             continue
 
         try:
-            engine.glow.glow(audio_chunk)  # FIXME: this is now a combined stream, so Celune does not continuously pulse
+            engine.glow.schedule(audio_chunk)
             engine.stream.write(audio_chunk)
         except Exception as e:
             engine.log(f"[PLAY ERROR] {engine.format_error(e, engine.dev)}", "error")

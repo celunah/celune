@@ -1,4 +1,5 @@
 """Shared Celune constants."""
+
 import datetime
 
 # NEW AND IMPROVED! NOW WITH BETTER CASING & PUNCTUATION!

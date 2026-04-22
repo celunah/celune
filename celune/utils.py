@@ -78,10 +78,11 @@ def to_rgb(color: str) -> tuple[int, ...]:
 
     return tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))
 
+
 def lunar_illumination(dt: datetime.datetime) -> float:
     """Get overall level of lunar illumination on a specified date.
 
-    Arguments:
+    Args:
         dt: The date to check lunar illumination of.
 
     Returns:
@@ -93,12 +94,13 @@ def lunar_illumination(dt: datetime.datetime) -> float:
     phase = (since_ref / 29.530588) % 1.0
     return 0.5 * (1 - math.cos(2 * math.pi * phase))
 
+
 def range_interpolated(
     value: float, lo: Union[int, float], hi: Union[int, float], power: float = 3.0
 ) -> Union[int, float]:
     """Get interpolated number within a specified range.
 
-    Arguments:
+    Args:
         value: The number (0-1) to convert to interpolated value.
         lo: The lower bound of the interpolated range.
         hi: The upper bound of the interpolated range.
@@ -108,5 +110,5 @@ def range_interpolated(
         Union[int, float]: The interpolated number.
     """
     clamped = max(0.0, min(1.0, value))
-    value = clamped ** power
+    value = clamped**power
     return lo + value * (hi - lo)
