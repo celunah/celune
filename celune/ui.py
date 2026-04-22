@@ -1012,7 +1012,7 @@ class CeluneHeadlessUI:
 class SelectMenu:
     """A selection menu.
 
-    Arguments:
+    Args:
         choices: Human-readable choice names.
         raw_choices: Internal choice values.
         prompt: Selection prompt to override the default one.
