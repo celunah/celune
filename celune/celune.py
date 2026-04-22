@@ -172,7 +172,7 @@ class Celune:
         close_stream(self, abort=abort)
 
     def unload_runtime_state(self, include_normalizer: bool = False) -> None:
-        """Unload unused models to regain VRAM.
+        """Unload unused models to regain memory.
 
         Args:
             include_normalizer: Whether to also unload the normalization model and
