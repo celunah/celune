@@ -61,6 +61,7 @@ THEME_LIGHT = Theme(
     surface="#ece8ff",  # same as background
     warning="#f0e68c",  # Celune warning
     error="#f07178",  # Celune error
+    dark=False,
 )
 
 

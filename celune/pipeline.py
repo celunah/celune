@@ -6,7 +6,9 @@ import re
 import time
 import queue
 import random
+import pathlib
 import datetime
+import threading
 import contextlib
 from typing import TYPE_CHECKING
 
@@ -19,6 +21,7 @@ import pyrubberband as rb
 from .dsp import _resample_audio, _soften, _split, _to_48khz
 from .exceptions import NotAvailableError
 from .utils import format_number
+from .analysis import analyze_voice
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -497,6 +500,18 @@ def generation_worker(engine: "Celune") -> None:
                             48000,
                             subtype="PCM_24",
                         )
+                        if engine.config["dev"] is True:
+                            analysis_thread = threading.Thread(
+                                target=analyze_voice,
+                                args=(
+                                    pathlib.Path(
+                                        f"outputs/celune_speech_{timestamp}_{first_words}.wav"
+                                    ),
+                                ),
+                                daemon=True,
+                            )
+                            analysis_thread.start()
+
                 break
             except Exception as e:
                 if engine.exit_requested:
@@ -597,7 +612,7 @@ def playback_worker(engine: "Celune") -> None:
                 avail, total = tuple(v / 1024**3 for v in torch.cuda.mem_get_info(0))
                 if avail <= 2:
                     engine.log(
-                        "Celune is running out of VRAM "
+                        "Celune is running out of memory "
                         f"({format_number(avail, 2)}/{format_number(total, 2)} GB available).",
                         "warning",
                     )
@@ -607,7 +622,7 @@ def playback_worker(engine: "Celune") -> None:
                     )
                 else:
                     engine.log(
-                        f"Available VRAM: {format_number(avail, 2)}/{format_number(total, 2)} GB"
+                        f"Available memory: {format_number(avail, 2)}/{format_number(total, 2)} GB"
                     )
             continue
 
