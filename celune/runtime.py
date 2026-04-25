@@ -3,13 +3,14 @@
 
 import sys
 import platform
+import datetime
 from typing import Callable
 
 import torch
 
 from . import __codename__, __comment__, __version__
 from .config import env_bool
-from .utils import cuda_architecture
+from .utils import cuda_architecture, lunar_info, celune_day_status, lunar_phase
 
 
 def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> None:
@@ -43,6 +44,26 @@ def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> No
         f"{__codename__} - {quotation_marks[0]}{__comment__}{quotation_marks[1]}",
         "info",
     )
+
+    # Celune reports the state of the moon and when the next Celune Day will occur below
+    now = datetime.datetime.now()
+
+    lunar = lunar_info(now)
+    days_until_full_moon = int(lunar[2])
+    phase = lunar[0]
+    celune_day_message = celune_day_status(now)
+
+    log(
+        f"Today is {now.strftime('%A, %B %d, %Y')}, it is a {lunar_phase(phase)}.",
+        "info",
+    )
+
+    log(
+        f"Celune reports there are {days_until_full_moon} days until a full moon, "
+        f"{celune_day_message}.",
+        "info",
+    )
+
     log("Environment test...", "info")
 
 
