@@ -19,7 +19,9 @@ if hasattr(sys, "ps1"):
     print("Caution: You are running the Celune backend interactively.")
     print("This is not an intended mode of operation, usage may differ.")
     print()
-    print("\u201cIf you're just exploring, please... be careful. I don't usually speak here.\u201d")
+    print(
+        "\u201cIf you're just exploring, please... be careful. I don't usually speak here.\u201d"
+    )
 
 try:
     # due to how Celune imports __version__ we cannot put these imports according to PEP8
