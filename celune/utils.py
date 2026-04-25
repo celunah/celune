@@ -79,7 +79,16 @@ def to_rgb(color: str) -> tuple[int, ...]:
 
     return tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))
 
+
 def lunar_info(dt: datetime.datetime) -> tuple[float, float, float]:
+    """Get lunar state from the given date and time.
+
+    Args:
+        dt: The date and time to use.
+
+    Returns:
+        tuple[float, float, float]: The lunar phase, illumination level and days until a full moon.
+    """
     frac_dt = dt.astimezone(datetime.timezone.utc)
     since_ref = (frac_dt - REFERENCE_NEW_MOON).total_seconds() / 86400
     cycle_days = 29.530588
@@ -89,7 +98,15 @@ def lunar_info(dt: datetime.datetime) -> tuple[float, float, float]:
 
     return phase, illumination, days_until_full
 
+
 def lunar_phase(phase: float) -> str:
+    """Convert a phase float to a phase name.
+
+    Args:
+        phase: The floating point phase.
+    Returns:
+        str: The corresponding phase name.
+    """
     if phase < 0.0625 or phase >= 0.9375:
         return "new moon"
     if phase < 0.1875:
@@ -107,7 +124,15 @@ def lunar_phase(phase: float) -> str:
 
     return "waning crescent"
 
+
 def celune_day_status(now: datetime.datetime) -> str:
+    """Return a formatted Celune Day status message.
+
+    Args:
+        now: The current date and time.
+    Returns:
+        str: The formatted Celune Day status message.
+    """
     celune_day_this_year = datetime.datetime(now.year, 6, 2)
 
     if now.date() == celune_day_this_year.date():
@@ -119,7 +144,9 @@ def celune_day_status(now: datetime.datetime) -> str:
         next_celune_day = celune_day_this_year
 
     days_until = (next_celune_day.date() - now.date()).days
-    return f"{days_until} days until Celune Day {next_celune_day.year}"
+    suffix = "s" if days_until != 1 else ""
+    return f"{days_until} day{suffix} until Celune Day {next_celune_day.year}"
+
 
 def range_interpolated(
     value: float, lo: Union[int, float], hi: Union[int, float], power: float = 3.0
@@ -165,7 +192,10 @@ def cuda_architecture(capability: tuple[int, int]) -> str:
 
     raise ValueError("invalid capability")
 
-def run_async(func: Callable, *args, daemon: bool = True, **kwargs) -> multiprocessing.Process:
+
+def run_async(
+    func: Callable, *args, daemon: bool = True, **kwargs
+) -> multiprocessing.Process:
     """Run a function asynchronously.
 
     Args:

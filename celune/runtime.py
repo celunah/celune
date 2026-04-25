@@ -50,6 +50,8 @@ def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> No
 
     lunar = lunar_info(now)
     days_until_full_moon = int(lunar[2])
+    prefix = "is" if days_until_full_moon == 1 else "are"
+    suffix = "s" if days_until_full_moon != 1 else ""
     phase = lunar[0]
     celune_day_message = celune_day_status(now)
 
@@ -59,7 +61,7 @@ def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> No
     )
 
     log(
-        f"Celune reports there are {days_until_full_moon} days until a full moon, "
+        f"Celune reports there {prefix} {days_until_full_moon} day{suffix} until a full moon, "
         f"{celune_day_message}.",
         "info",
     )
@@ -162,7 +164,8 @@ def validate_runtime(
                 )
             except (ValueError, NotImplementedError):
                 log(
-                    f"GPU {i}: {gpu} (not supported) - CUDA capability: {major}.{minor}", "info"
+                    f"GPU {i}: {gpu} (not supported) - CUDA capability: {major}.{minor}",
+                    "info",
                 )
                 log("Celune does not support this GPU.", "error")
                 log("Celune requires Ampere or newer.", "error")
