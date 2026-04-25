@@ -79,22 +79,47 @@ def to_rgb(color: str) -> tuple[int, ...]:
 
     return tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))
 
-
-def lunar_illumination(dt: datetime.datetime) -> float:
-    """Get overall level of lunar illumination on a specified date.
-
-    Args:
-        dt: The date to check lunar illumination of.
-
-    Returns:
-        float: The amount of lunar illumination formatted as a floating-point number.
-    """
-
+def lunar_info(dt: datetime.datetime) -> tuple[float, float, float]:
     frac_dt = dt.astimezone(datetime.timezone.utc)
     since_ref = (frac_dt - REFERENCE_NEW_MOON).total_seconds() / 86400
-    phase = (since_ref / 29.530588) % 1.0
-    return 0.5 * (1 - math.cos(2 * math.pi * phase))
+    cycle_days = 29.530588
+    phase = (since_ref / cycle_days) % 1.0
+    illumination = 0.5 * (1 - math.cos(2 * math.pi * phase))
+    days_until_full = ((0.5 - phase) % 1.0) * cycle_days
 
+    return phase, illumination, days_until_full
+
+def lunar_phase(phase: float) -> str:
+    if phase < 0.0625 or phase >= 0.9375:
+        return "new moon"
+    if phase < 0.1875:
+        return "waxing crescent"
+    if phase < 0.3125:
+        return "first quarter"
+    if phase < 0.4375:
+        return "waxing gibbous"
+    if phase < 0.5625:
+        return "full moon"
+    if phase < 0.6875:
+        return "waning gibbous"
+    if phase < 0.8125:
+        return "last quarter"
+
+    return "waning crescent"
+
+def celune_day_status(now: datetime.datetime) -> str:
+    celune_day_this_year = datetime.datetime(now.year, 6, 2)
+
+    if now.date() == celune_day_this_year.date():
+        return f"today is Celune Day {now.year}"
+
+    if now > celune_day_this_year:
+        next_celune_day = datetime.datetime(now.year + 1, 6, 2)
+    else:
+        next_celune_day = celune_day_this_year
+
+    days_until = (next_celune_day.date() - now.date()).days
+    return f"{days_until} days until Celune Day {next_celune_day.year}"
 
 def range_interpolated(
     value: float, lo: Union[int, float], hi: Union[int, float], power: float = 3.0

@@ -10,7 +10,7 @@ class TestExtension(CeluneExtension):
     """A sample Celune extension showcasing all features available in Celune's extension context."""
 
     EXTENSION_NAME = "Test"
-    AUTOSTART = True  # if you do not want Celune to load this, set it to False
+    AUTOSTART = False  # if you do not want Celune to load this, set it to False
 
     def autostart(self) -> None:
         """Demonstrate extension behavior during autostart.

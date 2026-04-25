@@ -14,7 +14,7 @@ from openrgb import OpenRGBClient
 from openrgb.utils import RGBColor
 
 from .dsp import _split
-from .utils import to_rgb, lunar_illumination, range_interpolated
+from .utils import to_rgb, lunar_info, range_interpolated
 
 
 class AudioRGBGlow:
@@ -58,7 +58,7 @@ class AudioRGBGlow:
             self.glow_multiplier *= 3.0
         else:
             self.glow_multiplier *= range_interpolated(
-                lunar_illumination(datetime.datetime.now()), 1.0, 2.0
+                lunar_info(datetime.datetime.now())[1], 1.0, 2.0
             )
 
         if not self.max_glow_forced:
