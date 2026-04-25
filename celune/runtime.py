@@ -9,6 +9,7 @@ import torch
 
 from . import __codename__, __comment__, __version__
 from .config import env_bool
+from .utils import cuda_architecture
 
 
 def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> None:
@@ -43,6 +44,24 @@ def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> No
         "info",
     )
     log("Environment test...", "info")
+
+
+def check_supported_backends() -> tuple[str, bool]:
+    """Check any supported backends and report if Celune can use them.
+
+    Returns:
+        tuple[str, bool]: A backend name and whether Celune can use the backend.
+    """
+
+    if torch.cuda.is_available():
+        if getattr(torch.version, "hip", None) is not None:
+            return "ROCm", False
+        return "CUDA", True
+
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "MPS", False
+
+    return "CPU", False
 
 
 def validate_runtime(
@@ -82,13 +101,13 @@ def validate_runtime(
         error("Incompatible Python version")
         return False
 
-    if cuda_version is None:
-        log(
-            "The currently installed PyTorch build does not include CUDA support.",
-            "error",
-        )
+    backend, usable = check_supported_backends()
+    log(f"Current system supports {backend} execution.", "info")
+
+    if not usable:
+        log(f"Celune does not currently support {backend} execution.", "error")
         set_state("error")
-        error("PyTorch has no CUDA support")
+        error("No supported backend found")
         return False
 
     cuda_version_tuple = tuple(map(int, cuda_version.split(".")))
@@ -104,16 +123,39 @@ def validate_runtime(
     cuda_avail = torch.cuda.is_available()
     log(f"CUDA available: {cuda_avail}", "info")
 
-    if not cuda_avail:
+    devices = torch.cuda.device_count()
+    if devices == 0:
         log("No GPUs found.", "error")
         set_state("error")
         error("CUDA is not available")
         return False
 
     try:
-        current_gpu = torch.cuda.get_device_name(0)
-        major, minor = torch.cuda.get_device_capability(0)
-        log(f"GPU: {current_gpu} (Capability: {major}.{minor})", "info")
+        for i in range(devices):
+            gpu = torch.cuda.get_device_name(i)
+            major, minor = torch.cuda.get_device_capability(i)
+            try:
+                log(
+                    f"GPU {i}: {gpu} ({cuda_architecture((major, minor))}) - CUDA capability: {major}.{minor}",
+                    "info",
+                )
+            except (ValueError, NotImplementedError):
+                log(
+                    f"GPU {i}: {gpu} (not supported) - CUDA capability: {major}.{minor}", "info"
+                )
+                log("Celune does not support this GPU.", "error")
+                log("Celune requires Ampere or newer.", "error")
+                log(
+                    "If you have another supported GPU, set CUDA_VISIBLE_DEVICES appropriately.",
+                    "error",
+                )
+                set_state("error")
+                error("Unsupported GPU")
+                return False
+
+            if devices > 1:
+                unused_devices = devices - 1
+                log(f"{unused_devices} GPUs will not be used.", "warning")
 
         log("Compute test...", "info")
         x = torch.rand(256, 256, device="cuda")

@@ -128,6 +128,7 @@ class Celune:
 
         self.locked = True
         self.loaded = False
+        self.recently_saved = None
         self._model_ready = threading.Event()
         self._model_ready.set()
         self._exit_requested = False
@@ -172,7 +173,7 @@ class Celune:
         close_stream(self, abort=abort)
 
     def unload_runtime_state(self, include_normalizer: bool = False) -> None:
-        """Unload unused models to regain VRAM.
+        """Unload unused models to regain memory.
 
         Args:
             include_normalizer: Whether to also unload the normalization model and

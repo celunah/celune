@@ -105,7 +105,7 @@ def main() -> None:
                         active_processes += 1
                         if active_processes > 1:
                             # you do not want to run multiple instances of Celune
-                            # your VRAM doesn't want to either
+                            # your memory doesn't want to either
                             print("Celune is already running.")
                             sys.exit(1)
 

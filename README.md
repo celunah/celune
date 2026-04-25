@@ -62,17 +62,20 @@ Celune also depends on external system tools that are not installed via `pip`:
 - **Symbolic link support** - recommended on Windows for optimal operation
 - **C/C++ compiler** - to compile required dependencies for VoxCPM2
 
-Celune requires CUDA for GPU acceleration. CPU-only execution is not supported.
+Celune requires an RTX 30 series GPU or newer. CPU-only execution is not supported.
 
 If Rubber Band is not installed, Celune will speak at normal speed, and speed controls will be unavailable.
 
 ## GPU requirements
 
 **GPU (CUDA):**
-- Minimum: 6 GB VRAM (e.g. GTX 1660 / RTX 2060)
-- Recommended: 8 GB+ VRAM (e.g. RTX 3060 or better)
+- Minimum: 6 GB VRAM (e.g. RTX 3050, not optimal)
+Only the Qwen backend without normalization will work.
 
-Celune’s core model fits within ~4 GB VRAM, but additional memory is required for runtime overhead, buffering, stable real-time playback, and input normalization.
+- Recommended: 8 GB+ VRAM (e.g. RTX 3060 or better)
+8 GB is recommended to use normalization, 12 GB is recommended to use the VoxCPM2 backend.
+
+Performance may be reduced when running GPU intensive applications along with Celune.
 
 Tested on: RTX 5070 (12 GB VRAM)
 
@@ -161,6 +164,8 @@ To install OpenRGB, go to https://openrgb.org/, download and install a package a
 
 ### C/C++ compiler setup
 Celune's VoxCPM2 backend may require a C/C++ compiler to compile dependencies. To install a suitable compiler, run one of the following commands:
+
+This is not required to use the Qwen backend, but you may need to install dependencies manually.
 
 ```bash
 # Windows
