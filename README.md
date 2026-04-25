@@ -70,11 +70,14 @@ If Rubber Band is not installed, Celune will speak at normal speed, and speed co
 
 **GPU (CUDA):**
 - Minimum: 6 GB VRAM (e.g. RTX 3050, not optimal)
+
 Only the Qwen backend without normalization will work.
 
 - Recommended: 8 GB+ VRAM (e.g. RTX 3060 or better)
+
 8 GB is recommended to use normalization, 12 GB is recommended to use the VoxCPM2 backend.
 
+---
 Performance may be reduced when running GPU intensive applications along with Celune.
 
 Tested on: RTX 5070 (12 GB VRAM)
