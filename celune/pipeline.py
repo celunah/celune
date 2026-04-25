@@ -270,8 +270,12 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         return []
 
     text_length = len(text)
-    chunk_length = 150  # chunking by fewer tokens makes the tonal drift less apparent with VoxCPM2
-    max_length = 500  # extend so that chunks always end on a boundary, rather than mid-sentence
+    chunk_length = (
+        150  # chunking by fewer tokens makes the tonal drift less apparent with VoxCPM2
+    )
+    max_length = (
+        500  # extend so that chunks always end on a boundary, rather than mid-sentence
+    )
     checker = re.compile(r"(?<=[.!?])\s+")
 
     chunks = []
@@ -497,7 +501,9 @@ def generation_worker(engine: "Celune") -> None:
                             48000,
                             subtype="PCM_24",
                         )
-                        engine.recently_saved = f"outputs/celune_speech_{timestamp}_{first_words}.wav"
+                        engine.recently_saved = (
+                            f"outputs/celune_speech_{timestamp}_{first_words}.wav"
+                        )
                 break
             except Exception as e:
                 if engine.exit_requested:
