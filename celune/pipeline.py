@@ -6,6 +6,7 @@ import re
 import time
 import queue
 import random
+import pathlib
 import datetime
 import contextlib
 from typing import TYPE_CHECKING
@@ -18,7 +19,8 @@ import pyrubberband as rb
 
 from .dsp import _resample_audio, _soften, _split, _to_48khz
 from .exceptions import NotAvailableError
-from .utils import format_number
+from .utils import format_number, run_async
+from .analysis import analyze_voice
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -268,46 +270,44 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         return []
 
     text_length = len(text)
-
-    if text_length <= 300:
-        # input is short, return as is
-        return [text]
-
-    # input is longer, chunk it here
-    if text_length <= 900:
-        max_chunk_length = 400
-        max_sentences = 3
-    elif text_length <= 2000:
-        max_chunk_length = 500
-        max_sentences = 4
-    else:
-        max_chunk_length = 600
-        max_sentences = 5
-
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    sentences = [s.strip() for s in sentences if s.strip()]
+    chunk_length = 150  # chunking by fewer tokens makes the tonal drift less apparent with VoxCPM2
+    max_length = 500  # extend so that chunks always end on a boundary, rather than mid-sentence
+    checker = re.compile(r"(?<=[.!?])\s+")
 
     chunks = []
-    current = []
-    current_length = 0
 
-    for sentence in sentences:
-        sentence_length = len(sentence)
-        added_length = sentence_length if not current else sentence_length + 1
+    while text:
+        if text_length <= max_length:
+            # input is short, return as is
+            return [text]
 
-        if current and (
-            len(current) >= max_sentences
-            or current_length + added_length > max_chunk_length
-        ):
-            chunks.append(" ".join(current))
-            current = []
-            current_length = 0
+        # chunk while keeping prosody intact
+        # PyCharm's type checker may complain about this
+        candidates = [m.start() for m in checker.finditer(text[: max_length + 1])]
 
-        current.append(sentence)
-        current_length += sentence_length if len(current) == 1 else sentence_length + 1
+        if candidates:
+            before = [p for p in candidates if p <= chunk_length]
+            after = [p for p in candidates if p > chunk_length]
 
-    if current:
-        chunks.append(" ".join(current))
+            if before and after:
+                split_pos = (
+                    max(before)
+                    if (chunk_length - max(before)) <= (min(after) - chunk_length)
+                    else min(after)
+                )
+            elif before:
+                split_pos = max(before)
+            else:
+                split_pos = min(after)
+        else:
+            next_boundary = checker.search(text, max_length + 1)
+            split_pos = next_boundary.start() if next_boundary else chunk_length
+
+        chunk = text[:split_pos].strip()
+        if chunk:
+            chunks.append(chunk)
+
+        text = text[split_pos:].strip()
 
     engine.log(f"Chunks: {len(chunks)}")
     return chunks
@@ -497,6 +497,7 @@ def generation_worker(engine: "Celune") -> None:
                             48000,
                             subtype="PCM_24",
                         )
+                        engine.recently_saved = f"outputs/celune_speech_{timestamp}_{first_words}.wav"
                 break
             except Exception as e:
                 if engine.exit_requested:
@@ -592,12 +593,19 @@ def playback_worker(engine: "Celune") -> None:
                     engine._last_flavor = choice
                     engine.log(f"Just type. {choice}")
                 else:
+                    if engine.config["dev"] and engine.recently_saved is not None:
+                        engine.log("Analyzing...")
+                        run_async(
+                            analyze_voice,
+                            pathlib.Path(engine.recently_saved),
+                        )
+
                     engine.log("Ready to speak.")
 
                 avail, total = tuple(v / 1024**3 for v in torch.cuda.mem_get_info(0))
                 if avail <= 2:
                     engine.log(
-                        "Celune is running out of VRAM "
+                        "Celune is running out of memory "
                         f"({format_number(avail, 2)}/{format_number(total, 2)} GB available).",
                         "warning",
                     )
@@ -607,7 +615,7 @@ def playback_worker(engine: "Celune") -> None:
                     )
                 else:
                     engine.log(
-                        f"Available VRAM: {format_number(avail, 2)}/{format_number(total, 2)} GB"
+                        f"Available memory: {format_number(avail, 2)}/{format_number(total, 2)} GB"
                     )
             continue
 

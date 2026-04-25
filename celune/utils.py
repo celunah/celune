@@ -3,7 +3,8 @@
 import math
 import datetime
 import subprocess
-from typing import Union
+import multiprocessing
+from typing import Union, Callable
 
 from celune.constants import REFERENCE_NEW_MOON
 
@@ -112,3 +113,50 @@ def range_interpolated(
     clamped = max(0.0, min(1.0, value))
     value = clamped**power
     return lo + value * (hi - lo)
+
+
+def cuda_architecture(capability: tuple[int, int]) -> str:
+    """Convert a CUDA capability tuple to an architecture name.
+
+    Args:
+        capability: CUDA capability formatted as tuple.
+
+    Returns:
+        str: The architecture name.
+    """
+
+    major, minor = capability
+
+    if major in [10, 11, 12] and minor == 0:
+        return "Blackwell"
+    if major == 9 and minor == 0:
+        return "Hopper"
+    if major == 8 and minor == 9:
+        return "Ada Lovelace"
+    if major == 8 and minor in [0, 6, 7]:  # CELINE INVADED THE CUDA ZONE!
+        return "Ampere"
+    if major < 8:
+        raise NotImplementedError("capability not supported")
+
+    raise ValueError("invalid capability")
+
+def run_async(func: Callable, *args, daemon: bool = True, **kwargs) -> multiprocessing.Process:
+    """Run a function asynchronously.
+
+    Args:
+        func: The function to call.
+        args: The arguments to pass to the function.
+        daemon: Whether to use a daemon process. Defaults to True.
+        kwargs: Keyword arguments to pass to the function.
+
+    Returns:
+        multiprocessing.Process: The process object.
+    """
+    proc = multiprocessing.Process(
+        target=func,
+        args=args,
+        kwargs=kwargs,
+        daemon=daemon,
+    )
+    proc.start()
+    return proc
