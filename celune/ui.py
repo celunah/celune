@@ -7,6 +7,7 @@ import time
 import shlex
 import signal
 import shutil
+import datetime
 import threading
 import itertools
 import subprocess
@@ -25,7 +26,7 @@ from rich.text import Text
 
 from .celune import Celune
 from .config import config_bool
-from .utils import format_number
+from .utils import format_number, celune_day_status, lunar_phase, lunar_info
 from .exceptions import InvalidExtensionError
 
 SEVERITY_COLORS = {
@@ -432,18 +433,33 @@ class CeluneUI(App):
 
     def _resource_pages(self) -> tuple[Callable[[], str], ...]:
         """Return resource footer pages in their display order."""
+
+        # system information & volatile state
         pages: list[Callable[[], str]] = [self._format_vram, self._format_usage]
         if (
             self.celune is not None
             and getattr(self.celune.backend, "current_seed", None) is not None
         ):
             pages.append(self._format_seed)
+
+        # Celune status report
+        now = datetime.datetime.now()
+        lunar = lunar_info(now)
+        suffix = "s" if int(lunar[2]) != 1 else ""
+
+        pages.append(lambda: now.strftime("%A, %B %d, %Y"))
+        pages.append(lambda: celune_day_status(now))
+        pages.append(lambda: lunar_phase(lunar[0]).title())
+        pages.append(lambda: f"{int(lunar[2])} day{suffix} until full moon")
+
+        # usage help
         pages.append(lambda: "/help commands")
         pages.append(
             lambda: (
                 f"CTRL+C/CTRL+Q exit \u2022 CTRL+T {self.celune.config['theme']} \u2022 CTRL+ENTER say"
             )
         )
+
         return tuple(pages)
 
     def update_resources(self) -> None:
