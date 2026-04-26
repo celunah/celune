@@ -19,6 +19,7 @@ from huggingface_hub.utils import disable_progress_bars
 
 from . import __version__
 from .backends import CeluneBackend, resolve_backend
+from .backends.qwen3 import Qwen3
 from .config import config_bool, config_value
 from .constants import NORMALIZER_MODEL_ID
 from .dsp import StreamingPedalboardReverb
@@ -78,7 +79,10 @@ class Celune:
         self.config = config
 
         backend_kwargs = {}
-        if isinstance(tts_backend, str) and tts_backend.strip().lower() == "qwen3":
+
+        if (
+            isinstance(tts_backend, str) and tts_backend.strip().lower() == "qwen3"
+        ) or isinstance(tts_backend, Qwen3):
             backend_kwargs["mode"] = config_value(config, "qwen3_mode", "native")
 
         try:

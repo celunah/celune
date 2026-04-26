@@ -1,21 +1,20 @@
-#!/usr/bin/env python3
+# pylint: disable=R0912, R0914
 """Analyze a WAV file and generate a radar chart plus a text report."""
 
-import pathlib
 import sys
+import pathlib
 import warnings
-from pathlib import Path
 
 import librosa
 import matplotlib
 import numpy as np
-from matplotlib import colors as mcolors
 from matplotlib import rcParams
+from matplotlib import pyplot as plt
+from matplotlib import colors as mcolors
 from matplotlib.projections import PolarAxes
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
+# ensure you have installed this font
 rcParams["font.family"] = "Outfit Thin"
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -122,7 +121,7 @@ def _join_trait_names(trait_names: list[str]) -> str:
     return ", ".join(display_names[:-1]) + f", and {display_names[-1]}"
 
 
-def load_audio(voice: Path) -> tuple[np.ndarray, int]:
+def load_audio(voice: pathlib.Path) -> tuple[np.ndarray, int]:
     """Load a WAV file while preserving the native sample rate."""
     y, sr = librosa.load(str(voice), sr=None, mono=True)
     return y, sr
@@ -142,7 +141,7 @@ def compute_raw_metrics(y: np.ndarray, sr: int) -> dict:
     rms_db = librosa.amplitude_to_db(rms_frames + 1e-9)
     metrics["dynamic_range_db"] = float(np.max(rms_db) - np.min(rms_db))
 
-    f0, voiced_flag, voiced_prob = librosa.pyin(
+    f0, voiced_flag, _ = librosa.pyin(
         y,
         fmin=float(librosa.note_to_hz("C2")),
         fmax=float(librosa.note_to_hz("C7")),
@@ -222,7 +221,7 @@ def _summarize_trait_status(traits: dict) -> tuple[str, str]:
     low_traits = {name: score for name, score in traits.items() if score < 0.3}
 
     if high_traits:
-        joined = _join_trait_names([trait for trait in high_traits.keys()]).lower()
+        joined = _join_trait_names(list(high_traits.keys())).lower()
         template_key = (
             "status_high_single" if len(high_traits) == 1 else "status_high_multi"
         )
@@ -230,7 +229,7 @@ def _summarize_trait_status(traits: dict) -> tuple[str, str]:
         return message, high_color
 
     if warning_traits:
-        joined = _join_trait_names([trait for trait in warning_traits.keys()]).lower()
+        joined = _join_trait_names(list(warning_traits.keys())).lower()
         template_key = (
             "status_watch_single" if len(warning_traits) == 1 else "status_watch_multi"
         )
@@ -380,7 +379,7 @@ def generate_assessment(m: dict, traits: dict) -> list[str]:
     return lines
 
 
-def plot_radar(traits: dict, title: str, output_path: Path) -> None:
+def plot_radar(traits: dict, title: str, output_path: pathlib.Path) -> None:
     """Draw a filled radar chart of trait scores and save it as a PNG."""
     base_color = "#CEBAFF"
     warn_color = "#F0E68C"
@@ -477,8 +476,8 @@ def write_report(
     m: dict,
     traits: dict,
     assessment: list[str],
-    voice: Path,
-    output_path: Path,
+    voice: pathlib.Path,
+    output_path: pathlib.Path,
 ) -> None:
     """Write a plain-text report with metrics, traits, and assessment."""
     sep = "=" * 60

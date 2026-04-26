@@ -145,7 +145,7 @@ class Qwen3(CeluneBackend):
             else:
                 self.log(f"{model_id} is already available.", "info")
 
-    def load_model(self, model_id: str, optimize: bool = True) -> FasterQwen3TTS:
+    def load_model(self, model_id: str, load_denoiser: bool = True) -> FasterQwen3TTS:
         """Load the given voice model.
 
         Args:

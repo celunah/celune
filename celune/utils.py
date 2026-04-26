@@ -1,3 +1,4 @@
+# pylint: disable=R0911
 """Celune common utility functions."""
 
 import math
