@@ -1,4 +1,5 @@
 backend: null
+qwen3_mode: native
 dev: false
 headless: false
 headless_nocolor: false
