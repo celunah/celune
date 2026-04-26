@@ -1,4 +1,4 @@
-# pylint: disable=C0114, C0302, R0912, W0718, R0911, R0902, R0915
+# pylint: disable=C0114, C0302, R0912, W0718, R0911, R0902, R0904, R0915
 """Celune's frontend layer."""
 
 import os
@@ -6,6 +6,7 @@ import sys
 import time
 import shlex
 import signal
+import shutil
 import threading
 import itertools
 import subprocess
@@ -382,13 +383,18 @@ class CeluneUI(App):
 
         return f"VRAM: {avail / 1024**3:.2f}/{total / 1024**3:.2f} GB available"
 
-    @staticmethod
-    def _gpu_usage() -> Optional[int]:
+    _NVIDIA_SMI: Optional[str] = shutil.which("nvidia-smi")
+
+    @classmethod
+    def _gpu_usage(cls) -> Optional[int]:
         """Read GPU utilization from nvidia-smi when it is available."""
+        if not cls._NVIDIA_SMI:
+            return None
+
         try:
             result = subprocess.run(
                 [
-                    "nvidia-smi",
+                    cls._NVIDIA_SMI,
                     "--query-gpu=utilization.gpu",
                     "--format=csv,noheader,nounits",
                 ],
@@ -426,25 +432,19 @@ class CeluneUI(App):
 
     def _resource_pages(self) -> tuple[Callable[[], str], ...]:
         """Return resource footer pages in their display order."""
-        if self.celune.backend and self.celune.backend.current_seed:
-            return (
-                self._format_vram,
-                self._format_usage,
-                self._format_seed,
-                lambda: f"/help commands",
-                lambda: (
-                    f"CTRL+C/CTRL+Q exit \u2022 CTRL+T {self.celune.config['theme']} \u2022 CTRL+ENTER say"
-                ),
+        pages: list[Callable[[], str]] = [self._format_vram, self._format_usage]
+        if (
+            self.celune is not None
+            and getattr(self.celune.backend, "current_seed", None) is not None
+        ):
+            pages.append(self._format_seed)
+        pages.append(lambda: "/help commands")
+        pages.append(
+            lambda: (
+                f"CTRL+C/CTRL+Q exit \u2022 CTRL+T {self.celune.config['theme']} \u2022 CTRL+ENTER say"
             )
-        else:
-            return (
-                self._format_vram,
-                self._format_usage,
-                lambda: f"/help commands",
-                lambda: (
-                    f"CTRL+C/CTRL+Q exit \u2022 CTRL+T {self.celune.config['theme']} \u2022 CTRL+ENTER say"
-                ),
-            )
+        )
+        return tuple(pages)
 
     def update_resources(self) -> None:
         """Refresh the currently selected resource footer page."""

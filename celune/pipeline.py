@@ -598,14 +598,8 @@ def playback_worker(engine: "Celune") -> None:
         if engine.exit_requested:
             continue
 
-        if isinstance(item, SpeechDone):
-            saved_path = item.saved_path
-        elif item is engine.utterance_done:
-            saved_path = None
-        else:
-            saved_path = None
-
         if isinstance(item, SpeechDone) or item is engine.utterance_done:
+            saved_path = item.saved_path if isinstance(item, SpeechDone) else None
             engine.playback_done.set()
 
             more_pending = (not engine.audio_queue.empty()) or (
@@ -648,7 +642,7 @@ def playback_worker(engine: "Celune") -> None:
                     engine.log("Ready to speak.")
 
                 avail, total = tuple(v / 1024**3 for v in torch.cuda.mem_get_info(0))
-                if avail <= 2:
+                if avail <= total * 0.1:
                     engine.log(
                         "Celune is running out of memory. Check the bottom right of Celune's window to learn more.",
                         "warning",

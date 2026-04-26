@@ -63,10 +63,7 @@ def resolve_backend(
 
         module = import_module(module_name)
         backend_cls = getattr(module, class_name)
-        try:
-            return backend_cls(log=log, **backend_kwargs)
-        except TypeError:
-            return backend_cls()
+        return backend_cls(log=log, **backend_kwargs)
 
     raise TypeError(
         "'backend_name' must be a backend instance, backend type, or backend name string"

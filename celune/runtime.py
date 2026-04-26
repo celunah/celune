@@ -1,4 +1,4 @@
-# pylint: disable=R0913, R0914, R0917, W0718
+# pylint: disable=R0911, R0913, R0914, R0915, R0917, W0718
 """Runtime and environment validation helpers for Celune."""
 
 import sys

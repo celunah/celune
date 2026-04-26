@@ -175,7 +175,11 @@ class VoxCPM2(CeluneBackend):
         else:
             self.optimize_enabled = optimize
 
+        # random seeding causes regenerations of Celune's output to be unique
+        # allowing you to fix a bad output
         self.current_seed = random.randrange(2**32)
+        random.seed(self.current_seed)
+        np.random.seed(self.current_seed)
         torch.cuda.manual_seed_all(self.current_seed)
         torch.backends.cudnn.deterministic = True
         torch.use_deterministic_algorithms(True)

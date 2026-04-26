@@ -77,14 +77,12 @@ def main() -> None:
                 "Which backend should Celune use?",
             ).start()
 
-            if backend == "Fast":
-                backend = "qwen3"
+            if backend == "qwen3":
                 print(
                     "Qwen3 can be configured to use voice cloning or Celune's native mode."
                 )
                 print("Refer to Celune's configuration file for more details.")
-            elif backend == "High Quality":
-                backend = "voxcpm2"
+            elif backend == "voxcpm2":
                 print(
                     "Note: VoxCPM2 only supports voice cloning, and it is significantly slower."
                 )
