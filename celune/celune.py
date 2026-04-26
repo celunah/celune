@@ -19,7 +19,7 @@ from huggingface_hub.utils import disable_progress_bars
 
 from . import __version__
 from .backends import CeluneBackend, resolve_backend
-from .config import config_bool
+from .config import config_bool, config_value
 from .constants import NORMALIZER_MODEL_ID
 from .dsp import StreamingPedalboardReverb
 from .utils import format_number
@@ -75,8 +75,18 @@ class Celune:
             lambda locked: None
         )
 
+        self.config = config
+
+        backend_kwargs = {}
+        if isinstance(tts_backend, str) and tts_backend.strip().lower() == "qwen3":
+            backend_kwargs["mode"] = config_value(config, "qwen3_mode", "native")
+
         try:
-            self.backend = resolve_backend(tts_backend, log=self.log_callback)
+            self.backend = resolve_backend(
+                tts_backend,
+                log=self.log_callback,
+                **backend_kwargs,
+            )
             self.tts_backend = self.backend.name
         except ValueError as e:
             raise BackendError(str(e)) from e
@@ -91,7 +101,6 @@ class Celune:
                 f"internal backend error: {self.format_error(e, dev)}"
             ) from e
 
-        self.config = config
         self.language = language
 
         self.model = None
@@ -605,17 +614,18 @@ class Celune:
         """
         release_pipeline(self)
 
-    def say(self, text: str) -> bool:
+    def say(self, text: str, save: bool = True) -> bool:
         """Queue text for Celune to say.
 
         Args:
             text: The text to synthesize.
+            save: Whether to save generated output artifacts.
 
         Returns:
             bool: ``True`` when the text was queued successfully, otherwise
                 ``False``.
         """
-        return say_pipeline(self, text)
+        return say_pipeline(self, text, save=save)
 
     def play(self, sound_path: str) -> bool:
         """Play a sound via Celune's pipeline.

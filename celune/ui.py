@@ -8,9 +8,12 @@ import shlex
 import signal
 import threading
 import itertools
+import subprocess
 from typing import Optional, Callable
 
 import yaml
+import torch
+import psutil
 import readchar
 from textual import work, events
 from textual.app import App, ComposeResult
@@ -26,7 +29,7 @@ from .exceptions import InvalidExtensionError
 
 SEVERITY_COLORS = {
     "celune": {
-        "info": "#ece8ff",
+        "info": "#cebaff",
         "warning": "#f0e68c",
         "error": "#f07178",
     },
@@ -43,7 +46,7 @@ THEME = Theme(
     primary="#cebaff",  # Celune primary
     secondary="#a595cc",  # Celune secondary
     accent="#7c7099",  # Celune tertiary
-    foreground="#ecd8ff",  # same as primary
+    foreground="#e2ceff",  # Celune highlight
     background="#1d1826",  # Celune background
     surface="#1d1826",  # same as background
     warning="#f0e68c",  # Celune warning
@@ -56,7 +59,7 @@ THEME_LIGHT = Theme(
     primary="#33293f",  # Celune light primary
     secondary="#281732",  # Celune light secondary
     accent="#1e1126",  # Celune light tertiary
-    foreground="#33293f",  # same as primary
+    foreground="#473d53",  # Celune highlight
     background="#ece8ff",  # Celune light background
     surface="#ece8ff",  # same as background
     warning="#f0e68c",  # Celune warning
@@ -79,6 +82,7 @@ class CeluneUI(App):
     #logs {
         height: 1fr;
         border: round $primary;
+        color: $primary;
         overflow-y: auto;
         overflow-x: hidden;
         padding: 1;
@@ -117,8 +121,20 @@ class CeluneUI(App):
     }
 
     #input:focus {
-        border: round $primary;
-        background-tint: $primary 10%;
+        border: round $foreground;
+        background: $background;
+        background-tint: transparent;
+    }
+
+    #input .text-area--cursor-line {
+        background: transparent;
+    }
+
+    #style:focus, #style:hover, #style.-active, #input:hover {
+        border: round $foreground;
+        background: $background;
+        background-tint: transparent;
+        tint: transparent;
     }
 
     #logs, #input {
@@ -126,12 +142,26 @@ class CeluneUI(App):
         margin-right: 1;
     }
 
-    #status {
+    #bottom {
         height: 1;
         background: $background;
-        width: 1fr;
-        margin-left: 2;
+        margin-left: 1;
+        margin-right: 1;
         margin-bottom: 1;
+        color: $primary;
+    }
+
+    #status {
+        height: 1;
+        width: 1fr;
+        text-align: left;
+        color: $primary;
+    }
+
+    #resources {
+        height: 1;
+        width: 1fr;
+        text-align: right;
         color: $primary;
     }
 
@@ -171,6 +201,7 @@ class CeluneUI(App):
         self.input_box = None
         self.style_button = None
         self.status = None
+        self.resources = None
         self.themes = ("celune", "celune_light")
         self.active_theme_name = "celune"
         self.log_history: list[tuple[str, str]] = []
@@ -193,6 +224,8 @@ class CeluneUI(App):
 
         self.consume_on_boundary = False
         self._suppress_input_change = False
+        self._resource_page = 0
+        self.indent = 2
 
     def _severity_color(self, severity: str = "info") -> str:
         """Return the current theme color for a log severity.
@@ -218,7 +251,16 @@ class CeluneUI(App):
         self.active_theme_name = theme_name
         self.theme = theme_name  # pylint: disable=W0201
         self._refresh_status()
+        self._refresh_theme_text()
         self._refresh_logs()
+
+    def _refresh_theme_text(self) -> None:
+        """Refresh widgets that use the active theme's normal text color."""
+        color = self._severity_color("info")
+        if self.logs is not None:
+            self.logs.styles.color = color
+        if self.resources is not None:
+            self.resources.styles.color = color
 
     def _refresh_status(self) -> None:
         """Refresh the status color for the active theme.
@@ -278,7 +320,9 @@ class CeluneUI(App):
                 yield Button(
                     self.celune_styles[0].capitalize(), id="style", disabled=True
                 )
-            yield Label("Initializing", id="status")
+            with Horizontal(id="bottom"):
+                yield Label("", id="status")
+                yield Label("", id="resources")
 
     def on_mount(self) -> None:
         """Prepare Celune.
@@ -304,7 +348,12 @@ class CeluneUI(App):
         self.logs = self.query_one("#logs", RichLog)
         self.input_box = self.query_one("#input", TextArea)
         self.status = self.query_one("#status", Label)
+        self.resources = self.query_one("#resources", Label)
         self.style_button = self.query_one("#style", Button)
+        self._refresh_status()
+        self._refresh_theme_text()
+        psutil.cpu_percent(interval=None)
+        self.set_interval(10 / len(self._resource_pages()), self.advance_resources)
 
         self._old_stdout = sys.stdout
         self._old_stderr = sys.stderr
@@ -316,6 +365,109 @@ class CeluneUI(App):
 
         self.call_after_refresh(self.start_background_init)
         signal.signal(signal.SIGINT, self.signal_handler)
+        self.safe_status("Initializing")
+        self.update_resources()
+
+    @staticmethod
+    def _format_vram() -> str:
+        """Return available CUDA memory in a compact display format."""
+        if not torch.cuda.is_available():
+            return "VRAM: nothing to fetch"
+
+        try:
+            device = torch.cuda.current_device()
+            avail, total = torch.cuda.mem_get_info(device)
+        except Exception:
+            return "VRAM: cannot fetch"
+
+        return f"VRAM: {avail / 1024**3:.2f}/{total / 1024**3:.2f} GB available"
+
+    @staticmethod
+    def _gpu_usage() -> Optional[int]:
+        """Read GPU utilization from nvidia-smi when it is available."""
+        try:
+            result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=utilization.gpu",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=1,
+            )
+        except Exception:
+            return None
+
+        first_line = result.stdout.strip().splitlines()[0:1]
+        if not first_line:
+            return None
+
+        try:
+            return int(first_line[0].strip())
+        except ValueError:
+            return None
+
+    def _format_usage(self) -> str:
+        """Return CPU/GPU utilization in a compact display format."""
+        cpu = psutil.cpu_percent(interval=None)
+        gpu = self._gpu_usage()
+        gpu_text = f"{gpu}%" if gpu is not None else "N/A"
+        return f"CPU: {cpu:.0f}% \u2022 GPU: {gpu_text}"
+
+    def _format_seed(self) -> str:
+        """Return the current backend seed when Celune exposes one."""
+        seed = None
+        if self.celune is not None:
+            seed = getattr(self.celune.backend, "current_seed", None)
+
+        return f"Seed: {seed}" if seed is not None else "Seed: N/A"
+
+    def _resource_pages(self) -> tuple[Callable[[], str], ...]:
+        """Return resource footer pages in their display order."""
+        if self.celune.backend and self.celune.backend.current_seed:
+            return (
+                self._format_vram,
+                self._format_usage,
+                self._format_seed,
+                lambda: f"/help commands",
+                lambda: (
+                    f"CTRL+C/CTRL+Q exit \u2022 CTRL+T {self.celune.config['theme']} \u2022 CTRL+ENTER say"
+                ),
+            )
+        else:
+            return (
+                self._format_vram,
+                self._format_usage,
+                lambda: f"/help commands",
+                lambda: (
+                    f"CTRL+C/CTRL+Q exit \u2022 CTRL+T {self.celune.config['theme']} \u2022 CTRL+ENTER say"
+                ),
+            )
+
+    def update_resources(self) -> None:
+        """Refresh the currently selected resource footer page."""
+        if self.cur_state == "exiting" or self.resources is None:
+            return
+
+        def update() -> None:
+            pages = self._resource_pages()
+            text = pages[self._resource_page % len(pages)]()
+            self.resources.update(text + " " * self.indent)
+
+        if threading.current_thread() is threading.main_thread():
+            update()
+        else:
+            self.call_from_thread(update)
+
+    def advance_resources(self) -> None:
+        """Advance the resource footer to the next page and refresh it."""
+        if self.cur_state == "exiting" or self.resources is None:
+            return
+
+        self._resource_page = (self._resource_page + 1) % len(self._resource_pages())
+        self.update_resources()
 
     def start_background_init(self) -> None:
         """Run Celune's initialization function.
@@ -381,6 +533,7 @@ class CeluneUI(App):
                 else "Enter text to speak here or run /help for commands"
             )
             self.style_button.disabled = locked
+            self.update_resources()
 
         if threading.current_thread() is threading.main_thread():
             update()
@@ -410,8 +563,9 @@ class CeluneUI(App):
         self.status_severity = severity
 
         def update() -> None:
-            self.status.update(msg)
+            self.status.update(" " * self.indent + msg)
             self._refresh_status()
+            self.update_resources()
 
         if threading.current_thread() is threading.main_thread():
             update()
@@ -461,8 +615,14 @@ class CeluneUI(App):
 
         if threading.current_thread() is threading.main_thread():
             self.style_button.label = label
+            self.update_resources()
         else:
-            self.call_from_thread(lambda: setattr(self.style_button, "label", label))
+
+            def update() -> None:
+                self.style_button.label = label
+                self.update_resources()
+
+            self.call_from_thread(update)
 
     def tts_log(self, msg: str, severity: str = "info") -> None:
         """Handle log messages coming from Celune.
@@ -499,7 +659,7 @@ class CeluneUI(App):
             )
             self.safe_log(
                 "/consumebuffer <true/false> - Make Celune consume text from the live buffer without "
-                "pressing CTRL+ENTER."
+                "pressing CTRL+SHIFT+ENTER."
             )
             self.safe_log(
                 "Caution: This feature may interfere with typing '...'.", "warning"
@@ -523,9 +683,7 @@ class CeluneUI(App):
             )
             self.safe_log("/stop - Terminate ongoing speech.")
             self.safe_log("/exit - Exit Celune.")
-            self.safe_log("You can also exit Celune by pressing CTRL+C.")
             self.safe_log("/help - Display this help message.")
-            self.safe_log("Press CTRL+T to toggle light/dark modes.")
             return
         if command == "consumebuffer":
             if not args:
@@ -720,6 +878,7 @@ class CeluneUI(App):
         if event.key == "ctrl+q":
             event.prevent_default()
             event.stop()
+            self._graceful_exit()
             return
 
         if event.key == "ctrl+t":
@@ -734,6 +893,7 @@ class CeluneUI(App):
             )
             with open("config.yaml", "w", encoding="utf-8") as f:
                 yaml.dump(self.celune.config, f)
+            self.update_resources()
 
             event.prevent_default()
             return
@@ -767,6 +927,7 @@ class CeluneUI(App):
                 self.style_button.disabled = True
                 self.input_box.placeholder = "Please wait"
                 self.input_box.load_text("")
+                self.update_resources()
                 event.prevent_default()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -818,10 +979,9 @@ class CeluneUI(App):
             return
         self.celune.locked = False
         self.celune.cur_state = "idle"
-        self.input_box.placeholder = (
-            "Enter text to speak here or run /help for commands"
-        )
+        self.input_box.placeholder = "Enter text to speak here"
         self.safe_status("Idle")
+        self.update_resources()
 
     def tts_queue_avail(
         self,
@@ -839,6 +999,7 @@ class CeluneUI(App):
             "Enter text to speak here or run /help for commands"
         )
         self.style_button.disabled = False
+        self.update_resources()
 
     def error(self, error: str) -> None:
         """Set the UI status to the error message.

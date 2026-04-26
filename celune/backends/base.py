@@ -30,6 +30,7 @@ class CeluneBackend(ABC):
 
         self.model = None
         self.log = log
+        self.current_seed: Optional[int] = None
 
     @staticmethod
     @abstractmethod

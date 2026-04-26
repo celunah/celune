@@ -9,7 +9,6 @@ from typing import Callable
 import torch
 
 from . import __codename__, __comment__, __version__
-from .config import env_bool
 from .utils import cuda_architecture, lunar_info, celune_day_status, lunar_phase
 
 
@@ -24,11 +23,6 @@ def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> No
         None: This function emits startup information through the log callback.
     """
     cuda_version = torch.version.cuda
-    quotation_marks = (
-        ("\u201c", "\u201d")
-        if (not env_bool("CELUNE_HEADLESS") or sys.stdout.isatty())
-        else ('"', '"')
-    )
 
     cuda_line = f", CUDA {cuda_version}" if cuda_version else ""
 
@@ -41,7 +35,7 @@ def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> No
         "info",
     )
     log(
-        f"{__codename__} - {quotation_marks[0]}{__comment__}{quotation_marks[1]}",
+        f'{__codename__} - "{__comment__}"',
         "info",
     )
 

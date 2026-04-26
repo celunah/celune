@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import glob
+import random
 import hashlib
 import contextlib
 from pathlib import Path
@@ -37,11 +38,14 @@ class VoxCPM2(CeluneBackend):
         "bold": "refs/bold.wav",
         "upbeat": "refs/upbeat.wav",
     }
+
+    # the sane default CFG is 2.4 for most voices,
+    # `calm` needs a higher CFG of 3.0 to capture the nuances without distorting
     voice_cfg: dict[str, float] = {
-        "balanced": 2.0,
+        "balanced": 2.4,
         "calm": 3.0,
-        "bold": 2.0,
-        "upbeat": 2.0,
+        "bold": 2.4,
+        "upbeat": 2.4,
     }
     default_voice: str = "balanced"
 
@@ -171,7 +175,8 @@ class VoxCPM2(CeluneBackend):
         else:
             self.optimize_enabled = optimize
 
-        torch.cuda.manual_seed_all(3584181039)
+        self.current_seed = random.randrange(2**32)
+        torch.cuda.manual_seed_all(self.current_seed)
         torch.backends.cudnn.deterministic = True
         torch.use_deterministic_algorithms(True)
 

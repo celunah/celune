@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import glob
-from typing import Optional, Generator
+from pathlib import Path
+from typing import Callable, Generator, Literal, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -19,13 +20,73 @@ class Qwen3(CeluneBackend):
     """Celune Qwen3-TTS backend."""
 
     name: str = "qwen3"
+    clone_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+    supported_modes: tuple[str, ...] = ("native", "clone")
     voice_models: dict[str, str] = {
         "balanced": "lunahr/Celune-1.7B-Neutral",
         "calm": "lunahr/Celune-1.7B-Calm",
         "bold": "lunahr/Celune-1.7B-Energetic",
         "upbeat": "lunahr/Celune-1.7B-Upbeat",
     }
+    reference_wavs: dict[str, str] = {
+        "balanced": "refs/balanced.wav",
+        "calm": "refs/calm.wav",
+        "bold": "refs/bold.wav",
+        "upbeat": "refs/upbeat.wav",
+    }
+    reference_texts: dict[str, str] = {
+        "balanced": (
+            "My name is Celune, pronounced Celune. It is a pleasure to meet you."
+        ),
+        "calm": "My name is... Celune... It is so... quiet.",
+        "bold": "My name is Celune! Let's do this, we have to get it done!",
+        "upbeat": (
+            "Hehehe... Hi, I'm Celune. Look, I have something to tell... "
+            "might as well make it fun. Shall we?"
+        ),
+    }
     default_voice: str = "balanced"
+
+    def __init__(
+        self,
+        log: Callable[[str, str], None],
+        mode: Literal["native", "clone"] = "native",
+    ) -> None:
+        if mode not in self.supported_modes:
+            raise ValueError(
+                f"unsupported qwen3 mode '{mode}' "
+                f"(available: {', '.join(self.supported_modes)})"
+            )
+
+        super().__init__(log=log)
+        self.mode = mode
+        if self.mode == "clone":
+            self.model_name = self.clone_model
+
+    @property
+    def default_model_id(self) -> str:
+        """Return the model loaded by default for the active Qwen3 mode."""
+        if self.mode == "clone":
+            return self.clone_model
+        return super().default_model_id
+
+    @property
+    def all_model_ids(self) -> list[str]:
+        """Return every model required by the active Qwen3 mode."""
+        if self.mode == "clone":
+            return [self.clone_model]
+        return super().all_model_ids
+
+    def model_id_for_voice(self, voice: str) -> str:
+        """Resolve a Celune voice to the model required by the active Qwen3 mode."""
+        if self.mode == "clone":
+            if voice not in self.voice_models:
+                raise ValueError(
+                    f"{self.name} cannot resolve a model for voice '{voice}'"
+                )
+            return self.clone_model
+
+        return super().model_id_for_voice(voice)
 
     @staticmethod
     def model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
@@ -117,6 +178,28 @@ class Qwen3(CeluneBackend):
         Returns:
             Iterable[Any]: An iterator of Qwen3 streaming audio chunks.
         """
-        kwargs.pop("voice", None)  # Celune has native voices in this backend
-        # Celune natively works with Qwen-formatted chunks
-        yield from model.generate_custom_voice_streaming(speaker="celune", **kwargs)
+        if self.mode == "native":
+            kwargs.pop("voice", None)  # Celune has native voices in this backend
+            # Celune natively works with Qwen-formatted chunks
+            yield from model.generate_custom_voice_streaming(speaker="celune", **kwargs)
+        elif self.mode == "clone":
+            voice = kwargs.pop("voice", self.default_voice)
+
+            try:
+                ref_wav = (
+                    Path(__file__).resolve().parents[1] / self.reference_wavs[voice]
+                )
+                ref_text = self.reference_texts[voice]
+            except KeyError as e:
+                raise ValueError(
+                    f"unknown voice '{voice}' for backend '{self.name}'"
+                ) from e
+
+            yield from model.generate_voice_clone_streaming(
+                ref_audio=ref_wav,
+                ref_text=ref_text,
+                xvec_only=False,
+                **kwargs,
+            )
+        else:
+            raise ValueError(f"unsupported qwen3 mode '{self.mode}'")

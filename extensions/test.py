@@ -10,7 +10,7 @@ class TestExtension(CeluneExtension):
     """A sample Celune extension showcasing all features available in Celune's extension context."""
 
     EXTENSION_NAME = "Test"
-    AUTOSTART = False  # if you do not want Celune to load this, set it to False
+    AUTOSTART = True  # if you do not want Celune to load this, set it to False
 
     def autostart(self) -> None:
         """Demonstrate extension behavior during autostart.
@@ -39,6 +39,9 @@ class TestExtension(CeluneExtension):
         self.play(
             str(sfx_path)
         )  # Celune can also play sound effects, regardless of sample rate
+        time.sleep(1)
+        # Celune can ignore saving artifacts from self.say()
+        self.say("You will only hear this once.", save=False)
 
     def invoke(self) -> None:
         """Demonstrate manual extension invocation behavior.
