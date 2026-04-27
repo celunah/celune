@@ -167,11 +167,7 @@ class VoxCPM2(CeluneBackend):
                         "warning",
                     )
 
-    def load_model(
-        self,
-        model_id: str,
-        **kwargs
-    ) -> VoxCPM:
+    def load_model(self, model_id: str, **kwargs) -> VoxCPM:
         """Load the given voice model.
 
         Args:

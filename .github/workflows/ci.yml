@@ -79,7 +79,6 @@ jobs:
         shell: cmd
         run: |
           if not exist dist mkdir dist
-          rc /fo resources\celune.res resources\celune.rc
           cl /nologo /O2 /MT launcher.c resources\celune.res /link /OUT:dist\celune.exe
 
       - name: Validate EXE
