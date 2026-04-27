@@ -181,6 +181,7 @@ class VoxCPM2(CeluneBackend):
         random.seed(self.current_seed)
         np.random.seed(self.current_seed)
         torch.cuda.manual_seed_all(self.current_seed)
+        torch.manual_seed(self.current_seed)
         torch.backends.cudnn.deterministic = True
         torch.use_deterministic_algorithms(True)
 

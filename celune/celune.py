@@ -81,8 +81,10 @@ class Celune:
         backend_kwargs = {}
 
         if (
-            isinstance(tts_backend, str) and tts_backend.strip().lower() == "qwen3"
-        ) or isinstance(tts_backend, Qwen3):
+            (isinstance(tts_backend, str) and tts_backend.strip().lower() == "qwen3")
+            or isinstance(tts_backend, Qwen3)
+            or (isinstance(tts_backend, type) and issubclass(tts_backend, Qwen3))
+        ):
             backend_kwargs["mode"] = config_value(config, "qwen3_mode", "native")
 
         try:

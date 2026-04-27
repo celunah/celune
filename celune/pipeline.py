@@ -632,7 +632,7 @@ def playback_worker(engine: "Celune") -> None:
                     engine.log(f"Just type. {choice}")
                 else:
                     # queueing new speech during analysis may net you a reduced performance
-                    if engine.config["dev"] and saved_path is not None:
+                    if engine.dev and saved_path is not None:
                         engine.log("Analyzing...")
                         run_async(
                             analyze_voice,
