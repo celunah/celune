@@ -150,7 +150,7 @@ class Qwen3(CeluneBackend):
 
         Args:
             model_id: The Qwen3 model repository ID to load.
-            optimize: Unused.
+            load_denoiser: Unused.
 
         Returns:
             FasterQwen3TTS: The loaded Qwen3 TTS model instance.

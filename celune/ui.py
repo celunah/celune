@@ -518,9 +518,7 @@ class CeluneUI(App):
                 self.tts_voice_changed(
                     self.celune.current_voice or self.celune_styles[0]
                 )
-                self.input_box.placeholder = (
-                    "Enter text to speak here"
-                )
+                self.input_box.placeholder = "Enter text to speak here"
 
                 self.safe_log("Ready to speak.")
 
@@ -544,9 +542,7 @@ class CeluneUI(App):
 
         def update() -> None:
             self.input_box.placeholder = (
-                "Please wait"
-                if locked
-                else "Enter text to speak here"
+                "Please wait" if locked else "Enter text to speak here"
             )
             self.style_button.disabled = locked
             self.update_resources()
@@ -1011,9 +1007,7 @@ class CeluneUI(App):
             return
         self.celune.locked = False
         self.safe_status("Speaking")
-        self.input_box.placeholder = (
-            "Enter text to speak here"
-        )
+        self.input_box.placeholder = "Enter text to speak here"
         self.style_button.disabled = False
         self.update_resources()
 
