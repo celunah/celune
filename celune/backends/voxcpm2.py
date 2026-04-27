@@ -50,6 +50,15 @@ class VoxCPM2(CeluneBackend):
     default_voice: str = "balanced"
 
     def __init__(self, log: Callable[[str, str], None]) -> None:
+        """Initialize the VoxCPM2 backend.
+
+        Args:
+            log: Logger callback used by the backend.
+
+        Returns:
+            None: This constructor prepares backend state and validates
+            reference audio.
+        """
         super().__init__(log=log)
         self.log = log
         self.optimize_enabled = False
@@ -126,6 +135,12 @@ class VoxCPM2(CeluneBackend):
                 self.log(f"{model_id} is already available.", "info")
 
     def _validate_refs(self) -> None:
+        """Validate bundled reference audio files.
+
+        Returns:
+            None: This method checks that reference files are accessible and logs
+            checksum status when checksums exist.
+        """
         for name, ref in self.reference_wavs.items():
             full_path = Path(__file__).resolve().parents[1] / ref
             try:

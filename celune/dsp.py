@@ -147,6 +147,12 @@ class StreamingPedalboardReverb:
     """Stateful reverb based on `pedalboard`."""
 
     def __init__(self):
+        """Initialize reverb state.
+
+        Returns:
+            None: This constructor prepares the pedalboard and default reverb
+            parameters.
+        """
         self.strength = 0.0
         self._first_chunk = True
 

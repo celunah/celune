@@ -1,14 +1,12 @@
 #define _POSIX_C_SOURCE 200809L
 
-#if defined(__linux__)
+#ifdef __linux__
 #include <unistd.h>
 #include <sys/wait.h>
-#elif defined(__APPLE__) && defined(__MACH__)
-#include <unistd.h>
-#include <sys/wait.h>
-#include <mach-o/dyld.h>
+#include <termios.h>
 #elif defined(_WIN32)
 #include <windows.h>
+#include <conio.h>
 #endif
 
 #include <stdint.h>
@@ -18,7 +16,7 @@
 
 #define printfe(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
 
-#if defined(__linux__)
+#ifdef __linux__
 int get_exe_dir(char *out, size_t size) {
     ssize_t len = readlink("/proc/self/exe", out, size - 1);
 
@@ -27,30 +25,6 @@ int get_exe_dir(char *out, size_t size) {
     }
 
     out[len] = '\0';
-
-    char *last = strrchr(out, '/');
-    if (last) {
-        *last = '\0';
-        return 1;
-    }
-
-    return 0;
-}
-#elif defined(__APPLE__) && defined(__MACH__)
-int get_exe_dir(char *out, size_t size) {
-    uint32_t sz = (uint32_t)size;
-
-    if (_NSGetExecutablePath(out, &sz) != 0) {
-        return 0;
-    }
-
-    char resolved[1024];
-    if (realpath(out, resolved) == NULL) {
-        return 0;
-    }
-
-    strncpy(out, resolved, size - 1);
-    out[size - 1] = '\0';
 
     char *last = strrchr(out, '/');
     if (last) {
@@ -78,7 +52,7 @@ int get_exe_dir(char *out, size_t size) {
 }
 #endif
 
-#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
+#ifdef __linux__
 int run_unix(void) {
 	char base[1024];
 	char python[1024];
@@ -213,10 +187,28 @@ int run_windows(void) {
 #endif
 
 int main(void) {
-#if defined(__linux__) || (defined(__APPLE__) && defined(__MACH__))
-    return run_unix();
+#ifdef __linux__
+    int return_code = run_unix();
+
+	if ( return_code != 0 ) {
+		struct termios oldt, newt;
+		tcgetattr(STDIN_FILENO, &oldt);
+		newt = oldt;
+		newt.c_lflag &= ~(ICANON | ECHO);
+		tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+		getchar();
+		tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+	}
+
+	return return_code;
 #elif defined(_WIN32)
-    return run_windows();
+    int return_code = run_windows();
+
+	if ( return_code != 0 ) {
+		_getch();
+	}
+
+    return return_code;
 #else
     printfe("Unsupported operating system.\n");
     printfe("How do you even run Celune on this thing you have?\n");

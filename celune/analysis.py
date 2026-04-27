@@ -99,7 +99,14 @@ TEXT_CONFIG = {
 
 
 def _text(*keys: str) -> str:
-    """Fetch a configurable text value from ``TEXT_CONFIG``."""
+    """Fetch a configurable text value from ``TEXT_CONFIG``.
+
+    Args:
+        *keys: Nested keys used to traverse ``TEXT_CONFIG``.
+
+    Returns:
+        str: The configured text value.
+    """
     value = TEXT_CONFIG
     for key in keys:
         value = value[key]
@@ -107,12 +114,26 @@ def _text(*keys: str) -> str:
 
 
 def _trait_label(trait_name: str) -> str:
-    """Return the display label for a trait."""
+    """Return the display label for a trait.
+
+    Args:
+        trait_name: The internal trait name.
+
+    Returns:
+        str: The localized display label.
+    """
     return _text("trait_labels", trait_name)
 
 
 def _join_trait_names(trait_names: list[str]) -> str:
-    """Join display trait names in a readable way."""
+    """Join display trait names in a readable way.
+
+    Args:
+        trait_names: Internal trait names to format.
+
+    Returns:
+        str: A human-readable joined trait list.
+    """
     display_names = [_trait_label(name) for name in trait_names]
     if len(display_names) == 1:
         return display_names[0]
@@ -122,13 +143,28 @@ def _join_trait_names(trait_names: list[str]) -> str:
 
 
 def load_audio(voice: pathlib.Path) -> tuple[np.ndarray, int]:
-    """Load a WAV file while preserving the native sample rate."""
+    """Load a WAV file while preserving the native sample rate.
+
+    Args:
+        voice: Path to the voice sample to load.
+
+    Returns:
+        tuple[np.ndarray, int]: The mono waveform and native sample rate.
+    """
     y, sr = librosa.load(str(voice), sr=None, mono=True)
     return y, sr
 
 
 def compute_raw_metrics(y: np.ndarray, sr: int) -> dict:
-    """Compute low-level audio descriptors from a mono signal."""
+    """Compute low-level audio descriptors from a mono signal.
+
+    Args:
+        y: The mono audio waveform.
+        sr: The waveform sample rate.
+
+    Returns:
+        dict: Raw signal metrics used by the voice report.
+    """
     metrics = {
         "duration_s": librosa.get_duration(y=y, sr=sr),
         "sample_rate": sr,
@@ -186,12 +222,31 @@ def compute_raw_metrics(y: np.ndarray, sr: int) -> dict:
 
 
 def _clip_norm(value: float, low: float, high: float) -> float:
-    """Map ``value`` from ``[low, high]`` to ``[0.0, 1.0]`` and clip."""
+    """Map ``value`` from ``[low, high]`` to ``[0.0, 1.0]`` and clip.
+
+    Args:
+        value: The value to normalize.
+        low: The input value that maps to ``0.0``.
+        high: The input value that maps to ``1.0``.
+
+    Returns:
+        float: The clipped normalized value.
+    """
     return float(np.clip((value - low) / (high - low + 1e-9), 0.0, 1.0))
 
 
 def _blend_colors(color_a: str, color_b: str, mix: float) -> str:
-    """Blend two colors and return the result as a hex string."""
+    """Blend two colors and return the result as a hex string.
+
+    Args:
+        color_a: The starting color.
+        color_b: The ending color.
+        mix: Blend amount where ``0.0`` is ``color_a`` and ``1.0`` is
+            ``color_b``.
+
+    Returns:
+        str: The blended color as a hex string.
+    """
     color_a_rgb = np.array(mcolors.to_rgb(color_a))
     color_b_rgb = np.array(mcolors.to_rgb(color_b))
     blended = (1.0 - mix) * color_a_rgb + mix * color_b_rgb
@@ -199,7 +254,14 @@ def _blend_colors(color_a: str, color_b: str, mix: float) -> str:
 
 
 def _summarize_trait_status(traits: dict) -> tuple[str, str]:
-    """Return a short bottom status message and its associated color."""
+    """Return a short bottom status message and its associated color.
+
+    Args:
+        traits: Derived trait scores keyed by trait name.
+
+    Returns:
+        tuple[str, str]: The status text and hex color.
+    """
     base_color = "#CEBAFF"
     warn_color = "#F0E68C"
     high_color = "#F07178"
@@ -250,7 +312,14 @@ def _summarize_trait_status(traits: dict) -> tuple[str, str]:
 
 
 def compute_traits(m: dict) -> dict:
-    """Derive heuristic voice trait scores in the ``0.0`` to ``1.0`` range."""
+    """Derive heuristic voice trait scores in the ``0.0`` to ``1.0`` range.
+
+    Args:
+        m: Raw metrics returned by ``compute_raw_metrics``.
+
+    Returns:
+        dict: Derived trait scores keyed by trait name.
+    """
     traits = {}
 
     pitch_hz = m["pitch_mean_hz"] if m["pitch_extraction_ok"] else 200.0
@@ -306,7 +375,15 @@ def compute_traits(m: dict) -> dict:
 
 
 def generate_assessment(m: dict, traits: dict) -> list[str]:
-    """Generate human-readable assessment lines for the voice sample."""
+    """Generate human-readable assessment lines for the voice sample.
+
+    Args:
+        m: Raw metrics returned by ``compute_raw_metrics``.
+        traits: Derived trait scores returned by ``compute_traits``.
+
+    Returns:
+        list[str]: Human-readable assessment lines.
+    """
     lines = []
 
     if m["duration_s"] < 2.0:
@@ -337,6 +414,14 @@ def generate_assessment(m: dict, traits: dict) -> list[str]:
         lines.append(_text("assessment", "pitch_unknown"))
 
     def level(trait_score: float) -> str:
+        """Convert a numeric trait score to a display level.
+
+        Args:
+            trait_score: Trait score in the ``0.0`` to ``1.0`` range.
+
+        Returns:
+            str: Localized level label for the score.
+        """
         if trait_score < 0.25:
             return _text("assessment", "level_low")
         if trait_score < 0.50:
@@ -380,7 +465,16 @@ def generate_assessment(m: dict, traits: dict) -> list[str]:
 
 
 def plot_radar(traits: dict, title: str, output_path: pathlib.Path) -> None:
-    """Draw a filled radar chart of trait scores and save it as a PNG."""
+    """Draw a filled radar chart of trait scores and save it as a PNG.
+
+    Args:
+        traits: Derived trait scores keyed by trait name.
+        title: Subtitle to include in the chart.
+        output_path: Path where the PNG chart should be written.
+
+    Returns:
+        None: This function writes the chart to disk.
+    """
     base_color = "#CEBAFF"
     warn_color = "#F0E68C"
     high_color = "#F07178"
@@ -479,7 +573,18 @@ def write_report(
     voice: pathlib.Path,
     output_path: pathlib.Path,
 ) -> None:
-    """Write a plain-text report with metrics, traits, and assessment."""
+    """Write a plain-text report with metrics, traits, and assessment.
+
+    Args:
+        m: Raw metrics returned by ``compute_raw_metrics``.
+        traits: Derived trait scores returned by ``compute_traits``.
+        assessment: Human-readable assessment lines.
+        voice: Path to the analyzed voice sample.
+        output_path: Path where the text report should be written.
+
+    Returns:
+        None: This function writes the report to disk.
+    """
     sep = "=" * 60
 
     with output_path.open("w", encoding="utf-8") as file_handle:
@@ -557,7 +662,14 @@ def write_report(
 
 
 def analyze_voice(voice: pathlib.Path) -> None:
-    """Analyze incoming voice artifact."""
+    """Analyze incoming voice artifact.
+
+    Args:
+        voice: Path to the WAV file to analyze.
+
+    Returns:
+        None: This function writes report artifacts next to the input file.
+    """
     if not voice.exists():
         print("Invalid voice path.", file=sys.stderr)
         sys.exit(1)

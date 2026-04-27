@@ -21,6 +21,16 @@ class AudioRGBGlow:
     """OpenRGB-compatible speaking-aware glow effect."""
 
     def __init__(self, color, host="127.0.0.1", port=6742):
+        """Initialize RGB glow state.
+
+        Args:
+            color: Base glow color accepted by ``to_rgb``.
+            host: OpenRGB server host.
+            port: OpenRGB server port.
+
+        Returns:
+            None: This constructor prepares device state and glow parameters.
+        """
         self.color = np.array(
             self._fix_color_rendering(to_rgb(color)), dtype=np.float32
         )
