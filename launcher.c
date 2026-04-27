@@ -192,12 +192,13 @@ int main(void) {
 
 	if ( return_code != 0 ) {
 		struct termios oldt, newt;
-		tcgetattr(STDIN_FILENO, &oldt);
-		newt = oldt;
-		newt.c_lflag &= ~(ICANON | ECHO);
-		tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-		getchar();
-		tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+        if (tcgetattr(STDIN_FILENO, &oldt) == 0) {
+            newt = oldt;
+            newt.c_lflag &= ~(ICANON | ECHO);
+            tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+            getchar();
+            tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+        }
 	}
 
 	return return_code;

@@ -384,9 +384,6 @@ def generation_worker(engine: "Celune") -> None:
         if isinstance(item, SpeechRequest):
             text = item.text
             save_output = item.save
-        else:
-            text = item
-            save_output = True
 
         if engine.exit_requested:
             engine.locked = False
