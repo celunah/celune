@@ -1,0 +1,57 @@
+name: Build Linux AppImage
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  appimage:
+    runs-on: ubuntu-latest
+    container: alpine:latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          apk add --no-cache build-base linux-headers file wget desktop-file-utils
+
+      - name: Build musl launcher
+        run: |
+          mkdir -p dist
+          cc -O2 -static launcher.c -o dist/celune
+          file dist/celune
+
+      - name: Prepare AppDir
+        run: |
+          mkdir -p Celune.AppDir
+          cp dist/celune Celune.AppDir/celune
+          ln -sf celune Celune.AppDir/AppRun
+          chmod +x Celune.AppDir/celune
+
+      - name: Validate AppDir
+        run: |
+          test -x Celune.AppDir/celune
+          test -L Celune.AppDir/AppRun
+          test -f Celune.AppDir/celune.desktop
+          test -f Celune.AppDir/celune.png
+          file Celune.AppDir/celune
+          file Celune.AppDir/AppRun
+          desktop-file-validate Celune.AppDir/celune.desktop
+
+      - name: Download appimagetool
+        run: |
+          wget -O appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+
+      - name: Build AppImage
+        run: |
+          ./appimagetool Celune.AppDir celune.appimage
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: celune.appimage
+          path: celune.appimage
