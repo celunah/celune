@@ -12,6 +12,10 @@ BACKENDS = {
 }
 
 
+def _default_log(_msg: str, _severity: str = "info") -> None:
+    """Default log signature for type checking."""
+
+
 def get_version(package: str) -> str:
     """Get an installed package version.
 
@@ -43,7 +47,7 @@ def resolve_backend(
     Returns:
         CeluneBackend: The resolved backend instance.
     """
-    log = log or (lambda msg, severity="info": None)
+    log = log or _default_log
 
     if isinstance(backend_name, CeluneBackend):
         return backend_name

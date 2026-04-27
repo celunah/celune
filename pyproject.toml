@@ -61,3 +61,10 @@ dev = [
     "pylint>=4.0.5",
     "ruff>=0.15.12",
 ]
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "celune.ui"
+ignore_errors = true

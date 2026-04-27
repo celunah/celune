@@ -1,4 +1,3 @@
-# pylint: disable=R0902
 """Celune Razer Chroma and OpenRGB-compatible RGB glow effect."""
 
 import os

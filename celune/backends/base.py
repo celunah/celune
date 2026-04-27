@@ -30,6 +30,7 @@ class CeluneBackend(ABC):
         Returns:
             None: This constructor stores backend state for later loading.
         """
+        self.model_name: Optional[str]
         if model_name is not None:
             self.model_name = model_name
         elif self.voice_models and self.default_voice is not None:
@@ -37,7 +38,7 @@ class CeluneBackend(ABC):
         else:
             self.model_name = None
 
-        self.model = None
+        self.model: Optional[PreTrainedModel] = None
         self.log = log
         self.current_seed: Optional[int] = None
 

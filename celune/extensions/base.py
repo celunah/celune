@@ -1,4 +1,3 @@
-# pylint: disable=R0903, R0902
 """Celune's extension annotations and classes."""
 
 from __future__ import annotations
@@ -7,8 +6,10 @@ from abc import ABC
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-from celune import __version__
+import celune as _celune
 from celune.exceptions import IncompleteExtensionError
+
+CELUNE_VERSION = str(getattr(_celune, "__version__", "unknown"))
 
 
 @runtime_checkable
@@ -129,7 +130,7 @@ class CeluneContext:
     wait_until_ready: WaitUntilReadyCallable
 
     name: str = "Celune"
-    version: str = __version__
+    version: str = CELUNE_VERSION
     shared: dict[str, Any] = field(default_factory=dict)
     dev: bool = False
 

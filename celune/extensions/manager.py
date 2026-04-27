@@ -1,4 +1,3 @@
-# pylint: disable=W0718, R0912
 """Celune's extension manager."""
 
 from __future__ import annotations

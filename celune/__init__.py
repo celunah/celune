@@ -1,4 +1,3 @@
-# pylint: disable=C0114, C0413, C0103
 import sys
 
 from .utils import get_revision

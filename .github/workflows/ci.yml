@@ -20,6 +20,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install portaudio19-dev
+
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
@@ -28,21 +31,17 @@ jobs:
 
       - name: Verify formatting
         run: uv run ruff format --check .
-        continue-on-error: true
 
       - name: Run lint
         run: uv run pylint celune
-        continue-on-error: true
 
       - name: Type check
         run: uv run mypy celune
-        continue-on-error: true
 
       - name: Import smoke test
         run: |
           uv run python -c "import celune"
           uv run python -c "from celune.backends import resolve_backend"
-        continue-on-error: true
 
   launcher-smoke-linux:
     name: Linux Launcher Build Smoke Test

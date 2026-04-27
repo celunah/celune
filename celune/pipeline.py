@@ -1,4 +1,3 @@
-# pylint: disable=W0212, W0718, R0912, R0914, R0915
 """Speech pipeline helpers for Celune."""
 
 import os
@@ -406,8 +405,8 @@ def generation_worker(engine: "Celune") -> None:
                 pushed_audio = False
 
                 chunks = split_text(engine, text)
-                buffer = []
-                full_audio = []
+                buffer: list[np.ndarray] = []
+                full_audio: list[np.ndarray] = []
 
                 with engine.model_lock:
                     if engine.model is None:
@@ -707,7 +706,10 @@ def playback_worker(engine: "Celune") -> None:
 
         try:
             engine.glow.schedule(audio_chunk)
-            engine.stream.write(audio_chunk)
+            stream = engine.stream
+            if stream is None:
+                raise NotAvailableError("audio stream is not available")
+            stream.write(audio_chunk)
         except Exception as e:
             engine.log(f"[PLAY ERROR] {engine.format_error(e, engine.dev)}", "error")
             engine.error_callback("Playback error")
