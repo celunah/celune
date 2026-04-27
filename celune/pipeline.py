@@ -381,9 +381,8 @@ def generation_worker(engine: "Celune") -> None:
             engine.audio_queue.put(engine.sentinel)
             break
 
-        if isinstance(item, SpeechRequest):
-            text = item.text
-            save_output = item.save
+        text = item.text
+        save_output = item.save
 
         if engine.exit_requested:
             engine.locked = False

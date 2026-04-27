@@ -25,7 +25,6 @@ class LogCallable(Protocol):
         Returns:
             None: Implementations forward the message to a logger.
         """
-        ...
 
 
 @runtime_checkable
@@ -42,7 +41,6 @@ class SayCallable(Protocol):
         Returns:
             bool: ``True`` when the request was accepted.
         """
-        ...
 
 
 @runtime_checkable
@@ -58,7 +56,6 @@ class PlayCallable(Protocol):
         Returns:
             bool: ``True`` when playback was queued.
         """
-        ...
 
 
 @runtime_checkable
@@ -75,7 +72,6 @@ class StatusCallable(Protocol):
         Returns:
             None: Implementations forward the status update.
         """
-        ...
 
 
 @runtime_checkable
@@ -91,7 +87,6 @@ class SetVoiceCallable(Protocol):
         Returns:
             bool: ``True`` when the voice change was accepted.
         """
-        ...
 
 
 @runtime_checkable
@@ -104,7 +99,6 @@ class GetStateCallable(Protocol):
         Returns:
             str: Current state name.
         """
-        ...
 
 
 @runtime_checkable
@@ -120,7 +114,6 @@ class WaitUntilReadyCallable(Protocol):
         Returns:
             bool: ``True`` when Celune is ready.
         """
-        ...
 
 
 @dataclass(slots=True)
