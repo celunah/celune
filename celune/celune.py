@@ -63,6 +63,25 @@ class Celune:
         dev: bool = False,
         config: Optional[dict] = None,
     ) -> None:
+        """Initialize the Celune engine and runtime state.
+
+        Args:
+            tts_backend: Backend name, backend instance, or backend class.
+            chunk_size: Backend chunk-size parameter for streaming generation.
+            language: Preferred generation language.
+            log_callback: Callback for log messages.
+            status_callback: Callback for status messages.
+            error_callback: Callback for user-facing errors.
+            idle_callback: Callback invoked when playback becomes idle.
+            queue_avail_callback: Callback invoked when audio is ready to play.
+            voice_changed_callback: Callback invoked after voice changes.
+            change_input_state_callback: Callback used to lock or unlock input.
+            dev: Whether developer diagnostics are enabled.
+            config: Loaded configuration dictionary.
+
+        Returns:
+            None: This constructor prepares queues, backend state, and RGB glow.
+        """
         if tts_backend is None:
             raise BackendError("no backend set")
 
@@ -262,6 +281,14 @@ class Celune:
         return True
 
     def _wait_until_idle(self, timeout: float = 30.0) -> bool:
+        """Wait until the model and playback pipeline are ready.
+
+        Args:
+            timeout: Maximum seconds to wait for each readiness step.
+
+        Returns:
+            bool: ``True`` when Celune is loaded and idle, otherwise ``False``.
+        """
         # don't wait a timeout while Celune is downloading a model
         ok = self._model_ready.wait(timeout=timeout)
         if not ok:
@@ -453,6 +480,11 @@ class Celune:
         """
 
         def _worker():
+            """Load normalizer components on a background thread.
+
+            Returns:
+                None: This worker updates normalizer fields or logs failures.
+            """
             try:
                 self.tokenizer, self.llm = load_normalizer_components(
                     self.log, self.backend
@@ -529,6 +561,12 @@ class Celune:
             return None
 
         def _run_inference() -> Optional[str]:
+            """Run a blocking normalization request.
+
+            Returns:
+                Optional[str]: Normalized text, or ``None`` when normalization
+                fails or is unsuitable.
+            """
             inf_start = time.perf_counter()
             try:
                 bad_text = text.strip()

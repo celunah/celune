@@ -52,6 +52,15 @@ class Qwen3(CeluneBackend):
         log: Callable[[str, str], None],
         mode: Literal["native", "clone"] = "native",
     ) -> None:
+        """Initialize the Qwen3 backend.
+
+        Args:
+            log: Logger callback used by the backend.
+            mode: Qwen3 generation mode to use.
+
+        Returns:
+            None: This constructor validates and stores the active mode.
+        """
         if mode not in self.supported_modes:
             raise ValueError(
                 f"unsupported qwen3 mode '{mode}' "
@@ -65,20 +74,35 @@ class Qwen3(CeluneBackend):
 
     @property
     def default_model_id(self) -> str:
-        """Return the model loaded by default for the active Qwen3 mode."""
+        """Return the model loaded by default for the active Qwen3 mode.
+
+        Returns:
+            str: The default Qwen3 model identifier.
+        """
         if self.mode == "clone":
             return self.clone_model
         return super().default_model_id
 
     @property
     def all_model_ids(self) -> list[str]:
-        """Return every model required by the active Qwen3 mode."""
+        """Return every model required by the active Qwen3 mode.
+
+        Returns:
+            list[str]: The model identifiers needed by the selected mode.
+        """
         if self.mode == "clone":
             return [self.clone_model]
         return super().all_model_ids
 
     def model_id_for_voice(self, voice: str) -> str:
-        """Resolve a Celune voice to the model required by the active Qwen3 mode."""
+        """Resolve a Celune voice to the model required by the active Qwen3 mode.
+
+        Args:
+            voice: The Celune voice name to resolve.
+
+        Returns:
+            str: The model identifier for the requested voice.
+        """
         if self.mode == "clone":
             if voice not in self.voice_models:
                 raise ValueError(

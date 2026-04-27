@@ -15,49 +15,112 @@ from celune.exceptions import IncompleteExtensionError
 class LogCallable(Protocol):
     """Extension callable logging annotation."""
 
-    def __call__(self, msg: str, severity: str = "info") -> None: ...
+    def __call__(self, msg: str, severity: str = "info") -> None:
+        """Emit a log message.
+
+        Args:
+            msg: Message text to emit.
+            severity: Message severity level.
+
+        Returns:
+            None: Implementations forward the message to a logger.
+        """
+        ...
 
 
 @runtime_checkable
 class SayCallable(Protocol):
     """Extension callable speech request annotation."""
 
-    def __call__(self, text: str, save: bool = True) -> bool: ...
+    def __call__(self, text: str, save: bool = True) -> bool:
+        """Queue text for speech.
+
+        Args:
+            text: Text to synthesize.
+            save: Whether to save generated output artifacts.
+
+        Returns:
+            bool: ``True`` when the request was accepted.
+        """
+        ...
 
 
 @runtime_checkable
 class PlayCallable(Protocol):
     """Extension callable play request annotation."""
 
-    def __call__(self, sound_path: str) -> bool: ...
+    def __call__(self, sound_path: str) -> bool:
+        """Queue an audio file for playback.
+
+        Args:
+            sound_path: Path to the sound file.
+
+        Returns:
+            bool: ``True`` when playback was queued.
+        """
+        ...
 
 
 @runtime_checkable
 class StatusCallable(Protocol):
     """Extension callable status update annotation."""
 
-    def __call__(self, msg: str, severity: str = "info") -> None: ...
+    def __call__(self, msg: str, severity: str = "info") -> None:
+        """Emit a status update.
+
+        Args:
+            msg: Status message text.
+            severity: Status severity level.
+
+        Returns:
+            None: Implementations forward the status update.
+        """
+        ...
 
 
 @runtime_checkable
 class SetVoiceCallable(Protocol):
     """Extension callable voice setting request annotation."""
 
-    def __call__(self, name: str) -> bool: ...
+    def __call__(self, name: str) -> bool:
+        """Request a voice change.
+
+        Args:
+            name: Voice name to select.
+
+        Returns:
+            bool: ``True`` when the voice change was accepted.
+        """
+        ...
 
 
 @runtime_checkable
 class GetStateCallable(Protocol):
     """Extension callable state read annotation."""
 
-    def __call__(self) -> str: ...
+    def __call__(self) -> str:
+        """Read the current runtime state.
+
+        Returns:
+            str: Current state name.
+        """
+        ...
 
 
 @runtime_checkable
 class WaitUntilReadyCallable(Protocol):
     """Extension callable wait until ready annotation."""
 
-    def __call__(self, timeout: float = 30.0) -> bool: ...
+    def __call__(self, timeout: float = 30.0) -> bool:
+        """Wait for Celune to become ready.
+
+        Args:
+            timeout: Maximum seconds to wait.
+
+        Returns:
+            bool: ``True`` when Celune is ready.
+        """
+        ...
 
 
 @dataclass(slots=True)
@@ -109,6 +172,14 @@ class CeluneExtension(ABC):
     AUTOSTART = False
 
     def __init__(self, context: CeluneContext) -> None:
+        """Initialize an extension instance.
+
+        Args:
+            context: Shared Celune extension context.
+
+        Returns:
+            None: This constructor stores the context for later use.
+        """
         self.ctx = context
 
     @property
@@ -211,7 +282,7 @@ class CeluneExtension(ABC):
             voice: The voice name to request from Celune.
 
         Returns:
-            None: This method forwards the voice change request.
+            bool: ``True`` when the voice change request was accepted.
         """
         if not self.ctx.wait_until_ready():
             return False

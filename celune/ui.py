@@ -197,6 +197,11 @@ class CeluneUI(App):
     """
 
     def __init__(self) -> None:
+        """Initialize UI state.
+
+        Returns:
+            None: This constructor prepares widget references and runtime flags.
+        """
         super().__init__()
 
         self.logs = None
@@ -257,7 +262,11 @@ class CeluneUI(App):
         self._refresh_logs()
 
     def _refresh_theme_text(self) -> None:
-        """Refresh widgets that use the active theme's normal text color."""
+        """Refresh widgets that use the active theme's normal text color.
+
+        Returns:
+            None: This method reapplies the active theme color to widgets.
+        """
         color = self._severity_color("info")
         if self.logs is not None:
             self.logs.styles.color = color
@@ -355,7 +364,7 @@ class CeluneUI(App):
         self._refresh_status()
         self._refresh_theme_text()
         psutil.cpu_percent(interval=None)
-        self.set_interval(10 / len(self._resource_pages()), self.advance_resources)
+        self.set_interval(2.06, self.advance_resources)
 
         self._old_stdout = sys.stdout
         self._old_stderr = sys.stderr
@@ -372,7 +381,11 @@ class CeluneUI(App):
 
     @staticmethod
     def _format_vram() -> str:
-        """Return available CUDA memory in a compact display format."""
+        """Return available CUDA memory in a compact display format.
+
+        Returns:
+            str: Formatted CUDA memory status text.
+        """
         if not torch.cuda.is_available():
             return "VRAM: nothing to fetch"
 
@@ -388,7 +401,14 @@ class CeluneUI(App):
 
     @classmethod
     def _gpu_usage(cls) -> Optional[int]:
-        """Read GPU utilization from nvidia-smi when it is available."""
+        """Read GPU utilization from nvidia-smi when it is available.
+
+        Args:
+            cls: The UI class storing the cached ``nvidia-smi`` path.
+
+        Returns:
+            Optional[int]: GPU utilization percentage, or ``None`` when unknown.
+        """
         if not cls._NVIDIA_SMI:
             return None
 
@@ -417,14 +437,22 @@ class CeluneUI(App):
             return None
 
     def _format_usage(self) -> str:
-        """Return CPU/GPU utilization in a compact display format."""
+        """Return CPU/GPU utilization in a compact display format.
+
+        Returns:
+            str: Formatted CPU and GPU utilization text.
+        """
         cpu = psutil.cpu_percent(interval=None)
         gpu = self._gpu_usage()
         gpu_text = f"{gpu}%" if gpu is not None else "N/A"
         return f"CPU: {cpu:.0f}% \u2022 GPU: {gpu_text}"
 
     def _format_seed(self) -> str:
-        """Return the current backend seed when Celune exposes one."""
+        """Return the current backend seed when Celune exposes one.
+
+        Returns:
+            str: Formatted backend seed text.
+        """
         seed = None
         if self.celune is not None:
             seed = getattr(self.celune.backend, "current_seed", None)
@@ -432,7 +460,11 @@ class CeluneUI(App):
         return f"Seed: {seed}" if seed is not None else "Seed: N/A"
 
     def _resource_pages(self) -> tuple[Callable[[], str], ...]:
-        """Return resource footer pages in their display order."""
+        """Return resource footer pages in their display order.
+
+        Returns:
+            tuple[Callable[[], str], ...]: Footer page callbacks.
+        """
 
         # system information & volatile state
         pages: list[Callable[[], str]] = [self._format_vram, self._format_usage]
@@ -463,11 +495,20 @@ class CeluneUI(App):
         return tuple(pages)
 
     def update_resources(self) -> None:
-        """Refresh the currently selected resource footer page."""
+        """Refresh the currently selected resource footer page.
+
+        Returns:
+            None: This method updates the footer widget when available.
+        """
         if self.cur_state == "exiting" or self.resources is None:
             return
 
         def update() -> None:
+            """Update the resource widget on the UI thread.
+
+            Returns:
+                None: This callback writes the selected resource page.
+            """
             pages = self._resource_pages()
             text = pages[self._resource_page % len(pages)]()
             self.resources.update(text + " " * self.indent)
@@ -478,7 +519,11 @@ class CeluneUI(App):
             self.call_from_thread(update)
 
     def advance_resources(self) -> None:
-        """Advance the resource footer to the next page and refresh it."""
+        """Advance the resource footer to the next page and refresh it.
+
+        Returns:
+            None: This method rotates the footer page index.
+        """
         if self.cur_state == "exiting" or self.resources is None:
             return
 
@@ -541,6 +586,11 @@ class CeluneUI(App):
         """
 
         def update() -> None:
+            """Apply the input lock state on the UI thread.
+
+            Returns:
+                None: This callback updates input widgets and resources.
+            """
             self.input_box.placeholder = (
                 "Please wait" if locked else "Enter text to speak here"
             )
@@ -575,6 +625,11 @@ class CeluneUI(App):
         self.status_severity = severity
 
         def update() -> None:
+            """Apply a status update on the UI thread.
+
+            Returns:
+                None: This callback updates status text and color.
+            """
             self.status.update(" " * self.indent + msg)
             self._refresh_status()
             self.update_resources()
@@ -631,6 +686,11 @@ class CeluneUI(App):
         else:
 
             def update() -> None:
+                """Apply a voice label update on the UI thread.
+
+                Returns:
+                    None: This callback updates the style button label.
+                """
                 self.style_button.label = label
                 self.update_resources()
 
@@ -671,7 +731,7 @@ class CeluneUI(App):
             )
             self.safe_log(
                 "/consumebuffer <true/false> - Make Celune consume text from the live buffer without "
-                "pressing CTRL+SHIFT+ENTER."
+                "pressing CTRL+ENTER."
             )
             self.safe_log(
                 "Caution: This feature may interfere with typing '...'.", "warning"
@@ -1088,6 +1148,11 @@ class CeluneHeadlessUI:
     """Celune headless interface methods."""
 
     def __init__(self):
+        """Initialize headless UI state.
+
+        Returns:
+            None: This constructor prepares terminal color handling.
+        """
         # not using Celune palette for compatibility purposes
         self.colors = {
             "black": "\x1b[0;30m",
@@ -1196,6 +1261,16 @@ class SelectMenu:
         raw_choices: list[str],
         prompt: str = "Select an option",
     ):
+        """Initialize a terminal selection menu.
+
+        Args:
+            choices: Human-readable choice labels.
+            raw_choices: Values returned for each choice.
+            prompt: Prompt shown above the choices.
+
+        Returns:
+            None: This constructor stores menu state.
+        """
         self.choices = choices
         self.raw_choices = raw_choices
         self.prompt = prompt
@@ -1250,6 +1325,15 @@ class LogRedirect:
         write_callback: Callable[[str, str], None],
         default_severity: str = "info",
     ) -> None:
+        """Initialize a stream-to-log redirector.
+
+        Args:
+            write_callback: Callback used to emit completed log lines.
+            default_severity: Severity assigned to emitted log lines.
+
+        Returns:
+            None: This constructor prepares the line buffer.
+        """
         self.write_callback = write_callback
         self.default_severity = default_severity
         self._buffer = ""

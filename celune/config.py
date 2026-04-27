@@ -27,7 +27,16 @@ def env_bool(name: str, fallback: bool = False) -> bool:
 def config_value(
     config: Optional[dict[str, Any]], key: str, default: Any = None
 ) -> Any:
-    """Safely read a value from the loaded YAML configuration."""
+    """Safely read a value from the loaded YAML configuration.
+
+    Args:
+        config: Loaded configuration dictionary, or ``None``.
+        key: Configuration key to read.
+        default: Value returned when config or key is missing.
+
+    Returns:
+        Any: The configured value or ``default``.
+    """
     if not config:
         return default
     return config.get(key, default)
@@ -39,5 +48,16 @@ def config_bool(
     config_key: str,
     default: bool = False,
 ) -> bool:
-    """Read a boolean setting where env vars take precedence over config."""
+    """Read a boolean setting where env vars take precedence over config.
+
+    Args:
+        config: Loaded configuration dictionary, or ``None``.
+        env_name: Environment variable name to check first.
+        config_key: Configuration key used when the environment variable is
+            unset.
+        default: Fallback value when no setting is present.
+
+    Returns:
+        bool: The resolved boolean setting.
+    """
     return env_bool(env_name, bool(config_value(config, config_key, default)))

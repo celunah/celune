@@ -288,49 +288,78 @@ def split_text(engine: "Celune", text: str) -> list[str]:
     if not text:
         return []
 
-    text_length = len(text)
-    chunk_length = (
-        150  # chunking by fewer tokens makes the tonal drift less apparent with VoxCPM2
-    )
-    max_length = (
-        500  # extend so that chunks always end on a boundary, rather than mid-sentence
-    )
-    checker = re.compile(r"(?<=[.!?])\s+")
+    chunk_length = 150
+    max_length = 400
+
+    # detect sentences
+    sentence_checker = re.compile(r"\S.*?(?:[.!?]+[\"')\]]*(?=\s+|$)|$)", re.S)
+
+    # detected quoted text with a boundary
+    quote_checker = re.compile(r'"[^"]*[.!?]"')
+
+    if len(text) <= max_length and not quote_checker.search(text):
+        # input is short, return as is
+        return [text]
+
+    def split_sentences(value: str) -> list[str]:
+        """Split a text fragment into sentence-like units.
+
+        Args:
+            value: Text fragment to split.
+
+        Returns:
+            list[str]: Sentence-like units with surrounding whitespace removed.
+        """
+        return [match.group(0).strip() for match in sentence_checker.finditer(value)]
+
+    def split_units(value: str) -> list[str]:
+        """Split text into sentence units while isolating quoted sentences.
+
+        Args:
+            value: Text to split.
+
+        Returns:
+            list[str]: Sentence units and complete quoted sentence units.
+        """
+        units = []
+        start = 0
+
+        for match in quote_checker.finditer(value):
+            units.extend(split_sentences(value[start : match.start()]))
+            units.append(match.group(0).strip())
+            start = match.end()
+
+        units.extend(split_sentences(value[start:]))
+        return [unit for unit in units if unit]
+
+    all_units = split_units(text)
+    if not all_units:
+        return []
 
     chunks = []
+    current = ""
 
-    while text:
-        if text_length <= max_length:
-            # input is short, return as is
-            return [text]
+    for u in all_units:
+        if quote_checker.fullmatch(u):
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(u)
+            continue
 
-        # chunk while keeping prosody intact
-        # PyCharm's type checker may complain about this
-        candidates = [m.start() for m in checker.finditer(text[: max_length + 1])]
-
-        if candidates:
-            before = [p for p in candidates if p <= chunk_length]
-            after = [p for p in candidates if p > chunk_length]
-
-            if before and after:
-                split_pos = (
-                    max(before)
-                    if (chunk_length - max(before)) <= (min(after) - chunk_length)
-                    else min(after)
-                )
-            elif before:
-                split_pos = max(before)
-            else:
-                split_pos = min(after)
+        if current and len(current) + 1 + len(u) > max_length:
+            chunks.append(current)
+            current = u
+        elif current and len(current) >= chunk_length:
+            chunks.append(current)
+            current = u
+        elif current:
+            current = f"{current} {u}"
         else:
-            next_boundary = checker.search(text, max_length + 1)
-            split_pos = next_boundary.start() if next_boundary else chunk_length
+            current = u
 
-        chunk = text[:split_pos].strip()
-        if chunk:
-            chunks.append(chunk)
-
-        text = text[split_pos:].strip()
+    if current:
+        chunks.append(current)
 
     engine.log(f"Chunks: {len(chunks)}")
     return chunks
@@ -641,16 +670,19 @@ def playback_worker(engine: "Celune") -> None:
 
                     engine.log("Ready to speak.")
 
-                avail, total = tuple(v / 1024**3 for v in torch.cuda.mem_get_info(0))
-                if avail <= total * 0.1:
-                    engine.log(
-                        "Celune is running out of memory. Check the bottom right of Celune's window to learn more.",
-                        "warning",
+                if torch.cuda.is_available():
+                    avail, total = tuple(
+                        v / 1024**3 for v in torch.cuda.mem_get_info(0)
                     )
-                    engine.log(
-                        "Please close any memory-resident applications to improve performance.",
-                        "warning",
-                    )
+                    if avail <= total * 0.1:
+                        engine.log(
+                            "Celune is running out of memory. Check the bottom right of Celune's window to learn more.",
+                            "warning",
+                        )
+                        engine.log(
+                            "Please close any memory-resident applications to improve performance.",
+                            "warning",
+                        )
             continue
 
         audio_chunk, sr, _ = item
