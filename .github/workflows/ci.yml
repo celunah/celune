@@ -1,0 +1,88 @@
+name: Celune CI
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - release/*
+  pull_request:
+    branches:
+      - main
+      - dev
+
+jobs:
+  python-checks:
+    name: Python Quality Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Verify formatting
+        run: uv run ruff format --check .
+
+      - name: Run lint
+        run: uv run pylint celune
+
+      - name: Type check
+        run: uv run mypy celune
+
+      - name: Import smoke test
+        run: |
+          uv run python -c "import celune"
+          uv run python -c "from celune.backends import resolve_backend"
+
+  launcher-smoke-linux:
+    name: Linux Launcher Build Smoke Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools file
+
+      - name: Build launcher (musl static)
+        run: |
+          mkdir -p dist
+          musl-gcc -O2 -static launcher.c -o dist/celune
+
+      - name: Validate launcher binary
+        run: |
+          test -f dist/celune
+          test -x dist/celune
+          file dist/celune
+
+  launcher-smoke-windows:
+    name: Windows Launcher Build Smoke Test
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build launcher with resources
+        shell: cmd
+        run: |
+          if not exist dist mkdir dist
+          rc /fo resources\celune.res resources\celune.rc
+          cl /nologo /O2 /MT launcher.c resources\celune.res /link /OUT:dist\celune.exe
+
+      - name: Validate EXE
+        shell: cmd
+        run: |
+          if not exist dist\celune.exe exit /b 1

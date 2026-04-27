@@ -54,3 +54,10 @@ torchvision = [{ index = "pytorch-cu128" }]
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
+
+[dependency-groups]
+dev = [
+    "mypy>=1.20.2",
+    "pylint>=4.0.5",
+    "ruff>=0.15.12",
+]

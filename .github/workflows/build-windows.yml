@@ -1,0 +1,30 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build Windows launcher
+        shell: cmd
+        run: |
+          if not exist dist mkdir dist
+          rc /fo packaging\windows\celune.res packaging\windows\celune.rc
+          cl /nologo /O2 /MT launcher\launcher.c packaging\windows\celune.res /link /OUT:dist\Celune.exe
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: Celune-Windows-x86_64
+          path: dist/Celune.exe
