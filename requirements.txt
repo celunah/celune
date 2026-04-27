@@ -9,7 +9,7 @@ voxcpm>=2.0.0,<2.1.0
 hf-xet
 huggingface-hub<1.0.0
 transformers<5.0.0
-triton>=3.3.0; sys_platform != 'win32'
+triton>=3.6.0; sys_platform != 'win32'
 triton-windows>=3.3.0; sys_platform == 'win32'
 
 # Sound processing
