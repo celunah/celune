@@ -19,6 +19,14 @@ class CeluneExtensionManager:
     """Celune's extension manager."""
 
     def __init__(self, context: CeluneContext) -> None:
+        """Initialize the extension manager.
+
+        Args:
+            context: Shared context passed to registered extensions.
+
+        Returns:
+            None: This constructor prepares extension registry state.
+        """
         self.context = context
         self.extensions: dict[str, CeluneExtension] = {}
         self.auto_started = False
@@ -73,6 +81,15 @@ class CeluneExtensionManager:
                     self.context.log(f"[Core] Auto-starting: {name}")
 
                 def runner(e=ext, n=name):
+                    """Run one extension autostart hook.
+
+                    Args:
+                        e: Extension instance to start.
+                        n: Extension display name for logging.
+
+                    Returns:
+                        None: This worker logs autostart failures.
+                    """
                     try:
                         e.autostart()
                     except Exception as ex:

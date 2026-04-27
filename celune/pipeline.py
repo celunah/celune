@@ -9,6 +9,7 @@ import random
 import pathlib
 import datetime
 import contextlib
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import torch
@@ -24,6 +25,21 @@ from .analysis import analyze_voice
 
 if TYPE_CHECKING:
     from .celune import Celune
+
+
+@dataclass(frozen=True)
+class SpeechRequest:
+    """Queued speech input and output persistence preference."""
+
+    text: str
+    save: bool = True
+
+
+@dataclass(frozen=True)
+class SpeechDone:
+    """Playback completion marker for one generated utterance."""
+
+    saved_path: str | None = None
 
 
 def clear_queue(q: queue.Queue) -> None:
@@ -137,12 +153,13 @@ def release_pipeline(engine: "Celune") -> None:
             engine.log("[LOCK] released")
 
 
-def say(engine: "Celune", text: str) -> bool:
+def say(engine: "Celune", text: str, save: bool = True) -> bool:
     """Queue text for Celune to say.
 
     Args:
         engine: The Celune engine that should speak the text.
         text: The input text to queue for synthesis.
+        save: Whether to save generated output artifacts.
 
     Returns:
         bool: ``True`` when the text was queued successfully, otherwise ``False``.
@@ -179,7 +196,9 @@ def say(engine: "Celune", text: str) -> bool:
             return False
 
         engine.cur_state = "generating"
-        engine.text_queue.put(normalized if normalized is not None else text)
+        engine.text_queue.put(
+            SpeechRequest(normalized if normalized is not None else text, save=save)
+        )
         engine.status_callback("Generating")
         return True
     except Exception:
@@ -269,49 +288,78 @@ def split_text(engine: "Celune", text: str) -> list[str]:
     if not text:
         return []
 
-    text_length = len(text)
-    chunk_length = (
-        150  # chunking by fewer tokens makes the tonal drift less apparent with VoxCPM2
-    )
-    max_length = (
-        500  # extend so that chunks always end on a boundary, rather than mid-sentence
-    )
-    checker = re.compile(r"(?<=[.!?])\s+")
+    chunk_length = 150
+    max_length = 400
+
+    # detect sentences
+    sentence_checker = re.compile(r"\S.*?(?:[.!?]+[\"')\]]*(?=\s+|$)|$)", re.S)
+
+    # detected quoted text with a boundary
+    quote_checker = re.compile(r'"[^"]*[.!?]"')
+
+    if len(text) <= max_length and not quote_checker.search(text):
+        # input is short, return as is
+        return [text]
+
+    def split_sentences(value: str) -> list[str]:
+        """Split a text fragment into sentence-like units.
+
+        Args:
+            value: Text fragment to split.
+
+        Returns:
+            list[str]: Sentence-like units with surrounding whitespace removed.
+        """
+        return [match.group(0).strip() for match in sentence_checker.finditer(value)]
+
+    def split_units(value: str) -> list[str]:
+        """Split text into sentence units while isolating quoted sentences.
+
+        Args:
+            value: Text to split.
+
+        Returns:
+            list[str]: Sentence units and complete quoted sentence units.
+        """
+        units = []
+        start = 0
+
+        for match in quote_checker.finditer(value):
+            units.extend(split_sentences(value[start : match.start()]))
+            units.append(match.group(0).strip())
+            start = match.end()
+
+        units.extend(split_sentences(value[start:]))
+        return [unit for unit in units if unit]
+
+    all_units = split_units(text)
+    if not all_units:
+        return []
 
     chunks = []
+    current = ""
 
-    while text:
-        if text_length <= max_length:
-            # input is short, return as is
-            return [text]
+    for u in all_units:
+        if quote_checker.fullmatch(u):
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(u)
+            continue
 
-        # chunk while keeping prosody intact
-        # PyCharm's type checker may complain about this
-        candidates = [m.start() for m in checker.finditer(text[: max_length + 1])]
-
-        if candidates:
-            before = [p for p in candidates if p <= chunk_length]
-            after = [p for p in candidates if p > chunk_length]
-
-            if before and after:
-                split_pos = (
-                    max(before)
-                    if (chunk_length - max(before)) <= (min(after) - chunk_length)
-                    else min(after)
-                )
-            elif before:
-                split_pos = max(before)
-            else:
-                split_pos = min(after)
+        if current and len(current) + 1 + len(u) > max_length:
+            chunks.append(current)
+            current = u
+        elif current and len(current) >= chunk_length:
+            chunks.append(current)
+            current = u
+        elif current:
+            current = f"{current} {u}"
         else:
-            next_boundary = checker.search(text, max_length + 1)
-            split_pos = next_boundary.start() if next_boundary else chunk_length
+            current = u
 
-        chunk = text[:split_pos].strip()
-        if chunk:
-            chunks.append(chunk)
-
-        text = text[split_pos:].strip()
+    if current:
+        chunks.append(current)
 
     engine.log(f"Chunks: {len(chunks)}")
     return chunks
@@ -327,11 +375,15 @@ def generation_worker(engine: "Celune") -> None:
         None: This worker loop runs until it receives the shutdown sentinel.
     """
     while True:
-        text = engine.text_queue.get()
+        item = engine.text_queue.get()
 
-        if text is engine.sentinel:
+        if item is engine.sentinel:
             engine.audio_queue.put(engine.sentinel)
             break
+
+        if isinstance(item, SpeechRequest):
+            text = item.text
+            save_output = item.save
 
         if engine.exit_requested:
             engine.locked = False
@@ -420,7 +472,8 @@ def generation_worker(engine: "Celune") -> None:
                                 break
 
                             buffer.append(audio_chunk)
-                            full_audio.append(audio_chunk)
+                            if save_output:
+                                full_audio.append(audio_chunk)
                             chunk_dur = len(audio_chunk) / 48000
                             speech_len += chunk_dur
                             buffered_speech_len += chunk_dur
@@ -464,46 +517,50 @@ def generation_worker(engine: "Celune") -> None:
 
                 engine.log("[GEN] done")
 
+                saved_path = None
                 if not engine.exit_requested:
                     if engine.reverb.strength > 0.0:
                         tail = engine.reverb.flush()
                         if len(tail) > 0:
                             engine.audio_queue.put((tail, 48000, None))
                             buffer.append(tail)
-                            full_audio.append(tail)
+                            if save_output:
+                                full_audio.append(tail)
 
                     engine.reverb.reset()
-                    engine.audio_queue.put(engine.utterance_done)
 
-                if full_audio:
-                    wav = np.concatenate(full_audio)
-                    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+                    if save_output and full_audio:
+                        wav = np.concatenate(full_audio)
+                        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
 
-                    # get up to first three words of input and sanitize for use in a file name
-                    first_words = "_".join(text.split()[:3]).lower()
-                    first_words = re.sub(r"[^a-zA-Z0-9_]", "", first_words)
+                        # get up to first three words of input and sanitize for use in a file name
+                        first_words = "_".join(text.split()[:3]).lower()
+                        first_words = re.sub(r"[^a-zA-Z0-9_]", "", first_words)
 
-                    if not os.path.exists("outputs"):
-                        engine.log("Outputs path not found, creating...", "warning")
-                        try:
-                            os.mkdir("outputs")
-                        except OSError as e:
-                            engine.log(
-                                "Cannot create outputs directory, not saving WAV file: "
-                                f"{engine.format_error(e, engine.dev)}",
-                                "warning",
+                        if not os.path.exists("outputs"):
+                            engine.log("Outputs path not found, creating...", "warning")
+                            try:
+                                os.mkdir("outputs")
+                            except OSError as e:
+                                engine.log(
+                                    "Cannot create outputs directory, not saving WAV file: "
+                                    f"{engine.format_error(e, engine.dev)}",
+                                    "warning",
+                                )
+
+                        if os.path.exists("outputs"):
+                            saved_path = (
+                                f"outputs/celune_speech_{timestamp}_{first_words}.wav"
+                            )
+                            sf.write(
+                                saved_path,
+                                wav,
+                                48000,
+                                subtype="PCM_24",
                             )
 
-                    if os.path.exists("outputs"):
-                        sf.write(
-                            f"outputs/celune_speech_{timestamp}_{first_words}.wav",
-                            wav,
-                            48000,
-                            subtype="PCM_24",
-                        )
-                        engine.recently_saved = (
-                            f"outputs/celune_speech_{timestamp}_{first_words}.wav"
-                        )
+                    engine.recently_saved = saved_path
+                    engine.audio_queue.put(SpeechDone(saved_path=saved_path))
                 break
             except Exception as e:
                 if engine.exit_requested:
@@ -567,7 +624,8 @@ def playback_worker(engine: "Celune") -> None:
         if engine.exit_requested:
             continue
 
-        if item is engine.utterance_done:
+        if isinstance(item, SpeechDone) or item is engine.utterance_done:
+            saved_path = item.saved_path if isinstance(item, SpeechDone) else None
             engine.playback_done.set()
 
             more_pending = (not engine.audio_queue.empty()) or (
@@ -599,30 +657,29 @@ def playback_worker(engine: "Celune") -> None:
                     engine._last_flavor = choice
                     engine.log(f"Just type. {choice}")
                 else:
-                    if engine.config["dev"] and engine.recently_saved is not None:
+                    # queueing new speech during analysis may net you a reduced performance
+                    if engine.dev and saved_path is not None:
                         engine.log("Analyzing...")
                         run_async(
                             analyze_voice,
-                            pathlib.Path(engine.recently_saved),
+                            pathlib.Path(saved_path),
                         )
 
                     engine.log("Ready to speak.")
 
-                avail, total = tuple(v / 1024**3 for v in torch.cuda.mem_get_info(0))
-                if avail <= 2:
-                    engine.log(
-                        "Celune is running out of memory "
-                        f"({format_number(avail, 2)}/{format_number(total, 2)} GB available).",
-                        "warning",
+                if torch.cuda.is_available():
+                    avail, total = tuple(
+                        v / 1024**3 for v in torch.cuda.mem_get_info(0)
                     )
-                    engine.log(
-                        "Please close any memory-resident applications to improve performance.",
-                        "warning",
-                    )
-                else:
-                    engine.log(
-                        f"Available memory: {format_number(avail, 2)}/{format_number(total, 2)} GB"
-                    )
+                    if avail <= total * 0.1:
+                        engine.log(
+                            "Celune is running out of memory. Check the bottom right of Celune's window to learn more.",
+                            "warning",
+                        )
+                        engine.log(
+                            "Please close any memory-resident applications to improve performance.",
+                            "warning",
+                        )
             continue
 
         audio_chunk, sr, _ = item

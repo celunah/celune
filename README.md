@@ -8,6 +8,7 @@ It has been designed for real-time performance on consumer GPUs.
 
 - Real-time speech generation pipeline
 - Distinct voice styles (Calm, Balanced, Bold, Upbeat)
+- Multiple operation modes
 - Stable long-form narration without drift
 - Source-level audio control (no post-processing)
 - GPU-accelerated inference
@@ -15,16 +16,16 @@ It has been designed for real-time performance on consumer GPUs.
 ## Voices & samples
 Each voice is demonstrated using a short introduction and a longer narration sample to showcase consistency, pacing, and expressiveness.
 
-| Voice        | Intro | Narration |
-|--------------|-------|-----------|
-| Balanced     | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc.wav) |
-| Calm         | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc.wav)    | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc.wav)    |
-| Bold         | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc.wav) |
-| Upbeat       | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc.wav) |
+| Voice        | Intro (Qwen) | Narration (Qwen) | Intro (VoxCPM2) | Narration (VoxCPM2) |
+|--------------|--------------|------------------|-----------------|---------------------|
+| Balanced     | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc_voxcpm2.wav) |
+| Calm         | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_voxcpm2.wav) |
+| Bold         | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_voxcpm2.wav) |
+| Upbeat       | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_voxcpm2.wav) |
 
-The demonstration lines were created using Celune's Qwen3 backend, which may inherit a minor amount of mistakes. This is not a bug.
+The demonstration lines try to showcase Celune's best, but they may include minor mistakes. This is an inherent limitation with TTS models, and Celune should not be blamed for it.
 
-Check the `demos` directory to check demonstration content from both Celune 3 & Celune 2/older versions.
+Browse the `demos` directory for demonstration content from the current version of Celune, as well as any past releases.
 
 > [!CAUTION]
 > Do not use markup or tags (e.g. `<...>`).  
@@ -140,15 +141,6 @@ sudo apt install sox rubberband-cli
 sudo pacman -S sox rubberband
 ```
 
-**macOS (Homebrew)**
-```bash
-# Install Homebrew if you don't already have it
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# Install SoX
-brew install sox rubberband
-```
-
 **Validate SoX & Rubber Band are installed**
 ```bash
 sox --version
@@ -179,9 +171,6 @@ sudo apt install build-essential
 
 # Linux (Arch Linux)
 sudo pacman -S base-devel
-
-# macOS
-brew install llvm
 ```
 
 ### CUDA Toolkit 12.8 installation
@@ -219,22 +208,22 @@ Without this, Celune may require elevated permissions or fall back to slower beh
 These screenshots show Celune's user interface.
 
 ### Before init
-[![Before init](./demos/state_before_init.png)](./demos/state_before_init.png)
+[![Before init](./demos/init.png)](./demos/init.png)
 
 ### Ready
-[![Ready](./demos/state_ready.png)](./demos/state_ready.png)
+[![Ready](./demos/ready.png)](./demos/ready.png)
 
 ### Talking
-[![Talking](./demos/state_talking.png)](./demos/state_talking.png)
+[![Talking](./demos/speaking.png)](./demos/speaking.png)
 
 ### Change voice
-[![Change voice](./demos/state_change_voice.png)](./demos/state_change_voice.png)
+[![Change voice](./demos/change_voice.png)](./demos/change_voice.png)
 
 ### Commands
-[![Commands](./demos/state_commands.png)](./demos/state_commands.png)
+[![Commands](./demos/commands.png)](./demos/commands.png)
 
 ### Extension invoke
-[![Extension invoke](./demos/state_extension_invoke.png)](./demos/state_extension_invoke.png)
+[![Extension invoke](./demos/extensions.png)](./demos/extensions.png)
 
 > Proudly made in 🇵🇱 for your listening pleasure.
 > 

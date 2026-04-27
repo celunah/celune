@@ -1,6 +1,18 @@
+# qwen3 = faster, less expressive
+# voxcpm2 = slower, high quality
+# if null, Celune will ask you to choose a backend before starting
 backend: null
+# clone = clone from Celune references
+# native = use Celune native models
+qwen3_mode: native
+# if enabled, detailed tracebacks will be displayed,
+# and Celune will self-analyze her own voice
 dev: false
+# if enabled, the UI is disabled and only extensions can send inputs
 headless: false
+# if enabled, headless mode will not use ANSI colors
 headless_nocolor: false
+# you can use the light or dark Celune theme
 theme: dark
+# if enabled, CeluneNorm will be loaded to normalize incoming text
 use_normalizer: false

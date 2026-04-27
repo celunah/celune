@@ -18,8 +18,8 @@ dependencies = [
     "huggingface-hub<1.0.0",
     "transformers<5.0.0",
     # For later usage in VoxCPM2, if the optimization path is fixed.
-    "triton>=3.3.0; sys_platform != 'win32'",
-    "triton-windows>=3.3.0; sys_platform == 'win32'",
+    # "triton>=3.6.0; sys_platform != 'win32'",
+    # "triton-windows>=3.6.0; sys_platform == 'win32'",
 
 	# Audio processing
     "numpy",
@@ -39,6 +39,11 @@ dependencies = [
     "psutil",
     "pyyaml",
 ]
+
+# Why does CodeRabbit think I'm uploading Celune to PyPI?
+# Her package is not standalone.
+[tool.setuptools.package-data]
+celune = ["refs/*.wav"]
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128" }]

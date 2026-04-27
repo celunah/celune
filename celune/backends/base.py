@@ -21,6 +21,15 @@ class CeluneBackend(ABC):
     def __init__(
         self, log: Callable[[str, str], None], model_name: Optional[str] = None
     ) -> None:
+        """Initialize common backend state.
+
+        Args:
+            log: Logger callback used by the backend.
+            model_name: Optional model identifier overriding voice defaults.
+
+        Returns:
+            None: This constructor stores backend state for later loading.
+        """
         if model_name is not None:
             self.model_name = model_name
         elif self.voice_models and self.default_voice is not None:
@@ -30,6 +39,7 @@ class CeluneBackend(ABC):
 
         self.model = None
         self.log = log
+        self.current_seed: Optional[int] = None
 
     @staticmethod
     @abstractmethod
@@ -128,12 +138,12 @@ class CeluneBackend(ABC):
         """
 
     @abstractmethod
-    def load_model(self, model_id: str, optimize: bool = True) -> PreTrainedModel:
+    def load_model(self, model_id: str, **kwargs) -> PreTrainedModel:
         """Load a model by backend-specific identifier.
 
         Args:
             model_id: The backend-specific model identifier to load.
-            optimize: (VoxCPM2 only) Whether to attempt optimizing VoxCPM2.
+            **kwargs: Backend-specific load options (e.g., VoxCPM2's `load_denoiser` or `optimize`).
 
         Returns:
             Any: The loaded backend model instance.

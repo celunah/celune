@@ -19,7 +19,8 @@ from huggingface_hub.utils import disable_progress_bars
 
 from . import __version__
 from .backends import CeluneBackend, resolve_backend
-from .config import config_bool
+from .backends.qwen3 import Qwen3
+from .config import config_bool, config_value
 from .constants import NORMALIZER_MODEL_ID
 from .dsp import StreamingPedalboardReverb
 from .utils import format_number
@@ -62,6 +63,25 @@ class Celune:
         dev: bool = False,
         config: Optional[dict] = None,
     ) -> None:
+        """Initialize the Celune engine and runtime state.
+
+        Args:
+            tts_backend: Backend name, backend instance, or backend class.
+            chunk_size: Backend chunk-size parameter for streaming generation.
+            language: Preferred generation language.
+            log_callback: Callback for log messages.
+            status_callback: Callback for status messages.
+            error_callback: Callback for user-facing errors.
+            idle_callback: Callback invoked when playback becomes idle.
+            queue_avail_callback: Callback invoked when audio is ready to play.
+            voice_changed_callback: Callback invoked after voice changes.
+            change_input_state_callback: Callback used to lock or unlock input.
+            dev: Whether developer diagnostics are enabled.
+            config: Loaded configuration dictionary.
+
+        Returns:
+            None: This constructor prepares queues, backend state, and RGB glow.
+        """
         if tts_backend is None:
             raise BackendError("no backend set")
 
@@ -75,8 +95,23 @@ class Celune:
             lambda locked: None
         )
 
+        self.config = config
+
+        backend_kwargs = {}
+
+        if (
+            (isinstance(tts_backend, str) and tts_backend.strip().lower() == "qwen3")
+            or isinstance(tts_backend, Qwen3)
+            or (isinstance(tts_backend, type) and issubclass(tts_backend, Qwen3))
+        ):
+            backend_kwargs["mode"] = config_value(config, "qwen3_mode", "native")
+
         try:
-            self.backend = resolve_backend(tts_backend, log=self.log_callback)
+            self.backend = resolve_backend(
+                tts_backend,
+                log=self.log_callback,
+                **backend_kwargs,
+            )
             self.tts_backend = self.backend.name
         except ValueError as e:
             raise BackendError(str(e)) from e
@@ -91,7 +126,6 @@ class Celune:
                 f"internal backend error: {self.format_error(e, dev)}"
             ) from e
 
-        self.config = config
         self.language = language
 
         self.model = None
@@ -247,6 +281,14 @@ class Celune:
         return True
 
     def _wait_until_idle(self, timeout: float = 30.0) -> bool:
+        """Wait until the model and playback pipeline are ready.
+
+        Args:
+            timeout: Maximum seconds to wait for each readiness step.
+
+        Returns:
+            bool: ``True`` when Celune is loaded and idle, otherwise ``False``.
+        """
         # don't wait a timeout while Celune is downloading a model
         ok = self._model_ready.wait(timeout=timeout)
         if not ok:
@@ -438,6 +480,11 @@ class Celune:
         """
 
         def _worker():
+            """Load normalizer components on a background thread.
+
+            Returns:
+                None: This worker updates normalizer fields or logs failures.
+            """
             try:
                 self.tokenizer, self.llm = load_normalizer_components(
                     self.log, self.backend
@@ -514,6 +561,12 @@ class Celune:
             return None
 
         def _run_inference() -> Optional[str]:
+            """Run a blocking normalization request.
+
+            Returns:
+                Optional[str]: Normalized text, or ``None`` when normalization
+                fails or is unsuitable.
+            """
             inf_start = time.perf_counter()
             try:
                 bad_text = text.strip()
@@ -605,17 +658,18 @@ class Celune:
         """
         release_pipeline(self)
 
-    def say(self, text: str) -> bool:
+    def say(self, text: str, save: bool = True) -> bool:
         """Queue text for Celune to say.
 
         Args:
             text: The text to synthesize.
+            save: Whether to save generated output artifacts.
 
         Returns:
             bool: ``True`` when the text was queued successfully, otherwise
                 ``False``.
         """
-        return say_pipeline(self, text)
+        return say_pipeline(self, text, save=save)
 
     def play(self, sound_path: str) -> bool:
         """Play a sound via Celune's pipeline.
