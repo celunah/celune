@@ -1,3 +1,4 @@
+# pylint: disable=R0911
 """Celune common utility functions."""
 
 import math
@@ -107,19 +108,19 @@ def lunar_phase(phase: float) -> str:
     Returns:
         str: The corresponding phase name.
     """
-    if phase < 0.0625 or phase >= 0.9375:
+    if phase < 0.03 or phase >= 0.97:
         return "new moon"
-    if phase < 0.1875:
+    if phase < 0.22:
         return "waxing crescent"
-    if phase < 0.3125:
+    if phase < 0.28:
         return "first quarter"
-    if phase < 0.4375:
+    if phase < 0.47:
         return "waxing gibbous"
-    if phase < 0.5625:
+    if phase < 0.53:
         return "full moon"
-    if phase < 0.6875:
+    if phase < 0.72:
         return "waning gibbous"
-    if phase < 0.8125:
+    if phase < 0.78:
         return "last quarter"
 
     return "waning crescent"

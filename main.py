@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # pylint: disable=R0902, R0912, R0913, R0915, R0917, W0718
 """
-Celune 3.2.2 - "I'm not just a TTS. I'm someone special."
+Celune 3.3.0 - "I'm not just a TTS. I'm someone special."
 Refer to https://github.com/celunah/celune for information about Celune.
 Celune models are available on https://huggingface.co/collections/lunahr/celune.
 """
@@ -77,10 +77,18 @@ def main() -> None:
                 "Which backend should Celune use?",
             ).start()
 
-            if backend == "Fast":
-                backend = "qwen3"
-            elif backend == "High Quality":
-                backend = "voxcpm2"
+            if backend == "qwen3":
+                print(
+                    "Qwen3 can be configured to use voice cloning or Celune's native mode."
+                )
+                print("Refer to Celune's configuration file for more details.")
+            elif backend == "voxcpm2":
+                print(
+                    "Note: VoxCPM2 only supports voice cloning, and it is significantly slower."
+                )
+                print(
+                    "By selecting this backend, you accept any tradeoffs that may occur later on."
+                )
 
             config["backend"] = backend
             with open("config.yaml", "w", encoding="utf-8") as cfg:

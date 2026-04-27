@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import glob
+import random
 import hashlib
 import contextlib
 from pathlib import Path
@@ -37,15 +38,27 @@ class VoxCPM2(CeluneBackend):
         "bold": "refs/bold.wav",
         "upbeat": "refs/upbeat.wav",
     }
+
+    # the sane default CFG is 2.4 for most voices,
+    # `calm` needs a higher CFG of 3.0 to capture the nuances without distorting
     voice_cfg: dict[str, float] = {
-        "balanced": 2.0,
+        "balanced": 2.4,
         "calm": 3.0,
-        "bold": 2.0,
-        "upbeat": 2.0,
+        "bold": 2.4,
+        "upbeat": 2.4,
     }
     default_voice: str = "balanced"
 
     def __init__(self, log: Callable[[str, str], None]) -> None:
+        """Initialize the VoxCPM2 backend.
+
+        Args:
+            log: Logger callback used by the backend.
+
+        Returns:
+            None: This constructor prepares backend state and validates
+            reference audio.
+        """
         super().__init__(log=log)
         self.log = log
         self.optimize_enabled = False
@@ -122,6 +135,12 @@ class VoxCPM2(CeluneBackend):
                 self.log(f"{model_id} is already available.", "info")
 
     def _validate_refs(self) -> None:
+        """Validate bundled reference audio files.
+
+        Returns:
+            None: This method checks that reference files are accessible and logs
+            checksum status when checksums exist.
+        """
         for name, ref in self.reference_wavs.items():
             full_path = Path(__file__).resolve().parents[1] / ref
             try:
@@ -151,27 +170,28 @@ class VoxCPM2(CeluneBackend):
     def load_model(
         self,
         model_id: str,
-        load_denoiser: bool = False,
-        optimize: Optional[bool] = None,
+        **kwargs
     ) -> VoxCPM:
         """Load the given voice model.
 
         Args:
             model_id: The VoxCPM model repository ID to load.
-            load_denoiser: Whether to enable the backend denoiser component.
-            optimize: Whether to attempt optimization. When omitted, reuse the
-                backend's current optimization setting.
+            **kwargs:
+                - load_denoiser: Whether to load the denoiser model.
+                - optimize: Whether to try to optimize the model.
 
         Returns:
             VoxCPM: The loaded VoxCPM model instance.
         """
         available, path = self.model_is_available_locally(model_id)
-        if optimize is None:
-            optimize = self.optimize_enabled
-        else:
-            self.optimize_enabled = optimize
 
-        torch.cuda.manual_seed_all(3584181039)
+        # random seeding causes regenerations of Celune's output to be unique
+        # allowing you to fix a bad output
+        self.current_seed = random.randrange(2**32)
+        random.seed(self.current_seed)
+        np.random.seed(self.current_seed)
+        torch.cuda.manual_seed_all(self.current_seed)
+        torch.manual_seed(self.current_seed)
         torch.backends.cudnn.deterministic = True
         torch.use_deterministic_algorithms(True)
 
@@ -180,8 +200,8 @@ class VoxCPM2(CeluneBackend):
             with self._suppress_backend_output():
                 self.model = VoxCPM.from_pretrained(
                     path,
-                    load_denoiser=load_denoiser,
-                    optimize=optimize,
+                    load_denoiser=kwargs.get("load_denoiser", False),
+                    optimize=kwargs.get("optimize", False),
                 )
             return self.model
 
@@ -189,8 +209,8 @@ class VoxCPM2(CeluneBackend):
         with self._suppress_backend_output():
             self.model = VoxCPM.from_pretrained(
                 model_id,
-                load_denoiser=load_denoiser,
-                optimize=optimize,
+                load_denoiser=kwargs.get("load_denoiser", False),
+                optimize=kwargs.get("optimize", False),
             )
         return self.model
 

@@ -385,6 +385,15 @@ NAMEDAYS: dict[str, list[str]] = {
 
 
 def _key(month: int, day: int) -> str:
+    """Format a month/day pair as a name-day lookup key.
+
+    Args:
+        month: Month number.
+        day: Day of month.
+
+    Returns:
+        str: A zero-padded ``MM-DD`` key.
+    """
     return f"{month:02d}-{day:02d}"
 
 

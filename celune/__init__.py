@@ -7,9 +7,9 @@ REVISION = get_revision()
 if REVISION:
     local = REVISION.rstrip("*")
     dirty = ".dirty" if REVISION.endswith("*") else ""
-    __version__ = f"3.2.2+{local}{dirty}"
+    __version__ = f"3.3.0+{local}{dirty}"
 else:
-    __version__ = "3.2.2"
+    __version__ = "3.3.0"
 
 __tagline__ = "\u201cI'm not just a TTS. I'm someone special.\u201d"
 __codename__ = "Fidelity\u00b2"
@@ -20,7 +20,7 @@ if hasattr(sys, "ps1"):
     print("This is not an intended mode of operation, usage may differ.")
     print()
     print(
-        "\u201cIf you're just exploring, please... be careful. I don't usually speak here.\u201d"
+        "\"If you're just exploring, please... be careful. I don't usually speak here.\""
     )
 
 try:
