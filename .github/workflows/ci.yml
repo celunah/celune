@@ -75,13 +75,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-
       - name: Build launcher with resources
         shell: cmd
         run: |
           if not exist dist mkdir dist
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"
           cl /nologo /O2 /MT launcher.c resources\celune.res /link /OUT:dist\celune.exe
 
       - name: Validate EXE
