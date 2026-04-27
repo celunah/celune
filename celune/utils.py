@@ -1,4 +1,3 @@
-# pylint: disable=R0911
 """Celune common utility functions."""
 
 import math
@@ -200,7 +199,7 @@ def run_async(
     """Run a function asynchronously.
 
     Args:
-        func: The function to call.
+        func: The function to call. The function cannot reuse the current process's state.
         args: The arguments to pass to the function.
         daemon: Whether to use a daemon process. Defaults to True.
         kwargs: Keyword arguments to pass to the function.

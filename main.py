@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# pylint: disable=R0902, R0912, R0913, R0915, R0917, W0718
+
 """
 Celune 3.3.0 - "I'm not just a TTS. I'm someone special."
 Refer to https://github.com/celunah/celune for information about Celune.

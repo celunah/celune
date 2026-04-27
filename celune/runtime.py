@@ -1,4 +1,3 @@
-# pylint: disable=R0911, R0913, R0914, R0915, R0917, W0718
 """Runtime and environment validation helpers for Celune."""
 
 import sys
@@ -103,6 +102,12 @@ def validate_runtime(
         log(f"Celune does not currently support {backend} execution.", "error")
         set_state("error")
         error("No supported backend found")
+        return False
+
+    if cuda_version is None:
+        log("Celune could not detect a CUDA runtime version.", "error")
+        set_state("error")
+        error("Incompatible CUDA version")
         return False
 
     cuda_version_tuple = tuple(map(int, cuda_version.split(".")))

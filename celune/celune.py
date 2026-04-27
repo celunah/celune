@@ -1,4 +1,3 @@
-# pylint: disable=R0902, R0904, R0911, R0912, R0913, R0914, R0915, R0917, W0718
 """Celune's backend layer."""
 
 import gc
@@ -7,7 +6,7 @@ import queue
 import threading
 import traceback
 import contextlib
-from typing import Optional, Callable, Union
+from typing import Any, Optional, Callable, Protocol, Union
 
 import torch
 import sounddevice as sd
@@ -45,6 +44,18 @@ from .pipeline import (
 from .runtime import log_runtime_banner, validate_runtime
 
 
+class MessageCallback(Protocol):
+    """Callback accepting a message and optional severity."""
+
+    def __call__(self, msg: str, severity: str = "info") -> None: ...
+
+
+class InputStateCallback(Protocol):
+    """Callback accepting either positional or named lock state."""
+
+    def __call__(self, locked: bool) -> None: ...
+
+
 class Celune:
     """The character engine for Celune."""
 
@@ -53,13 +64,13 @@ class Celune:
         tts_backend: Optional[Union[str, CeluneBackend, type[CeluneBackend]]] = None,
         chunk_size: int = 24,  # only used in Qwen3 backend; ~1.92s
         language: str = "Auto",  # Qwen3 backend accepts a language, others may not
-        log_callback: Optional[Callable[[str, str], None]] = None,
-        status_callback: Optional[Callable[[str, str], None]] = None,
+        log_callback: Optional[MessageCallback] = None,
+        status_callback: Optional[MessageCallback] = None,
         error_callback: Optional[Callable[[str], None]] = None,
         idle_callback: Optional[Callable[[], None]] = None,
         queue_avail_callback: Optional[Callable[[], None]] = None,
         voice_changed_callback: Optional[Callable[[str], None]] = None,
-        change_input_state_callback: Optional[Callable[[bool], None]] = None,
+        change_input_state_callback: Optional[InputStateCallback] = None,
         dev: bool = False,
         config: Optional[dict] = None,
     ) -> None:
@@ -85,14 +96,14 @@ class Celune:
         if tts_backend is None:
             raise BackendError("no backend set")
 
-        self.log_callback = log_callback or (lambda msg, severity="info": None)
-        self.status_callback = status_callback or (lambda msg, severity="info": None)
+        self.log_callback: MessageCallback = log_callback or self._noop_message
+        self.status_callback: MessageCallback = status_callback or self._noop_message
         self.error_callback = error_callback or (lambda error: None)
         self.idle_callback = idle_callback or (lambda: None)
         self.queue_avail_callback = queue_avail_callback or (lambda: None)
         self.voice_changed_callback = voice_changed_callback or (lambda name: None)
-        self.change_input_state_callback = change_input_state_callback or (
-            lambda locked: None
+        self.change_input_state_callback: InputStateCallback = (
+            change_input_state_callback or self._noop_input_state
         )
 
         self.config = config
@@ -128,7 +139,7 @@ class Celune:
 
         self.language = language
 
-        self.model = None
+        self.model: Optional[PreTrainedModel] = None
         self.llm: Optional[PreTrainedModel] = None
         self.tokenizer: Optional[PreTrainedTokenizerBase] = None
 
@@ -139,11 +150,11 @@ class Celune:
         self.chunk_size = chunk_size
         self.prebuffer_chunks = 5 if self.backend.name == "qwen3" else 10
 
-        self.text_queue = queue.Queue()
-        self.audio_queue = queue.Queue()
+        self.text_queue: queue.Queue[Any] = queue.Queue()
+        self.audio_queue: queue.Queue[Any] = queue.Queue()
 
-        self._playback_thread = None
-        self._generation_thread = None
+        self._playback_thread: Optional[threading.Thread] = None
+        self._generation_thread: Optional[threading.Thread] = None
 
         self._queue_lock = threading.Lock()
         self._sentinel = object()  # dispatched upon exit
@@ -162,7 +173,8 @@ class Celune:
 
         self.locked = True
         self.loaded = False
-        self.recently_saved = None
+        self.recently_saved: Optional[str] = None
+        self._last_flavor: Optional[str] = None
         self._model_ready = threading.Event()
         self._model_ready.set()
         self._exit_requested = False
@@ -182,6 +194,14 @@ class Celune:
 
         self.glow = AudioRGBGlow(color="#cebaff")
         self.glow.start()
+
+    @staticmethod
+    def _noop_message(msg: str, severity: str = "info") -> None:
+        """Discard a message callback."""
+
+    @staticmethod
+    def _noop_input_state(locked: bool) -> None:
+        """Discard an input lock-state callback."""
 
     @staticmethod
     def _clear_queue(q: queue.Queue) -> None:
@@ -434,15 +454,16 @@ class Celune:
             self.error_callback("Default model failed to load")
             return False
 
-        self._generation_thread = threading.Thread(
+        generation_thread = threading.Thread(
             target=self._generation_worker, daemon=True
         )
-        self._playback_thread = threading.Thread(
-            target=self._playback_worker, daemon=True
-        )
+        playback_thread = threading.Thread(target=self._playback_worker, daemon=True)
 
-        self._generation_thread.start()
-        self._playback_thread.start()
+        self._generation_thread = generation_thread
+        self._playback_thread = playback_thread
+
+        generation_thread.start()
+        playback_thread.start()
 
         if not validate_runtime(
             log=self.log,
@@ -560,6 +581,9 @@ class Celune:
         if self.llm is None or self.tokenizer is None:
             return None
 
+        llm = self.llm
+        tokenizer = self.tokenizer
+
         def _run_inference() -> Optional[str]:
             """Run a blocking normalization request.
 
@@ -573,21 +597,21 @@ class Celune:
                 norm_token = "<NORM>"
 
                 # Are we using CeluneNorm?
-                norm_token_id = self.tokenizer.convert_tokens_to_ids(norm_token)
+                norm_token_id = tokenizer.convert_tokens_to_ids(norm_token)
                 assert norm_token_id is not None, "not a CeluneNorm normalizer"
-                assert norm_token_id != self.tokenizer.unk_token_id, (
+                assert norm_token_id != tokenizer.unk_token_id, (
                     "not a CeluneNorm normalizer"
                 )
 
                 prompt = f"{bad_text}{norm_token}"
 
-                tokens = self.tokenizer(
+                tokens = tokenizer(
                     prompt,
                     return_tensors="pt",
                     add_special_tokens=False,
                 )
 
-                inputs = tokens.to(self.llm.device)
+                inputs = tokens.to(llm.device)
                 len_tokens = tokens["input_ids"].shape[1]
 
                 self.log(f"Tokens to normalize: {len_tokens}")
@@ -596,13 +620,12 @@ class Celune:
                     return None
 
                 with torch.inference_mode():
-                    output_ids = self.llm.generate(
+                    output_ids = llm.generate(  # type: ignore[operator]
                         **inputs,
                         max_new_tokens=512,
                         do_sample=False,
-                        pad_token_id=self.tokenizer.pad_token_id
-                        or self.tokenizer.eos_token_id,
-                        eos_token_id=self.tokenizer.eos_token_id,
+                        pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+                        eos_token_id=tokenizer.eos_token_id,
                     )
 
                 prompt_len = inputs["input_ids"].shape[1]
@@ -613,7 +636,7 @@ class Celune:
                     self.log("Normalizer returned no tokens.", "warning")
                     return None
 
-                out = self.tokenizer.decode(new_ids, skip_special_tokens=True)
+                out = tokenizer.decode(new_ids, skip_special_tokens=True)
 
                 # too many <NORM>s can break splitting
                 if "<NORM>" in out:
@@ -740,13 +763,25 @@ class Celune:
         playback_worker(self)
 
     @property
-    def stream(self) -> sd.OutputStream:
+    def stream(self) -> Optional[sd.OutputStream]:
         """Get the current audio output stream.
 
         Returns:
             Optional[sounddevice.OutputStream]: The active audio stream, if any.
         """
         return self._stream
+
+    @stream.setter
+    def stream(self, value: Optional[sd.OutputStream]) -> None:
+        """Set the current audio output stream.
+
+        Args:
+            value: The new output stream object.
+
+        Returns:
+            None: This setter updates Celune's active stream reference.
+        """
+        self._stream = value
 
     @property
     def say_lock(self):
@@ -821,7 +856,7 @@ class Celune:
         return self._sentinel
 
     @property
-    def generation_thread(self) -> threading.Thread:
+    def generation_thread(self) -> Optional[threading.Thread]:
         """Get the generation worker thread.
 
         Returns:
@@ -830,7 +865,7 @@ class Celune:
         return self._generation_thread
 
     @property
-    def playback_thread(self) -> threading.Thread:
+    def playback_thread(self) -> Optional[threading.Thread]:
         """Get the playback worker thread.
 
         Returns:
@@ -866,7 +901,7 @@ class Celune:
         return self._audio_unavailable
 
     @property
-    def current_sr(self):
+    def current_sr(self) -> Optional[int]:
         """Get the active stream sample rate.
 
         Returns:
@@ -874,20 +909,8 @@ class Celune:
         """
         return self._current_sr
 
-    @stream.setter
-    def stream(self, value):
-        """Set the current audio output stream.
-
-        Args:
-            value: The new output stream object.
-
-        Returns:
-            None: This setter updates Celune's active stream reference.
-        """
-        self._stream = value
-
     @current_sr.setter
-    def current_sr(self, value):
+    def current_sr(self, value: Optional[int]) -> None:
         """Set the active stream sample rate.
 
         Args:

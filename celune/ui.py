@@ -1,4 +1,3 @@
-# pylint: disable=C0114, C0302, R0912, W0718, R0911, R0902, R0904, R0915
 """Celune's frontend layer."""
 
 import os
@@ -256,7 +255,7 @@ class CeluneUI(App):
             None: This method updates theme state and redraws status and logs.
         """
         self.active_theme_name = theme_name
-        self.theme = theme_name  # pylint: disable=W0201
+        self.theme = theme_name
         self._refresh_status()
         self._refresh_theme_text()
         self._refresh_logs()
@@ -354,7 +353,7 @@ class CeluneUI(App):
         else:
             self.active_theme_name = "celune"
             self.safe_log("Invalid theme, defaulting to dark", "warning")
-        self.theme = self.active_theme_name  # pylint: disable=W0201
+        self.theme = self.active_theme_name
 
         self.logs = self.query_one("#logs", RichLog)
         self.input_box = self.query_one("#input", TextArea)
@@ -390,9 +389,12 @@ class CeluneUI(App):
             return "VRAM: nothing to fetch"
 
         try:
-            device = torch.cuda.current_device()
-            avail, total = torch.cuda.mem_get_info(device)
-        except Exception:
+            if torch.cuda.is_available():
+                device = torch.cuda.current_device()
+                avail, total = torch.cuda.mem_get_info(device)
+            else:
+                raise RuntimeError("can't fetch VRAM usage")
+        except (AssertionError, RuntimeError, ValueError):
             return "VRAM: cannot fetch"
 
         return f"VRAM: {avail / 1024**3:.2f}/{total / 1024**3:.2f} GB available"
@@ -424,7 +426,7 @@ class CeluneUI(App):
                 check=True,
                 timeout=1,
             )
-        except Exception:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
             return None
 
         first_line = result.stdout.strip().splitlines()[0:1]

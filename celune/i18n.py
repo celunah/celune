@@ -1,4 +1,3 @@
-# pylint: disable=W0603
 """Celune internationalization stubs."""
 
 from __future__ import annotations
@@ -7,6 +6,7 @@ import os
 import locale as _locale  # else it gets shadowed
 import ctypes
 import contextlib
+from types import SimpleNamespace
 from typing import Optional
 
 DEFAULT_LOCALE = "en"
@@ -28,7 +28,7 @@ def get_system_locale() -> str:
 
     if os.name == "nt":
         with contextlib.suppress(Exception):
-            windll = ctypes.windll.kernel32
+            windll = getattr(ctypes, "windll", SimpleNamespace()).kernel32
             lang_code = windll.GetUserDefaultUILanguage()
             return _locale.windows_locale.get(lang_code, "en")
 

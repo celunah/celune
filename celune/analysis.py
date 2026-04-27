@@ -1,9 +1,9 @@
-# pylint: disable=R0912, R0914
 """Analyze a WAV file and generate a radar chart plus a text report."""
 
 import sys
 import pathlib
 import warnings
+from typing import Any, cast
 
 import librosa
 import matplotlib
@@ -20,7 +20,9 @@ rcParams["font.family"] = "Outfit Thin"
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-TEXT_CONFIG = {
+TextConfig = dict[str, Any]
+
+TEXT_CONFIG: TextConfig = {
     "trait_labels": {
         "Calmness": "Calmness",
         "Energy": "Energy",
@@ -110,7 +112,7 @@ def _text(*keys: str) -> str:
     value = TEXT_CONFIG
     for key in keys:
         value = value[key]
-    return value
+    return cast(str, value)
 
 
 def _trait_label(trait_name: str) -> str:
@@ -152,7 +154,7 @@ def load_audio(voice: pathlib.Path) -> tuple[np.ndarray, int]:
         tuple[np.ndarray, int]: The mono waveform and native sample rate.
     """
     y, sr = librosa.load(str(voice), sr=None, mono=True)
-    return y, sr
+    return y, int(sr)
 
 
 def compute_raw_metrics(y: np.ndarray, sr: int) -> dict:
@@ -250,7 +252,8 @@ def _blend_colors(color_a: str, color_b: str, mix: float) -> str:
     color_a_rgb = np.array(mcolors.to_rgb(color_a))
     color_b_rgb = np.array(mcolors.to_rgb(color_b))
     blended = (1.0 - mix) * color_a_rgb + mix * color_b_rgb
-    return mcolors.to_hex(blended)  # noqa
+    rgb = tuple(float(channel) for channel in blended)
+    return mcolors.to_hex(cast(tuple[float, float, float], rgb))  # noqa
 
 
 def _summarize_trait_status(traits: dict) -> tuple[str, str]:
@@ -501,8 +504,8 @@ def plot_radar(traits: dict, title: str, output_path: pathlib.Path) -> None:
         mix = _clip_norm(max_value, 0.8, 1.0)
         shape_color = _blend_colors(warn_color, high_color, mix)
 
-    ax: PolarAxes
     fig, ax = plt.subplots(figsize=(7.4, 8.8), subplot_kw={"polar": True})
+    ax = cast(PolarAxes, ax)
 
     fig.patch.set_facecolor("#1d1824")
     ax.set_facecolor("#1d1824")
