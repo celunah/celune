@@ -60,6 +60,7 @@ dev = [
     "mypy",
     "pylint",
     "ruff",
+	"types-pyyaml",
 ]
 
 [tool.mypy]
