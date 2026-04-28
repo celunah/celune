@@ -9,8 +9,10 @@ import shutil
 import datetime
 import threading
 import itertools
+import contextlib
 import subprocess
-from typing import Optional, Callable
+from typing import Optional, Callable, Protocol
+from collections.abc import Iterator
 
 import yaml
 import torch
@@ -25,7 +27,7 @@ from rich.text import Text
 
 from .celune import Celune
 from .config import config_bool
-from .utils import format_number, celune_day_status, lunar_phase, lunar_info
+from .utils import celune_day_status, lunar_phase, lunar_info
 from .exceptions import InvalidExtensionError
 
 SEVERITY_COLORS = {
@@ -203,28 +205,28 @@ class CeluneUI(App):
         """
         super().__init__()
 
-        self.logs = None
-        self.input_box = None
-        self.style_button = None
-        self.status = None
-        self.resources = None
+        self.logs: RichLog
+        self.input_box: TextArea
+        self.style_button: Button
+        self.status: Label
+        self.resources: Label
         self.themes = ("celune", "celune_light")
         self.active_theme_name = "celune"
         self.log_history: list[tuple[str, str]] = []
         self.status_severity = "info"
 
-        self.celune: Optional[Celune] = None
+        self.celune: Celune
         self.celune_ready = False
-        self.celune_styles = ["balanced"]
-        self.celune_voices = None
+        self.celune_styles: tuple[str, ...] = ("balanced", "calm", "bold", "upbeat")
+        self.celune_voices: Iterator[str]
 
         self.style_index = 0
 
         self._old_stdout = sys.stdout
         self._old_stderr = sys.stderr
 
-        self._log_stdout = None
-        self._log_stderr = None
+        self._log_stdout: LogRedirect
+        self._log_stderr: LogRedirect
 
         self.cur_state = "active"
 
@@ -375,6 +377,7 @@ class CeluneUI(App):
 
         self.call_after_refresh(self.start_background_init)
         signal.signal(signal.SIGINT, self.signal_handler)
+        signal.signal(signal.SIGTSTP, self.signal_handler)
         self.safe_status("Initializing")
         self.update_resources()
 
@@ -548,10 +551,10 @@ class CeluneUI(App):
             None: This worker initializes the engine and updates UI state.
         """
         try:
-            tts_voices = list(self.celune.backend.voices)
+            tts_voices: tuple[str, ...] = tuple(self.celune.backend.voices)
 
             self.celune.set_voices(tts_voices)
-            self.celune_styles = tts_voices or ["balanced"]
+            self.celune_styles = tts_voices or ("balanced", "calm", "bold", "upbeat")
             self.celune_voices = itertools.cycle(tts_voices)
             if self.celune.current_voice in self.celune_styles:
                 self.style_index = self.celune_styles.index(self.celune.current_voice)
@@ -782,7 +785,7 @@ class CeluneUI(App):
                 self.safe_log("Usage: /invoke <extension> [args]")
                 return
 
-            if not self.celune or not self.celune.extension_manager:
+            if not self.celune.extension_manager:
                 self.safe_log("Extension system not initialized.", "warning")
                 return
 
@@ -798,7 +801,7 @@ class CeluneUI(App):
 
             return
         if command == "extensions":
-            if not self.celune or not self.celune.extension_manager:
+            if not self.celune.extension_manager:
                 self.safe_log("Extension system not initialized.", "warning")
                 return
 
@@ -809,10 +812,6 @@ class CeluneUI(App):
                 self.safe_log("Extensions: " + ", ".join(names))
             return
         if command == "voiceprompt":
-            if not self.celune:
-                self.safe_log("Celune is not initialized.", "warning")
-                return
-
             if not args:
                 self.safe_log("Usage: /voiceprompt <prompt>", "warning")
                 return
@@ -828,10 +827,6 @@ class CeluneUI(App):
             self.safe_log(f"Voice prompt set to '{new_prompt}'.")
             return
         if command == "speed":
-            if not self.celune:
-                self.safe_log("Celune is not initialized.", "warning")
-                return
-
             if not self.celune.can_use_rubberband:
                 self.safe_log("Celune cannot currently use Rubber Band.", "warning")
                 return
@@ -841,43 +836,41 @@ class CeluneUI(App):
                 return
 
             try:
+                if args[0].endswith("%"):
+                    args[0] = args[0].rstrip("%")
+
                 speed = float(args[0])
-                if not 0.8 <= speed <= 1.2:
-                    self.safe_log("Value out of range. Expected 0.8-1.2.", "warning")
+                float_speed = speed / 100.0
+                if not 0.8 <= float_speed <= 1.2:
+                    self.safe_log("Value out of range. Expected 80-120%.", "warning")
                     return
-                self.celune.speed = speed
+                self.celune.speed = float_speed
             except ValueError:
                 self.safe_log(f"Invalid argument: {args[0]}", "warning")
             else:
-                self.safe_log(f"Speaking speed set to x{args[0]}.")
+                self.safe_log(f"Speaking speed set to {args[0]}%.")
             return
         if command == "reverb":
-            if not self.celune:
-                self.safe_log("Celune is not initialized.", "warning")
-                return
-
             if not args:
                 self.safe_log("Usage: /reverb <strength>", "warning")
                 return
 
             try:
+                if args[0].endswith("%"):
+                    args[0] = args[0].rstrip("%")
+
                 strength = float(args[0])
-                if not 0.0 <= strength <= 1.0:
-                    self.safe_log("Value out of range. Expected 0.0-1.0.", "warning")
+                float_strength = strength / 100.0
+                if not 0.0 <= float_strength <= 1.0:
+                    self.safe_log("Value out of range. Expected 0-100%.", "warning")
                     return
                 self.celune.reverb.strength = strength
             except ValueError:
                 self.safe_log(f"Invalid argument: {args[0]}", "warning")
             else:
-                self.safe_log(
-                    f"Reverb strength set to {format_number(strength * 100)}%."
-                )
+                self.safe_log(f"Reverb strength set to {args[0]}%.")
             return
         if command == "play":
-            if not self.celune:
-                self.safe_log("Celune is not initialized.", "warning")
-                return
-
             if not args:
                 self.safe_log("Usage: /play <path>", "warning")
                 return
@@ -893,10 +886,6 @@ class CeluneUI(App):
                 return
             return
         if command == "stop":
-            if not self.celune:
-                self.safe_log("Celune is not initialized.", "warning")
-                return
-
             if not self.celune.force_stop_speech():
                 self.safe_log("Nothing to stop.")
                 return
@@ -946,63 +935,61 @@ class CeluneUI(App):
         Returns:
             None: This handler processes shortcuts, commands, and speech requests.
         """
-        if self.cur_state == "exiting":
-            return
-
-        if event.key == "ctrl+q":
-            event.prevent_default()
-            event.stop()
-            self._graceful_exit()
-            return
-
-        if event.key == "ctrl+t":
-            next_theme = (
-                self.themes[1]
-                if self.active_theme_name == self.themes[0]
-                else self.themes[0]
-            )
-            self._apply_theme(next_theme)
-            self.celune.config["theme"] = (
-                "dark" if self.theme == self.themes[0] else "light"
-            )
-            with open("config.yaml", "w", encoding="utf-8") as f:
-                yaml.dump(self.celune.config, f)
-            self.update_resources()
-
-            event.prevent_default()
-            return
-
-        if event.key == "ctrl+j":
-            if not self.celune:
+        with contextlib.suppress(EOFError):
+            if self.cur_state == "exiting":
                 return
 
-            text = self.input_box.text.strip()
-
-            if not text:
-                return
-
-            if text.startswith("/"):
-                try:
-                    parts = shlex.split(text[1:])
-                except ValueError as e:
-                    self.safe_log(f"Command parsing error: {e}", "error")
-                    return
-
-                if not parts:
-                    return
-
-                command = parts[0].lower()
-                command_args = parts[1:]
-
-                self.process_command(command, command_args)
-                return
-
-            if self.celune.say(text):
-                self.style_button.disabled = True
-                self.input_box.placeholder = "Please wait"
-                self.input_box.load_text("")
-                self.update_resources()
+            if event.key == "ctrl+q":
                 event.prevent_default()
+                event.stop()
+                self._graceful_exit()
+                return
+
+            if event.key == "ctrl+t":
+                next_theme = (
+                    self.themes[1]
+                    if self.active_theme_name == self.themes[0]
+                    else self.themes[0]
+                )
+                self._apply_theme(next_theme)
+                self.celune.config["theme"] = (
+                    "dark" if self.theme == self.themes[0] else "light"
+                )
+                with open("config.yaml", "w", encoding="utf-8") as f:
+                    yaml.dump(self.celune.config, f)
+                self.update_resources()
+
+                event.prevent_default()
+                return
+
+            if event.key == "ctrl+j":
+                text = self.input_box.text.strip()
+
+                if not text:
+                    return
+
+                if text.startswith("/"):
+                    try:
+                        parts = shlex.split(text[1:])
+                    except ValueError as e:
+                        self.safe_log(f"Command parsing error: {e}", "error")
+                        return
+
+                    if not parts:
+                        return
+
+                    command = parts[0].lower()
+                    command_args = parts[1:]
+
+                    self.process_command(command, command_args)
+                    return
+
+                if self.celune.say(text):
+                    self.style_button.disabled = True
+                    self.input_box.placeholder = "Please wait"
+                    self.input_box.load_text("")
+                    self.update_resources()
+                    event.prevent_default()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Change Celune's tone.
@@ -1129,17 +1116,19 @@ class CeluneUI(App):
         """
         self.exit()
 
-    def signal_handler(self, _sig, _frame) -> None:
-        """Trap CTRL+C and exit Celune if pressed.
+    def signal_handler(self, sig, _frame) -> None:
+        """Trap CTRL+C and exit Celune if pressed, while ignoring CTRL+Z.
 
         Args:
-            _sig: The received signal number.
+            sig: The received signal number.
             _frame: The current stack frame from the signal handler.
 
         Returns:
             None: This handler schedules a graceful application shutdown.
         """
-        # cannot be wrapped in try-except, or it won't be effective
+        if sig == signal.SIGTSTP:
+            return
+
         if threading.current_thread() is threading.main_thread():
             self.call_later(self._graceful_exit)
         else:
@@ -1149,7 +1138,7 @@ class CeluneUI(App):
 class CeluneHeadlessUI:
     """Celune headless interface methods."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize headless UI state.
 
         Returns:
@@ -1166,7 +1155,7 @@ class CeluneHeadlessUI:
             "cyan": "\x1b[0;36m",
             "white": "\x1b[0;37m",
         }
-        self.celune: Optional[Celune] = None
+        self.celune: Celune
 
         # for Celune terminals not supporting colored text
         self.no_color = (
@@ -1175,7 +1164,7 @@ class CeluneHeadlessUI:
             )
             or not sys.stdout.isatty()
         )
-        self.reset: str = "\x1b[0m" if not self.no_color else ""
+        self.reset = "\x1b[0m" if not self.no_color else ""
 
     def severity_color(self, severity: str) -> str:
         """Get color from the VGA text mode palette.
@@ -1230,22 +1219,33 @@ class CeluneHeadlessUI:
                 alive.
         """
         signal.signal(signal.SIGINT, self.signal_handler)
+        signal.signal(signal.SIGTSTP, self.signal_handler)
         while True:
             time.sleep(1)
 
-    def signal_handler(self, _sig, _frame) -> None:
-        """Exit Celune in headless mode on CTRL+C.
+    def signal_handler(self, sig, _frame) -> None:
+        """Exit Celune in headless mode on CTRL+C and handle CTRL+Z.
 
         Args:
-            _sig: The received signal number.
+            sig: The received signal number.
             _frame: The current stack frame from the signal handler.
 
         Returns:
             None: This handler closes Celune and exits the process.
         """
+        if sig == signal.SIGTSTP:
+            return
+
         if self.celune is not None:
             self.celune.close()
         sys.exit(0)
+
+
+class CeluneBaseUI(Protocol):
+    """Celune base UI protocols."""
+
+    def run(self) -> None:
+        """Run the UI's main loop."""
 
 
 class SelectMenu:
