@@ -16,7 +16,7 @@ dependencies = [
     # Qwen3 does not support newer versions of Hugging Face libraries at this time.
     # Celune will use Transformers 4.x for the time being.
     "huggingface-hub<1.0.0",
-    "transformers<5.0.0",
+    "transformers<6.0.0",
     # For later usage in VoxCPM2, if the optimization path is fixed.
     # "triton>=3.6.0; sys_platform != 'win32'",
     # "triton-windows>=3.6.0; sys_platform == 'win32'",
