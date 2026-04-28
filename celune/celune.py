@@ -61,6 +61,7 @@ class Celune:
 
     def __init__(
         self,
+        config: dict[str, Any],
         tts_backend: Optional[Union[str, CeluneBackend, type[CeluneBackend]]] = None,
         chunk_size: int = 24,  # only used in Qwen3 backend; ~1.92s
         language: str = "Auto",  # Qwen3 backend accepts a language, others may not
@@ -72,7 +73,6 @@ class Celune:
         voice_changed_callback: Optional[Callable[[str], None]] = None,
         change_input_state_callback: Optional[InputStateCallback] = None,
         dev: bool = False,
-        config: Optional[dict] = None,
     ) -> None:
         """Initialize the Celune engine and runtime state.
 
@@ -144,7 +144,7 @@ class Celune:
         self.tokenizer: Optional[PreTrainedTokenizerBase] = None
 
         self.current_voice = self.backend.default_voice
-        self.voices: list[str] = self.backend.voices
+        self.voices: tuple[str, ...] = tuple(self.backend.voices)
         self.voice_prompt: Optional[str] = None
 
         self.chunk_size = chunk_size
@@ -260,7 +260,7 @@ class Celune:
             with contextlib.suppress(Exception):
                 torch.cuda.empty_cache()
 
-    def set_voices(self, voices: list) -> None:
+    def set_voices(self, voices: tuple[str, ...]) -> None:
         """Configure Celune's voice information.
 
         Args:
@@ -637,6 +637,9 @@ class Celune:
                     return None
 
                 out = tokenizer.decode(new_ids, skip_special_tokens=True)
+
+                if isinstance(out, list):
+                    out = out[0] if out else ""
 
                 # too many <NORM>s can break splitting
                 if "<NORM>" in out:

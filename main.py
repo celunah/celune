@@ -26,7 +26,7 @@ try:
     from celune.celune import Celune
     from celune.exceptions import No
     from celune.namedays import has_nameday
-    from celune.ui import CeluneUI, CeluneHeadlessUI, SelectMenu
+    from celune.ui import CeluneUI, CeluneHeadlessUI, CeluneBaseUI, SelectMenu
     from celune.config import config_bool, config_value, env_bool
 except ModuleNotFoundError as package:
     print(f"Missing dependency: {package.name}")
@@ -117,6 +117,7 @@ def main() -> None:
                             print("Celune is already running.")
                             sys.exit(1)
 
+        ui: CeluneBaseUI
         if not headless:  # normal mode
             ui = CeluneUI()
             celune = Celune(
