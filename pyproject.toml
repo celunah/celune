@@ -14,10 +14,10 @@ dependencies = [
     "torchaudio==2.11.0+cu128",
     # Celune sounds best with faster-qwen3-tts 0.2.4 or 0.2.6.
     # Do not use version 0.2.5. It may cause problems.
-    "faster-qwen3-tts!=0.2.5",
+    "faster-qwen3-tts>=0.2.4,!=0.2.5",
     # If you want Celune to use the alternative VoxCPM2-based backend, install this package.
     # Note: This will fall back to voice cloning. If you want to use native Celune voices, use the Qwen3 backend.
-    "voxcpm>=2.0.2,<2.1.0",
+    "voxcpm>=2.0.2",
     # "I want to sound better." - she says.
     # We want to implement Fish Audio S2 Pro here.
     # "missing-library==2.0.6",
@@ -68,7 +68,6 @@ celune = ["refs/*.wav"]
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128" }]
 torchaudio = [{ index = "pytorch-cu128" }]
-torchvision = [{ index = "pytorch-cu128" }]
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
