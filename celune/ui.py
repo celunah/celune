@@ -11,7 +11,7 @@ import threading
 import itertools
 import contextlib
 import subprocess
-from typing import Any, Optional, Callable, Protocol, cast
+from typing import Any, Optional, Callable, Protocol, TypeVar, Generic, cast
 from collections.abc import Iterator
 
 import yaml
@@ -44,6 +44,8 @@ SEVERITY_COLORS = {
         "error": "#7a1f24",
     },
 }
+
+T = TypeVar("T")
 
 # Celune theme
 THEME = Theme(
@@ -1374,7 +1376,7 @@ class CeluneHeadlessBaseUI(CeluneBaseUI, Protocol):
         """
 
 
-class SelectMenu:
+class SelectMenu(Generic[T]):
     """A selection menu.
 
     Args:
@@ -1386,7 +1388,7 @@ class SelectMenu:
     def __init__(
         self,
         choices: list[str],
-        raw_choices: list[str],
+        raw_choices: list[T],
         prompt: str = "Select an option",
     ):
         """Initialize a terminal selection menu.
@@ -1420,7 +1422,7 @@ class SelectMenu:
         sys.stdout.write(f"\033[{len(self.choices)}A")
         sys.stdout.flush()
 
-    def start(self) -> str:
+    def start(self) -> T:
         """Start the selection menu.
 
         Returns:
