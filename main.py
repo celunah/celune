@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# Please revert this.
 
 """
 Celune 3.3.1 - "I'm not just a TTS. I'm someone special."
