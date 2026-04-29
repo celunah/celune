@@ -1,5 +1,6 @@
 """Celune's frontend layer."""
 
+import re
 import os
 import sys
 import time
@@ -11,7 +12,7 @@ import threading
 import itertools
 import contextlib
 import subprocess
-from typing import Any, Optional, Callable, Protocol, TypeVar, Generic, cast
+from typing import Any, Optional, Callable, Protocol, Generic, cast
 from collections.abc import Iterator
 
 import yaml
@@ -20,59 +21,15 @@ import psutil
 import readchar
 from textual import work, events
 from textual.app import App, ComposeResult
-from textual.theme import Theme
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, RichLog, TextArea, Button
 from rich.text import Text
 
 from .celune import Celune
 from .config import config_bool
-from .utils import celune_day_status, lunar_phase, lunar_info
+from .utils import celune_day_status, lunar_phase, lunar_info, supports_ansi
 from .exceptions import InvalidExtensionError
-
-SIGTSTP = getattr(signal, "SIGTSTP", None)
-
-SEVERITY_COLORS = {
-    "celune": {
-        "info": "#cebaff",
-        "warning": "#f0e68c",
-        "error": "#f07178",
-    },
-    "celune_light": {
-        "info": "#33293f",
-        "warning": "#6b5e00",
-        "error": "#7a1f24",
-    },
-}
-
-T = TypeVar("T")
-
-# Celune theme
-THEME = Theme(
-    name="celune",
-    primary="#cebaff",  # Celune primary
-    secondary="#a595cc",  # Celune secondary
-    accent="#7c7099",  # Celune tertiary
-    foreground="#e2ceff",  # Celune highlight
-    background="#1d1826",  # Celune background
-    surface="#1d1826",  # same as background
-    warning="#f0e68c",  # Celune warning
-    error="#f07178",  # Celune error
-    dark=True,
-)
-
-THEME_LIGHT = Theme(
-    name="celune_light",
-    primary="#33293f",  # Celune light primary
-    secondary="#281732",  # Celune light secondary
-    accent="#1e1126",  # Celune light tertiary
-    foreground="#473d53",  # Celune highlight
-    background="#ece8ff",  # Celune light background
-    surface="#ece8ff",  # same as background
-    warning="#f0e68c",  # Celune warning
-    error="#f07178",  # Celune error
-    dark=False,
-)
+from .constants import EXIT_SUCCESS, T, SEVERITY_COLORS, SIGTSTP, THEME, THEME_LIGHT
 
 
 class CeluneUI(App):
@@ -373,8 +330,18 @@ class CeluneUI(App):
 
         self._old_stdout = sys.stdout
         self._old_stderr = sys.stderr
-        self._log_stdout = LogRedirect(self.safe_log, "info")
-        self._log_stderr = LogRedirect(self.safe_log, "warning")
+        self._log_stdout = LogRedirect(
+            write_callback=self.safe_log,
+            default_severity="info",
+            stdout=self._old_stdout,
+            stderr=self._old_stderr,
+        )
+        self._log_stderr = LogRedirect(
+            write_callback=self.safe_log,
+            default_severity="warning",
+            stdout=self._old_stdout,
+            stderr=self._old_stderr,
+        )
 
         sys.stdout = self._log_stdout
         sys.stderr = self._log_stderr
@@ -1188,7 +1155,7 @@ class CeluneHeadlessUI:
         # for Celune terminals not supporting colored text
         self.no_color = (
             config_bool(config, "CELUNE_HEADLESS_NOCOLOR", "headless_nocolor")
-            or not sys.stdout.isatty()
+            or not supports_ansi()
         )
         self.reset = "\x1b[0m" if not self.no_color else ""
 
@@ -1265,7 +1232,7 @@ class CeluneHeadlessUI:
 
         if self.celune is not None:
             self.celune.close()
-        sys.exit(0)
+        sys.exit(EXIT_SUCCESS)
 
 
 class CeluneBaseUI(Protocol):
@@ -1452,6 +1419,8 @@ class LogRedirect:
 
     def __init__(
         self,
+        stdout,
+        stderr,
         write_callback: Callable[[str, str], None],
         default_severity: str = "info",
     ) -> None:
@@ -1467,6 +1436,8 @@ class LogRedirect:
         self.write_callback = write_callback
         self.default_severity = default_severity
         self._buffer = ""
+        self.underlying_stdout = stdout
+        self.underlying_stderr = stderr
 
     def write(self, text: str) -> None:
         """Write text to the logger.
@@ -1483,6 +1454,12 @@ class LogRedirect:
         if "is deprecated" in text:
             return
 
+        # strip any incoming ANSI, but keep TTY specific input
+        ansi_regex = re.compile(
+            r"\x1b(?:\[[0-?]*[ -/]*[@-~]|][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])"
+        )
+        text = re.sub(ansi_regex, "", text)
+
         self._buffer += text
 
         while "\n" in self._buffer or "\r" in self._buffer:
@@ -1496,6 +1473,23 @@ class LogRedirect:
             if chunk:
                 self.write_callback(chunk, self.default_severity)
 
+    def ansi(self, escape: str) -> None:
+        """Write ANSI escape code(s) to the terminal directly.
+
+        Args:
+            escape: The ANSI escape code(s) to process.
+
+        Return:
+            None: This function writes ANSI escape codes to the underlying terminal.
+        """
+        ansi_regex = re.compile(
+            r"\x1b(?:\[[0-?]*[ -/]*[@-~]|][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])"
+        )
+        any_ansi = re.findall(ansi_regex, escape)
+        if any_ansi:
+            escapes = "".join(any_ansi)
+            self.underlying_stdout.write(escapes)
+
     def flush(self) -> None:
         """Flush the buffers.
 
@@ -1505,3 +1499,11 @@ class LogRedirect:
         if self._buffer.strip():
             self.write_callback(self._buffer.strip(), self.default_severity)
         self._buffer = ""
+
+    def isatty(self) -> bool:
+        """Return if the underlying terminal is a TTY.
+
+        Returns:
+            bool: Whether the underlying terminal is a TTY.
+        """
+        return self.underlying_stdout.isatty()
