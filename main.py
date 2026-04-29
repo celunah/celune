@@ -112,7 +112,9 @@ def main() -> None:
                         print("Continuing with the current version.")
                         time.sleep(5)
                     else:
-                        print("Celune updated successfully. Restart Celune to apply changes.")
+                        print(
+                            "Celune updated successfully. Restart Celune to apply changes."
+                        )
                         sys.exit(0)
 
         # ask for default backend if not set yet
