@@ -508,7 +508,8 @@ class CeluneUI(App):
         pages.append(lambda: now.strftime("%A, %B %d, %Y"))
         pages.append(lambda: celune_day_status(now))
         pages.append(lambda: lunar_phase(lunar[0]).title())
-        pages.append(lambda: f"{int(lunar[2])} day{suffix} until full moon")
+        if lunar_phase(lunar[0]) != "full moon":
+            pages.append(lambda: f"{int(lunar[2])} day{suffix} until full moon")
 
         # usage help
         pages.append(lambda: "/help commands")
