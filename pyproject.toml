@@ -9,7 +9,7 @@ authors = [
 ]
 
 dependencies = [
-	# AI stack
+    # AI stack
     "torch==2.11.0+cu128",
     "torchaudio==2.11.0+cu128",
     # Celune sounds best with faster-qwen3-tts 0.2.4 or 0.2.6.
@@ -28,10 +28,10 @@ dependencies = [
     "huggingface-hub<1.0.0",
     "transformers<5.0.0",
     # For later usage in VoxCPM2, if the optimization path is fixed.
-    # "triton>=3.6.0; sys_platform == 'win32'",
+    # "triton>=3.6.0; sys_platform == 'linux'",
     # "triton-windows>=3.6.0; sys_platform == 'win32'",
 
-	# Audio processing
+    # Audio processing
     "numpy",
     "scipy",
     "pedalboard",
@@ -49,7 +49,7 @@ dependencies = [
     # Celune uses this to plot the voice graph. If developer mode is disabled, this isn't needed.
     "matplotlib",
 
-	# Others
+    # Others
     "psutil",
     "pyyaml",
 ]
@@ -81,7 +81,7 @@ dev = [
     "pylint",
     "ruff",
     # If not installed, type checkers may complain.
-	"types-pyyaml",
+    "types-pyyaml",
 ]
 
 [tool.pyright]

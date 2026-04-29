@@ -17,8 +17,8 @@ hf-xet
 huggingface-hub<1.0.0
 transformers<5.0.0
 # For later usage in VoxCPM2, if the optimization path is fixed.
-# triton>=3.3.1; sys_platform == 'linux'
-# triton-windows>=3.3.1; sys_platform == 'win32'
+# triton>=3.6.0; sys_platform == 'linux'
+# triton-windows>=3.6.0; sys_platform == 'win32'
 
 # Sound processing
 numpy
