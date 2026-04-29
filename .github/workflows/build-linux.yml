@@ -41,13 +41,10 @@ jobs:
           file Celune.AppDir/AppRun
           desktop-file-validate Celune.AppDir/celune.desktop
 
-      - name: Download appimagetool
+      - name: Download appimagetool & Build AppImage
         run: |
           wget -O appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
-
-      - name: Build AppImage
-        run: |
           ./appimagetool Celune.AppDir celune.appimage
 
       - name: Upload AppImage
