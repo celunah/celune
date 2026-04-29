@@ -112,8 +112,8 @@ def main() -> None:
                         print("Continuing with the current version.")
                         time.sleep(5)
                     else:
-                        print("Celune updated successfully. Restarting Celune...")
-                        os.execl(sys.executable, sys.executable, *sys.argv)
+                        print("Celune updated successfully. Restart Celune to apply changes.")
+                        sys.exit(0)
 
         # ask for default backend if not set yet
         # Celune will save this preference
