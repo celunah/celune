@@ -1,8 +1,8 @@
 <h1 align="center">Celune</h1>
 
-Celune is a real-time AI TTS engine focused on natural voice delivery, low-latency playback, and distinct voice styles.
+Celune is a real-time AI TTS character engine focused on expressive voice delivery with a well-made user experience.
 
-It has been designed for real-time performance on consumer GPUs.
+It has been designed to provide fast, high-quality voice generation, even on consumer-grade hardware.
 
 ## Features
 
@@ -10,8 +10,8 @@ It has been designed for real-time performance on consumer GPUs.
 - Distinct voice styles (Calm, Balanced, Bold, Upbeat)
 - Multiple operation modes
 - Stable long-form narration without drift
-- Source-level audio control (no post-processing)
-- GPU-accelerated inference
+- Native audio controls & effects (no post-processing)
+- Optimized GPU inference
 
 ## Voices & samples
 Each voice is demonstrated using a short introduction and a longer narration sample to showcase consistency, pacing, and expressiveness.
