@@ -50,10 +50,10 @@ jobs:
         run: |
           wget -O appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
-          ./appimagetool Celune.AppDir Celune.AppImage
+          ./appimagetool Celune.AppDir celune.appimage
 
       - name: Upload AppImage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
-          name: celune.appimage
+          name: Celune-Linux-x86_64
           path: celune.appimage
