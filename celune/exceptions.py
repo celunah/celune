@@ -29,6 +29,10 @@ class BadAudioError(ValueError, CeluneError):
     """Celune cannot process audio in this format."""
 
 
+class UpdateError(RuntimeError, CeluneError):
+    """Celune cannot update at this time."""
+
+
 class IncompleteExtensionError(NotImplementedError, ExtensionError):
     """User did not define a required extension method."""
 

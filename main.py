@@ -24,8 +24,9 @@ try:
     import yaml
     import psutil
     from celune.celune import Celune
-    from celune.exceptions import No
+    from celune.exceptions import No, UpdateError
     from celune.namedays import has_nameday
+    from celune.updater import check_for_update, update_to_latest
     from celune.ui import (
         CeluneUI,
         CeluneHeadlessUI,
@@ -77,6 +78,42 @@ def main() -> None:
         dev = config_bool(config, "CELUNE_DEV", "dev")
         headless = config_bool(config, "CELUNE_HEADLESS", "headless")
         backend = INITIAL_BACKEND or config_value(config, "backend")
+
+        # try to update if not up to date
+        if not headless:
+            update = check_for_update()
+            if update:
+                latest_label = f"Celune {update.latest_version}"
+                if not update.latest_tag:
+                    latest_label = "Celune latest"
+
+                choice = SelectMenu(
+                    ["Yes, update now", "No, continue as is"],
+                    ["update", "continue"],
+                    "\n".join(
+                        [
+                            "New update found.",
+                            (
+                                f"You are running Celune {update.local_version} "
+                                f"({update.local_revision}), latest version is "
+                                f"{latest_label} ({update.latest_revision})."
+                            ),
+                            "Do you want to update?",
+                        ]
+                    ),
+                ).start()
+
+                if choice == "update":
+                    print("Updating Celune...")
+                    try:
+                        update_to_latest()
+                    except UpdateError as exc:
+                        print(exc)
+                        print("Continuing with the current version.")
+                        time.sleep(5)
+                    else:
+                        print("Celune updated successfully. Restarting Celune...")
+                        os.execl(sys.executable, sys.executable, *sys.argv)
 
         # ask for default backend if not set yet
         # Celune will save this preference
