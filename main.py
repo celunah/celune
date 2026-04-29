@@ -89,7 +89,7 @@ def main() -> None:
 
                 choice = SelectMenu(
                     ["Yes, update now", "No, continue as is"],
-                    ["update", "continue"],
+                    [True, False],
                     "\n".join(
                         [
                             "New update found.",
@@ -103,7 +103,7 @@ def main() -> None:
                     ),
                 ).start()
 
-                if choice == "update":
+                if choice is True:
                     print("Updating Celune...")
                     try:
                         update_to_latest()
