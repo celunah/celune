@@ -52,6 +52,19 @@ def _run_git(args: list[str], timeout: int = 15) -> str:
     return result.stdout.strip()
 
 
+def _format_git_error(exc: subprocess.CalledProcessError) -> str:
+    details = "\n".join(
+        part.strip()
+        for part in (exc.stderr, exc.stdout)
+        if isinstance(part, str) and part.strip()
+    )
+    command = " ".join(str(part) for part in exc.cmd)
+    if details:
+        return f"{command} failed:\n{details}"
+
+    return f"{command} failed with exit code {exc.returncode}."
+
+
 def _git_succeeds(args: list[str], timeout: int = 15) -> bool:
     result = subprocess.run(
         ["git", *args],
@@ -211,7 +224,7 @@ def update_to_latest() -> None:
         UpdateError: Celune cannot be updated safely.
     """
     if not _is_git_checkout():
-        raise UpdateError("Celune is not running from a Git checkout.")
+        raise UpdateError("Celune did not find a Git repository.")
 
     if _has_local_changes():
         raise UpdateError(
@@ -219,32 +232,36 @@ def update_to_latest() -> None:
         )
 
     try:
-        _run_git(["fetch", "--tags", "--prune", REMOTE_URL], timeout=120)
-    except (
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        FileNotFoundError,
-    ) as exc:
-        raise UpdateError("Celune could not update from GitHub.") from exc
+        _run_git(["fetch", "--prune", REMOTE_URL, "HEAD"], timeout=120)
+    except subprocess.CalledProcessError as exc:
+        raise UpdateError(_format_git_error(exc)) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise UpdateError(f"Git fetch timed out after {exc.timeout} seconds.") from exc
+    except FileNotFoundError as exc:
+        raise UpdateError("Celune could not find Git on this system.") from exc
 
     try:
         can_fast_forward = _git_succeeds(
             ["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"]
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        raise UpdateError("Celune could not inspect the update.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise UpdateError(
+            f"Git update validation timed out after {exc.timeout} seconds."
+        ) from exc
+    except FileNotFoundError as exc:
+        raise UpdateError("Celune could not find Git on this system.") from exc
 
     if not can_fast_forward:
         raise UpdateError(
             "Celune cannot update automatically because the local branch cannot "
-            "fast-forward to GitHub."
+            "be fast-forwarded."
         )
 
     try:
         _run_git(["merge", "--ff-only", "FETCH_HEAD"], timeout=120)
-    except (
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        FileNotFoundError,
-    ) as exc:
-        raise UpdateError("Celune could not apply the update.") from exc
+    except subprocess.CalledProcessError as exc:
+        raise UpdateError(_format_git_error(exc)) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise UpdateError(f"Git merge timed out after {exc.timeout} seconds.") from exc
+    except FileNotFoundError as exc:
+        raise UpdateError("Celune could not find Git on this system.") from exc
