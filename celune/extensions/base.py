@@ -25,7 +25,11 @@ class LogCallable(Protocol):
 
         Returns:
             None: Implementations forward the message to a logger.
+
+        Raises:
+            NotImplementedError: The protocol placeholder is called directly.
         """
+        raise NotImplementedError
 
 
 @runtime_checkable
@@ -41,22 +45,31 @@ class SayCallable(Protocol):
 
         Returns:
             bool: ``True`` when the request was accepted.
+
+        Raises:
+            NotImplementedError: The protocol placeholder is called directly.
         """
+        raise NotImplementedError
 
 
 @runtime_checkable
 class PlayCallable(Protocol):
     """Extension callable play request annotation."""
 
-    def __call__(self, sound_path: str) -> bool:
+    def __call__(self, sound_path: str, keep: bool = False) -> bool:
         """Queue an audio file for playback.
 
         Args:
             sound_path: Path to the sound file.
+            keep: Whether to prepend this SFX to the next saved utterance.
 
         Returns:
             bool: ``True`` when playback was queued.
+
+        Raises:
+            NotImplementedError: The protocol placeholder is called directly.
         """
+        raise NotImplementedError
 
 
 @runtime_checkable
@@ -72,7 +85,11 @@ class StatusCallable(Protocol):
 
         Returns:
             None: Implementations forward the status update.
+
+        Raises:
+            NotImplementedError: The protocol placeholder is called directly.
         """
+        raise NotImplementedError
 
 
 @runtime_checkable
@@ -87,7 +104,11 @@ class SetVoiceCallable(Protocol):
 
         Returns:
             bool: ``True`` when the voice change was accepted.
+
+        Raises:
+            NotImplementedError: The protocol placeholder is called directly.
         """
+        raise NotImplementedError
 
 
 @runtime_checkable
@@ -99,7 +120,11 @@ class GetStateCallable(Protocol):
 
         Returns:
             str: Current state name.
+
+        Raises:
+            NotImplementedError: The protocol placeholder is called directly.
         """
+        raise NotImplementedError
 
 
 @runtime_checkable
@@ -114,7 +139,11 @@ class WaitUntilReadyCallable(Protocol):
 
         Returns:
             bool: ``True`` when Celune is ready.
+
+        Raises:
+            NotImplementedError: The protocol placeholder is called directly.
         """
+        raise NotImplementedError
 
 
 @dataclass(slots=True)
@@ -211,6 +240,10 @@ class CeluneExtension(ABC):
 
         Returns:
             None: Subclasses override this to perform extension work.
+
+        Raises:
+            IncompleteExtensionError: The extension does not override
+                ``invoke``.
         """
         raise IncompleteExtensionError(
             f"{self.__class__.__name__}.invoke() is not implemented"
@@ -243,11 +276,12 @@ class CeluneExtension(ABC):
 
         return self.ctx.say(text, save=save)
 
-    def play(self, sound_path: str) -> bool:
+    def play(self, sound_path: str, keep: bool = False) -> bool:
         """Play arbitrary sound through Celune.
 
         Args:
             sound_path: The path to the audio file to play.
+            keep: Whether to prepend this SFX to the next saved utterance.
 
         Returns:
             bool: ``True`` when playback was queued, otherwise ``False``.
@@ -255,7 +289,7 @@ class CeluneExtension(ABC):
         if not self.ctx.wait_until_ready():
             return False
 
-        return self.ctx.play(sound_path)
+        return self.ctx.play(sound_path, keep=keep)
 
     def status(self, msg: str, severity: str = "info") -> None:
         """Update status display.

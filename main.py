@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-Celune 3.3.0 - "I'm not just a TTS. I'm someone special."
+Celune 3.3.1 - "I'm not just a TTS. I'm someone special."
 Refer to https://github.com/celunah/celune for information about Celune.
 Celune models are available on https://huggingface.co/collections/lunahr/celune.
 """
@@ -26,7 +26,13 @@ try:
     from celune.celune import Celune
     from celune.exceptions import No
     from celune.namedays import has_nameday
-    from celune.ui import CeluneUI, CeluneHeadlessUI, CeluneBaseUI, SelectMenu
+    from celune.ui import (
+        CeluneUI,
+        CeluneHeadlessUI,
+        CeluneHeadlessBaseUI,
+        CeluneTextualUI,
+        SelectMenu,
+    )
     from celune.config import config_bool, config_value, env_bool
 except ModuleNotFoundError as package:
     print(f"Missing dependency: {package.name}")
@@ -49,6 +55,10 @@ def main() -> None:
 
     Returns:
         None: This function runs the application or exits the process on failure.
+
+    Raises:
+        No: Celune refuses to run on a blocked name day.
+        Exception: Re-raised in development mode for unexpected startup errors.
     """
     try:
         date = datetime.datetime.now()
@@ -117,8 +127,8 @@ def main() -> None:
                             print("Celune is already running.")
                             sys.exit(1)
 
-        ui: CeluneBaseUI
         if not headless:  # normal mode
+            ui: CeluneTextualUI
             ui = CeluneUI()
             celune = Celune(
                 tts_backend=backend,
@@ -136,16 +146,17 @@ def main() -> None:
             ui.celune = celune
             ui.run()
         else:  # CEF/headless mode
-            ui = CeluneHeadlessUI()
+            ui_headless: CeluneHeadlessBaseUI
+            ui_headless = CeluneHeadlessUI(config)
             celune = Celune(
                 tts_backend=backend,
-                log_callback=ui.headless_log,
-                error_callback=ui.headless_error,
+                log_callback=ui_headless.headless_log,
+                error_callback=ui_headless.headless_error,
                 dev=dev,
                 config=config,
             )
             celune.setup_extensions()
-            ui.celune = celune
+            ui_headless.celune = celune
 
             if not celune.load():
                 celune.close()
@@ -153,7 +164,7 @@ def main() -> None:
 
             print("Celune is running in headless mode.")
             print("While in this mode, input is only possible via Celune extensions.")
-            ui.run()
+            ui_headless.run()
     except Exception as e:
         if e.__class__ != No:
             print("An internal error occurred running Celune.")

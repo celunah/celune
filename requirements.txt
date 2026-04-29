@@ -1,16 +1,24 @@
 # Please, just use `uv sync`.
---extra-index-url=https://download.pytorch.org/whl/cu128
+-i https://download.pytorch.org/whl/cu128
 
 # AI stack
 torch==2.11.0+cu128
 torchaudio==2.11.0+cu128
+# Celune sounds best with faster-qwen3-tts 0.2.4 or 0.2.6.
+# Do not use version 0.2.5. It may cause problems.
 faster-qwen3-tts==0.2.6
+# If you want Celune to use the alternative VoxCPM2-based backend, install this package.
+# Note: This will fall back to voice cloning. If you want to use native Celune voices, use the Qwen3 backend.
 voxcpm>=2.0.0,<2.1.0
+# If not installed, Hugging Face falls back to the older Git LFS way of downloading models.
 hf-xet
+# Qwen3 does not support newer versions of Hugging Face libraries at this time.
+# Celune will use Transformers 4.x for the time being.
 huggingface-hub<1.0.0
 transformers<5.0.0
-triton>=3.3.0; sys_platform != 'win32'
-triton-windows>=3.3.0; sys_platform == 'win32'
+# For later usage in VoxCPM2, if the optimization path is fixed.
+# triton>=3.3.1; sys_platform == 'linux'
+# triton-windows>=3.3.1; sys_platform == 'win32'
 
 # Sound processing
 numpy
@@ -19,12 +27,16 @@ sounddevice
 soundfile
 pedalboard
 pyrubberband
+# Explicitly used by the self-analysis pass, used as a dependency elsewhere.
+librosa
 
 # UX & UI
 textual
 rich
 readchar
 openrgb-python
+# Celune uses this to plot the voice graph. If developer mode is disabled, this isn't needed.
+matplotlib
 
 # Others
 psutil

@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Callable, Optional, Generator
+from typing import Any, Callable, Optional, Generator
 
 import numpy as np
 import numpy.typing as npt
-from transformers import PreTrainedModel
 
 
 class CeluneBackend(ABC):
@@ -38,7 +37,7 @@ class CeluneBackend(ABC):
         else:
             self.model_name = None
 
-        self.model: Optional[PreTrainedModel] = None
+        self.model: Any | None = None
         self.log = log
         self.current_seed: Optional[int] = None
 
@@ -59,6 +58,9 @@ class CeluneBackend(ABC):
 
         Returns:
             str: The backend-specific model identifier used by default.
+
+        Raises:
+            ValueError: No default model can be resolved for this backend.
         """
         if self.voice_models and self.default_voice is not None:
             return self.voice_models[self.default_voice]
@@ -102,6 +104,10 @@ class CeluneBackend(ABC):
 
         Returns:
             str: The model identifier associated with the requested voice.
+
+        Raises:
+            KeyError: The voice name is not defined by this backend.
+            ValueError: The backend cannot resolve model IDs by voice.
         """
         if self.voice_models:
             return self.voice_models[voice]
@@ -111,11 +117,14 @@ class CeluneBackend(ABC):
 
         raise ValueError(f"{self.name} cannot resolve a model for voice '{voice}'")
 
-    def load_default_model(self) -> PreTrainedModel:
+    def load_default_model(self) -> Any:
         """Load the configured default model for this backend.
 
         Returns:
             Any: The loaded backend model instance.
+
+        Raises:
+            ValueError: The backend does not have a configured model to load.
         """
         if self.model_name is None:
             raise ValueError(f"{self.name} does not have a configured model to load")
@@ -139,7 +148,7 @@ class CeluneBackend(ABC):
         """
 
     @abstractmethod
-    def load_model(self, model_id: str, **kwargs) -> PreTrainedModel:
+    def load_model(self, model_id: str, **kwargs) -> Any:
         """Load a model by backend-specific identifier.
 
         Args:
@@ -152,7 +161,7 @@ class CeluneBackend(ABC):
 
     @abstractmethod
     def generate_stream(
-        self, model: PreTrainedModel, **kwargs
+        self, model: Any, **kwargs
     ) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Yield audio chunks from a loaded backend model.
 

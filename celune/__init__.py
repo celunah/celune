@@ -6,9 +6,9 @@ REVISION = get_revision()
 if REVISION:
     local = REVISION.rstrip("*")
     dirty = ".dirty" if REVISION.endswith("*") else ""
-    __version__ = f"3.3.0+{local}{dirty}"
+    __version__ = f"3.3.1+{local}{dirty}"
 else:
-    __version__ = "3.3.0"
+    __version__ = "3.3.1"
 
 __tagline__ = "\u201cI'm not just a TTS. I'm someone special.\u201d"
 __codename__ = "Fidelity\u00b2"

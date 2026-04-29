@@ -8,8 +8,10 @@ import traceback
 import contextlib
 from typing import Any, Optional, Callable, Protocol, Union
 
-import torch
+import numpy as np
+import numpy.typing as npt
 import sounddevice as sd
+import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from transformers.utils import logging as hf_logging
@@ -47,13 +49,38 @@ from .runtime import log_runtime_banner, validate_runtime
 class MessageCallback(Protocol):
     """Callback accepting a message and optional severity."""
 
-    def __call__(self, msg: str, severity: str = "info") -> None: ...
+    def __call__(self, msg: str, severity: str = "info") -> None:
+        """Handle a message emitted by Celune.
+
+        Args:
+            msg: Message text to handle.
+            severity: Severity label associated with the message.
+
+        Returns:
+            None: Implementations consume or forward the message.
+
+        Raises:
+            NotImplementedError: The protocol placeholder is called directly.
+        """
+        raise NotImplementedError
 
 
 class InputStateCallback(Protocol):
     """Callback accepting either positional or named lock state."""
 
-    def __call__(self, locked: bool) -> None: ...
+    def __call__(self, locked: bool) -> None:
+        """Handle input lock-state changes.
+
+        Args:
+            locked: Whether input should be treated as locked.
+
+        Returns:
+            None: Implementations update their input state.
+
+        Raises:
+            NotImplementedError: The protocol placeholder is called directly.
+        """
+        raise NotImplementedError
 
 
 class Celune:
@@ -92,6 +119,9 @@ class Celune:
 
         Returns:
             None: This constructor prepares queues, backend state, and RGB glow.
+
+        Raises:
+            BackendError: No backend is selected, or backend setup fails.
         """
         if tts_backend is None:
             raise BackendError("no backend set")
@@ -174,6 +204,7 @@ class Celune:
         self.locked = True
         self.loaded = False
         self.recently_saved: Optional[str] = None
+        self.kept_sfx_audio: Optional[npt.NDArray[np.float32]] = None
         self._last_flavor: Optional[str] = None
         self._model_ready = threading.Event()
         self._model_ready.set()
@@ -387,6 +418,9 @@ class Celune:
 
         Returns:
             None: This method reloads the backend model for the requested voice.
+
+        Raises:
+            WarmupError: The newly loaded voice fails warmup.
         """
 
         self.log("Celune is reloading, please stand by...")
@@ -581,8 +615,8 @@ class Celune:
         if self.llm is None or self.tokenizer is None:
             return None
 
-        llm = self.llm
-        tokenizer = self.tokenizer
+        llm: Any = self.llm
+        tokenizer: Any = self.tokenizer
 
         def _run_inference() -> Optional[str]:
             """Run a blocking normalization request.
@@ -697,17 +731,18 @@ class Celune:
         """
         return say_pipeline(self, text, save=save)
 
-    def play(self, sound_path: str) -> bool:
+    def play(self, sound_path: str, keep: bool = False) -> bool:
         """Play a sound via Celune's pipeline.
 
         Args:
             sound_path: The path to the audio file to play.
+            keep: Whether to prepend this SFX to the next saved utterance.
 
         Returns:
             bool: ``True`` when playback was queued successfully, otherwise
                 ``False``.
         """
-        return play_pipeline(self, sound_path)
+        return play_pipeline(self, sound_path, keep=keep)
 
     def close(self) -> None:
         """Shut off Celune and exit.

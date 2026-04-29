@@ -46,6 +46,9 @@ def format_number(num: float, precision: int = 0) -> str:
 
     Returns:
         str: The formatted numeric string.
+
+    Raises:
+        ValueError: ``precision`` is negative.
     """
     if precision < 0:
         raise ValueError("precision must be >= 0")
@@ -64,6 +67,9 @@ def to_rgb(color: str) -> tuple[int, ...]:
 
     Returns:
         tuple[int, ...]: The parsed ``(red, green, blue)`` color components.
+
+    Raises:
+        ValueError: ``color`` is not a valid 3- or 6-character hex code.
     """
     color = color.strip()
 
@@ -175,6 +181,11 @@ def cuda_architecture(capability: tuple[int, int]) -> str:
 
     Returns:
         str: The architecture name.
+
+    Raises:
+        NotImplementedError: The CUDA capability is below Celune's supported
+            minimum.
+        ValueError: The CUDA capability is not recognized.
     """
 
     major, minor = capability

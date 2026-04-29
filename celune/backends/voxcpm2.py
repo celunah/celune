@@ -222,6 +222,9 @@ class VoxCPM2(CeluneBackend):
         Returns:
             Iterable[tuple]: An iterator of ``(audio, sample_rate, timing)``
             tuples suitable for Celune's playback pipeline.
+
+        Raises:
+            ValueError: The requested voice is unknown or input text is empty.
         """
         # convert/remove invalid params
         voice = kwargs.pop("voice", self.default_voice)

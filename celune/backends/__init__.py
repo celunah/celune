@@ -46,6 +46,10 @@ def resolve_backend(
 
     Returns:
         CeluneBackend: The resolved backend instance.
+
+    Raises:
+        ValueError: The named backend is unknown.
+        TypeError: The backend specification is not a supported type.
     """
     log = log or _default_log
 
