@@ -9,19 +9,24 @@ on:
 jobs:
   appimage:
     runs-on: ubuntu-latest
-    container: alpine:latest
 
     steps:
       - uses: actions/checkout@v5
 
       - name: Install build deps
         run: |
-          apk add --no-cache build-base linux-headers file wget desktop-file-utils
+          sudo apt-get update
+          sudo apt-get install -y \
+            musl-tools \
+            file \
+            wget \
+            desktop-file-utils \
+            libfuse2
 
       - name: Build musl launcher
         run: |
           mkdir -p dist
-          cc -O2 -static launcher.c -o dist/celune
+          musl-gcc -O2 -static launcher.c -o dist/celune
           file dist/celune
 
       - name: Prepare AppDir
@@ -45,7 +50,7 @@ jobs:
         run: |
           wget -O appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
-          ./appimagetool Celune.AppDir celune.appimage
+          ./appimagetool Celune.AppDir Celune.AppImage
 
       - name: Upload AppImage
         uses: actions/upload-artifact@v4
