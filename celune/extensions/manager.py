@@ -38,6 +38,11 @@ class CeluneExtensionManager:
 
         Returns:
             CeluneExtension: The registered extension instance.
+
+        Raises:
+            InvalidExtensionError: The object is not a CeluneExtension subclass.
+            ExtensionAlreadyRegisteredError: An extension with the same name is
+                already registered.
         """
         if not inspect.isclass(extension_cls) or not issubclass(
             extension_cls, CeluneExtension
@@ -117,6 +122,9 @@ class CeluneExtensionManager:
         Returns:
             Any: The invocation thread is started asynchronously, so this returns
                 ``None``.
+
+        Raises:
+            InvalidExtensionError: The requested extension is not registered.
         """
         ext = self.extensions.get(name)
         if ext is None:

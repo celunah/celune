@@ -20,7 +20,7 @@ import pyrubberband as rb
 from .dsp import _resample_audio, _soften, _split, _to_48khz
 from .exceptions import NotAvailableError
 from .utils import format_number, run_async
-from .analysis import analyze_voice
+from .analysis import analyze_voice_audio
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -39,6 +39,7 @@ class SpeechDone:
     """Playback completion marker for one generated utterance."""
 
     saved_path: str | None = None
+    analysis_audio: np.ndarray | None = None
 
 
 def clear_queue(q: queue.Queue) -> None:
@@ -105,6 +106,7 @@ def force_stop_speech(engine: "Celune") -> bool:
     with engine.queue_lock:
         clear_queue(engine.text_queue)
         clear_queue(engine.audio_queue)
+        engine.kept_sfx_audio = None
         engine.audio_queue.put(engine.force_stop_marker)
 
     return True
@@ -162,6 +164,9 @@ def say(engine: "Celune", text: str, save: bool = True) -> bool:
 
     Returns:
         bool: ``True`` when the text was queued successfully, otherwise ``False``.
+
+    Raises:
+        Exception: Re-raised after releasing the pipeline if queueing fails.
     """
     if not engine.model_ready.is_set():
         engine.status_callback("Waiting for model")
@@ -205,15 +210,20 @@ def say(engine: "Celune", text: str, save: bool = True) -> bool:
         raise
 
 
-def play(engine: "Celune", sound_path: str) -> bool:
+def play(engine: "Celune", sound_path: str, keep: bool = False) -> bool:
     """Play a sound via Celune's pipeline.
 
     Args:
         engine: The Celune engine that should play the sound.
         sound_path: The path to the audio file to play.
+        keep: Whether to prepend this SFX to the next saved utterance.
 
     Returns:
         bool: ``True`` when playback was queued successfully, otherwise ``False``.
+
+    Raises:
+        Exception: Re-raised after releasing the pipeline if SFX playback setup
+            fails.
     """
     if not os.path.exists(sound_path):
         engine.log(f"Celune cannot find {sound_path}.", "warning")
@@ -229,10 +239,12 @@ def play(engine: "Celune", sound_path: str) -> bool:
             f"Sample rate: {sr} Hz, length: {format_number(audio_len, 2)} seconds"
         )
 
-        audio = _resample_audio(audio, sr)
+        audio = _resample_audio(np.asarray(audio, dtype=np.float32), sr)
+        if keep:
+            engine.kept_sfx_audio = audio.copy()
 
         engine.cur_state = "speaking"
-        for chunk in _split(audio, sr, engine.chunk_size):
+        for chunk in _split(audio, 48000, engine.chunk_size):
             engine.audio_queue.put((chunk, 48000, None))
         engine.audio_queue.put(engine.utterance_done)
 
@@ -372,6 +384,9 @@ def generation_worker(engine: "Celune") -> None:
 
     Returns:
         None: This worker loop runs until it receives the shutdown sentinel.
+
+    Raises:
+        NotAvailableError: The speech model is unavailable during generation.
     """
     while True:
         item = engine.text_queue.get()
@@ -382,6 +397,8 @@ def generation_worker(engine: "Celune") -> None:
 
         text = item.text
         save_output = item.save
+        kept_sfx_audio = engine.kept_sfx_audio
+        engine.kept_sfx_audio = None
 
         if engine.exit_requested:
             engine.locked = False
@@ -443,10 +460,12 @@ def generation_worker(engine: "Celune") -> None:
                             if engine.utterance_force_stop.is_set():
                                 break
 
-                            if hasattr(audio_chunk, "cpu"):
+                            if isinstance(audio_chunk, torch.Tensor):
                                 audio_chunk = audio_chunk.cpu().numpy()
 
-                            audio_chunk = _to_48khz(audio_chunk, sr)
+                            audio_chunk = _to_48khz(
+                                np.asarray(audio_chunk, dtype=np.float32), sr
+                            )
 
                             if engine.speed != 1.0 and engine.can_use_rubberband:
                                 try:
@@ -459,8 +478,13 @@ def generation_worker(engine: "Celune") -> None:
                                         "warning",
                                     )
                                     engine.can_use_rubberband = False
+                                else:
+                                    audio_chunk = np.asarray(
+                                        audio_chunk, dtype=np.float32
+                                    )
                             if engine.reverb.strength > 0.0:
                                 audio_chunk = engine.reverb.process(audio_chunk, 48000)
+                                audio_chunk = np.asarray(audio_chunk, dtype=np.float32)
 
                             if is_first_chunk:
                                 audio_chunk = _soften(audio_chunk, 48000, end=False)
@@ -516,6 +540,7 @@ def generation_worker(engine: "Celune") -> None:
                 engine.log("[GEN] done")
 
                 saved_path = None
+                analysis_audio = None
                 if not engine.exit_requested:
                     if engine.reverb.strength > 0.0:
                         tail = engine.reverb.flush()
@@ -529,6 +554,9 @@ def generation_worker(engine: "Celune") -> None:
 
                     if save_output and full_audio:
                         wav = np.concatenate(full_audio)
+                        analysis_audio = wav.copy()
+                        if kept_sfx_audio is not None:
+                            wav = np.concatenate((kept_sfx_audio, wav))
                         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
 
                         # get up to first three words of input and sanitize for use in a file name
@@ -558,7 +586,12 @@ def generation_worker(engine: "Celune") -> None:
                             )
 
                     engine.recently_saved = saved_path
-                    engine.audio_queue.put(SpeechDone(saved_path=saved_path))
+                    engine.audio_queue.put(
+                        SpeechDone(
+                            saved_path=saved_path,
+                            analysis_audio=analysis_audio,
+                        )
+                    )
                 break
             except Exception as e:
                 if engine.exit_requested:
@@ -581,6 +614,9 @@ def playback_worker(engine: "Celune") -> None:
 
     Returns:
         None: This worker loop runs until playback is shut down.
+
+    Raises:
+        NotAvailableError: The audio stream is unavailable during playback.
     """
     started = False
 
@@ -624,6 +660,9 @@ def playback_worker(engine: "Celune") -> None:
 
         if isinstance(item, SpeechDone) or item is engine.utterance_done:
             saved_path = item.saved_path if isinstance(item, SpeechDone) else None
+            analysis_audio = (
+                item.analysis_audio if isinstance(item, SpeechDone) else None
+            )
             engine.playback_done.set()
 
             more_pending = (not engine.audio_queue.empty()) or (
@@ -656,11 +695,20 @@ def playback_worker(engine: "Celune") -> None:
                     engine.log(f"Just type. {choice}")
                 else:
                     # queueing new speech during analysis may net you a reduced performance
-                    if engine.dev and saved_path is not None:
+                    if (
+                        engine.dev
+                        and saved_path is not None
+                        and analysis_audio is not None
+                    ):
                         engine.log("Analyzing...")
+                        saved = pathlib.Path(saved_path)
                         run_async(
-                            analyze_voice,
-                            pathlib.Path(saved_path),
+                            analyze_voice_audio,
+                            analysis_audio,
+                            48000,
+                            saved.name,
+                            saved.parent,
+                            saved.stem,
                         )
 
                     engine.log("Ready to speak.")

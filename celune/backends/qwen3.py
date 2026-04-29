@@ -60,6 +60,9 @@ class Qwen3(CeluneBackend):
 
         Returns:
             None: This constructor validates and stores the active mode.
+
+        Raises:
+            ValueError: The requested Qwen3 generation mode is unsupported.
         """
         if mode not in self.supported_modes:
             raise ValueError(
@@ -102,6 +105,9 @@ class Qwen3(CeluneBackend):
 
         Returns:
             str: The model identifier for the requested voice.
+
+        Raises:
+            ValueError: Clone mode cannot resolve the requested voice.
         """
         if self.mode == "clone":
             if voice not in self.voice_models:
@@ -200,6 +206,9 @@ class Qwen3(CeluneBackend):
 
         Returns:
             Iterable[Any]: An iterator of Qwen3 streaming audio chunks.
+
+        Raises:
+            ValueError: The current Qwen3 mode or requested voice is unsupported.
         """
         if self.mode == "native":
             kwargs.pop("voice", None)  # Celune has native voices in this backend

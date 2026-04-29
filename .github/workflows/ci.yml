@@ -36,7 +36,7 @@ jobs:
         run: uv run pylint celune
 
       - name: Type check
-        run: uv run mypy celune
+        run: uv run pyright celune
 
       - name: Import smoke test
         run: |

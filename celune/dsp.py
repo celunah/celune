@@ -191,6 +191,10 @@ class StreamingPedalboardReverb:
 
         Returns:
             npt.NDArray[np.float32]: The processed stereo audio chunk.
+
+        Raises:
+            AudioMismatchError: ``audio`` is not stereo audio shaped
+                ``(samples, 2)``.
         """
         if audio.ndim != 2 or audio.shape[1] != 2:
             raise AudioMismatchError(

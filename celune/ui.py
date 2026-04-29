@@ -11,7 +11,7 @@ import threading
 import itertools
 import contextlib
 import subprocess
-from typing import Optional, Callable, Protocol
+from typing import Any, Optional, Callable, Protocol, cast
 from collections.abc import Iterator
 
 import yaml
@@ -29,6 +29,8 @@ from .celune import Celune
 from .config import config_bool
 from .utils import celune_day_status, lunar_phase, lunar_info
 from .exceptions import InvalidExtensionError
+
+SIGTSTP = getattr(signal, "SIGTSTP", None)
 
 SEVERITY_COLORS = {
     "celune": {
@@ -205,28 +207,28 @@ class CeluneUI(App):
         """
         super().__init__()
 
-        self.logs: RichLog
-        self.input_box: TextArea
-        self.style_button: Button
-        self.status: Label
-        self.resources: Label
+        self.logs = cast(RichLog, None)
+        self.input_box = cast(TextArea, None)
+        self.style_button = cast(Button, None)
+        self.status = cast(Label, None)
+        self.resources = cast(Label, None)
         self.themes = ("celune", "celune_light")
         self.active_theme_name = "celune"
         self.log_history: list[tuple[str, str]] = []
         self.status_severity = "info"
 
-        self.celune: Celune
+        self.celune = cast(Celune, None)
         self.celune_ready = False
         self.celune_styles: tuple[str, ...] = ("balanced", "calm", "bold", "upbeat")
-        self.celune_voices: Iterator[str]
+        self.celune_voices: Iterator[str] = itertools.cycle(self.celune_styles)
 
         self.style_index = 0
 
         self._old_stdout = sys.stdout
         self._old_stderr = sys.stderr
 
-        self._log_stdout: LogRedirect
-        self._log_stderr: LogRedirect
+        self._log_stdout = cast(LogRedirect, None)
+        self._log_stderr = cast(LogRedirect, None)
 
         self.cur_state = "active"
 
@@ -377,7 +379,8 @@ class CeluneUI(App):
 
         self.call_after_refresh(self.start_background_init)
         signal.signal(signal.SIGINT, self.signal_handler)
-        signal.signal(signal.SIGTSTP, self.signal_handler)
+        if SIGTSTP is not None:
+            signal.signal(SIGTSTP, self.signal_handler)
         self.safe_status("Initializing")
         self.update_resources()
 
@@ -403,6 +406,8 @@ class CeluneUI(App):
         return f"VRAM: {avail / 1024**3:.2f}/{total / 1024**3:.2f} GB available"
 
     _NVIDIA_SMI: Optional[str] = shutil.which("nvidia-smi")
+    _NVIDIA_SMI_PROC: Optional[subprocess.Popen[str]] = None
+    _NVIDIA_SMI_USAGE: Optional[int] = None
 
     @classmethod
     def _gpu_usage(cls) -> Optional[int]:
@@ -417,29 +422,45 @@ class CeluneUI(App):
         if not cls._NVIDIA_SMI:
             return None
 
+        proc = cls._NVIDIA_SMI_PROC
+        if proc is not None:
+            if proc.poll() is None:
+                return cls._NVIDIA_SMI_USAGE
+
+            stdout, _ = proc.communicate()
+            cls._NVIDIA_SMI_PROC = None
+
+            if proc.returncode != 0:
+                cls._NVIDIA_SMI_USAGE = None
+                return None
+
+            first_line = stdout.strip().splitlines()[0:1]
+            if not first_line:
+                cls._NVIDIA_SMI_USAGE = None
+                return None
+
+            try:
+                cls._NVIDIA_SMI_USAGE = int(first_line[0].strip())
+            except ValueError:
+                cls._NVIDIA_SMI_USAGE = None
+
+            return cls._NVIDIA_SMI_USAGE
+
         try:
-            result = subprocess.run(
+            cls._NVIDIA_SMI_PROC = subprocess.Popen(  # pylint: disable=consider-using-with
                 [
                     cls._NVIDIA_SMI,
                     "--query-gpu=utilization.gpu",
                     "--format=csv,noheader,nounits",
                 ],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 text=True,
-                check=True,
-                timeout=1,
             )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
-            return None
+        except OSError:
+            cls._NVIDIA_SMI_USAGE = None
 
-        first_line = result.stdout.strip().splitlines()[0:1]
-        if not first_line:
-            return None
-
-        try:
-            return int(first_line[0].strip())
-        except ValueError:
-            return None
+        return cls._NVIDIA_SMI_USAGE
 
     def _format_usage(self) -> str:
         """Return CPU/GPU utilization in a compact display format.
@@ -1126,7 +1147,7 @@ class CeluneUI(App):
         Returns:
             None: This handler schedules a graceful application shutdown.
         """
-        if sig == signal.SIGTSTP:
+        if SIGTSTP is not None and sig == SIGTSTP:
             return
 
         if threading.current_thread() is threading.main_thread():
@@ -1138,8 +1159,12 @@ class CeluneUI(App):
 class CeluneHeadlessUI:
     """Celune headless interface methods."""
 
-    def __init__(self) -> None:
+    def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
         """Initialize headless UI state.
+
+        Args:
+            config: Loaded configuration dictionary used for terminal color
+                settings.
 
         Returns:
             None: This constructor prepares terminal color handling.
@@ -1155,13 +1180,11 @@ class CeluneHeadlessUI:
             "cyan": "\x1b[0;36m",
             "white": "\x1b[0;37m",
         }
-        self.celune: Celune
+        self.celune = cast(Celune, None)
 
         # for Celune terminals not supporting colored text
         self.no_color = (
-            config_bool(
-                self.celune.config, "CELUNE_HEADLESS_NOCOLOR", "headless_nocolor"
-            )
+            config_bool(config, "CELUNE_HEADLESS_NOCOLOR", "headless_nocolor")
             or not sys.stdout.isatty()
         )
         self.reset = "\x1b[0m" if not self.no_color else ""
@@ -1219,7 +1242,8 @@ class CeluneHeadlessUI:
                 alive.
         """
         signal.signal(signal.SIGINT, self.signal_handler)
-        signal.signal(signal.SIGTSTP, self.signal_handler)
+        if SIGTSTP is not None:
+            signal.signal(SIGTSTP, self.signal_handler)
         while True:
             time.sleep(1)
 
@@ -1233,7 +1257,7 @@ class CeluneHeadlessUI:
         Returns:
             None: This handler closes Celune and exits the process.
         """
-        if sig == signal.SIGTSTP:
+        if SIGTSTP is not None and sig == SIGTSTP:
             return
 
         if self.celune is not None:
@@ -1244,8 +1268,109 @@ class CeluneHeadlessUI:
 class CeluneBaseUI(Protocol):
     """Celune base UI protocols."""
 
+    celune: Celune
+
     def run(self) -> None:
-        """Run the UI's main loop."""
+        """Run the UI's main loop.
+
+        Returns:
+            None: Implementations block until the UI exits.
+        """
+
+
+class CeluneTextualUI(CeluneBaseUI, Protocol):
+    """Protocol for Celune's interactive Textual UI callbacks."""
+
+    def tts_log(self, msg: str, severity: str = "info") -> None:
+        """Handle log messages coming from Celune.
+
+        Args:
+            msg: The log message emitted by Celune.
+            severity: The log severity level.
+
+        Returns:
+            None: Implementations forward the log message.
+        """
+
+    def safe_status(self, msg: str, severity: str = "info") -> None:
+        """Update current status.
+
+        Args:
+            msg: The status text to display.
+            severity: The status severity level.
+
+        Returns:
+            None: Implementations update their status display.
+        """
+
+    def error(self, error: str) -> None:
+        """Set the UI status to the error message.
+
+        Args:
+            error: The error text to display.
+
+        Returns:
+            None: Implementations expose the error to the user.
+        """
+
+    def tts_idle(self) -> None:
+        """Reset UI state after Celune stops talking.
+
+        Returns:
+            None: Implementations restore idle state.
+        """
+
+    def tts_queue_avail(self) -> None:
+        """Unlock input queueing after Celune completes generation.
+
+        Returns:
+            None: Implementations re-enable queueing while playback continues.
+        """
+
+    def tts_voice_changed(self, name: str) -> None:
+        """Set UI state after changing Celune's voice.
+
+        Args:
+            name: The newly active voice name.
+
+        Returns:
+            None: Implementations synchronize visible voice state.
+        """
+
+    def change_input_state(self, locked: bool) -> None:
+        """Lock or unlock Celune's UI layer.
+
+        Args:
+            locked: Whether input should be disabled.
+
+        Returns:
+            None: Implementations update input availability.
+        """
+
+
+class CeluneHeadlessBaseUI(CeluneBaseUI, Protocol):
+    """Protocol for Celune's headless UI callbacks."""
+
+    def headless_log(self, msg: str, severity: str = "info") -> None:
+        """Log to the headless interface.
+
+        Args:
+            msg: The log message to print.
+            severity: The log severity level.
+
+        Returns:
+            None: Implementations emit the log line.
+        """
+
+    def headless_error(self, error: str) -> None:
+        """Log an error to the headless interface.
+
+        Args:
+            error: The error message to print.
+
+        Returns:
+            None: Implementations emit the error line.
+        """
 
 
 class SelectMenu:

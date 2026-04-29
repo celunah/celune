@@ -664,6 +664,61 @@ def write_report(
         file_handle.write(f"{sep}\n")
 
 
+def _analyze_voice_data(
+    y: np.ndarray,
+    sr: int,
+    voice: pathlib.Path,
+    out_dir: pathlib.Path,
+    stem: str,
+) -> None:
+    """Analyze voice audio and write report artifacts.
+
+    Args:
+        y: Mono waveform to analyze.
+        sr: Waveform sample rate.
+        voice: Display path for the analyzed voice sample.
+        out_dir: Directory where report artifacts should be written.
+        stem: File stem to use for report artifacts.
+
+    Returns:
+        None: This function writes report artifacts to ``out_dir``.
+    """
+    radar_path = out_dir / f"{stem}_radar.png"
+    report_path = out_dir / f"{stem}_report.txt"
+
+    metrics = compute_raw_metrics(y, sr)
+    traits = compute_traits(metrics)
+    assessment = generate_assessment(metrics, traits)
+    plot_radar(traits, voice.name, radar_path)
+    write_report(metrics, traits, assessment, voice, report_path)
+
+
+def analyze_voice_audio(
+    audio: np.ndarray,
+    sr: int,
+    display_name: str,
+    out_dir: pathlib.Path,
+    stem: str,
+) -> None:
+    """Analyze in-memory voice audio without any saved SFX prefix.
+
+    Args:
+        audio: Voice-only waveform. Stereo audio is mixed to mono.
+        sr: Waveform sample rate.
+        display_name: File name to show in generated reports.
+        out_dir: Directory where report artifacts should be written.
+        stem: File stem to use for report artifacts.
+
+    Returns:
+        None: This function writes report artifacts to ``out_dir``.
+    """
+    y = np.asarray(audio, dtype=np.float32)
+    if y.ndim == 2:
+        y = np.mean(y, axis=1)
+
+    _analyze_voice_data(y, sr, pathlib.Path(display_name), out_dir, stem)
+
+
 def analyze_voice(voice: pathlib.Path) -> None:
     """Analyze incoming voice artifact.
 
@@ -677,14 +732,5 @@ def analyze_voice(voice: pathlib.Path) -> None:
         print("Invalid voice path.", file=sys.stderr)
         sys.exit(1)
 
-    stem = voice.stem
-    out_dir = voice.parent
-    radar_path = out_dir / f"{stem}_radar.png"
-    report_path = out_dir / f"{stem}_report.txt"
-
     y, sr = load_audio(voice)
-    metrics = compute_raw_metrics(y, sr)
-    traits = compute_traits(metrics)
-    assessment = generate_assessment(metrics, traits)
-    plot_radar(traits, voice.name, radar_path)
-    write_report(metrics, traits, assessment, voice, report_path)
+    _analyze_voice_data(y, sr, voice, voice.parent, voice.stem)

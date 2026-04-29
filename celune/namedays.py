@@ -406,6 +406,10 @@ def get_names(month: int, day: int) -> list[str]:
 
     Returns:
         list[str]: The matching English name-day names.
+
+    Raises:
+        TypeError: ``value`` is not a supported date-like value.
+        ValueError: ``value`` is a string with non-numeric date parts.
     """
     return list(NAMEDAYS.get(_key(month, day), []))
 
@@ -418,6 +422,10 @@ def get_names_for_date(value: Union[date, datetime, str]) -> list[str]:
 
     Returns:
         list[str]: The matching English name-day names.
+
+    Raises:
+        TypeError: ``value`` is not a supported date-like value.
+        ValueError: ``value`` is a string with non-numeric date parts.
     """
     if isinstance(value, datetime):
         return get_names(value.month, value.day)
