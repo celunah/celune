@@ -52,6 +52,19 @@ def _run_git(args: list[str], timeout: int = 15) -> str:
     return result.stdout.strip()
 
 
+def _git_succeeds(args: list[str], timeout: int = 15) -> bool:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=_repo_root(),
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=timeout,
+    )
+    return result.returncode == 0
+
+
 def _short_revision(revision: str) -> str:
     return revision[:SHORT_HASH_LENGTH] if revision else "unknown"
 
@@ -197,18 +210,41 @@ def update_to_latest() -> None:
     Raises:
         UpdateError: Celune cannot be updated safely.
     """
-    try:
-        status = _run_git(["status", "--porcelain"])
-        if status:
-            raise UpdateError(
-                "Celune has determined the local Git repository has not been committed yet."
-            )
+    if not _is_git_checkout():
+        raise UpdateError("Celune is not running from a Git checkout.")
 
+    if _has_local_changes():
+        raise UpdateError(
+            "Celune has determined the local Git repository has not been committed yet."
+        )
+
+    try:
         _run_git(["fetch", "--tags", "--prune", REMOTE_URL], timeout=120)
-        _run_git(["merge", "--ff-only", "FETCH_HEAD"], timeout=120)
     except (
         subprocess.CalledProcessError,
         subprocess.TimeoutExpired,
         FileNotFoundError,
     ) as exc:
         raise UpdateError("Celune could not update from GitHub.") from exc
+
+    try:
+        can_fast_forward = _git_succeeds(
+            ["merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"]
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        raise UpdateError("Celune could not inspect the update.") from exc
+
+    if not can_fast_forward:
+        raise UpdateError(
+            "Celune cannot update automatically because the local branch cannot "
+            "fast-forward to GitHub."
+        )
+
+    try:
+        _run_git(["merge", "--ff-only", "FETCH_HEAD"], timeout=120)
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+    ) as exc:
+        raise UpdateError("Celune could not apply the update.") from exc
