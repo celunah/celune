@@ -23,6 +23,7 @@ INITIAL_BACKEND = os.getenv("CELUNE_BACKEND")
 try:
     import yaml
     import psutil
+
     from celune.celune import Celune
     from celune.exceptions import No, UpdateError
     from celune.namedays import has_nameday
@@ -35,6 +36,14 @@ try:
         SelectMenu,
     )
     from celune.config import config_bool, config_value, env_bool
+    from celune.utils import supports_ansi
+    from celune.constants import (
+        EXIT_PENDING_UPDATE,
+        EXIT_NO_ANSI,
+        EXIT_FAILURE,
+        EXIT_ALREADY_RUNNING,
+        EXIT_CELINE_DAY,
+    )
 except ModuleNotFoundError as package:
     print(f"Missing dependency: {package.name}")
     print("Celune requires this library to function.")
@@ -43,12 +52,16 @@ except ModuleNotFoundError as package:
     print("or install manually:")
     print(f"    pip install {package.name}")
     if INITIAL_DEV:
+        with contextlib.suppress(ModuleNotFoundError):
+            from rich.traceback import install
+
+            install()
+
         raise
     print("Run Celune with CELUNE_DEV=1 to get full traceback.")
-
     # this error is not controllable by config.yaml due to how Celune exceptions are caught
     print("Other errors may be displayed by setting 'dev: true' in config.yaml.")
-    sys.exit(1)
+    sys.exit(4)
 
 
 def main() -> None:
@@ -66,7 +79,8 @@ def main() -> None:
         if has_nameday("Celine", date):
             raise No("I sense an entity who I shall not engage with today.")
 
-        print("\x1b]2;Celune\x07", end="", flush=True)
+        if supports_ansi():
+            print("\x1b]2;Celune\x07", end="", flush=True)
 
         if not os.path.exists("config.yaml"):
             shutil.copy("default_config.yaml", "config.yaml")
@@ -80,12 +94,12 @@ def main() -> None:
         backend = INITIAL_BACKEND or config_value(config, "backend")
 
         # try to update if not up to date
-        if not headless:
+        if not headless and supports_ansi():
             update = check_for_update()
             if update:
                 latest_label = f"Celune {update.latest_version}"
                 if not update.latest_tag:
-                    latest_label = "Celune latest"
+                    latest_label = "Celune"  # "I'm not sure if I'm up to date."
 
                 choice = SelectMenu(
                     ["Yes, update now", "No, continue as is"],
@@ -103,7 +117,7 @@ def main() -> None:
                     ),
                 ).start()
 
-                if choice is True:
+                if choice:
                     print("Updating Celune...")
                     try:
                         update_to_latest()
@@ -115,11 +129,23 @@ def main() -> None:
                         print(
                             "Celune updated successfully. Restart Celune to apply changes."
                         )
-                        sys.exit(0)
+                        sys.exit(EXIT_PENDING_UPDATE)
+        elif check_for_update() and not supports_ansi():
+            print("This terminal does not support ANSI.")
+            print("Attempting to apply update non-interactively...")
+            try:
+                update_to_latest()
+            except UpdateError as exc:
+                print(exc)
+                print("Continuing with the current version.")
+                time.sleep(5)
+            else:
+                print("Celune updated successfully. Restart Celune to apply changes.")
+                sys.exit(EXIT_PENDING_UPDATE)
 
         # ask for default backend if not set yet
         # Celune will save this preference
-        if not backend:
+        if not backend and supports_ansi():
             backend = SelectMenu(
                 ["Qwen3 - Fast", "VoxCPM2 - High quality"],
                 ["qwen3", "voxcpm2"],
@@ -142,6 +168,11 @@ def main() -> None:
             config["backend"] = backend
             with open("config.yaml", "w", encoding="utf-8") as cfg:
                 yaml.dump(config, cfg)
+        elif not backend and not supports_ansi():
+            print("This terminal does not support ANSI.")
+            print("Please select a backend manually.")
+            print("Refer to Celune's configuration for details.")
+            sys.exit(EXIT_NO_ANSI)
 
         if not env_bool("CELUNE_LAUNCHER"):
             print(
@@ -164,9 +195,9 @@ def main() -> None:
                             # you do not want to run multiple instances of Celune
                             # your memory doesn't want to either
                             print("Celune is already running.")
-                            sys.exit(1)
+                            sys.exit(EXIT_ALREADY_RUNNING)
 
-        if not headless:  # normal mode
+        if not headless and supports_ansi():  # normal mode
             ui: CeluneTextualUI
             ui = CeluneUI()
             celune = Celune(
@@ -184,7 +215,7 @@ def main() -> None:
             celune.setup_extensions()
             ui.celune = celune
             ui.run()
-        else:  # CEF/headless mode
+        elif headless:
             ui_headless: CeluneHeadlessBaseUI
             ui_headless = CeluneHeadlessUI(config)
             celune = Celune(
@@ -199,23 +230,32 @@ def main() -> None:
 
             if not celune.load():
                 celune.close()
-                sys.exit(1)
+                sys.exit(EXIT_FAILURE)
 
             print("Celune is running in headless mode.")
             print("While in this mode, input is only possible via Celune extensions.")
             ui_headless.run()
+        else:
+            print("This terminal does not support ANSI.")
+            print("Celune cannot start in normal mode.")
+            sys.exit(EXIT_NO_ANSI)
     except Exception as e:
         if e.__class__ != No:
             print("An internal error occurred running Celune.")
             if INITIAL_DEV:
+                with contextlib.suppress(ModuleNotFoundError):
+                    from rich.traceback import install
+
+                    install()
+
                 raise
             print(e or "no error description")
             print("Run Celune with CELUNE_DEV=1 to get full traceback.")
             print("Alternatively, set 'dev: true' in config.yaml")
-            sys.exit(1)
-        else:
-            print("I sense the presence of... her.\nI would rather not.")
-            sys.exit(103)
+            sys.exit(EXIT_FAILURE)
+
+        print("I sense the presence of... her.\nI would rather not.")
+        sys.exit(EXIT_CELINE_DAY)
 
 
 if __name__ == "__main__":

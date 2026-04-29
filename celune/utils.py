@@ -1,5 +1,7 @@
 """Celune common utility functions."""
 
+import os
+import sys
 import math
 import datetime
 import subprocess
@@ -226,3 +228,25 @@ def run_async(
     )
     proc.start()
     return proc
+
+
+def supports_ansi() -> bool:
+    """Does the terminal support ANSI color codes?
+
+    Returns:
+        bool: Whether the terminal supports ANSI color codes.
+    """
+    plat = sys.platform
+    supported_platform = (
+        plat != "Pocket PC"
+        and (  # why check for a "Pocket PC" if Celune does not run there?
+            plat != "win32"
+            or any(
+                env in os.environ
+                for env in ("ANSICON", "WT_SESSION", "TERM_PROGRAM", "ConEmuANSI")
+            )
+        )
+    )
+
+    is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+    return supported_platform and is_tty

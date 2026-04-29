@@ -1,6 +1,5 @@
 """Analyze a WAV file and generate a radar chart plus a text report."""
 
-import sys
 import pathlib
 import warnings
 from typing import Any, cast
@@ -729,8 +728,7 @@ def analyze_voice(voice: pathlib.Path) -> None:
         None: This function writes report artifacts next to the input file.
     """
     if not voice.exists():
-        print("Invalid voice path.", file=sys.stderr)
-        sys.exit(1)
+        return
 
     y, sr = load_audio(voice)
     _analyze_voice_data(y, sr, voice, voice.parent, voice.stem)
