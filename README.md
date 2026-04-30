@@ -1,4 +1,4 @@
-![Celune](./resources/celune_wordmark_transparent.png "Celune wordmark")
+![Celune](./resources/branding/celune_wordmark_transparent.png "Celune wordmark")
 ---
 
 Celune is a real-time AI TTS character engine focused on expressive voice delivery with a well-made user experience.
