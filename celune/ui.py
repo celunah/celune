@@ -27,7 +27,13 @@ from rich.text import Text
 
 from .celune import Celune
 from .config import config_bool
-from .utils import celune_day_status, lunar_phase, lunar_info, supports_ansi
+from .utils import (
+    celune_day_status,
+    lunar_phase,
+    lunar_info,
+    supports_ansi,
+    format_error,
+)
 from .exceptions import InvalidExtensionError
 from .constants import EXIT_SUCCESS, T, SEVERITY_COLORS, SIGTSTP, THEME, THEME_LIGHT
 
@@ -316,6 +322,7 @@ class CeluneUI(App):
         else:
             self.active_theme_name = "celune"
             self.safe_log("Invalid theme, defaulting to dark", "warning")
+
         self.theme = self.active_theme_name
 
         self.logs = self.query_one("#logs", RichLog)
@@ -564,9 +571,7 @@ class CeluneUI(App):
                 self.safe_log("Ready to speak.")
 
         except Exception as e:
-            self.safe_log(
-                f"[INIT ERROR] {self.celune.format_error(e, self.celune.dev)}", "error"
-            )
+            self.safe_log(f"[INIT ERROR] {format_error(e, self.celune.dev)}", "error")
             self.error("Celune could not start")
             self.cur_state = "error"
 
@@ -871,7 +876,7 @@ class CeluneUI(App):
                 self.celune.play(args[0])
             except Exception as e:
                 self.safe_log(
-                    f"Cannot play this file: {self.celune.format_error(e, self.celune.dev)}",
+                    f"Cannot play this file: {format_error(e, self.celune.dev)}",
                     "error",
                 )
                 return

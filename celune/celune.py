@@ -4,7 +4,6 @@ import gc
 import time
 import queue
 import threading
-import traceback
 import contextlib
 from typing import Any, Optional, Callable, Protocol, Union
 
@@ -24,7 +23,7 @@ from .backends.qwen3 import Qwen3
 from .config import config_bool, config_value
 from .constants import NORMALIZER_MODEL_ID
 from .dsp import StreamingPedalboardReverb
-from .utils import format_number
+from .utils import format_number, format_error
 from .chroma import AudioRGBGlow
 from .exceptions import NotAvailableError, WarmupError, BackendError
 from .extensions.base import CeluneContext
@@ -163,9 +162,7 @@ class Celune:
                 f"backend '{tts_backend}' has unmet dependencies: '{e.name}'"
             ) from e
         except Exception as e:
-            raise BackendError(
-                f"internal backend error: {self.format_error(e, dev)}"
-            ) from e
+            raise BackendError(f"internal backend error: {format_error(e, dev)}") from e
 
         self.language = language
 
@@ -447,7 +444,7 @@ class Celune:
             self.status_callback("Idle")
         except Exception as e:
             self.loaded = False
-            self.log(f"[RELOAD ERROR] {self.format_error(e, self.dev)}", "error")
+            self.log(f"[RELOAD ERROR] {format_error(e, self.dev)}", "error")
             self.status_callback("Celune could not reload", "error")
             self.error_callback("Celune could not reload")
 
@@ -484,7 +481,7 @@ class Celune:
             self.model = self.backend.load_default_model()
         except Exception as e:
             self.log("Celune could not load the default model.", "error")
-            self.log(self.format_error(e, self.dev), "error")
+            self.log(format_error(e, self.dev), "error")
             self.error_callback("Default model failed to load")
             return False
 
@@ -504,7 +501,7 @@ class Celune:
             error=self.error_callback,
             set_state=lambda state: setattr(self, "cur_state", state),
             glow_connect_failed=self.glow.connect_failed,
-            format_error=self.format_error,
+            format_error=format_error,
             dev=self.dev,
         ):
             return False
@@ -546,9 +543,7 @@ class Celune:
                 )
                 self.log("Normalizer loaded.")
             except Exception as e:
-                self.log(
-                    f"[NORMALIZER ERROR] {self.format_error(e, self.dev)}", "error"
-                )
+                self.log(f"[NORMALIZER ERROR] {format_error(e, self.dev)}", "error")
                 self.log("Normalizer failed to load.", "warning")
                 self.log("Normalization will not be available.", "warning")
 
@@ -589,7 +584,7 @@ class Celune:
             return True
 
         except Exception as e:
-            self.log(f"[WARMUP ERROR] {self.format_error(e, self.dev)}", "error")
+            self.log(f"[WARMUP ERROR] {format_error(e, self.dev)}", "error")
             self.cur_state = "error"
             self.error_callback("Celune could not warm up")
             return False
@@ -649,7 +644,7 @@ class Celune:
                 len_tokens = tokens["input_ids"].shape[1]
 
                 self.log(f"Tokens to normalize: {len_tokens}")
-                if len_tokens > 256:
+                if len_tokens > 128:
                     self.log("Input is too long to normalize.", "warning")
                     return None
 
@@ -672,6 +667,7 @@ class Celune:
 
                 out = tokenizer.decode(new_ids, skip_special_tokens=True)
 
+                # fix type checker
                 if isinstance(out, list):
                     out = out[0] if out else ""
 
@@ -691,7 +687,7 @@ class Celune:
 
             except Exception as e:
                 self.log(
-                    f"[NORMALIZATION ERROR] {self.format_error(e, self.dev)}",
+                    f"[NORMALIZATION ERROR] {format_error(e, self.dev)}",
                     "error",
                 )
                 return None
@@ -753,25 +749,6 @@ class Celune:
         close_pipeline(self)
         with self._model_lock:
             self.unload_runtime_state(include_normalizer=True)
-
-    @staticmethod
-    def format_error(e: Exception, dev: bool) -> str:
-        """Format an error message.
-
-        Args:
-            e: The exception to format.
-            dev: Whether developer mode is enabled.
-
-        Returns:
-            str: Either the full traceback or the exception text.
-        """
-        if dev:
-            trace = traceback.format_exc()
-            with open("celune_traceback.txt", "w", encoding="utf-8") as f:
-                f.write(trace)
-
-        details = str(e) or "no error description"
-        return traceback.format_exc() if dev else details
 
     def _split_text(self, text: str) -> list[str]:
         """Split text into chunks.

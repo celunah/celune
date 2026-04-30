@@ -4,6 +4,7 @@ import os
 import sys
 import math
 import datetime
+import traceback
 import subprocess
 import multiprocessing
 from typing import Union, Callable
@@ -250,3 +251,22 @@ def supports_ansi() -> bool:
 
     is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
     return supported_platform and is_tty
+
+
+def format_error(e: Exception, dev: bool) -> str:
+    """Format an error message.
+
+    Args:
+        e: The exception to format.
+        dev: Whether developer mode is enabled.
+
+    Returns:
+        str: Either the full traceback or the exception text.
+    """
+    if dev:
+        trace = traceback.format_exc()
+        with open("celune_traceback.txt", "w", encoding="utf-8") as f:
+            f.write(trace)
+
+    details = str(e) or "no error description"
+    return traceback.format_exc() if dev else details
