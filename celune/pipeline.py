@@ -19,7 +19,7 @@ import pyrubberband as rb
 
 from .dsp import _resample_audio, _soften, _split, _to_48khz
 from .exceptions import NotAvailableError
-from .utils import format_number, run_async
+from .utils import format_number, run_async, format_error
 from .analysis import analyze_voice_audio
 
 if TYPE_CHECKING:
@@ -570,7 +570,7 @@ def generation_worker(engine: "Celune") -> None:
                             except OSError as e:
                                 engine.log(
                                     "Cannot create outputs directory, not saving WAV file: "
-                                    f"{engine.format_error(e, engine.dev)}",
+                                    f"{format_error(e, engine.dev)}",
                                     "warning",
                                 )
 
@@ -598,7 +598,7 @@ def generation_worker(engine: "Celune") -> None:
                     release_pipeline(engine)
                     break
 
-                engine.log(f"[GEN ERROR] {engine.format_error(e, engine.dev)}", "error")
+                engine.log(f"[GEN ERROR] {format_error(e, engine.dev)}", "error")
                 engine.cur_state = "error"
                 engine.locked = False
                 engine.playback_done.set()
@@ -759,7 +759,7 @@ def playback_worker(engine: "Celune") -> None:
                 raise NotAvailableError("audio stream is not available")
             stream.write(audio_chunk)
         except Exception as e:
-            engine.log(f"[PLAY ERROR] {engine.format_error(e, engine.dev)}", "error")
+            engine.log(f"[PLAY ERROR] {format_error(e, engine.dev)}", "error")
             engine.error_callback("Playback error")
             close_stream(engine, abort=True)
             engine._stream = None

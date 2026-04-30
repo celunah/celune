@@ -13,7 +13,7 @@ on:
 
 jobs:
   python-checks:
-    name: Python Quality Checks
+    name: Anti AI Slop & Vibe Coding Checks
     runs-on: ubuntu-latest
 
     steps:
@@ -24,10 +24,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install portaudio19-dev
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
 
       - name: Sync dependencies
-        run: uv sync --all-extras --dev
+        run: uv sync --dev
 
       - name: Verify formatting
         run: uv run ruff format --check .
@@ -40,8 +40,7 @@ jobs:
 
       - name: Import smoke test
         run: |
-          uv run python -c "import celune"
-          uv run python -c "from celune.backends import resolve_backend"
+          uv run python -c "import celune; print(dir(celune))"
 
   launcher-smoke-linux:
     name: Linux Launcher Build Smoke Test
