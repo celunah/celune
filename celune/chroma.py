@@ -66,9 +66,8 @@ class AudioRGBGlow:
         if current_date.day == 2 and current_date.month == 6:
             self.glow_multiplier *= 3.0
         else:
-            self.glow_multiplier *= range_interpolated(
-                lunar_info(datetime.datetime.now())[1], 1.0, 2.0
-            )
+            _, illum, _ = lunar_info(current_date)
+            self.glow_multiplier *= range_interpolated(illum, 1.0, 2.0)
 
         if not self.max_glow_forced:
             self.idle_brightness = 0.05 * self.glow_multiplier
