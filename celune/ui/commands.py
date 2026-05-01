@@ -34,9 +34,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             "/consumebuffer <true/false> - Make Celune consume text from the live buffer without "
             "pressing CTRL+ENTER."
         )
-        ui.safe_log(
-            "Caution: This feature may interfere with typing '...'.", "warning"
-        )
+        ui.safe_log("Caution: This feature may interfere with typing '...'.", "warning")
         ui.safe_log(
             "/invoke <extension> [args] - Invoke a Celune extension by its name."
         )
@@ -72,9 +70,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             else:
                 ui.safe_log("No longer consuming from live input")
             return
-        ui.safe_log(
-            f"Invalid argument for '{command}', must be true/false.", "warning"
-        )
+        ui.safe_log(f"Invalid argument for '{command}', must be true/false.", "warning")
         return
     if command == "invoke":
         if not args:
