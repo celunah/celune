@@ -135,15 +135,27 @@ async def api_security(request: Request, call_next: Any) -> Any:
     if not _authenticated(request):
         return JSONResponse(
             status_code=401,
-            content={"detail": "Missing or invalid API token."},
+            content={
+                "error": "unauthorized",
+                "message": "Who are you? Send me an authentication token.",
+            },
             headers={"WWW-Authenticate": "Bearer"},
         )
 
     if _rate_limited(request):
+        current_time = datetime.datetime.now()
+        next_minute = current_time.replace(
+            second=0, microsecond=0
+        ) + datetime.timedelta(minutes=1)
+        retry_after = (next_minute - current_time).total_seconds()
+
         return JSONResponse(
             status_code=429,
-            content={"detail": "Rate limit exceeded."},
-            headers={"Retry-After": "60"},
+            content={
+                "error": "ratelimit_exceeded",
+                "message": "Please wait until you make me speak again.",
+            },
+            headers={"Retry-After": retry_after},
         )
 
     return await call_next(request)
@@ -158,8 +170,9 @@ def bind_celune(celune: "Celune") -> None:
 def require_celune() -> "Celune":
     """Return the bound Celune instance or fail the request."""
     if bound_celune is None:
-        raise HTTPException(
-            status_code=503, detail="I'm currently busy. Try again later."
+        return JSONResponse(
+            status_code=503,
+            content={"error": "not_ready", "message": "I'm not currently available."},
         )
     return bound_celune
 
@@ -184,22 +197,22 @@ def wav_header() -> bytes:
 
     return b"".join(
         (
-            b"RIFF",
-            struct.pack("<I", unknown_size),
-            b"WAVE",
-            b"fmt ",
+            b"RIFF",  # RIFF header
+            struct.pack("<I", unknown_size),  # treat as stream
+            b"WAVE",  # WAV file
+            b"fmt ",  # format
             struct.pack(
                 "<IHHIIHH",
                 16,
                 1,
-                channels,
-                sample_rate,
-                byte_rate,
-                block_align,
-                bits_per_sample,
+                channels,  # stereo
+                sample_rate,  # 48 kHz
+                byte_rate,  # 48 kHz * 2 channels * 24 bits // 8
+                block_align,  # 2 channels * 24 bits // 8
+                bits_per_sample,  # 24 bits
             ),
-            b"data",
-            struct.pack("<I", unknown_size),
+            b"data",  # data
+            struct.pack("<I", unknown_size),  # PCM data
         )
     )
 
@@ -305,8 +318,12 @@ def speak(body: SpeakRequest) -> StreamingResponse:
     api_log("SPEAK", body.content)
     chunks = celune.say_stream(body.content, save=body.save)
     if chunks is None:
-        raise HTTPException(
-            status_code=409, detail="I'm currently busy. Try again later."
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "not_ready",
+                "message": "I'm currently busy. Try again later.",
+            },
         )
 
     return StreamingResponse(
@@ -323,14 +340,21 @@ def voice(body: VoiceRequest) -> ActionResponse:
     api_log("VOICE", body.voice_name)
 
     if body.voice_name not in celune.voices:
-        raise HTTPException(
-            status_code=400, detail="I am not able to speak in that tone."
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "invalid_value",
+                "message": "I am not able to speak in that tone.",
+            },
         )
 
     if not celune.set_voice_and_wait(body.voice_name):
-        raise HTTPException(
+        return JSONResponse(
             status_code=500,
-            detail="I can't change my tone right now.",
+            content={
+                "error": "request_failed",
+                "message": "I can't change my tone right now.",
+            },
         )
 
     return ActionResponse(status="ok")
@@ -343,7 +367,13 @@ def sfx(body: SFXRequest) -> StreamingResponse:
     api_log("SFX", body.sfx, f" (keep={body.keep})")
 
     if not celune.play(body.sfx, keep=body.keep):
-        raise HTTPException(status_code=500, detail="I can't play that right now.")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "request_failed",
+                "message": "I can't play that right now.",
+            },
+        )
 
     def chunks() -> Iterator[bytes]:
         """Yield the SFX file as 48 kHz stereo float32 chunks."""
