@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from typing import Optional
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -165,11 +166,11 @@ def _is_git_checkout() -> bool:
         return False
 
 
-def check_for_update() -> UpdateInfo | None:
+def check_for_update() -> Optional[UpdateInfo]:
     """Check GitHub for a newer Celune revision or tag.
 
     Returns:
-        UpdateInfo | None: Information about the update, or ``None`` when Celune
+        Optional[UpdateInfo]: Information about the update, or ``None`` when Celune
             appears current or update metadata cannot be read.
     """
     if os.getenv("CELUNE_SKIP_UPDATE") in {"1", "true", "on", "yes", "enabled"}:

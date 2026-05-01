@@ -41,3 +41,8 @@ matplotlib
 # Others
 psutil
 pyyaml
+
+# API
+uvicorn
+fastapi
+pydantic
