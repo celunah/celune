@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional
 import numpy as np
 import soundfile as sf
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
