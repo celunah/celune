@@ -37,7 +37,7 @@ class CeluneBackend(ABC):
         else:
             self.model_name = None
 
-        self.model: Any | None = None
+        self.model: Optional[Any] = None
         self.log = log
         self.current_seed: Optional[int] = None
 
