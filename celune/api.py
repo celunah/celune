@@ -6,12 +6,12 @@ import threading
 import time
 from collections import defaultdict, deque
 from hmac import compare_digest
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, Union
 
 import numpy as np
 import soundfile as sf
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -155,7 +155,7 @@ async def api_security(request: Request, call_next: Any) -> Any:
                 "error": "ratelimit_exceeded",
                 "message": "Please wait until you make me speak again.",
             },
-            headers={"Retry-After": retry_after},
+            headers={"Retry-After": str(retry_after)},
         )
 
     return await call_next(request)
@@ -170,9 +170,9 @@ def bind_celune(celune: "Celune") -> None:
 def require_celune() -> "Celune":
     """Return the bound Celune instance or fail the request."""
     if bound_celune is None:
-        return JSONResponse(
+        raise HTTPException(
             status_code=503,
-            content={"error": "not_ready", "message": "I'm not currently available."},
+            detail="I'm not currently available.",
         )
     return bound_celune
 
@@ -312,7 +312,7 @@ def version() -> VersionResponse:
 
 
 @api.post("/v1/speak")
-def speak(body: SpeakRequest) -> StreamingResponse:
+def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
     """Queue speech and stream generated audio chunks back to the caller."""
     celune = require_celune()
     api_log("SPEAK", body.content)
@@ -334,7 +334,7 @@ def speak(body: SpeakRequest) -> StreamingResponse:
 
 
 @api.post("/v1/voice", response_model=ActionResponse)
-def voice(body: VoiceRequest) -> ActionResponse:
+def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
     """Change Celune's active voice."""
     celune = require_celune()
     api_log("VOICE", body.voice_name)
@@ -361,7 +361,7 @@ def voice(body: VoiceRequest) -> ActionResponse:
 
 
 @api.post("/v1/sfx")
-def sfx(body: SFXRequest) -> StreamingResponse:
+def sfx(body: SFXRequest) -> Union[StreamingResponse, JSONResponse]:
     """Play an SFX file and stream the audio chunks back to the caller."""
     celune = require_celune()
     api_log("SFX", body.sfx, f" (keep={body.keep})")
