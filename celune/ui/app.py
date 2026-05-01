@@ -651,8 +651,6 @@ class CeluneUI(App):
         visible_lines = max(min_lines, min(line_count, max_lines))
         event.text_area.styles.height = visible_lines + 2
 
-        text = event.text_area.text
-
         if self.consume_on_boundary:
             if text and text[-1] in ".!?":
                 if text in ".!?":

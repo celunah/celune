@@ -429,7 +429,7 @@ def generation_worker(engine: "Celune") -> None:
 
         if engine.exit_requested:
             if stream_queue is not None:
-                stream_queue.put(NotAvailableError)
+                stream_queue.put(NotAvailableError("stream queue interrupted"))
                 stream_queue.put(None)
             release_pipeline(engine)
             continue
