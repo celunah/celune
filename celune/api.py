@@ -76,7 +76,8 @@ def configure_api_security(
 
 def resolve_api_host(token: Optional[str] = None, host: Optional[str] = None) -> str:
     """Resolve the API bind host from authentication state."""
-    _ = host
+    if host:
+        return host
     configured_token = _clean_token(token) or _env_auth_token()
     if configured_token is None:
         return "127.0.0.1"

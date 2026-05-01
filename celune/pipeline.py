@@ -9,7 +9,7 @@ import pathlib
 import datetime
 import contextlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import torch
 import numpy as np
@@ -32,15 +32,15 @@ class SpeechRequest:
 
     text: str
     save: bool = True
-    stream_queue: queue.Queue | None = None
+    stream_queue: Optional[queue.Queue] = None
 
 
 @dataclass(frozen=True)
 class SpeechDone:
     """Playback completion marker for one generated utterance."""
 
-    saved_path: str | None = None
-    analysis_audio: np.ndarray | None = None
+    saved_path: Optional[str] = None
+    analysis_audio: Optional[np.ndarray] = None
 
 
 def clear_queue(q: queue.Queue) -> None:
@@ -176,7 +176,7 @@ def queue_speech(
     engine: "Celune",
     text: str,
     save: bool = True,
-    stream_queue: queue.Queue | None = None,
+    stream_queue: Optional[queue.Queue] = None,
 ) -> bool:
     """Queue text for Celune to say and optionally mirror audio chunks.
 
@@ -429,6 +429,7 @@ def generation_worker(engine: "Celune") -> None:
 
         if engine.exit_requested:
             if stream_queue is not None:
+                stream_queue.put(NotAvailableError)
                 stream_queue.put(None)
             release_pipeline(engine)
             continue

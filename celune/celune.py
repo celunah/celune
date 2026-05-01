@@ -827,7 +827,7 @@ class Celune:
             Optional[queue.Queue]: Queue receiving 48 kHz stereo float32 chunks,
                 or ``None`` when the request could not be queued.
         """
-        stream_queue: queue.Queue = queue.Queue()
+        stream_queue: queue.Queue = queue.Queue(maxsize=2)
         if not queue_speech(self, text, save=save, stream_queue=stream_queue):
             return None
         return stream_queue

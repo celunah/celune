@@ -181,7 +181,7 @@ class CeluneUI(App):
         self.register_theme(THEME)
         self.register_theme(THEME_LIGHT)
 
-        theme = os.getenv("CELUNE_THEME") or self.celune.config["theme"]
+        theme = os.getenv("CELUNE_THEME") or self.celune.config.get("theme", "dark")
 
         if theme == "dark":
             self.active_theme_name = "celune"
@@ -569,10 +569,15 @@ class CeluneUI(App):
         Returns:
             None: This handler shuts down Celune and restores redirected output.
         """
-        self.cur_state = "exiting"
-
         if self.celune is not None:
             self.celune.close()
+
+        if self._log_stdout is not None:
+            self._log_stdout.flush()
+        if self._log_stderr is not None:
+            self._log_stderr.flush()
+
+        self.cur_state = "exiting"
 
         if hasattr(self, "_old_stdout"):
             sys.stdout = self._old_stdout
