@@ -478,14 +478,14 @@ class CeluneUI(App):
 
         # Celune status report
         now = datetime.datetime.now()
-        lunar = lunar_info(now)
-        suffix = "s" if int(lunar[2]) != 1 else ""
+        phase, _, days = lunar_info(now)
+        suffix = "s" if int(days) != 1 else ""
 
         pages.append(lambda: now.strftime("%A, %B %d, %Y"))
         pages.append(lambda: celune_day_status(now))
-        pages.append(lambda: lunar_phase(lunar[0]).title())
-        if lunar_phase(lunar[0]) != "full moon":
-            pages.append(lambda: f"{int(lunar[2])} day{suffix} until full moon")
+        pages.append(lambda: lunar_phase(phase).title())
+        if lunar_phase(phase) != "full moon":
+            pages.append(lambda: f"{int(days)} day{suffix} until full moon")
 
         # usage help
         pages.append(lambda: "/help commands")
