@@ -16,3 +16,8 @@ headless_nocolor: false
 theme: dark
 # if enabled, CeluneNorm will be loaded to normalize incoming text
 use_normalizer: false
+# if enabled, Celune will start her FastAPI server in the background
+api:
+  enabled: true
+  host: 0.0.0.0
+  port: 2060

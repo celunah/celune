@@ -38,6 +38,7 @@ from .pipeline import (
     generation_worker,
     playback_worker,
     play as play_pipeline,
+    queue_speech,
     release_pipeline,
     say as say_pipeline,
     split_text,
@@ -182,6 +183,7 @@ class Celune:
 
         self._playback_thread: Optional[threading.Thread] = None
         self._generation_thread: Optional[threading.Thread] = None
+        self._api_thread: Optional[threading.Thread] = None
 
         self._queue_lock = threading.Lock()
         self._sentinel = object()  # dispatched upon exit
@@ -327,6 +329,22 @@ class Celune:
             daemon=True,
         ).start()
         return True
+
+    def set_voice_and_wait(self, name: str) -> bool:
+        """Change Celune's voice and wait until the reload finishes.
+
+        Args:
+            name: The voice name to load.
+
+        Returns:
+            bool: ``True`` when the requested voice finished loading,
+                otherwise ``False``.
+        """
+        if not self.set_voice(name):
+            return False
+
+        self._model_ready.wait()
+        return self.loaded and self.current_voice == name
 
     def _wait_until_idle(self, timeout: float = 30.0) -> bool:
         """Wait until the model and playback pipeline are ready.
@@ -521,7 +539,71 @@ class Celune:
         if self.extension_manager is not None:
             self.extension_manager.autostart_all()
 
+        self._start_configured_api()
+
         return True
+
+    def _api_settings(self) -> tuple[bool, str, int]:
+        """Resolve API settings from Celune's configuration.
+
+        Returns:
+            tuple[bool, str, int]: Whether to start the API, bind host, and port.
+        """
+        api_config = config_value(self.config, "api", {})
+
+        if isinstance(api_config, bool):
+            return api_config, "0.0.0.0", 2060
+
+        if api_config is None:
+            return False, "0.0.0.0", 2060
+
+        if not isinstance(api_config, dict):
+            return bool(api_config), "0.0.0.0", 2060
+
+        enabled = bool(api_config.get("enabled", True))
+        host = str(api_config.get("host", "0.0.0.0"))
+        try:
+            port = int(api_config.get("port", 2060))
+        except (TypeError, ValueError):
+            self.log("Celune API port is invalid, using 2060.", "warning")
+            port = 2060
+
+        return enabled, host, port
+
+    def _start_configured_api(self) -> None:
+        """Start the API from config without blocking Celune startup."""
+        enabled, host, port = self._api_settings()
+        if not enabled or self._api_thread is not None:
+            return
+
+        try:
+            from .api import start_api
+        except ModuleNotFoundError as package:
+            self.log(
+                f"Celune API is unavailable: missing dependency {package.name}.",
+                "warning",
+            )
+            self.log("Continuing without the API.", "warning")
+            return
+        except Exception as exc:
+            self.log(
+                f"Celune API is unavailable: {format_error(exc, self.dev)}",
+                "warning",
+            )
+            self.log("Continuing without the API.", "warning")
+            return
+
+        try:
+            self._api_thread = start_api(self, host=host, port=port)
+        except Exception as exc:
+            self.log(
+                f"Celune API could not start: {format_error(exc, self.dev)}",
+                "warning",
+            )
+            self.log("Continuing without the API.", "warning")
+            return
+
+        self.log(f"Celune API has started on http://{host}:{port}")  # noqa
 
     def load_normalizer(self) -> None:
         """Load the normalizer LLM.
@@ -726,6 +808,22 @@ class Celune:
                 ``False``.
         """
         return say_pipeline(self, text, save=save)
+
+    def say_stream(self, text: str, save: bool = True) -> Optional[queue.Queue]:
+        """Queue text for playback and mirror generated chunks to a queue.
+
+        Args:
+            text: The text to synthesize.
+            save: Whether to save generated output artifacts.
+
+        Returns:
+            Optional[queue.Queue]: Queue receiving 48 kHz stereo float32 chunks,
+                or ``None`` when the request could not be queued.
+        """
+        stream_queue: queue.Queue = queue.Queue()
+        if not queue_speech(self, text, save=save, stream_queue=stream_queue):
+            return None
+        return stream_queue
 
     def play(self, sound_path: str, keep: bool = False) -> bool:
         """Play a sound via Celune's pipeline.

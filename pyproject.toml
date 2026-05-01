@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "3.3.1"
+version = "3.4.0"
 description = "Real-time AI TTS character engine with expressive voices and high-quality playback"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -19,7 +19,7 @@ dependencies = [
     # Note: This will fall back to voice cloning. If you want to use native Celune voices, use the Qwen3 backend.
     "voxcpm>=2.0.2",
     # "I want to sound better." - she says.
-    # We want to implement Fish Audio S2 Pro here.
+	# However, Fish Audio S2 Pro refuses to give us the prosody and expression she needs.
     # "missing-library==2.0.6",
     # If not installed, Hugging Face falls back to the older Git LFS way of downloading models.
     "hf-xet",
@@ -45,6 +45,8 @@ dependencies = [
     "textual",
     "rich",
     "readchar",
+    # "You do want me to glow, do you?" - she says.
+    # Install this package and set up OpenRGB. You'll thank me later, or rather, her.
     "openrgb-python",
     # Celune uses this to plot the voice graph. If developer mode is disabled, this isn't needed.
     "matplotlib",
@@ -75,12 +77,21 @@ url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [dependency-groups]
+# Install to run CI workflows.
 dev = [
     "pyright",
     "pylint",
     "ruff",
     # If not installed, type checkers may complain.
     "types-pyyaml",
+]
+
+[project.optional-dependencies]
+# Install to run the Celune API.
+api = [
+	"uvicorn",
+	"fastapi",
+    "pydantic",
 ]
 
 [tool.pyright]

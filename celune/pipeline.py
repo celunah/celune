@@ -32,6 +32,7 @@ class SpeechRequest:
 
     text: str
     save: bool = True
+    stream_queue: queue.Queue | None = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,27 @@ def say(engine: "Celune", text: str, save: bool = True) -> bool:
     Raises:
         Exception: Re-raised after releasing the pipeline if queueing fails.
     """
+    return queue_speech(engine, text, save=save, stream_queue=None)
+
+
+def queue_speech(
+    engine: "Celune",
+    text: str,
+    save: bool = True,
+    stream_queue: queue.Queue | None = None,
+) -> bool:
+    """Queue text for Celune to say and optionally mirror audio chunks.
+
+    Args:
+        engine: The Celune engine that should speak the text.
+        text: The input text to queue for synthesis.
+        save: Whether to save generated output artifacts.
+        stream_queue: Optional queue receiving generated 48 kHz float32 chunks.
+
+    Returns:
+        bool: ``True`` when the text was queued successfully, otherwise
+            ``False``.
+    """
     if not engine.model_ready.is_set():
         engine.status_callback("Waiting for model")
         engine.log("Speak request is waiting for model reload to finish.", "info")
@@ -201,7 +223,11 @@ def say(engine: "Celune", text: str, save: bool = True) -> bool:
 
         engine.cur_state = "generating"
         engine.text_queue.put(
-            SpeechRequest(normalized if normalized is not None else text, save=save)
+            SpeechRequest(
+                normalized if normalized is not None else text,
+                save=save,
+                stream_queue=stream_queue,
+            )
         )
         engine.status_callback("Generating")
         return True
@@ -397,6 +423,7 @@ def generation_worker(engine: "Celune") -> None:
 
         text = item.text
         save_output = item.save
+        stream_queue = item.stream_queue
         kept_sfx_audio = engine.kept_sfx_audio
         engine.kept_sfx_audio = None
 
@@ -501,9 +528,10 @@ def generation_worker(engine: "Celune") -> None:
                             buffered_speech_len += chunk_dur
 
                             if buffered_speech_len >= 10.0:
-                                engine.audio_queue.put(
-                                    (np.concatenate(buffer), 48000, None)
-                                )
+                                queued_audio = np.concatenate(buffer)
+                                engine.audio_queue.put((queued_audio, 48000, None))
+                                if stream_queue is not None:
+                                    stream_queue.put(queued_audio.copy())
                                 buffer = []
                                 buffered_speech_len = 0.0
 
@@ -516,10 +544,14 @@ def generation_worker(engine: "Celune") -> None:
                 generation_time = time.perf_counter() - start_time
 
                 if engine.exit_requested:
+                    if stream_queue is not None:
+                        stream_queue.put(None)
                     release_pipeline(engine)
                     break
 
                 if engine.utterance_force_stop.is_set():
+                    if stream_queue is not None:
+                        stream_queue.put(None)
                     engine.reverb.reset()
                     break
 
@@ -529,7 +561,10 @@ def generation_worker(engine: "Celune") -> None:
                 )
 
                 if buffer:
-                    engine.audio_queue.put((np.concatenate(buffer), 48000, None))
+                    queued_audio = np.concatenate(buffer)
+                    engine.audio_queue.put((queued_audio, 48000, None))
+                    if stream_queue is not None:
+                        stream_queue.put(queued_audio.copy())
                     if not pushed_audio:
                         # noinspection PyUnusedLocal
                         pushed_audio = True
@@ -546,6 +581,8 @@ def generation_worker(engine: "Celune") -> None:
                         tail = engine.reverb.flush()
                         if len(tail) > 0:
                             engine.audio_queue.put((tail, 48000, None))
+                            if stream_queue is not None:
+                                stream_queue.put(tail.copy())
                             buffer.append(tail)
                             if save_output:
                                 full_audio.append(tail)
@@ -592,6 +629,8 @@ def generation_worker(engine: "Celune") -> None:
                             analysis_audio=analysis_audio,
                         )
                     )
+                    if stream_queue is not None:
+                        stream_queue.put(None)
                 break
             except Exception as e:
                 if engine.exit_requested:
@@ -599,6 +638,9 @@ def generation_worker(engine: "Celune") -> None:
                     break
 
                 engine.log(f"[GEN ERROR] {format_error(e, engine.dev)}", "error")
+                if stream_queue is not None:
+                    stream_queue.put(e)
+                    stream_queue.put(None)
                 engine.cur_state = "error"
                 engine.locked = False
                 engine.playback_done.set()
