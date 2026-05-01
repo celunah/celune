@@ -443,6 +443,10 @@ def generation_worker(engine: "Celune") -> None:
                         "Skipping generation because model is not ready.", "warning"
                     )
                     engine.locked = False
+                    if stream_queue is not None:
+                        stream_queue.put(NotAvailableError("model is not ready"))
+                        stream_queue.put(None)
+                    release_pipeline(engine)
                     break
 
                 start_time = time.perf_counter()
