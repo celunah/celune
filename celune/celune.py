@@ -330,11 +330,12 @@ class Celune:
         ).start()
         return True
 
-    def set_voice_and_wait(self, name: str) -> bool:
+    def set_voice_and_wait(self, name: str, timeout: float = 30.0) -> bool:
         """Change Celune's voice and wait until the reload finishes.
 
         Args:
             name: The voice name to load.
+            timeout: How long to wait before considering the reload a failure.
 
         Returns:
             bool: ``True`` when the requested voice finished loading,
@@ -343,7 +344,9 @@ class Celune:
         if not self.set_voice(name):
             return False
 
-        self._model_ready.wait()
+        if not self._model_ready.wait(timeout=timeout):
+            self.log("Timed out while processing a voice change.", "warning")
+            return False
         return self.loaded and self.current_voice == name
 
     def _wait_until_idle(self, timeout: float = 30.0) -> bool:
@@ -543,36 +546,47 @@ class Celune:
 
         return True
 
-    def _api_settings(self) -> tuple[bool, str, int]:
+    def _api_settings(self) -> tuple[bool, str, int, Optional[str], int]:
         """Resolve API settings from Celune's configuration.
 
         Returns:
-            tuple[bool, str, int]: Whether to start the API, bind host, and port.
+            tuple[bool, str, int, Optional[str], int]: Whether to start the API,
+                bind host, port, auth token, and per-minute request limit.
         """
         api_config = config_value(self.config, "api", {})
 
         if isinstance(api_config, bool):
-            return api_config, "0.0.0.0", 2060
+            return api_config, "0.0.0.0", 2060, None, 60
 
         if api_config is None:
-            return False, "0.0.0.0", 2060
+            return False, "0.0.0.0", 2060, None, 60
 
         if not isinstance(api_config, dict):
-            return bool(api_config), "0.0.0.0", 2060
+            return bool(api_config), "0.0.0.0", 2060, None, 60
 
         enabled = bool(api_config.get("enabled", True))
         host = str(api_config.get("host", "0.0.0.0"))
+        token_value = api_config.get("token")
+        token = str(token_value).strip() if token_value is not None else None
+        if not token:
+            token = None
         try:
             port = int(api_config.get("port", 2060))
         except (TypeError, ValueError):
             self.log("Celune API port is invalid, using 2060.", "warning")
             port = 2060
 
-        return enabled, host, port
+        try:
+            requests_per_minute = int(api_config.get("rate_limit_per_minute", 60))
+        except (TypeError, ValueError):
+            self.log("Celune API rate limit is invalid, using 60/min.", "warning")
+            requests_per_minute = 60
+
+        return enabled, host, port, token, max(0, requests_per_minute)
 
     def _start_configured_api(self) -> None:
         """Start the API from config without blocking Celune startup."""
-        enabled, host, port = self._api_settings()
+        enabled, host, port, token, requests_per_minute = self._api_settings()
         if not enabled or self._api_thread is not None:
             return
 
@@ -580,30 +594,23 @@ class Celune:
             from .api import start_api
         except ModuleNotFoundError as package:
             self.log(
-                f"Celune API is unavailable: missing dependency {package.name}.",
+                f"Cannot start the API. '{package.name}' is not installed.",
                 "warning",
             )
-            self.log("Continuing without the API.", "warning")
             return
-        except Exception as exc:
-            self.log(
-                f"Celune API is unavailable: {format_error(exc, self.dev)}",
-                "warning",
-            )
-            self.log("Continuing without the API.", "warning")
+        except Exception:
             return
 
         try:
-            self._api_thread = start_api(self, host=host, port=port)
-        except Exception as exc:
-            self.log(
-                f"Celune API could not start: {format_error(exc, self.dev)}",
-                "warning",
+            self._api_thread = start_api(
+                self,
+                host=host,
+                port=port,
+                token=token,
+                requests_per_minute=requests_per_minute,
             )
-            self.log("Continuing without the API.", "warning")
+        except Exception:
             return
-
-        self.log(f"Celune API has started on http://{host}:{port}")  # noqa
 
     def load_normalizer(self) -> None:
         """Load the normalizer LLM.

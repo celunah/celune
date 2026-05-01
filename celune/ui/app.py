@@ -295,11 +295,10 @@ class CeluneUI(App):
             if self.celune.load():
                 self.celune_ready = True
                 self.safe_status("Idle")
-                self.style_button.disabled = False
                 self.tts_voice_changed(
                     self.celune.current_voice or self.celune_styles[0]
                 )
-                self.input_box.placeholder = "Enter text to speak here"
+                self.change_input_state(locked=False)
 
                 self.safe_log("Ready to speak.")
 
@@ -590,9 +589,8 @@ class CeluneUI(App):
             return
         self.celune.locked = False
         self.celune.cur_state = "idle"
-        self.input_box.placeholder = "Enter text to speak here"
+        self.change_input_state(locked=False)
         self.safe_status("Idle")
-        self.update_resources()
 
     def tts_queue_avail(
         self,
@@ -606,9 +604,7 @@ class CeluneUI(App):
             return
         self.celune.locked = False
         self.safe_status("Speaking")
-        self.input_box.placeholder = "Enter text to speak here"
-        self.style_button.disabled = False
-        self.update_resources()
+        self.change_input_state(locked=False)
 
     def error(self, error: str) -> None:
         """Set the UI status to the error message.

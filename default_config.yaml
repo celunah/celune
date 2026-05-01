@@ -19,5 +19,10 @@ use_normalizer: false
 # if enabled, Celune will start her FastAPI server in the background
 api:
   enabled: true
+  # host is selected automatically: token -> 0.0.0.0, no token -> 127.0.0.1
   host: 0.0.0.0
   port: 2060
+  # token can also be set with CELUNE_API_TOKEN.
+  # without a token, Celune binds the API to localhost only.
+  token: null
+  rate_limit_per_minute: 60

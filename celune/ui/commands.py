@@ -156,7 +156,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             if not 0.0 <= float_strength <= 1.0:
                 ui.safe_log("Value out of range. Expected 0-100%.", "warning")
                 return
-            ui.celune.reverb.strength = strength
+            ui.celune.reverb.strength = float_strength
         except ValueError:
             ui.safe_log(f"Invalid argument: {args[0]}", "warning")
         else:
@@ -168,8 +168,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             return
 
         try:
+            if not ui.celune.play(args[0]):
+                return
             ui.safe_log(f"Playing {args[0]}")
-            ui.celune.play(args[0])
         except Exception as e:
             ui.safe_log(
                 f"Cannot play this file: {format_error(e, ui.celune.dev)}",

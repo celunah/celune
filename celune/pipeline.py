@@ -428,7 +428,9 @@ def generation_worker(engine: "Celune") -> None:
         engine.kept_sfx_audio = None
 
         if engine.exit_requested:
-            engine.locked = False
+            if stream_queue is not None:
+                stream_queue.put(None)
+            release_pipeline(engine)
             continue
 
         while True:

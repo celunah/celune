@@ -121,7 +121,7 @@ def resource_pages(celune: Celune | None) -> tuple[str, ...]:
     pages.append("/help commands")
     if celune is not None:
         pages.append(
-            f"CTRL+C/CTRL+Q exit • CTRL+T {celune.config['theme']} • CTRL+ENTER say"
+            f"CTRL+C/CTRL+Q exit • CTRL+T {celune.config.get('theme', 'dark')} • CTRL+ENTER say"
         )
 
     return tuple(pages)
