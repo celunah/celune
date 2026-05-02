@@ -311,7 +311,7 @@ def version() -> VersionResponse:
     return VersionResponse(version=f"Celune {__version__}")
 
 
-@api.post("/v1/speak")
+@api.post("/v1/speak", response_model=None)
 def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
     """Queue speech and stream generated audio chunks back to the caller."""
     celune = require_celune()
@@ -360,7 +360,7 @@ def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
     return ActionResponse(status="ok")
 
 
-@api.post("/v1/sfx")
+@api.post("/v1/sfx", response_model=None)
 def sfx(body: SFXRequest) -> Union[StreamingResponse, JSONResponse]:
     """Play an SFX file and stream the audio chunks back to the caller."""
     celune = require_celune()

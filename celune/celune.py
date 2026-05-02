@@ -22,7 +22,7 @@ from .backends import CeluneBackend, resolve_backend
 from .backends.qwen3 import Qwen3
 from .config import config_bool, config_value
 from .constants import NORMALIZER_MODEL_ID
-from .dsp import StreamingPedalboardReverb
+from .dsp import StreamingPedalboardReverb, readiness_signal
 from .utils import format_number, format_error
 from .chroma import AudioRGBGlow
 from .exceptions import NotAvailableError, WarmupError, BackendError
@@ -544,6 +544,12 @@ class Celune:
 
         self._start_configured_api()
 
+        # notify readiness
+        if acquire_pipeline(self, "readiness signal"):
+            self.cur_state = "speaking"
+            self.audio_queue.put((readiness_signal(), 48000, None))
+            self.audio_queue.put(self.utterance_done)
+
         return True
 
     def _api_settings(self) -> tuple[bool, str, int, Optional[str], int]:
@@ -598,7 +604,8 @@ class Celune:
                 "warning",
             )
             return
-        except Exception:
+        except Exception as e:
+            self.log(f"Cannot import the API: {format_error(e, self.dev)}", "warning")
             return
 
         try:
@@ -609,7 +616,8 @@ class Celune:
                 token=token,
                 requests_per_minute=requests_per_minute,
             )
-        except Exception:
+        except Exception as e:
+            self.log(f"Cannot start the API: {format_error(e, self.dev)}", "warning")
             return
 
     def load_normalizer(self) -> None:
