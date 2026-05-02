@@ -1,6 +1,5 @@
 """Celune common utility functions."""
 
-import os
 import sys
 import math
 import datetime
@@ -237,20 +236,40 @@ def supports_ansi() -> bool:
     Returns:
         bool: Whether the terminal supports ANSI color codes.
     """
-    plat = sys.platform
-    supported_platform = (
-        plat != "Pocket PC"
-        and (  # why check for a "Pocket PC" if Celune does not run there?
-            plat != "win32"
-            or any(
-                env in os.environ
-                for env in ("ANSICON", "WT_SESSION", "TERM_PROGRAM", "ConEmuANSI")
-            )
+    is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+    if not is_tty:  # non-interactive terminals don't support ANSI
+        return False
+
+    if sys.platform != "win32":  # interactive terminals on Linux systems should already be ANSI capable
+        return True
+
+    try:
+        import ctypes
+    except ModuleNotFoundError:
+        return False
+
+    # get stdout handle
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    stdout_handle = kernel32.GetStdHandle(-11)
+    invalid_handle = ctypes.c_void_p(-1).value
+    # no handle found
+    if stdout_handle in (0, invalid_handle):
+        return False
+
+    # check stdout handle, bail out if none found
+    mode = ctypes.c_uint32()
+    if not kernel32.GetConsoleMode(stdout_handle, ctypes.byref(mode)):  # invalid handle
+        return False
+
+    enable_virtual_terminal_processing = 0x0004
+    if mode.value & enable_virtual_terminal_processing:  # try to enable ANSI mode, bail out if not set
+        return True  # ANSI mode was enabled
+
+    return bool(  # try to enable ANSI mode using alternative call syntax, bail out if not set
+        kernel32.SetConsoleMode(
+            stdout_handle, mode.value | enable_virtual_terminal_processing
         )
     )
-
-    is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
-    return supported_platform and is_tty
 
 
 def format_error(e: Exception, dev: bool) -> str:
