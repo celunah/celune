@@ -1,10 +1,12 @@
 """Celune audio processing functions."""
 
 import math
+from importlib.resources import as_file, files
 from typing import Iterable
 
 import numpy as np
 import numpy.typing as npt
+import soundfile as sf
 from scipy.signal import resample_poly
 from pedalboard import Pedalboard, Reverb
 
@@ -86,6 +88,16 @@ def _to_48khz(
         npt.NDArray[np.float32]: The audio resampled to 48 kHz stereo.
     """
     return _resample_audio(audio, source_sr, 48000)
+
+
+def readiness_signal() -> npt.NDArray[np.float32]:
+    """Load Celune's startup readiness sound."""
+    readiness_wav = files("celune").joinpath("refs", "readiness.wav")
+
+    with as_file(readiness_wav) as path:
+        audio, sr = sf.read(path, dtype="float32")
+
+    return _to_48khz(np.asarray(audio, dtype=np.float32), sr)
 
 
 def _soften(
