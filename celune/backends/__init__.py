@@ -13,7 +13,15 @@ BACKENDS = {
 
 
 def _default_log(_msg: str, _severity: str = "info") -> None:
-    """Default log signature for type checking."""
+    """Default log signature for type checking.
+
+    Args:
+        _msg: To be redefined.
+        _severity: To be redefined.
+
+    Returns:
+        None: This signature is meant to be inherited from.
+    """
 
 
 def get_version(package: str) -> str:

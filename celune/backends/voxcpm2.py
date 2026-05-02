@@ -57,7 +57,7 @@ class VoxCPM2(CeluneBackend):
 
         Returns:
             None: This constructor prepares backend state and validates
-            reference audio.
+                reference audio.
         """
         super().__init__(log=log)
         self.log = log
@@ -66,12 +66,12 @@ class VoxCPM2(CeluneBackend):
 
     @staticmethod
     @contextlib.contextmanager
-    def _suppress_backend_output():
+    def _suppress_backend_output() -> Generator[None, None, None]:
         """Suppress unnecessary backend output.
 
         Returns:
             Generator[None, None, None]: A context manager that silences stdout
-            and stderr while backend code executes.
+                and stderr while backend code executes.
         """
         with open(os.devnull, "w", encoding="utf-8") as devnull:
             with contextlib.redirect_stdout(devnull):
@@ -87,7 +87,7 @@ class VoxCPM2(CeluneBackend):
 
         Returns:
             tuple[bool, Optional[str]]: A flag indicating cache availability and
-            the resolved snapshot path when present.
+                the resolved snapshot path when present.
         """
         base = HF_HUB_CACHE
         model_dir = os.path.join(base, f"models--{model.replace('/', '--')}")
@@ -139,7 +139,7 @@ class VoxCPM2(CeluneBackend):
 
         Returns:
             None: This method checks that reference files are accessible and logs
-            checksum status when checksums exist.
+                checksum status when checksums exist.
         """
         for name, ref in self.reference_wavs.items():
             full_path = Path(__file__).resolve().parents[1] / ref
@@ -184,10 +184,12 @@ class VoxCPM2(CeluneBackend):
         # random seeding causes regenerations of Celune's output to be unique
         # allowing you to fix a bad output
         self.current_seed = random.randrange(2**32)
+
         random.seed(self.current_seed)
         np.random.seed(self.current_seed)
         torch.cuda.manual_seed_all(self.current_seed)
         torch.manual_seed(self.current_seed)
+
         torch.backends.cudnn.deterministic = True
         torch.use_deterministic_algorithms(True)
 
@@ -220,8 +222,8 @@ class VoxCPM2(CeluneBackend):
             **kwargs: Streaming generation arguments passed to the backend.
 
         Returns:
-            Iterable[tuple]: An iterator of ``(audio, sample_rate, timing)``
-            tuples suitable for Celune's playback pipeline.
+            Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of
+                ``(audio, sample_rate, timing)`` tuples suitable for Celune's playback pipeline.
 
         Raises:
             ValueError: The requested voice is unknown or input text is empty.
@@ -242,6 +244,7 @@ class VoxCPM2(CeluneBackend):
 
         text = kwargs.pop("text", None)
         if not text:
+            # saying nothing makes no sense
             raise ValueError("expected input, nothing found")
 
         if instruct:
@@ -255,7 +258,7 @@ class VoxCPM2(CeluneBackend):
                     reference_wav_path=ref_wav,
                     inference_timesteps=6,
                     cfg_value=cfg,
-                ):  # Celune wants (audio, sr, timing)
+                ):  # Celune wants `(audio, sr, timing)`, but we don't use `timing`
                     yield chunk, 48000, None
         else:
             version = get_version("voxcpm")

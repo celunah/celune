@@ -94,6 +94,7 @@ class CeluneBackend(ABC):
         """
         if self.voice_models:
             return list(self.voice_models)
+
         return []
 
     def model_id_for_voice(self, voice: str) -> str:
@@ -128,6 +129,7 @@ class CeluneBackend(ABC):
         """
         if self.model_name is None:
             raise ValueError(f"{self.name} does not have a configured model to load")
+
         self.model = self.load_model(self.model_name)
         return self.model
 
@@ -170,5 +172,6 @@ class CeluneBackend(ABC):
             **kwargs: Backend-specific generation parameters.
 
         Returns:
-            Iterable[Any]: An iterator of backend-specific audio chunk payloads.
+            Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of
+                Celune compatible audio chunks.
         """

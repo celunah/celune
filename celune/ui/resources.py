@@ -101,11 +101,11 @@ def format_seed(celune: Celune) -> str:
     return f"Seed: {seed}" if seed is not None else "Seed: N/A"
 
 
-def resource_pages(celune: Optional[Celune]) -> tuple[str, ...]:
+def resource_pages(celune: Celune) -> tuple[str, ...]:
     """Return resource footer pages in their display order."""
     pages = [format_vram(), format_usage()]
 
-    if celune is not None and getattr(celune.backend, "current_seed", None) is not None:
+    if getattr(celune.backend, "current_seed", None) is not None:
         pages.append(format_seed(celune))
 
     now = datetime.datetime.now()

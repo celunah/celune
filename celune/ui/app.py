@@ -7,7 +7,8 @@ import signal
 import threading
 import itertools
 import contextlib
-from typing import cast
+from types import FrameType
+from typing import cast, Optional
 from collections.abc import Iterator
 
 import yaml
@@ -665,7 +666,7 @@ class CeluneUI(App):
         """
         self.exit()
 
-    def signal_handler(self, sig, _frame) -> None:
+    def signal_handler(self, sig: int, _frame: Optional[FrameType]) -> None:
         """Trap CTRL+C and exit Celune if pressed, while ignoring CTRL+Z.
 
         Args:

@@ -180,6 +180,7 @@ class Qwen3(CeluneBackend):
 
         Args:
             model_id: The Qwen3 model repository ID to load.
+            **kwargs: Additional keyword arguments to use.
 
         Returns:
             FasterQwen3TTS: The loaded Qwen3 TTS model instance.
@@ -202,22 +203,26 @@ class Qwen3(CeluneBackend):
 
         Args:
             model: The loaded Qwen3 model instance.
-            **kwargs: Streaming generation arguments passed to the backend.
+            **kwargs: Streaming generation keyword arguments to use.
 
         Returns:
-            Iterable[Any]: An iterator of Qwen3 streaming audio chunks.
+            Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of Qwen3 streaming audio chunks.
 
         Raises:
             ValueError: The current Qwen3 mode or requested voice is unsupported.
         """
         if self.mode == "native":
-            kwargs.pop("voice", None)  # Celune has native voices in this backend
+            # we are not using the voice param here, as the model defines only one
+            # and you have to reload the model to apply voice settings
+            kwargs.pop("voice", None)
             # Celune natively works with Qwen-formatted chunks
             yield from model.generate_custom_voice_streaming(speaker="celune", **kwargs)
         elif self.mode == "clone":
+            # we are using the voice param here as it tells Celune which reference to use
             voice = kwargs.pop("voice", self.default_voice)
 
             try:
+                # this path resolves to celune/refs/[voice].wav
                 ref_wav = (
                     Path(__file__).resolve().parents[1] / self.reference_wavs[voice]
                 )
@@ -230,7 +235,7 @@ class Qwen3(CeluneBackend):
             yield from model.generate_voice_clone_streaming(
                 ref_audio=ref_wav,
                 ref_text=ref_text,
-                xvec_only=False,
+                xvec_only=False,  # use reference-based conditioning
                 **kwargs,
             )
         else:

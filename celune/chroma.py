@@ -19,7 +19,7 @@ from .utils import to_rgb, lunar_info, range_interpolated
 class AudioRGBGlow:
     """OpenRGB-compatible speaking-aware glow effect."""
 
-    def __init__(self, color, host="127.0.0.1", port=6742):
+    def __init__(self, color: str, host: str = "127.0.0.1", port: int = 6742) -> None:
         """Initialize RGB glow state.
 
         Args:
@@ -134,7 +134,7 @@ class AudioRGBGlow:
         self._worker.start()
         return True
 
-    def stop(self, reset=True, wait=False) -> None:
+    def stop(self, reset: bool = True, wait: bool = False) -> None:
         """Hard-stop the glow effect.
 
         Args:
@@ -296,7 +296,7 @@ class AudioRGBGlow:
         level = level ** (1.0 / self.gamma)
         return float(np.clip(level, 0.0, 1.0))
 
-    def _set_all_devices(self, rgb) -> None:
+    def _set_all_devices(self, rgb: tuple[int, int, int]) -> None:
         """Apply color to all registered OpenRGB devices.
 
         Args:
@@ -306,7 +306,7 @@ class AudioRGBGlow:
             None: This method pushes the color update to all known devices.
         """
         rgb = np.clip(rgb, 0, 255).astype(int)
-        color = RGBColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        color = RGBColor(rgb[0], rgb[1], rgb[2])
         for device in self.devices:
             with contextlib.suppress(Exception):
                 device.set_color(color, fast=self.fast)

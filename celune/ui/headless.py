@@ -3,6 +3,7 @@
 import signal
 import sys
 import time
+from types import FrameType
 from typing import Any, Optional, cast
 
 from ..celune import Celune
@@ -102,7 +103,7 @@ class CeluneHeadlessUI:
         while True:
             time.sleep(1)
 
-    def signal_handler(self, sig, _frame) -> None:
+    def signal_handler(self, sig: int, _frame: Optional[FrameType]) -> None:
         """Exit Celune in headless mode on CTRL+C and handle CTRL+Z.
 
         Args:
