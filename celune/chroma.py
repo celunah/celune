@@ -6,6 +6,7 @@ import datetime
 import threading
 import contextlib
 from collections import deque
+from typing import Union
 
 import numpy as np
 import numpy.typing as npt
@@ -14,6 +15,8 @@ from openrgb.utils import RGBColor
 
 from .dsp import _split
 from .utils import to_rgb, lunar_info, range_interpolated
+
+type RGBTuple = tuple[int, ...]
 
 
 class AudioRGBGlow:
@@ -254,7 +257,7 @@ class AudioRGBGlow:
         return audio
 
     @staticmethod
-    def _fix_color_rendering(rgb: tuple) -> tuple[int, int, int]:
+    def _fix_color_rendering(rgb: RGBTuple) -> RGBTuple:
         """Compensate for LED green dominance and prevent channel clipping.
 
         Args:
@@ -296,7 +299,7 @@ class AudioRGBGlow:
         level = level ** (1.0 / self.gamma)
         return float(np.clip(level, 0.0, 1.0))
 
-    def _set_all_devices(self, rgb: tuple[int, int, int]) -> None:
+    def _set_all_devices(self, rgb: Union[RGBTuple, npt.NDArray[np.floating]]) -> None:
         """Apply color to all registered OpenRGB devices.
 
         Args:
