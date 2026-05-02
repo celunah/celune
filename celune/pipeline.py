@@ -347,6 +347,8 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         Returns:
             list[str]: Sentence-like units with surrounding whitespace removed.
         """
+
+        # match is a keyword, but it's allowed as an identifier
         return [match.group(0).strip() for match in sentence_checker.finditer(value)]
 
     def split_units(value: str) -> list[str]:
@@ -476,7 +478,7 @@ def generation_worker(engine: "Celune") -> None:
                             audio_chunk,
                             sr,  # 24 kHz if Qwen3, 48 kHz if VoxCPM2
                             _,
-                        ) in engine.backend.generate_stream(
+                        ) in engine.backend.generate_stream(  # some args will be discarded as needed
                             engine.model,
                             text=chunk_text,
                             language=engine.language,
@@ -534,6 +536,7 @@ def generation_worker(engine: "Celune") -> None:
                             speech_len += chunk_dur
                             buffered_speech_len += chunk_dur
 
+                            # buffering helps Celune speak smoothly when performance is bad
                             if buffered_speech_len >= 10.0:
                                 queued_audio = np.concatenate(buffer)
                                 engine.audio_queue.put((queued_audio, 48000, None))
@@ -564,7 +567,7 @@ def generation_worker(engine: "Celune") -> None:
 
                 engine.log(
                     f"[GEN] {format_number(speech_len, 2)} seconds, took {format_number(generation_time, 2)} seconds, "
-                    f"RTF: {format_number(speech_len / generation_time, 2)}"
+                    f"Speed: x{format_number(speech_len / generation_time, 2)}"
                 )
 
                 if buffer:

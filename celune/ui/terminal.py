@@ -149,7 +149,7 @@ class LogRedirect:
         Args:
             escape: The ANSI escape code(s) to process.
 
-        Return:
+        Returns:
             None: This function writes ANSI escape codes to the underlying terminal.
         """
         ansi_regex = re.compile(

@@ -7,6 +7,7 @@ from typing import Any, cast
 import librosa
 import matplotlib
 import numpy as np
+import numpy.typing as npt
 from matplotlib import rcParams
 from matplotlib import pyplot as plt
 from matplotlib import colors as mcolors
@@ -143,20 +144,20 @@ def _join_trait_names(trait_names: list[str]) -> str:
     return ", ".join(display_names[:-1]) + f", and {display_names[-1]}"
 
 
-def load_audio(voice: pathlib.Path) -> tuple[np.ndarray, int]:
+def load_audio(voice: pathlib.Path) -> tuple[npt.NDArray[np.float32], int]:
     """Load a WAV file while preserving the native sample rate.
 
     Args:
         voice: Path to the voice sample to load.
 
     Returns:
-        tuple[np.ndarray, int]: The mono waveform and native sample rate.
+        tuple[npt.NDArray[np.float32], int]: The mono waveform and native sample rate.
     """
     y, sr = librosa.load(str(voice), sr=None, mono=True)
     return y, int(sr)
 
 
-def compute_raw_metrics(y: np.ndarray, sr: int) -> dict:
+def compute_raw_metrics(y: npt.NDArray[np.float32], sr: int) -> dict:
     """Compute low-level audio descriptors from a mono signal.
 
     Args:
@@ -664,7 +665,7 @@ def write_report(
 
 
 def _analyze_voice_data(
-    y: np.ndarray,
+    y: npt.NDArray[np.float32],
     sr: int,
     voice: pathlib.Path,
     out_dir: pathlib.Path,
@@ -693,7 +694,7 @@ def _analyze_voice_data(
 
 
 def analyze_voice_audio(
-    audio: np.ndarray,
+    audio: npt.NDArray[np.float32],
     sr: int,
     display_name: str,
     out_dir: pathlib.Path,
