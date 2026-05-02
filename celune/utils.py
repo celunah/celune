@@ -240,7 +240,9 @@ def supports_ansi() -> bool:
     if not is_tty:  # non-interactive terminals don't support ANSI
         return False
 
-    if sys.platform != "win32":  # interactive terminals on Linux systems should already be ANSI capable
+    if (
+        sys.platform != "win32"
+    ):  # interactive terminals on Linux systems should already be ANSI capable
         return True
 
     try:
@@ -262,7 +264,9 @@ def supports_ansi() -> bool:
         return False
 
     enable_virtual_terminal_processing = 0x0004
-    if mode.value & enable_virtual_terminal_processing:  # try to enable ANSI mode, bail out if not set
+    if (
+        mode.value & enable_virtual_terminal_processing
+    ):  # try to enable ANSI mode, bail out if not set
         return True  # ANSI mode was enabled
 
     return bool(  # try to enable ANSI mode using alternative call syntax, bail out if not set
