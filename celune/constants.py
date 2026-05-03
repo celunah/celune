@@ -68,3 +68,8 @@ THEME_LIGHT = Theme(
     error="#7a1f24",  # Celune light error
     dark=False,
 )
+
+# pipeline state objects
+TERMINATE = object()
+UTTERANCE_END = object()
+UTTERANCE_FORCE_END = object()

@@ -19,7 +19,7 @@ from textual.widgets import Label, RichLog, TextArea, Button
 from rich.text import Text
 
 from ..celune import Celune
-from ..utils import format_error
+from ..utils import format_error, indent
 from ..constants import SEVERITY_COLORS, SIGTSTP, THEME, THEME_LIGHT
 from .commands import process_command as process_ui_command
 from . import resources as ui_resources
@@ -70,7 +70,6 @@ class CeluneUI(App):
         self.consume_on_boundary = False
         self._suppress_input_change = False
         self._resource_page = 0
-        self.indent = 2
 
     def _severity_color(self, severity: str = "info") -> str:
         """Return the current theme color for a log severity.
@@ -246,7 +245,7 @@ class CeluneUI(App):
             """
             pages = ui_resources.resource_pages(self.celune)
             text = pages[self._resource_page % len(pages)]
-            self.resources.update(text + " " * self.indent)
+            self.resources.update(indent(text, spaces=2, direction="right"))
 
         if threading.current_thread() is threading.main_thread():
             update()
@@ -364,7 +363,7 @@ class CeluneUI(App):
             Returns:
                 None: This callback updates status text and color.
             """
-            self.status.update(" " * self.indent + msg)
+            self.status.update(indent(msg, spaces=2))
             self._refresh_status()
             self.update_resources()
 
