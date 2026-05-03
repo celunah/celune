@@ -89,6 +89,6 @@ class PipelineStates(Enum):
 class UtteranceLoudnessTier(IntEnum):
     """Per-utterance loudness tiers."""
 
-    NORMAL = 0
-    SUSPICIOUS = 1
-    SILENT = 2
+    NORMAL = 0  # Celune spoke normally.
+    SUSPICIOUS = 1  # Utterance may be too silent.
+    SILENT = 2  # Utterance is too silent.
