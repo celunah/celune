@@ -14,6 +14,8 @@ from celune.constants import REFERENCE_NEW_MOON
 
 
 class CallerInfo(TypedDict):
+    """Caller information type annotation."""
+
     function: str
     filename: str
     line: int
