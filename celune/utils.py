@@ -2,13 +2,21 @@
 
 import sys
 import math
+import inspect
 import datetime
 import traceback
 import subprocess
 import multiprocessing
-from typing import Union, Callable, Literal
+from pathlib import Path
+from typing import Union, Callable, Optional, Literal, TypedDict
 
 from celune.constants import REFERENCE_NEW_MOON
+
+
+class CallerInfo(TypedDict):
+    function: str
+    filename: str
+    line: int
 
 
 def get_revision() -> str:
@@ -315,3 +323,42 @@ def indent(text: str, spaces: int, direction: Literal["left", "right"] = "left")
         return text + " " * spaces
 
     raise ValueError("can't indent from this direction")
+
+
+def get_caller() -> Optional[CallerInfo]:
+    """Get information on the caller importing a package.
+
+    Returns:
+        dict: The caller's information.
+    """
+    for frame in inspect.stack():
+        filename = frame.filename
+        current = Path(__file__).resolve().parts[-2]
+
+        if "importlib" in filename or filename.startswith("<frozen"):
+            continue
+
+        if current in filename:
+            continue
+
+        return {
+            "function": frame.function,
+            "filename": frame.filename,
+            "line": frame.lineno,
+        }
+
+    return None
+
+
+def caller_is_repl() -> bool:
+    """Is the caller importing Celune the Python REPL?
+
+    Returns:
+        bool: If the caller is the Python REPL.
+    """
+    caller = get_caller()
+
+    if caller is not None:
+        return caller["filename"].startswith("<python-input-")
+
+    return False

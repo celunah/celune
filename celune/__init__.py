@@ -1,6 +1,6 @@
 import sys
 
-from .utils import get_revision
+from .utils import get_revision, caller_is_repl
 
 REVISION = get_revision()
 if REVISION:
@@ -36,5 +36,6 @@ try:
         "__comment__",
     ]
 except ModuleNotFoundError as package:
-    print(f"Missing dependency: {package.name}")
-    print("Some functionality may be unavailable.")
+    if caller_is_repl():
+        print(f"Missing dependency: {package.name}")
+        print("Some functionality may be unavailable.")
