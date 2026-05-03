@@ -2,6 +2,7 @@
 
 import signal
 import datetime
+from enum import IntEnum, Enum
 from typing import TypeVar
 
 from textual.theme import Theme
@@ -12,14 +13,20 @@ NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v1.3"
 # I use this to know when the next moon comes.
 REFERENCE_NEW_MOON = datetime.datetime(2000, 1, 6, 18, 14, tzinfo=datetime.timezone.utc)
 
+
 # exit codes
-EXIT_SUCCESS = 0
-EXIT_PENDING_UPDATE = 0
-EXIT_FAILURE = 1
-EXIT_NO_ANSI = 2
-EXIT_ALREADY_RUNNING = 3
-EXIT_MISSING_DEPENDENCIES = 4
-EXIT_CELINE_DAY = 103
+class ExitCodes(Enum):
+    """Celune exit codes."""
+
+    EXIT_SUCCESS = 0  # Celune exited successfully.
+    EXIT_PENDING_UPDATE = 0  # Celune has a pending update.
+    EXIT_FAILURE = 1  # Celune experienced a general failure.
+    EXIT_NO_ANSI = 2  # Celune did not find an ANSI capable terminal.
+    EXIT_ALREADY_RUNNING = 3  # Celune is already running.
+    EXIT_MISSING_DEPENDENCIES = 4  # Celune is missing required dependencies.
+    EXIT_CELINE_DAY_SIX_SEVEN = 67  # Celune refuses to run on Celine Day.
+    EXIT_CELINE_DAY = 103  # Celune refuses to run on Celine Day.
+
 
 # SIGTSTP is not defined on Windows systems
 SIGTSTP = getattr(signal, "SIGTSTP", None)
@@ -69,7 +76,19 @@ THEME_LIGHT = Theme(
     dark=False,
 )
 
+
 # pipeline state objects
-TERMINATE = object()
-UTTERANCE_END = object()
-UTTERANCE_FORCE_END = object()
+class PipelineStates(Enum):
+    """Pipeline state objects."""
+
+    TERMINATE = object()  # Celune is exiting.
+    UTTERANCE_END = object()  # Utterance ended normally.
+    UTTERANCE_FORCE_END = object()  # Utterance was interrupted by the user.
+
+
+class UtteranceLoudnessTier(IntEnum):
+    """Per-utterance loudness tiers."""
+
+    NORMAL = 0
+    SUSPICIOUS = 1
+    SILENT = 2

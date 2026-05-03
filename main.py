@@ -9,6 +9,7 @@ Celune models are available on https://huggingface.co/collections/lunahr/celune.
 import os
 import sys
 import time
+import random
 import shutil
 import datetime
 import contextlib
@@ -37,13 +38,7 @@ try:
     )
     from celune.config import config_bool, config_value, env_bool
     from celune.utils import supports_ansi, indent
-    from celune.constants import (
-        EXIT_PENDING_UPDATE,
-        EXIT_NO_ANSI,
-        EXIT_FAILURE,
-        EXIT_ALREADY_RUNNING,
-        EXIT_CELINE_DAY,
-    )
+    from celune.constants import ExitCodes
 except ModuleNotFoundError as package:
     print(f"You do not have '{package.name}' installed.")
     print("Celune requires this library to function.")
@@ -144,7 +139,7 @@ def main() -> None:
                         print(
                             "Celune updated successfully. Restart Celune to apply changes."
                         )
-                        sys.exit(EXIT_PENDING_UPDATE)
+                        sys.exit(ExitCodes.EXIT_PENDING_UPDATE.value)
         elif check_for_update() and not supports_ansi():
             print("This terminal does not support ANSI.")
             print("Attempting to apply update non-interactively...")
@@ -156,7 +151,7 @@ def main() -> None:
                 time.sleep(5)
             else:
                 print("Celune updated successfully. Restart Celune to apply changes.")
-                sys.exit(EXIT_PENDING_UPDATE)
+                sys.exit(ExitCodes.EXIT_PENDING_UPDATE.value)
 
         # ask for default backend if not set yet
         # Celune will save this preference
@@ -187,20 +182,17 @@ def main() -> None:
             print("This terminal does not support ANSI.")
             print("Please select a backend manually.")
             print("Refer to Celune's configuration for details.")
-            sys.exit(EXIT_NO_ANSI)
+            sys.exit(ExitCodes.EXIT_NO_ANSI.value)
 
         if not env_bool("CELUNE_LAUNCHER"):
             launcher_exe = "celune.exe" if os.name == "nt" else "celune.appimage"
-            print(
-                "Celune is not being launched via the Celune launcher.\n"
-                "\n"
-                "To suppress this message, run Celune with:\n"
-                f"{indent(f'{launcher_exe}', spaces=4)}"
-                "\n"
-                "or set the following environment variable:\n"
-                f"{indent('CELUNE_LAUNCHER=1', spaces=4)}",
-                flush=True,
-            )
+            print("Celune is not being launched via the Celune launcher.")
+            print()
+            print("To suppress this message, run Celune with:")
+            print(indent(f"{launcher_exe}", spaces=4))
+            print()
+            print("or set the following environment variable:")
+            print(indent("CELUNE_LAUNCHER=1", spaces=4))
             time.sleep(5)
         else:
             active_processes = 0
@@ -217,7 +209,7 @@ def main() -> None:
                             # you do not want to run multiple instances of Celune
                             # your memory doesn't want to either
                             print("Celune is already running.")
-                            sys.exit(EXIT_ALREADY_RUNNING)
+                            sys.exit(ExitCodes.EXIT_ALREADY_RUNNING.value)
 
         if not headless and supports_ansi():  # normal mode
             ui: CeluneTextualUI
@@ -252,7 +244,7 @@ def main() -> None:
 
             if not celune.load():
                 celune.close()
-                sys.exit(EXIT_FAILURE)
+                sys.exit(ExitCodes.EXIT_FAILURE.value)
 
             print("Celune is running in headless mode.")
             print("While in this mode, input is only possible via Celune extensions.")
@@ -262,7 +254,7 @@ def main() -> None:
             print("Celune cannot start in normal mode.")
             print("Hint:")
             print(indent("Try using another terminal application.", spaces=4))
-            sys.exit(EXIT_NO_ANSI)
+            sys.exit(ExitCodes.EXIT_NO_ANSI.value)
     except Exception as e:
         if e.__class__ != No:
             print("An internal error occurred while Celune was running.")
@@ -285,14 +277,18 @@ def main() -> None:
             print()
             print("additional debugging:")
             print(indent("Set 'dev: true' in config.yaml", spaces=4))
-            sys.exit(EXIT_FAILURE)
+            sys.exit(ExitCodes.EXIT_FAILURE.value)
 
         print("I sense the presence of... her.")
         print("I would rather not.")
         print()
         print("Hint:")
         print(indent("Try again tomorrow.", spaces=4))
-        sys.exit(EXIT_CELINE_DAY)
+        sys.exit(
+            ExitCodes.EXIT_CELINE_DAY.value
+            if random.uniform(0, 1) < 0.5
+            else ExitCodes.EXIT_CELINE_DAY_SIX_SEVEN.value
+        )
 
 
 if __name__ == "__main__":

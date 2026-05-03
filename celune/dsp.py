@@ -10,6 +10,7 @@ import soundfile as sf
 from scipy.signal import resample_poly
 from pedalboard import Pedalboard, Reverb
 
+from celune.constants import UtteranceLoudnessTier
 from celune.exceptions import AudioMismatchError, BadAudioError
 
 
@@ -156,6 +157,26 @@ def _split(
 
     for i in range(0, len(audio), frames):
         yield audio[i : i + frames]
+
+
+def is_silent_utterance(audio: npt.NDArray[np.float32]) -> tuple[bool, int]:
+    """Validate if this utterance is silent or not.
+
+    Args:
+        audio: NumPy array containing target audio.
+
+    Returns:
+        tuple[bool, int]: Whether this utterance is silent and how silent it is.
+    """
+    rms = np.sqrt(np.mean(np.square(audio)))
+
+    if rms <= 0.001:  # likely only contains surface noise
+        return True, UtteranceLoudnessTier.SILENT
+    if rms <= 0.01:  # some speech occurred, but it is suspicious
+        return True, UtteranceLoudnessTier.SUSPICIOUS
+
+    # Celune spoke normally
+    return False, UtteranceLoudnessTier.NORMAL
 
 
 class StreamingPedalboardReverb:
