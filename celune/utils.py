@@ -6,7 +6,7 @@ import datetime
 import traceback
 import subprocess
 import multiprocessing
-from typing import Union, Callable
+from typing import Union, Callable, Literal
 
 from celune.constants import REFERENCE_NEW_MOON
 
@@ -293,3 +293,25 @@ def format_error(e: Exception, dev: bool) -> str:
 
     details = str(e) or "no error description"
     return traceback.format_exc() if dev else details
+
+
+def indent(text: str, spaces: int, direction: Literal["left", "right"] = "left") -> str:
+    """Indent a string from left or the right.
+
+    Args:
+        text: The text to indent.
+        spaces: How many spaces to indent with.
+        direction: The direction to indent from, must be horizontal.
+
+    Returns:
+        str: The indented string.
+
+    Raises:
+        ValueError: Invalid indenting direction.
+    """
+    if direction == "left":
+        return " " * spaces + text
+    if direction == "right":
+        return text + " " * spaces
+
+    raise ValueError("can't indent from this direction")

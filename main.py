@@ -36,7 +36,7 @@ try:
         SelectMenu,
     )
     from celune.config import config_bool, config_value, env_bool
-    from celune.utils import supports_ansi
+    from celune.utils import supports_ansi, indent
     from celune.constants import (
         EXIT_PENDING_UPDATE,
         EXIT_NO_ANSI,
@@ -45,12 +45,18 @@ try:
         EXIT_CELINE_DAY,
     )
 except ModuleNotFoundError as package:
-    print(f"Missing dependency: {package.name}")
+    print(f"You do not have '{package.name}' installed.")
     print("Celune requires this library to function.")
-    print("Install dependencies with:")
+    print()
+    print("Set up Celune automatically by running:")
+    print("    python setup.py")
+    print()
+    print("or alternatively with uv:")
     print("    uv sync")
-    print("or install manually:")
+    print()
+    print("or install the package manually:")
     print(f"    pip install {package.name}")
+    print()
     if INITIAL_DEV:
         with contextlib.suppress(ModuleNotFoundError):
             from rich.traceback import install
@@ -58,9 +64,18 @@ except ModuleNotFoundError as package:
             install()
 
         raise
-    print("Run Celune with CELUNE_DEV=1 to get full traceback.")
+    print("for full traceback:")
+    if os.name == "nt":
+        print("set CELUNE_DEV=1")
+        print(f"    python {os.path.basename(__file__)}")
+    else:
+        print(f"    CELUNE_DEV=1 python {os.path.basename(__file__)}")
+    print()
+
     # this error is not controllable by config.yaml due to how Celune exceptions are caught
-    print("Other errors may be displayed by setting 'dev: true' in config.yaml.")
+    print("additional debugging:")
+    print("    Set 'dev: true' in config.yaml")
+    print()
     sys.exit(4)
 
 
@@ -175,8 +190,15 @@ def main() -> None:
             sys.exit(EXIT_NO_ANSI)
 
         if not env_bool("CELUNE_LAUNCHER"):
+            launcher_exe = "celune.exe" if os.name == "nt" else "celune.appimage"
             print(
-                "Warning: Celune is not being launched via the Celune launcher.",
+                "Celune is not being launched via the Celune launcher.\n"
+                "\n"
+                "To suppress this message, run Celune with:\n"
+                f"{indent(f'{launcher_exe}', spaces=4)}"
+                "\n"
+                "or set the following environment variable:\n"
+                f"{indent('CELUNE_LAUNCHER=1', spaces=4)}",
                 flush=True,
             )
             time.sleep(5)
@@ -188,7 +210,7 @@ def main() -> None:
                 ):
                     if proc.name() in [
                         "celune.exe",
-                        "celune.AppImage",
+                        "celune.appimage",
                     ]:  # Celune launcher
                         active_processes += 1
                         if active_processes > 1:
@@ -238,10 +260,12 @@ def main() -> None:
         else:
             print("This terminal does not support ANSI.")
             print("Celune cannot start in normal mode.")
+            print("Hint:")
+            print(indent("Try using another terminal application.", spaces=4))
             sys.exit(EXIT_NO_ANSI)
     except Exception as e:
         if e.__class__ != No:
-            print("An internal error occurred running Celune.")
+            print("An internal error occurred while Celune was running.")
             if INITIAL_DEV:
                 with contextlib.suppress(ModuleNotFoundError):
                     from rich.traceback import install
@@ -250,11 +274,24 @@ def main() -> None:
 
                 raise
             print(e or "no error description")
-            print("Run Celune with CELUNE_DEV=1 to get full traceback.")
-            print("Alternatively, set 'dev: true' in config.yaml")
+            print("For full traceback:")
+            if os.name == "nt":
+                print("set CELUNE_DEV=1")
+                print(indent("python {os.path.basename(__file__)}", spaces=4))
+            else:
+                print(
+                    indent("CELUNE_DEV=1 python {os.path.basename(__file__)}", spaces=4)
+                )
+            print()
+            print("additional debugging:")
+            print(indent("Set 'dev: true' in config.yaml", spaces=4))
             sys.exit(EXIT_FAILURE)
 
-        print("I sense the presence of... her.\nI would rather not.")
+        print("I sense the presence of... her.")
+        print("I would rather not.")
+        print()
+        print("Hint:")
+        print(indent("Try again tomorrow.", spaces=4))
         sys.exit(EXIT_CELINE_DAY)
 
 
