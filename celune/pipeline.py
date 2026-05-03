@@ -17,7 +17,7 @@ import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 
-from .dsp import _resample_audio, _soften, _split, _to_48khz
+from .dsp import _resample_audio, _soften, _split, _to_48khz, is_silent_utterance
 from .exceptions import NotAvailableError
 from .utils import format_number, run_async, format_error
 from .analysis import analyze_voice_audio
@@ -418,6 +418,7 @@ def generation_worker(engine: "Celune") -> None:
     """
     while True:
         item = engine.text_queue.get()
+        engine.regenerate = False
 
         if item is engine.sentinel:
             engine.audio_queue.put(engine.sentinel)
@@ -598,6 +599,22 @@ def generation_worker(engine: "Celune") -> None:
                                 full_audio.append(tail)
 
                     engine.reverb.reset()
+                    is_silent, silence_tier = is_silent_utterance(
+                        np.concatenate(full_audio)
+                    )
+
+                    if is_silent and silence_tier == 2:
+                        engine.regenerate = True
+                        # push recently processed item back so Celune can process it again
+                        engine.text_queue.put(item)
+                        engine.log(
+                            "Previous utterance was silent, regenerating...", "warning"
+                        )
+                        continue
+                    if is_silent and silence_tier == 1:
+                        engine.log(
+                            "This utterance may be unexpectedly silent.", "warning"
+                        )
 
                     if save_output and full_audio:
                         wav = np.concatenate(full_audio)

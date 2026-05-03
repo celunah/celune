@@ -665,6 +665,14 @@ class CeluneUI(App):
         """
         self.exit()
 
+    def graceful_exit(self) -> None:
+        """Public interface for CeluneUI._graceful_exit().
+
+        Returns:
+            None: This method returns the same value as CeluneUI._graceful_exit().
+        """
+        self._graceful_exit()
+
     def signal_handler(self, sig: int, _frame: Optional[FrameType]) -> None:
         """Trap CTRL+C and exit Celune if pressed, while ignoring CTRL+Z.
 

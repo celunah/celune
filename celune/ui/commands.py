@@ -185,7 +185,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         return
     if command == "exit":
-        ui._graceful_exit()
+        ui.graceful_exit()
         return
 
     ui.safe_log(

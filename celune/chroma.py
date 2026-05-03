@@ -309,7 +309,7 @@ class AudioRGBGlow:
             None: This method pushes the color update to all known devices.
         """
         rgb = np.clip(rgb, 0, 255).astype(int)
-        color = RGBColor(rgb[0], rgb[1], rgb[2])
+        color = RGBColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))
         for device in self.devices:
             with contextlib.suppress(Exception):
                 device.set_color(color, fast=self.fast)

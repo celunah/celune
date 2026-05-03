@@ -8,7 +8,7 @@ from typing import Any, Optional, cast
 
 from ..celune import Celune
 from ..config import config_bool
-from ..constants import EXIT_SUCCESS, SIGTSTP
+from ..constants import ExitCodes, SIGTSTP
 from ..utils import supports_ansi
 
 
@@ -118,4 +118,4 @@ class CeluneHeadlessUI:
 
         if self.celune is not None:
             self.celune.close()
-        sys.exit(EXIT_SUCCESS)
+        sys.exit(ExitCodes.EXIT_SUCCESS.value)

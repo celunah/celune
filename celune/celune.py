@@ -21,12 +21,7 @@ from . import __version__
 from .backends import CeluneBackend, resolve_backend
 from .backends.qwen3 import Qwen3
 from .config import config_bool, config_value
-from .constants import (
-    NORMALIZER_MODEL_ID,
-    TERMINATE,
-    UTTERANCE_END,
-    UTTERANCE_FORCE_END,
-)
+from .constants import NORMALIZER_MODEL_ID, PipelineStates
 from .dsp import StreamingPedalboardReverb, readiness_signal
 from .utils import format_number, format_error
 from .chroma import AudioRGBGlow
@@ -192,6 +187,7 @@ class Celune:
 
         self._queue_lock = threading.Lock()
         self._utterance_force_stop = threading.Event()
+        self.regenerate = False
 
         self._stream: Optional[sd.OutputStream] = None
         self._current_sr: Optional[int] = None
@@ -945,7 +941,7 @@ class Celune:
         Returns:
             object: The sentinel object inserted into the audio queue.
         """
-        return UTTERANCE_FORCE_END
+        return PipelineStates.UTTERANCE_FORCE_END.value
 
     @property
     def playback_done(self):
@@ -972,7 +968,7 @@ class Celune:
         Returns:
             object: The sentinel object inserted when generation finishes.
         """
-        return UTTERANCE_END
+        return PipelineStates.UTTERANCE_END.value
 
     @property
     def sentinel(self):
@@ -981,7 +977,7 @@ class Celune:
         Returns:
             object: The sentinel object used to stop worker threads.
         """
-        return TERMINATE
+        return PipelineStates.TERMINATE.value
 
     @property
     def generation_thread(self) -> Optional[threading.Thread]:
