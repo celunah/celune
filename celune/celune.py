@@ -201,6 +201,7 @@ class Celune:
         self.loaded = False
         self.recently_saved: Optional[str] = None
         self.kept_sfx_audio: Optional[npt.NDArray[np.float32]] = None
+
         self._last_flavor: Optional[str] = None
         self._model_ready = threading.Event()
         self._model_ready.set()

@@ -62,6 +62,7 @@ class VoxCPM2(CeluneBackend):
         super().__init__(log=log)
         self.log = log
         self.optimize_enabled = False
+        self.random_seed = True
         self._validate_refs()
 
     @staticmethod
@@ -183,12 +184,13 @@ class VoxCPM2(CeluneBackend):
 
         # random seeding causes regenerations of Celune's output to be unique
         # allowing you to fix a bad output
-        self.current_seed = random.randrange(2**32)
+        if self.random_seed:
+            self.current_seed = random.randrange(2**32)
 
-        random.seed(self.current_seed)
-        np.random.seed(self.current_seed)
-        torch.cuda.manual_seed_all(self.current_seed)
-        torch.manual_seed(self.current_seed)
+            random.seed(self.current_seed)
+            np.random.seed(self.current_seed)
+            torch.cuda.manual_seed_all(self.current_seed)
+            torch.manual_seed(self.current_seed)
 
         torch.backends.cudnn.deterministic = True
         torch.use_deterministic_algorithms(True)
