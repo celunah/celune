@@ -40,6 +40,7 @@ class CeluneBackend(ABC):
         self.model: Optional[Any] = None
         self.log = log
         self.current_seed: Optional[int] = None
+        self.random_seed = True
 
     @staticmethod
     @abstractmethod

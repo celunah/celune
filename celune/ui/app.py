@@ -21,7 +21,8 @@ from rich.text import Text
 
 from ..celune import Celune
 from ..utils import format_error, indent
-from ..constants import SEVERITY_COLORS, SIGTSTP, THEME, THEME_APRIL_FOOLS, THEME_LIGHT
+from ..constants import SIGTSTP
+from ..colors import THEME, THEME_LIGHT, THEME_APRIL_FOOLS, SEVERITY_COLORS
 from .commands import process_command as process_ui_command
 from . import resources as ui_resources
 from .terminal import LogRedirect

@@ -52,6 +52,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(
             "/play <file> - Play a sound effect by path. Only WAV files are supported."
         )
+        ui.safe_log("/seed - Set a seed for speech outputs (VoxCPM2 only).")
         ui.safe_log("/stop - Terminate ongoing speech.")
         ui.safe_log("/exit - Exit Celune.")
         ui.safe_log("/help - Display this help message.")
@@ -177,6 +178,25 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 "error",
             )
             return
+        return
+    if command == "seed":
+        if not args:
+            ui.safe_log("Usage: /seed <seed>", "warning")
+            return
+
+        if args[0]:
+            try:
+                value = int(args[0])
+                ui.celune.backend.current_seed = value
+                ui.celune.backend.random_seed = False
+                ui.safe_log(f"Seed set to {args[0]}.")
+                return
+            except ValueError:
+                ui.safe_log("Invalid argument: {args[0]}", "warning")
+                return
+
+        ui.celune.backend.random_seed = True
+        ui.safe_log("Custom seed removed.")
         return
     if command == "stop":
         if not ui.celune.force_stop_speech():

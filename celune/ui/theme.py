@@ -1,6 +1,6 @@
 """Textual theme assets."""
 
-from ..constants import SEVERITY_COLORS
+from ..colors import SEVERITY_COLORS
 
 CELUNE_CSS = """
     Screen {
