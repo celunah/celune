@@ -319,6 +319,7 @@ dependencies = [
 api = [
     { name = "fastapi" },
     { name = "pydantic" },
+    { name = "python-multipart" },
     { name = "uvicorn" },
 ]
 
@@ -344,6 +345,7 @@ requires-dist = [
     { name = "psutil" },
     { name = "pydantic", marker = "extra == 'api'" },
     { name = "pyrubberband" },
+    { name = "python-multipart", marker = "extra == 'api'" },
     { name = "pyyaml" },
     { name = "readchar" },
     { name = "rich" },

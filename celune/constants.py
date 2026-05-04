@@ -7,6 +7,8 @@ from typing import TypeVar
 
 from textual.theme import Theme
 
+from celune.colors import random_hex
+
 # NEW AND IMPROVED! NOW WITH BETTER CASING & PUNCTUATION!
 NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v1.3"
 
@@ -46,6 +48,11 @@ SEVERITY_COLORS = {
         "warning": "#6b5e00",
         "error": "#7a1f24",
     },
+    "celune_april_fools": {
+        "info": random_hex(),
+        "warning": random_hex(),
+        "error": random_hex(),
+    },
 }
 
 # dark theme
@@ -73,6 +80,19 @@ THEME_LIGHT = Theme(
     surface="#ece8ff",  # same as background
     warning="#6b5e00",  # Celune light warning
     error="#7a1f24",  # Celune light error
+    dark=False,
+)
+
+THEME_APRIL_FOOLS = Theme(
+    name="celune_april_fools",
+    primary=random_hex(),
+    secondary=random_hex(),
+    accent=random_hex(),
+    foreground=random_hex(),
+    background=random_hex(),
+    surface=random_hex(),
+    warning=random_hex(),
+    error=random_hex(),
     dark=False,
 )
 

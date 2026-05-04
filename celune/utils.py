@@ -10,6 +10,7 @@ import multiprocessing
 from pathlib import Path
 from typing import Union, Callable, Optional, Literal, TypedDict
 
+from celune import colors
 from celune.constants import REFERENCE_NEW_MOON
 
 
@@ -364,3 +365,12 @@ def caller_is_repl() -> bool:
         return caller["filename"].startswith("<python-input-")
 
     return False
+
+
+def random_hex() -> str:
+    """Return a random six-digit hex color.
+
+    Returns:
+        str: The random hex color.
+    """
+    return colors.random_hex()

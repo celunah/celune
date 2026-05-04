@@ -1,5 +1,6 @@
 """Celune's frontend layer."""
 
+import datetime
 import os
 import sys
 import shlex
@@ -20,7 +21,7 @@ from rich.text import Text
 
 from ..celune import Celune
 from ..utils import format_error, indent
-from ..constants import SEVERITY_COLORS, SIGTSTP, THEME, THEME_LIGHT
+from ..constants import SEVERITY_COLORS, SIGTSTP, THEME, THEME_APRIL_FOOLS, THEME_LIGHT
 from .commands import process_command as process_ui_command
 from . import resources as ui_resources
 from .terminal import LogRedirect
@@ -47,8 +48,19 @@ class CeluneUI(App):
         self.style_button = cast(Button, None)
         self.status = cast(Label, None)
         self.resources = cast(Label, None)
-        self.themes = ("celune", "celune_light")
-        self.active_theme_name = "celune"
+
+        if self._is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
+            "1",
+            "true",
+            "on",
+            "yes",
+            "enabled",
+        }:
+            self.themes = ("celune_april_fools", "celune_april_fools")
+            self.active_theme_name = "celune_april_fools"
+        else:
+            self.themes = ("celune", "celune_light")
+            self.active_theme_name = "celune"
         self.log_history: list[tuple[str, str]] = []
         self.status_severity = "info"
 
@@ -70,6 +82,12 @@ class CeluneUI(App):
         self.consume_on_boundary = False
         self._suppress_input_change = False
         self._resource_page = 0
+
+    @staticmethod
+    def _is_april_fools() -> bool:
+        """Return whether the UI should use the April Fools theme."""
+        now = datetime.datetime.now()
+        return now.month == 4 and now.day == 1
 
     def _severity_color(self, severity: str = "info") -> str:
         """Return the current theme color for a log severity.
@@ -180,16 +198,26 @@ class CeluneUI(App):
         """
         self.register_theme(THEME)
         self.register_theme(THEME_LIGHT)
+        self.register_theme(THEME_APRIL_FOOLS)
 
-        theme = os.getenv("CELUNE_THEME") or self.celune.config.get("theme", "dark")
-
-        if theme == "dark":
-            self.active_theme_name = "celune"
-        elif theme == "light":
-            self.active_theme_name = "celune_light"
+        if self._is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
+            "1",
+            "true",
+            "on",
+            "yes",
+            "enabled",
+        }:
+            self.active_theme_name = "celune_april_fools"
         else:
-            self.active_theme_name = "celune"
-            self.safe_log("Invalid theme, defaulting to dark", "warning")
+            theme = os.getenv("CELUNE_THEME") or self.celune.config.get("theme", "dark")
+
+            if theme == "dark":
+                self.active_theme_name = "celune"
+            elif theme == "light":
+                self.active_theme_name = "celune_light"
+            else:
+                self.active_theme_name = "celune"
+                self.safe_log("Invalid theme, defaulting to dark", "warning")
 
         self.theme = self.active_theme_name
 
@@ -495,6 +523,10 @@ class CeluneUI(App):
                 return
 
             if event.key == "ctrl+t":
+                if self.active_theme_name == "celune_april_fools":
+                    event.prevent_default()
+                    return
+
                 next_theme = (
                     self.themes[1]
                     if self.active_theme_name == self.themes[0]

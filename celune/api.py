@@ -1,4 +1,5 @@
 import datetime
+import io
 import os
 import queue
 import struct
@@ -11,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, Union
 import numpy as np
 import soundfile as sf
 import uvicorn
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -28,6 +29,7 @@ auth_token: Optional[str] = None
 rate_limit_per_minute = 60
 rate_limit_lock = threading.Lock()
 rate_limit_hits: defaultdict[str, deque[float]] = defaultdict(deque)
+max_sfx_upload_bytes = 25 * 1024 * 1024
 
 
 class StartedServer(uvicorn.Server):
@@ -278,13 +280,6 @@ class VoiceRequest(BaseModel):
     voice_name: str = Field(min_length=1)
 
 
-class SFXRequest(BaseModel):
-    """Request body for playing a sound effect."""
-
-    sfx: str = Field(min_length=1)
-    keep: bool = True
-
-
 class ActionResponse(BaseModel):
     """Generic accepted control response."""
 
@@ -361,25 +356,49 @@ def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
 
 
 @api.post("/v1/sfx", response_model=None)
-def sfx(body: SFXRequest) -> Union[StreamingResponse, JSONResponse]:
-    """Play an SFX file and stream the audio chunks back to the caller."""
+async def sfx(
+    file: UploadFile = File(...),
+    keep: bool = Form(True),
+) -> Union[StreamingResponse, JSONResponse]:
+    """Play an uploaded SFX file and stream the audio chunks back to the caller."""
     celune = require_celune()
-    api_log("SFX", body.sfx, f" (keep={body.keep})")
+    filename = file.filename or "uploaded SFX"
+    api_log("SFX", filename, f" (keep={keep})")
 
-    if not celune.play(body.sfx, keep=body.keep):
+    data = await file.read(max_sfx_upload_bytes + 1)
+    if len(data) > max_sfx_upload_bytes:
         return JSONResponse(
-            status_code=500,
+            status_code=413,
             content={
-                "error": "request_failed",
+                "error": "request_too_large",
+                "message": "That sound is too large for me to play.",
+            },
+        )
+
+    try:
+        audio, sr = sf.read(io.BytesIO(data), dtype="float32")
+        audio = _resample_audio(np.asarray(audio, dtype=np.float32), sr)
+    except Exception as e:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "invalid_audio",
+                "message": f"I can't understand that sound file: {format_error(e, celune.dev)}",
+            },
+        )
+
+    if not celune.play_audio(audio, 48000, label=filename, keep=keep):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "not_ready",
                 "message": "I can't play that right now.",
             },
         )
 
     def chunks() -> Iterator[bytes]:
-        """Yield the SFX file as 48 kHz stereo float32 chunks."""
+        """Yield the uploaded SFX as 48 kHz stereo float32 chunks."""
         yield wav_header()
-        audio, sr = sf.read(body.sfx, dtype="float32")
-        audio = _resample_audio(np.asarray(audio, dtype=np.float32), sr)
         for chunk in _split(audio, 48000, celune.chunk_size):
             yield float32_to_pcm24(chunk)
 

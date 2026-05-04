@@ -207,7 +207,12 @@ def queue_speech(
         normalized = engine.normalize(text)
 
     date = datetime.datetime.now()
-    if date.month == 4 and date.day == 1:
+    if (
+        date.month == 4
+        and date.day == 1
+        and os.getenv("CELUNE_DISABLE_APRIL_FOOLS")
+        not in {"1", "true", "on", "yes", "enabled"}
+    ):
         engine.log("We are about to do a funny!")
         text = text.replace("celune", "celine").replace("Celune", "Celine")
 
@@ -236,6 +241,55 @@ def queue_speech(
         raise
 
 
+def queue_sfx_audio(
+    engine: "Celune",
+    audio: np.ndarray,
+    sample_rate: int,
+    label: str,
+    keep: bool = False,
+) -> bool:
+    """Queue decoded SFX audio through Celune's playback pipeline.
+
+    Args:
+        engine: The Celune engine that should play the sound.
+        audio: Decoded mono or stereo audio.
+        sample_rate: Source sample rate for the decoded audio.
+        label: Human-readable label for logs and status.
+        keep: Whether to prepend this SFX to the next saved utterance.
+
+    Returns:
+        bool: ``True`` when playback was queued successfully, otherwise ``False``.
+
+    Raises:
+        Exception: Re-raised after releasing the pipeline if SFX playback setup
+            fails.
+    """
+    if not acquire_pipeline(engine, "play"):
+        return False
+
+    try:
+        audio = np.asarray(audio, dtype=np.float32)
+        audio_len = len(audio) / sample_rate
+        engine.log(
+            f"Sample rate: {sample_rate} Hz, length: {format_number(audio_len, 2)} seconds"
+        )
+
+        audio = _resample_audio(audio, sample_rate)
+        if keep:
+            engine.kept_sfx_audio = audio.copy()
+
+        engine.cur_state = "speaking"
+        for chunk in _split(audio, 48000, engine.chunk_size):
+            engine.audio_queue.put((chunk, 48000, None))
+        engine.audio_queue.put(engine.utterance_done)
+
+        engine.status_callback(f"Playing {label}")
+        return True
+    except Exception:
+        release_pipeline(engine)
+        raise
+
+
 def play(engine: "Celune", sound_path: str, keep: bool = False) -> bool:
     """Play a sound via Celune's pipeline.
 
@@ -255,30 +309,10 @@ def play(engine: "Celune", sound_path: str, keep: bool = False) -> bool:
         engine.log(f"Celune cannot find {sound_path}.", "warning")
         return False
 
-    if not acquire_pipeline(engine, "play"):
-        return False
-
-    try:
-        audio, sr = sf.read(sound_path, dtype="float32")
-        audio_len = len(audio) / sr
-        engine.log(
-            f"Sample rate: {sr} Hz, length: {format_number(audio_len, 2)} seconds"
-        )
-
-        audio = _resample_audio(np.asarray(audio, dtype=np.float32), sr)
-        if keep:
-            engine.kept_sfx_audio = audio.copy()
-
-        engine.cur_state = "speaking"
-        for chunk in _split(audio, 48000, engine.chunk_size):
-            engine.audio_queue.put((chunk, 48000, None))
-        engine.audio_queue.put(engine.utterance_done)
-
-        engine.status_callback(f"Playing {sound_path}")
-        return True
-    except Exception:
-        release_pipeline(engine)
-        raise
+    audio, sr = sf.read(sound_path, dtype="float32")
+    return queue_sfx_audio(
+        engine, np.asarray(audio, dtype=np.float32), sr, sound_path, keep
+    )
 
 
 def close(engine: "Celune") -> None:
