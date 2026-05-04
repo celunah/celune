@@ -36,6 +36,7 @@ from .pipeline import (
     close_stream,
     force_stop_speech as force_stop_pipeline,
     generation_worker,
+    queue_sfx_audio,
     playback_worker,
     play as play_pipeline,
     queue_speech,
@@ -848,6 +849,27 @@ class Celune:
                 ``False``.
         """
         return play_pipeline(self, sound_path, keep=keep)
+
+    def play_audio(
+        self,
+        audio: npt.NDArray[np.float32],
+        sample_rate: int,
+        label: str = "uploaded SFX",
+        keep: bool = False,
+    ) -> bool:
+        """Play decoded audio via Celune's pipeline.
+
+        Args:
+            audio: Decoded mono or stereo audio.
+            sample_rate: Source sample rate for the decoded audio.
+            label: Human-readable label for logs and status.
+            keep: Whether to prepend this SFX to the next saved utterance.
+
+        Returns:
+            bool: ``True`` when playback was queued successfully, otherwise
+                ``False``.
+        """
+        return queue_sfx_audio(self, audio, sample_rate, label, keep=keep)
 
     def close(self) -> None:
         """Shut off Celune and exit.

@@ -91,6 +91,7 @@ dev = [
 api = [
 	"uvicorn",
 	"fastapi",
+    "python-multipart",
     "pydantic",
 ]
 
