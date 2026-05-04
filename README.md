@@ -66,6 +66,8 @@ Celune also depends on external system tools that are not installed via `pip`:
 
 Celune requires an RTX 30 series GPU or newer. CPU-only execution is not supported.
 
+Usage of Celune's UI requires an ANSI-capable terminal. Non-compliant terminals can only use the headless (CEF) mode.
+
 If Rubber Band is not installed, Celune will speak at normal speed, and speed controls will be unavailable.
 
 ## GPU requirements
