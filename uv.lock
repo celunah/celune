@@ -334,7 +334,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", marker = "extra == 'api'" },
-    { name = "faster-qwen3-tts", specifier = "<0.2.5" },
+    { name = "faster-qwen3-tts", specifier = ">=0.2.4" },
     { name = "hf-xet" },
     { name = "huggingface-hub", specifier = "<1.0.0" },
     { name = "librosa" },
