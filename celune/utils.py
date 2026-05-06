@@ -10,7 +10,6 @@ import multiprocessing
 from pathlib import Path
 from typing import Union, Callable, Optional, Literal, TypedDict
 
-from celune import colors
 from celune.constants import REFERENCE_NEW_MOON
 
 
@@ -369,10 +368,11 @@ def caller_is_repl() -> bool:
     return False
 
 
-def random_hex() -> str:
-    """Return a random six-digit hex color.
+def title_case(text: str) -> str:
+    """Return a title-cased version of the input string.
 
     Returns:
-        str: The random hex color.
+        str: The title-cased string.
     """
-    return colors.random_hex()
+
+    return text[0].upper() + text[1:]

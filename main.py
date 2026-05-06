@@ -37,7 +37,7 @@ try:
         SelectMenu,
     )
     from celune.config import config_bool, config_value, env_bool
-    from celune.utils import supports_ansi, indent
+    from celune.utils import supports_ansi, indent, title_case
     from celune.constants import ExitCodes
 except ModuleNotFoundError as package:
     print(f"You do not have '{package.name}' installed.")
@@ -146,7 +146,8 @@ def main() -> None:
             try:
                 update_to_latest()
             except UpdateError as exc:
-                print(exc)
+                detail = title_case(str(exc))
+                print(f"Celune could not update: {detail}")
                 print("Continuing with the current version.")
                 time.sleep(5)
             else:
