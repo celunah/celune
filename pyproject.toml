@@ -10,11 +10,14 @@ authors = [
 
 dependencies = [
     # AI stack
+    # Please, only use CUDA 12.8.
     "torch==2.11.0+cu128",
     "torchaudio==2.11.0+cu128",
-    # Celune sounds best with faster-qwen3-tts 0.2.4 or 0.2.6.
-    # Do not use version 0.2.5. It may cause problems.
-    "faster-qwen3-tts>=0.2.4,!=0.2.5",
+    # Celune sounds best with faster-qwen3-tts 0.2.4.
+    # To match this version's behavior in 0.2.5 or newer, you may need to set non_streaming_mode=True.
+    # This parameter is ambiguously named, it doesn't actually disable streaming mode.
+    # If it did, Celune would have a problem operating.
+    "faster-qwen3-tts>=0.2.4",
     # If you want Celune to use the alternative VoxCPM2-based backend, install this package.
     # Note: This will fall back to voice cloning. If you want to use native Celune voices, use the Qwen3 backend.
     "voxcpm>=2.0.2",

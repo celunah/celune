@@ -203,7 +203,7 @@ def cuda_architecture(capability: tuple[int, int]) -> str:
 
     major, minor = capability
 
-    if major in [10, 11, 12] and minor == 0:
+    if major in [10, 11, 12] and minor == 0:  # recommended family
         return "Blackwell"
     if major == 9 and minor == 0:
         return "Hopper"
@@ -211,10 +211,12 @@ def cuda_architecture(capability: tuple[int, int]) -> str:
         return "Ada Lovelace"
     if major == 8 and minor in [0, 6, 7]:  # CELINE INVADED THE CUDA ZONE!
         return "Ampere"
-    if major < 8:
+    if major < 8:  # too old
         raise NotImplementedError("capability not supported")
 
-    raise ValueError("invalid capability")
+    raise ValueError(
+        "invalid capability"
+    )  # non-CUDA GPU reported a capability not known to Celune
 
 
 def run_async(

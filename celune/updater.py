@@ -225,21 +225,21 @@ def update_to_latest() -> None:
         UpdateError: Celune cannot be updated safely.
     """
     if not _is_git_checkout():
-        raise UpdateError("Celune did not find a Git repository.")
+        raise UpdateError("did not find a repository")
 
     if _has_local_changes():
-        raise UpdateError(
-            "Celune has determined the local Git repository has not been committed yet."
-        )
+        raise UpdateError("repository not committed")
 
     try:
         _run_git(["fetch", "--prune", REMOTE_URL, "HEAD"], timeout=120)
     except subprocess.CalledProcessError as exc:
         raise UpdateError(_format_git_error(exc)) from exc
     except subprocess.TimeoutExpired as exc:
-        raise UpdateError(f"Git fetch timed out after {exc.timeout} seconds.") from exc
+        raise UpdateError(
+            f"timed out fetching the repository after {exc.timeout} seconds"
+        ) from exc
     except FileNotFoundError as exc:
-        raise UpdateError("Celune could not find Git on this system.") from exc
+        raise UpdateError("git is not available") from exc
 
     try:
         can_fast_forward = _git_succeeds(
@@ -247,22 +247,19 @@ def update_to_latest() -> None:
         )
     except subprocess.TimeoutExpired as exc:
         raise UpdateError(
-            f"Git update validation timed out after {exc.timeout} seconds."
+            f"timed out validating the update after {exc.timeout} seconds"
         ) from exc
     except FileNotFoundError as exc:
-        raise UpdateError("Celune could not find Git on this system.") from exc
+        raise UpdateError("git is not available") from exc
 
     if not can_fast_forward:
-        raise UpdateError(
-            "Celune cannot update automatically because the local branch cannot "
-            "be fast-forwarded."
-        )
+        raise UpdateError("repository is not able to be fast-forwarded")
 
     try:
         _run_git(["merge", "--ff-only", "FETCH_HEAD"], timeout=120)
     except subprocess.CalledProcessError as exc:
         raise UpdateError(_format_git_error(exc)) from exc
     except subprocess.TimeoutExpired as exc:
-        raise UpdateError(f"Git merge timed out after {exc.timeout} seconds.") from exc
+        raise UpdateError(f"timed out merging after {exc.timeout} seconds") from exc
     except FileNotFoundError as exc:
-        raise UpdateError("Celune could not find Git on this system.") from exc
+        raise UpdateError("git is not available") from exc

@@ -251,7 +251,7 @@ class VoxCPM2(CeluneBackend):
         text = kwargs.pop("text", None)
         if not text:
             # saying nothing makes no sense
-            raise ValueError("expected input, nothing found")
+            raise ValueError("expected text to say")
 
         if instruct:
             # if this includes "music" or "singing", Celune may sing

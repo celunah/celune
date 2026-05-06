@@ -38,6 +38,7 @@ class SelectMenu(Generic[T]):
             raise ValueError("choices must not be empty")
         if len(choices) != len(raw_choices):
             raise ValueError("choices and raw_choices must have same length")
+
         self.choices = choices
         self.raw_choices = raw_choices
         self.prompt = prompt
