@@ -8,10 +8,11 @@ import hashlib
 from pathlib import Path
 from typing import Callable, Generator, Literal, Optional
 
-import faster_qwen3_tts
 import numpy as np
 import numpy.typing as npt
-from faster_qwen3_tts import FasterQwen3TTS
+
+# imported with a name because __version__ is reserved to Celune
+from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
 from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 
@@ -252,9 +253,7 @@ class Qwen3(CeluneBackend):
             raise ValueError("expected text to say")
 
         # if faster_qwen3_tts >= 0.2.5 use instructions, else remove this arg
-        major, minor, patch = (
-            int(num) for num in faster_qwen3_tts.__version__.split(".")
-        )
+        major, minor, patch = (int(num) for num in qwen3_ver.split("."))
         if not (major >= 0 and minor >= 2 and patch >= 5):
             kwargs.pop("instruct", None)
 
