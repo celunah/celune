@@ -57,7 +57,7 @@ class CeluneExtensionManager:
         if name in self.extensions:
             self.context.log(f"[Core] {name} is already registered", "warning")
             raise ExtensionAlreadyRegisteredError(
-                f"Extension '{name}' is already registered"
+                f"extension '{name}' is already registered"
             )
 
         self.extensions[name] = instance
@@ -128,7 +128,7 @@ class CeluneExtensionManager:
         """
         ext = self.extensions.get(name)
         if ext is None:
-            raise InvalidExtensionError(f"Extension '{name}' is not registered")
+            raise InvalidExtensionError(f"extension '{name}' is not registered")
 
         threading.Thread(
             target=ext.invoke, daemon=True, args=args, kwargs=kwargs

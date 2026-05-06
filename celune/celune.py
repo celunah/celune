@@ -453,14 +453,22 @@ class Celune:
 
                 self.log("Rewarming up...")
                 if not self._warmup():
-                    raise WarmupError("Warmup failed after reload")
+                    raise WarmupError("warmup failed after reload")
 
                 self.current_voice = voice
                 self.loaded = True
 
-            self.voice_changed_callback(voice)
-            self.log(f"Voice {voice} loaded.")
-            self.status_callback("Idle")
+            # play readiness signal on voice change success
+            # fail out if the pipeline cannot accept it for whatever reason
+            if acquire_pipeline(self, "readiness signal"):
+                self.cur_state = "speaking"
+                self.audio_queue.put((readiness_signal(), 48000, None))
+                self.audio_queue.put(self.utterance_done)
+                self.voice_changed_callback(voice)
+                self.log(f"Voice {voice} loaded.")
+                self.status_callback("Idle")
+            else:
+                raise NotAvailableError("expected to become ready, but did not")
         except Exception as e:
             self.loaded = False
             self.log(f"[RELOAD ERROR] {format_error(e, self.dev)}", "error")
@@ -547,6 +555,9 @@ class Celune:
             self.cur_state = "speaking"
             self.audio_queue.put((readiness_signal(), 48000, None))
             self.audio_queue.put(self.utterance_done)
+        else:
+            self.log("Expected to become ready, but did not.", "error")
+            return False
 
         return True
 
@@ -661,7 +672,7 @@ class Celune:
 
             with self._model_lock:
                 if self.model is None:
-                    raise NotAvailableError("Model is not available during warmup")
+                    raise NotAvailableError("cannot warm up without a model reference")
 
                 for _, _, _ in self.backend.generate_stream(
                     self.model,

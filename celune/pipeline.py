@@ -498,7 +498,9 @@ def generation_worker(engine: "Celune") -> None:
 
                 with engine.model_lock:
                     if engine.model is None:
-                        raise NotAvailableError("self.model is None")
+                        raise NotAvailableError(
+                            "cannot generate without a model reference"
+                        )
 
                     for chunk_index, chunk_text in enumerate(chunks):
                         if engine.exit_requested:

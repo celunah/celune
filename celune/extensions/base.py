@@ -27,9 +27,9 @@ class LogCallable(Protocol):
             None: Implementations forward the message to a logger.
 
         Raises:
-            NotImplementedError: The protocol placeholder is called directly.
+            IncompleteExtensionError: The protocol placeholder is called directly.
         """
-        raise NotImplementedError
+        raise IncompleteExtensionError("protocol not defined")
 
 
 @runtime_checkable
@@ -47,9 +47,9 @@ class SayCallable(Protocol):
             bool: ``True`` when the request was accepted.
 
         Raises:
-            NotImplementedError: The protocol placeholder is called directly.
+            IncompleteExtensionError: The protocol placeholder is called directly.
         """
-        raise NotImplementedError
+        raise IncompleteExtensionError("protocol not defined")
 
 
 @runtime_checkable
@@ -67,9 +67,9 @@ class PlayCallable(Protocol):
             bool: ``True`` when playback was queued.
 
         Raises:
-            NotImplementedError: The protocol placeholder is called directly.
+            IncompleteExtensionError: The protocol placeholder is called directly.
         """
-        raise NotImplementedError
+        raise IncompleteExtensionError("protocol not defined")
 
 
 @runtime_checkable
@@ -87,9 +87,9 @@ class StatusCallable(Protocol):
             None: Implementations forward the status update.
 
         Raises:
-            NotImplementedError: The protocol placeholder is called directly.
+            IncompleteExtensionError: The protocol placeholder is called directly.
         """
-        raise NotImplementedError
+        raise IncompleteExtensionError("protocol not defined")
 
 
 @runtime_checkable
@@ -106,9 +106,9 @@ class SetVoiceCallable(Protocol):
             bool: ``True`` when the voice change was accepted.
 
         Raises:
-            NotImplementedError: The protocol placeholder is called directly.
+            IncompleteExtensionError: The protocol placeholder is called directly.
         """
-        raise NotImplementedError
+        raise IncompleteExtensionError("protocol not defined")
 
 
 @runtime_checkable
@@ -122,9 +122,9 @@ class GetStateCallable(Protocol):
             str: Current state name.
 
         Raises:
-            NotImplementedError: The protocol placeholder is called directly.
+            IncompleteExtensionError: The protocol placeholder is called directly.
         """
-        raise NotImplementedError
+        raise IncompleteExtensionError("protocol not defined")
 
 
 @runtime_checkable
@@ -141,9 +141,9 @@ class WaitUntilReadyCallable(Protocol):
             bool: ``True`` when Celune is ready.
 
         Raises:
-            NotImplementedError: The protocol placeholder is called directly.
+            IncompleteExtensionError: The protocol placeholder is called directly.
         """
-        raise NotImplementedError
+        raise IncompleteExtensionError("protocol not defined")
 
 
 @dataclass(slots=True)

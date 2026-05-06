@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 import glob
+import hashlib
 from pathlib import Path
 from typing import Callable, Generator, Literal, Optional
 
+import faster_qwen3_tts
 import numpy as np
 import numpy.typing as npt
 from faster_qwen3_tts import FasterQwen3TTS
@@ -14,6 +16,7 @@ from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 
 from .base import CeluneBackend
+from ..exceptions import BackendError
 
 
 class Qwen3(CeluneBackend):
@@ -74,6 +77,7 @@ class Qwen3(CeluneBackend):
         self.mode = mode
         if self.mode == "clone":
             self.model_name = self.clone_model
+            self._validate_refs()
 
     @property
     def default_model_id(self) -> str:
@@ -175,6 +179,39 @@ class Qwen3(CeluneBackend):
             else:
                 self.log(f"{model_id} is already available.", "info")
 
+    def _validate_refs(self) -> None:
+        """Validate bundled reference audio files.
+
+        Returns:
+            None: This method checks that reference files are accessible and logs
+                checksum status when checksums exist.
+        """
+        for name, ref in self.reference_wavs.items():
+            full_path = Path(__file__).resolve().parents[1] / ref
+            try:
+                with open(full_path, "rb") as f:
+                    checksum = hashlib.file_digest(f, "sha256").hexdigest()
+            except FileNotFoundError as e:
+                raise BackendError(f"reference audio for '{name}' not found") from e
+            except PermissionError as e:
+                raise BackendError(f"cannot access reference audio for '{name}'") from e
+
+            checksum_path = f"{os.path.splitext(full_path)[0]}.sha256"
+            if os.path.exists(checksum_path):
+                with open(checksum_path, "r", encoding="utf-8") as f:
+                    expected = f.read().strip()
+
+                if checksum != expected:
+                    self.log(
+                        f"Checksum mismatch for '{name}', output may be affected.",
+                        "warning",
+                    )
+                else:
+                    self.log(
+                        f"Checksum not found for '{name}', skipping checksum verification.",
+                        "warning",
+                    )
+
     def load_model(self, model_id: str, **kwargs) -> FasterQwen3TTS:
         """Load the given voice model.
 
@@ -209,8 +246,18 @@ class Qwen3(CeluneBackend):
             Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of Qwen3 streaming audio chunks.
 
         Raises:
-            ValueError: The current Qwen3 mode or requested voice is unsupported.
+            ValueError: The current Qwen3 mode and/or requested voice is unsupported, or input text is empty.
         """
+        if not kwargs.get("text", None):
+            raise ValueError("expected text to say")
+
+        # if faster_qwen3_tts >= 0.2.5 use instructions, else remove this arg
+        major, minor, patch = (
+            int(num) for num in faster_qwen3_tts.__version__.split(".")
+        )
+        if not (major >= 0 and minor >= 2 and patch >= 5):
+            kwargs.pop("instruct", None)
+
         if self.mode == "native":
             # we are not using the voice param here, as the model defines only one
             # and you have to reload the model to apply voice settings
@@ -235,7 +282,7 @@ class Qwen3(CeluneBackend):
             yield from model.generate_voice_clone_streaming(
                 ref_audio=ref_wav,
                 ref_text=ref_text,
-                xvec_only=False,  # use reference-based conditioning
+                non_streaming_mode=False,  # VERY IMPORTANT ON >=0.2.5
                 **kwargs,
             )
         else:
