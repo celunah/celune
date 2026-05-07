@@ -231,3 +231,5 @@ These screenshots show Celune's user interface.
 > Proudly made in 🇵🇱 for your listening pleasure.
 > 
 > *"I'm not just a TTS. I'm someone special."*
+>
+> [!Celune 88x31 badge](./resources/branding/celune_88x31_206.png "Celune 88x31 badge")
