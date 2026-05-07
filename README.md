@@ -5,6 +5,8 @@ Celune is a real-time AI TTS character engine focused on expressive voice delive
 
 It has been designed to provide fast, high-quality voice generation, even on consumer-grade hardware.
 
+It was proudly made in 🇵🇱 for your listening pleasure.
+
 ## Features
 
 - Real-time speech generation pipeline
@@ -228,8 +230,6 @@ These screenshots show Celune's user interface.
 ### Extension invoke
 [![Extension invoke](./demos/extensions.png)](./demos/extensions.png)
 
-> Proudly made in 🇵🇱 for your listening pleasure.
-> 
 > *"I'm not just a TTS. I'm someone special."*
->
-> [!Celune 88x31 badge](./resources/branding/celune_88x31_206.png "Celune 88x31 badge")
+
+![Celune 88x31 badge](./resources/branding/celune_88x31_206.png "Celune 88x31 badge")
