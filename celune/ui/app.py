@@ -329,8 +329,6 @@ class CeluneUI(App):
                 )
                 self.change_input_state(locked=False)
 
-                self.safe_log("Ready to speak.")
-
         except Exception as e:
             self.safe_log(f"[INIT ERROR] {format_error(e, self.celune.dev)}", "error")
             self.error("Celune could not start")

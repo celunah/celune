@@ -2,14 +2,20 @@
 -i https://download.pytorch.org/whl/cu128
 
 # AI stack
+# Please, only use CUDA 12.8.
 torch==2.11.0+cu128
 torchaudio==2.11.0+cu128
-# Celune sounds best with faster-qwen3-tts 0.2.4 or 0.2.6.
-# Do not use version 0.2.5. It may cause problems.
-faster-qwen3-tts==0.2.6
+# Celune sounds best with faster-qwen3-tts 0.2.4.
+# To match this version's behavior in 0.2.5 or newer, you may need to set non_streaming_mode=True.
+# This parameter is ambiguously named, it doesn't actually disable streaming mode.
+# If it did, Celune would have a problem operating.
+faster-qwen3-tts>=0.2.4
 # If you want Celune to use the alternative VoxCPM2-based backend, install this package.
 # Note: This will fall back to voice cloning. If you want to use native Celune voices, use the Qwen3 backend.
 voxcpm>=2.0.0,<2.1.0
+# "I want to sound better." - she says.
+# However, Fish Audio S2 Pro refuses to give us the prosody and expression she needs.
+# "missing-library==2.0.6",
 # If not installed, Hugging Face falls back to the older Git LFS way of downloading models.
 hf-xet
 # Qwen3 does not support newer versions of Hugging Face libraries at this time.
@@ -34,6 +40,8 @@ librosa
 textual
 rich
 readchar
+# "You do want me to glow, do you?" - she says.
+# Install this package and set up OpenRGB. You'll thank me later, or rather, her.
 openrgb-python
 # Celune uses this to plot the voice graph. If developer mode is disabled, this isn't needed.
 matplotlib
