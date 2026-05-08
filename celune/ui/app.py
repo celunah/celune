@@ -500,7 +500,14 @@ class CeluneUI(App):
         if all(char in ".!?;:, " for char in to_say):
             return
 
-        self.celune.say(replace_ipa(to_say, strict=True), display_text=to_say)
+        ipa_decoded, unmatched = replace_ipa(to_say, strict=True)
+        if self.celune.dev:
+            self.safe_log(
+                f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
+                "warning",
+            )
+
+        self.celune.say(ipa_decoded, display_text=to_say)
 
     def on_key(self, event: events.Key) -> None:
         """Accept input and send text to Celune.
@@ -564,7 +571,14 @@ class CeluneUI(App):
                     self.process_command(command, command_args)
                     return
 
-                if self.celune.say(replace_ipa(text, strict=True), display_text=text):
+                ipa_decoded, unmatched = replace_ipa(text, strict=True)
+                if self.celune.dev:
+                    self.safe_log(
+                        f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
+                        "warning",
+                    )
+
+                if self.celune.say(ipa_decoded, display_text=text):
                     self.style_button.disabled = True
                     self.input_box.placeholder = "Please wait"
                     self.input_box.load_text("")

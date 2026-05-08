@@ -385,32 +385,19 @@ def title_case(text: str) -> str:
     return text[0].upper() + text[1:]
 
 
-def ipa_to_english(ipa: str) -> str:
+def ipa_to_english(ipa: str) -> tuple[str, int]:
     """Return an English approximation of the input IPA.
 
     Args:
         ipa: The IPA to approximate.
 
     Returns:
-        str: The English approximation of the input IPA.
+        tuple[str, int]: The English approximation of the input IPA,
+            and the amount of unmatched IPA characters.
     """
 
     ipa_map = {
-        "i": "ee",
-        "ɪ": "ih",
-        "e": "eh",
-        "ɛ": "eh",
-        "æ": "a",
-        "ɑ": "ah",
-        "ɒ": "o",
-        "ɔ": "aw",
-        "o": "oh",
-        "ʊ": "u",
-        "u": "oo",
-        "ʌ": "uh",
-        "ə": "uh",
-        "ɚ": "er",
-        "ɝ": "er",
+        # consonants
         "p": "p",
         "b": "b",
         "t": "t",
@@ -420,6 +407,8 @@ def ipa_to_english(ipa: str) -> str:
         "m": "m",
         "n": "n",
         "ŋ": "ng",
+        "tʃ": "ch",
+        "dʒ": "j",
         "f": "f",
         "v": "v",
         "θ": "th",
@@ -429,21 +418,51 @@ def ipa_to_english(ipa: str) -> str:
         "ʃ": "sh",
         "ʒ": "zh",
         "h": "h",
-        "tʃ": "ch",
-        "dʒ": "j",
-        "r": "r",
-        "ɹ": "r",
-        "l": "l",
-        "j": "y",
         "w": "w",
+        "j": "y",
+        "r": "r",
+        "l": "l",
+        "ɾ": "d",
+        "ɲ": "ny",
+        "ç": "hy",
+        "ʎ": "ly",
+        "ʁ": "r",
+        "χ": "h",
+        # vowels
+        "i": "ee",
+        "ɪ": "ih",
+        "e": "eh",
+        "eɪ": "ay",
+        "ɛ": "eh",
+        "æ": "a",
+        "ʌ": "uh",
+        "ə": "uh",  # schwa is ambiguous, not guaranteed to be correct in all cases
+        "u": "oo",
+        "ʊ": "u",
+        "oʊ": "oh",
+        "ɔ": "aw",
+        "ɑ": "ah",
+        "aɪ": "ai",
+        "aʊ": "ow",
+        "ɔɪ": "oi",
+        "y": "ee",
+        # uncommon
+        "x": "h",
+        "ʔ": "-",
+        "ɚ": "er",
+        "ɝ": "er",
+        "ɹ": "r",
+        # marks
+        "ˈ": "",
+        "ˌ": "",
+        "ː": "",
+        ".": "",
     }
 
     ipa = ipa.strip("/[]")
-    ipa = ipa.replace("ˈ", "").replace("ˌ", "")
-    ipa = ipa.replace("ː", "")
-
     result = []
     i = 0
+    unmatched = 0
 
     keys = sorted(ipa_map, key=len, reverse=True)
     while i < len(ipa):
@@ -454,34 +473,44 @@ def ipa_to_english(ipa: str) -> str:
                 break
         else:
             ch = ipa[i]
-            if ch in {".", " "}:
+            if ch == " ":
                 result.append("-")
             else:
                 result.append(ch)
+
+            unmatched += 1
             i += 1
 
-    return "".join(result)
+    return "".join(result), unmatched
 
 
-def replace_ipa(text: str, strict: bool = True) -> str:
-    """Replace IPA in input text with English approximation of the IPA.
+def replace_ipa(text: str, strict: bool = True) -> tuple[str, int]:
+    """Return an English approximation of the input IPA.
 
     Args:
-        text: The input text.
-        strict: Whether the bracketed text must be wrapped in IPA-specific markers (slashes).
+        ipa: The IPA to approximate.
 
     Returns:
-        str: The text with the IPA replaced.
+        tuple[str, int]: The English approximation of the input IPA,
+            and the amount of unmatched IPA characters.
     """
+    total_unmatched = 0
 
     def repl(match: re.Match[str]) -> str:
+        nonlocal total_unmatched
+
         ipa = match.group(1) or match.group(2) or ""
+
         # PyCharm loves its "TYPO" warnings, but this is an IPA dictionary, not a word!
-        ipa_markers = set("ɪɛæɑɒɔʊʌəɚɝŋθðʃʒɹˈˌː")
+        ipa_markers = set("ŋʃʒθðɾɲçʎʁχɪɛæʌəʊɔɑɚʔɝɹˈˌː.")
 
         if strict and not ipa_markers.intersection(ipa):
             return match.group(0)
 
-        return ipa_to_english(match.group(0))
+        converted, unmatched = ipa_to_english(match.group(0))
+        total_unmatched += unmatched
 
-    return re.sub(r"/([^/\[\]]+)/|\[([^/\[\]]+)]", repl, text)
+        return converted
+
+    result = re.sub(r"/([^/\[\]]+)/|\[([^/\[\]]+)]", repl, text)
+    return result, total_unmatched
