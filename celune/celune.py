@@ -820,18 +820,24 @@ class Celune:
         """
         release_pipeline(self)
 
-    def say(self, text: str, save: bool = True) -> bool:
+    def say(
+        self,
+        text: str,
+        save: bool = True,
+        display_text: Optional[str] = None,
+    ) -> bool:
         """Queue text for Celune to say.
 
         Args:
             text: The text to synthesize.
             save: Whether to save generated output artifacts.
+            display_text: Optional text to show in logs instead of the synthesis text.
 
         Returns:
             bool: ``True`` when the text was queued successfully, otherwise
                 ``False``.
         """
-        return say_pipeline(self, text, save=save)
+        return say_pipeline(self, text, save=save, display_text=display_text)
 
     def say_stream(self, text: str, save: bool = True) -> Optional[queue.Queue]:
         """Queue text for playback and mirror generated chunks to a queue.

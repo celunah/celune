@@ -31,6 +31,7 @@ class SpeechRequest:
     """Queued speech input and output persistence preference."""
 
     text: str
+    display_text: str
     save: bool = True
     stream_queue: Optional[queue.Queue] = None
 
@@ -155,13 +156,19 @@ def release_pipeline(engine: "Celune") -> None:
             engine.log("[LOCK] released")
 
 
-def say(engine: "Celune", text: str, save: bool = True) -> bool:
+def say(
+    engine: "Celune",
+    text: str,
+    save: bool = True,
+    display_text: Optional[str] = None,
+) -> bool:
     """Queue text for Celune to say.
 
     Args:
         engine: The Celune engine that should speak the text.
         text: The input text to queue for synthesis.
         save: Whether to save generated output artifacts.
+        display_text: Optional text to show in logs instead of the synthesis text.
 
     Returns:
         bool: ``True`` when the text was queued successfully, otherwise ``False``.
@@ -169,7 +176,7 @@ def say(engine: "Celune", text: str, save: bool = True) -> bool:
     Raises:
         Exception: Re-raised after releasing the pipeline if queueing fails.
     """
-    return queue_speech(engine, text, save=save, stream_queue=None)
+    return queue_speech(engine, text, save=save, stream_queue=None, display_text=display_text)
 
 
 def queue_speech(
@@ -177,6 +184,7 @@ def queue_speech(
     text: str,
     save: bool = True,
     stream_queue: Optional[queue.Queue] = None,
+    display_text: Optional[str] = None,
 ) -> bool:
     """Queue text for Celune to say and optionally mirror audio chunks.
 
@@ -185,6 +193,7 @@ def queue_speech(
         text: The input text to queue for synthesis.
         save: Whether to save generated output artifacts.
         stream_queue: Optional queue receiving generated 48 kHz float32 chunks.
+        display_text: Optional text to show in logs instead of the synthesis text.
 
     Returns:
         bool: ``True`` when the text was queued successfully, otherwise
@@ -230,6 +239,7 @@ def queue_speech(
         engine.text_queue.put(
             SpeechRequest(
                 normalized if normalized is not None else text,
+                display_text=display_text if display_text is not None else text,
                 save=save,
                 stream_queue=stream_queue,
             )
@@ -459,6 +469,7 @@ def generation_worker(engine: "Celune") -> None:
             break
 
         text = item.text
+        display_text = item.display_text
         save_output = item.save
         stream_queue = item.stream_queue
         kept_sfx_audio = engine.kept_sfx_audio
@@ -487,7 +498,7 @@ def generation_worker(engine: "Celune") -> None:
                     break
 
                 start_time = time.perf_counter()
-                engine.log(f"[GEN] {text}")
+                engine.log(f"[GEN] {display_text}")
                 speech_len = 0.0
                 buffered_speech_len = 0.0
                 pushed_audio = False
@@ -824,7 +835,7 @@ def playback_worker(engine: "Celune") -> None:
                     )
                     if avail <= total * 0.1:
                         engine.log(
-                            "Celune is running out of memory. Check the bottom right of Celune's window to learn more.",
+                            "Celune is running out of VRAM. Check the bottom right of Celune's window to learn more.",
                             "warning",
                         )
                         engine.log(

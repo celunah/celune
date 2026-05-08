@@ -12,6 +12,7 @@ import numpy as np
 import numpy.typing as npt
 
 # imported with a name because __version__ is reserved to Celune
+# it's not in __all__, but that's not Celune's job, so we have to ignore the warning
 from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
 from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
@@ -32,7 +33,7 @@ class Qwen3(CeluneBackend):
         "bold": "lunahr/Celune-1.7B-Energetic",
         "upbeat": "lunahr/Celune-1.7B-Upbeat",
     }
-    reference_wavs: dict[str, str] = {
+    reference_waves: dict[str, str] = {
         "balanced": "refs/balanced.wav",
         "calm": "refs/calm.wav",
         "bold": "refs/bold.wav",
@@ -187,7 +188,7 @@ class Qwen3(CeluneBackend):
             None: This method checks that reference files are accessible and logs
                 checksum status when checksums exist.
         """
-        for name, ref in self.reference_wavs.items():
+        for name, ref in self.reference_waves.items():
             full_path = Path(__file__).resolve().parents[1] / ref
             try:
                 with open(full_path, "rb") as f:
@@ -270,7 +271,7 @@ class Qwen3(CeluneBackend):
             try:
                 # this path resolves to celune/refs/[voice].wav
                 ref_wav = (
-                    Path(__file__).resolve().parents[1] / self.reference_wavs[voice]
+                    Path(__file__).resolve().parents[1] / self.reference_waves[voice]
                 )
                 ref_text = self.reference_texts[voice]
             except KeyError as e:

@@ -20,7 +20,7 @@ from textual.widgets import Label, RichLog, TextArea, Button
 from rich.text import Text
 
 from ..celune import Celune
-from ..utils import format_error, indent
+from ..utils import format_error, indent, replace_ipa
 from ..constants import SIGTSTP
 from ..colors import THEME, THEME_LIGHT, THEME_APRIL_FOOLS, SEVERITY_COLORS
 from .commands import process_command as process_ui_command
@@ -475,20 +475,20 @@ class CeluneUI(App):
         """Process Celune control commands."""
         process_ui_command(self, command, args)
 
-    def consume_buffer(self, tlen: int) -> None:
+    def consume_buffer(self, text_len: int) -> None:
         """Consume a sentence from live input and say it.
 
         Args:
-            tlen: The number of characters to consume from the input buffer.
+            text_len: The number of characters to consume from the input buffer.
 
         Returns:
             None: This method removes the consumed text and queues it for speech.
         """
-        to_say = self.input_box.text[:tlen].strip()
+        to_say = self.input_box.text[:text_len].strip()
 
         self._suppress_input_change = True
         try:
-            self.input_box.load_text(self.input_box.text[tlen:])
+            self.input_box.load_text(self.input_box.text[text_len:])
         # yes, no except:
         # that is valid python
         finally:
@@ -500,7 +500,7 @@ class CeluneUI(App):
         if all(char in ".!?;:, " for char in to_say):
             return
 
-        self.celune.say(to_say)
+        self.celune.say(replace_ipa(to_say, strict=True), display_text=to_say)
 
     def on_key(self, event: events.Key) -> None:
         """Accept input and send text to Celune.
@@ -564,7 +564,7 @@ class CeluneUI(App):
                     self.process_command(command, command_args)
                     return
 
-                if self.celune.say(text):
+                if self.celune.say(replace_ipa(text, strict=True), display_text=text):
                     self.style_button.disabled = True
                     self.input_box.placeholder = "Please wait"
                     self.input_box.load_text("")
