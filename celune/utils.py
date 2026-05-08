@@ -1,4 +1,5 @@
 """Celune common utility functions."""
+
 import re
 import sys
 import math
@@ -472,6 +473,7 @@ def replace_ipa(text: str, strict: bool = True) -> str:
     Returns:
         str: The text with the IPA replaced.
     """
+
     def repl(match: re.Match[str]) -> str:
         ipa = match.group(1) or match.group(2) or ""
         # PyCharm loves its "TYPO" warnings, but this is an IPA dictionary, not a word!
