@@ -33,7 +33,7 @@ class VoxCPM2(CeluneBackend):
         "bold": "openbmb/VoxCPM2",
         "upbeat": "openbmb/VoxCPM2",
     }
-    reference_wavs: dict[str, str] = {
+    reference_waves: dict[str, str] = {
         "balanced": "refs/balanced.wav",
         "calm": "refs/calm.wav",
         "bold": "refs/bold.wav",
@@ -156,7 +156,7 @@ class VoxCPM2(CeluneBackend):
             None: This method checks that reference files are accessible and logs
                 checksum status when checksums exist.
         """
-        for name, ref in self.reference_wavs.items():
+        for name, ref in self.reference_waves.items():
             full_path = Path(__file__).resolve().parents[1] / ref
             try:
                 with open(full_path, "rb") as f:
@@ -241,7 +241,7 @@ class VoxCPM2(CeluneBackend):
         kwargs.pop("chunk_size", None)
 
         try:
-            ref_wav = Path(__file__).resolve().parents[1] / self.reference_wavs[voice]
+            ref_wav = Path(__file__).resolve().parents[1] / self.reference_waves[voice]
             cfg = self.voice_cfg[voice]
         except KeyError as e:
             raise ValueError(

@@ -36,12 +36,18 @@ class LogCallable(Protocol):
 class SayCallable(Protocol):
     """Extension callable speech request annotation."""
 
-    def __call__(self, text: str, save: bool = True) -> bool:
+    def __call__(
+        self,
+        text: str,
+        save: bool = True,
+        display_text: str | None = None,
+    ) -> bool:
         """Queue text for speech.
 
         Args:
             text: Text to synthesize.
             save: Whether to save generated output artifacts.
+            display_text: Optional text to show in logs instead of the synthesis text.
 
         Returns:
             bool: ``True`` when the request was accepted.
@@ -261,12 +267,18 @@ class CeluneExtension(ABC):
         """
         self.ctx.log(f"[{self.name}] {msg}", severity)
 
-    def say(self, text: str, save: bool = True) -> bool:
+    def say(
+        self,
+        text: str,
+        save: bool = True,
+        display_text: str | None = None,
+    ) -> bool:
         """Make Celune say something.
 
         Args:
             text: The text to queue for speech synthesis.
             save: Whether to save generated output artifacts.
+            display_text: Optional text to show in logs instead of the synthesis text.
 
         Returns:
             bool: ``True`` when the speech request was queued, otherwise ``False``.
@@ -274,7 +286,7 @@ class CeluneExtension(ABC):
         if not self.ctx.wait_until_ready():
             return False
 
-        return self.ctx.say(text, save=save)
+        return self.ctx.say(text, save=save, display_text=display_text)
 
     def play(self, sound_path: str, keep: bool = False) -> bool:
         """Play arbitrary sound through Celune.

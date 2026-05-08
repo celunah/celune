@@ -5,7 +5,7 @@ import datetime
 from enum import IntEnum, Enum
 from typing import TypeVar
 
-# NEW AND IMPROVED! NOW WITH BETTER CASING & PUNCTUATION!
+# CeluneNorm v1.3 includes the most important changes, so that Celune can speak optimally.
 NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v1.3"
 
 # I use this to know when the next moon comes.

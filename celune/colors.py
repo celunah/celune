@@ -42,7 +42,7 @@ THEME_LIGHT = Theme(
     dark=False,
 )
 
-# haha funny theme
+# lol funny theme
 THEME_APRIL_FOOLS = Theme(
     name="celune_april_fools",
     primary=random_hex(),

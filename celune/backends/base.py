@@ -14,7 +14,7 @@ class CeluneBackend(ABC):
 
     name: str = "unknown"
     voice_models: Optional[dict[str, str]] = None
-    reference_wavs: Optional[dict[str, str]] = None
+    reference_waves: Optional[dict[str, str]] = None
     default_voice: Optional[str] = None
 
     def __init__(

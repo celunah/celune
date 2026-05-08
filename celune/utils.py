@@ -1,5 +1,5 @@
 """Celune common utility functions."""
-
+import re
 import sys
 import math
 import inspect
@@ -345,11 +345,14 @@ def get_caller() -> Optional[CallerInfo]:
         if current in filename:
             continue
 
-        return {
+        # need to explicitly annotate this else PyCharm does not recognize the type of the return value
+        info: CallerInfo = {
             "function": frame.function,
             "filename": frame.filename,
             "line": frame.lineno,
         }
+
+        return info
 
     return None
 
@@ -371,8 +374,112 @@ def caller_is_repl() -> bool:
 def title_case(text: str) -> str:
     """Return a title-cased version of the input string.
 
+    Args:
+        text: The text to title-case.
+
     Returns:
         str: The title-cased string.
     """
 
     return text[0].upper() + text[1:]
+
+
+def ipa_to_english(ipa: str) -> str:
+    """Return an English approximation of the input IPA.
+
+    Args:
+        ipa: The IPA to approximate.
+
+    Returns:
+        str: The English approximation of the input IPA.
+    """
+
+    ipa_map = {
+        "i": "ee",
+        "ɪ": "ih",
+        "e": "eh",
+        "ɛ": "eh",
+        "æ": "a",
+        "ɑ": "ah",
+        "ɒ": "o",
+        "ɔ": "aw",
+        "o": "oh",
+        "ʊ": "u",
+        "u": "oo",
+        "ʌ": "uh",
+        "ə": "uh",
+        "ɚ": "er",
+        "ɝ": "er",
+        "p": "p",
+        "b": "b",
+        "t": "t",
+        "d": "d",
+        "k": "k",
+        "g": "g",
+        "m": "m",
+        "n": "n",
+        "ŋ": "ng",
+        "f": "f",
+        "v": "v",
+        "θ": "th",
+        "ð": "dh",
+        "s": "s",
+        "z": "z",
+        "ʃ": "sh",
+        "ʒ": "zh",
+        "h": "h",
+        "tʃ": "ch",
+        "dʒ": "j",
+        "r": "r",
+        "ɹ": "r",
+        "l": "l",
+        "j": "y",
+        "w": "w",
+    }
+
+    ipa = ipa.strip("/[]")
+    ipa = ipa.replace("ˈ", "").replace("ˌ", "")
+    ipa = ipa.replace("ː", "")
+
+    result = []
+    i = 0
+
+    keys = sorted(ipa_map, key=len, reverse=True)
+    while i < len(ipa):
+        for key in keys:
+            if ipa.startswith(key, i):
+                result.append(ipa_map[key])
+                i += len(key)
+                break
+        else:
+            ch = ipa[i]
+            if ch in {".", " "}:
+                result.append("-")
+            else:
+                result.append(ch)
+            i += 1
+
+    return "".join(result)
+
+
+def replace_ipa(text: str, strict: bool = True) -> str:
+    """Replace IPA in input text with English approximation of the IPA.
+
+    Args:
+        text: The input text.
+        strict: Whether the bracketed text must be wrapped in IPA-specific markers (slashes).
+
+    Returns:
+        str: The text with the IPA replaced.
+    """
+    def repl(match: re.Match[str]) -> str:
+        ipa = match.group(1) or match.group(2) or ""
+        # PyCharm loves its "TYPO" warnings, but this is an IPA dictionary, not a word!
+        ipa_markers = set("ɪɛæɑɒɔʊʌəɚɝŋθðʃʒɹˈˌː")
+
+        if strict and not ipa_markers.intersection(ipa):
+            return match.group(0)
+
+        return ipa_to_english(match.group(0))
+
+    return re.sub(r"/([^/\[\]]+)/|\[([^/\[\]]+)]", repl, text)
