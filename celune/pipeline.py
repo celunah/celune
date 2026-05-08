@@ -176,7 +176,9 @@ def say(
     Raises:
         Exception: Re-raised after releasing the pipeline if queueing fails.
     """
-    return queue_speech(engine, text, save=save, stream_queue=None, display_text=display_text)
+    return queue_speech(
+        engine, text, save=save, stream_queue=None, display_text=display_text
+    )
 
 
 def queue_speech(

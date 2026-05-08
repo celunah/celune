@@ -453,7 +453,9 @@ def find_dates_for_name(name: str) -> list[str]:
     """
     needle = name.casefold()
     return [
-        d for d, names in NAME_DAYS.items() if any(n.casefold() == needle for n in names)
+        d
+        for d, names in NAME_DAYS.items()
+        if any(n.casefold() == needle for n in names)
     ]
 
 
