@@ -44,6 +44,39 @@ class SpeechDone:
     analysis_audio: Optional[np.ndarray] = None
 
 
+@dataclass
+class SpeechTiming:
+    """Timing data for a generated speech utterance."""
+
+    start_time: float
+    first_chunk_time: Optional[float] = None
+    first_playback_time: Optional[float] = None
+
+    def mark_first_chunk(self) -> None:
+        """Record when the backend yields its first audio chunk."""
+        if self.first_chunk_time is None:
+            self.first_chunk_time = time.monotonic()
+
+    def mark_first_playback(self) -> None:
+        """Record when the first audio chunk is sent to the output stream."""
+        if self.first_playback_time is None:
+            self.first_playback_time = time.monotonic()
+
+    def ttfc_ms(self) -> float:
+        """Return time to first generated chunk in milliseconds."""
+        if self.first_chunk_time is None:
+            return float("nan")
+
+        return (self.first_chunk_time - self.start_time) * 1000
+
+    def ttfp_seconds(self) -> float:
+        """Return time to first playback in seconds."""
+        if self.first_playback_time is None:
+            return float("nan")
+
+        return self.first_playback_time - self.start_time
+
+
 def clear_queue(q: queue.Queue) -> None:
     """Drain all pending items from a queue.
 
@@ -58,6 +91,29 @@ def clear_queue(q: queue.Queue) -> None:
             q.get_nowait()
     except queue.Empty:
         pass
+
+
+def log_first_playback(engine: "Celune", timing: object) -> None:
+    """Log time to first playback for a queued speech timing object."""
+    start_time = getattr(timing, "start_time", None)
+    if not isinstance(start_time, float):
+        return
+
+    mark_first_playback = getattr(timing, "mark_first_playback", None)
+    if callable(mark_first_playback):
+        mark_first_playback()
+    elif getattr(timing, "first_playback_time", None) is None:
+        return
+
+    ttfp_seconds = getattr(timing, "ttfp_seconds", None)
+    if callable(ttfp_seconds):
+        elapsed = ttfp_seconds()
+        if not isinstance(elapsed, float):
+            return
+    else:
+        elapsed = time.monotonic() - start_time
+
+    engine.log(f"TTFP: {format_number(elapsed, 2)} seconds")
 
 
 def close_stream(engine: "Celune", abort: bool = False) -> None:
@@ -125,8 +181,7 @@ def acquire_pipeline(engine: "Celune", action: str) -> bool:
         bool: ``True`` when the pipeline was claimed, otherwise ``False``.
     """
     with engine.say_lock:
-        if engine.dev:
-            engine.log(f"[LOCK] acquire requested by {action}, locked={engine.locked}")
+        engine.log_dev(f"[LOCK] acquire requested by {action}, locked={engine.locked}")
         if engine.locked:
             engine.log(f"Tried to {action} while Celune was busy.", "warning")
             engine.error_callback("Celune is currently busy")
@@ -134,8 +189,7 @@ def acquire_pipeline(engine: "Celune", action: str) -> bool:
 
         engine.locked = True
         engine.playback_done.clear()
-        if engine.dev:
-            engine.log(f"[LOCK] acquired by {action}")
+        engine.log_dev(f"[LOCK] acquired by {action}")
         return True
 
 
@@ -152,8 +206,7 @@ def release_pipeline(engine: "Celune") -> None:
         engine.locked = False
         engine.playback_done.set()
         engine.cur_state = "idle"
-        if engine.dev:
-            engine.log("[LOCK] released")
+        engine.log_dev("[LOCK] released")
 
 
 def say(
@@ -291,7 +344,8 @@ def queue_sfx_audio(
             engine.kept_sfx_audio = audio.copy()
 
         engine.cur_state = "speaking"
-        for chunk in _split(audio, 48000, engine.chunk_size):
+        # push the smallest possible chunks for responsive stopping
+        for chunk in _split(audio, 48000, 1):
             engine.audio_queue.put((chunk, 48000, None))
         engine.audio_queue.put(engine.utterance_done)
 
@@ -499,10 +553,11 @@ def generation_worker(engine: "Celune") -> None:
                     release_pipeline(engine)
                     break
 
-                start_time = time.perf_counter()
+                start_time = time.monotonic()
                 engine.log(f"[GEN] {display_text}")
                 speech_len = 0.0
                 buffered_speech_len = 0.0
+                speech_timing = SpeechTiming(start_time)
                 pushed_audio = False
 
                 chunks = split_text(engine, text)
@@ -545,6 +600,8 @@ def generation_worker(engine: "Celune") -> None:
 
                             if engine.utterance_force_stop.is_set():
                                 break
+
+                            speech_timing.mark_first_chunk()
 
                             if isinstance(audio_chunk, torch.Tensor):
                                 audio_chunk = audio_chunk.cpu().numpy()
@@ -589,7 +646,13 @@ def generation_worker(engine: "Celune") -> None:
                             # buffering helps Celune speak smoothly when performance is bad
                             if buffered_speech_len >= 10.0:
                                 queued_audio = np.concatenate(buffer)
-                                engine.audio_queue.put((queued_audio, 48000, None))
+                                engine.audio_queue.put(
+                                    (
+                                        queued_audio,
+                                        48000,
+                                        speech_timing if not pushed_audio else None,
+                                    )
+                                )
                                 if stream_queue is not None:
                                     stream_queue.put(queued_audio.copy())
                                 buffer = []
@@ -601,7 +664,7 @@ def generation_worker(engine: "Celune") -> None:
                                     engine.cur_state = "speaking"
                                     engine.queue_avail_callback()
 
-                generation_time = time.perf_counter() - start_time
+                generation_time = time.monotonic() - start_time
 
                 if engine.exit_requested:
                     if stream_queue is not None:
@@ -616,13 +679,21 @@ def generation_worker(engine: "Celune") -> None:
                     break
 
                 engine.log(
-                    f"[GEN] {format_number(speech_len, 2)} seconds, took {format_number(generation_time, 2)} seconds, "
-                    f"Speed: x{format_number(speech_len / generation_time, 2)}"
+                    f"[GEN] {format_number(speech_len, 2)} seconds, "
+                    f"took {format_number(generation_time, 2)} seconds"
                 )
+                engine.log(f"Speed: x{format_number(speech_len / generation_time, 2)}")
+                engine.log(f"TTFC: {format_number(speech_timing.ttfc_ms(), 1)} ms")
 
                 if buffer:
                     queued_audio = np.concatenate(buffer)
-                    engine.audio_queue.put((queued_audio, 48000, None))
+                    engine.audio_queue.put(
+                        (
+                            queued_audio,
+                            48000,
+                            speech_timing if not pushed_audio else None,
+                        )
+                    )
                     if stream_queue is not None:
                         stream_queue.put(queued_audio.copy())
                     if not pushed_audio:
@@ -818,7 +889,7 @@ def playback_worker(engine: "Celune") -> None:
                         and saved_path is not None
                         and analysis_audio is not None
                     ):
-                        engine.log("Analyzing...")
+                        engine.log_dev("Analyzing...")
                         saved = pathlib.Path(saved_path)
                         run_async(
                             analyze_voice_audio,
@@ -846,7 +917,7 @@ def playback_worker(engine: "Celune") -> None:
                         )
             continue
 
-        audio_chunk, sr, _ = item
+        audio_chunk, sr, timing = item
 
         if engine.stream is None:
             try:
@@ -871,10 +942,11 @@ def playback_worker(engine: "Celune") -> None:
             continue
 
         try:
-            engine.glow.schedule(audio_chunk)
             stream = engine.stream
             if stream is None:
                 raise NotAvailableError("audio stream is not available")
+            log_first_playback(engine, timing)
+            engine.glow.schedule(audio_chunk)
             stream.write(audio_chunk)
         except Exception as e:
             engine.log(f"[PLAY ERROR] {format_error(e, engine.dev)}", "error")

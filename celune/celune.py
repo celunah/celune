@@ -91,7 +91,8 @@ class Celune:
         self,
         config: dict[str, Any],
         tts_backend: Optional[Union[str, CeluneBackend, type[CeluneBackend]]] = None,
-        chunk_size: int = 24,  # only used in Qwen3 backend; ~1.92s
+        chunk_size: int = 0,  # defaulted to 0 because not all backends use this
+        target_chunk_length: float = 0.64,
         language: str = "Auto",  # Qwen3 backend accepts a language, others may not
         log_callback: Optional[MessageCallback] = None,
         status_callback: Optional[MessageCallback] = None,
@@ -166,9 +167,31 @@ class Celune:
         except Exception as e:
             raise BackendError(f"internal backend error: {format_error(e, dev)}") from e
 
+        if chunk_size:
+            self.chunk_size = chunk_size
+        else:
+            # chunk length must be evenly divisible by target backend's base chunk size
+            # e.g. if chunk rate = 12.5, then chunk length must be evenly divisible by 0.08s
+            #
+            # examples:
+            # Qwen3 = length must be divisible by 0.08s (12.5 Hz)
+            # VoxCPM2 = length must be divisible by 0.16s (6.25 Hz)
+            multiple = target_chunk_length * self.backend.chunk_rate
+            nearest = round(multiple)
+
+            if abs(multiple - nearest) > 1e-6:
+                raise BackendError(
+                    f"invalid chunk length: {target_chunk_length}s is not divisible by {1 / self.backend.chunk_rate}s"
+                )
+
+            self.chunk_size = max(
+                1, round(target_chunk_length / (1 / self.backend.chunk_rate))
+            )
+
         self.language = language
 
         self.model: Optional[PreTrainedModel] = None
+        self.model_name = ""
         self.llm: Optional[PreTrainedModel] = None
         self.tokenizer: Optional[PreTrainedTokenizerBase] = None
 
@@ -176,7 +199,6 @@ class Celune:
         self.voices: tuple[str, ...] = tuple(self.backend.voices)
         self.voice_prompt: Optional[str] = None
 
-        self.chunk_size = chunk_size
         self.prebuffer_chunks = 5 if self.backend.name == "qwen3" else 10
 
         self.text_queue: queue.Queue[Any] = queue.Queue()
@@ -391,8 +413,7 @@ class Celune:
             None: This method builds the extension context and autoloads user
                 extensions.
         """
-        if self.dev:
-            self.log("[EXT] Setting up extension manager")
+        self.log_dev("[EXT] Setting up extension manager")
 
         ctx = CeluneContext(
             log=self.log,
@@ -405,14 +426,14 @@ class Celune:
             name="Celune",
             version=__version__,
             dev=self.dev,
+            log_dev=self.log_dev,
         )
         self.extension_manager = CeluneExtensionManager(ctx)
         self.extension_manager.autoload("extensions")
 
-        if self.dev:
-            self.log(
-                f"[EXT] Loaded extensions: {self.extension_manager.list_extensions()}"
-            )
+        self.log_dev(
+            f"[EXT] Loaded extensions: {self.extension_manager.list_extensions()}"
+        )
 
     def log(self, msg: str, severity: str = "info") -> None:
         """Log a message.
@@ -425,6 +446,19 @@ class Celune:
             None: This method forwards the log event to the configured callback.
         """
         self.log_callback(msg, severity)
+
+    def log_dev(self, msg: str, severity: str = "info") -> None:
+        """Log a developer message.
+
+        Args:
+            msg: The message to emit.
+            severity: The message severity level.
+
+        Returns:
+            None: This method forwards the log event to the configured callback.
+        """
+        if self.dev:
+            self.log_callback(msg, severity)
 
     def change_voice(self, voice: str) -> None:
         """Change Celune's voice parameters.
@@ -445,15 +479,22 @@ class Celune:
 
         try:
             with self._model_lock:
-                self.unload_runtime_state(include_normalizer=False)
+                new_model_name = self.backend.model_id_for_voice(voice)
 
-                self.model = self.backend.load_model(
-                    self.backend.model_id_for_voice(voice)
+                # VoxCPM2 uses the same model for all voices, so we don't have to reload every time
+                if new_model_name != self.model_name:
+                    self.log_dev(f"[RELOAD] Unloading model: {self.model_name}")
+                    self.unload_runtime_state(include_normalizer=False)
+                    self.log_dev(f"[RELOAD] Loading model: {new_model_name}")
+                    self.model = self.backend.load_model(new_model_name)
+
+                    self.log("Rewarming up...")
+                    if not self._warmup():
+                        raise WarmupError("warmup failed after reload")
+
+                self.log_dev(
+                    "[RELOAD] The target model is the same as the model is currently in use."
                 )
-
-                self.log("Rewarming up...")
-                if not self._warmup():
-                    raise WarmupError("warmup failed after reload")
 
                 self.current_voice = voice
                 self.loaded = True
@@ -506,6 +547,7 @@ class Celune:
         self.log("All Celune voices are available.")
         try:
             self.model = self.backend.load_default_model()
+            self.model_name = self.backend.model_id_for_voice(self.voices[0])
         except Exception as e:
             self.log("Celune could not load the default model.", "error")
             self.log(format_error(e, self.dev), "error")

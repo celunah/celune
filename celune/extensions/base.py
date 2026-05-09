@@ -33,6 +33,26 @@ class LogCallable(Protocol):
 
 
 @runtime_checkable
+class DevLogCallable(Protocol):
+    """Extension callable developer logging annotation."""
+
+    def __call__(self, msg: str, severity: str = "info") -> None:
+        """Emit a developer log message.
+
+        Args:
+            msg: Message text to emit.
+            severity: Message severity level.
+
+        Returns:
+            None: Implementations forward the developer message to a logger.
+
+        Raises:
+            IncompleteExtensionError: The protocol placeholder is called directly.
+        """
+        raise IncompleteExtensionError("protocol not defined")
+
+
+@runtime_checkable
 class SayCallable(Protocol):
     """Extension callable speech request annotation."""
 
@@ -157,6 +177,7 @@ class CeluneContext:
     """Celune's extension context."""
 
     log: LogCallable
+    log_dev: DevLogCallable
     say: SayCallable
     play: PlayCallable
     status: StatusCallable

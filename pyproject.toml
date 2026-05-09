@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "3.4.1"
+version = "3.4.2"
 description = "Real-time AI TTS character engine with expressive voices and high-quality playback"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-Celune 3.4.1 - "I'm not just a TTS. I'm someone special."
+Celune 3.4.2 - "I'm not just a TTS. I'm someone special."
 Refer to https://github.com/celunah/celune for information about Celune.
 Celune models are available on https://huggingface.co/collections/lunahr/celune.
 """
@@ -27,7 +27,7 @@ try:
 
     from celune.celune import Celune
     from celune.exceptions import No, UpdateError
-    from celune.namedays import has_nameday
+    from celune.namedays import has_name_day
     from celune.updater import check_for_update, update_to_latest
     from celune.ui import (
         CeluneUI,
@@ -86,8 +86,8 @@ def main() -> None:
     """
     try:
         date = datetime.datetime.now()
-        if has_nameday("Celine", date):
-            raise No("I sense an entity who I shall not engage with today.")
+        if has_name_day("Celine", date):
+            raise No
 
         if supports_ansi():
             print("\x1b]2;Celune\x07", end="", flush=True)

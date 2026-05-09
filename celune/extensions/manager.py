@@ -61,8 +61,7 @@ class CeluneExtensionManager:
             )
 
         self.extensions[name] = instance
-        if self.context.dev:
-            self.context.log(f"[Core] Registered extension: {name}")
+        self.context.log_dev(f"[Core] Registered extension: {name}")
         return instance
 
     def autostart_all(self) -> None:
@@ -81,8 +80,7 @@ class CeluneExtensionManager:
         started = 0
         for name, ext in self.extensions.items():
             if ext.AUTOSTART:
-                if self.context.dev:
-                    self.context.log(f"[Core] Auto-starting: {name}")
+                self.context.log_dev(f"[Core] Auto-starting: {name}")
 
                 def runner(e=ext, n=name):
                     """Run one extension autostart hook.
@@ -106,8 +104,7 @@ class CeluneExtensionManager:
                 threading.Thread(target=runner, daemon=True).start()
 
         if not started:
-            if self.context.dev:
-                self.context.log("[Core] No extensions to autostart.")
+            self.context.log_dev("[Core] No extensions to autostart.")
         else:
             self.auto_started = True
 
@@ -167,8 +164,7 @@ class CeluneExtensionManager:
             self.context.log("Extensions will not be available.", "warning")
             return
 
-        if self.context.dev:
-            self.context.log(f"[Core] Scanning extension folder: {extensions_dir}")
+        self.context.log_dev(f"[Core] Scanning extension folder: {extensions_dir}")
 
         for file_path in sorted(extensions_dir.glob("*.py")):
             if file_path.name.startswith("_"):
