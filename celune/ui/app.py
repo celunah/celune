@@ -423,6 +423,19 @@ class CeluneUI(App):
         else:
             self.call_from_thread(self.logs.write, entry)
 
+    def safe_log_dev(self, msg: str, severity: str = "info") -> None:
+        """Log a message.
+
+        Args:
+            msg: The log line to append.
+            severity: The log severity level.
+
+        Returns:
+            None: This method safely updates the log widget from any thread.
+        """
+        if self.celune.dev:
+            self.safe_log(msg, severity)
+
     def tts_voice_changed(self, name: str) -> None:
         """Set UI state after changing Celune's voice.
 
@@ -501,8 +514,8 @@ class CeluneUI(App):
             return
 
         ipa_decoded, unmatched = replace_ipa(to_say, strict=True)
-        if self.celune.dev:
-            self.safe_log(
+        if unmatched > 0:
+            self.safe_log_dev(
                 f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
                 "warning",
             )
@@ -572,8 +585,8 @@ class CeluneUI(App):
                     return
 
                 ipa_decoded, unmatched = replace_ipa(text, strict=True)
-                if self.celune.dev:
-                    self.safe_log(
+                if unmatched > 0:
+                    self.safe_log_dev(
                         f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
                         "warning",
                     )

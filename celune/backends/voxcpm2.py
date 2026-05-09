@@ -27,6 +27,7 @@ class VoxCPM2(CeluneBackend):
     """Celune VoxCPM2 backend."""
 
     name: str = "voxcpm2"
+    chunk_rate: float = 6.25
     voice_models: dict[str, str] = {
         "balanced": "openbmb/VoxCPM2",
         "calm": "openbmb/VoxCPM2",
@@ -238,7 +239,7 @@ class VoxCPM2(CeluneBackend):
         voice = kwargs.pop("voice", self.default_voice)
         instruct = kwargs.pop("instruct", None)
         kwargs.pop("language", None)
-        kwargs.pop("chunk_size", None)
+        chunk_size = kwargs.pop("chunk_size", 1)
 
         try:
             ref_wav = Path(__file__).resolve().parents[1] / self.reference_waves[voice]
@@ -255,21 +256,30 @@ class VoxCPM2(CeluneBackend):
 
         if instruct:
             # if this includes "music" or "singing", Celune may sing
+            # these instructions can also be injected manually
             text = f"({instruct}) {text}"
 
         # Random seeding causes regenerations of Celune's output to be unique,
         # while a custom seed makes the next output reproducible.
         self._apply_seed()
 
+        chunks_per_batch = max(1, round(chunk_size / (1 / self.chunk_rate)))
         if hasattr(model, "generate_streaming"):
             with self._suppress_backend_output():
+                batch = []
                 for chunk in model.generate_streaming(
                     text,
                     reference_wav_path=ref_wav,
                     inference_timesteps=6,
                     cfg_value=cfg,
                 ):  # Celune wants `(audio, sr, timing)`, but we don't use `timing`
-                    yield chunk, 48000, None
+                    batch.append(chunk)
+                    if len(batch) >= chunks_per_batch:
+                        yield np.concatenate(batch), 48000, None
+                        batch.clear()
+
+                if batch:  # push remaining
+                    yield np.concatenate(batch), 48000, None
         else:
             version = get_version("voxcpm")
             raise NotImplementedError(

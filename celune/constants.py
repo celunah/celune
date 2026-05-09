@@ -48,3 +48,8 @@ class UtteranceLoudnessTier(IntEnum):
     NORMAL = 0  # Celune spoke normally.
     SUSPICIOUS = 1  # Utterance may be too silent.
     SILENT = 2  # Utterance is too silent.
+
+
+# N/A values
+N_A_NUMERIC = float("nan")
+N_A = None

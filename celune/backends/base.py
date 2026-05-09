@@ -8,11 +8,14 @@ from typing import Any, Callable, Optional, Generator
 import numpy as np
 import numpy.typing as npt
 
+from ..constants import N_A_NUMERIC
+
 
 class CeluneBackend(ABC):
     """Base class for Celune speech backends."""
 
     name: str = "unknown"
+    chunk_rate: float = N_A_NUMERIC
     voice_models: Optional[dict[str, str]] = None
     reference_waves: Optional[dict[str, str]] = None
     default_voice: Optional[str] = None

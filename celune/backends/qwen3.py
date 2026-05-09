@@ -25,6 +25,7 @@ class Qwen3(CeluneBackend):
     """Celune Qwen3-TTS backend."""
 
     name: str = "qwen3"
+    chunk_rate: float = 12.5
     clone_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     supported_modes: tuple[str, ...] = ("native", "clone")
     voice_models: dict[str, str] = {

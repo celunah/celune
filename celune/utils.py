@@ -50,12 +50,13 @@ def get_revision() -> str:
         return ""
 
 
-def format_number(num: float, precision: int = 0) -> str:
+def format_number(num: float, precision: int = 0, fallback: str = "N/A") -> str:
     """Format a number without trailing zeroes.
 
     Args:
         num: The numeric value to format.
         precision: The number of decimal places to preserve before trimming.
+        fallback: The fallback value to return if the number is not representable.
 
     Returns:
         str: The formatted numeric string.
@@ -65,6 +66,9 @@ def format_number(num: float, precision: int = 0) -> str:
     """
     if precision < 0:
         raise ValueError("precision must be >= 0")
+
+    if not math.isfinite(num):
+        return fallback
 
     digits = precision if precision > 0 else 12
     text = f"{num:.{digits}f}".rstrip("0").rstrip(".")
@@ -387,6 +391,7 @@ def title_case(text: str) -> str:
 
 def ipa_to_english(ipa: str) -> tuple[str, int]:
     """Return an English approximation of the input IPA.
+        The output may be inaccurate with non-English IPA inputs.
 
     Args:
         ipa: The IPA to approximate.
@@ -477,8 +482,8 @@ def ipa_to_english(ipa: str) -> tuple[str, int]:
                 result.append("-")
             else:
                 result.append(ch)
+                unmatched += 1
 
-            unmatched += 1
             i += 1
 
     return "".join(result), unmatched
