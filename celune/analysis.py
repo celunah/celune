@@ -3,8 +3,9 @@
 import pathlib
 import warnings
 import contextlib
-from typing import Any, cast
+from typing import Any, Optional, cast
 
+import torch
 import librosa
 import matplotlib
 import numpy as np
@@ -13,9 +14,14 @@ from matplotlib import rcParams
 from matplotlib import pyplot as plt
 from matplotlib import colors as mcolors
 from matplotlib.projections import PolarAxes
+from transformers import AutoModel, AutoProcessor
+
+from .constants import VOICE_EMBEDDING_MODEL
 
 matplotlib.use("Agg")
-# ensure you have installed this font
+
+# this font is included within Celune
+# check resources/fonts to find the font files
 rcParams["font.family"] = "Outfit Thin"
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -23,7 +29,6 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 TextConfig = dict[str, Any]
 
-QWEN3_VOICE_EMBEDDING_MODEL = "marksverdhei/Qwen3-Voice-Embedding-12Hz-1.7B"
 _EMBEDDING_MODEL: Any = None
 _EMBEDDING_PROCESSOR: Any = None
 
@@ -251,9 +256,17 @@ def compute_raw_metrics(y: npt.NDArray[np.float32], sr: int) -> dict:
 
 
 def _embedding_tensor_to_numpy(value: Any) -> npt.NDArray[np.float32]:
-    """Convert a supported embedding object to a normalized 1D NumPy array."""
-    import torch
+    """Convert a supported embedding object to a normalized 1D NumPy array.
 
+    Args:
+        value: The embedding object to convert.
+
+    Returns:
+        npt.NDArray[np.float32]: The NumPy array representation of this embedding.
+
+    Raises:
+        ValueError: The embedding has an invalid or unexpected shape.
+    """
     if isinstance(value, dict):
         if "speaker_embedding" in value:
             value = value["speaker_embedding"]
@@ -276,9 +289,17 @@ def _embedding_tensor_to_numpy(value: Any) -> npt.NDArray[np.float32]:
 
 
 def _load_reference_embedding(voice: str) -> npt.NDArray[np.float32]:
-    """Load a packaged Qwen3 reference embedding for a Celune voice."""
-    import torch
+    """Load a packaged Qwen3 reference embedding for a Celune voice.
 
+    Args:
+        voice: The target Celune voice to load an embedding for.
+
+    Returns:
+        npt.NDArray[np.float32]: The NumPy array of the embedding.
+
+    Raises:
+        FileNotFoundError: No Celune voice was found by this name or it has no embeddings.
+    """
     ref_path = pathlib.Path(__file__).resolve().parent / "refs" / f"{voice}.pt"
     if not ref_path.exists():
         raise FileNotFoundError(f"{ref_path.name} not found")
@@ -287,25 +308,30 @@ def _load_reference_embedding(voice: str) -> npt.NDArray[np.float32]:
 
 
 def _available_reference_voices() -> list[str]:
-    """Return available packaged reference embedding names."""
+    """Return available packaged reference embedding names.
+
+    Returns:
+        list[str]: The list of available embedding names.
+    """
     refs_dir = pathlib.Path(__file__).resolve().parent / "refs"
     return sorted(path.stem for path in refs_dir.glob("*.pt"))
 
 
 def _load_embedding_model() -> tuple[Any, Any]:
-    """Load and cache the Qwen3 speaker embedding processor/model."""
+    """Load and cache the Qwen3 speaker embedding processor/model.
+
+    Returns:
+        tuple[Any, Any]: The loaded models and processor objects.
+    """
     global _EMBEDDING_MODEL, _EMBEDDING_PROCESSOR
 
     if _EMBEDDING_MODEL is None or _EMBEDDING_PROCESSOR is None:
-        import torch
-        from transformers import AutoModel, AutoProcessor
-
         _EMBEDDING_PROCESSOR = AutoProcessor.from_pretrained(
-            QWEN3_VOICE_EMBEDDING_MODEL,
+            VOICE_EMBEDDING_MODEL,
             trust_remote_code=True,
         )
         _EMBEDDING_MODEL = AutoModel.from_pretrained(
-            QWEN3_VOICE_EMBEDDING_MODEL,
+            VOICE_EMBEDDING_MODEL,
             trust_remote_code=True,
         )
         _EMBEDDING_MODEL.eval()
@@ -319,9 +345,15 @@ def _compute_qwen3_embedding(
     y: npt.NDArray[np.float32],
     sr: int,
 ) -> npt.NDArray[np.float32]:
-    """Compute a Qwen3 ECAPA-TDNN speaker embedding for a mono waveform."""
-    import torch
+    """Compute a Qwen3 ECAPA-TDNN speaker embedding for a mono waveform.
 
+    Args:
+        y: The NumPy array of the voice waveform.
+        sr: The sample rate of the voice waveform.
+
+    Returns:
+        npt.NDArray[np.float32]: The computed embedding of the voice waveform.
+    """
     processor, model = _load_embedding_model()
     inputs = processor(y, sampling_rate=sr)
     inputs = {
@@ -339,7 +371,18 @@ def _cosine_similarity_percent(
     embedding: npt.NDArray[np.float32],
     reference: npt.NDArray[np.float32],
 ) -> tuple[float, float]:
-    """Return cosine similarity and a clipped percentage-style score."""
+    """Return cosine similarity and a clipped percentage-style score.
+
+    Args:
+        embedding: The embedding to check.
+        reference: The target embedding to compare against.
+
+    Returns:
+        tuple[float, float]: The cosine and percentage similarity.
+
+    Raises:
+        ValueError: The embedding norm was zero.
+    """
     denom = float(np.linalg.norm(embedding) * np.linalg.norm(reference))
     if denom <= 1e-9:
         raise ValueError("embedding norm is zero")
@@ -351,23 +394,40 @@ def _cosine_similarity_percent(
 
 
 def _voice_drift_level(drift_percent: float) -> str:
-    """Return a readable drift level for a reference similarity gap."""
+    """Return a readable drift level for a reference similarity gap.
+
+    Args:
+        drift_percent: The drift percentage value.
+
+    Return:
+        str: The human readable drift tier.
+    """
     if drift_percent <= 5.0:
-        return "minimal"
-    if drift_percent <= 15.0:
-        return "low"
-    if drift_percent <= 30.0:
-        return "moderate"
-    return "high"
+        return "good"
+    if drift_percent <= 10.0:
+        return "caution"
+    if drift_percent <= 20.0:
+        return "weak"
+    return "wrong"
 
 
 def add_reference_similarity_metrics(
     metrics: dict,
     y: npt.NDArray[np.float32],
     sr: int,
-    reference_voice: str | None,
+    reference_voice: Optional[str],
 ) -> None:
-    """Add Qwen3 speaker embedding similarity metrics when possible."""
+    """Add Qwen3 speaker embedding similarity metrics when possible.
+
+    Args:
+        metrics: The reference similarity metrics.
+        y: The NumPy array of the voice.
+        sr: The sample rete of the voice.
+        reference_voice: The reference voice to check against.
+
+    Returns:
+        None: This function adds the metrics to the graph.
+    """
     if not reference_voice:
         return
 
@@ -406,11 +466,13 @@ def add_reference_similarity_metrics(
     metrics["voice_drift_level"] = _voice_drift_level(metrics["voice_drift_percent"])
     metrics["voice_similarity_matches"] = matches
 
+    # incorrect Celune voice
     metrics["voice_similarity_status"] = "MISMATCH"
     if matches:
         best_match = matches[0]
         metrics["voice_similarity_best_match"] = best_match
         if best_match.get("voice") == reference_voice:
+            # correct Celune voice
             metrics["voice_similarity_status"] = "OK"
 
     if len(matches) > 1:
@@ -685,7 +747,7 @@ def plot_radar(
     traits: dict,
     title: str,
     output_path: pathlib.Path,
-    metrics: dict | None = None,
+    metrics: Optional[dict] = None,
 ) -> None:
     """Draw a filled radar chart of trait scores and save it as a PNG.
 
@@ -954,7 +1016,7 @@ def _analyze_voice_data(
     voice: pathlib.Path,
     out_dir: pathlib.Path,
     stem: str,
-    reference_voice: str | None = None,
+    reference_voice: Optional[str] = None,
 ) -> None:
     """Analyze voice audio and write report artifacts.
 
@@ -987,7 +1049,7 @@ def analyze_voice_audio(
     display_name: str,
     out_dir: pathlib.Path,
     stem: str,
-    reference_voice: str | None = None,
+    reference_voice: Optional[str] = None,
 ) -> None:
     """Analyze in-memory voice audio without any saved SFX prefix.
 

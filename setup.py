@@ -12,6 +12,7 @@ import platform
 import subprocess
 import contextlib
 from pathlib import Path
+from typing import Optional
 
 with contextlib.suppress(IndexError):
     arg = sys.argv[1]
@@ -147,11 +148,11 @@ def ensure_scoop() -> bool:
     return False
 
 
-def resolve_openrgb() -> str | None:
+def resolve_openrgb() -> Optional[str]:
     """Find OpenRGB even when its installer did not add it to PATH.
 
     Returns:
-        str | None: The resolved OpenRGB executable path, or None if unavailable.
+        Optional[str]: The resolved OpenRGB executable path, or None if unavailable.
     """
     for binary_name in ("openrgb", "OpenRGB"):
         binary_path = shutil.which(binary_name)
@@ -196,14 +197,14 @@ def resolve_openrgb() -> str | None:
     return None
 
 
-def resolve_binary(binary_name: str) -> str | None:
+def resolve_binary(binary_name: str) -> Optional[str]:
     """Resolve a required executable.
 
     Args:
         binary_name: The executable name to resolve.
 
     Returns:
-        str | None: The resolved executable path, or None if unavailable.
+        Optional[str]: The resolved executable path, or None if unavailable.
     """
     if binary_name == "openrgb":
         return resolve_openrgb()
