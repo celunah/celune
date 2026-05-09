@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, Optional, runtime_checkable
 
 import celune as _celune
 from celune.exceptions import IncompleteExtensionError
@@ -60,7 +60,7 @@ class SayCallable(Protocol):
         self,
         text: str,
         save: bool = True,
-        display_text: str | None = None,
+        display_text: Optional[str] = None,
     ) -> bool:
         """Queue text for speech.
 
@@ -292,7 +292,7 @@ class CeluneExtension(ABC):
         self,
         text: str,
         save: bool = True,
-        display_text: str | None = None,
+        display_text: Optional[str] = None,
     ) -> bool:
         """Make Celune say something.
 

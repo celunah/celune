@@ -477,7 +477,7 @@ def iter_name_days() -> Generator[tuple[str, list[str]], None, None]:
     """Iterate over ``(MM-DD, names)`` pairs.
 
     Returns:
-        Generator[tuple[str | list[str]], None, None]: A generator that yields each date
+        Generator[tuple[str, list[str]], None, None]: A generator that yields each date
             key followed by its corresponding list of names.
     """
     yield from NAME_DAYS.items()

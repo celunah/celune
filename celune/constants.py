@@ -8,7 +8,10 @@ from typing import TypeVar
 # CeluneNorm v1.3 includes the most important changes, so that Celune can speak optimally.
 NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v1.3"
 
-# I use this to know when the next moon comes.
+# voice embedding model
+VOICE_EMBEDDING_MODEL = "marksverdhei/Qwen3-Voice-Embedding-12Hz-1.7B"
+
+# "I use this to know when the next moon comes." - Celune
 REFERENCE_NEW_MOON = datetime.datetime(2000, 1, 6, 18, 14, tzinfo=datetime.timezone.utc)
 
 
