@@ -898,6 +898,7 @@ def playback_worker(engine: "Celune") -> None:
                             saved.name,
                             saved.parent,
                             saved.stem,
+                            engine.current_voice,
                         )
 
                     engine.log("Ready to speak.")
