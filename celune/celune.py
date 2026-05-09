@@ -477,6 +477,8 @@ class Celune:
         self.status_callback("Reloading")
         self.cur_state = "reloading"
 
+        readiness_acquired = False
+
         try:
             with self._model_lock:
                 new_model_name = self.backend.model_id_for_voice(voice)
@@ -499,17 +501,21 @@ class Celune:
                 self.current_voice = voice
                 self.loaded = True
 
-            # play readiness signal on voice change success
-            # fail out if the pipeline cannot accept it for whatever reason
-            if acquire_pipeline(self, "readiness signal"):
+            # Play the readiness signal on voice change success. This is a "best effort"
+            # because a previous readiness signal may still be playing in configurations
+            # where Celune does not have to reload the model fully.
+            if acquire_pipeline(self, "play readiness signal"):
+                readiness_acquired = True
                 self.cur_state = "speaking"
                 self.audio_queue.put((readiness_signal(), 48000, None))
                 self.audio_queue.put(self.utterance_done)
-                self.voice_changed_callback(voice)
-                self.log(f"Voice {voice} loaded.")
-                self.status_callback("Idle")
             else:
-                raise NotAvailableError("expected to become ready, but did not")
+                self.log_dev("Could not play the readiness signal.", "warning")
+
+            self.voice_changed_callback(voice)
+            self.log(f"Voice {voice} loaded.")
+            if not readiness_acquired:
+                self.status_callback("Idle")
         except Exception as e:
             self.loaded = False
             self.log(f"[RELOAD ERROR] {format_error(e, self.dev)}", "error")
@@ -518,7 +524,6 @@ class Celune:
 
         finally:
             self._model_ready.set()
-            self._release_pipeline()
             self.change_input_state_callback(locked=False)
 
     def force_stop_speech(self) -> bool:
@@ -593,13 +598,12 @@ class Celune:
         self._start_configured_api()
 
         # notify readiness
-        if acquire_pipeline(self, "readiness signal"):
+        if acquire_pipeline(self, "play readiness signal"):
             self.cur_state = "speaking"
             self.audio_queue.put((readiness_signal(), 48000, None))
             self.audio_queue.put(self.utterance_done)
         else:
-            self.log("Expected to become ready, but did not.", "error")
-            return False
+            self.log_dev("Could not play the readiness signal.", "warning")
 
         return True
 
