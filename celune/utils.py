@@ -527,3 +527,13 @@ def replace_ipa(text: str, strict: bool = True) -> tuple[str, int]:
 
     result = re.sub(r"/([^/\[\]]+)/|\[([^/\[\]]+)]", repl, text)
     return result, total_unmatched
+
+
+def is_april_fools() -> bool:
+    """Is today April Fools?
+
+    Returns:
+        bool: Whether today is April Fools.
+    """
+    now = datetime.datetime.now()
+    return now.month == 4 and now.day == 1

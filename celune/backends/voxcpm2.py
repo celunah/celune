@@ -16,6 +16,9 @@ import torch
 import numpy as np
 import numpy.typing as npt
 from voxcpm import VoxCPM
+from voxcpm.model.voxcpm2 import VoxCPM2Model, VoxCPMConfig, get_dtype
+from voxcpm.modules.audiovae import AudioVAEV2
+from transformers import LlamaTokenizerFast
 from safetensors.torch import load_file as load_safetensors_file
 from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
@@ -37,6 +40,8 @@ class VoxCPM2(CeluneBackend):
 
     name: str = "voxcpm2"
     chunk_rate: float = 6.25
+
+    # if int8 load was requested this will be overriden with the hybrid models
     voice_models: dict[str, str] = {
         "balanced": "openbmb/VoxCPM2",
         "calm": "openbmb/VoxCPM2",
@@ -89,7 +94,11 @@ class VoxCPM2(CeluneBackend):
         self._validate_refs()
 
     def _apply_seed(self) -> None:
-        """Seed all generation RNGs for the next backend operation."""
+        """Seed all generation RNGs for the next backend operation.
+
+        Returns:
+            None: This method seeds Celune's RNG.
+        """
         if self.random_seed:
             self.current_seed = secrets.randbits(32)
 
@@ -165,7 +174,7 @@ class VoxCPM2(CeluneBackend):
         """
         for model_id in self.all_model_ids:
             if Path(model_id).expanduser().exists():
-                self.log(f"{model_id} is available locally.", "info")
+                self.log(f"{model_id} was found locally.", "info")
                 continue
 
             available, _ = self.model_is_available_locally(model_id)
@@ -173,7 +182,7 @@ class VoxCPM2(CeluneBackend):
                 self.log(f"Downloading {model_id}...", "info")
                 snapshot_download(repo_id=model_id)
             else:
-                self.log(f"{model_id} is already available.", "info")
+                self.log(f"{model_id} is available in cache.", "info")
 
     def _validate_refs(self) -> None:
         """Validate bundled reference audio files.
@@ -230,7 +239,6 @@ class VoxCPM2(CeluneBackend):
                     load_denoiser=kwargs.get("load_denoiser", False),
                     optimize=kwargs.get("optimize", False),
                 )
-                self._log_int8_runtime_stats(self.model)
                 return self.model
 
             with self._suppress_backend_output():
@@ -254,7 +262,6 @@ class VoxCPM2(CeluneBackend):
                     load_denoiser=kwargs.get("load_denoiser", False),
                     optimize=kwargs.get("optimize", False),
                 )
-                self._log_int8_runtime_stats(self.model)
                 return self.model
 
             with self._suppress_backend_output():
@@ -273,7 +280,6 @@ class VoxCPM2(CeluneBackend):
                 load_denoiser=kwargs.get("load_denoiser", False),
                 optimize=kwargs.get("optimize", False),
             )
-            self._log_int8_runtime_stats(self.model)
             return self.model
 
         with self._suppress_backend_output():
@@ -286,7 +292,11 @@ class VoxCPM2(CeluneBackend):
 
     @staticmethod
     def _checkpoint_needs_hybrid_load(model_path: str) -> bool:
-        """Return whether a VoxCPM2 checkpoint contains actual INT8 tensors."""
+        """Return whether a VoxCPM2 checkpoint contains actual INT8 tensors.
+
+        Returns:
+            bool: The result of the hybrid model inspection.
+        """
         return inspect_hybrid_tts_checkpoint(model_path).has_int8_tensors
 
     def _load_hybrid_int8_model(
@@ -295,17 +305,20 @@ class VoxCPM2(CeluneBackend):
         load_denoiser: bool,
         optimize: bool,
     ) -> VoxCPM:
-        """Load a VoxCPM2 hybrid INT8/BF16 checkpoint through Celune's path."""
-        load_start = time.perf_counter()
-        try:
-            from transformers import LlamaTokenizerFast
-            from voxcpm.model.voxcpm2 import VoxCPM2Model, VoxCPMConfig, get_dtype
-            from voxcpm.modules.audiovae import AudioVAEV2
-        except ImportError as e:
-            raise BackendError(
-                "VoxCPM2 hybrid INT8 dependencies are unavailable"
-            ) from e
+        """Load a VoxCPM2 hybrid INT8/BF16 checkpoint through Celune's path.
 
+        Args:
+            model_path: The model path or Hugging Face ID to load.
+            load_denoiser: Whether to load the denoiser.
+            optimize: Whether to try optimizing the model.
+
+        Returns:
+            VoxCPM: The underlying model object.
+
+        Raises:
+            BackendError: The hybrid model checkpoint is invalid or Celune could not load it.
+        """
+        load_start = time.perf_counter()
         path = Path(model_path)
         with open(path / "config.json", encoding="utf-8") as f:
             config = VoxCPMConfig.model_validate_json(f.read())
@@ -393,21 +406,6 @@ class VoxCPM2(CeluneBackend):
         setattr(pipeline, "_celune_int8_dequant_cache_ms", dequant_cache_ms)
         return pipeline
 
-    def _log_int8_runtime_stats(self, model: VoxCPM) -> None:
-        """Log Celune INT8 runtime details when the model exposes them."""
-        int8_linear_count = getattr(model, "_celune_int8_linear_count", None)
-        if int8_linear_count is None:
-            return
-
-        load_ms = float(getattr(model, "_celune_int8_load_ms", 0.0))
-        dequant_cache_ms = float(getattr(model, "_celune_int8_dequant_cache_ms", 0.0))
-        self.log(
-            "VoxCPM2 INT8 VRAM runtime: "
-            f"{int8_linear_count} linear layers replaced, "
-            f"load {load_ms:.1f} ms, dequant/cache {dequant_cache_ms:.1f} ms.",
-            "info",
-        )
-
     def generate_stream(
         self, model: VoxCPM, **kwargs
     ) -> Generator[tuple[npt.NDArray[np.float32], int, BackendTiming]]:
@@ -448,8 +446,8 @@ class VoxCPM2(CeluneBackend):
             # these instructions can also be injected manually
             text = f"({instruct}) {text}"
 
-        # Random seeding causes regenerations of Celune's output to be unique,
-        # while a custom seed makes the next output reproducible.
+        # random seeding causes regenerations of Celune's output to be unique,
+        # while a custom seed makes the next output reproducible
         self._apply_seed()
 
         chunks_per_batch = max(1, round(chunk_size / (1 / self.chunk_rate)))

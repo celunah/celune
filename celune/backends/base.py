@@ -29,16 +29,6 @@ class CeluneBackend(ABC):
         model_name: Optional[str] = None,
         config: Optional[dict[str, Any]] = None,
     ) -> None:
-        """Initialize common backend state.
-
-        Args:
-            log: Logger callback used by the backend.
-            model_name: Optional model identifier overriding voice defaults.
-            config: Loaded Celune configuration dictionary.
-
-        Returns:
-            None: This constructor stores backend state for later loading.
-        """
         self.model_name: Optional[str]
         if model_name is not None:
             self.model_name = model_name

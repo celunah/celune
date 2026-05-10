@@ -252,13 +252,13 @@ def release_pipeline(
     with engine.say_lock:
         if owner is not None and engine.lock_held_by != owner:
             engine.log_dev(
-                f"[LOCK] release ignored for {owner}; held by {engine.lock_held_by}"
+                f"[LOCK] not releasing, the lock is still held by {engine.lock_held_by}"
             )
             return False
         if token is not None and engine.pipeline_lock_token != token:
             engine.log_dev(
-                "[LOCK] release ignored for stale playback marker "
-                f"{token}; current token is {engine.pipeline_lock_token}"
+                "[LOCK] not releasing, the current token is now stale and "
+                f"{engine.pipeline_lock_token} is currently holding the lock"
             )
             return False
 
@@ -802,7 +802,7 @@ def generation_worker(engine: "Celune") -> None:
                         if part is not None
                     ]
                     if timing_parts:
-                        engine.log(
+                        engine.log_dev(
                             f"{backend_timing_name} timing: " + ", ".join(timing_parts),
                         )
 

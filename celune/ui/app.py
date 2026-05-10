@@ -1,6 +1,5 @@
 """Celune's frontend layer."""
 
-import datetime
 import os
 import sys
 import shlex
@@ -20,7 +19,7 @@ from textual.widgets import Label, RichLog, TextArea, Button
 from rich.text import Text
 
 from ..celune import Celune
-from ..utils import format_error, indent, replace_ipa
+from ..utils import format_error, indent, replace_ipa, is_april_fools
 from ..constants import SIGTSTP
 from ..colors import THEME, THEME_LIGHT, THEME_APRIL_FOOLS, SEVERITY_COLORS
 from .commands import process_command as process_ui_command
@@ -50,7 +49,7 @@ class CeluneUI(App):
         self.status = cast(Label, None)
         self.resources = cast(Label, None)
 
-        if self._is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
+        if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
             "1",
             "true",
             "on",
@@ -83,12 +82,6 @@ class CeluneUI(App):
         self.consume_on_boundary = False
         self._suppress_input_change = False
         self._resource_page = 0
-
-    @staticmethod
-    def _is_april_fools() -> bool:
-        """Return whether the UI should use the April Fools theme."""
-        now = datetime.datetime.now()
-        return now.month == 4 and now.day == 1
 
     def _severity_color(self, severity: str = "info") -> str:
         """Return the current theme color for a log severity.
@@ -201,7 +194,7 @@ class CeluneUI(App):
         self.register_theme(THEME_LIGHT)
         self.register_theme(THEME_APRIL_FOOLS)
 
-        if self._is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
+        if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
             "1",
             "true",
             "on",

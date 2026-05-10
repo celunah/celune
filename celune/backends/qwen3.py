@@ -26,6 +26,8 @@ from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 from transformers import AutoConfig, AutoProcessor
 
+# Qwen3-TTS logs a flash-attn warning, but Celune does not support it
+# shut it up because it prints itself over the UI
 with suppress_flash_attn_warning():
     from qwen_tts.core.models import (
         Qwen3TTSConfig,
@@ -205,7 +207,15 @@ def _load_faster_qwen3_tts_auto(
 def _timed_qwen3_stream(
     stream: Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]], None, None],
 ) -> Generator[tuple[npt.NDArray[np.float32], int, BackendTiming], None, None]:
-    """Attach wall-clock yield timing to Qwen3 streaming chunks."""
+    """Attach wall-clock yield timing to Qwen3 streaming chunks.
+
+    Args:
+        stream: The incoming stream of TTS output.
+
+    Returns:
+        Generator[tuple[npt.NDArray[np.float32], int, BackendTiming], None, None]: The stream
+            with yield timing included.
+    """
     chunk_index = 0
     while True:
         start = time.perf_counter()
@@ -409,7 +419,7 @@ class Qwen3(CeluneBackend):
         """
         for model_id in self.all_model_ids:
             if Path(model_id).expanduser().exists():
-                self.log(f"{model_id} is available locally.", "info")
+                self.log(f"{model_id} was found locally.", "info")
                 continue
 
             available, _ = self.model_is_available_locally(model_id)
@@ -417,7 +427,7 @@ class Qwen3(CeluneBackend):
                 self.log(f"Downloading {model_id}...", "info")
                 snapshot_download(repo_id=model_id)
             else:
-                self.log(f"{model_id} is already available.", "info")
+                self.log(f"{model_id} is available in cache.", "info")
 
     def _validate_refs(self) -> None:
         """Validate bundled reference audio files.
@@ -467,7 +477,6 @@ class Qwen3(CeluneBackend):
             self.log("Loading TTS model from local path...", "info")
             model_path = str(local_path.resolve())
             self.model = _load_faster_qwen3_tts_auto(model_path)
-            self._log_int8_runtime_stats(self.model)
             return self.model
 
         available, path = self.model_is_available_locally(model_id)
@@ -475,31 +484,12 @@ class Qwen3(CeluneBackend):
         if available and path is not None:
             os.environ["HF_HUB_OFFLINE"] = "1"
             self.model = _load_faster_qwen3_tts_auto(path)
-            self._log_int8_runtime_stats(self.model)
             return self.model
 
         self.log("Downloading TTS model...", "info")
         path = snapshot_download(repo_id=model_id)
         self.model = _load_faster_qwen3_tts_auto(path)
-        self._log_int8_runtime_stats(self.model)
         return self.model
-
-    def _log_int8_runtime_stats(self, model: FasterQwen3TTS) -> None:
-        """Log Celune INT8 runtime details when the model exposes them."""
-        int8_linear_count = getattr(model, "_celune_int8_linear_count", None)
-        if int8_linear_count is None:
-            return
-
-        cache_count = getattr(model, "_celune_int8_runtime_cache_count", 0)
-        load_ms = float(getattr(model, "_celune_int8_load_ms", 0.0))
-        dequant_cache_ms = float(getattr(model, "_celune_int8_dequant_cache_ms", 0.0))
-        self.log(
-            "Qwen3 INT8 VRAM runtime: "
-            f"{int8_linear_count} linear layers replaced, "
-            f"{cache_count} cached for replay, "
-            f"load {load_ms:.1f} ms, dequant/cache {dequant_cache_ms:.1f} ms.",
-            "info",
-        )
 
     def generate_stream(
         self, model: FasterQwen3TTS, **kwargs
@@ -528,7 +518,7 @@ class Qwen3(CeluneBackend):
             # we are not using the voice param here, as the model defines only one
             # and you have to reload the model to apply voice settings
             kwargs.pop("voice", None)
-            self.log("Qwen3 generation path: native custom voice.", "debug")
+
             # Celune natively works with Qwen-formatted chunks
             yield from _timed_qwen3_stream(
                 model.generate_custom_voice_streaming(speaker="celune", **kwargs)
@@ -548,7 +538,6 @@ class Qwen3(CeluneBackend):
                     f"unknown voice '{voice}' for backend '{self.name}'"
                 ) from e
 
-            self.log("Qwen3 generation path: voice clone.", "debug")
             yield from _timed_qwen3_stream(
                 model.generate_voice_clone_streaming(
                     ref_audio=ref_wav,

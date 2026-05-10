@@ -292,11 +292,26 @@ class Celune:
 
     @staticmethod
     def _noop_message(msg: str, severity: str = "info") -> None:
-        """Discard a message callback."""
+        """Discard a message callback.
+
+        Args:
+            msg: Unused.
+            severity: Unused.
+
+        Returns:
+            None: This method discards a message callback.
+        """
 
     @staticmethod
     def _noop_input_state(locked: bool) -> None:
-        """Discard an input lock-state callback."""
+        """Discard an input lock-state callback.
+
+        Args:
+            locked: Unused.
+
+        Returns:
+            None: This method discards input lock-state callback.
+        """
 
     @staticmethod
     def _clear_queue(q: queue.Queue) -> None:
@@ -1233,10 +1248,21 @@ class Celune:
 
     @property
     def pipeline_lock_token(self) -> int:
-        """Get the current pipeline lock token."""
+        """Get the current pipeline lock token.
+
+        Returns:
+            int: The token that holds Celune's pipeline lock.
+        """
         return self._pipeline_lock_token
 
     @pipeline_lock_token.setter
     def pipeline_lock_token(self, value: int) -> None:
-        """Set the current pipeline lock token."""
+        """Set the current pipeline lock token.
+
+        Args:
+            value: The token that is about to claim Celune's pipeline lock.
+
+        Returns:
+            None: This setter sets Celune's pipeline lock token.
+        """
         self._pipeline_lock_token = value
