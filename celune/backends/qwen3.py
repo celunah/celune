@@ -39,7 +39,7 @@ with suppress_flash_attn_warning():
 
 from .base import BackendTiming, CeluneBackend
 from ..modeling import (
-    Int8ScaledLinear,
+    QWEN3_SAFE_TRANSFORMER_INT8_PROFILE,
     enable_qwen3_int8_runtime_cache,
     inspect_hybrid_tts_checkpoint,
     load_hybrid_tts_checkpoint,
@@ -55,7 +55,6 @@ def _load_faster_qwen3_tts_int8(
     dtype: torch.dtype = torch.bfloat16,
     attn_implementation: str = "sdpa",
     max_seq_len: int = 2048,
-    int8_runtime: str = "memory",
 ) -> FasterQwen3TTS:
     """Load a Qwen3 hybrid INT8/BF16 checkpoint as FasterQwen3TTS.
 
@@ -65,14 +64,13 @@ def _load_faster_qwen3_tts_int8(
         dtype: Runtime dtype used for non-INT8 computation.
         attn_implementation: Attention implementation requested from Qwen.
         max_seq_len: Maximum sequence length for the talker CUDA graph.
-        int8_runtime: Qwen3 INT8 runtime mode, either ``balanced`` or ``memory``.
-
     Returns:
         FasterQwen3TTS: Loaded FasterQwen3TTS wrapper.
 
     Raises:
         BackendError: The checkpoint cannot be retained or does not match the model.
     """
+    load_start = time.perf_counter()
     loaded = load_hybrid_tts_checkpoint(model_path, keep_state_dict=True)
     if loaded.state_dict is None:
         raise BackendError("INT8 checkpoint scan did not retain the state dict")
@@ -87,7 +85,10 @@ def _load_faster_qwen3_tts_int8(
         model = Qwen3TTSForConditionalGeneration(config)
 
     int8_linear_count = replace_int8_linear_modules(
-        model, loaded.index, loaded.state_dict
+        model,
+        loaded.index,
+        loaded.state_dict,
+        QWEN3_SAFE_TRANSFORMER_INT8_PROFILE,
     )
 
     state_dict = qwen3_int8_state_dict(loaded.state_dict)
@@ -107,15 +108,19 @@ def _load_faster_qwen3_tts_int8(
 
     cast(nn.Module, model).to(device)
     model.eval()
-    runtime_cache_count = 0
-    if int8_runtime == "balanced":
-        runtime_cache_count = enable_qwen3_int8_runtime_cache(
-            model,
-            device=device,
-            dtype=dtype,
-            offload_quantized_buffers=True,
-            module_filter=_qwen3_balanced_int8_cache_filter,
-        )
+    cache_start = time.perf_counter()
+    runtime_cache_count = enable_qwen3_int8_runtime_cache(
+        model,
+        device=device,
+        dtype=dtype,
+        offload_quantized_buffers=True,
+        module_filter=None,
+    )
+    dequant_cache_ms = (time.perf_counter() - cache_start) * 1000
+    del state_dict
+    loaded.state_dict = None
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     speech_tokenizer = Qwen3TTSTokenizer.from_pretrained(
         str(Path(model_path) / "speech_tokenizer"),
@@ -164,7 +169,8 @@ def _load_faster_qwen3_tts_int8(
     )
     setattr(tts, "_celune_int8_linear_count", int8_linear_count)
     setattr(tts, "_celune_int8_runtime_cache_count", runtime_cache_count)
-    setattr(tts, "_celune_int8_runtime", int8_runtime)
+    setattr(tts, "_celune_int8_load_ms", (time.perf_counter() - load_start) * 1000)
+    setattr(tts, "_celune_int8_dequant_cache_ms", dequant_cache_ms)
     return tts
 
 
@@ -178,35 +184,21 @@ def _qwen3_checkpoint_needs_hybrid_load(model_path: str) -> bool:
         bool: ``True`` when the checkpoint contains hybrid INT8/BF16 weights.
     """
     index = inspect_hybrid_tts_checkpoint(model_path)
-    return index.is_hybrid_int8_bf16
-
-
-def _qwen3_balanced_int8_cache_filter(
-    name: str,
-    _module: Int8ScaledLinear,
-) -> bool:
-    """Return whether a Qwen3 INT8 linear module should be cached."""
-    return ".mlp." in name or name.endswith(".self_attn.o_proj")
+    return index.has_int8_tensors
 
 
 def _load_faster_qwen3_tts_auto(
     model_path: str,
-    int8_runtime: str = "memory",
 ) -> FasterQwen3TTS:
     """Load Qwen3 using hybrid or normal loading based on checkpoint contents.
 
     Args:
         model_path: Local checkpoint directory to load.
-        int8_runtime: Qwen3 INT8 runtime mode, either ``balanced`` or ``memory``.
-
     Returns:
         FasterQwen3TTS: Loaded FasterQwen3TTS wrapper.
     """
     if _qwen3_checkpoint_needs_hybrid_load(model_path):
-        return _load_faster_qwen3_tts_int8(
-            model_path,
-            int8_runtime=int8_runtime,
-        )
+        return _load_faster_qwen3_tts_int8(model_path)
     return FasterQwen3TTS.from_pretrained(model_path)
 
 
@@ -226,11 +218,13 @@ def _timed_qwen3_stream(
         timing_out: BackendTiming = dict(timing) if isinstance(timing, dict) else {}
         timing_out.setdefault("backend", "qwen3")
         timing_out.setdefault("chunk_index", chunk_index)
-        timing_out["yield_ms"] = yield_ms
         model_ms = float(timing_out.get("prefill_ms", 0.0)) + float(
             timing_out.get("decode_ms", 0.0)
         )
-        timing_out["codec_ms_approx"] = max(0.0, yield_ms - model_ms)
+        timing_out["total_wall_ms"] = yield_ms
+        codec_ms = max(0.0, yield_ms - model_ms)
+        if codec_ms > 0.0:
+            timing_out["codec_ms_approx"] = codec_ms
         chunk_index += 1
         yield audio_chunk, sr, timing_out
 
@@ -266,7 +260,6 @@ class Qwen3(CeluneBackend):
         ),
     }
     default_voice: str = "balanced"
-    supported_int8_runtimes: tuple[str, ...] = ("balanced", "memory")
 
     def __init__(
         self,
@@ -294,14 +287,6 @@ class Qwen3(CeluneBackend):
             )
 
         super().__init__(log=log, config=config)
-        self.int8_runtime = (
-            str(self.config.get("qwen3_int8_runtime", "memory")).strip().lower()
-        )
-        if self.int8_runtime not in self.supported_int8_runtimes:
-            raise ValueError(
-                f"unsupported qwen3_int8_runtime '{self.int8_runtime}' "
-                f"(available: {', '.join(self.supported_int8_runtimes)})"
-            )
 
         if self.config.get("int8"):
             self.clone_model = "lunahr/Qwen3-TTS-12Hz-1.7B-Base-hybrid-int8"
@@ -481,10 +466,7 @@ class Qwen3(CeluneBackend):
         if local_path.exists():
             self.log("Loading TTS model from local path...", "info")
             model_path = str(local_path.resolve())
-            self.model = _load_faster_qwen3_tts_auto(
-                model_path,
-                int8_runtime=self.int8_runtime,
-            )
+            self.model = _load_faster_qwen3_tts_auto(model_path)
             self._log_int8_runtime_stats(self.model)
             return self.model
 
@@ -492,19 +474,13 @@ class Qwen3(CeluneBackend):
 
         if available and path is not None:
             os.environ["HF_HUB_OFFLINE"] = "1"
-            self.model = _load_faster_qwen3_tts_auto(
-                path,
-                int8_runtime=self.int8_runtime,
-            )
+            self.model = _load_faster_qwen3_tts_auto(path)
             self._log_int8_runtime_stats(self.model)
             return self.model
 
         self.log("Downloading TTS model...", "info")
         path = snapshot_download(repo_id=model_id)
-        self.model = _load_faster_qwen3_tts_auto(
-            path,
-            int8_runtime=self.int8_runtime,
-        )
+        self.model = _load_faster_qwen3_tts_auto(path)
         self._log_int8_runtime_stats(self.model)
         return self.model
 
@@ -514,12 +490,14 @@ class Qwen3(CeluneBackend):
         if int8_linear_count is None:
             return
 
-        runtime = getattr(model, "_celune_int8_runtime", self.int8_runtime)
         cache_count = getattr(model, "_celune_int8_runtime_cache_count", 0)
+        load_ms = float(getattr(model, "_celune_int8_load_ms", 0.0))
+        dequant_cache_ms = float(getattr(model, "_celune_int8_dequant_cache_ms", 0.0))
         self.log(
-            "Qwen3 INT8 runtime "
-            f"{runtime}: {int8_linear_count} linear layers replaced, "
-            f"{cache_count} cached for replay.",
+            "Qwen3 INT8 VRAM runtime: "
+            f"{int8_linear_count} linear layers replaced, "
+            f"{cache_count} cached for replay, "
+            f"load {load_ms:.1f} ms, dequant/cache {dequant_cache_ms:.1f} ms.",
             "info",
         )
 
@@ -550,6 +528,7 @@ class Qwen3(CeluneBackend):
             # we are not using the voice param here, as the model defines only one
             # and you have to reload the model to apply voice settings
             kwargs.pop("voice", None)
+            self.log("Qwen3 generation path: native custom voice.", "debug")
             # Celune natively works with Qwen-formatted chunks
             yield from _timed_qwen3_stream(
                 model.generate_custom_voice_streaming(speaker="celune", **kwargs)
@@ -569,6 +548,7 @@ class Qwen3(CeluneBackend):
                     f"unknown voice '{voice}' for backend '{self.name}'"
                 ) from e
 
+            self.log("Qwen3 generation path: voice clone.", "debug")
             yield from _timed_qwen3_stream(
                 model.generate_voice_clone_streaming(
                     ref_audio=ref_wav,

@@ -38,6 +38,7 @@ from .pipeline import (
     generation_worker,
     queue_sfx_audio,
     playback_worker,
+    playback_done_marker,
     play as play_pipeline,
     queue_speech,
     release_pipeline,
@@ -246,6 +247,7 @@ class Celune:
         self._playback_done.set()
         self._say_lock = threading.Lock()
         self._lock_held_by: Optional[str] = None
+        self._pipeline_lock_token = 0
         self._model_lock = threading.RLock()
 
         self.cur_state = "init"
@@ -378,6 +380,31 @@ class Celune:
             return False
 
         self.change_input_state_callback(locked=True)
+        with self.say_lock:
+            if self.locked and self.lock_held_by not in {
+                None,
+                PipelineActions.READINESS_SIGNAL.value,
+                PipelineActions.VOICE_CHANGE.value,
+            }:
+                pipeline_held_by = (
+                    f"'{self.lock_held_by}'"
+                    if self.lock_held_by is not None
+                    else "an unknown pipeline event"
+                )
+                self.log(
+                    "Voice changes are not currently available because Celune is busy.",
+                    "warning",
+                )
+                self.log_dev(
+                    f"The pipeline is currently being held by {pipeline_held_by}."
+                )
+                self.change_input_state_callback(locked=False)
+                return False
+
+            self.lock_held_by = PipelineActions.VOICE_CHANGE.value
+            self.locked = True
+            self.pipeline_lock_token += 1
+            self.playback_done.clear()
 
         if not self._model_ready.is_set():
             self.log("Waiting for models to load...")
@@ -532,14 +559,15 @@ class Celune:
                     self.unload_runtime_state(include_normalizer=False)
                     self.log_dev(f"[RELOAD] Loading model: {new_model_name}")
                     self.model = self.backend.load_model(new_model_name)
+                    self.model_name = new_model_name
 
                     self.log("Rewarming up...")
                     if not self._warmup():
                         raise WarmupError("warmup failed after reload")
-
-                self.log_dev(
-                    "[RELOAD] Not reloading, the target model is the same as the one currently loaded."
-                )
+                else:
+                    self.log_dev(
+                        "[RELOAD] Not reloading, the target model is the same as the one currently loaded."
+                    )
 
                 self.current_voice = voice
                 self.loaded = True
@@ -547,11 +575,12 @@ class Celune:
             # play the readiness signal on voice change success - it may not always work
             # because a previous readiness signal may still be playing in configurations
             # where Celune does not have to fully reload the model prior to being ready
+            release_pipeline(self, owner=PipelineActions.VOICE_CHANGE.value)
             if acquire_pipeline(self, PipelineActions.READINESS_SIGNAL.value):
                 readiness_acquired = True
                 self.cur_state = "speaking"
                 self.audio_queue.put((readiness_signal(), 48000, None))
-                self.audio_queue.put(self.utterance_done)
+                self.audio_queue.put(playback_done_marker(self))
             else:
                 self.log_dev("Could not play the readiness signal.", "warning")
 
@@ -566,6 +595,7 @@ class Celune:
             self.error_callback("Celune could not reload")
 
         finally:
+            release_pipeline(self, owner=PipelineActions.VOICE_CHANGE.value)
             self._model_ready.set()
             self.change_input_state_callback(locked=False)
 
@@ -644,7 +674,7 @@ class Celune:
         if acquire_pipeline(self, PipelineActions.READINESS_SIGNAL.value):
             self.cur_state = "speaking"
             self.audio_queue.put((readiness_signal(), 48000, None))
-            self.audio_queue.put(self.utterance_done)
+            self.audio_queue.put(playback_done_marker(self))
         else:
             self.log_dev("Could not play the readiness signal.", "warning")
 
@@ -1200,3 +1230,13 @@ class Celune:
             None: This setter sets Celune's pipeline lock occupier.
         """
         self._lock_held_by = value
+
+    @property
+    def pipeline_lock_token(self) -> int:
+        """Get the current pipeline lock token."""
+        return self._pipeline_lock_token
+
+    @pipeline_lock_token.setter
+    def pipeline_lock_token(self, value: int) -> None:
+        """Set the current pipeline lock token."""
+        self._pipeline_lock_token = value

@@ -38,6 +38,20 @@ class HybridCheckpointIndex:
         """Return whether the checkpoint contains only INT8 and BF16 tensors."""
         return bool(self.int8) and bool(self.bf16) and not self.other
 
+    @property
+    def has_int8_tensors(self) -> bool:
+        """Return whether the checkpoint contains actual INT8 tensors."""
+        return bool(self.int8)
+
+
+@dataclass(frozen=True)
+class HybridInt8LinearProfile:
+    """Backend-safe INT8 Linear tensor name profile."""
+
+    name: str
+    module_prefixes: tuple[str, ...]
+    weight_suffixes: tuple[str, ...]
+
 
 @dataclass
 class HybridTTSModel(Generic[T]):
@@ -194,6 +208,7 @@ def replace_int8_linear_modules(
     model: nn.Module,
     index: HybridCheckpointIndex,
     state_dict: dict[str, torch.Tensor],
+    profile: HybridInt8LinearProfile,
 ) -> int:
     """Replace checkpoint-marked linear layers with INT8-backed modules.
 
@@ -201,24 +216,26 @@ def replace_int8_linear_modules(
         model: Qwen3 model whose modules should be replaced.
         index: Hybrid checkpoint index that identifies INT8 weights.
         state_dict: Checkpoint state dictionary containing scale tensor shapes.
+        profile: Backend profile limiting allowed INT8 Linear names.
 
     Returns:
         int: Number of layers replaced.
 
     Raises:
-        KeyError: A matching INT8 scale tensor is missing from the checkpoint.
+        ValueError: An INT8 tensor is unsupported by the backend profile.
     """
+    validate_int8_linear_checkpoint(index, state_dict, profile)
     count = 0
     for weight_name in index.int8:
-        if not weight_name.endswith(".weight"):
-            continue
-
         module_name = weight_name.removesuffix(".weight")
         parent_name, _, child_name = module_name.rpartition(".")
         parent = _get_module(model, parent_name)
         child = getattr(parent, child_name)
         if not isinstance(child, nn.Linear):
-            continue
+            raise ValueError(
+                f"{profile.name} INT8 tensor '{weight_name}' targets "
+                f"{type(child).__name__}, expected torch.nn.Linear"
+            )
 
         replacement = Int8ScaledLinear(
             child.in_features,
@@ -230,6 +247,100 @@ def replace_int8_linear_modules(
         setattr(parent, child_name, replacement)
         count += 1
     return count
+
+
+QWEN3_SAFE_TRANSFORMER_INT8_PROFILE = HybridInt8LinearProfile(
+    name="Qwen3-TTS",
+    module_prefixes=(
+        "talker.model.layers.",
+        "talker.code_predictor.model.layers.",
+        "talker.codec_head_model.layers.",
+    ),
+    weight_suffixes=(
+        ".self_attn.q_proj.weight",
+        ".self_attn.k_proj.weight",
+        ".self_attn.v_proj.weight",
+        ".self_attn.o_proj.weight",
+        ".mlp.gate_proj.weight",
+        ".mlp.up_proj.weight",
+        ".mlp.down_proj.weight",
+    ),
+)
+
+
+VOXCPM2_SAFE_TRANSFORMER_INT8_PROFILE = HybridInt8LinearProfile(
+    name="VoxCPM2",
+    module_prefixes=(
+        "tts_model.base_lm.layers.",
+        "tts_model.residual_lm.layers.",
+        "tts_model.feat_encoder.encoder.layers.",
+        "tts_model.feat_encoder.layers.",
+        "tts_model.feat_decoder.estimator.decoder.layers.",
+        "tts_model.feat_decoder.estimator.layers.",
+        "base_lm.layers.",
+        "residual_lm.layers.",
+        "feat_encoder.encoder.layers.",
+        "feat_encoder.layers.",
+        "feat_decoder.estimator.decoder.layers.",
+        "feat_decoder.estimator.layers.",
+    ),
+    weight_suffixes=(
+        ".self_attn.q_proj.weight",
+        ".self_attn.k_proj.weight",
+        ".self_attn.v_proj.weight",
+        ".self_attn.o_proj.weight",
+        ".mlp.gate_proj.weight",
+        ".mlp.up_proj.weight",
+        ".mlp.down_proj.weight",
+    ),
+)
+
+
+def _matches_int8_profile(name: str, profile: HybridInt8LinearProfile) -> bool:
+    """Return whether an INT8 tensor name is allowed by a backend profile."""
+    return name.startswith(profile.module_prefixes) and name.endswith(
+        profile.weight_suffixes
+    )
+
+
+def validate_int8_linear_checkpoint(
+    index: HybridCheckpointIndex,
+    state_dict: Mapping[str, torch.Tensor],
+    profile: HybridInt8LinearProfile,
+) -> None:
+    """Validate INT8 tensors before any inference path can use them.
+
+    Args:
+        index: Checkpoint dtype index.
+        state_dict: Loaded state dictionary used to verify scale tensors.
+        profile: Backend-safe module profile.
+
+    Raises:
+        ValueError: A tensor is missing scale metadata or is unsupported.
+    """
+    missing_scales: list[str] = []
+    unsupported: list[str] = []
+
+    for name in index.int8:
+        scale_name = f"{name}.int8_scale"
+        if scale_name not in state_dict:
+            missing_scales.append(scale_name)
+        if not _matches_int8_profile(name, profile):
+            unsupported.append(name)
+
+    if missing_scales:
+        preview = ", ".join(missing_scales[:8])
+        raise ValueError(
+            f"{profile.name} hybrid INT8 checkpoint is missing scale tensors: {preview}"
+        )
+
+    if unsupported:
+        preview = ", ".join(unsupported[:8])
+        raise ValueError(
+            f"{profile.name} hybrid INT8 checkpoint contains unsupported INT8 "
+            f"tensors: {preview}. Only safe transformer Linear weights are "
+            "accepted."
+        )
 
 
 def qwen3_int8_state_dict(

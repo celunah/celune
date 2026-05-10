@@ -16,11 +16,19 @@ import torch
 import numpy as np
 import numpy.typing as npt
 from voxcpm import VoxCPM
+from safetensors.torch import load_file as load_safetensors_file
 from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 
 from . import get_version
 from .base import BackendTiming, CeluneBackend
+from ..modeling import (
+    VOXCPM2_SAFE_TRANSFORMER_INT8_PROFILE,
+    inspect_hybrid_tts_checkpoint,
+    load_hybrid_tts_checkpoint,
+    qwen3_int8_state_dict,
+    replace_int8_linear_modules,
+)
 from ..exceptions import BackendError
 
 
@@ -70,9 +78,10 @@ class VoxCPM2(CeluneBackend):
         super().__init__(log=log, config=config)
 
         if self.config.get("int8"):
-            raise ValueError(
-                "VoxCPM2 INT8 is not supported by the current VoxCPM loader"
-            )
+            self.voice_models = {
+                voice: "lunahr/VoxCPM2-hybrid-int8" for voice in self.voice_models
+            }
+            self.model_name = self.voice_models[self.default_voice]
 
         self.log = log
         self.optimize_enabled = False
@@ -214,9 +223,19 @@ class VoxCPM2(CeluneBackend):
         local_path = Path(model_id).expanduser()
         if local_path.exists():
             self.log("Loading TTS model from local path...", "info")
+            model_path = str(local_path.resolve())
+            if self._checkpoint_needs_hybrid_load(model_path):
+                self.model = self._load_hybrid_int8_model(
+                    model_path,
+                    load_denoiser=kwargs.get("load_denoiser", False),
+                    optimize=kwargs.get("optimize", False),
+                )
+                self._log_int8_runtime_stats(self.model)
+                return self.model
+
             with self._suppress_backend_output():
                 self.model = VoxCPM.from_pretrained(
-                    str(local_path.resolve()),
+                    model_path,
                     load_denoiser=kwargs.get("load_denoiser", False),
                     optimize=kwargs.get("optimize", False),
                 )
@@ -229,6 +248,15 @@ class VoxCPM2(CeluneBackend):
 
         if available and path is not None:
             os.environ["HF_HUB_OFFLINE"] = "1"
+            if self._checkpoint_needs_hybrid_load(path):
+                self.model = self._load_hybrid_int8_model(
+                    path,
+                    load_denoiser=kwargs.get("load_denoiser", False),
+                    optimize=kwargs.get("optimize", False),
+                )
+                self._log_int8_runtime_stats(self.model)
+                return self.model
+
             with self._suppress_backend_output():
                 self.model = VoxCPM.from_pretrained(
                     path,
@@ -238,13 +266,147 @@ class VoxCPM2(CeluneBackend):
             return self.model
 
         self.log("Downloading TTS model...", "info")
+        path = snapshot_download(repo_id=model_id)
+        if self._checkpoint_needs_hybrid_load(path):
+            self.model = self._load_hybrid_int8_model(
+                path,
+                load_denoiser=kwargs.get("load_denoiser", False),
+                optimize=kwargs.get("optimize", False),
+            )
+            self._log_int8_runtime_stats(self.model)
+            return self.model
+
         with self._suppress_backend_output():
             self.model = VoxCPM.from_pretrained(
-                model_id,
+                path,
                 load_denoiser=kwargs.get("load_denoiser", False),
                 optimize=kwargs.get("optimize", False),
             )
         return self.model
+
+    @staticmethod
+    def _checkpoint_needs_hybrid_load(model_path: str) -> bool:
+        """Return whether a VoxCPM2 checkpoint contains actual INT8 tensors."""
+        return inspect_hybrid_tts_checkpoint(model_path).has_int8_tensors
+
+    def _load_hybrid_int8_model(
+        self,
+        model_path: str,
+        load_denoiser: bool,
+        optimize: bool,
+    ) -> VoxCPM:
+        """Load a VoxCPM2 hybrid INT8/BF16 checkpoint through Celune's path."""
+        load_start = time.perf_counter()
+        try:
+            from transformers import LlamaTokenizerFast
+            from voxcpm.model.voxcpm2 import VoxCPM2Model, VoxCPMConfig, get_dtype
+            from voxcpm.modules.audiovae import AudioVAEV2
+        except ImportError as e:
+            raise BackendError(
+                "VoxCPM2 hybrid INT8 dependencies are unavailable"
+            ) from e
+
+        path = Path(model_path)
+        with open(path / "config.json", encoding="utf-8") as f:
+            config = VoxCPMConfig.model_validate_json(f.read())
+
+        tokenizer = LlamaTokenizerFast.from_pretrained(str(path))
+        audio_vae_config = getattr(config, "audio_vae_config", None)
+        audio_vae = (
+            AudioVAEV2(config=audio_vae_config) if audio_vae_config else AudioVAEV2()
+        )
+
+        audiovae_safetensors_path = path / "audiovae.safetensors"
+        audiovae_pth_path = path / "audiovae.pth"
+        if audiovae_safetensors_path.exists():
+            vae_state_dict = load_safetensors_file(
+                str(audiovae_safetensors_path), device="cpu"
+            )
+        elif audiovae_pth_path.exists():
+            checkpoint = torch.load(
+                audiovae_pth_path,
+                map_location="cpu",
+                weights_only=True,
+            )
+            vae_state_dict = checkpoint.get("state_dict", checkpoint)
+        else:
+            raise BackendError(
+                "VoxCPM2 AudioVAE checkpoint not found for hybrid INT8 load"
+            )
+
+        with self._suppress_backend_output():
+            model = VoxCPM2Model(config, tokenizer, audio_vae)
+        model = model.to(get_dtype(model.config.dtype))
+        model.audio_vae = model.audio_vae.to(torch.float32)
+
+        loaded = load_hybrid_tts_checkpoint(path, keep_state_dict=True)
+        if loaded.state_dict is None:
+            raise BackendError(
+                "VoxCPM2 INT8 checkpoint scan did not retain the state dict"
+            )
+
+        int8_linear_count = replace_int8_linear_modules(
+            model,
+            loaded.index,
+            loaded.state_dict,
+            VOXCPM2_SAFE_TRANSFORMER_INT8_PROFILE,
+        )
+        state_dict = qwen3_int8_state_dict(loaded.state_dict)
+        for key, value in vae_state_dict.items():
+            state_dict[f"audio_vae.{key}"] = value
+
+        state_dict = {
+            name: tensor.to(model.device) if tensor.dtype is torch.int8 else tensor
+            for name, tensor in state_dict.items()
+        }
+        incompatible = model.load_state_dict(state_dict, strict=False, assign=True)
+        unexpected = [key for key in incompatible.unexpected_keys if "lora_" not in key]
+        if unexpected:
+            preview = ", ".join(unexpected[:5])
+            raise BackendError(
+                f"VoxCPM2 INT8 checkpoint had unexpected keys: {preview}"
+            )
+        del state_dict
+        loaded.state_dict = None
+
+        cache_start = time.perf_counter()
+        cache_count = 0
+        model = model.to(model.device).eval().optimize(disable=not optimize)
+        dequant_cache_ms = (time.perf_counter() - cache_start) * 1000
+
+        pipeline = VoxCPM.__new__(VoxCPM)
+        pipeline.tts_model = model
+        pipeline.text_normalizer = None
+        pipeline.denoiser = None
+        if load_denoiser:
+            from voxcpm.zipenhancer import ZipEnhancer
+
+            pipeline.denoiser = ZipEnhancer(
+                "iic/speech_zipenhancer_ans_multiloss_16k_base"
+            )
+
+        setattr(pipeline, "_celune_int8_linear_count", int8_linear_count)
+        setattr(pipeline, "_celune_int8_runtime_cache_count", cache_count)
+        setattr(
+            pipeline, "_celune_int8_load_ms", (time.perf_counter() - load_start) * 1000
+        )
+        setattr(pipeline, "_celune_int8_dequant_cache_ms", dequant_cache_ms)
+        return pipeline
+
+    def _log_int8_runtime_stats(self, model: VoxCPM) -> None:
+        """Log Celune INT8 runtime details when the model exposes them."""
+        int8_linear_count = getattr(model, "_celune_int8_linear_count", None)
+        if int8_linear_count is None:
+            return
+
+        load_ms = float(getattr(model, "_celune_int8_load_ms", 0.0))
+        dequant_cache_ms = float(getattr(model, "_celune_int8_dequant_cache_ms", 0.0))
+        self.log(
+            "VoxCPM2 INT8 VRAM runtime: "
+            f"{int8_linear_count} linear layers replaced, "
+            f"load {load_ms:.1f} ms, dequant/cache {dequant_cache_ms:.1f} ms.",
+            "info",
+        )
 
     def generate_stream(
         self, model: VoxCPM, **kwargs
@@ -320,10 +482,7 @@ class VoxCPM2(CeluneBackend):
                             "backend": self.name,
                             "chunk_index": chunk_index,
                             "chunk_steps": len(batch),
-                            "yield_ms": yield_ms,
-                            "decode_ms": yield_ms,
-                            "prefill_ms": 0.0,
-                            "codec_ms_approx": 0.0,
+                            "total_wall_ms": yield_ms,
                             "is_final": False,
                         }
                         yield audio, 48000, timing
@@ -338,10 +497,7 @@ class VoxCPM2(CeluneBackend):
                         "backend": self.name,
                         "chunk_index": chunk_index,
                         "chunk_steps": len(batch),
-                        "yield_ms": yield_ms,
-                        "decode_ms": yield_ms,
-                        "prefill_ms": 0.0,
-                        "codec_ms_approx": 0.0,
+                        "total_wall_ms": yield_ms,
                         "is_final": True,
                     }
                     yield audio, 48000, timing

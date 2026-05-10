@@ -61,6 +61,7 @@ class PipelineActions(Enum):
     SPEAK = "speak"  # called by celune.Celune.say()
     SFX = "sfx"  # called by celune.Celune.play()
     READINESS_SIGNAL = "readiness signal"  # called by celune.Celune.load() and celune.Celune.change_voice()
+    VOICE_CHANGE = "voice change"  # called by celune.Celune.set_voice()
 
 
 # N/A values

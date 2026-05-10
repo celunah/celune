@@ -43,6 +43,24 @@ class SpeechDone:
 
     saved_path: Optional[str] = None
     analysis_audio: Optional[np.ndarray] = None
+    lock_owner: Optional[str] = None
+    lock_token: int = 0
+
+
+@dataclass(frozen=True)
+class PlaybackDone:
+    """Playback completion marker tied to the action that queued it."""
+
+    lock_owner: Optional[str]
+    lock_token: int
+
+
+def playback_done_marker(engine: "Celune") -> PlaybackDone:
+    """Create a playback completion marker for the current lock holder."""
+    return PlaybackDone(
+        lock_owner=engine.lock_held_by,
+        lock_token=engine.pipeline_lock_token,
+    )
 
 
 @dataclass
@@ -115,6 +133,13 @@ def log_first_playback(engine: "Celune", timing: object) -> None:
         elapsed = time.monotonic() - start_time
 
     engine.log(f"TTFP: {format_number(elapsed, 2)} seconds")
+
+
+def _format_backend_timing_field(label: str, value_ms: float) -> Optional[str]:
+    """Format one backend timing field, omitting unmeasured zero values."""
+    if value_ms <= 0.0:
+        return None
+    return f"{label} {format_number(value_ms, 1)} ms"
 
 
 def close_stream(engine: "Celune", abort: bool = False) -> None:
@@ -203,25 +228,46 @@ def acquire_pipeline(engine: "Celune", action: str) -> bool:
 
         engine.lock_held_by = action
         engine.locked = True
+        engine.pipeline_lock_token += 1
         engine.playback_done.clear()
         engine.log_dev(f"[LOCK] acquired by {action}")
         return True
 
 
-def release_pipeline(engine: "Celune") -> None:
+def release_pipeline(
+    engine: "Celune",
+    owner: Optional[str] = None,
+    token: Optional[int] = None,
+) -> bool:
     """Release Celune's shared playback pipeline.
 
     Args:
         engine: The Celune engine that owns the playback pipeline.
+        owner: Optional action expected to own the lock.
+        token: Optional lock token expected to own the lock.
 
     Returns:
-        None: This method clears the busy state and marks playback as done.
+        bool: ``True`` when the lock was released.
     """
     with engine.say_lock:
+        if owner is not None and engine.lock_held_by != owner:
+            engine.log_dev(
+                f"[LOCK] release ignored for {owner}; held by {engine.lock_held_by}"
+            )
+            return False
+        if token is not None and engine.pipeline_lock_token != token:
+            engine.log_dev(
+                "[LOCK] release ignored for stale playback marker "
+                f"{token}; current token is {engine.pipeline_lock_token}"
+            )
+            return False
+
         engine.locked = False
         engine.playback_done.set()
         engine.cur_state = "idle"
+        engine.lock_held_by = None
         engine.log_dev("[LOCK] released")
+        return True
 
 
 def say(
@@ -362,7 +408,7 @@ def queue_sfx_audio(
         # push the smallest possible chunks for responsive stopping
         for chunk in _split(audio, 48000, 1):
             engine.audio_queue.put((chunk, 48000, None))
-        engine.audio_queue.put(engine.utterance_done)
+        engine.audio_queue.put(playback_done_marker(engine))
 
         engine.status_callback(f"Playing {label}")
         return True
@@ -577,7 +623,10 @@ def generation_worker(engine: "Celune") -> None:
                 backend_prefill_ms = 0.0
                 backend_decode_ms = 0.0
                 backend_codec_ms = 0.0
-                backend_yield_ms = 0.0
+                backend_tokenize_ms = 0.0
+                backend_generate_ms = 0.0
+                backend_dequant_cache_ms = 0.0
+                backend_total_wall_ms = 0.0
                 backend_timing_name = engine.backend.name
 
                 chunks = split_text(engine, text)
@@ -634,8 +683,17 @@ def generation_worker(engine: "Celune") -> None:
                             backend_codec_ms += float(
                                 backend_timing.get("codec_ms_approx", 0.0)
                             )
-                            backend_yield_ms += float(
-                                backend_timing.get("yield_ms", 0.0)
+                            backend_tokenize_ms += float(
+                                backend_timing.get("tokenize_ms", 0.0)
+                            )
+                            backend_generate_ms += float(
+                                backend_timing.get("generate_ms", 0.0)
+                            )
+                            backend_dequant_cache_ms += float(
+                                backend_timing.get("dequant_cache_ms", 0.0)
+                            )
+                            backend_total_wall_ms += float(
+                                backend_timing.get("total_wall_ms", 0.0)
                             )
 
                             if isinstance(audio_chunk, torch.Tensor):
@@ -719,13 +777,34 @@ def generation_worker(engine: "Celune") -> None:
                 )
                 engine.log(f"Speed: x{format_number(speech_len / generation_time, 2)}")
                 engine.log(f"TTFC: {format_number(speech_timing.ttfc_ms(), 1)} ms")
-                if backend_yield_ms > 0.0:
-                    engine.log(
-                        f"{backend_timing_name} timing: "
-                        f"prefill {format_number(backend_prefill_ms, 1)} ms, "
-                        f"decode {format_number(backend_decode_ms, 1)} ms, "
-                        f"codec/overhead {format_number(backend_codec_ms, 1)} ms",
-                    )
+                if backend_total_wall_ms > 0.0:
+                    timing_parts = [
+                        part
+                        for part in (
+                            _format_backend_timing_field(
+                                "tokenize", backend_tokenize_ms
+                            ),
+                            _format_backend_timing_field(
+                                "generate", backend_generate_ms
+                            ),
+                            _format_backend_timing_field("prefill", backend_prefill_ms),
+                            _format_backend_timing_field("decode", backend_decode_ms),
+                            _format_backend_timing_field(
+                                "dequant/cache", backend_dequant_cache_ms
+                            ),
+                            _format_backend_timing_field(
+                                "codec/overhead", backend_codec_ms
+                            ),
+                            _format_backend_timing_field(
+                                "total wall", backend_total_wall_ms
+                            ),
+                        )
+                        if part is not None
+                    ]
+                    if timing_parts:
+                        engine.log(
+                            f"{backend_timing_name} timing: " + ", ".join(timing_parts),
+                        )
 
                 if buffer:
                     queued_audio = np.concatenate(buffer)
@@ -816,6 +895,8 @@ def generation_worker(engine: "Celune") -> None:
                         SpeechDone(
                             saved_path=saved_path,
                             analysis_audio=analysis_audio,
+                            lock_owner=engine.lock_held_by,
+                            lock_token=engine.pipeline_lock_token,
                         )
                     )
                     if stream_queue is not None:
@@ -889,11 +970,16 @@ def playback_worker(engine: "Celune") -> None:
         if engine.exit_requested:
             continue
 
-        if isinstance(item, SpeechDone) or item is engine.utterance_done:
+        if (
+            isinstance(item, (SpeechDone, PlaybackDone))
+            or item is engine.utterance_done
+        ):
             saved_path = item.saved_path if isinstance(item, SpeechDone) else None
             analysis_audio = (
                 item.analysis_audio if isinstance(item, SpeechDone) else None
             )
+            lock_owner = getattr(item, "lock_owner", None)
+            lock_token = getattr(item, "lock_token", None)
             engine.playback_done.set()
 
             more_pending = (not engine.audio_queue.empty()) or (
@@ -905,8 +991,13 @@ def playback_worker(engine: "Celune") -> None:
                 if engine.stream is not None and not engine.exit_requested:
                     engine.stream.write(silence)
             else:
-                release_pipeline(engine)
-                engine.idle_callback()
+                released = release_pipeline(
+                    engine,
+                    owner=lock_owner,
+                    token=lock_token,
+                )
+                if released:
+                    engine.idle_callback()
 
                 if random.random() < 0.01:
                     flavor_texts = [
