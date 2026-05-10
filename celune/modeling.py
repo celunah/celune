@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import inspect
 import os
 from pathlib import Path
-from typing import Any, Callable, Generic, Mapping, TypeVar, Union, cast, overload
+from typing import Any, Callable, Generic, Mapping, Optional, Union, cast, overload
 
 import torch
 from torch import nn
@@ -18,9 +18,8 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from .backends import CeluneBackend
-from .constants import NORMALIZER_MODEL_ID
+from .constants import NORMALIZER_MODEL_ID, T
 
-T = TypeVar("T")
 CheckpointPath = Union[str, os.PathLike[str]]
 
 
@@ -60,7 +59,7 @@ class HybridTTSModel(Generic[T]):
     model: T
     index: HybridCheckpointIndex
     incompatible_keys: Any = None
-    state_dict: dict[str, torch.Tensor] | None = None
+    state_dict: Optional[dict[str, torch.Tensor]] = None
 
 
 class Int8ScaledLinear(nn.Module):
@@ -72,7 +71,7 @@ class Int8ScaledLinear(nn.Module):
         out_features: int,
         bias: bool,
         scale_shape: torch.Size,
-        device: torch.device | str | None = None,
+        device: Optional[Union[torch.device, str]] = None,
     ) -> None:
         """Initialize an INT8-backed linear layer.
 
@@ -108,7 +107,7 @@ class Int8ScaledLinear(nn.Module):
 
     def _dequantized_weight(
         self,
-        device: torch.device | str,
+        device: Union[torch.device, str],
         dtype: torch.dtype,
     ) -> torch.Tensor:
         """Return this layer's dequantized weight tensor.
@@ -129,7 +128,7 @@ class Int8ScaledLinear(nn.Module):
 
     def enable_runtime_weight_cache(
         self,
-        device: torch.device | str,
+        device: Union[torch.device, str],
         dtype: torch.dtype,
         offload_quantized_buffers: bool = False,
     ) -> None:
@@ -365,10 +364,10 @@ def qwen3_int8_state_dict(
 
 def enable_qwen3_int8_runtime_cache(
     model: nn.Module,
-    device: torch.device | str,
+    device: Union[torch.device, str],
     dtype: torch.dtype,
     offload_quantized_buffers: bool = False,
-    module_filter: Callable[[str, Int8ScaledLinear], bool] | None = None,
+    module_filter: Optional[Callable[[str, Int8ScaledLinear], bool]] = None,
 ) -> int:
     """Enable cached dequantized runtime weights for Qwen3 INT8 modules.
 
@@ -428,7 +427,7 @@ def _checkpoint_files(checkpoint: CheckpointPath) -> list[Path]:
 
 
 def _load_safetensors_file(
-    path: Path, device: str | torch.device
+    path: Path, device: Union[str, torch.device]
 ) -> dict[str, torch.Tensor]:
     """Load all tensors from a safetensors checkpoint file.
 
@@ -492,7 +491,7 @@ def _inspect_safetensors_file(path: Path) -> dict[str, torch.dtype]:
 
 
 def _load_torch_file(
-    path: Path, map_location: str | torch.device
+    path: Path, map_location: Union[str, torch.device]
 ) -> dict[str, torch.Tensor]:
     """Load a PyTorch checkpoint file as a tensor state dictionary.
 
@@ -560,7 +559,7 @@ def _index_hybrid_dtypes(
 
 
 def inspect_hybrid_tts_checkpoint(
-    checkpoint: CheckpointPath | Mapping[str, torch.Tensor],
+    checkpoint: Union[CheckpointPath, Mapping[str, torch.Tensor]],
 ) -> HybridCheckpointIndex:
     """Inspect checkpoint tensor dtypes without loading safetensors payloads."""
     if isinstance(checkpoint, Mapping):
@@ -590,8 +589,8 @@ def inspect_hybrid_tts_checkpoint(
 
 
 def _load_checkpoint_state_dict(
-    checkpoint: CheckpointPath | Mapping[str, torch.Tensor],
-    map_location: str | torch.device,
+    checkpoint: Union[CheckpointPath, Mapping[str, torch.Tensor]],
+    map_location: Union[str, torch.device],
 ) -> dict[str, torch.Tensor]:
     """Load a checkpoint path or tensor mapping into a state dictionary.
 
@@ -673,7 +672,7 @@ def _is_quantization_metadata(name: str) -> bool:
 
 def _maybe_cast_bf16_tensors(
     state_dict: dict[str, torch.Tensor],
-    dtype: torch.dtype | None,
+    dtype: Optional[torch.dtype],
 ) -> dict[str, torch.Tensor]:
     """Optionally cast BF16 tensors while preserving INT8 tensors.
 
@@ -760,15 +759,16 @@ def _load_state_dict_into_model(
 
 @overload
 def load_hybrid_tts_checkpoint(
-    checkpoint: CheckpointPath | Mapping[str, torch.Tensor],
-    model_or_factory: T | Callable[[HybridCheckpointIndex], T],
+    checkpoint: Union[CheckpointPath, Mapping[str, torch.Tensor]],
+    model_or_factory: Union[T, Callable[[HybridCheckpointIndex], T]],
     *,
-    map_location: str | torch.device = "cpu",
-    bf16_dtype: torch.dtype | None = None,
+    map_location: Union[str, torch.device] = "cpu",
+    bf16_dtype: Optional[torch.dtype] = None,
     strict: bool = True,
     allow_extra_dtypes: bool = False,
-    load_state_dict_fn: Callable[[T, Mapping[str, torch.Tensor], bool], Any]
-    | None = None,
+    load_state_dict_fn: Optional[
+        Callable[[T, Mapping[str, torch.Tensor], bool], Any]
+    ] = None,
     keep_state_dict: bool = False,
     evaluate: bool = True,
 ) -> HybridTTSModel[T]:
@@ -792,14 +792,16 @@ def load_hybrid_tts_checkpoint(
 
 @overload
 def load_hybrid_tts_checkpoint(
-    checkpoint: CheckpointPath | Mapping[str, torch.Tensor],
+    checkpoint: Union[CheckpointPath, Mapping[str, torch.Tensor]],
     model_or_factory: None = None,
     *,
-    map_location: str | torch.device = "cpu",
-    bf16_dtype: torch.dtype | None = None,
+    map_location: Union[str, torch.device] = "cpu",
+    bf16_dtype: Optional[torch.dtype] = None,
     strict: bool = True,
     allow_extra_dtypes: bool = False,
-    load_state_dict_fn: None = None,
+    load_state_dict_fn: Optional[
+        Callable[[T, Mapping[str, torch.Tensor], bool], Any]
+    ] = None,
     keep_state_dict: bool = True,
     evaluate: bool = True,
 ) -> HybridTTSModel[None]:
@@ -822,18 +824,19 @@ def load_hybrid_tts_checkpoint(
 
 
 def load_hybrid_tts_checkpoint(
-    checkpoint: CheckpointPath | Mapping[str, torch.Tensor],
-    model_or_factory: T | Callable[[HybridCheckpointIndex], T] | None = None,
+    checkpoint: Union[CheckpointPath, Mapping[str, torch.Tensor]],
+    model_or_factory: Optional[Union[T, Callable[[HybridCheckpointIndex], T]]] = None,
     *,
-    map_location: str | torch.device = "cpu",
-    bf16_dtype: torch.dtype | None = None,
+    map_location: Union[str, torch.device] = "cpu",
+    bf16_dtype: Optional[torch.dtype] = None,
     strict: bool = True,
     allow_extra_dtypes: bool = False,
-    load_state_dict_fn: Callable[[T, Mapping[str, torch.Tensor], bool], Any]
-    | None = None,
+    load_state_dict_fn: Optional[
+        Callable[[T, Mapping[str, torch.Tensor], bool], Any]
+    ] = None,
     keep_state_dict: bool = False,
     evaluate: bool = True,
-) -> HybridTTSModel[T] | HybridTTSModel[None]:
+) -> Union[HybridTTSModel[T], HybridTTSModel[None]]:
     """Load a hybrid INT8/BF16 TTS checkpoint through a library-agnostic adapter.
 
     INT8 tensors are kept as INT8 so target libraries with quantized modules can
