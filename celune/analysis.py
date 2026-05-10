@@ -45,6 +45,7 @@ TEXT_CONFIG: TextConfig = {
     "graph": {
         "title": "Celune's Voice Report",
         "status_ok": "Celune is performing normally.",
+        "status_na": "Celune did not say anything.",
         "status_underperforming_single": "Celune's {traits} is underperforming.",
         "status_watch_single": "Celune's {traits} is driving her tone.",
         "status_watch_multi": "Celune's {traits} are driving her tone.",
@@ -83,10 +84,10 @@ TEXT_CONFIG: TextConfig = {
         "voice_similarity_next_closest_label": "Next closest",
         "voice_similarity_margin_label": "Confidence margin",
         "voice_drift_label": "Drift level",
-        "voice_drift_minimal": "minimal",
-        "voice_drift_low": "low",
-        "voice_drift_moderate": "moderate",
-        "voice_drift_high": "high",
+        "voice_drift_stable": "stable",
+        "voice_drift_expressive": "expressive",
+        "voice_drift_weak": "weak",
+        "voice_drift_wrong": "wrong",
         "voice_similarity_na": "N/A",
     },
     "assessment": {
@@ -298,7 +299,7 @@ def _load_reference_embedding(voice: str) -> npt.NDArray[np.float32]:
         npt.NDArray[np.float32]: The NumPy array of the embedding.
 
     Raises:
-        FileNotFoundError: No Celune voice was found by this name or it has no embeddings.
+        FileNotFoundError: No Celune voice was found by this name, or it has no embeddings.
     """
     ref_path = pathlib.Path(__file__).resolve().parent / "refs" / f"{voice}.pt"
     if not ref_path.exists():
@@ -399,14 +400,14 @@ def _voice_drift_level(drift_percent: float) -> str:
     Args:
         drift_percent: The drift percentage value.
 
-    Return:
-        str: The human readable drift tier.
+    Returns:
+        str: The human-readable drift tier.
     """
-    if drift_percent <= 5.0:
-        return "good"
+    if drift_percent <= 3.0:
+        return "stable"
+    if drift_percent <= 6.0:
+        return "expressive"
     if drift_percent <= 10.0:
-        return "caution"
-    if drift_percent <= 20.0:
         return "weak"
     return "wrong"
 
@@ -546,6 +547,9 @@ def _summarize_trait_status(traits: dict) -> tuple[str, str]:
     }
     low_traits = {name: score for name, score in traits.items() if score < 0.3}
 
+    if all(not trait for trait in traits.values()):
+        return _text("graph", "status_na"), high_color
+
     if high_traits:
         joined = _join_trait_names(list(high_traits.keys())).lower()
         template_key = (
@@ -635,7 +639,17 @@ def compute_traits(m: dict) -> dict:
         np.clip(0.35 * pitch_height + 0.35 * pitch_exp + 0.30 * pace_score, 0.0, 1.0)
     )
 
-    return traits
+    if m["voice_extraction_ok"]:
+        return traits
+    return {
+        "Calmness": 0.0,
+        "Energy": 0.0,
+        "Softness": 0.0,
+        "Clarity": 0.0,
+        "Expressiveness": 0.0,
+        "Presence": 0.0,
+        "Playfulness": 0.0,
+    }
 
 
 def generate_assessment(m: dict, traits: dict) -> list[str]:
