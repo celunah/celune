@@ -62,6 +62,8 @@ def resolve_backend(
     log = log or _default_log
 
     if isinstance(backend_name, CeluneBackend):
+        if "config" in backend_kwargs:
+            backend_name.config = backend_kwargs["config"] or {}
         return backend_name
 
     if isinstance(backend_name, type) and issubclass(backend_name, CeluneBackend):

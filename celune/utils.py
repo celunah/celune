@@ -493,15 +493,23 @@ def replace_ipa(text: str, strict: bool = True) -> tuple[str, int]:
     """Return an English approximation of the input IPA.
 
     Args:
-        ipa: The IPA to approximate.
+        text: The input text with IPA
+        strict: Whether IPA must be wrapped in IPA brackets to be treated as such.
 
     Returns:
-        tuple[str, int]: The English approximation of the input IPA,
-            and the amount of unmatched IPA characters.
+        tuple[str, int]: The text with the IPA approximated, and the amount of unmatched IPA characters.
     """
     total_unmatched = 0
 
     def repl(match: re.Match[str]) -> str:
+        """Replace a single IPA regex match with approximated English text.
+
+        Args:
+            match: Regex match containing slash- or bracket-delimited IPA.
+
+        Returns:
+            str: Converted text, or the original match when strict mode skips it.
+        """
         nonlocal total_unmatched
 
         ipa = match.group(1) or match.group(2) or ""

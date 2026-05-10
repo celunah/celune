@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Optional, Generator
+from typing import Any, Callable, Optional, Generator, TypeAlias
 
 import numpy as np
 import numpy.typing as npt
 
 from ..constants import N_A_NUMERIC
+
+BackendTiming: TypeAlias = dict[str, float | int | bool | str]
 
 
 class CeluneBackend(ABC):
@@ -19,15 +21,20 @@ class CeluneBackend(ABC):
     voice_models: Optional[dict[str, str]] = None
     reference_waves: Optional[dict[str, str]] = None
     default_voice: Optional[str] = None
+    int8_model_path: Optional[str] = None
 
     def __init__(
-        self, log: Callable[[str, str], None], model_name: Optional[str] = None
+        self,
+        log: Callable[[str, str], None],
+        model_name: Optional[str] = None,
+        config: Optional[dict[str, Any]] = None,
     ) -> None:
         """Initialize common backend state.
 
         Args:
             log: Logger callback used by the backend.
             model_name: Optional model identifier overriding voice defaults.
+            config: Loaded Celune configuration dictionary.
 
         Returns:
             None: This constructor stores backend state for later loading.
@@ -41,6 +48,7 @@ class CeluneBackend(ABC):
             self.model_name = None
 
         self.model: Optional[Any] = None
+        self.config = config or {}
         self.log = log
         self.current_seed: Optional[int] = None
         self.random_seed = True
@@ -81,6 +89,9 @@ class CeluneBackend(ABC):
         Returns:
             list[str]: The unique model identifiers exposed by the backend.
         """
+        if self.int8_model_path is not None:
+            return [self.int8_model_path]
+
         if self.voice_models:
             return list(dict.fromkeys(self.voice_models.values()))
 
@@ -114,6 +125,11 @@ class CeluneBackend(ABC):
             KeyError: The voice name is not defined by this backend.
             ValueError: The backend cannot resolve model IDs by voice.
         """
+        if self.int8_model_path is not None:
+            if self.voice_models and voice not in self.voice_models:
+                raise KeyError(voice)
+            return self.int8_model_path
+
         if self.voice_models:
             return self.voice_models[voice]
 
@@ -121,6 +137,18 @@ class CeluneBackend(ABC):
             return self.model_name
 
         raise ValueError(f"{self.name} cannot resolve a model for voice '{voice}'")
+
+    def use_int8_model(self, model_path: str) -> None:
+        """Use a local INT8 model checkpoint for all backend voice loads.
+
+        Args:
+            model_path: Filesystem path to a backend-compatible INT8 checkpoint.
+
+        Returns:
+            None: This method updates the backend's model resolution state.
+        """
+        self.int8_model_path = model_path
+        self.model_name = model_path
 
     def load_default_model(self) -> Any:
         """Load the configured default model for this backend.
@@ -168,7 +196,7 @@ class CeluneBackend(ABC):
     @abstractmethod
     def generate_stream(
         self, model: Any, **kwargs
-    ) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Generator[tuple[npt.NDArray[np.float32], int, BackendTiming]]:
         """Yield audio chunks from a loaded backend model.
 
         Args:
@@ -176,6 +204,6 @@ class CeluneBackend(ABC):
             **kwargs: Backend-specific generation parameters.
 
         Returns:
-            Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of
+            Generator[tuple[npt.NDArray[np.float32], int, BackendTiming]]: An iterator of
                 Celune compatible audio chunks.
         """

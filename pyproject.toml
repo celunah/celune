@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "3.4.2"
+version = "3.5.0"
 description = "Real-time AI TTS character engine with expressive voices and high-quality playback"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -18,6 +18,9 @@ dependencies = [
     # This parameter is ambiguously named, it doesn't actually disable streaming mode.
     # If it did, Celune would have a problem operating.
     "faster-qwen3-tts>=0.2.4",
+    # faster-qwen3-tts installs this package automatically, it is marked as an explicit dependency
+    # in Celune's hybrid model loader when used with Qwen3-TTS.
+    "qwen-tts",
     # If you want Celune to use the alternative VoxCPM2-based backend, install this package.
     # Note: This will fall back to voice cloning. If you want to use native Celune voices, use the Qwen3 backend.
     "voxcpm>=2.0.2",
@@ -33,6 +36,9 @@ dependencies = [
     # For later usage in VoxCPM2, if the optimization path is fixed.
     # "triton>=3.6.0; sys_platform == 'linux'",
     # "triton-windows>=3.6.0; sys_platform == 'win32'",
+    # Explicitly used to know if hybrid loading is required.
+    "safetensors",
+    "accelerate",
 
     # Audio processing
     "numpy",

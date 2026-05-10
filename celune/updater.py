@@ -37,10 +37,28 @@ class VersionKey:
 
 
 def _repo_root() -> Path:
+    """Return the repository root directory.
+
+    Returns:
+        Path: Absolute path to the project root.
+    """
     return Path(__file__).resolve().parent.parent
 
 
 def _run_git(args: list[str], timeout: int = 15) -> str:
+    """Run a Git command in the repository root.
+
+    Args:
+        args: Git arguments excluding the ``git`` executable.
+        timeout: Maximum seconds to wait for the command.
+
+    Returns:
+        str: Trimmed stdout from the Git command.
+
+    Raises:
+        subprocess.CalledProcessError: Git exits with a non-zero status.
+        subprocess.TimeoutExpired: Git does not finish before the timeout.
+    """
     result = subprocess.run(
         ["git", *args],
         cwd=_repo_root(),
@@ -54,6 +72,14 @@ def _run_git(args: list[str], timeout: int = 15) -> str:
 
 
 def _format_git_error(exc: subprocess.CalledProcessError) -> str:
+    """Format a Git process failure for display.
+
+    Args:
+        exc: Git process exception to describe.
+
+    Returns:
+        str: Human-readable Git error message.
+    """
     details = "\n".join(
         part.strip()
         for part in (exc.stderr, exc.stdout)
@@ -67,6 +93,18 @@ def _format_git_error(exc: subprocess.CalledProcessError) -> str:
 
 
 def _git_succeeds(args: list[str], timeout: int = 15) -> bool:
+    """Return whether a Git command succeeds.
+
+    Args:
+        args: Git arguments excluding the ``git`` executable.
+        timeout: Maximum seconds to wait for the command.
+
+    Returns:
+        bool: ``True`` when Git exits with status code zero.
+
+    Raises:
+        subprocess.TimeoutExpired: Git does not finish before the timeout.
+    """
     result = subprocess.run(
         ["git", *args],
         cwd=_repo_root(),
@@ -80,18 +118,50 @@ def _git_succeeds(args: list[str], timeout: int = 15) -> bool:
 
 
 def _short_revision(revision: str) -> str:
+    """Shorten a Git revision for display.
+
+    Args:
+        revision: Full Git revision string.
+
+    Returns:
+        str: Short revision or ``"unknown"``.
+    """
     return revision[:SHORT_HASH_LENGTH] if revision else "unknown"
 
 
 def _base_version(version: str) -> str:
+    """Return the public version without local build metadata.
+
+    Args:
+        version: Version string to normalize.
+
+    Returns:
+        str: Version before the first ``+`` suffix.
+    """
     return version.split("+", 1)[0]
 
 
 def _normalize_tag(tag: str) -> str:
+    """Normalize a Git tag or ref into a version string.
+
+    Args:
+        tag: Tag or tag ref to normalize.
+
+    Returns:
+        str: Tag without ``refs/tags/`` or leading ``v``.
+    """
     return tag.removeprefix("refs/tags/").removeprefix("v")
 
 
 def _version_key(tag: str) -> VersionKey:
+    """Convert a tag into a comparable version key.
+
+    Args:
+        tag: Version tag to parse.
+
+    Returns:
+        VersionKey: Parsed numeric version and suffix.
+    """
     normalized = _normalize_tag(tag)
     match = re.match(r"^(\d+(?:\.\d+)*)(.*)$", normalized)
     if not match:
@@ -103,6 +173,15 @@ def _version_key(tag: str) -> VersionKey:
 
 
 def _is_newer_version_tag(candidate: str, current: str) -> bool:
+    """Return whether one version tag is newer than another.
+
+    Args:
+        candidate: Candidate version tag.
+        current: Current version tag.
+
+    Returns:
+        bool: ``True`` when the candidate should be considered newer.
+    """
     candidate_key = _version_key(candidate)
     current_key = _version_key(current)
     if candidate_key.numbers != current_key.numbers:
@@ -112,6 +191,15 @@ def _is_newer_version_tag(candidate: str, current: str) -> bool:
 
 
 def _latest_remote_tag() -> tuple[str, str]:
+    """Find the latest version tag available on the remote repository.
+
+    Returns:
+        tuple[str, str]: Latest tag and its revision, or empty strings.
+
+    Raises:
+        subprocess.CalledProcessError: Git cannot read remote tags.
+        subprocess.TimeoutExpired: Git does not finish before the timeout.
+    """
     output = _run_git(["ls-remote", "--tags", "--refs", REMOTE_URL], timeout=20)
     tags: list[tuple[str, str]] = []
     for line in output.splitlines():
@@ -133,6 +221,15 @@ def _latest_remote_tag() -> tuple[str, str]:
 
 
 def _remote_head_revision() -> str:
+    """Read the remote HEAD revision.
+
+    Returns:
+        str: Remote HEAD revision, or an empty string.
+
+    Raises:
+        subprocess.CalledProcessError: Git cannot read remote HEAD.
+        subprocess.TimeoutExpired: Git does not finish before the timeout.
+    """
     output = _run_git(["ls-remote", REMOTE_URL, "HEAD"], timeout=20)
     if not output:
         return ""
@@ -141,6 +238,11 @@ def _remote_head_revision() -> str:
 
 
 def _local_tag() -> str:
+    """Return the exact local tag for HEAD when one exists.
+
+    Returns:
+        str: Normalized local tag, or an empty string.
+    """
     try:
         return _normalize_tag(_run_git(["describe", "--tags", "--exact-match", "HEAD"]))
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -148,14 +250,37 @@ def _local_tag() -> str:
 
 
 def _local_revision() -> str:
+    """Return the current local Git revision.
+
+    Returns:
+        str: Current HEAD revision.
+
+    Raises:
+        subprocess.CalledProcessError: Git cannot read the local revision.
+        subprocess.TimeoutExpired: Git does not finish before the timeout.
+    """
     return _run_git(["rev-parse", "HEAD"])
 
 
 def _has_local_changes() -> bool:
+    """Return whether the Git checkout has uncommitted changes.
+
+    Returns:
+        bool: ``True`` when ``git status --porcelain`` has output.
+
+    Raises:
+        subprocess.CalledProcessError: Git cannot read local status.
+        subprocess.TimeoutExpired: Git does not finish before the timeout.
+    """
     return bool(_run_git(["status", "--porcelain"]))
 
 
 def _is_git_checkout() -> bool:
+    """Return whether the project is running from a Git checkout.
+
+    Returns:
+        bool: ``True`` when the project root is inside a Git work tree.
+    """
     try:
         return _run_git(["rev-parse", "--is-inside-work-tree"]) == "true"
     except (

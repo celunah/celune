@@ -8,8 +8,9 @@ import random
 import secrets
 import hashlib
 import contextlib
+import time
 from pathlib import Path
-from typing import Callable, Optional, Generator
+from typing import Any, Callable, Optional, Generator
 
 import torch
 import numpy as np
@@ -19,7 +20,7 @@ from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 
 from . import get_version
-from .base import CeluneBackend
+from .base import BackendTiming, CeluneBackend
 from ..exceptions import BackendError
 
 
@@ -51,17 +52,28 @@ class VoxCPM2(CeluneBackend):
     }
     default_voice: str = "balanced"
 
-    def __init__(self, log: Callable[[str, str], None]) -> None:
+    def __init__(
+        self,
+        log: Callable[[str, str], None],
+        config: Optional[dict[str, Any]] = None,
+    ) -> None:
         """Initialize the VoxCPM2 backend.
 
         Args:
             log: Logger callback used by the backend.
+            config: Loaded Celune configuration dictionary.
 
         Returns:
             None: This constructor prepares backend state and validates
                 reference audio.
         """
-        super().__init__(log=log)
+        super().__init__(log=log, config=config)
+
+        if self.config.get("int8"):
+            raise ValueError(
+                "VoxCPM2 INT8 is not supported by the current VoxCPM loader"
+            )
+
         self.log = log
         self.optimize_enabled = False
         self.random_seed = True
@@ -143,6 +155,10 @@ class VoxCPM2(CeluneBackend):
             None: This method downloads any missing backend models.
         """
         for model_id in self.all_model_ids:
+            if Path(model_id).expanduser().exists():
+                self.log(f"{model_id} is available locally.", "info")
+                continue
+
             available, _ = self.model_is_available_locally(model_id)
             if not available:
                 self.log(f"Downloading {model_id}...", "info")
@@ -195,6 +211,17 @@ class VoxCPM2(CeluneBackend):
         Returns:
             VoxCPM: The loaded VoxCPM model instance.
         """
+        local_path = Path(model_id).expanduser()
+        if local_path.exists():
+            self.log("Loading TTS model from local path...", "info")
+            with self._suppress_backend_output():
+                self.model = VoxCPM.from_pretrained(
+                    str(local_path.resolve()),
+                    load_denoiser=kwargs.get("load_denoiser", False),
+                    optimize=kwargs.get("optimize", False),
+                )
+            return self.model
+
         available, path = self.model_is_available_locally(model_id)
 
         torch.backends.cudnn.deterministic = True
@@ -221,7 +248,7 @@ class VoxCPM2(CeluneBackend):
 
     def generate_stream(
         self, model: VoxCPM, **kwargs
-    ) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Generator[tuple[npt.NDArray[np.float32], int, BackendTiming]]:
         """Generate Celune compatible audio chunks.
 
         Args:
@@ -229,7 +256,7 @@ class VoxCPM2(CeluneBackend):
             **kwargs: Streaming generation arguments passed to the backend.
 
         Returns:
-            Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of
+            Generator[tuple[npt.NDArray[np.float32], int, BackendTiming]]: An iterator of
                 ``(audio, sample_rate, timing)`` tuples suitable for Celune's playback pipeline.
 
         Raises:
@@ -265,21 +292,63 @@ class VoxCPM2(CeluneBackend):
 
         chunks_per_batch = max(1, round(chunk_size / (1 / self.chunk_rate)))
         if hasattr(model, "generate_streaming"):
-            with self._suppress_backend_output():
+            backend_stream = None
+            try:
+                with self._suppress_backend_output():
+                    backend_stream = model.generate_streaming(
+                        text,
+                        reference_wav_path=ref_wav,
+                        inference_timesteps=6,
+                        cfg_value=cfg,
+                    )
+
                 batch = []
-                for chunk in model.generate_streaming(
-                    text,
-                    reference_wav_path=ref_wav,
-                    inference_timesteps=6,
-                    cfg_value=cfg,
-                ):  # Celune wants `(audio, sr, timing)`, but we don't use `timing`
+                batch_start = time.perf_counter()
+                chunk_index = 0
+                while True:
+                    with self._suppress_backend_output():
+                        try:
+                            chunk = next(backend_stream)
+                        except StopIteration:
+                            break
+
                     batch.append(chunk)
                     if len(batch) >= chunks_per_batch:
-                        yield np.concatenate(batch), 48000, None
+                        yield_ms = (time.perf_counter() - batch_start) * 1000
+                        audio = np.concatenate(batch)
+                        timing: BackendTiming = {
+                            "backend": self.name,
+                            "chunk_index": chunk_index,
+                            "chunk_steps": len(batch),
+                            "yield_ms": yield_ms,
+                            "decode_ms": yield_ms,
+                            "prefill_ms": 0.0,
+                            "codec_ms_approx": 0.0,
+                            "is_final": False,
+                        }
+                        yield audio, 48000, timing
                         batch.clear()
+                        batch_start = time.perf_counter()
+                        chunk_index += 1
 
                 if batch:  # push remaining
-                    yield np.concatenate(batch), 48000, None
+                    yield_ms = (time.perf_counter() - batch_start) * 1000
+                    audio = np.concatenate(batch)
+                    timing = {
+                        "backend": self.name,
+                        "chunk_index": chunk_index,
+                        "chunk_steps": len(batch),
+                        "yield_ms": yield_ms,
+                        "decode_ms": yield_ms,
+                        "prefill_ms": 0.0,
+                        "codec_ms_approx": 0.0,
+                        "is_final": True,
+                    }
+                    yield audio, 48000, timing
+            finally:
+                if backend_stream is not None and hasattr(backend_stream, "close"):
+                    with contextlib.suppress(Exception):
+                        backend_stream.close()
         else:
             version = get_version("voxcpm")
             raise NotImplementedError(

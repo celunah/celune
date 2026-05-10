@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-Celune 3.4.2 - "I'm not just a TTS. I'm someone special."
+Celune 3.5.0 - "I'm not just a TTS. I'm someone special."
 Refer to https://github.com/celunah/celune for information about Celune.
 Celune models are available on https://huggingface.co/collections/lunahr/celune.
 """

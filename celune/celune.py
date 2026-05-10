@@ -21,7 +21,7 @@ from . import __version__
 from .backends import CeluneBackend, resolve_backend
 from .backends.qwen3 import Qwen3
 from .config import config_bool, config_value
-from .constants import NORMALIZER_MODEL_ID, PipelineStates
+from .constants import NORMALIZER_MODEL_ID, PipelineStates, PipelineActions
 from .dsp import StreamingPedalboardReverb, readiness_signal
 from .utils import format_number, format_error
 from .chroma import AudioRGBGlow
@@ -45,6 +45,17 @@ from .pipeline import (
     split_text,
 )
 from .runtime import log_runtime_banner, validate_runtime
+
+try:
+    from .api import start_api
+except ModuleNotFoundError as package:
+    start_api = None
+    API_IMPORT_ERROR: Optional[Exception] = package
+except Exception as api_error:
+    start_api = None
+    API_IMPORT_ERROR = api_error
+else:
+    API_IMPORT_ERROR = None
 
 
 class MessageCallback(Protocol):
@@ -140,7 +151,7 @@ class Celune:
 
         self.config = config
 
-        backend_kwargs = {}
+        backend_kwargs = {"config": config}
 
         if (
             (isinstance(tts_backend, str) and tts_backend.strip().lower() == "qwen3")
@@ -156,6 +167,8 @@ class Celune:
                 **backend_kwargs,
             )
             self.tts_backend = self.backend.name
+            if config_bool(config, "CELUNE_INT8", "int8", False):
+                self._enable_int8_backend_model()
         except ValueError as e:
             raise BackendError(str(e)) from e
         except TypeError as e:
@@ -226,11 +239,13 @@ class Celune:
 
         self._last_flavor: Optional[str] = None
         self._model_ready = threading.Event()
+
         self._model_ready.set()
         self._exit_requested = False
         self._playback_done = threading.Event()
         self._playback_done.set()
         self._say_lock = threading.Lock()
+        self._lock_held_by: Optional[str] = None
         self._model_lock = threading.RLock()
 
         self.cur_state = "init"
@@ -244,6 +259,34 @@ class Celune:
 
         self.glow = AudioRGBGlow(color="#cebaff")
         self.glow.start()
+
+    def _enable_int8_backend_model(self) -> None:
+        """Apply an optional configured INT8 model override.
+
+        Returns:
+            None: Backends without an explicit override use their own INT8 defaults.
+        """
+        model_ref = self._configured_int8_model_ref()
+        if model_ref is not None:
+            self.backend.use_int8_model(model_ref)
+
+    def _configured_int8_model_ref(self) -> Optional[str]:
+        """Return an INT8 model path/repo from config when one is set."""
+        configured = config_value(self.config, "int8_model", None)
+        if configured is None:
+            configured = config_value(self.config, "int8_models", None)
+
+        if isinstance(configured, str):
+            configured = configured.strip()
+            return configured or None
+
+        if isinstance(configured, dict):
+            backend_ref = configured.get(self.backend.name)
+            if isinstance(backend_ref, str):
+                backend_ref = backend_ref.strip()
+                return backend_ref or None
+
+        return None
 
     @staticmethod
     def _noop_message(msg: str, severity: str = "info") -> None:
@@ -495,16 +538,16 @@ class Celune:
                         raise WarmupError("warmup failed after reload")
 
                 self.log_dev(
-                    "[RELOAD] The target model is the same as the model is currently in use."
+                    "[RELOAD] Not reloading, the target model is the same as the one currently loaded."
                 )
 
                 self.current_voice = voice
                 self.loaded = True
 
-            # Play the readiness signal on voice change success. This is a "best effort"
+            # play the readiness signal on voice change success - it may not always work
             # because a previous readiness signal may still be playing in configurations
-            # where Celune does not have to reload the model fully.
-            if acquire_pipeline(self, "play readiness signal"):
+            # where Celune does not have to fully reload the model prior to being ready
+            if acquire_pipeline(self, PipelineActions.READINESS_SIGNAL.value):
                 readiness_acquired = True
                 self.cur_state = "speaking"
                 self.audio_queue.put((readiness_signal(), 48000, None))
@@ -598,7 +641,7 @@ class Celune:
         self._start_configured_api()
 
         # notify readiness
-        if acquire_pipeline(self, "play readiness signal"):
+        if acquire_pipeline(self, PipelineActions.READINESS_SIGNAL.value):
             self.cur_state = "speaking"
             self.audio_queue.put((readiness_signal(), 48000, None))
             self.audio_queue.put(self.utterance_done)
@@ -651,16 +694,19 @@ class Celune:
         if not enabled or self._api_thread is not None:
             return
 
-        try:
-            from .api import start_api
-        except ModuleNotFoundError as package:
+        if start_api is None:
+            if isinstance(API_IMPORT_ERROR, ModuleNotFoundError):
+                pkg = API_IMPORT_ERROR
+                self.log(
+                    f"Cannot start the API. '{pkg.name}' is not installed.",
+                    "warning",
+                )
+                return
+
+            error = API_IMPORT_ERROR or RuntimeError("unknown API import error")
             self.log(
-                f"Cannot start the API. '{package.name}' is not installed.",
-                "warning",
+                f"Cannot import the API: {format_error(error, self.dev)}", "warning"
             )
-            return
-        except Exception as e:
-            self.log(f"Cannot import the API: {format_error(e, self.dev)}", "warning")
             return
 
         try:
@@ -856,6 +902,7 @@ class Celune:
             bool: ``True`` when the pipeline lock was acquired, otherwise
                 ``False``.
         """
+        self._lock_held_by = action
         return acquire_pipeline(self, action)
 
     def _release_pipeline(self) -> None:
@@ -864,6 +911,7 @@ class Celune:
         Returns:
             None: This helper clears Celune's busy state.
         """
+        self._lock_held_by = None
         release_pipeline(self)
 
     def say(
@@ -1130,3 +1178,25 @@ class Celune:
             None: This setter updates Celune's current sample-rate tracking.
         """
         self._current_sr = value
+
+    @property
+    def lock_held_by(self) -> Optional[str]:
+        """Get the occupier of Celune's pipeline lock.
+
+        Returns:
+            Optional[str]: The current pipeline lock occupier, if any.
+        """
+        return self._lock_held_by
+
+    @lock_held_by.setter
+    def lock_held_by(self, value: Optional[str]) -> None:
+        """Set the occupier of Celune's pipeline lock.
+
+        Args:
+            value: The action that is about to claim Celune's pipeline lock,
+                ``None`` if the pipeline is about to be unlocked.
+
+        Returns:
+            None: This setter sets Celune's pipeline lock occupier.
+        """
+        self._lock_held_by = value

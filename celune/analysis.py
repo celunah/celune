@@ -87,6 +87,10 @@ TEXT_CONFIG: TextConfig = {
         "voice_drift_low": "low",
         "voice_drift_moderate": "moderate",
         "voice_drift_high": "high",
+        "voice_drift_good": "good",
+        "voice_drift_caution": "caution",
+        "voice_drift_weak": "weak",
+        "voice_drift_wrong": "wrong",
         "voice_similarity_na": "N/A",
     },
     "assessment": {
@@ -298,7 +302,7 @@ def _load_reference_embedding(voice: str) -> npt.NDArray[np.float32]:
         npt.NDArray[np.float32]: The NumPy array of the embedding.
 
     Raises:
-        FileNotFoundError: No Celune voice was found by this name or it has no embeddings.
+        FileNotFoundError: No Celune voice was found by this name, or it has no embeddings.
     """
     ref_path = pathlib.Path(__file__).resolve().parent / "refs" / f"{voice}.pt"
     if not ref_path.exists():
@@ -399,8 +403,8 @@ def _voice_drift_level(drift_percent: float) -> str:
     Args:
         drift_percent: The drift percentage value.
 
-    Return:
-        str: The human readable drift tier.
+    Returns:
+        str: The human-readable drift tier.
     """
     if drift_percent <= 5.0:
         return "good"

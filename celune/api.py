@@ -40,6 +40,15 @@ class StartedServer(uvicorn.Server):
         config: uvicorn.Config,
         on_started: Optional[Callable[[], None]] = None,
     ) -> None:
+        """Initialize the started-server notification wrapper.
+
+        Args:
+            config: Uvicorn server configuration.
+            on_started: Optional callback invoked after successful startup.
+
+        Returns:
+            None: This constructor stores the startup callback.
+        """
         super().__init__(config)
         self.on_started = on_started
 
@@ -437,6 +446,15 @@ def run_api(
     bind_host = resolve_api_host(token=auth_token, host=host)
 
     def _default_started(bhost: str, bport: int) -> None:
+        """Report API startup to Celune logs or stdout.
+
+        Args:
+            bhost: Bound host address.
+            bport: Bound port number.
+
+        Returns:
+            None: This callback reports startup status.
+        """
         http = "http"
         message = f"Celune API has started on {http}://{bhost}:{bport}"
         if celune is not None:

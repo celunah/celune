@@ -5,12 +5,19 @@ backend: null
 # clone = clone from Celune references
 # native = use Celune native models
 qwen3_mode: native
+# if enabled, Celune will use INT8 hybrid models defined by the backend currently in use
+# this will allow you to save some of your VRAM at runtime and voice quality should be unaffected
+int8: false
+# memory = keep strict INT8 weights, slower but uses the least VRAM
+# balanced = cache the hottest INT8 weights for more speed, but may not reduce total VRAM
+qwen3_int8_runtime: memory
 # if enabled, detailed tracebacks will be displayed,
 # and Celune will self-analyze her own voice
 dev: false
 # if enabled, the UI is disabled and only extensions can send inputs
 headless: false
 # if enabled, headless mode will not use ANSI colors
+# Celune can also set this automatically if the running terminal is non-compliant
 headless_nocolor: false
 # you can use the light or dark Celune theme
 theme: dark

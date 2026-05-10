@@ -5,6 +5,8 @@ import datetime
 from enum import IntEnum, Enum
 from typing import TypeVar
 
+import torch
+
 # CeluneNorm v1.3 includes the most important changes, so that Celune can speak optimally.
 NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v1.3"
 
@@ -53,6 +55,15 @@ class UtteranceLoudnessTier(IntEnum):
     SILENT = 2  # Utterance is too silent.
 
 
+class PipelineActions(Enum):
+    """Pipeline actions known to Celune."""
+
+    SPEAK = "speak"  # called by celune.Celune.say()
+    SFX = "sfx"  # called by celune.Celune.play()
+    READINESS_SIGNAL = "readiness signal"  # called by celune.Celune.load() and celune.Celune.change_voice()
+
+
 # N/A values
-N_A_NUMERIC = float("nan")
-N_A = None
+N_A_NUMERIC = float("nan")  # numeric N/A
+N_A_TENSOR = torch.empty(0, 0)  # tensor N/A
+N_A = None  # general N/A

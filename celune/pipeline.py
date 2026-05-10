@@ -17,6 +17,7 @@ import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 
+from .constants import PipelineActions
 from .dsp import _resample_audio, _soften, _split, _to_48khz, is_silent_utterance
 from .exceptions import NotAvailableError
 from .utils import format_number, run_async, format_error
@@ -183,10 +184,24 @@ def acquire_pipeline(engine: "Celune", action: str) -> bool:
     with engine.say_lock:
         engine.log_dev(f"[LOCK] acquire requested by {action}, locked={engine.locked}")
         if engine.locked:
-            engine.log(f"Tried to {action} while Celune was busy.", "warning")
+            engine.log(
+                f"The '{action}' action is not currently available because Celune is busy.",
+                "warning",
+            )
+
+            pipeline_held_by = (
+                f"'{engine.lock_held_by}'"
+                if engine.lock_held_by is not None
+                else "an unknown pipeline event"
+            )
+            engine.log_dev(
+                f"The pipeline is currently being held by {pipeline_held_by}."
+            )
+
             engine.error_callback("Celune is currently busy")
             return False
 
+        engine.lock_held_by = action
         engine.locked = True
         engine.playback_done.clear()
         engine.log_dev(f"[LOCK] acquired by {action}")
@@ -280,7 +295,7 @@ def queue_speech(
         engine.log("We are about to do a funny!")
         text = text.replace("celune", "celine").replace("Celune", "Celine")
 
-    if not acquire_pipeline(engine, "speak"):
+    if not acquire_pipeline(engine, PipelineActions.SPEAK.value):
         return False
 
     try:
@@ -329,7 +344,7 @@ def queue_sfx_audio(
         Exception: Re-raised after releasing the pipeline if SFX playback setup
             fails.
     """
-    if not acquire_pipeline(engine, "play"):
+    if not acquire_pipeline(engine, PipelineActions.SFX.value):
         return False
 
     try:
@@ -559,6 +574,11 @@ def generation_worker(engine: "Celune") -> None:
                 buffered_speech_len = 0.0
                 speech_timing = SpeechTiming(start_time)
                 pushed_audio = False
+                backend_prefill_ms = 0.0
+                backend_decode_ms = 0.0
+                backend_codec_ms = 0.0
+                backend_yield_ms = 0.0
+                backend_timing_name = engine.backend.name
 
                 chunks = split_text(engine, text)
                 buffer: list[np.ndarray] = []
@@ -582,7 +602,7 @@ def generation_worker(engine: "Celune") -> None:
                         for (
                             audio_chunk,
                             sr,  # 24 kHz if Qwen3, 48 kHz if VoxCPM2
-                            _,
+                            backend_timing,
                         ) in engine.backend.generate_stream(  # some args will be discarded as needed
                             engine.model,
                             text=chunk_text,
@@ -602,6 +622,21 @@ def generation_worker(engine: "Celune") -> None:
                                 break
 
                             speech_timing.mark_first_chunk()
+                            backend_timing_name = str(
+                                backend_timing.get("backend", backend_timing_name)
+                            )
+                            backend_prefill_ms += float(
+                                backend_timing.get("prefill_ms", 0.0)
+                            )
+                            backend_decode_ms += float(
+                                backend_timing.get("decode_ms", 0.0)
+                            )
+                            backend_codec_ms += float(
+                                backend_timing.get("codec_ms_approx", 0.0)
+                            )
+                            backend_yield_ms += float(
+                                backend_timing.get("yield_ms", 0.0)
+                            )
 
                             if isinstance(audio_chunk, torch.Tensor):
                                 audio_chunk = audio_chunk.cpu().numpy()
@@ -684,6 +719,13 @@ def generation_worker(engine: "Celune") -> None:
                 )
                 engine.log(f"Speed: x{format_number(speech_len / generation_time, 2)}")
                 engine.log(f"TTFC: {format_number(speech_timing.ttfc_ms(), 1)} ms")
+                if backend_yield_ms > 0.0:
+                    engine.log(
+                        f"{backend_timing_name} timing: "
+                        f"prefill {format_number(backend_prefill_ms, 1)} ms, "
+                        f"decode {format_number(backend_decode_ms, 1)} ms, "
+                        f"codec/overhead {format_number(backend_codec_ms, 1)} ms",
+                    )
 
                 if buffer:
                     queued_audio = np.concatenate(buffer)
