@@ -236,6 +236,7 @@ def compute_raw_metrics(y: npt.NDArray[np.float32], sr: int) -> dict:
 
     hop_duration_s = 512 / sr
     num_voiced_frames = int(np.sum(voiced_flag))
+    metrics["voice_extraction_ok"] = num_voiced_frames > 0
     metrics["speaking_pace_proxy"] = float(
         num_voiced_frames * hop_duration_s / max(metrics["duration_s"], 1e-6)
     )
