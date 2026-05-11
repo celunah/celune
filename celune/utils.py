@@ -227,11 +227,13 @@ def run_async(
     func: Callable, *args, daemon: bool = True, **kwargs
 ) -> multiprocessing.Process:
     """Run a function asynchronously.
+    The function must not return a value or affect Celune directly, because it will run
+        detached from Celune.
 
     Args:
-        func: The function to call. The function cannot reuse the current process's state.
+        func: The function to call.
         args: The arguments to pass to the function.
-        daemon: Whether to use a daemon process. Defaults to True.
+        daemon: Whether to use a daemon process. Defaults to ``True``.
         kwargs: Keyword arguments to pass to the function.
 
     Returns:
@@ -519,3 +521,30 @@ def replace_ipa(text: str, strict: bool = True) -> tuple[str, int]:
 
     result = re.sub(r"/([^/\[\]]+)/|\[([^/\[\]]+)]", repl, text)
     return result, total_unmatched
+
+
+def custom_assert(condition: bool, exception: Optional[Exception]) -> None:
+    """Assert a condition and raise a given exception if not met.
+
+    Args:
+        condition: The condition to assert against.
+        exception: The exception to raise if the condition was not met.
+
+    Returns:
+        None: This function raises an exception upon a failed assertion.
+
+    Raises:
+        Exception: A specified exception class was raised because assertion failed.
+        TypeError: An object was specified to be raised that was not an instance of Exception.
+        AssertionError: An exception class was not specified, while assertion failed.
+    """
+    if not condition:
+        if isinstance(exception, Exception):
+            raise exception
+        if isinstance(exception, type) and issubclass(exception, BaseException):
+            raise exception()
+        if exception is None:
+            raise AssertionError
+        raise TypeError(
+            f"expected an instance of Exception or None, got {type(exception).__name__}"
+        )
