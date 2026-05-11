@@ -265,21 +265,62 @@ class VoxCPM2(CeluneBackend):
 
         chunks_per_batch = max(1, round(chunk_size / (1 / self.chunk_rate)))
         if hasattr(model, "generate_streaming"):
-            with self._suppress_backend_output():
+            backend_stream = None
+            try:
+                with self._suppress_backend_output():
+                    backend_stream = model.generate_streaming(
+                        text,
+                        reference_wav_path=ref_wav,
+                        inference_timesteps=6,
+                        cfg_value=cfg,
+                    )
+
                 batch = []
-                for chunk in model.generate_streaming(
-                    text,
-                    reference_wav_path=ref_wav,
-                    inference_timesteps=6,
-                    cfg_value=cfg,
-                ):  # Celune wants `(audio, sr, timing)`, but we don't use `timing`
+                chunk_index = 0
+                pending_audio: Optional[npt.NDArray[np.float32]] = None
+                pending_timing: Optional[dict] = None
+                while True:
+                    with self._suppress_backend_output():
+                        try:
+                            chunk = next(backend_stream)
+                        except StopIteration:
+                            break
+
                     batch.append(chunk)
                     if len(batch) >= chunks_per_batch:
-                        yield np.concatenate(batch), 48000, None
+                        if pending_audio is not None and pending_timing is not None:
+                            yield pending_audio, 48000, pending_timing
+
+                        audio = np.concatenate(batch)
+                        pending_timing = {
+                            "backend": self.name,
+                            "chunk_index": chunk_index,
+                            "chunk_steps": len(batch),
+                            "is_final": False,
+                        }
+                        pending_audio = audio
                         batch.clear()
+                        chunk_index += 1
 
                 if batch:  # push remaining
-                    yield np.concatenate(batch), 48000, None
+                    if pending_audio is not None and pending_timing is not None:
+                        yield pending_audio, 48000, pending_timing
+
+                    audio = np.concatenate(batch)
+                    timing = {
+                        "backend": self.name,
+                        "chunk_index": chunk_index,
+                        "chunk_steps": len(batch),
+                        "is_final": True,
+                    }
+                    yield audio, 48000, timing
+                elif pending_audio is not None and pending_timing is not None:
+                    pending_timing["is_final"] = True
+                    yield pending_audio, 48000, pending_timing
+            finally:
+                if backend_stream is not None and hasattr(backend_stream, "close"):
+                    with contextlib.suppress(Exception):
+                        backend_stream.close()
         else:
             version = get_version("voxcpm")
             raise NotImplementedError(

@@ -101,7 +101,7 @@ def format_seed(celune: Celune) -> str:
     return f"Seed: {seed}" if seed is not None else "Seed: N/A"
 
 
-def resource_pages(celune: Celune) -> tuple[str, ...]:
+def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[str, ...]:
     """Return resource footer pages in their display order."""
     pages = [format_vram(), format_usage()]
 
@@ -120,8 +120,15 @@ def resource_pages(celune: Celune) -> tuple[str, ...]:
 
     pages.append("/help commands")
     if celune is not None:
-        pages.append(
-            f"CTRL+C/CTRL+Q exit • CTRL+T {celune.config.get('theme', 'dark')} • CTRL+ENTER say"
-        )
+        active_theme = theme_name
+        if active_theme is None:
+            configured_theme = celune.config.get("theme", "dark")
+            active_theme = "celune_light" if configured_theme == "light" else "celune"
+
+        if active_theme == "celune_april_fools":
+            pages.append("CTRL+C/CTRL+Q exit • CTRL+ENTER say")
+        else:
+            other_theme = "light" if active_theme == "celune" else "dark"
+            pages.append(f"CTRL+C/CTRL+Q exit • CTRL+T {other_theme} • CTRL+ENTER say")
 
     return tuple(pages)

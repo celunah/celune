@@ -272,7 +272,7 @@ class CeluneUI(App):
             Returns:
                 None: This callback writes the selected resource page.
             """
-            pages = ui_resources.resource_pages(self.celune)
+            pages = ui_resources.resource_pages(self.celune, self.active_theme_name)
             text = pages[self._resource_page % len(pages)]
             self.resources.update(indent(text, spaces=2, direction="right"))
 
@@ -291,7 +291,7 @@ class CeluneUI(App):
             return
 
         self._resource_page = (self._resource_page + 1) % len(
-            ui_resources.resource_pages(self.celune)
+            ui_resources.resource_pages(self.celune, self.active_theme_name)
         )
         self.update_resources()
 
