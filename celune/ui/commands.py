@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Slash command handling for the Textual UI."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Textual theme assets."""
 
 from ..colors import SEVERITY_COLORS

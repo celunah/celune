@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Color utility helpers."""
 
 import random

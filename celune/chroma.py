@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Celune Razer Chroma and OpenRGB-compatible RGB glow effect."""
 
 import os

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Celune UI package."""
 
 from .app import CeluneUI

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Name day list derived from Polish name days, translated to English, and with Polish-only names removed."""
 
 from __future__ import annotations

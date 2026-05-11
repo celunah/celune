@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """UI callback protocols."""
 
 from typing import Protocol

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Speech pipeline helpers for Celune."""
 
 import json

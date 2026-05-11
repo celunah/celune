@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Qwen3 backend implementation for Celune."""
 
 from __future__ import annotations

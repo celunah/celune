@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+"""Celune main package."""
+
 import sys
 
 from .utils import get_revision, caller_is_repl

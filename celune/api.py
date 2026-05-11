@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+"""Celune's API layer."""
+
 import datetime
 import io
 import os

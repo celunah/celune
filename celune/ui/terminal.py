@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Terminal UI helpers."""
 
 import re

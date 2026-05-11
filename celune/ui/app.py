@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Celune's frontend layer."""
 
 import datetime
