@@ -716,9 +716,7 @@ def generation_worker(engine: "Celune") -> None:
                             temperature=generation_params["temperature"],
                             top_k=generation_params["top_k"],
                             top_p=generation_params["top_p"],
-                            repetition_penalty=generation_params[
-                                "repetition_penalty"
-                            ],
+                            repetition_penalty=generation_params["repetition_penalty"],
                         ):
                             if engine.exit_requested:
                                 break
