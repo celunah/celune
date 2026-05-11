@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Shared Celune constants."""
 
 import signal

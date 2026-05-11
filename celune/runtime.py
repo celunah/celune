@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Runtime and environment validation helpers for Celune."""
 
 import sys

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 
 """
 Celune 3.4.3 - "I'm not just a TTS. I'm someone special."
 Refer to https://github.com/celunah/celune for information about Celune.
 Celune models are available on https://huggingface.co/collections/lunahr/celune.
+
+This software may be redistributed under the terms of the MIT license, including commercial use.
 """
 
 import os

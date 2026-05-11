@@ -1,4 +1,5 @@
-"""Celune self-update helpers."""
+# SPDX-License-Identifier: MIT
+"""Celune automatic update helpers."""
 
 from __future__ import annotations
 

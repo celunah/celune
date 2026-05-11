@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Headless Celune UI."""
 
 import signal

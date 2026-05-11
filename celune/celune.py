@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Celune's backend layer."""
 
 import gc

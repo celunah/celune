@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Celune audio processing functions."""
 
 import math

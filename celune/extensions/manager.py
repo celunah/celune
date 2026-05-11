@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Celune's extension manager."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Resource footer data for the Textual UI."""
 
 from __future__ import annotations

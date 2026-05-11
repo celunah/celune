@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Celune automatic setup utility.
 
 No, this is not a setuptools remnant, this is Celune's bootstrapper.
