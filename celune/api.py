@@ -291,9 +291,13 @@ def root() -> RootResponse:
     """Celune API root endpoint.
 
     Returns:
-        RootResponse: The API is working.
+        RootResponse: The response with Celune's underlying state.
     """
-    return RootResponse(status="ok")
+    try:
+        celune = require_celune()
+        return RootResponse(status=celune.cur_state)
+    except HTTPException:
+        return RootResponse(status="error")
 
 
 @api.get("/v1/version", response_model=VersionResponse)
