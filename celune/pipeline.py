@@ -1,7 +1,9 @@
 """Speech pipeline helpers for Celune."""
 
+import json
 import os
 import re
+import struct
 import time
 import queue
 import random
@@ -9,7 +11,7 @@ import pathlib
 import datetime
 import contextlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 import numpy as np
@@ -21,6 +23,7 @@ from .dsp import _resample_audio, _soften, _split, _to_48khz, is_silent_utteranc
 from .exceptions import NotAvailableError
 from .utils import format_number, run_async, format_error
 from .analysis import analyze_voice_audio
+from . import __version__
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -75,6 +78,118 @@ class SpeechTiming:
             return float("nan")
 
         return self.first_playback_time - self.start_time
+
+
+def _append_wav_chunk(path: str, chunk_id: bytes, payload: bytes) -> None:
+    """Append a RIFF/WAVE chunk and refresh the container size."""
+    if len(chunk_id) != 4:
+        raise ValueError("WAV chunk ID must be exactly four bytes")
+
+    with open(path, "r+b") as wav_file:
+        header = wav_file.read(12)
+        if len(header) != 12 or header[:4] != b"RIFF" or header[8:12] != b"WAVE":
+            raise ValueError("file is not a RIFF/WAVE file")
+
+        wav_file.seek(0, os.SEEK_END)
+        wav_file.write(chunk_id)
+        wav_file.write(struct.pack("<I", len(payload)))
+        wav_file.write(payload)
+        if len(payload) % 2:
+            wav_file.write(b"\x00")
+
+        file_size = wav_file.tell()
+        riff_size = file_size - 8
+        if riff_size > 0xFFFFFFFF:
+            raise ValueError("WAV file is too large for RIFF metadata")
+
+        wav_file.seek(4)
+        wav_file.write(struct.pack("<I", riff_size))
+
+
+def read_celune_wav_metadata(path: str) -> Optional[dict[str, Any]]:
+    """Read the newest Celune CLMT metadata chunk from a WAV file."""
+    metadata: Optional[dict[str, Any]] = None
+
+    with open(path, "rb") as wav_file:
+        header = wav_file.read(12)
+        if len(header) != 12 or header[:4] != b"RIFF" or header[8:12] != b"WAVE":
+            raise ValueError("file is not a RIFF/WAVE file")
+
+        while True:
+            chunk_header = wav_file.read(8)
+            if not chunk_header:
+                break
+            if len(chunk_header) != 8:
+                raise ValueError("truncated WAV chunk header")
+
+            chunk_id = chunk_header[:4]
+            chunk_size = struct.unpack("<I", chunk_header[4:])[0]
+            payload = wav_file.read(chunk_size)
+            if len(payload) != chunk_size:
+                raise ValueError("truncated WAV chunk payload")
+
+            if chunk_id == b"CLMT":
+                decoded = json.loads(payload.decode("utf-8"))
+                if not isinstance(decoded, dict):
+                    raise ValueError("Celune metadata payload is not a JSON object")
+                metadata = decoded
+
+            if chunk_size % 2:
+                wav_file.seek(1, os.SEEK_CUR)
+
+    return metadata
+
+
+def _write_celune_wav_metadata(
+    path: str,
+    engine: "Celune",
+    *,
+    text: str,
+    display_text: str,
+    generation_params: dict[str, object],
+    sample_rate: int,
+    subtype: str,
+    included_kept_sfx: bool,
+) -> None:
+    """Store Celune generation metadata in a custom CLMT WAV chunk.
+
+    Args:
+        path: The path to the WAV file.
+        engine: The instance of Celune to use data from.
+        text: The input text given to Celune.
+        display_text: The displayed text shown in Celune's UI.
+        generation_params: The generation parameters used with this generation.
+        sample_rate: A fixed sample rate (Hz) of ``48000``.
+        subtype: A fixed PCM subtype value of ``PCM_24``.
+        included_kept_sfx: Whether the included utterance has a preceding sound effect.
+
+    Returns:
+        None: This value injects a Celune metadata (CLMT) chunk to the target WAV file.
+    """
+    payload = {
+        "format": "celune_metadata",
+        "format_version": 1,
+        "celune_version": __version__,
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "text": text,
+        "display_text": display_text,
+        "backend": getattr(engine, "tts_backend", None),
+        "backend_mode": engine.config.get("qwen3_mode"),
+        "model_name": getattr(engine, "model_name", ""),
+        "voice": getattr(engine, "current_voice", None),
+        "voice_prompt": getattr(engine, "voice_prompt", None),
+        "language": getattr(engine, "language", None),
+        "chunk_size": getattr(engine, "chunk_size", None),
+        "speed": getattr(engine, "speed", None),
+        "reverb_strength": getattr(engine.reverb, "strength", None),
+        "use_normalizer": getattr(engine, "use_normalization", None),
+        "sample_rate": sample_rate,
+        "subtype": subtype,
+        "included_kept_sfx": included_kept_sfx,
+        "generation": generation_params,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    _append_wav_chunk(path, b"CLMT", encoded)
 
 
 def clear_queue(q: queue.Queue) -> None:
@@ -560,6 +675,14 @@ def generation_worker(engine: "Celune") -> None:
                 speech_timing = SpeechTiming(start_time)
                 pushed_audio = False
 
+                # these generation parameters are fixed and do not change
+                generation_params = {
+                    "temperature": 0.15,
+                    "top_k": 20,
+                    "top_p": 0.7,
+                    "repetition_penalty": 1.1,
+                }
+
                 chunks = split_text(engine, text)
                 buffer: list[np.ndarray] = []
                 full_audio: list[np.ndarray] = []
@@ -590,10 +713,12 @@ def generation_worker(engine: "Celune") -> None:
                             chunk_size=engine.chunk_size,
                             instruct=engine.voice_prompt,
                             voice=engine.current_voice,
-                            temperature=0.15,
-                            top_k=20,
-                            top_p=0.7,
-                            repetition_penalty=1.1,
+                            temperature=generation_params["temperature"],
+                            top_k=generation_params["top_k"],
+                            top_p=generation_params["top_p"],
+                            repetition_penalty=generation_params[
+                                "repetition_penalty"
+                            ],
                         ):
                             if engine.exit_requested:
                                 break
@@ -762,12 +887,31 @@ def generation_worker(engine: "Celune") -> None:
                             saved_path = (
                                 f"outputs/celune_speech_{timestamp}_{first_words}.wav"
                             )
+                            sample_rate = 48000
+                            subtype = "PCM_24"
                             sf.write(
                                 saved_path,
                                 wav,
-                                48000,
-                                subtype="PCM_24",
+                                sample_rate,
+                                subtype=subtype,
                             )
+                            try:
+                                _write_celune_wav_metadata(
+                                    saved_path,
+                                    engine,
+                                    text=text,
+                                    display_text=display_text,
+                                    generation_params=generation_params,
+                                    sample_rate=sample_rate,
+                                    subtype=subtype,
+                                    included_kept_sfx=kept_sfx_audio is not None,
+                                )
+                            except Exception as e:
+                                engine.log(
+                                    "Could not write WAV metadata: "
+                                    f"{format_error(e, engine.dev)}",
+                                    "warning",
+                                )
 
                     engine.recently_saved = saved_path
                     engine.audio_queue.put(
