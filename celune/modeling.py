@@ -34,12 +34,20 @@ class HybridCheckpointIndex:
 
     @property
     def is_hybrid_int8_bf16(self) -> bool:
-        """Return whether the checkpoint contains only INT8 and BF16 tensors."""
+        """Return whether the checkpoint contains only INT8 and BF16 tensors.
+
+        Returns:
+            bool: Whether the checkpoint is a hybrid INT8/BF16 checkpoint.
+        """
         return bool(self.int8) and bool(self.bf16) and not self.other
 
     @property
     def has_int8_tensors(self) -> bool:
-        """Return whether the checkpoint contains actual INT8 tensors."""
+        """Return whether the checkpoint contains actual INT8 tensors.
+
+        Returns:
+            bool: Whether the checkpoint has any INT8 tensor.
+        """
         return bool(self.int8)
 
 
@@ -73,18 +81,6 @@ class Int8ScaledLinear(nn.Module):
         scale_shape: torch.Size,
         device: Optional[Union[torch.device, str]] = None,
     ) -> None:
-        """Initialize an INT8-backed linear layer.
-
-        Args:
-            in_features: Number of input features.
-            out_features: Number of output features.
-            bias: Whether the layer has a bias parameter.
-            scale_shape: Shape of the checkpoint scale tensor.
-            device: Optional device for initial buffers.
-
-        Returns:
-            None: This constructor registers INT8 weight and scale buffers.
-        """
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -221,7 +217,7 @@ def replace_int8_linear_modules(
         int: Number of layers replaced.
 
     Raises:
-        ValueError: An INT8 tensor is unsupported by the backend profile.
+        TypeError: An INT8 tensor targets an unexpected type name.
     """
     validate_int8_linear_checkpoint(index, state_dict, profile)
     count = 0
@@ -231,8 +227,8 @@ def replace_int8_linear_modules(
         parent = _get_module(model, parent_name)
         child = getattr(parent, child_name)
         if not isinstance(child, nn.Linear):
-            raise ValueError(
-                f"{profile.name} INT8 tensor '{weight_name}' targets "
+            raise TypeError(
+                f"{profile.name} tensor '{weight_name}' targets "
                 f"{type(child).__name__}, expected torch.nn.Linear"
             )
 
@@ -296,7 +292,11 @@ VOXCPM2_SAFE_TRANSFORMER_INT8_PROFILE = HybridInt8LinearProfile(
 
 
 def _matches_int8_profile(name: str, profile: HybridInt8LinearProfile) -> bool:
-    """Return whether an INT8 tensor name is allowed by a backend profile."""
+    """Return whether an INT8 tensor name is allowed by a backend profile.
+
+    Returns:
+        bool: Whether this tensor name is allowed by a backend profile.
+    """
     return name.startswith(profile.module_prefixes) and name.endswith(
         profile.weight_suffixes
     )
@@ -330,15 +330,13 @@ def validate_int8_linear_checkpoint(
     if missing_scales:
         preview = ", ".join(missing_scales[:8])
         raise ValueError(
-            f"{profile.name} hybrid INT8 checkpoint is missing scale tensors: {preview}"
+            f"{profile.name} hybrid checkpoint is missing scale tensors: {preview}"
         )
 
     if unsupported:
         preview = ", ".join(unsupported[:8])
         raise ValueError(
-            f"{profile.name} hybrid INT8 checkpoint contains unsupported INT8 "
-            f"tensors: {preview}. Only safe transformer Linear weights are "
-            "accepted."
+            f"{profile.name} hybrid checkpoint contains tensors not acceptable by the hybrid loader"
         )
 
 
@@ -407,6 +405,7 @@ def _checkpoint_files(checkpoint: CheckpointPath) -> list[Path]:
 
     Raises:
         FileNotFoundError: The path does not exist or has no supported files.
+        ValueError: A legacy PyTorch checkpoint was found.
     """
     path = Path(checkpoint)
     if path.is_file():
@@ -414,14 +413,19 @@ def _checkpoint_files(checkpoint: CheckpointPath) -> list[Path]:
     if not path.is_dir():
         raise FileNotFoundError(f"checkpoint path does not exist: {path}")
 
-    for pattern in ("model*.safetensors", "*.safetensors", "pytorch_model*.bin"):
+    for pattern in ("model*.safetensors", "*.safetensors"):
         files = sorted(path.glob(pattern))
         if files:
             return files
 
-    files = sorted(path.glob("*.pt")) + sorted(path.glob("*.pth"))
+    files = (
+        sorted(path.glob("*.pt"))
+        + sorted(path.glob("*.pth"))
+        + sorted(path.glob("pytorch_model*.bin"))
+        + sorted(path.glob("*.bin"))
+    )
     if files:
-        return files
+        raise ValueError("can't use non-safetensors checkpoints here")
 
     raise FileNotFoundError(f"no supported checkpoint files found in: {path}")
 
@@ -561,7 +565,17 @@ def _index_hybrid_dtypes(
 def inspect_hybrid_tts_checkpoint(
     checkpoint: Union[CheckpointPath, Mapping[str, torch.Tensor]],
 ) -> HybridCheckpointIndex:
-    """Inspect checkpoint tensor dtypes without loading safetensors payloads."""
+    """Inspect checkpoint tensor dtypes without loading safetensors payloads.
+
+    Args:
+        checkpoint: The checkpoint to inspect.
+
+    Returns:
+        HybridCheckpointIndex: The list of tensors and their dtypes.
+
+    Raises:
+        ValueError: Some checkpoint shards contain duplicate tensors.
+    """
     if isinstance(checkpoint, Mapping):
         if not all(isinstance(value, torch.Tensor) for value in checkpoint.values()):
             raise TypeError("checkpoint mapping must contain only torch.Tensor values")
@@ -580,9 +594,7 @@ def inspect_hybrid_tts_checkpoint(
         overlap = dtypes.keys() & part.keys()
         if overlap:
             names = ", ".join(sorted(overlap)[:5])
-            raise ValueError(
-                f"duplicate tensor names across checkpoint shards: {names}"
-            )
+            raise ValueError(f"checkpoint shards share same tensors: {names}")
         dtypes.update(part)
 
     return _index_hybrid_dtypes(dtypes)
@@ -620,9 +632,7 @@ def _load_checkpoint_state_dict(
         overlap = state_dict.keys() & part.keys()
         if overlap:
             names = ", ".join(sorted(overlap)[:5])
-            raise ValueError(
-                f"duplicate tensor names across checkpoint shards: {names}"
-            )
+            raise ValueError(f"checkpoint shards share same tensors: {names}")
         state_dict.update(part)
     return state_dict
 
@@ -650,7 +660,7 @@ def _is_quantization_metadata(name: str) -> bool:
         name: Tensor name to classify.
 
     Returns:
-        bool: ``True`` when the tensor is quantization metadata.
+        bool: ``True`` when the tensor is quantization metadata, ``False`` otherwise.
     """
     return name.endswith(
         (
@@ -735,7 +745,7 @@ def _load_state_dict_into_model(
 
     Raises:
         TypeError: The model does not expose ``load_state_dict``.
-        RuntimeError: Loading fails for a reason unrelated to INT8 gradients.
+        RuntimeError: Model has failed to load.
     """
     if not hasattr(model, "load_state_dict"):
         raise TypeError(
