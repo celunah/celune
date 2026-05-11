@@ -285,7 +285,6 @@ def _is_git_checkout() -> bool:
         return _run_git(["rev-parse", "--is-inside-work-tree"]) == "true"
     except (
         subprocess.CalledProcessError,
-        FileNotFoundError,
         subprocess.TimeoutExpired,
     ):
         return False
@@ -301,7 +300,10 @@ def check_for_update() -> Optional[UpdateInfo]:
     if os.getenv("CELUNE_SKIP_UPDATE") in {"1", "true", "on", "yes", "enabled"}:
         return None
 
-    if not _is_git_checkout():
+    try:
+        if not _is_git_checkout():
+            return None
+    except FileNotFoundError:
         return None
 
     try:
@@ -349,8 +351,11 @@ def update_to_latest() -> None:
     Raises:
         UpdateError: Celune cannot be updated safely.
     """
-    if not _is_git_checkout():
-        raise UpdateError("did not find a repository")
+    try:
+        if not _is_git_checkout():
+            raise UpdateError("did not find a repository")
+    except FileNotFoundError as exc:
+        raise UpdateError("git is not available") from exc
 
     if _has_local_changes():
         raise UpdateError("repository not committed")

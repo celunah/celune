@@ -161,7 +161,7 @@ class Int8ScaledLinear(nn.Module):
             weight = self._dequantized_weight(device=inp.device, dtype=inp.dtype)
 
         bias = (
-            cast(torch.Tensor, self.bias).to(dtype=inp.dtype)
+            cast(torch.Tensor, self.bias).to(device=inp.device, dtype=inp.dtype)
             if self.bias is not None
             else None
         )
@@ -883,7 +883,7 @@ def load_hybrid_tts_checkpoint(
         else _load_state_dict_into_model(model, state_dict, strict)
     )
 
-    evaluate_fn = getattr(model, "evaluate", None)
+    evaluate_fn = getattr(model, "eval", None)
     if evaluate and callable(evaluate_fn):
         # we already checked if this is a callable, so this can be safely suppressed
         # pylint: disable=E1102

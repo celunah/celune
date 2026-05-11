@@ -186,7 +186,7 @@ class CeluneBackend(ABC):
     @abstractmethod
     def generate_stream(
         self, model: Any, **kwargs
-    ) -> Generator[tuple[npt.NDArray[np.float32], int, BackendTiming]]:
+    ) -> Generator[tuple[npt.NDArray[np.float32], int, BackendTiming], None, None]:
         """Yield audio chunks from a loaded backend model.
 
         Args:
@@ -194,6 +194,6 @@ class CeluneBackend(ABC):
             **kwargs: Backend-specific generation parameters.
 
         Returns:
-            Generator[tuple[npt.NDArray[np.float32], int, BackendTiming]]: An iterator of
+            Generator[tuple[npt.NDArray[np.float32], int, BackendTiming], None, None]: An iterator of
                 Celune compatible audio chunks.
         """

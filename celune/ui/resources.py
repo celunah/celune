@@ -74,7 +74,8 @@ def gpu_usage() -> Optional[int]:
         return _NVIDIA_SMI_USAGE
 
     try:
-        _NVIDIA_SMI_PROC = subprocess.call(
+        # pylint: disable=R1732
+        _NVIDIA_SMI_PROC = subprocess.Popen(
             [
                 _NVIDIA_SMI,
                 "--query-gpu=utilization.gpu",
@@ -83,9 +84,8 @@ def gpu_usage() -> Optional[int]:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
-            check=True,
         )
-    except (OSError, subprocess.CalledProcessError):
+    except OSError:
         _NVIDIA_SMI_USAGE = None
 
     return _NVIDIA_SMI_USAGE

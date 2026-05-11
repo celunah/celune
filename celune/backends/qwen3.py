@@ -77,8 +77,8 @@ def _load_faster_qwen3_tts_int8(
     if loaded.state_dict is None:
         raise BackendError("INT8 checkpoint scan did not retain the state dict")
 
-    AutoConfig.register("qwen3_tts", Qwen3TTSConfig)
-    AutoProcessor.register(Qwen3TTSConfig, Qwen3TTSProcessor)
+    AutoConfig.register("qwen3_tts", Qwen3TTSConfig, exist_ok=True)
+    AutoProcessor.register(Qwen3TTSConfig, Qwen3TTSProcessor, exist_ok=True)
 
     config = cast(Any, AutoConfig.from_pretrained(model_path))
     config._attn_implementation = attn_implementation
