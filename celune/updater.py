@@ -15,6 +15,7 @@ from .exceptions import UpdateError
 
 REMOTE_URL = "https://github.com/celunah/celune.git"
 SHORT_HASH_LENGTH = 7
+UPDATE_BRANCHES = {"main", "master"}
 
 
 @dataclass(frozen=True)
@@ -141,6 +142,21 @@ def _remote_head_revision() -> str:
     return output.split(maxsplit=1)[0]
 
 
+def _remote_branch_revision(branch: str) -> str:
+    output = _run_git(
+        ["ls-remote", REMOTE_URL, f"refs/heads/{branch}"],
+        timeout=20,
+    )
+    if not output:
+        return ""
+
+    return output.split(maxsplit=1)[0]
+
+
+def _current_branch() -> str:
+    return _run_git(["branch", "--show-current"])
+
+
 def _local_tag() -> str:
     try:
         return _normalize_tag(_run_git(["describe", "--tags", "--exact-match", "HEAD"]))
@@ -181,12 +197,18 @@ def check_for_update() -> Optional[UpdateInfo]:
         return None
 
     try:
+        branch = _current_branch()
+        if branch and branch not in UPDATE_BRANCHES:
+            return None
+
         if _has_local_changes():
             return None
 
         local_revision = _local_revision()
         local_tag = _local_tag()
-        remote_revision = _remote_head_revision()
+        remote_revision = (
+            _remote_branch_revision(branch) if branch else _remote_head_revision()
+        )
         latest_tag, latest_tag_revision = _latest_remote_tag()
     except (
         subprocess.CalledProcessError,
@@ -232,7 +254,23 @@ def update_to_latest() -> None:
         raise UpdateError("repository not committed")
 
     try:
-        _run_git(["fetch", "--prune", REMOTE_URL, "HEAD"], timeout=120)
+        branch = _current_branch()
+    except subprocess.CalledProcessError as exc:
+        raise UpdateError(_format_git_error(exc)) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise UpdateError(
+            f"timed out checking the current branch after {exc.timeout} seconds"
+        ) from exc
+    except FileNotFoundError as exc:
+        raise UpdateError("git is not available") from exc
+
+    if branch and branch not in UPDATE_BRANCHES:
+        raise UpdateError(f"automatic updates are disabled on branch '{branch}'")
+
+    fetch_ref = f"refs/heads/{branch}" if branch else "HEAD"
+
+    try:
+        _run_git(["fetch", "--prune", REMOTE_URL, fetch_ref], timeout=120)
     except subprocess.CalledProcessError as exc:
         raise UpdateError(_format_git_error(exc)) from exc
     except subprocess.TimeoutExpired as exc:
