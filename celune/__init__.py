@@ -14,7 +14,7 @@ else:
     __version__ = "3.5.0"
 
 __tagline__ = "\u201cI'm not just a TTS. I'm someone special.\u201d"
-__codename__ = "Guidance\u00b2"
+__codename__ = "Guidance"
 __comment__ = "My vocal prowess can be easily harnessed by beginners."
 
 if hasattr(sys, "ps1"):
