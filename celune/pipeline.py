@@ -168,7 +168,7 @@ def _write_celune_wav_metadata(
         text: The input text given to Celune.
         display_text: The displayed text shown in Celune's UI.
         generation_params: The generation parameters used with this generation.
-        sample_rate: A fixed sample rate (Hz) of ``BASE_SR``.
+        sample_rate: A fixed sample rate (Hz) of ``48000``.
         subtype: A fixed PCM subtype value of ``PCM_24``.
         included_kept_sfx: Whether the included utterance has a preceding sound effect.
 
@@ -378,8 +378,13 @@ def queue_speech(
         bool: ``True`` when the text was queued successfully, otherwise
             ``False``.
     """
+    if engine.is_in_tutorial:
+        engine.log("Speech input is disabled during the tutorial.", "warning")
+        return False
+
     if not engine.model_ready.is_set():
         engine.status_callback("Waiting for model")
+        engine.progress_callback(None, None)
         engine.log("Speak request is waiting for model reload to finish.", "info")
 
     engine.model_ready.wait()
@@ -392,6 +397,7 @@ def queue_speech(
     normalized = None
     if engine.use_normalization:
         engine.status_callback("Normalizing")
+        engine.progress_callback(None, None)
         normalized = engine.normalize(text)
 
     date = datetime.datetime.now()
@@ -424,6 +430,7 @@ def queue_speech(
             )
         )
         engine.status_callback("Generating")
+        engine.progress_callback(None, None)
         return True
     except Exception:
         release_pipeline(engine)
@@ -710,6 +717,7 @@ def generation_worker(engine: "Celune") -> None:
                 }
 
                 chunks = split_text(engine, text)
+                engine.progress_callback(0, max(1, len(chunks)))
                 buffer: list[np.ndarray] = []
                 full_audio: list[np.ndarray] = []
 
@@ -814,6 +822,8 @@ def generation_worker(engine: "Celune") -> None:
                                     engine.status_callback("Speaking")
                                     engine.cur_state = "speaking"
                                     engine.queue_avail_callback()
+
+                        engine.progress_callback(chunk_index + 1, len(chunks))
 
                 generation_time = time.monotonic() - start_time
 
@@ -961,6 +971,7 @@ def generation_worker(engine: "Celune") -> None:
                 engine.cur_state = "error"
                 engine.locked = False
                 engine.playback_done.set()
+                engine.progress_callback(0, 1)
                 engine.error_callback("Celune could not generate the input")
                 break
 
@@ -1101,7 +1112,7 @@ def playback_worker(engine: "Celune") -> None:
                 )
                 engine.stream.start()
                 started = True
-                engine.log(f"[PLAY] started stream at {sr} Hz")
+                engine.log_dev(f"[PLAY] started stream at {sr} Hz")
             except sd.PortAudioError:
                 if not engine.audio_unavailable:
                     engine.log("Celune could not initialize the audio stream.", "error")

@@ -44,6 +44,17 @@ class CeluneTextualUI(CeluneBaseUI, Protocol):
             None: Implementations update their status display.
         """
 
+    def safe_progress(self, progress: float | None, total: float | None = None) -> None:
+        """Update current progress.
+
+        Args:
+            progress: Current progress, or ``None`` for an indeterminate bar.
+            total: Total progress, or ``None`` for an indeterminate bar.
+
+        Returns:
+            None: Implementations update their progress display.
+        """
+
     def error(self, error: str) -> None:
         """Set the UI status to the error message.
 

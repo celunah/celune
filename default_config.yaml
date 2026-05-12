@@ -5,7 +5,7 @@ backend: null
 # clone = clone from Celune references
 # native = use Celune native models
 qwen3_mode: native
-# if enabled, detailed tracebacks will be displayed,
+# if enabled, detailed tracebacks will be displayed, verbose logging messages will appear,
 # and Celune will self-analyze her own voice
 dev: false
 # if enabled, the UI is disabled and only extensions can send inputs

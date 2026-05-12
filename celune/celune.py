@@ -86,6 +86,25 @@ class InputStateCallback(Protocol):
         raise NotImplementedError
 
 
+class ProgressCallback(Protocol):
+    """Callback accepting progress and total values."""
+
+    def __call__(self, progress: Optional[float], total: Optional[float]) -> None:
+        """Handle a progress update emitted by Celune.
+
+        Args:
+            progress: Current progress, or ``None`` for an indeterminate bar.
+            total: Total progress, or ``None`` for an indeterminate bar.
+
+        Returns:
+            None: Implementations update their progress display.
+
+        Raises:
+            NotImplementedError: The protocol placeholder is called directly.
+        """
+        raise NotImplementedError
+
+
 class Celune:
     """The character engine for Celune."""
 
@@ -103,6 +122,7 @@ class Celune:
         queue_avail_callback: Optional[Callable[[], None]] = None,
         voice_changed_callback: Optional[Callable[[str], None]] = None,
         change_input_state_callback: Optional[InputStateCallback] = None,
+        progress_callback: Optional[ProgressCallback] = None,
         dev: bool = False,
     ) -> None:
         """Initialize the Celune engine and runtime state.
@@ -118,6 +138,7 @@ class Celune:
             queue_avail_callback: Callback invoked when audio is ready to play.
             voice_changed_callback: Callback invoked after voice changes.
             change_input_state_callback: Callback used to lock or unlock input.
+            progress_callback: Callback used to update the UI progress bar.
             dev: Whether developer diagnostics are enabled.
             config: Loaded configuration dictionary.
 
@@ -138,6 +159,9 @@ class Celune:
         self.voice_changed_callback = voice_changed_callback or (lambda name: None)
         self.change_input_state_callback: InputStateCallback = (
             change_input_state_callback or self._noop_input_state
+        )
+        self.progress_callback: ProgressCallback = (
+            progress_callback or self._noop_progress
         )
 
         self.config = config
@@ -235,6 +259,7 @@ class Celune:
         self._model_lock = threading.RLock()
 
         self.cur_state = "init"
+        self.is_in_tutorial = False
 
         self.dev = dev
         self.use_normalization = config_bool(
@@ -253,6 +278,10 @@ class Celune:
     @staticmethod
     def _noop_input_state(locked: bool) -> None:
         """Discard an input lock-state callback."""
+
+    @staticmethod
+    def _noop_progress(progress: Optional[float], total: Optional[float]) -> None:
+        """Discard a progress callback."""
 
     @staticmethod
     def _clear_queue(q: queue.Queue) -> None:
@@ -476,6 +505,7 @@ class Celune:
 
         self.log("Celune is reloading, please stand by...")
         self.status_callback("Reloading")
+        self.progress_callback(None, None)
         self.cur_state = "reloading"
 
         readiness_acquired = False
@@ -512,12 +542,14 @@ class Celune:
 
             self.voice_changed_callback(voice)
             self.log(f"Voice {voice} loaded.")
+            self.progress_callback(1, 1)
             if not readiness_acquired:
                 self.status_callback("Idle")
         except Exception as e:
             self.loaded = False
             self.log(f"[RELOAD ERROR] {format_error(e, self.dev)}", "error")
             self.status_callback("Celune could not reload", "error")
+            self.progress_callback(0, 1)
             self.error_callback("Celune could not reload")
 
         finally:
@@ -545,6 +577,7 @@ class Celune:
         hf_logging.set_verbosity_error()
 
         log_runtime_banner(self.log, self.backend.name)
+        self.progress_callback(None, None)
         self.backend.preload_models()
 
         self.log("All Celune voices are available.")
@@ -554,6 +587,7 @@ class Celune:
         except Exception as e:
             self.log("Celune could not load the default model.", "error")
             self.log(format_error(e, self.dev), "error")
+            self.progress_callback(0, 1)
             self.error_callback("Default model failed to load")
             return False
 
@@ -688,13 +722,16 @@ class Celune:
                     self.log, self.backend
                 )
                 self.log("Normalizer loaded.")
+                self.progress_callback(1, 1)
             except Exception as e:
                 self.log(f"[NORMALIZER ERROR] {format_error(e, self.dev)}", "error")
                 self.log("Normalizer failed to load.", "warning")
                 self.log("Normalization will not be available.", "warning")
+                self.progress_callback(0, 1)
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
+        self.progress_callback(None, None)
         self.log(f"Loading normalizer {NORMALIZER_MODEL_ID}...")
 
     def _warmup(self) -> bool:
@@ -705,6 +742,7 @@ class Celune:
         """
         self.log("[WARMUP] Warming up...")
         self.status_callback("Warming up")
+        self.progress_callback(None, None)
         warmup_text = "A"
 
         try:
@@ -726,12 +764,13 @@ class Celune:
 
             warmup_end = time.perf_counter()
             warmup_took = warmup_end - warmup_start
-            self.log(f"[WARMUP] done, took {format_number(warmup_took, 2)} seconds")
+            self.log_dev(f"[WARMUP] done, took {format_number(warmup_took, 2)} seconds")
             return True
 
         except Exception as e:
             self.log(f"[WARMUP ERROR] {format_error(e, self.dev)}", "error")
             self.cur_state = "error"
+            self.progress_callback(0, 1)
             self.error_callback("Celune could not warm up")
             return False
 

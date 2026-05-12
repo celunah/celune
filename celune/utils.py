@@ -4,6 +4,8 @@
 import re
 import sys
 import math
+import time
+import random
 import inspect
 import datetime
 import traceback
@@ -11,6 +13,7 @@ import subprocess
 import multiprocessing
 from pathlib import Path
 from typing import Union, Callable, Optional, Literal, TypedDict
+from collections.abc import Iterator
 
 from celune.constants import REFERENCE_NEW_MOON
 
@@ -496,7 +499,9 @@ def replace_ipa(text: str, strict: bool = True) -> tuple[str, int]:
     """Return an English approximation of the input IPA.
 
     Args:
-        ipa: The IPA to approximate.
+        text: The IPA to approximate.
+        strict: Whether the input text must be delimited by IPA brackets (slashes or square brackets)
+            to be treated as IPA or not.
 
     Returns:
         tuple[str, int]: The English approximation of the input IPA,
@@ -549,3 +554,27 @@ def custom_assert(condition: bool, exception: Optional[Exception]) -> None:
         raise TypeError(
             f"expected an instance of Exception or None, got {type(exception).__name__}"
         )
+
+
+def typing_animation(text: str) -> Iterator[str]:
+    """Iterate over an input string in a typing-like way.
+
+    Args:
+        text: The text to iterate over.
+
+    Returns:
+        Iterator[str]: An iterator that yields characters in a typing-like way.
+    """
+
+    for char in text:
+        if char in ".!?":
+            rand_delay = random.uniform(0.25, 0.45)
+        elif char in ".;:":
+            rand_delay = random.uniform(0.12, 0.22)
+        elif char == " ":
+            rand_delay = random.uniform(0.02, 0.05)
+        else:
+            rand_delay = 0.06 + random.uniform(0.0, 0.1)
+
+        time.sleep(0.08 + rand_delay)
+        yield char
