@@ -3,9 +3,10 @@
 
 from __future__ import annotations
 
-import wave
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import soundfile as sf
 
 from ..exceptions import InvalidExtensionError
 from ..utils import format_error
@@ -23,40 +24,51 @@ def tutorial(ui: CeluneUI) -> None:
     Returns:
         None: This function sends Celune tutorial commands automatically.
     """
-    assets = Path(__file__).resolve().parents[1] / "assets"
-    clips = (
-        (assets / "tutorial1.wav", None),
-        (assets / "tutorial2.wav", lambda: ui.pulse_border("#input")),
-        (assets / "tutorial3.wav", lambda: ui.pulse_border("#style")),
-        (
-            assets / "tutorial4.wav",
-            lambda: ui.type_and_send("/help", process_commands=True),
-        ),
-    )
+    try:
+        assets = Path(__file__).resolve().parents[1] / "assets"
+        if not assets.exists():
+            ui.safe_log("No tutorial assets found.", "warning")
+            return
 
-    def wav_duration(pth: Path) -> float:
-        """Return the duration of a WAV file in seconds."""
-        with wave.open(str(pth), "rb") as wav_file:
-            return wav_file.getnframes() / wav_file.getframerate()
+        clips = (
+            (assets / "tutorial1.wav", None),
+            (assets / "tutorial2.wav", lambda: ui.pulse_border("#input")),
+            (assets / "tutorial3.wav", lambda: ui.pulse_border("#style")),
+            (
+                assets / "tutorial4.wav",
+                lambda: ui.type_and_send("/help", process_commands=True),
+            ),
+        )
 
-    def play_tutorial_clip(pth: Path) -> None:
-        """Play a tutorial clip and discard the playback result."""
-        ui.celune.play(str(pth))
+        def wav_duration(pth: Path) -> float:
+            """Return the duration of a WAV file in seconds."""
+            if not pth.exists():
+                raise FileNotFoundError(f"tutorial clip not found: {pth}")
 
-    ui.begin_tutorial()
-    elapsed = 0.0
-    gap = 0.15
+            info = sf.info(str(pth))
+            return info.frames / info.samplerate
 
-    for path, action in clips:
-        duration = wav_duration(path)
-        ui.tutorial_after(elapsed, lambda pth=path: play_tutorial_clip(pth))
+        def play_tutorial_clip(pth: Path) -> None:
+            """Play a tutorial clip and discard the playback result."""
+            ui.celune.play(str(pth))
 
-        if action is not None:
-            ui.tutorial_after(elapsed, action)
+        ui.begin_tutorial()
+        elapsed = 0.0
+        gap = 0.15
 
-        elapsed += duration + gap
+        for path, action in clips:
+            duration = wav_duration(path)
+            ui.tutorial_after(elapsed, lambda pth=path: play_tutorial_clip(pth))
 
-    ui.tutorial_after(elapsed, ui.finish_tutorial)
+            if action is not None:
+                ui.tutorial_after(elapsed, action)
+
+            elapsed += duration + gap
+
+        ui.tutorial_after(elapsed, ui.finish_tutorial)
+    except Exception as e:
+        ui.safe_log(f"Tutorial failed: {format_error(e, ui.celune.dev)}", "warning")
+        ui.cancel_tutorial(stop_audio=True)
 
 
 def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
