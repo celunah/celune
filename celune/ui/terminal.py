@@ -110,6 +110,7 @@ class LogRedirect:
         self._buffer = ""
         self.underlying_stdout = stdout
         self.underlying_stderr = stderr
+        self.filter_messages = []  # these messages will be filtered out by the logger
 
     def write(self, text: str) -> None:
         """Write text to the logger.
@@ -123,7 +124,7 @@ class LogRedirect:
         if not text:
             return
 
-        if "is deprecated" in text:
+        if text in self.filter_messages:
             return
 
         # strip any incoming ANSI, but keep TTY specific input

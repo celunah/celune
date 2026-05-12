@@ -1,9 +1,9 @@
+#!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """Celune automatic setup utility.
 
 No, this is not a setuptools remnant, this is Celune's bootstrapper.
 """
-#!/usr/bin/env python3
 
 import sys
 import os

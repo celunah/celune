@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import wave
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..exceptions import InvalidExtensionError
@@ -10,6 +12,51 @@ from ..utils import format_error
 
 if TYPE_CHECKING:
     from .app import CeluneUI
+
+
+def tutorial(ui: CeluneUI) -> None:
+    """Run actions related to Celune's tutorial.
+
+    Args:
+        ui: The instance of CeluneUI that the tutorial will interact with.
+
+    Returns:
+        None: This function sends Celune tutorial commands automatically.
+    """
+    assets = Path(__file__).resolve().parents[1] / "assets"
+    clips = (
+        (assets / "tutorial1.wav", None),
+        (assets / "tutorial2.wav", lambda: ui.pulse_border("#input")),
+        (assets / "tutorial3.wav", lambda: ui.pulse_border("#style")),
+        (
+            assets / "tutorial4.wav",
+            lambda: ui.type_and_send("/help", process_commands=True),
+        ),
+    )
+
+    def wav_duration(pth: Path) -> float:
+        """Return the duration of a WAV file in seconds."""
+        with wave.open(str(pth), "rb") as wav_file:
+            return wav_file.getnframes() / wav_file.getframerate()
+
+    def play_tutorial_clip(pth: Path) -> None:
+        """Play a tutorial clip and discard the playback result."""
+        ui.celune.play(str(pth))
+
+    ui.begin_tutorial()
+    elapsed = 0.0
+    gap = 0.15
+
+    for path, action in clips:
+        duration = wav_duration(path)
+        ui.tutorial_after(elapsed, lambda pth=path: play_tutorial_clip(pth))
+
+        if action is not None:
+            ui.tutorial_after(elapsed, action)
+
+        elapsed += duration + gap
+
+    ui.tutorial_after(elapsed, ui.finish_tutorial)
 
 
 def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
@@ -56,6 +103,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(
             "/seed [seed|random] - Set or clear the seed for speech outputs (VoxCPM2 only)."
         )
+        ui.safe_log("/tutorial - Run Celune's tutorial.")
         ui.safe_log("/stop - Terminate ongoing speech.")
         ui.safe_log("/exit - Exit Celune.")
         ui.safe_log("/help - Display this help message.")
@@ -208,6 +256,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.celune.backend.current_seed = value
         ui.celune.backend.random_seed = False
         ui.safe_log(f"Seed set to {value}.")
+        return
+    if command == "tutorial":
+        tutorial(ui)
         return
     if command == "stop":
         if not ui.celune.force_stop_speech():
