@@ -569,7 +569,7 @@ def typing_animation(text: str) -> Iterator[str]:
     for char in text:
         if char in ".!?":
             rand_delay = random.uniform(0.25, 0.45)
-        elif char in ".;:":
+        elif char in ",;:":
             rand_delay = random.uniform(0.12, 0.22)
         elif char == " ":
             rand_delay = random.uniform(0.02, 0.05)
