@@ -11,12 +11,12 @@ import soundfile as sf
 from scipy.signal import resample_poly
 from pedalboard import Pedalboard, Reverb
 
-from celune.constants import UtteranceLoudnessTier
-from celune.exceptions import AudioMismatchError, BadAudioError
+from .constants import UtteranceLoudnessTier, BASE_SR
+from .exceptions import AudioMismatchError, BadAudioError
 
 
 def _resample_audio(
-    audio: npt.NDArray[np.float32], source_sr: int, target_sr: int = 48000
+    audio: npt.NDArray[np.float32], source_sr: int, target_sr: int = BASE_SR
 ) -> npt.NDArray[np.float32]:
     """Resample the given audio to the given sample rate.
 
@@ -89,7 +89,7 @@ def _to_48khz(
     Returns:
         npt.NDArray[np.float32]: The audio resampled to 48 kHz stereo.
     """
-    return _resample_audio(audio, source_sr, 48000)
+    return _resample_audio(audio, source_sr, BASE_SR)
 
 
 def readiness_signal() -> npt.NDArray[np.float32]:
@@ -98,7 +98,7 @@ def readiness_signal() -> npt.NDArray[np.float32]:
 
     # we did not find the Celune chord, return silence instead
     if not readiness_wav.is_file():
-        return _to_48khz(np.zeros((48000, 2), dtype=np.float32), 48000)
+        return _to_48khz(np.zeros((BASE_SR, 2), dtype=np.float32), BASE_SR)
 
     with as_file(readiness_wav) as path:
         audio, sr = sf.read(path, dtype="float32")
@@ -219,7 +219,7 @@ class StreamingPedalboardReverb:
         self.reverb.dry_level = 1.0
 
     def process(
-        self, audio: npt.NDArray[np.float32], sr: int = 48000
+        self, audio: npt.NDArray[np.float32], sr: int = BASE_SR
     ) -> npt.NDArray[np.float32]:
         """Apply reverb effect.
 
@@ -253,7 +253,7 @@ class StreamingPedalboardReverb:
         return np.ascontiguousarray(out.T.astype(np.float32, copy=False))
 
     def flush(
-        self, sr: int = 48000, threshold: float = 1e-4, max_secs: float = 3.0
+        self, sr: int = BASE_SR, threshold: float = 1e-4, max_secs: float = 3.0
     ) -> npt.NDArray[np.float32]:
         """Extract the remaining reverb by pushing silence.
 

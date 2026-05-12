@@ -22,6 +22,7 @@ from huggingface_hub.constants import HF_HUB_CACHE
 from . import get_version
 from .base import CeluneBackend
 from ..exceptions import BackendError
+from ..constants import BASE_SR
 
 
 class VoxCPM2(CeluneBackend):
@@ -290,7 +291,7 @@ class VoxCPM2(CeluneBackend):
                     batch.append(chunk)
                     if len(batch) >= chunks_per_batch:
                         if pending_audio is not None and pending_timing is not None:
-                            yield pending_audio, 48000, pending_timing
+                            yield pending_audio, BASE_SR, pending_timing
 
                         audio = np.concatenate(batch)
                         pending_timing = {
@@ -305,7 +306,7 @@ class VoxCPM2(CeluneBackend):
 
                 if batch:  # push remaining
                     if pending_audio is not None and pending_timing is not None:
-                        yield pending_audio, 48000, pending_timing
+                        yield pending_audio, BASE_SR, pending_timing
 
                     audio = np.concatenate(batch)
                     timing = {
@@ -314,10 +315,10 @@ class VoxCPM2(CeluneBackend):
                         "chunk_steps": len(batch),
                         "is_final": True,
                     }
-                    yield audio, 48000, timing
+                    yield audio, BASE_SR, timing
                 elif pending_audio is not None and pending_timing is not None:
                     pending_timing["is_final"] = True
-                    yield pending_audio, 48000, pending_timing
+                    yield pending_audio, BASE_SR, pending_timing
             finally:
                 if backend_stream is not None and hasattr(backend_stream, "close"):
                     with contextlib.suppress(Exception):

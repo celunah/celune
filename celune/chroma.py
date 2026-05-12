@@ -15,6 +15,7 @@ from openrgb import OpenRGBClient
 from openrgb.utils import RGBColor
 
 from .dsp import _split
+from .constants import BASE_SR
 from .utils import to_rgb, lunar_info, range_interpolated
 
 type RGBTuple = tuple[int, ...]
@@ -196,13 +197,13 @@ class AudioRGBGlow:
         if not self.start():
             return
 
-        chunks = _split(audio, 48000, 8)
+        chunks = _split(audio, BASE_SR, 8)
         now = time.monotonic()
         offset = 0.0
 
         with self._lock:
             for chunk in chunks:
-                duration = chunk.shape[0] / 48000.0
+                duration = chunk.shape[0] / float(BASE_SR)
                 self._scheduled_chunks.append((now + offset, chunk))
                 offset += duration
 
