@@ -20,10 +20,18 @@ import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 
-from .dsp import _resample_audio, _soften, _split, _to_48khz, is_silent_utterance
+from .dsp import (
+    _resample_audio,
+    _soften,
+    _split,
+    _to_48khz,
+    is_silent_utterance,
+    readiness_signal,
+)
 from .exceptions import NotAvailableError
 from .utils import format_number, run_async, format_error
 from .analysis import analyze_voice_audio
+from .constants import BASE_SR
 from . import __version__
 
 if TYPE_CHECKING:
@@ -160,7 +168,7 @@ def _write_celune_wav_metadata(
         text: The input text given to Celune.
         display_text: The displayed text shown in Celune's UI.
         generation_params: The generation parameters used with this generation.
-        sample_rate: A fixed sample rate (Hz) of ``48000``.
+        sample_rate: A fixed sample rate (Hz) of ``BASE_SR``.
         subtype: A fixed PCM subtype value of ``PCM_24``.
         included_kept_sfx: Whether the included utterance has a preceding sound effect.
 
@@ -461,8 +469,8 @@ def queue_sfx_audio(
 
         engine.cur_state = "speaking"
         # push the smallest possible chunks for responsive stopping
-        for chunk in _split(audio, 48000, 1):
-            engine.audio_queue.put((chunk, 48000, None))
+        for chunk in _split(audio, BASE_SR, 1):
+            engine.audio_queue.put((chunk, BASE_SR, None))
         engine.audio_queue.put(engine.utterance_done)
 
         engine.status_callback(f"Playing {label}")
@@ -620,6 +628,23 @@ def split_text(engine: "Celune", text: str) -> list[str]:
     return chunks
 
 
+def play_readiness_signal(engine: "Celune") -> bool:
+    """Queue a readiness signal to be played.
+
+    Args:
+        engine: The instance of Celune to do this with.
+
+    Returns:
+        bool: Whether the readiness signal was processed successfully.
+    """
+    if acquire_pipeline(engine, "play readiness signal"):
+        engine.cur_state = "speaking"
+        engine.audio_queue.put((readiness_signal(), BASE_SR, None))
+        engine.audio_queue.put(engine.utterance_done)
+        return True
+    return False
+
+
 def generation_worker(engine: "Celune") -> None:
     """Generate audio tokens and send them to the audio pipeline.
 
@@ -737,7 +762,7 @@ def generation_worker(engine: "Celune") -> None:
                             if engine.speed != 1.0 and engine.can_use_rubberband:
                                 try:
                                     audio_chunk = rb.time_stretch(
-                                        audio_chunk, 48000, engine.speed
+                                        audio_chunk, BASE_SR, engine.speed
                                     )
                                 except RuntimeError:
                                     engine.log(
@@ -750,11 +775,13 @@ def generation_worker(engine: "Celune") -> None:
                                         audio_chunk, dtype=np.float32
                                     )
                             if engine.reverb.strength > 0.0:
-                                audio_chunk = engine.reverb.process(audio_chunk, 48000)
+                                audio_chunk = engine.reverb.process(
+                                    audio_chunk, BASE_SR
+                                )
                                 audio_chunk = np.asarray(audio_chunk, dtype=np.float32)
 
                             if is_first_chunk:
-                                audio_chunk = _soften(audio_chunk, 48000, end=False)
+                                audio_chunk = _soften(audio_chunk, BASE_SR, end=False)
                                 is_first_chunk = False
 
                             if engine.exit_requested:
@@ -763,7 +790,7 @@ def generation_worker(engine: "Celune") -> None:
                             buffer.append(audio_chunk)
                             if save_output:
                                 full_audio.append(audio_chunk)
-                            chunk_dur = len(audio_chunk) / 48000
+                            chunk_dur = len(audio_chunk) / BASE_SR
                             speech_len += chunk_dur
                             buffered_speech_len += chunk_dur
 
@@ -773,7 +800,7 @@ def generation_worker(engine: "Celune") -> None:
                                 engine.audio_queue.put(
                                     (
                                         queued_audio,
-                                        48000,
+                                        BASE_SR,
                                         speech_timing if not pushed_audio else None,
                                     )
                                 )
@@ -814,7 +841,7 @@ def generation_worker(engine: "Celune") -> None:
                     engine.audio_queue.put(
                         (
                             queued_audio,
-                            48000,
+                            BASE_SR,
                             speech_timing if not pushed_audio else None,
                         )
                     )
@@ -835,7 +862,7 @@ def generation_worker(engine: "Celune") -> None:
                     if engine.reverb.strength > 0.0:
                         tail = engine.reverb.flush()
                         if len(tail) > 0:
-                            engine.audio_queue.put((tail, 48000, None))
+                            engine.audio_queue.put((tail, BASE_SR, None))
                             if stream_queue is not None:
                                 stream_queue.put(tail.copy())
                             buffer.append(tail)
@@ -886,7 +913,7 @@ def generation_worker(engine: "Celune") -> None:
                             saved_path = (
                                 f"outputs/celune_speech_{timestamp}_{first_words}.wav"
                             )
-                            sample_rate = 48000
+                            sample_rate = BASE_SR
                             subtype = "PCM_24"
                             sf.write(
                                 saved_path,
@@ -1002,7 +1029,7 @@ def playback_worker(engine: "Celune") -> None:
             )
 
             if more_pending:
-                silence = np.zeros((48000, 2), dtype=np.float32)
+                silence = np.zeros((BASE_SR, 2), dtype=np.float32)
                 if engine.stream is not None and not engine.exit_requested:
                     engine.stream.write(silence)
             else:
@@ -1037,7 +1064,7 @@ def playback_worker(engine: "Celune") -> None:
                         run_async(
                             analyze_voice_audio,
                             analysis_audio,
-                            48000,
+                            BASE_SR,
                             saved.name,
                             saved.parent,
                             saved.stem,

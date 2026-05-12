@@ -23,7 +23,7 @@ from .backends import CeluneBackend, resolve_backend
 from .backends.qwen3 import Qwen3
 from .config import config_bool, config_value
 from .constants import NORMALIZER_MODEL_ID, PipelineStates
-from .dsp import StreamingPedalboardReverb, readiness_signal
+from .dsp import StreamingPedalboardReverb
 from .utils import format_number, format_error
 from .chroma import AudioRGBGlow
 from .exceptions import NotAvailableError, WarmupError, BackendError
@@ -44,6 +44,7 @@ from .pipeline import (
     release_pipeline,
     say as say_pipeline,
     split_text,
+    play_readiness_signal,
 )
 from .runtime import log_runtime_banner, validate_runtime
 
@@ -504,11 +505,8 @@ class Celune:
             # Play the readiness signal on voice change success. This is a "best effort"
             # because a previous readiness signal may still be playing in configurations
             # where Celune does not have to reload the model fully.
-            if acquire_pipeline(self, "play readiness signal"):
+            if play_readiness_signal(self):
                 readiness_acquired = True
-                self.cur_state = "speaking"
-                self.audio_queue.put((readiness_signal(), 48000, None))
-                self.audio_queue.put(self.utterance_done)
             else:
                 self.log_dev("Could not play the readiness signal.", "warning")
 
@@ -598,11 +596,7 @@ class Celune:
         self._start_configured_api()
 
         # notify readiness
-        if acquire_pipeline(self, "play readiness signal"):
-            self.cur_state = "speaking"
-            self.audio_queue.put((readiness_signal(), 48000, None))
-            self.audio_queue.put(self.utterance_done)
-        else:
+        if not play_readiness_signal(self):
             self.log_dev("Could not play the readiness signal.", "warning")
 
         return True
