@@ -58,10 +58,14 @@ def tutorial(ui: CeluneUI) -> None:
 
         for path, action in clips:
             duration = wav_duration(path)
-            ui.tutorial_after(elapsed, lambda pth=path: play_tutorial_clip(pth))
 
             if action is not None:
                 ui.tutorial_after(elapsed, action)
+                ui.tutorial_after(
+                    elapsed + gap, lambda pth=path: play_tutorial_clip(pth)
+                )
+            else:
+                ui.tutorial_after(elapsed, lambda pth=path: play_tutorial_clip(pth))
 
             elapsed += duration + gap
 
