@@ -10,7 +10,7 @@ import threading
 import itertools
 import contextlib
 from types import FrameType
-from typing import cast, Optional, Callable
+from typing import cast, Optional, Callable, Union
 from collections.abc import Iterator
 
 import yaml
@@ -398,7 +398,7 @@ class CeluneUI(App):
         target_brightness = max(0.0, color.brightness * 0.6)
         return CeluneUI._with_brightness(color, target_brightness)
 
-    def pulse_border(self, target: str | Widget) -> None:
+    def pulse_border(self, target: Union[str, Widget]) -> None:
         """Softly pulse a widget border darker and back.
 
         Args:
