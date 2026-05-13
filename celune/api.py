@@ -13,6 +13,7 @@ from hmac import compare_digest
 from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, Union
 
 import numpy as np
+import numpy.typing as npt
 import soundfile as sf
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -223,7 +224,7 @@ def wav_header() -> bytes:
     )
 
 
-def float32_to_pcm24(audio: np.ndarray) -> bytes:
+def float32_to_pcm24(audio: npt.NDArray[np.float32]) -> bytes:
     """Convert normalized float32 audio to signed 24-bit little-endian PCM."""
     audio = np.asarray(audio, dtype=np.float32)
 
