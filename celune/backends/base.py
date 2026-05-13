@@ -135,9 +135,10 @@ class CeluneBackend(ABC):
             Optional[int]: Maximum generated codec/token steps for one text chunk,
                 or ``None`` when the backend does not expose a stable limit.
         """
-        return None
+        del text  # mark this unused
 
-    def generation_progress_steps(self, timing: Optional[dict]) -> int:
+    @staticmethod
+    def generation_progress_steps(timing: Optional[dict]) -> int:
         """Return how many generation steps a streamed chunk represents.
 
         Args:

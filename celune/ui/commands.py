@@ -41,7 +41,7 @@ def tutorial(ui: CeluneUI) -> None:
     )
 
     ui.begin_tutorial()
-    tutorial_token = ui._tutorial_token
+    tutorial_token = ui.tutorial_token
 
     def prepare_and_schedule() -> None:
         """Prepare tutorial clip timings without blocking Textual."""
@@ -61,9 +61,9 @@ def tutorial(ui: CeluneUI) -> None:
                 """Queue tutorial audio on a background thread."""
                 try:
                     ui.celune.play(str(pth))
-                except Exception as e:
+                except Exception as exc:
                     ui.safe_log(
-                        f"Tutorial playback failed: {format_error(e, ui.celune.dev)}",
+                        f"Tutorial playback failed: {format_error(exc, ui.celune.dev)}",
                         "warning",
                     )
                     ui.call_from_thread(ui.cancel_tutorial, True)
@@ -84,7 +84,7 @@ def tutorial(ui: CeluneUI) -> None:
 
         def schedule() -> None:
             """Schedule prepared tutorial actions on the UI thread."""
-            if tutorial_token != ui._tutorial_token or not ui._tutorial_active:
+            if tutorial_token != ui.tutorial_token or not ui.tutorial_active:
                 return
 
             elapsed = 0.0
