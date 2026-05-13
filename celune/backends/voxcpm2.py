@@ -30,6 +30,38 @@ class VoxCPM2(CeluneBackend):
 
     name: str = "voxcpm2"
     chunk_rate: float = 6.25
+    supported_languages: tuple[str, ...] = (
+        "ar",
+        "my",
+        "zh-cn",
+        "da",
+        "nl",
+        "en",
+        "fi",
+        "fr",
+        "de",
+        "el",
+        "he",
+        "hi",
+        "id",
+        "it",
+        "ja",
+        "km",
+        "ko",
+        "lo",
+        "ms",
+        "no",
+        "pl",
+        "pt",
+        "ru",
+        "es",
+        "sw",
+        "sv",
+        "tl",
+        "th",
+        "tr",
+        "vi",
+    )
     voice_models: dict[str, str] = {
         "balanced": "openbmb/VoxCPM2",
         "calm": "openbmb/VoxCPM2",

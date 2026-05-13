@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Union, Callable, Optional, Literal, TypedDict
 from collections.abc import Iterator
 
+import langdetect
+
 from celune.constants import REFERENCE_NEW_MOON
 
 
@@ -24,6 +26,15 @@ class CallerInfo(TypedDict):
     function: str
     filename: str
     line: int
+
+
+class LanguageResult(TypedDict):
+    """Language detection metadata type annotation."""
+
+    language: str
+    languages: list[str]
+    probabilities: dict[str, float]
+    supported: bool
 
 
 def get_revision() -> str:
@@ -578,3 +589,101 @@ def typing_animation(text: str) -> Iterator[str]:
 
         time.sleep(0.08 + rand_delay)
         yield char
+
+
+def detect_language(text: str, supported: list[str]) -> LanguageResult:
+    """Detect possible languages in input text and report if it is in the supported
+        language list.
+
+    Args:
+        text: The text to detect language of.
+        supported: A list of supported languages to check against.
+
+    Returns:
+        LanguageResult: The language detection result metadata object.
+    """
+
+    try:
+        main_lang = langdetect.detect(text)
+        possible_langs = langdetect.detect_langs(text)
+        probabilities = {}
+
+        for lang in possible_langs:
+            probabilities[lang.lang] = lang.prob
+
+        result: LanguageResult = {
+            "language": main_lang,
+            "languages": list(probabilities.keys()),
+            "supported": main_lang in supported,
+            "probabilities": probabilities,
+        }
+
+        return result
+    except langdetect.LangDetectException:
+        result: LanguageResult = {
+            "language": "en",
+            "languages": ["en"],
+            "supported": "en" in supported,
+            "probabilities": {"en": 1.0},
+        }
+
+        return result
+
+
+def is_april_fools() -> bool:
+    """Is today April Fools?
+
+    Returns:
+        bool: Whether today is April Fools.
+    """
+    now = datetime.datetime.now()
+    return now.month == 4 and now.day == 1
+
+
+def is_celune_day() -> bool:
+    """Is today Celune Day? (June 2nd)
+
+    Returns:
+        bool: Whether today is Celune Day.
+    """
+    now = datetime.datetime.now()
+    return now.month == 6 and now.day == 2
+
+
+def rng_replace(
+    text: str, targets: list[str], replacements: list[str], rate: float = 0.5
+) -> str:
+    """Replace text with given replacements according to a set probability.
+
+    Args:
+        text: The input string.
+        targets: A list of words/phrases to search for.
+        replacements: A list of potential replacement strings.
+        rate: The random probability (0.0 to 1.0) at which text will be replaced.
+
+    Returns:
+        str: The string with randomized, case-preserved replacements.
+    """
+    if not targets or not replacements:
+        return text
+
+    pattern_str = r"\b(" + "|".join(re.escape(t) for t in targets) + r")\b"
+    pattern = re.compile(pattern_str, re.IGNORECASE)
+
+    def repl(match: re.Match) -> str:
+        source = match.group(0)
+
+        if random.random() >= rate:
+            return source
+
+        target = random.choice(replacements)
+
+        if source.isupper():
+            return target.upper()
+
+        if source[:1].isupper():
+            return target[:1].upper() + target[1:]
+
+        return target.lower()
+
+    return pattern.sub(repl, text)

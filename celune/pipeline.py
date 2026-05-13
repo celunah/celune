@@ -19,6 +19,7 @@ import numpy as np
 import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
+from iso639 import Lang
 
 from .dsp import (
     _resample_audio,
@@ -29,7 +30,14 @@ from .dsp import (
     readiness_signal,
 )
 from .exceptions import NotAvailableError
-from .utils import format_number, run_async, format_error
+from .utils import (
+    format_number,
+    run_async,
+    format_error,
+    detect_language,
+    is_april_fools,
+    rng_replace,
+)
 from .analysis import analyze_voice_audio
 from .constants import BASE_SR
 from . import __version__
@@ -394,21 +402,32 @@ def queue_speech(
         engine.error_callback("Celune is not currently ready")
         return False
 
+    language_meta = detect_language(text, list(engine.backend.supported_languages))
+    if not language_meta["supported"]:
+        # "zh-cn" has to be clipped to just "zh" to be a valid language code
+        language = Lang(language_meta["language"][:2]).name
+
+        engine.log(
+            f"Received unsupported input in the following language: {language}",
+            "warning",
+        )
+        engine.log("Celune may not say the input properly.", "warning")
+
     normalized = None
     if engine.use_normalization:
         engine.status_callback("Normalizing")
         engine.progress_callback(None, None)
         normalized = engine.normalize(text)
 
-    date = datetime.datetime.now()
-    if (
-        date.month == 4
-        and date.day == 1
-        and os.getenv("CELUNE_DISABLE_APRIL_FOOLS")
-        not in {"1", "true", "on", "yes", "enabled"}
-    ):
+    if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
+        "1",
+        "true",
+        "on",
+        "yes",
+        "enabled",
+    }:
         engine.log("We are about to do a funny!")
-        text = text.replace("celune", "celine").replace("Celune", "Celine")
+        text = rng_replace(text, targets=["celune"], replacements=["celine"])
 
     if not acquire_pipeline(engine, "speak"):
         return False

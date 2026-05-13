@@ -57,6 +57,8 @@ dependencies = [
     # Others
     "psutil",
     "pyyaml",
+    "langdetect",
+    "iso639-lang",
 ]
 
 [project.urls]

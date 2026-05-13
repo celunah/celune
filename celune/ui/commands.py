@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,21 +25,26 @@ def tutorial(ui: CeluneUI) -> None:
     Returns:
         None: This function sends Celune tutorial commands automatically.
     """
-    try:
-        assets = Path(__file__).resolve().parents[1] / "assets"
-        if not assets.exists():
-            ui.safe_log("No tutorial assets found.", "warning")
-            return
+    assets = Path(__file__).resolve().parents[1] / "assets"
+    if not assets.exists():
+        ui.safe_log("No tutorial assets found.", "warning")
+        return
 
-        clips = (
-            (assets / "tutorial1.wav", None),
-            (assets / "tutorial2.wav", lambda: ui.pulse_border("#input")),
-            (assets / "tutorial3.wav", lambda: ui.pulse_border("#style")),
-            (
-                assets / "tutorial4.wav",
-                lambda: ui.type_and_send("/help", process_commands=True),
-            ),
-        )
+    clips = (
+        (assets / "tutorial1.wav", None),
+        (assets / "tutorial2.wav", lambda: ui.pulse_border("#input")),
+        (assets / "tutorial3.wav", lambda: ui.pulse_border("#style")),
+        (
+            assets / "tutorial4.wav",
+            lambda: ui.type_and_send("/help", process_commands=True),
+        ),
+    )
+
+    ui.begin_tutorial()
+    tutorial_token = ui._tutorial_token
+
+    def prepare_and_schedule() -> None:
+        """Prepare tutorial clip timings without blocking Textual."""
 
         def wav_duration(pth: Path) -> float:
             """Return the duration of a WAV file in seconds."""
@@ -49,26 +55,54 @@ def tutorial(ui: CeluneUI) -> None:
             return info.frames / info.samplerate
 
         def play_tutorial_clip(pth: Path) -> None:
-            """Play a tutorial clip and discard the playback result."""
-            ui.celune.play(str(pth))
+            """Play a tutorial clip without blocking the Textual message loop."""
 
-        ui.begin_tutorial()
-        elapsed = 0.0
-        gap = 0.15
+            def worker() -> None:
+                """Queue tutorial audio on a background thread."""
+                try:
+                    ui.celune.play(str(pth))
+                except Exception as e:
+                    ui.safe_log(
+                        f"Tutorial playback failed: {format_error(e, ui.celune.dev)}",
+                        "warning",
+                    )
+                    ui.call_from_thread(ui.cancel_tutorial, True)
 
-        for path, action in clips:
-            duration = wav_duration(path)
-            ui.tutorial_after(elapsed, lambda pth=path: play_tutorial_clip(pth))
+            threading.Thread(target=worker, daemon=True).start()
 
-            if action is not None:
-                ui.tutorial_after(elapsed, action)
+        try:
+            clip_durations = tuple(
+                (path, action, wav_duration(path)) for path, action in clips
+            )
+        except Exception as e:
+            ui.safe_log(
+                f"Tutorial failed: {format_error(e, ui.celune.dev)}",
+                "warning",
+            )
+            ui.call_from_thread(ui.cancel_tutorial, True)
+            return
 
-            elapsed += duration + gap
+        def schedule() -> None:
+            """Schedule prepared tutorial actions on the UI thread."""
+            if tutorial_token != ui._tutorial_token or not ui._tutorial_active:
+                return
 
-        ui.tutorial_after(elapsed, ui.finish_tutorial)
-    except Exception as e:
-        ui.safe_log(f"Tutorial failed: {format_error(e, ui.celune.dev)}", "warning")
-        ui.cancel_tutorial(stop_audio=True)
+            elapsed = 0.0
+            gap = 0.15
+
+            for path, action, duration in clip_durations:
+                ui.tutorial_after(elapsed, lambda pth=path: play_tutorial_clip(pth))
+
+                if action is not None:
+                    ui.tutorial_after(elapsed, action)
+
+                elapsed += duration + gap
+
+            ui.tutorial_after(elapsed, ui.finish_tutorial)
+
+        ui.call_from_thread(schedule)
+
+    threading.Thread(target=prepare_and_schedule, daemon=True).start()
 
 
 def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:

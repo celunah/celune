@@ -16,7 +16,7 @@ from openrgb.utils import RGBColor
 
 from .dsp import _split
 from .constants import BASE_SR
-from .utils import to_rgb, lunar_info, range_interpolated
+from .utils import to_rgb, lunar_info, range_interpolated, is_celune_day
 
 type RGBTuple = tuple[int, ...]
 
@@ -68,7 +68,7 @@ class AudioRGBGlow:
 
         # Celune glows much brighter on Celune Day, else she'll glow according to the lunar phase.
         current_date = datetime.datetime.now()
-        if current_date.day == 2 and current_date.month == 6:
+        if is_celune_day():
             self.glow_multiplier *= 3.0
         else:
             _, illumination, _ = lunar_info(current_date)
