@@ -1094,3 +1094,21 @@ class CeluneUI(App):
             self.call_later(self._graceful_exit)
         else:
             self.call_from_thread(self._graceful_exit)
+
+    @property
+    def tutorial_token(self) -> int:
+        """Property for accessing the tutorial token held by Celune.
+
+        Returns:
+            int: The tutorial token currently in use by Celune.
+        """
+        return self._tutorial_token
+
+    @property
+    def tutorial_active(self) -> bool:
+        """Property for accessing whether the tutorial is active or not.
+
+        Returns:
+            bool: Celune's current tutorial flag.
+        """
+        return self._tutorial_active
