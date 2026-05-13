@@ -157,8 +157,7 @@ def read_celune_wav_metadata(path: str) -> Optional[dict[str, Any]]:
     return metadata
 
 
-def _write_celune_wav_metadata(
-    path: str,
+def _celune_metadata_payload(
     engine: "Celune",
     *,
     text: str,
@@ -167,23 +166,22 @@ def _write_celune_wav_metadata(
     sample_rate: int,
     subtype: str,
     included_kept_sfx: bool,
-) -> None:
-    """Store Celune generation metadata in a custom CLMT WAV chunk.
+) -> dict[str, object]:
+    """Build the Celune generation metadata payload.
 
     Args:
-        path: The path to the WAV file.
         engine: The instance of Celune to use data from.
         text: The input text given to Celune.
         display_text: The displayed text shown in Celune's UI.
         generation_params: The generation parameters used with this generation.
-        sample_rate: A fixed sample rate (Hz) of ``48000``.
-        subtype: A fixed PCM subtype value of ``PCM_24``.
+        sample_rate: The saved sample rate in Hz.
+        subtype: The saved audio subtype.
         included_kept_sfx: Whether the included utterance has a preceding sound effect.
 
     Returns:
-        None: This value injects a Celune metadata (CLMT) chunk to the target WAV file.
+        dict[str, object]: JSON-serializable metadata.
     """
-    payload = {
+    return {
         "format": "celune_metadata",
         "format_version": 1,
         "celune_version": __version__,
@@ -205,8 +203,84 @@ def _write_celune_wav_metadata(
         "included_kept_sfx": included_kept_sfx,
         "generation": generation_params,
     }
+
+
+def _write_celune_wav_metadata(
+    path: str,
+    engine: "Celune",
+    *,
+    text: str,
+    display_text: str,
+    generation_params: dict[str, object],
+    sample_rate: int,
+    subtype: str,
+    included_kept_sfx: bool,
+) -> None:
+    """Store Celune generation metadata in a custom CLMT WAV chunk.
+
+    Args:
+        path: The path to the WAV file.
+        engine: The instance of Celune to use data from.
+        text: The input text given to Celune.
+        display_text: The displayed text shown in Celune's UI.
+        generation_params: The generation parameters used with this generation.
+        sample_rate: The saved sample rate in Hz.
+        subtype: The saved audio subtype.
+        included_kept_sfx: Whether the included utterance has a preceding sound effect.
+
+    Returns:
+        None: This value injects a Celune metadata (CLMT) chunk to the target WAV file.
+    """
+    payload = _celune_metadata_payload(
+        engine,
+        text=text,
+        display_text=display_text,
+        generation_params=generation_params,
+        sample_rate=sample_rate,
+        subtype=subtype,
+        included_kept_sfx=included_kept_sfx,
+    )
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     _append_wav_chunk(path, b"CLMT", encoded)
+
+
+def _set_soundfile_string(audio_file: sf.SoundFile, field: str, value: str) -> None:
+    """Set a libsndfile metadata string on an open audio file."""
+    string_type = sf._str_types[field]  # type: ignore[attr-defined]
+    result = sf._snd.sf_set_string(  # type: ignore[attr-defined]
+        audio_file._file,  # type: ignore[attr-defined]
+        string_type,
+        value.encode("utf-8"),
+    )
+    if result != 0:
+        raise ValueError(f"could not write {field} metadata")
+
+
+def _write_celune_flac(
+    path: str,
+    audio: np.ndarray,
+    sample_rate: int,
+    subtype: str,
+    metadata: dict[str, object],
+) -> None:
+    """Write a FLAC file with Celune metadata in Vorbis comments."""
+    channels = 1 if audio.ndim == 1 else audio.shape[1]
+    encoded = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+
+    with sf.SoundFile(
+        path,
+        mode="w",
+        samplerate=sample_rate,
+        channels=channels,
+        format="FLAC",
+        subtype=subtype,
+    ) as audio_file:
+        _set_soundfile_string(audio_file, "software", f"Celune {__version__}")
+        _set_soundfile_string(audio_file, "comment", encoded)
+        created_at = metadata.get("created_at")
+        if isinstance(created_at, str):
+            _set_soundfile_string(audio_file, "date", created_at)
+        audio_file.write(audio)
 
 
 def clear_queue(q: queue.Queue) -> None:
@@ -970,33 +1044,34 @@ def generation_worker(engine: "Celune") -> None:
 
                         if os.path.exists("outputs"):
                             saved_path = (
-                                f"outputs/celune_speech_{timestamp}_{first_words}.wav"
+                                f"outputs/celune_speech_{timestamp}_{first_words}.flac"
                             )
                             sample_rate = BASE_SR
                             subtype = "PCM_24"
-                            sf.write(
-                                saved_path,
-                                wav,
-                                sample_rate,
+                            metadata = _celune_metadata_payload(
+                                engine,
+                                text=text,
+                                display_text=display_text,
+                                generation_params=generation_params,
+                                sample_rate=sample_rate,
                                 subtype=subtype,
+                                included_kept_sfx=kept_sfx_audio is not None,
                             )
                             try:
-                                _write_celune_wav_metadata(
+                                _write_celune_flac(
                                     saved_path,
-                                    engine,
-                                    text=text,
-                                    display_text=display_text,
-                                    generation_params=generation_params,
-                                    sample_rate=sample_rate,
+                                    wav,
+                                    sample_rate,
                                     subtype=subtype,
-                                    included_kept_sfx=kept_sfx_audio is not None,
+                                    metadata=metadata,
                                 )
                             except Exception as e:
                                 engine.log(
-                                    "Could not write WAV metadata: "
+                                    "Could not save FLAC output: "
                                     f"{format_error(e, engine.dev)}",
                                     "warning",
                                 )
+                                saved_path = None
 
                     engine.recently_saved = saved_path
                     engine.audio_queue.put(
