@@ -798,8 +798,8 @@ def generation_worker(engine: "Celune") -> None:
                                 break
 
                             if progress_total is not None:
-                                generated_steps += engine.backend.generation_progress_steps(
-                                    timing
+                                generated_steps += (
+                                    engine.backend.generation_progress_steps(timing)
                                 )
                                 engine.progress_callback(
                                     min(generated_steps, progress_total),
