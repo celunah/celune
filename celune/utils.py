@@ -293,7 +293,7 @@ def supports_ansi() -> bool:
         return False
 
     # check stdout handle, bail out if none found
-    mode = ctypes.c_uint32()
+    mode = ctypes.c_uint32(0)
     if not kernel32.GetConsoleMode(stdout_handle, ctypes.byref(mode)):  # invalid handle
         return False
 

@@ -4,7 +4,6 @@
 import json
 import os
 import re
-import struct
 import time
 import queue
 import random
@@ -12,14 +11,16 @@ import pathlib
 import datetime
 import contextlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 import numpy as np
+import numpy.typing as npt
 import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 from iso639 import Lang
+from iso639.exceptions import InvalidLanguageValue
 
 from .dsp import (
     _resample_audio,
@@ -39,7 +40,7 @@ from .utils import (
     rng_replace,
 )
 from .analysis import analyze_voice_audio
-from .constants import BASE_SR
+from .constants import BASE_SR, N_A_NUMERIC
 from . import __version__
 
 if TYPE_CHECKING:
@@ -61,7 +62,7 @@ class SpeechDone:
     """Playback completion marker for one generated utterance."""
 
     saved_path: Optional[str] = None
-    analysis_audio: Optional[np.ndarray] = None
+    analysis_audio: Optional[npt.NDArray[np.float32]] = None
 
 
 @dataclass
@@ -85,76 +86,16 @@ class SpeechTiming:
     def ttfc_ms(self) -> float:
         """Return time to first generated chunk in milliseconds."""
         if self.first_chunk_time is None:
-            return float("nan")
+            return N_A_NUMERIC
 
         return (self.first_chunk_time - self.start_time) * 1000
 
     def ttfp_seconds(self) -> float:
         """Return time to first playback in seconds."""
         if self.first_playback_time is None:
-            return float("nan")
+            return N_A_NUMERIC
 
         return self.first_playback_time - self.start_time
-
-
-def _append_wav_chunk(path: str, chunk_id: bytes, payload: bytes) -> None:
-    """Append a RIFF/WAVE chunk and refresh the container size."""
-    if len(chunk_id) != 4:
-        raise ValueError("WAV chunk ID must be exactly four bytes")
-
-    with open(path, "r+b") as wav_file:
-        header = wav_file.read(12)
-        if len(header) != 12 or header[:4] != b"RIFF" or header[8:12] != b"WAVE":
-            raise ValueError("file is not a RIFF/WAVE file")
-
-        wav_file.seek(0, os.SEEK_END)
-        wav_file.write(chunk_id)
-        wav_file.write(struct.pack("<I", len(payload)))
-        wav_file.write(payload)
-        if len(payload) % 2:
-            wav_file.write(b"\x00")
-
-        file_size = wav_file.tell()
-        riff_size = file_size - 8
-        if riff_size > 0xFFFFFFFF:
-            raise ValueError("WAV file is too large for RIFF metadata")
-
-        wav_file.seek(4)
-        wav_file.write(struct.pack("<I", riff_size))
-
-
-def read_celune_wav_metadata(path: str) -> Optional[dict[str, Any]]:
-    """Read the newest Celune CLMT metadata chunk from a WAV file."""
-    metadata: Optional[dict[str, Any]] = None
-
-    with open(path, "rb") as wav_file:
-        header = wav_file.read(12)
-        if len(header) != 12 or header[:4] != b"RIFF" or header[8:12] != b"WAVE":
-            raise ValueError("file is not a RIFF/WAVE file")
-
-        while True:
-            chunk_header = wav_file.read(8)
-            if not chunk_header:
-                break
-            if len(chunk_header) != 8:
-                raise ValueError("truncated WAV chunk header")
-
-            chunk_id = chunk_header[:4]
-            chunk_size = struct.unpack("<I", chunk_header[4:])[0]
-            payload = wav_file.read(chunk_size)
-            if len(payload) != chunk_size:
-                raise ValueError("truncated WAV chunk payload")
-
-            if chunk_id == b"CLMT":
-                decoded = json.loads(payload.decode("utf-8"))
-                if not isinstance(decoded, dict):
-                    raise ValueError("Celune metadata payload is not a JSON object")
-                metadata = decoded
-
-            if chunk_size % 2:
-                wav_file.seek(1, os.SEEK_CUR)
-
-    return metadata
 
 
 def _celune_metadata_payload(
@@ -205,45 +146,6 @@ def _celune_metadata_payload(
     }
 
 
-def _write_celune_wav_metadata(
-    path: str,
-    engine: "Celune",
-    *,
-    text: str,
-    display_text: str,
-    generation_params: dict[str, object],
-    sample_rate: int,
-    subtype: str,
-    included_kept_sfx: bool,
-) -> None:
-    """Store Celune generation metadata in a custom CLMT WAV chunk.
-
-    Args:
-        path: The path to the WAV file.
-        engine: The instance of Celune to use data from.
-        text: The input text given to Celune.
-        display_text: The displayed text shown in Celune's UI.
-        generation_params: The generation parameters used with this generation.
-        sample_rate: The saved sample rate in Hz.
-        subtype: The saved audio subtype.
-        included_kept_sfx: Whether the included utterance has a preceding sound effect.
-
-    Returns:
-        None: This value injects a Celune metadata (CLMT) chunk to the target WAV file.
-    """
-    payload = _celune_metadata_payload(
-        engine,
-        text=text,
-        display_text=display_text,
-        generation_params=generation_params,
-        sample_rate=sample_rate,
-        subtype=subtype,
-        included_kept_sfx=included_kept_sfx,
-    )
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    _append_wav_chunk(path, b"CLMT", encoded)
-
-
 def _set_soundfile_string(audio_file: sf.SoundFile, field: str, value: str) -> None:
     """Set a libsndfile metadata string on an open audio file."""
     string_type = sf._str_types[field]  # type: ignore[attr-defined]
@@ -257,8 +159,9 @@ def _set_soundfile_string(audio_file: sf.SoundFile, field: str, value: str) -> N
 
 
 def _write_celune_flac(
+    engine: "Celune",
     path: str,
-    audio: np.ndarray,
+    audio: npt.NDArray[np.float32],
     sample_rate: int,
     subtype: str,
     metadata: dict[str, object],
@@ -275,7 +178,10 @@ def _write_celune_flac(
         format="FLAC",
         subtype=subtype,
     ) as audio_file:
-        _set_soundfile_string(audio_file, "software", f"Celune {__version__}")
+        _set_soundfile_string(audio_file, "encoder", f"Celune {__version__}")
+        _set_soundfile_string(
+            audio_file, "encoded_by", f"Celune {__version__} via {engine.backend.name}"
+        )
         _set_soundfile_string(audio_file, "comment", encoded)
         created_at = metadata.get("created_at")
         if isinstance(created_at, str):
@@ -480,7 +386,10 @@ def queue_speech(
     language_meta = detect_language(text, list(engine.backend.supported_languages))
     if not language_meta["supported"]:
         # "zh-cn" has to be clipped to just "zh" to be a valid language code
-        language = Lang(language_meta["language"][:2]).name
+        try:
+            language = Lang(language_meta["language"][:2]).name
+        except InvalidLanguageValue:
+            language = language_meta["language"]
 
         engine.log(
             f"Received unsupported input in the following language: {language}",
@@ -535,7 +444,7 @@ def queue_speech(
 
 def queue_sfx_audio(
     engine: "Celune",
-    audio: np.ndarray,
+    audio: npt.NDArray[np.float32],
     sample_rate: int,
     label: str,
     keep: bool = False,
@@ -813,6 +722,15 @@ def generation_worker(engine: "Celune") -> None:
                 }
 
                 chunks = split_text(engine, text)
+                if not chunks:
+                    engine.progress_callback(0, 1)
+                    engine.error_callback("Nothing to say")
+                    release_pipeline(engine)
+                    if stream_queue is not None:
+                        stream_queue.put(NotAvailableError("nothing to say"))
+                        stream_queue.put(None)
+                    break
+
                 chunk_progress_totals = tuple(
                     engine.backend.generation_progress_total(chunk_text)
                     for chunk_text in chunks
@@ -831,8 +749,8 @@ def generation_worker(engine: "Celune") -> None:
                 else:
                     generated_steps = 0
                     engine.progress_callback(0, max(1, len(chunks)))
-                buffer: list[np.ndarray] = []
-                full_audio: list[np.ndarray] = []
+                buffer: list[npt.NDArray[np.float32]] = []
+                full_audio: list[npt.NDArray[np.float32]] = []
 
                 with engine.model_lock:
                     if engine.model is None:
@@ -1059,6 +977,7 @@ def generation_worker(engine: "Celune") -> None:
                             )
                             try:
                                 _write_celune_flac(
+                                    engine,
                                     saved_path,
                                     wav,
                                     sample_rate,
