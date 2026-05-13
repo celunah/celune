@@ -27,6 +27,7 @@ class Qwen3(CeluneBackend):
 
     name: str = "qwen3"
     chunk_rate: float = 12.5
+    max_new_tokens: int = 2048
     supported_languages: tuple[str, ...] = (
         "zh-cn",
         "en",
@@ -137,6 +138,10 @@ class Qwen3(CeluneBackend):
             return self.clone_model
 
         return super().model_id_for_voice(voice)
+
+    def generation_progress_total(self, text: Optional[str] = None) -> int:
+        """Return the Qwen3 streaming generation context length."""
+        return self.max_new_tokens
 
     @staticmethod
     def model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
@@ -266,6 +271,8 @@ class Qwen3(CeluneBackend):
         """
         if not kwargs.get("text", None):
             raise ValueError("expected text to say")
+
+        kwargs.setdefault("max_new_tokens", self.max_new_tokens)
 
         # if faster_qwen3_tts >= 0.2.5 use instructions, else remove this arg
         major, minor, patch = (int(num) for num in qwen3_ver.split("."))

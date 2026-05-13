@@ -400,6 +400,7 @@ def queue_speech(
     if not engine.loaded:
         engine.log("Model became unavailable before speaking.", "warning")
         engine.error_callback("Celune is not currently ready")
+        engine.progress_callback(0, 1)
         return False
 
     language_meta = detect_language(text, list(engine.backend.supported_languages))
@@ -430,6 +431,7 @@ def queue_speech(
         text = rng_replace(text, targets=["celune"], replacements=["celine"])
 
     if not acquire_pipeline(engine, "speak"):
+        engine.progress_callback(0, 1)
         return False
 
     try:
@@ -437,6 +439,7 @@ def queue_speech(
             engine.log("Model became unavailable before queueing speech.", "warning")
             engine.error_callback("Celune is not currently ready")
             release_pipeline(engine)
+            engine.progress_callback(0, 1)
             return False
 
         engine.cur_state = "generating"
@@ -736,7 +739,24 @@ def generation_worker(engine: "Celune") -> None:
                 }
 
                 chunks = split_text(engine, text)
-                engine.progress_callback(0, max(1, len(chunks)))
+                chunk_progress_totals = tuple(
+                    engine.backend.generation_progress_total(chunk_text)
+                    for chunk_text in chunks
+                )
+                known_progress_totals = tuple(
+                    total for total in chunk_progress_totals if total is not None
+                )
+                progress_total = (
+                    sum(known_progress_totals)
+                    if len(known_progress_totals) == len(chunks)
+                    else None
+                )
+                if progress_total is not None:
+                    generated_steps = 0
+                    engine.progress_callback(0, progress_total)
+                else:
+                    generated_steps = 0
+                    engine.progress_callback(0, max(1, len(chunks)))
                 buffer: list[np.ndarray] = []
                 full_audio: list[np.ndarray] = []
 
@@ -758,7 +778,7 @@ def generation_worker(engine: "Celune") -> None:
                         for (
                             audio_chunk,
                             sr,  # 24 kHz if Qwen3, 48 kHz if VoxCPM2
-                            _,
+                            timing,
                         ) in engine.backend.generate_stream(  # some args will be discarded as needed
                             engine.model,
                             text=chunk_text,
@@ -776,6 +796,15 @@ def generation_worker(engine: "Celune") -> None:
 
                             if engine.utterance_force_stop.is_set():
                                 break
+
+                            if progress_total is not None:
+                                generated_steps += engine.backend.generation_progress_steps(
+                                    timing
+                                )
+                                engine.progress_callback(
+                                    min(generated_steps, progress_total),
+                                    progress_total,
+                                )
 
                             speech_timing.mark_first_chunk()
 
@@ -842,7 +871,8 @@ def generation_worker(engine: "Celune") -> None:
                                     engine.cur_state = "speaking"
                                     engine.queue_avail_callback()
 
-                        engine.progress_callback(chunk_index + 1, len(chunks))
+                        if progress_total is None:
+                            engine.progress_callback(chunk_index + 1, len(chunks))
 
                 generation_time = time.monotonic() - start_time
 
