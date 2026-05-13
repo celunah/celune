@@ -8,6 +8,7 @@ import signal
 import threading
 import itertools
 import contextlib
+import time
 from types import FrameType
 from typing import cast, Optional, Callable, Union
 from collections.abc import Iterator
@@ -24,7 +25,14 @@ from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 from rich.text import Text
 
 from ..celune import Celune
-from ..utils import format_error, indent, replace_ipa, typing_animation, is_april_fools
+from ..utils import (
+    format_error,
+    indent,
+    replace_ipa,
+    typing_animation,
+    typing_delay,
+    is_april_fools,
+)
 from ..constants import SIGTSTP
 from ..colors import THEME, THEME_LIGHT, THEME_APRIL_FOOLS, SEVERITY_COLORS
 from .commands import process_command as process_ui_command
@@ -864,6 +872,9 @@ class CeluneUI(App):
                     return
                 typed += char
                 self.call_from_thread(replace_input, typed)
+
+            final_char = text[-1] if text else " "
+            time.sleep(typing_delay(final_char))
 
             if self.cur_state != "exiting" and (
                 not cancellable or token == self._tutorial_token

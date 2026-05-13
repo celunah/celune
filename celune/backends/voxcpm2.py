@@ -30,6 +30,8 @@ class VoxCPM2(CeluneBackend):
 
     name: str = "voxcpm2"
     chunk_rate: float = 6.25
+    max_new_tokens: int = 8192
+    retry_badcase_ratio_threshold: float = 6.0
     supported_languages: tuple[str, ...] = (
         "ar",
         "my",
@@ -307,6 +309,10 @@ class VoxCPM2(CeluneBackend):
                         reference_wav_path=ref_wav,
                         inference_timesteps=6,
                         cfg_value=cfg,
+                        max_len=self.max_new_tokens,
+                        retry_badcase_ratio_threshold=(
+                            self.retry_badcase_ratio_threshold
+                        ),
                     )
 
                 batch = []

@@ -567,6 +567,27 @@ def custom_assert(condition: bool, exception: Optional[Exception]) -> None:
         )
 
 
+def typing_delay(char: str) -> float:
+    """Return the typing animation delay for one character.
+
+    Args:
+        char: The character that should influence the delay.
+
+    Returns:
+        float: Delay in seconds before the character appears.
+    """
+    if char in ".!?":
+        rand_delay = random.uniform(0.25, 0.45)
+    elif char in ",;:":
+        rand_delay = random.uniform(0.12, 0.22)
+    elif char == " ":
+        rand_delay = random.uniform(0.02, 0.05)
+    else:
+        rand_delay = 0.06 + random.uniform(0.0, 0.1)
+
+    return 0.08 + rand_delay
+
+
 def typing_animation(text: str) -> Iterator[str]:
     """Iterate over an input string in a typing-like way.
 
@@ -578,16 +599,7 @@ def typing_animation(text: str) -> Iterator[str]:
     """
 
     for char in text:
-        if char in ".!?":
-            rand_delay = random.uniform(0.25, 0.45)
-        elif char in ",;:":
-            rand_delay = random.uniform(0.12, 0.22)
-        elif char == " ":
-            rand_delay = random.uniform(0.02, 0.05)
-        else:
-            rand_delay = 0.06 + random.uniform(0.0, 0.1)
-
-        time.sleep(0.08 + rand_delay)
+        time.sleep(typing_delay(char))
         yield char
 
 
