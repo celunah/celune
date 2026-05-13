@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Celune's frontend layer."""
 
-import datetime
 import os
 import sys
 import shlex
@@ -25,7 +24,7 @@ from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 from rich.text import Text
 
 from ..celune import Celune
-from ..utils import format_error, indent, replace_ipa, typing_animation
+from ..utils import format_error, indent, replace_ipa, typing_animation, is_april_fools
 from ..constants import SIGTSTP
 from ..colors import THEME, THEME_LIGHT, THEME_APRIL_FOOLS, SEVERITY_COLORS
 from .commands import process_command as process_ui_command
@@ -56,7 +55,7 @@ class CeluneUI(App):
         self.resources = cast(Label, None)
         self.progress_bar = cast(ProgressBar, None)
 
-        if self._is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
+        if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
             "1",
             "true",
             "on",
@@ -90,15 +89,10 @@ class CeluneUI(App):
         self._suppress_input_change = False
         self._resource_page = 0
         self._border_pulse_tokens: dict[int, int] = {}
+        self._border_pulse_widgets: dict[int, Widget] = {}
         self._tutorial_timers: list[Timer] = []
         self._tutorial_token = 0
         self._tutorial_active = False
-
-    @staticmethod
-    def _is_april_fools() -> bool:
-        """Return whether the UI should use the April Fools theme."""
-        now = datetime.datetime.now()
-        return now.month == 4 and now.day == 1
 
     def _severity_color(self, severity: str = "info") -> str:
         """Return the current theme color for a log severity.
@@ -120,11 +114,24 @@ class CeluneUI(App):
         Returns:
             None: This method updates theme state and redraws status and logs.
         """
+        self._clear_border_pulses()
         self.active_theme_name = theme_name
         self.theme = theme_name
         self._refresh_status()
         self._refresh_theme_text()
         self._refresh_logs()
+
+    def _clear_border_pulses(self) -> None:
+        """Remove temporary border pulse overrides so CSS can theme them."""
+        for widget_key, widget in list(self._border_pulse_widgets.items()):
+            self._border_pulse_tokens[widget_key] = (
+                self._border_pulse_tokens.get(widget_key, 0) + 1
+            )
+            widget.styles.border = None
+            widget.refresh(layout=False)
+
+        self._border_pulse_widgets.clear()
+        self._border_pulse_tokens.clear()
 
     def _refresh_theme_text(self) -> None:
         """Refresh widgets that use the active theme's normal text color.
@@ -214,7 +221,7 @@ class CeluneUI(App):
         self.register_theme(THEME_LIGHT)
         self.register_theme(THEME_APRIL_FOOLS)
 
-        if self._is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
+        if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
             "1",
             "true",
             "on",
@@ -423,6 +430,7 @@ class CeluneUI(App):
         widget_key = id(widget)
         token = self._border_pulse_tokens.get(widget_key, 0) + 1
         self._border_pulse_tokens[widget_key] = token
+        self._border_pulse_widgets[widget_key] = widget
 
         target_border: tuple[EdgeStyle, ...] = tuple(
             (
@@ -467,27 +475,48 @@ class CeluneUI(App):
                 )
             )
 
-        for index in range(1, steps + 1):
-            self.set_timer(
-                frame_delay * index,
-                lambda ind=index: apply_blend(ind / steps),
-            )
-
-        peak_at = frame_delay * steps
-        for index in range(1, steps + 1):
-            self.set_timer(
-                peak_at + hold_duration + frame_delay * index,
-                lambda ind=index: apply_blend(1 - (ind / steps)),
-            )
-
         def restore() -> None:
-            """Restore the border captured before the pulse."""
+            """Return border styling to CSS/theme ownership."""
             if self._border_pulse_tokens.get(widget_key) != token:
                 return
-            set_border(original_border)
+            widget.styles.border = None
+            widget.refresh(layout=False)
             self._border_pulse_tokens.pop(widget_key, None)
+            self._border_pulse_widgets.pop(widget_key, None)
 
-        self.set_timer(duration, restore)
+        def schedule_frame(index: int, delay: float) -> None:
+            """Schedule the next pulse frame without filling the timer queue."""
+            if self._border_pulse_tokens.get(widget_key) != token:
+                return
+
+            if index >= steps * 2:
+                restore()
+                return
+
+            def run_frame() -> None:
+                """Apply one frame and then queue the next one."""
+                if self._border_pulse_tokens.get(widget_key) != token:
+                    return
+
+                if index < steps:
+                    apply_blend((index + 1) / steps)
+                    next_delay = (
+                        hold_duration + frame_delay
+                        if index + 1 == steps
+                        else frame_delay
+                    )
+                else:
+                    apply_blend(1 - ((index - steps + 1) / steps))
+                    next_delay = frame_delay
+
+                schedule_frame(index + 1, next_delay)
+
+            if delay <= 0:
+                run_frame()
+            else:
+                self.set_timer(delay, run_frame)
+
+        schedule_frame(0, frame_delay)
 
     def change_input_state(self, locked: bool) -> None:
         """Lock or unlock Celune's UI layer.

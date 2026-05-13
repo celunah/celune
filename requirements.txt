@@ -49,6 +49,8 @@ matplotlib
 # Others
 psutil
 pyyaml
+langdetect
+iso639-lang
 
 # API
 uvicorn
