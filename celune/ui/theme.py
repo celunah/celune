@@ -120,7 +120,7 @@ CELUNE_CSS = """
     #controls {
         height: auto;
     }
-    
+
     #progress {
         width: 1fr;
     }
