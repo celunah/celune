@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """UI callback protocols."""
 
-from typing import Protocol
+from typing import Protocol, Optional
 
 from ..celune import Celune
 
@@ -44,7 +44,9 @@ class CeluneTextualUI(CeluneBaseUI, Protocol):
             None: Implementations update their status display.
         """
 
-    def safe_progress(self, progress: float | None, total: float | None = None) -> None:
+    def safe_progress(
+        self, progress: Optional[float], total: Optional[float] = None
+    ) -> None:
         """Update current progress.
 
         Args:
