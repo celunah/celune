@@ -25,16 +25,6 @@ class SelectMenu(Generic[T]):
         raw_choices: list[T],
         prompt: str = "Select an option",
     ):
-        """Initialize a terminal selection menu.
-
-        Args:
-            choices: Human-readable choice labels.
-            raw_choices: Values returned for each choice.
-            prompt: Prompt shown above the choices.
-
-        Returns:
-            None: This constructor stores menu state.
-        """
         if not choices:
             raise ValueError("choices must not be empty")
         if len(choices) != len(raw_choices):
@@ -96,15 +86,6 @@ class LogRedirect:
         write_callback: Callable[[str, str], None],
         default_severity: str = "info",
     ) -> None:
-        """Initialize a stream-to-log redirector.
-
-        Args:
-            write_callback: Callback used to emit completed log lines.
-            default_severity: Severity assigned to emitted log lines.
-
-        Returns:
-            None: This constructor prepares the line buffer.
-        """
         self.write_callback = write_callback
         self.default_severity = default_severity
         self._buffer = ""

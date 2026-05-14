@@ -7,7 +7,8 @@ import os
 import glob
 import hashlib
 from pathlib import Path
-from typing import Callable, Generator, Literal, Optional
+from typing import Callable, Literal, Optional
+from collections.abc import Iterator
 
 import numpy as np
 import numpy.typing as npt
@@ -72,18 +73,6 @@ class Qwen3(CeluneBackend):
         log: Callable[[str, str], None],
         mode: Literal["native", "clone"] = "native",
     ) -> None:
-        """Initialize the Qwen3 backend.
-
-        Args:
-            log: Logger callback used by the backend.
-            mode: Qwen3 generation mode to use.
-
-        Returns:
-            None: This constructor validates and stores the active mode.
-
-        Raises:
-            ValueError: The requested Qwen3 generation mode is unsupported.
-        """
         if mode not in self.supported_modes:
             raise ValueError(
                 f"unsupported qwen3 mode '{mode}' "
@@ -256,7 +245,7 @@ class Qwen3(CeluneBackend):
 
     def generate_stream(
         self, model: FasterQwen3TTS, **kwargs
-    ) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Generate Celune compatible audio chunks.
 
         Args:
@@ -264,7 +253,7 @@ class Qwen3(CeluneBackend):
             **kwargs: Streaming generation keyword arguments to use.
 
         Returns:
-            Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of Qwen3 streaming audio chunks.
+            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of Qwen3 streaming audio chunks.
 
         Raises:
             ValueError: The current Qwen3 mode and/or requested voice is unsupported, or input text is empty.

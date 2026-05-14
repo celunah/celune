@@ -10,7 +10,8 @@ import secrets
 import hashlib
 import contextlib
 from pathlib import Path
-from typing import Callable, Optional, Generator
+from typing import Callable, Optional
+from collections.abc import Iterator
 
 import torch
 import numpy as np
@@ -88,15 +89,6 @@ class VoxCPM2(CeluneBackend):
     default_voice: str = "balanced"
 
     def __init__(self, log: Callable[[str, str], None]) -> None:
-        """Initialize the VoxCPM2 backend.
-
-        Args:
-            log: Logger callback used by the backend.
-
-        Returns:
-            None: This constructor prepares backend state and validates
-                reference audio.
-        """
         super().__init__(log=log)
         self.log = log
         self.optimize_enabled = False
@@ -118,11 +110,11 @@ class VoxCPM2(CeluneBackend):
 
     @staticmethod
     @contextlib.contextmanager
-    def _suppress_backend_output() -> Generator[None, None, None]:
+    def _suppress_backend_output() -> Iterator:
         """Suppress unnecessary backend output.
 
         Returns:
-            Generator[None, None, None]: A context manager that silences stdout
+            Iterator: A context manager that silences stdout
                 and stderr while backend code executes.
         """
         with open(os.devnull, "w", encoding="utf-8") as devnull:
@@ -257,7 +249,7 @@ class VoxCPM2(CeluneBackend):
 
     def generate_stream(
         self, model: VoxCPM, **kwargs
-    ) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Generate Celune compatible audio chunks.
 
         Args:
@@ -265,7 +257,7 @@ class VoxCPM2(CeluneBackend):
             **kwargs: Streaming generation arguments passed to the backend.
 
         Returns:
-            Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of
+            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of
                 ``(audio, sample_rate, timing)`` tuples suitable for Celune's playback pipeline.
 
         Raises:
