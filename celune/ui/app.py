@@ -49,11 +49,6 @@ class CeluneUI(App):
     CSS = CELUNE_CSS
 
     def __init__(self) -> None:
-        """Initialize UI state.
-
-        Returns:
-            None: This constructor prepares widget references and runtime flags.
-        """
         super().__init__()
 
         self.logs = cast(RichLog, None)

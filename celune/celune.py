@@ -125,29 +125,6 @@ class Celune:
         progress_callback: Optional[ProgressCallback] = None,
         dev: bool = False,
     ) -> None:
-        """Initialize the Celune engine and runtime state.
-
-        Args:
-            tts_backend: Backend name, backend instance, or backend class.
-            chunk_size: Backend chunk-size parameter for streaming generation.
-            language: Preferred generation language.
-            log_callback: Callback for log messages.
-            status_callback: Callback for status messages.
-            error_callback: Callback for user-facing errors.
-            idle_callback: Callback invoked when playback becomes idle.
-            queue_avail_callback: Callback invoked when audio is ready to play.
-            voice_changed_callback: Callback invoked after voice changes.
-            change_input_state_callback: Callback used to lock or unlock input.
-            progress_callback: Callback used to update the UI progress bar.
-            dev: Whether developer diagnostics are enabled.
-            config: Loaded configuration dictionary.
-
-        Returns:
-            None: This constructor prepares queues, backend state, and RGB glow.
-
-        Raises:
-            BackendError: No backend is selected, or backend setup fails.
-        """
         if tts_backend is None:
             raise BackendError("no backend set")
 

@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Optional, Generator
+from typing import Any, Callable, Optional
+from collections.abc import Iterator
 
 import numpy as np
 import numpy.typing as npt
@@ -202,7 +203,7 @@ class CeluneBackend(ABC):
     @abstractmethod
     def generate_stream(
         self, model: Any, **kwargs
-    ) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Yield audio chunks from a loaded backend model.
 
         Args:
@@ -210,6 +211,6 @@ class CeluneBackend(ABC):
             **kwargs: Backend-specific generation parameters.
 
         Returns:
-            Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of
+            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of
                 Celune compatible audio chunks.
         """
