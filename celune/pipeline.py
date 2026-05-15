@@ -12,6 +12,7 @@ import datetime
 import contextlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
+from collections.abc import Mapping
 
 import torch
 import numpy as np
@@ -45,6 +46,11 @@ from . import __version__
 
 if TYPE_CHECKING:
     from .celune import Celune
+
+_FLAC_MAGIC = b"fLaC"
+_FLAC_STREAMINFO_BLOCK = 0
+_FLAC_VORBIS_COMMENT_BLOCK = 4
+_MAX_FLAC_METADATA_BLOCK_SIZE = 0xFFFFFF
 
 
 @dataclass(frozen=True)
@@ -146,16 +152,148 @@ def _celune_metadata_payload(
     }
 
 
-def _set_soundfile_string(audio_file: sf.SoundFile, field: str, value: str) -> None:
-    """Set a libsndfile metadata string on an open audio file."""
-    string_type = sf._str_types[field]  # type: ignore[attr-defined]
-    result = sf._snd.sf_set_string(  # type: ignore[attr-defined]
-        audio_file._file,  # type: ignore[attr-defined]
-        string_type,
-        value.encode("utf-8"),
+def _valid_vorbis_comment_key(key: str) -> bool:
+    """Return whether ``key`` is a valid Vorbis comment field name."""
+    return (
+        bool(key) and "=" not in key and all(0x20 <= ord(char) <= 0x7D for char in key)
     )
-    if result != 0:
-        raise ValueError(f"could not write {field} metadata")
+
+
+def _read_vorbis_string(payload: bytes, offset: int) -> tuple[bytes, int]:
+    """Read one little-endian length-prefixed Vorbis comment string."""
+    if offset + 4 > len(payload):
+        raise ValueError("truncated Vorbis comment")
+
+    length = int.from_bytes(payload[offset : offset + 4], "little")
+    offset += 4
+    end = offset + length
+    if end > len(payload):
+        raise ValueError("truncated Vorbis comment")
+
+    return payload[offset:end], end
+
+
+def _parse_vorbis_comment_block(payload: bytes) -> tuple[bytes, list[tuple[str, str]]]:
+    """Parse a Vorbis comment block into a vendor string and field pairs."""
+    vendor, offset = _read_vorbis_string(payload, 0)
+    if offset + 4 > len(payload):
+        raise ValueError("truncated Vorbis comment list")
+
+    comment_count = int.from_bytes(payload[offset : offset + 4], "little")
+    offset += 4
+    comments: list[tuple[str, str]] = []
+    for _ in range(comment_count):
+        raw_comment, offset = _read_vorbis_string(payload, offset)
+        decoded = raw_comment.decode("utf-8", errors="replace")
+        key, separator, value = decoded.partition("=")
+        if separator and _valid_vorbis_comment_key(key):
+            comments.append((key, value))
+
+    return vendor, comments
+
+
+def _encode_vorbis_comment_block(
+    vendor: bytes, comments: list[tuple[str, str]]
+) -> bytes:
+    """Encode Vorbis comments into a FLAC metadata block payload."""
+    payload = bytearray()
+    payload.extend(len(vendor).to_bytes(4, "little"))
+    payload.extend(vendor)
+    payload.extend(len(comments).to_bytes(4, "little"))
+    for key, value in comments:
+        raw_comment = f"{key}={value}".encode("utf-8")
+        payload.extend(len(raw_comment).to_bytes(4, "little"))
+        payload.extend(raw_comment)
+
+    return bytes(payload)
+
+
+def _flac_metadata_blocks(data: bytes) -> tuple[list[tuple[int, bytes]], int]:
+    """Return FLAC metadata blocks and the byte offset where audio frames start."""
+    if not data.startswith(_FLAC_MAGIC):
+        raise ValueError("not a FLAC file")
+
+    offset = len(_FLAC_MAGIC)
+    blocks: list[tuple[int, bytes]] = []
+    while True:
+        if offset + 4 > len(data):
+            raise ValueError("truncated FLAC metadata")
+
+        header = data[offset]
+        block_type = header & 0x7F
+        block_length = int.from_bytes(data[offset + 1 : offset + 4], "big")
+        offset += 4
+        end = offset + block_length
+        if end > len(data):
+            raise ValueError("truncated FLAC metadata")
+
+        blocks.append((block_type, data[offset:end]))
+        offset = end
+        if header & 0x80:
+            return blocks, offset
+
+
+def _encode_flac_metadata_blocks(blocks: list[tuple[int, bytes]]) -> bytes:
+    """Encode FLAC metadata blocks with the final-block flag repaired."""
+    encoded = bytearray(_FLAC_MAGIC)
+    for index, (block_type, payload) in enumerate(blocks):
+        if len(payload) > _MAX_FLAC_METADATA_BLOCK_SIZE:
+            raise ValueError("FLAC metadata block is too large")
+
+        final_flag = 0x80 if index == len(blocks) - 1 else 0
+        encoded.append(final_flag | block_type)
+        encoded.extend(len(payload).to_bytes(3, "big"))
+        encoded.extend(payload)
+
+    return bytes(encoded)
+
+
+def _stringify_flac_metadata(value: object) -> str:
+    """Convert an arbitrary metadata value into a Vorbis comment value."""
+    if isinstance(value, str):
+        return value
+
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _write_flac_metadata(path: str, tags: Mapping[str, object]) -> None:
+    """Write arbitrary valid FLAC Vorbis comment tags to ``path``."""
+    valid_tags = {
+        key: _stringify_flac_metadata(value)
+        for key, value in tags.items()
+        if _valid_vorbis_comment_key(key)
+    }
+    if not valid_tags:
+        return
+
+    path_obj = pathlib.Path(path)
+    data = path_obj.read_bytes()
+    blocks, audio_offset = _flac_metadata_blocks(data)
+    audio_data = data[audio_offset:]
+
+    comment_index: Optional[int] = None
+    vendor = f"Celune {__version__}".encode("utf-8")
+    comments: list[tuple[str, str]] = []
+    for index, (block_type, payload) in enumerate(blocks):
+        if block_type == _FLAC_VORBIS_COMMENT_BLOCK:
+            comment_index = index
+            vendor, comments = _parse_vorbis_comment_block(payload)
+            break
+
+    replaced_keys = {key.casefold() for key in valid_tags}
+    comments = [
+        (key, value) for key, value in comments if key.casefold() not in replaced_keys
+    ]
+    comments.extend(valid_tags.items())
+    vorbis_payload = _encode_vorbis_comment_block(vendor, comments)
+
+    if comment_index is None:
+        insert_index = 1 if blocks and blocks[0][0] == _FLAC_STREAMINFO_BLOCK else 0
+        blocks.insert(insert_index, (_FLAC_VORBIS_COMMENT_BLOCK, vorbis_payload))
+    else:
+        blocks[comment_index] = (_FLAC_VORBIS_COMMENT_BLOCK, vorbis_payload)
+
+    path_obj.write_bytes(_encode_flac_metadata_blocks(blocks) + audio_data)
 
 
 def _write_celune_flac(
@@ -178,15 +316,17 @@ def _write_celune_flac(
         format="FLAC",
         subtype=subtype,
     ) as audio_file:
-        _set_soundfile_string(audio_file, "encoder", f"Celune {__version__}")
-        _set_soundfile_string(
-            audio_file, "encoded_by", f"Celune {__version__} via {engine.backend.name}"
-        )
-        _set_soundfile_string(audio_file, "comment", encoded)
-        created_at = metadata.get("created_at")
-        if isinstance(created_at, str):
-            _set_soundfile_string(audio_file, "date", created_at)
         audio_file.write(audio)
+
+    created_at = metadata.get("created_at")
+    tags: dict[str, object] = {
+        "encoder": f"Celune {__version__} via {engine.backend.name}",
+        "comment": encoded,
+    }
+    if isinstance(created_at, str):
+        tags["date"] = created_at
+
+    _write_flac_metadata(path, tags)
 
 
 def clear_queue(q: queue.Queue) -> None:
@@ -735,20 +875,6 @@ def generation_worker(engine: "Celune") -> None:
                     engine.backend.generation_progress_total(chunk_text)
                     for chunk_text in chunks
                 )
-                known_progress_totals = tuple(
-                    total for total in chunk_progress_totals if total is not None
-                )
-                progress_total = (
-                    sum(known_progress_totals)
-                    if len(known_progress_totals) == len(chunks)
-                    else None
-                )
-                if progress_total is not None:
-                    generated_steps = 0
-                    engine.progress_callback(0, progress_total)
-                else:
-                    generated_steps = 0
-                    engine.progress_callback(0, max(1, len(chunks)))
                 buffer: list[npt.NDArray[np.float32]] = []
                 full_audio: list[npt.NDArray[np.float32]] = []
 
@@ -766,6 +892,9 @@ def generation_worker(engine: "Celune") -> None:
                             break
 
                         is_first_chunk = chunk_index == 0
+                        progress_total = chunk_progress_totals[chunk_index]
+                        generated_steps = 0
+                        engine.progress_callback(0, progress_total or 1)
 
                         for (
                             audio_chunk,
@@ -864,7 +993,7 @@ def generation_worker(engine: "Celune") -> None:
                                     engine.queue_avail_callback()
 
                         if progress_total is None:
-                            engine.progress_callback(chunk_index + 1, len(chunks))
+                            engine.progress_callback(1, 1)
 
                 generation_time = time.monotonic() - start_time
 
