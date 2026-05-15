@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""CEVOICE v1 bundle writer, parser, and lazy file loader."""
+"""CEVOICE bundle writer, parser, and lazy file loader."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import struct
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Mapping, Optional
+from typing import Any, BinaryIO, Callable, Mapping, Optional, Union
 
 from .exceptions import CEVoiceError
 
@@ -38,8 +38,8 @@ class CEVoice:
     payload_offset: int
 
     @classmethod
-    def open(cls, path: str | Path) -> "CEVoice":
-        """Parse and validate a CEVOICE v1 bundle.
+    def open(cls, path: Union[str, Path]) -> "CEVoice":
+        """Parse and validate a CEVOICE bundle.
 
         Args:
             path: The CEVOICE bundle to load.
@@ -180,11 +180,11 @@ class CEVoiceLoader:
 
 
 def write_cevoice(
-    path: str | Path,
-    voices: Mapping[str, Mapping[str, bytes | str | Path]],
+    path: Union[str, Path],
+    voices: Mapping[str, Mapping[str, Union[bytes, str, Path]]],
     metadata: Optional[Mapping[str, Any]] = None,
 ) -> Path:
-    """Write a CEVOICE v1 bundle from per-voice binary assets.
+    """Write a CEVOICE bundle from per-voice binary assets.
 
     Args:
         path: The CEVOICE bundle to save as.
@@ -297,10 +297,10 @@ def default_bundle_path() -> Path:
     Returns:
         Path: The absolute path to Celune's default voice bundle.
     """
-    return Path(__file__).resolve().parent / "voices" / "celune.cevoice"
+    return Path(__file__).resolve().parent / "voices" / "default.cevoice"
 
 
-def resolve_bundle_path(bundle: str | Path | None = None) -> Path:
+def resolve_bundle_path(bundle: Optional[Union[str, Path]] = None) -> Path:
     """Resolve a configured CEVOICE bundle name or path.
 
     Args:
@@ -322,7 +322,7 @@ def resolve_bundle_path(bundle: str | Path | None = None) -> Path:
     return Path(__file__).resolve().parent / "voices" / candidate
 
 
-def select_voice_bundle(bundle: str | Path | None = None) -> Path:
+def select_voice_bundle(bundle: Optional[Union[str, Path]] = None) -> Path:
     """Select the CEVOICE bundle used by Celune's shared loader.
 
     Args:

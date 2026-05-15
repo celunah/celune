@@ -330,7 +330,7 @@ class Celune:
         """
         self.voices = voices
 
-    def load_voice_bundle(self, bundle: str | Path | None = None) -> bool:
+    def load_voice_bundle(self, bundle: Optional[Union[str, Path]] = None) -> bool:
         """Select and load a CEVOICE bundle into Celune's active voice set.
 
         Args:
