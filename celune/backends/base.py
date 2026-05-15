@@ -22,6 +22,7 @@ class CeluneBackend(ABC):
     voice_models: Optional[dict[str, str]] = None
     reference_waves: Optional[dict[str, str]] = None
     default_voice: Optional[str] = None
+    uses_voice_bundles: bool = False
 
     def __init__(
         self, log: Callable[[str, str], None], model_name: Optional[str] = None

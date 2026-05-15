@@ -22,6 +22,7 @@ from huggingface_hub.constants import HF_HUB_CACHE
 
 from . import get_version
 from .base import CeluneBackend
+from ..cevoice import default_loader
 from ..exceptions import BackendError
 from ..constants import BASE_SR
 
@@ -30,6 +31,7 @@ class VoxCPM2(CeluneBackend):
     """Celune VoxCPM2 backend."""
 
     name: str = "voxcpm2"
+    uses_voice_bundles: bool = True
     chunk_rate: float = 6.25
     max_new_tokens: int = 8192
     retry_badcase_ratio_threshold: float = 6.0
@@ -185,8 +187,14 @@ class VoxCPM2(CeluneBackend):
             None: This method checks that reference files are accessible and logs
                 checksum status when checksums exist.
         """
+        loader = default_loader()
+        if loader is not None:
+            for name in self.reference_waves:
+                loader.materialize(name, "wav")
+            return
+
         for name, ref in self.reference_waves.items():
-            full_path = Path(__file__).resolve().parents[1] / ref
+            full_path = self._reference_wave_path(name, ref)
             try:
                 with open(full_path, "rb") as f:
                     checksum = hashlib.file_digest(f, "sha256").hexdigest()
@@ -210,6 +218,13 @@ class VoxCPM2(CeluneBackend):
                         f"Checksum not found for '{name}', skipping checksum verification.",
                         "warning",
                     )
+
+    @staticmethod
+    def _reference_wave_path(name: str, ref: str) -> Path:
+        loader = default_loader()
+        if loader is not None:
+            return loader.materialize(name, "wav")
+        return Path(__file__).resolve().parents[1] / ref
 
     def load_model(self, model_id: str, **kwargs) -> VoxCPM:
         """Load the given voice model.
@@ -270,7 +285,7 @@ class VoxCPM2(CeluneBackend):
         chunk_size = kwargs.pop("chunk_size", 1)
 
         try:
-            ref_wav = Path(__file__).resolve().parents[1] / self.reference_waves[voice]
+            ref_wav = self._reference_wave_path(voice, self.reference_waves[voice])
             cfg = self.voice_cfg[voice]
         except KeyError as e:
             raise ValueError(
