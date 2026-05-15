@@ -160,8 +160,13 @@ class CEVoiceLoader:
         """
         key = (voice, kind)
         if key not in self._paths:
+            if "/" in voice or "\\" in voice or voice in {"", ".", ".."}:
+                raise CEVoiceError(f"invalid voice name '{voice}'")
+            if "/" in kind or "\\" in kind or kind in {"", ".", ".."}:
+                raise CEVoiceError(f"invalid asset kind '{kind}'")
             extension = suffix or f".{kind}"
-            path = self._directory / f"{voice}{extension}"
+            safe_voice = Path(voice).name
+            path = self._directory / f"{safe_voice}{extension}"
             path.write_bytes(self.bundle.read_asset(voice, kind))
             self._paths[key] = path
         return self._paths[key]
@@ -257,6 +262,10 @@ def _validate_metadata(path: Path, metadata: Any, payload_offset: int) -> None:
         for kind, asset in assets.items():
             if not isinstance(kind, str) or not isinstance(asset, dict):
                 raise CEVoiceError(f"invalid asset entry for voice '{voice}'")
+            if "/" in voice or "\\" in voice or voice in {"", ".", ".."}:
+                raise CEVoiceError("invalid voice name")
+            if "/" in kind or "\\" in kind or kind in {"", ".", ".."}:
+                raise CEVoiceError(f"invalid asset kind for voice '{voice}'")
             offset = asset.get("offset")
             length = asset.get("length")
             digest = asset.get("sha256")

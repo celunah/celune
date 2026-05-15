@@ -57,14 +57,14 @@ dependencies = [
     # Others
     "psutil",
     "pyyaml",
-    "langdetect",
-    "iso639-lang",
+    "langdetect>=1.0.0,<2.0.0",
+    "iso639-lang>=2.0.0,<3.0.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/lunahr"
-Repository = "https://github.com/lunahr/celune"
-Issues = "https://github.com/lunahr/celune/issues"
+Homepage = "https://github.com/celunah"
+Repository = "https://github.com/celunah/celune"
+Issues = "https://github.com/celunah/celune/issues"
 
 # Why does CodeRabbit think I'm uploading Celune to PyPI?
 # Her package is not standalone.
