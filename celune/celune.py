@@ -618,18 +618,21 @@ class Celune:
         backend_warning = getattr(self.backend, "deprecation_warning", None)
         if backend_warning:
             self.log(f"DeprecationWarning: {backend_warning}", "warning")
-        self.load_available_voices()
+
+        if not self.load_available_voices():
+            self.log("No voices were loaded.", "error")
+            self.progress_callback(0, 1)
+            self.error_callback("No voices loaded")
+            return False
+
         if self.backend.uses_voice_bundles:
             announce_default_bundle(self.log)
+
         self.setup_extensions()
         self.progress_callback(None, None)
         self.backend.preload_models()
 
-        if not self.voices:
-            self.log("No Celune voices are available.", "error")
-            return False
-
-        self.log("All Celune voices are available.")
+        self.log("All voices are available.")
         try:
             self.model = self.backend.load_default_model()
             self.model_name = self.backend.model_id_for_voice(self.voices[0])
