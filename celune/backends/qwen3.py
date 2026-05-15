@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import glob
 import hashlib
+import warnings
 from pathlib import Path
 from typing import Callable, Literal, Optional
 from collections.abc import Iterator
@@ -20,6 +21,7 @@ from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 
 from .base import CeluneBackend
+from ..cevoice import default_loader
 from ..exceptions import BackendError
 
 
@@ -71,7 +73,7 @@ class Qwen3(CeluneBackend):
     def __init__(
         self,
         log: Callable[[str, str], None],
-        mode: Literal["native", "clone"] = "native",
+        mode: Literal["native", "clone"] = "clone",
     ) -> None:
         if mode not in self.supported_modes:
             raise ValueError(
@@ -81,6 +83,19 @@ class Qwen3(CeluneBackend):
 
         super().__init__(log=log)
         self.mode = mode
+        self.uses_voice_bundles = self.mode == "clone"
+        self.deprecation_warning: Optional[str] = None
+        if self.mode == "native":
+            message = (
+                "Qwen3 native mode is deprecated and will be removed soon. "
+                "Please load a CEVOICE pack for optimal operation."
+            )
+            warnings.warn(
+                message,
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.deprecation_warning = message
         if self.mode == "clone":
             self.model_name = self.clone_model
             self._validate_refs()
@@ -196,8 +211,14 @@ class Qwen3(CeluneBackend):
             None: This method checks that reference files are accessible and logs
                 checksum status when checksums exist.
         """
+        loader = default_loader()
+        if loader is not None:
+            for name in self.reference_waves:
+                loader.materialize(name, "wav")
+            return
+
         for name, ref in self.reference_waves.items():
-            full_path = Path(__file__).resolve().parents[1] / ref
+            full_path = self._reference_wave_path(name, ref)
             try:
                 with open(full_path, "rb") as f:
                     checksum = hashlib.file_digest(f, "sha256").hexdigest()
@@ -221,6 +242,13 @@ class Qwen3(CeluneBackend):
                         f"Checksum not found for '{name}', skipping checksum verification.",
                         "warning",
                     )
+
+    @staticmethod
+    def _reference_wave_path(name: str, ref: str) -> Path:
+        loader = default_loader()
+        if loader is not None:
+            return loader.materialize(name, "wav")
+        return Path(__file__).resolve().parents[1] / ref
 
     def load_model(self, model_id: str, **kwargs) -> FasterQwen3TTS:
         """Load the given voice model.
@@ -280,9 +308,7 @@ class Qwen3(CeluneBackend):
 
             try:
                 # this path resolves to celune/refs/[voice].wav
-                ref_wav = (
-                    Path(__file__).resolve().parents[1] / self.reference_waves[voice]
-                )
+                ref_wav = self._reference_wave_path(voice, self.reference_waves[voice])
                 ref_text = self.reference_texts[voice]
             except KeyError as e:
                 raise ValueError(

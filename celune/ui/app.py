@@ -75,7 +75,7 @@ class CeluneUI(App):
 
         self.celune = cast(Celune, None)
         self.celune_ready = False
-        self.celune_styles: tuple[str, ...] = ("balanced", "calm", "bold", "upbeat")
+        self.celune_styles: tuple[str, ...] = ()
         self.celune_voices: Iterator[str] = itertools.cycle(self.celune_styles)
 
         self.style_index = 0
@@ -206,9 +206,7 @@ class CeluneUI(App):
             )
             with Horizontal(id="controls"):
                 yield TextArea(id="input", placeholder="Please wait")
-                yield Button(
-                    self.celune_styles[0].capitalize(), id="style", disabled=True
-                )
+                yield Button("No Voice Set", id="style", disabled=True)
             with Horizontal(id="bottom"):
                 yield Label("", id="status")
                 yield Label("", id="resources")
@@ -253,6 +251,7 @@ class CeluneUI(App):
         self.progress_bar = self.query_one("#progress", ProgressBar)
         self._refresh_status()
         self._refresh_theme_text()
+        self._refresh_logs()
         ui_resources.prime_usage()
         self.set_interval(2.06, self.advance_resources)
 
@@ -335,17 +334,15 @@ class CeluneUI(App):
             None: This worker initializes the engine and updates UI state.
         """
         try:
-            tts_voices: tuple[str, ...] = tuple(self.celune.backend.voices)
-
-            self.celune.set_voices(tts_voices)
-            self.celune_styles = tts_voices or ("balanced", "calm", "bold", "upbeat")
-            self.celune_voices = itertools.cycle(tts_voices)
-            if self.celune.current_voice in self.celune_styles:
-                self.style_index = self.celune_styles.index(self.celune.current_voice)
-            else:
-                self.style_index = 0
-
             if self.celune.load():
+                self.celune_styles = self.celune.voices
+                self.celune_voices = itertools.cycle(self.celune_styles)
+                if self.celune.current_voice in self.celune_styles:
+                    self.style_index = self.celune_styles.index(
+                        self.celune.current_voice
+                    )
+                else:
+                    self.style_index = 0
                 self.celune_ready = True
                 self.safe_status("Idle")
                 self.tts_voice_changed(
@@ -596,13 +593,16 @@ class CeluneUI(App):
         Returns:
             None: This method safely updates the log widget from any thread.
         """
-        if self.cur_state == "exiting" or self.logs is None:
+        if self.cur_state == "exiting":
             return
 
         if severity not in SEVERITY_COLORS["celune"]:
             severity = "info"
 
         self.log_history.append((msg, severity))
+        if self.logs is None:
+            return
+
         entry = Text(msg, style=self._severity_color(severity))
 
         if threading.current_thread() is threading.main_thread():

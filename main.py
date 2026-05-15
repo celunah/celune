@@ -167,10 +167,10 @@ def main() -> None:
             ).start()
 
             if backend == "qwen3":
+                print("Qwen3 uses CEVOICE-backed voice cloning by default.")
                 print(
-                    "Qwen3 can be configured to use voice cloning or Celune's native mode."
+                    "Native mode remains available as a deprecated compatibility option."
                 )
-                print("Refer to Celune's configuration file for more details.")
             elif backend == "voxcpm2":
                 print(
                     "Note: VoxCPM2 only supports voice cloning, and it is significantly slower."
@@ -231,7 +231,6 @@ def main() -> None:
                 dev=dev,
                 config=config,
             )
-            celune.setup_extensions()
             ui.celune = celune
             ui.run()
         elif headless:
@@ -244,7 +243,6 @@ def main() -> None:
                 dev=dev,
                 config=config,
             )
-            celune.setup_extensions()
             ui_headless.celune = celune
 
             if not celune.load():

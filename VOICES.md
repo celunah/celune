@@ -20,7 +20,7 @@ Parts in brackets may not be said equally by all speakers.
 The name is derived from the author's username.
 
 # Models
-Qwen-based models used in Celune no longer use reference audios, unless the Qwen3 cloning mode has been enabled.
+Qwen3 now uses CEVOICE-backed voice cloning by default. Native Qwen3 mode remains available only as a deprecated compatibility option.
 
 Check https://huggingface.co/collections/lunahr/celune for a list of Celune models in use, or these model pages:
 

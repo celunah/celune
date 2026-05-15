@@ -2,9 +2,11 @@
 # voxcpm2 = slower, high quality
 # if null, Celune will ask you to choose a backend before starting
 backend: null
-# clone = clone from Celune references
-# native = use Celune native models
-qwen3_mode: native
+# clone = clone from CEVOICE bundles
+# native = deprecated compatibility mode using Celune native models
+qwen3_mode: clone
+# either a built-in bundle name under celune/voices or an explicit .cevoice path
+voice_bundle: celune
 # if enabled, detailed tracebacks will be displayed, verbose logging messages will appear,
 # and Celune will self-analyze her own voice
 dev: false

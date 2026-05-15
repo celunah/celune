@@ -48,3 +48,7 @@ class ExtensionAlreadyRegisteredError(ExtensionError):
 
 class No(Exception):
     """Celune does not want to start today."""
+
+
+class CEVoiceError(RuntimeError, CeluneError):
+    """CEVOICE data is malformed or unsupported."""

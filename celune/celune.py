@@ -6,6 +6,7 @@ import time
 import queue
 import threading
 import contextlib
+from pathlib import Path
 from typing import Any, Optional, Callable, Protocol, Union
 
 import numpy as np
@@ -21,6 +22,7 @@ from huggingface_hub.utils import disable_progress_bars
 from . import __version__
 from .backends import CeluneBackend, resolve_backend
 from .backends.qwen3 import Qwen3
+from .cevoice import announce_default_bundle, default_loader, select_voice_bundle
 from .config import config_bool, config_value
 from .constants import NORMALIZER_MODEL_ID, PipelineStates
 from .dsp import StreamingPedalboardReverb
@@ -149,7 +151,7 @@ class Celune:
             (isinstance(tts_backend, str) and tts_backend.strip().lower() == "qwen3")
             or (isinstance(tts_backend, type) and issubclass(tts_backend, Qwen3))
         ):
-            backend_kwargs["mode"] = config_value(config, "qwen3_mode", "native")
+            backend_kwargs["mode"] = config_value(config, "qwen3_mode", "clone")
 
         try:
             self.backend = resolve_backend(
@@ -197,8 +199,8 @@ class Celune:
         self.llm: Optional[PreTrainedModel] = None
         self.tokenizer: Optional[PreTrainedTokenizerBase] = None
 
-        self.current_voice = self.backend.default_voice
-        self.voices: tuple[str, ...] = tuple(self.backend.voices)
+        self.current_voice: Optional[str] = None
+        self.voices: tuple[str, ...] = ()
         self.voice_prompt: Optional[str] = None
 
         self.prebuffer_chunks = 5 if self.backend.name == "qwen3" else 10
@@ -328,6 +330,67 @@ class Celune:
         """
         self.voices = voices
 
+    def load_voice_bundle(self, bundle: str | Path | None = None) -> bool:
+        """Select and load a CEVOICE bundle into Celune's active voice set.
+
+        Args:
+            bundle: A built-in bundle name, explicit bundle path, or ``None`` to
+                use Celune's default bundle.
+
+        Returns:
+            bool: ``True`` when a CEVOICE bundle was loaded, otherwise ``False``.
+        """
+        select_voice_bundle(bundle)
+        loader = default_loader()
+        if loader is None:
+            voices = tuple(self.backend.voices)
+            self.voices = voices
+            self.current_voice = (
+                self.backend.default_voice
+                if self.backend.default_voice in voices
+                else voices[0]
+                if voices
+                else None
+            )
+            return bool(voices)
+
+        voices = tuple(loader.bundle.voices)
+        configured_default = loader.bundle.metadata.get("default_voice")
+        preferred_voice = (
+            configured_default
+            if isinstance(configured_default, str)
+            else self.backend.default_voice
+        )
+        self.voices = voices
+        self.current_voice = (
+            preferred_voice
+            if preferred_voice in voices
+            else voices[0]
+            if voices
+            else None
+        )
+        return bool(voices)
+
+    def load_available_voices(self) -> bool:
+        """Load the active voice set appropriate for the selected backend.
+
+        Returns:
+            bool: ``True`` when at least one voice is available.
+        """
+        if self.backend.uses_voice_bundles:
+            return self.load_voice_bundle(config_value(self.config, "voice_bundle"))
+
+        voices = tuple(self.backend.voices)
+        self.voices = voices
+        self.current_voice = (
+            self.backend.default_voice
+            if self.backend.default_voice in voices
+            else voices[0]
+            if voices
+            else None
+        )
+        return bool(voices)
+
     def set_voice(self, name: str) -> bool:
         """Extension method for changing Celune's voice.
 
@@ -420,8 +483,6 @@ class Celune:
             None: This method builds the extension context and autoloads user
                 extensions.
         """
-        self.log_dev("[EXT] Setting up extension manager")
-
         ctx = CeluneContext(
             log=self.log,
             say=self.say,
@@ -554,8 +615,19 @@ class Celune:
         hf_logging.set_verbosity_error()
 
         log_runtime_banner(self.log, self.backend.name)
+        backend_warning = getattr(self.backend, "deprecation_warning", None)
+        if backend_warning:
+            self.log(f"DeprecationWarning: {backend_warning}", "warning")
+        self.load_available_voices()
+        if self.backend.uses_voice_bundles:
+            announce_default_bundle(self.log)
+        self.setup_extensions()
         self.progress_callback(None, None)
         self.backend.preload_models()
+
+        if not self.voices:
+            self.log("No Celune voices are available.", "error")
+            return False
 
         self.log("All Celune voices are available.")
         try:

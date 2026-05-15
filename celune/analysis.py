@@ -4,6 +4,7 @@
 import pathlib
 import warnings
 import contextlib
+from io import BytesIO
 from typing import Any, Optional, cast
 
 import torch
@@ -18,6 +19,7 @@ from matplotlib.projections import PolarAxes
 from transformers import AutoModel, AutoProcessor
 
 from .constants import VOICE_EMBEDDING_MODEL
+from .cevoice import default_loader
 
 matplotlib.use("Agg")
 
@@ -303,6 +305,14 @@ def _load_reference_embedding(voice: str) -> npt.NDArray[np.float32]:
     Raises:
         FileNotFoundError: No Celune voice was found by this name, or it has no embeddings.
     """
+    loader = default_loader()
+    if loader is not None:
+        try:
+            data = loader.bundle.read_asset(voice, "pt")
+        except KeyError as error:
+            raise FileNotFoundError(f"{voice}.pt not found") from error
+        return _embedding_tensor_to_numpy(torch.load(BytesIO(data), map_location="cpu"))
+
     ref_path = pathlib.Path(__file__).resolve().parent / "refs" / f"{voice}.pt"
     if not ref_path.exists():
         raise FileNotFoundError(f"{ref_path.name} not found")
@@ -316,6 +326,14 @@ def _available_reference_voices() -> list[str]:
     Returns:
         list[str]: The list of available embedding names.
     """
+    loader = default_loader()
+    if loader is not None:
+        return sorted(
+            voice
+            for voice in loader.bundle.voices
+            if "pt" in loader.bundle.voices[voice].get("assets", {})
+        )
+
     refs_dir = pathlib.Path(__file__).resolve().parent / "refs"
     return sorted(path.stem for path in refs_dir.glob("*.pt"))
 
