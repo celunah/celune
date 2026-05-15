@@ -13,7 +13,7 @@ if REVISION:
 else:
     __version__ = "3.5.0"
 
-__tagline__ = "\u201cI'm not just a TTS. I'm someone special.\u201d"
+__tagline__ = "\u201cYour voice, your way.\u201d"
 __codename__ = "Guidance"
 __comment__ = "My vocal prowess can be easily harnessed by beginners."
 
