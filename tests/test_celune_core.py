@@ -3,6 +3,7 @@
 
 import unittest
 from pathlib import Path
+from typing import Any, cast
 from unittest import mock
 
 from celune.celune import Celune
@@ -12,18 +13,39 @@ from tests.support import FakeBackend, FakeGlow
 
 
 class CeluneCoreTests(unittest.TestCase):
+    """Tests for Celune orchestration without real model work."""
+
     def _make_celune(self, config: dict) -> Celune:
+        """Build a Celune instance with lightweight fakes.
+
+        Args:
+            config: Configuration dictionary supplied to Celune.
+
+        Returns:
+            Celune: A Celune instance with fake glow and backend objects.
+
+        Raises:
+            BackendError: Celune initialization rejects the supplied config.
+        """
         with mock.patch("celune.celune.AudioRGBGlow", FakeGlow):
             with mock.patch("celune.celune.default_loader", return_value=None):
                 return Celune(config=config, tts_backend=FakeBackend)
 
     def test_constructor_validates_backend_and_chunk_size(self) -> None:
+        """Verify constructor validation and derived chunk size behavior.
+
+        Returns:
+            None: Assertions verify constructor behavior.
+
+        Raises:
+            AssertionError: Constructor behavior changes unexpectedly.
+        """
         with self.assertRaisesRegex(BackendError, "no backend set"):
             Celune(config={}, tts_backend=None)
 
         celune = self._make_celune({})
         self.assertEqual(celune.chunk_size, 8)
-        self.assertEqual(celune.glow.started, True)
+        self.assertEqual(getattr(celune.glow, "started"), True)
 
         with mock.patch("celune.celune.AudioRGBGlow", FakeGlow):
             with mock.patch("celune.celune.default_loader", return_value=None):
@@ -35,6 +57,14 @@ class CeluneCoreTests(unittest.TestCase):
                     )
 
     def test_voice_loading_uses_backend_and_bundle_defaults(self) -> None:
+        """Verify backend voices and bundle metadata determine defaults.
+
+        Returns:
+            None: Assertions verify voice selection behavior.
+
+        Raises:
+            AssertionError: Voice loading behavior changes unexpectedly.
+        """
         celune = self._make_celune({})
         self.assertEqual(celune.load_available_voices(), True)
         self.assertEqual(celune.voices, ("balanced", "bold"))
@@ -50,8 +80,18 @@ class CeluneCoreTests(unittest.TestCase):
         self.assertEqual(celune.current_voice, "bold")
 
     def test_logging_waiting_and_api_settings_cover_edge_cases(self) -> None:
+        """Verify logging gates, readiness checks, and API fallbacks.
+
+        Returns:
+            None: Assertions verify core utility behavior.
+
+        Raises:
+            AssertionError: Core utility behavior changes unexpectedly.
+        """
         logs: list[tuple[str, str]] = []
-        celune = self._make_celune({"api": {"port": "bad", "rate_limit_per_minute": "bad"}})
+        celune = self._make_celune(
+            {"api": {"port": "bad", "rate_limit_per_minute": "bad"}}
+        )
         celune.log_callback = lambda msg, severity="info": logs.append((msg, severity))
         celune.log("hello")
         self.assertEqual(logs[-1], ("hello", "info"))
@@ -75,6 +115,14 @@ class CeluneCoreTests(unittest.TestCase):
         self.assertEqual(logs[-1][1], "warning")
 
     def test_load_success_and_model_failure_paths_are_stubbed(self) -> None:
+        """Verify successful startup and default-model failure handling.
+
+        Returns:
+            None: Assertions verify startup behavior.
+
+        Raises:
+            AssertionError: Startup behavior changes unexpectedly.
+        """
         celune = self._make_celune({})
         celune.setup_extensions = mock.Mock()
         celune._warmup = mock.Mock(return_value=True)
@@ -85,10 +133,12 @@ class CeluneCoreTests(unittest.TestCase):
         with mock.patch("celune.celune.threading.Thread") as thread_cls:
             thread_cls.return_value.start = mock.Mock()
             with mock.patch("celune.celune.validate_runtime", return_value=True):
-                with mock.patch("celune.celune.play_readiness_signal", return_value=False):
+                with mock.patch(
+                    "celune.celune.play_readiness_signal", return_value=False
+                ):
                     self.assertEqual(celune.load(), True)
         self.assertEqual(celune.loaded, True)
-        self.assertEqual(celune.glow.entered, True)
+        self.assertEqual(getattr(celune.glow, "entered"), True)
 
         failing = self._make_celune({})
         failing.setup_extensions = mock.Mock()
@@ -100,10 +150,18 @@ class CeluneCoreTests(unittest.TestCase):
         self.assertEqual(errors, ["Default model failed to load"])
 
     def test_unload_runtime_state_clears_models_without_cuda(self) -> None:
+        """Verify model references are cleared without touching CUDA.
+
+        Returns:
+            None: Assertions verify unload behavior.
+
+        Raises:
+            AssertionError: Unload behavior changes unexpectedly.
+        """
         celune = self._make_celune({})
-        celune.model = object()
-        celune.llm = object()
-        celune.tokenizer = object()
+        celune.model = cast(Any, object())
+        celune.llm = cast(Any, object())
+        celune.tokenizer = cast(Any, object())
         celune.backend.model = object()
         with mock.patch("celune.celune.torch.cuda.is_available", return_value=False):
             celune.unload_runtime_state(include_normalizer=True)

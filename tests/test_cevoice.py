@@ -3,6 +3,7 @@
 
 import copy
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,12 +13,30 @@ from celune.exceptions import CEVoiceError
 
 
 class CEVoiceTests(unittest.TestCase):
+    """Tests for CEVOICE bundle serialization and loader behavior."""
+
     def setUp(self) -> None:
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp_dir.cleanup)
-        self.path = Path(self.temp_dir.name) / "sample.cevoice"
+        """Create an isolated temporary directory for one test.
+
+        Returns:
+            None: This fixture prepares per-test paths.
+
+        Raises:
+            None: Temporary directory creation errors propagate normally.
+        """
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.temp_dir, True)
+        self.path = self.temp_dir / "sample.cevoice"
 
     def tearDown(self) -> None:
+        """Reset shared CEVOICE loader globals after one test.
+
+        Returns:
+            None: This fixture clears process-wide CEVOICE state.
+
+        Raises:
+            None: Loader cleanup errors are not expected.
+        """
         loader = cevoice._DEFAULT_LOADER
         if loader is not None:
             loader.close()
@@ -28,6 +47,14 @@ class CEVoiceTests(unittest.TestCase):
         cevoice._SELECTED_BUNDLE = None
 
     def _write_bundle(self) -> cevoice.CEVoice:
+        """Write and reopen one tiny valid CEVOICE fixture.
+
+        Returns:
+            CEVoice: The reopened CEVOICE fixture bundle.
+
+        Raises:
+            CEVoiceError: Fixture writing or loading fails unexpectedly.
+        """
         cevoice.write_cevoice(
             self.path,
             {
@@ -48,6 +75,14 @@ class CEVoiceTests(unittest.TestCase):
         return cevoice.CEVoice.open(self.path)
 
     def test_write_open_read_and_materialize_bundle_assets(self) -> None:
+        """Verify CEVOICE writes, reads, ordering, and materialization.
+
+        Returns:
+            None: Assertions verify CEVOICE success behavior.
+
+        Raises:
+            AssertionError: CEVOICE behavior changes unexpectedly.
+        """
         bundle = self._write_bundle()
         self.assertEqual(bundle.voice_order, ("bold", "balanced"))
         self.assertEqual(bundle.read_asset("balanced", "wav"), b"wav")
@@ -58,6 +93,14 @@ class CEVoiceTests(unittest.TestCase):
         self.assertEqual(loader.materialize("balanced", "wav"), path)
 
     def test_asset_lookup_and_checksum_failures_are_reported(self) -> None:
+        """Verify missing assets and checksum corruption are reported.
+
+        Returns:
+            None: Assertions verify CEVOICE failure behavior.
+
+        Raises:
+            AssertionError: CEVOICE failure handling changes unexpectedly.
+        """
         bundle = self._write_bundle()
         with self.assertRaisesRegex(KeyError, "asset 'pt'"):
             bundle.asset("bold", "pt")
@@ -69,6 +112,14 @@ class CEVoiceTests(unittest.TestCase):
             broken.read_asset("bold", "wav")
 
     def test_invalid_metadata_is_rejected(self) -> None:
+        """Verify malformed CEVOICE metadata is rejected.
+
+        Returns:
+            None: Assertions verify metadata validation behavior.
+
+        Raises:
+            AssertionError: Metadata validation behavior changes unexpectedly.
+        """
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
         metadata["default_voice"] = "missing"
@@ -102,6 +153,14 @@ class CEVoiceTests(unittest.TestCase):
             cevoice.CEVoice.open(self.path)
 
     def test_default_loader_and_announcement_cover_success_and_failure(self) -> None:
+        """Verify loader selection and announcement fallback paths.
+
+        Returns:
+            None: Assertions verify loader behavior.
+
+        Raises:
+            AssertionError: Loader behavior changes unexpectedly.
+        """
         self._write_bundle()
         cevoice.select_voice_bundle(self.path)
         logs: list[tuple[str, str]] = []
@@ -115,11 +174,11 @@ class CEVoiceTests(unittest.TestCase):
         self.assertEqual(logs, [("Loading voice bundle: Fixture", "info")])
         self.assertIsNone(cevoice.announce_default_bundle(log))
 
-        cevoice.select_voice_bundle(Path(self.temp_dir.name) / "missing.cevoice")
+        cevoice.select_voice_bundle(self.temp_dir / "missing.cevoice")
         self.assertIsNone(cevoice.default_loader())
         self.assertIsNone(cevoice.announce_default_bundle(log))
 
-        invalid_path = Path(self.temp_dir.name) / "invalid.cevoice"
+        invalid_path = self.temp_dir / "invalid.cevoice"
         invalid_path.write_bytes(b"bad")
         cevoice.select_voice_bundle(invalid_path)
         self.assertIsNone(cevoice.default_loader())
@@ -127,6 +186,14 @@ class CEVoiceTests(unittest.TestCase):
         self.assertEqual(logs[-1][1], "warning")
 
     def test_materialize_rejects_unsafe_names(self) -> None:
+        """Verify unsafe voice and asset names cannot be materialized.
+
+        Returns:
+            None: Assertions verify path safety behavior.
+
+        Raises:
+            AssertionError: Path safety behavior changes unexpectedly.
+        """
         loader = cevoice.CEVoiceLoader(self._write_bundle())
         self.addCleanup(loader.close)
         with self.assertRaisesRegex(CEVoiceError, "invalid voice name"):
@@ -135,6 +202,17 @@ class CEVoiceTests(unittest.TestCase):
             loader.materialize("balanced", "../wav")
 
     def _rewrite_metadata(self, metadata: dict) -> None:
+        """Replace fixture metadata while preserving the original payload.
+
+        Args:
+            metadata: Metadata object to serialize into the fixture bundle.
+
+        Returns:
+            None: This helper rewrites the current fixture file.
+
+        Raises:
+            None: Serialization or file errors propagate normally.
+        """
         metadata_bytes = json.dumps(
             metadata,
             ensure_ascii=True,

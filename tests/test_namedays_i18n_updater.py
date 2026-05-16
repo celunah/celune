@@ -10,7 +10,17 @@ from celune import i18n, namedays, updater
 
 
 class NameDayTests(unittest.TestCase):
+    """Tests for name-day lookup helpers."""
+
     def test_lookup_helpers_cover_supported_inputs(self) -> None:
+        """Verify date lookup helpers and invalid input handling.
+
+        Returns:
+            None: Assertions verify lookup behavior.
+
+        Raises:
+            AssertionError: Name-day lookup behavior changes unexpectedly.
+        """
         self.assertEqual(namedays.get_names(5, 16), ["Andrew", "Simon"])
         self.assertEqual(
             namedays.get_names_for_date(datetime.date(2026, 5, 16)),
@@ -27,10 +37,20 @@ class NameDayTests(unittest.TestCase):
 
 
 class I18nTests(unittest.TestCase):
+    """Tests for localization fallback behavior."""
+
     def tearDown(self) -> None:
         i18n.set_locale("en")
 
     def test_string_falls_back_and_formats_values(self) -> None:
+        """Verify fallback strings and interpolation.
+
+        Returns:
+            None: Assertions verify localization behavior.
+
+        Raises:
+            AssertionError: Localization behavior changes unexpectedly.
+        """
         original = dict(i18n.STRINGS)
         try:
             i18n.STRINGS["en"] = {"hello": "Hello {name}"}
@@ -44,7 +64,17 @@ class I18nTests(unittest.TestCase):
 
 
 class UpdaterTests(unittest.TestCase):
+    """Tests for pure updater decision logic."""
+
     def test_version_helpers_order_tags(self) -> None:
+        """Verify version normalization and ordering helpers.
+
+        Returns:
+            None: Assertions verify version helper behavior.
+
+        Raises:
+            AssertionError: Version helper behavior changes unexpectedly.
+        """
         self.assertEqual(updater._normalize_tag("refs/tags/v3.5.0"), "3.5.0")
         self.assertEqual(updater._short_revision("abcdef123"), "abcdef1")
         self.assertEqual(updater._short_revision(""), "unknown")
@@ -52,12 +82,28 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(updater._is_newer_version_tag("3.5.0", "3.5.1"), False)
 
     def test_check_for_update_returns_none_for_dirty_worktree(self) -> None:
+        """Verify dirty repositories suppress update prompts.
+
+        Returns:
+            None: Assertions verify update suppression behavior.
+
+        Raises:
+            AssertionError: Update suppression behavior changes unexpectedly.
+        """
         with mock.patch("celune.updater._is_git_checkout", return_value=True):
             with mock.patch("celune.updater._current_branch", return_value="main"):
                 with mock.patch("celune.updater._has_local_changes", return_value=True):
                     self.assertIsNone(updater.check_for_update())
 
     def test_check_for_update_builds_update_info(self) -> None:
+        """Verify update metadata assembly for a newer revision.
+
+        Returns:
+            None: Assertions verify update metadata behavior.
+
+        Raises:
+            AssertionError: Update metadata behavior changes unexpectedly.
+        """
         with mock.patch.dict("os.environ", {}, clear=True):
             with mock.patch("celune.updater._is_git_checkout", return_value=True):
                 with mock.patch("celune.updater._current_branch", return_value="main"):
@@ -67,7 +113,9 @@ class UpdaterTests(unittest.TestCase):
                         with mock.patch(
                             "celune.updater._local_revision", return_value="a" * 40
                         ):
-                            with mock.patch("celune.updater._local_tag", return_value="3.5.0"):
+                            with mock.patch(
+                                "celune.updater._local_tag", return_value="3.5.0"
+                            ):
                                 with mock.patch(
                                     "celune.updater._remote_branch_revision",
                                     return_value="b" * 40,
@@ -84,6 +132,14 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(update.latest_version, "3.5.1")
 
     def test_update_to_latest_rejects_unsafe_states(self) -> None:
+        """Verify unsafe repository states reject automatic updates.
+
+        Returns:
+            None: Assertions verify update safety behavior.
+
+        Raises:
+            AssertionError: Update safety behavior changes unexpectedly.
+        """
         with mock.patch("celune.updater._is_git_checkout", return_value=False):
             with self.assertRaisesRegex(updater.UpdateError, "did not find"):
                 updater.update_to_latest()

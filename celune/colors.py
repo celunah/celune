@@ -173,9 +173,7 @@ def _derive_light_palette(background: str, accent: str) -> dict[str, str]:
         "warning": _ensure_contrast(
             _hls_color(0.15, 0.28, 0.85), light_background, 4.5
         ),
-        "error": _ensure_contrast(
-            _hls_color(0.99, 0.32, 0.72), light_background, 4.5
-        ),
+        "error": _ensure_contrast(_hls_color(0.99, 0.32, 0.72), light_background, 4.5),
     }
 
 
