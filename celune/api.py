@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+"""Celune's API layer."""
+
 import datetime
 import io
 import os
@@ -10,6 +13,7 @@ from hmac import compare_digest
 from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, Union
 
 import numpy as np
+import numpy.typing as npt
 import soundfile as sf
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -19,6 +23,7 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .dsp import _resample_audio, _split
 from .utils import format_error
+from .constants import BASE_SR
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -191,7 +196,7 @@ def api_log(action: str, content: str, suffix: str = "") -> None:
 def wav_header() -> bytes:
     """Return a streamable 48 kHz stereo PCM24 WAV header."""
     channels = 2
-    sample_rate = 48000
+    sample_rate = BASE_SR
     bits_per_sample = 24
     block_align = channels * bits_per_sample // 8
     byte_rate = sample_rate * block_align
@@ -219,7 +224,7 @@ def wav_header() -> bytes:
     )
 
 
-def float32_to_pcm24(audio: np.ndarray) -> bytes:
+def float32_to_pcm24(audio: npt.NDArray[np.float32]) -> bytes:
     """Convert normalized float32 audio to signed 24-bit little-endian PCM."""
     audio = np.asarray(audio, dtype=np.float32)
 
@@ -250,7 +255,7 @@ def stream_headers() -> dict[str, str]:
     """Return headers describing the WAV stream."""
     return {
         "X-Audio-Format": "wav-pcm24",
-        "X-Sample-Rate": "48000",
+        "X-Sample-Rate": str(BASE_SR),
         "X-Channels": "2",
     }
 
@@ -291,9 +296,13 @@ def root() -> RootResponse:
     """Celune API root endpoint.
 
     Returns:
-        RootResponse: The API is working.
+        RootResponse: The response with Celune's underlying state.
     """
-    return RootResponse(status="ok")
+    try:
+        celune = require_celune()
+        return RootResponse(status=celune.cur_state)
+    except HTTPException:
+        return RootResponse(status="error")
 
 
 @api.get("/v1/version", response_model=VersionResponse)
@@ -387,7 +396,7 @@ async def sfx(
             },
         )
 
-    if not celune.play_audio(audio, 48000, label=filename, keep=keep):
+    if not celune.play_audio(audio, BASE_SR, label=filename, keep=keep):
         return JSONResponse(
             status_code=409,
             content={
@@ -399,7 +408,7 @@ async def sfx(
     def chunks() -> Iterator[bytes]:
         """Yield the uploaded SFX as 48 kHz stereo float32 chunks."""
         yield wav_header()
-        for chunk in _split(audio, 48000, celune.chunk_size):
+        for chunk in _split(audio, BASE_SR, celune.chunk_size):
             yield float32_to_pcm24(chunk)
 
     return StreamingResponse(

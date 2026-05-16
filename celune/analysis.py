@@ -1,8 +1,10 @@
+# SPDX-License-Identifier: MIT
 """Analyze a WAV file and generate a radar chart plus a text report."""
 
 import pathlib
 import warnings
 import contextlib
+from io import BytesIO
 from typing import Any, Optional, cast
 
 import torch
@@ -17,6 +19,7 @@ from matplotlib.projections import PolarAxes
 from transformers import AutoModel, AutoProcessor
 
 from .constants import VOICE_EMBEDDING_MODEL
+from .cevoice import default_loader
 
 matplotlib.use("Agg")
 
@@ -302,6 +305,14 @@ def _load_reference_embedding(voice: str) -> npt.NDArray[np.float32]:
     Raises:
         FileNotFoundError: No Celune voice was found by this name, or it has no embeddings.
     """
+    loader = default_loader()
+    if loader is not None:
+        try:
+            data = loader.bundle.read_asset(voice, "pt")
+        except KeyError as error:
+            raise FileNotFoundError(f"{voice}.pt not found") from error
+        return _embedding_tensor_to_numpy(torch.load(BytesIO(data), map_location="cpu"))
+
     ref_path = pathlib.Path(__file__).resolve().parent / "refs" / f"{voice}.pt"
     if not ref_path.exists():
         raise FileNotFoundError(f"{ref_path.name} not found")
@@ -315,6 +326,14 @@ def _available_reference_voices() -> list[str]:
     Returns:
         list[str]: The list of available embedding names.
     """
+    loader = default_loader()
+    if loader is not None:
+        return sorted(
+            voice
+            for voice in loader.bundle.voices
+            if "pt" in loader.bundle.voices[voice].get("assets", {})
+        )
+
     refs_dir = pathlib.Path(__file__).resolve().parent / "refs"
     return sorted(path.stem for path in refs_dir.glob("*.pt"))
 
@@ -1094,6 +1113,23 @@ def analyze_voice_audio(
     )
 
 
+def _has_reference_embedding(voice: str) -> bool:
+    """Does this voice have an embeddding?
+
+    Args:
+        voice: The voice to check from the CEVOICE bundle.
+
+    Returns:
+        bool: Whether this voice has an embedding included.
+    """
+
+    loader = default_loader()
+    if loader is not None:
+        return "pt" in loader.bundle.voices.get(voice, {}).get("assets", {})
+    refs_dir = pathlib.Path(__file__).resolve().parent / "refs"
+    return (refs_dir / f"{voice}.pt").exists()
+
+
 def analyze_voice(voice: pathlib.Path) -> None:
     """Analyze incoming voice artifact.
 
@@ -1107,6 +1143,5 @@ def analyze_voice(voice: pathlib.Path) -> None:
         return
 
     y, sr = load_audio(voice)
-    refs_dir = pathlib.Path(__file__).resolve().parent / "refs"
-    reference_voice = voice.stem if (refs_dir / f"{voice.stem}.pt").exists() else None
+    reference_voice = voice.stem if _has_reference_embedding(voice.stem) else None
     _analyze_voice_data(y, sr, voice, voice.parent, voice.stem, reference_voice)

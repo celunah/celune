@@ -15,12 +15,12 @@ Celune can be pronounced in one of two ways:
 - English-style: Seh-LOON (IPA: /sɛˈluːn/)
 - French-style: Say-LUNE or See-LUNE, approximation: Say-L(Y)OON or See-L(Y)OON, (IPA: /seɪˈlyn/ or /seˈlyn/)
 
-Parts in brackets may not be said equally by all speakers.
+Parts in brackets may not be said equally by all speakers, as they're not native English sounds.
 
 The name is derived from the author's username.
 
 # Models
-Qwen-based models used in Celune no longer use reference audios, unless the Qwen3 cloning mode has been enabled.
+Qwen3 now uses voice cloning samples from the installed CEVOICE file by default. Native Qwen3 mode remains available only as a deprecated compatibility option, using non-cloning models.
 
 Check https://huggingface.co/collections/lunahr/celune for a list of Celune models in use, or these model pages:
 
@@ -42,6 +42,7 @@ These scripts are what Celune says in the reference audio. They were modified fr
 
 > Upbeat:
 > `Hehehe... Hi, I'm Celune. Look, I have something to tell... might as well make it fun. Shall we?`
+> This sample includes leading laughter.
 
 # Reference prompts
 These prompts were used to steer direction of the voice during auditioning.
@@ -73,7 +74,7 @@ These edits were applied to make sure the new references match the initial refer
 - Energetic/Neutral pitch `-1 sem`
 - Calm pitch `-0.5 sem`
 
-- Energetic - slow down `lune` in `Celune` by 33% (high quality paul stretch), to correct the pronunciation of the name
+- Energetic - slow down `lune` in `Celune` by 33% (high quality paulstretching), to correct the pronunciation of the name
 - Neutral - 75ms pause between `pronounced` and `Celune`, for natural pacing
 
 # Effects
@@ -109,4 +110,4 @@ Refer to the /reverb command for details.
 # Output format
 This format makes Celune sound the best on your computer, especially if using VoxCPM2.
 
-- 48kHz stereo, signed 24-bit PCM
+- 48kHz stereo, signed 24-bit PCM, FLAC

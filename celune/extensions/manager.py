@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Celune's extension manager."""
 
 from __future__ import annotations
@@ -18,14 +19,6 @@ class CeluneExtensionManager:
     """Celune's extension manager."""
 
     def __init__(self, context: CeluneContext) -> None:
-        """Initialize the extension manager.
-
-        Args:
-            context: Shared context passed to registered extensions.
-
-        Returns:
-            None: This constructor prepares extension registry state.
-        """
         self.context = context
         self.extensions: dict[str, CeluneExtension] = {}
         self.auto_started = False

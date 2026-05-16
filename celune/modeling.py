@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Normalizer loading helpers for Celune."""
 
 from typing import Callable, Union
