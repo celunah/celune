@@ -2,6 +2,7 @@
 """Tests for pure analysis helpers and RGB glow math."""
 
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -72,6 +73,29 @@ class AnalysisTests(unittest.TestCase):
         self.assertIn("No voicings found.", assessment[1])
         self.assertIn("Mean pitch could not be determined", assessment[3])
         self.assertIn("high pause ratio", assessment[-1].lower())
+
+    @mock.patch("celune.analysis.default_loader", return_value=None)
+    def test_loose_reference_embeddings_are_discovered_without_bundle(
+        self, _default_loader: mock.Mock
+    ) -> None:
+        """Verify loose packaged embeddings remain available without CEVOICE."""
+        self.assertEqual(
+            analysis._available_reference_voices(),
+            ["balanced", "bold", "calm", "upbeat"],
+        )
+
+    @mock.patch("celune.analysis.default_loader", return_value=None)
+    @mock.patch("celune.analysis.torch.load")
+    def test_loose_reference_embedding_loads_without_bundle(
+        self, torch_load: mock.Mock, _default_loader: mock.Mock
+    ) -> None:
+        """Verify loose packaged embeddings still load by derived voice path."""
+        torch_load.return_value = np.ones(2048, dtype=np.float32)
+
+        embedding = analysis._load_reference_embedding("balanced")
+
+        self.assertEqual(embedding.shape, (2048,))
+        torch_load.assert_called_once()
 
 
 class ChromaTests(unittest.TestCase):
