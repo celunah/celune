@@ -32,9 +32,6 @@ class FakeBackend(CeluneBackend):
 
         Returns:
             tuple[bool, Optional[str]]: Availability and the fake local path.
-
-        Raises:
-            None: This helper does not raise.
         """
         return True, model
 
@@ -43,9 +40,6 @@ class FakeBackend(CeluneBackend):
 
         Returns:
             None: This fake intentionally performs no work.
-
-        Raises:
-            None: This helper does not raise.
         """
         return None
 
@@ -58,9 +52,6 @@ class FakeBackend(CeluneBackend):
 
         Returns:
             Any: A dictionary describing the requested fake model.
-
-        Raises:
-            None: This helper does not raise.
         """
         return {"model_id": model_id, "kwargs": kwargs}
 
@@ -73,9 +64,6 @@ class FakeBackend(CeluneBackend):
 
         Returns:
             Any: An iterator yielding one fake audio chunk.
-
-        Raises:
-            None: This helper does not raise.
         """
         del model, kwargs
         yield np.zeros((8, 2), dtype=np.float32), 48000, {"chunk_steps": 2}
@@ -92,9 +80,6 @@ class FakeGlow:
 
         Returns:
             None: Constructors initialize state in place.
-
-        Raises:
-            None: This constructor does not raise.
         """
         self.color = color
         self.connect_failed = False
@@ -107,9 +92,6 @@ class FakeGlow:
 
         Returns:
             bool: Always ``True`` for the fake implementation.
-
-        Raises:
-            None: This helper does not raise.
         """
         self.started = True
         return True
@@ -119,9 +101,6 @@ class FakeGlow:
 
         Returns:
             None: This helper mutates fake state in place.
-
-        Raises:
-            None: This helper does not raise.
         """
         self.entered = True
 
@@ -130,9 +109,6 @@ class FakeGlow:
 
         Returns:
             None: This fake intentionally performs no work.
-
-        Raises:
-            None: This helper does not raise.
         """
 
     @staticmethod
@@ -145,9 +121,6 @@ class FakeGlow:
 
         Returns:
             None: This fake intentionally performs no work.
-
-        Raises:
-            None: This helper does not raise.
         """
         discard(reset)
         discard(wait)
@@ -160,9 +133,6 @@ class FakeGlow:
 
         Returns:
             None: This helper appends to fake state.
-
-        Raises:
-            None: This helper does not raise.
         """
         self.scheduled.append(audio)
 
@@ -175,9 +145,6 @@ class FakeStream:
 
         Returns:
             None: Constructors initialize state in place.
-
-        Raises:
-            None: This constructor does not raise.
         """
         self.stopped = False
         self.aborted = False
@@ -189,9 +156,6 @@ class FakeStream:
 
         Returns:
             None: This helper mutates fake state in place.
-
-        Raises:
-            None: This helper does not raise.
         """
         self.stopped = True
 
@@ -200,9 +164,6 @@ class FakeStream:
 
         Returns:
             None: This helper mutates fake state in place.
-
-        Raises:
-            None: This helper does not raise.
         """
         self.aborted = True
 
@@ -211,9 +172,6 @@ class FakeStream:
 
         Returns:
             None: This helper mutates fake state in place.
-
-        Raises:
-            None: This helper does not raise.
         """
         self.closed = True
 
@@ -225,9 +183,6 @@ class FakeStream:
 
         Returns:
             None: This helper appends to fake state.
-
-        Raises:
-            None: This helper does not raise.
         """
         self.written.append(audio)
 
@@ -237,9 +192,6 @@ def make_pipeline_engine() -> SimpleNamespace:
 
     Returns:
         SimpleNamespace: An object exposing the pipeline attributes under test.
-
-    Raises:
-        None: This helper does not raise.
     """
     messages: list[tuple[str, str]] = []
     errors: list[str] = []

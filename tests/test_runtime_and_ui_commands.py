@@ -103,9 +103,6 @@ class UICommandTests(unittest.TestCase):
 
         Returns:
             None: This helper forwards to the production command handler.
-
-        Raises:
-            None: Production command errors propagate normally.
         """
         process_command(cast(CeluneUI, self.ui), command, args)
 

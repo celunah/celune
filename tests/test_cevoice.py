@@ -20,9 +20,6 @@ class CEVoiceTests(unittest.TestCase):
 
         Returns:
             None: This fixture prepares per-test paths.
-
-        Raises:
-            None: Temporary directory creation errors propagate normally.
         """
         self.temp_dir = Path(tempfile.mkdtemp())
         self.addCleanup(self._cleanup_temp_dir)
@@ -33,9 +30,6 @@ class CEVoiceTests(unittest.TestCase):
 
         Returns:
             None: This fixture removes temporary files created by the test.
-
-        Raises:
-            None: Cleanup ignores missing paths and other removal errors.
         """
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
@@ -44,9 +38,6 @@ class CEVoiceTests(unittest.TestCase):
 
         Returns:
             None: This fixture clears process-wide CEVOICE state.
-
-        Raises:
-            None: Loader cleanup errors are not expected.
         """
         loader = cevoice._DEFAULT_LOADER
         if loader is not None:
@@ -220,9 +211,6 @@ class CEVoiceTests(unittest.TestCase):
 
         Returns:
             None: This helper rewrites the current fixture file.
-
-        Raises:
-            None: Serialization or file errors propagate normally.
         """
         metadata_bytes = json.dumps(
             metadata,
