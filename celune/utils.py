@@ -1,12 +1,40 @@
+# SPDX-License-Identifier: MIT
 """Celune common utility functions."""
 
+import re
+import sys
 import math
+import time
+import random
+import inspect
 import datetime
+import traceback
 import subprocess
 import multiprocessing
-from typing import Union, Callable
+from pathlib import Path
+from typing import Union, Callable, Optional, Literal, TypedDict, overload
+from collections.abc import Iterator
+
+import langdetect
 
 from celune.constants import REFERENCE_NEW_MOON
+
+
+class CallerInfo(TypedDict):
+    """Caller information type annotation."""
+
+    function: str
+    filename: str
+    line: int
+
+
+class LanguageResult(TypedDict):
+    """Language detection metadata type annotation."""
+
+    language: str
+    languages: list[str]
+    probabilities: dict[str, float]
+    supported: bool
 
 
 def get_revision() -> str:
@@ -37,12 +65,13 @@ def get_revision() -> str:
         return ""
 
 
-def format_number(num: float, precision: int = 0) -> str:
+def format_number(num: float, precision: int = 0, fallback: str = "N/A") -> str:
     """Format a number without trailing zeroes.
 
     Args:
         num: The numeric value to format.
         precision: The number of decimal places to preserve before trimming.
+        fallback: The fallback value to return if the number is not representable.
 
     Returns:
         str: The formatted numeric string.
@@ -52,6 +81,9 @@ def format_number(num: float, precision: int = 0) -> str:
     """
     if precision < 0:
         raise ValueError("precision must be >= 0")
+
+    if not math.isfinite(num):
+        return fallback
 
     digits = precision if precision > 0 else 12
     text = f"{num:.{digits}f}".rstrip("0").rstrip(".")
@@ -190,7 +222,7 @@ def cuda_architecture(capability: tuple[int, int]) -> str:
 
     major, minor = capability
 
-    if major in [10, 11, 12] and minor == 0:
+    if major in [10, 11, 12] and minor == 0:  # recommended family
         return "Blackwell"
     if major == 9 and minor == 0:
         return "Hopper"
@@ -198,21 +230,25 @@ def cuda_architecture(capability: tuple[int, int]) -> str:
         return "Ada Lovelace"
     if major == 8 and minor in [0, 6, 7]:  # CELINE INVADED THE CUDA ZONE!
         return "Ampere"
-    if major < 8:
+    if major < 8:  # too old
         raise NotImplementedError("capability not supported")
 
-    raise ValueError("invalid capability")
+    raise ValueError(
+        "invalid capability"
+    )  # non-CUDA GPU reported a capability not known to Celune
 
 
 def run_async(
     func: Callable, *args, daemon: bool = True, **kwargs
 ) -> multiprocessing.Process:
     """Run a function asynchronously.
+    The function must not return a value or affect Celune directly, because it will run
+        detached from Celune.
 
     Args:
-        func: The function to call. The function cannot reuse the current process's state.
+        func: The function to call.
         args: The arguments to pass to the function.
-        daemon: Whether to use a daemon process. Defaults to True.
+        daemon: Whether to use a daemon process. Defaults to ``True``.
         kwargs: Keyword arguments to pass to the function.
 
     Returns:
@@ -226,3 +262,468 @@ def run_async(
     )
     proc.start()
     return proc
+
+
+def supports_ansi() -> bool:
+    """Does the terminal support ANSI color codes?
+
+    Returns:
+        bool: Whether the terminal supports ANSI color codes.
+    """
+    is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+    if not is_tty:  # non-interactive terminals don't support ANSI
+        return False
+
+    if (
+        sys.platform != "win32"
+    ):  # interactive terminals on Linux systems should already be ANSI capable
+        return True
+
+    try:
+        import ctypes
+    except ModuleNotFoundError:
+        return False
+
+    # get stdout handle
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    stdout_handle = kernel32.GetStdHandle(-11)
+    invalid_handle = ctypes.c_void_p(-1).value
+    # no handle found
+    if stdout_handle in (0, invalid_handle):
+        return False
+
+    # check stdout handle, bail out if none found
+    mode = ctypes.c_uint32(0)
+    if not kernel32.GetConsoleMode(stdout_handle, ctypes.byref(mode)):  # invalid handle
+        return False
+
+    enable_virtual_terminal_processing = 0x0004
+    if (
+        mode.value & enable_virtual_terminal_processing
+    ):  # try to enable ANSI mode, bail out if not set
+        return True  # ANSI mode was enabled
+
+    return bool(  # try to enable ANSI mode using alternative call syntax, bail out if not set
+        kernel32.SetConsoleMode(
+            stdout_handle, mode.value | enable_virtual_terminal_processing
+        )
+    )
+
+
+def format_error(e: Exception, dev: bool) -> str:
+    """Format an error message.
+
+    Args:
+        e: The exception to format.
+        dev: Whether developer mode is enabled.
+
+    Returns:
+        str: Either the full traceback or the exception text.
+    """
+    if dev:
+        trace = traceback.format_exc()
+        with open("celune_traceback.txt", "w", encoding="utf-8") as f:
+            f.write(trace)
+
+    details = str(e) or "no error description"
+    return traceback.format_exc() if dev else details
+
+
+def indent(text: str, spaces: int, direction: Literal["left", "right"] = "left") -> str:
+    """Indent a string from left or the right.
+
+    Args:
+        text: The text to indent.
+        spaces: How many spaces to indent with.
+        direction: The direction to indent from, must be horizontal.
+
+    Returns:
+        str: The indented string.
+
+    Raises:
+        ValueError: Invalid indenting direction.
+    """
+    if direction == "left":
+        return " " * spaces + text
+    if direction == "right":
+        return text + " " * spaces
+
+    raise ValueError("can't indent from this direction")
+
+
+def get_caller() -> Optional[CallerInfo]:
+    """Get information on the caller importing a package.
+
+    Returns:
+        dict: The caller's information.
+    """
+    for frame in inspect.stack():
+        filename = frame.filename
+        current = Path(__file__).resolve().parts[-2]
+
+        if "importlib" in filename or filename.startswith("<frozen"):
+            continue
+
+        if current in filename:
+            continue
+
+        # need to explicitly annotate this else PyCharm does not recognize the type of the return value
+        info: CallerInfo = {
+            "function": frame.function,
+            "filename": frame.filename,
+            "line": frame.lineno,
+        }
+
+        return info
+
+    return None
+
+
+def caller_is_repl() -> bool:
+    """Is the caller importing Celune the Python REPL?
+
+    Returns:
+        bool: If the caller is the Python REPL.
+    """
+    caller = get_caller()
+
+    if caller is not None:
+        return caller["filename"].startswith("<python-input-")
+
+    return False
+
+
+def title_case(text: str) -> str:
+    """Return a title-cased version of the input string.
+
+    Args:
+        text: The text to title-case.
+
+    Returns:
+        str: The title-cased string.
+    """
+
+    return text[0].upper() + text[1:]
+
+
+def ipa_to_english(ipa: str) -> tuple[str, int]:
+    """Return an English approximation of the input IPA.
+        The output may be inaccurate with non-English IPA inputs.
+
+    Args:
+        ipa: The IPA to approximate.
+
+    Returns:
+        tuple[str, int]: The English approximation of the input IPA,
+            and the amount of unmatched IPA characters.
+    """
+
+    ipa_map = {
+        # consonants
+        "p": "p",
+        "b": "b",
+        "t": "t",
+        "d": "d",
+        "k": "k",
+        "g": "g",
+        "m": "m",
+        "n": "n",
+        "ŋ": "ng",
+        "tʃ": "ch",
+        "dʒ": "j",
+        "f": "f",
+        "v": "v",
+        "θ": "th",
+        "ð": "dh",
+        "s": "s",
+        "z": "z",
+        "ʃ": "sh",
+        "ʒ": "zh",
+        "h": "h",
+        "w": "w",
+        "j": "y",
+        "r": "r",
+        "l": "l",
+        "ɾ": "d",
+        "ɲ": "ny",
+        "ç": "hy",
+        "ʎ": "ly",
+        "ʁ": "r",
+        "χ": "h",
+        # vowels
+        "i": "ee",
+        "ɪ": "ih",
+        "e": "eh",
+        "eɪ": "ay",
+        "ɛ": "eh",
+        "æ": "a",
+        "ʌ": "uh",
+        "ə": "uh",  # schwa is ambiguous, not guaranteed to be correct in all cases
+        "u": "oo",
+        "ʊ": "u",
+        "oʊ": "oh",
+        "ɔ": "aw",
+        "ɑ": "ah",
+        "aɪ": "ai",
+        "aʊ": "ow",
+        "ɔɪ": "oi",
+        "y": "ee",
+        # uncommon
+        "x": "h",
+        "ʔ": "-",
+        "ɚ": "er",
+        "ɝ": "er",
+        "ɹ": "r",
+        # marks
+        "ˈ": "",
+        "ˌ": "",
+        "ː": "",
+        ".": "",
+    }
+
+    ipa = ipa.strip("/[]")
+    result = []
+    i = 0
+    unmatched = 0
+
+    keys = sorted(ipa_map, key=len, reverse=True)
+    while i < len(ipa):
+        for key in keys:
+            if ipa.startswith(key, i):
+                result.append(ipa_map[key])
+                i += len(key)
+                break
+        else:
+            ch = ipa[i]
+            if ch == " ":
+                result.append("-")
+            else:
+                result.append(ch)
+                unmatched += 1
+
+            i += 1
+
+    return "".join(result), unmatched
+
+
+def replace_ipa(text: str, strict: bool = True) -> tuple[str, int]:
+    """Return an English approximation of the input IPA.
+
+    Args:
+        text: The IPA to approximate.
+        strict: Whether the input text must be delimited by IPA brackets (slashes or square brackets)
+            to be treated as IPA or not.
+
+    Returns:
+        tuple[str, int]: The English approximation of the input IPA,
+            and the amount of unmatched IPA characters.
+    """
+    total_unmatched = 0
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal total_unmatched
+
+        ipa = match.group(1) or match.group(2) or ""
+
+        # PyCharm loves its "TYPO" warnings, but this is an IPA dictionary, not a word!
+        ipa_markers = set("ŋʃʒθðɾɲçʎʁχɪɛæʌəʊɔɑɚʔɝɹˈˌː.")
+
+        if strict and not ipa_markers.intersection(ipa):
+            return match.group(0)
+
+        converted, unmatched = ipa_to_english(match.group(0))
+        total_unmatched += unmatched
+
+        return converted
+
+    result = re.sub(r"/([^/\[\]]+)/|\[([^/\[\]]+)]", repl, text)
+    return result, total_unmatched
+
+
+def custom_assert(condition: bool, exception: Optional[Exception]) -> None:
+    """Assert a condition and raise a given exception if not met.
+
+    Args:
+        condition: The condition to assert against.
+        exception: The exception to raise if the condition was not met.
+
+    Returns:
+        None: This function raises an exception upon a failed assertion.
+
+    Raises:
+        Exception: A specified exception class was raised because assertion failed.
+        TypeError: An object was specified to be raised that was not an instance of Exception.
+        AssertionError: An exception class was not specified, while assertion failed.
+    """
+    if not condition:
+        if isinstance(exception, Exception):
+            raise exception
+        if isinstance(exception, type) and issubclass(exception, BaseException):
+            raise exception()
+        if exception is None:
+            raise AssertionError
+        raise TypeError(
+            f"expected an instance of Exception or None, got {type(exception).__name__}"
+        )
+
+
+def typing_delay(char: str) -> float:
+    """Return the typing animation delay for one character.
+
+    Args:
+        char: The character that should influence the delay.
+
+    Returns:
+        float: Delay in seconds before the character appears.
+    """
+    if char in ".!?":
+        rand_delay = random.uniform(0.25, 0.45)
+    elif char in ",;:":
+        rand_delay = random.uniform(0.12, 0.22)
+    elif char == " ":
+        rand_delay = random.uniform(0.02, 0.05)
+    else:
+        rand_delay = 0.06 + random.uniform(0.0, 0.1)
+
+    return 0.08 + rand_delay
+
+
+def typing_animation(text: str) -> Iterator[str]:
+    """Iterate over an input string in a typing-like way.
+
+    Args:
+        text: The text to iterate over.
+
+    Returns:
+        Iterator[str]: An iterator that yields characters in a typing-like way.
+    """
+
+    for char in text:
+        time.sleep(typing_delay(char))
+        yield char
+
+
+def detect_language(text: str, supported: list[str]) -> LanguageResult:
+    """Detect possible languages in input text and report if it is in the supported
+        language list.
+
+    Args:
+        text: The text to detect language of.
+        supported: A list of supported languages to check against.
+
+    Returns:
+        LanguageResult: The language detection result metadata object.
+    """
+
+    try:
+        main_lang = langdetect.detect(text)
+        possible_langs = langdetect.detect_langs(text)
+        probabilities = {}
+
+        for lang in possible_langs:
+            probabilities[lang.lang] = lang.prob
+
+        result: LanguageResult = {
+            "language": main_lang,
+            "languages": list(probabilities.keys()),
+            "supported": main_lang in supported,
+            "probabilities": probabilities,
+        }
+
+        return result
+    except langdetect.LangDetectException:
+        result: LanguageResult = {
+            "language": "en",
+            "languages": ["en"],
+            "supported": "en" in supported,
+            "probabilities": {"en": 1.0},
+        }
+
+        return result
+
+
+def is_april_fools() -> bool:
+    """Is today April Fools?
+
+    Returns:
+        bool: Whether today is April Fools.
+    """
+    now = datetime.datetime.now()
+    return now.month == 4 and now.day == 1
+
+
+def is_celune_day() -> bool:
+    """Is today Celune Day? (June 2nd)
+
+    Returns:
+        bool: Whether today is Celune Day.
+    """
+    now = datetime.datetime.now()
+    return now.month == 6 and now.day == 2
+
+
+def rng_replace(
+    text: str, targets: list[str], replacements: list[str], rate: float = 0.5
+) -> str:
+    """Replace text with given replacements according to a set probability.
+
+    Args:
+        text: The input string.
+        targets: A list of words/phrases to search for.
+        replacements: A list of potential replacement strings.
+        rate: The random probability (0.0 to 1.0) at which text will be replaced.
+
+    Returns:
+        str: The string with randomized, case-preserved replacements.
+    """
+    if not targets or not replacements:
+        return text
+
+    pattern_str = r"\b(" + "|".join(re.escape(t) for t in targets) + r")\b"
+    pattern = re.compile(pattern_str, re.IGNORECASE)
+
+    def repl(match: re.Match) -> str:
+        source = match.group(0)
+
+        if random.random() >= rate:
+            return source
+
+        target = random.choice(replacements)
+
+        if source.isupper():
+            return target.upper()
+
+        if source[:1].isupper():
+            return target[:1].upper() + target[1:]
+
+        return target.lower()
+
+    return pattern.sub(repl, text)
+
+
+@overload
+def discard(val: object) -> None: ...
+
+
+@overload
+def discard(val: object, attr: str) -> None:
+    """Overload for the implementation of celune.utils.discard()."""
+
+
+def discard(val: object, attr: Optional[str] = None) -> None:
+    """Discard a value or clear an explicitly named attribute.
+
+    Args:
+        val: Any value, or the object that owns ``attr``.
+        attr: Optional attribute name to clear on ``val``.
+
+    Returns:
+        None: One-argument calls only consume the value. Two-argument calls set
+            the named attribute to ``None``.
+    """
+    if attr is not None:
+        setattr(val, attr, None)
+        return
+
+    _ = val
+    del _

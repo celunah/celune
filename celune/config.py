@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Configuration helpers for Celune."""
 
 import os

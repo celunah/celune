@@ -1,11 +1,13 @@
+# SPDX-License-Identifier: MIT
 """Name day list derived from Polish name days, translated to English, and with Polish-only names removed."""
 
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Generator, Union
+from typing import Union
+from collections.abc import Iterator
 
-NAMEDAYS: dict[str, list[str]] = {
+NAME_DAYS: dict[str, list[str]] = {
     "01-01": [],
     "01-02": ["Basil", "Stephanie"],
     "01-03": ["Peter", "Genevieve"],
@@ -411,7 +413,7 @@ def get_names(month: int, day: int) -> list[str]:
         TypeError: ``value`` is not a supported date-like value.
         ValueError: ``value`` is a string with non-numeric date parts.
     """
-    return list(NAMEDAYS.get(_key(month, day), []))
+    return list(NAME_DAYS.get(_key(month, day), []))
 
 
 def get_names_for_date(value: Union[date, datetime, str]) -> list[str]:
@@ -453,11 +455,13 @@ def find_dates_for_name(name: str) -> list[str]:
     """
     needle = name.casefold()
     return [
-        d for d, names in NAMEDAYS.items() if any(n.casefold() == needle for n in names)
+        d
+        for d, names in NAME_DAYS.items()
+        if any(n.casefold() == needle for n in names)
     ]
 
 
-def has_nameday(name: str, value: Union[date, datetime, str]) -> bool:
+def has_name_day(name: str, value: Union[date, datetime, str]) -> bool:
     """Return whether the given English name is present on the supplied date.
 
     Args:
@@ -471,11 +475,11 @@ def has_nameday(name: str, value: Union[date, datetime, str]) -> bool:
     return any(n.casefold() == needle for n in get_names_for_date(value))
 
 
-def iter_namedays() -> Generator[tuple[str, list[str]], None, None]:
+def iter_name_days() -> Iterator[tuple[str, list[str]]]:
     """Iterate over ``(MM-DD, names)`` pairs.
 
     Returns:
-        Generator[tuple[str | list[str]], None, None]: A generator that yields each date
+        Iterator[tuple[str, list[str]]]: A generator that yields each date
             key followed by its corresponding list of names.
     """
-    yield from NAMEDAYS.items()
+    yield from NAME_DAYS.items()

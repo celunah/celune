@@ -13,7 +13,7 @@ on:
 
 jobs:
   python-checks:
-    name: Python Quality Checks
+    name: Anti AI Slop & Vibe Coding Checks
     runs-on: ubuntu-latest
 
     steps:
@@ -24,24 +24,30 @@ jobs:
         run: sudo apt-get update && sudo apt-get install portaudio19-dev
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
 
       - name: Sync dependencies
-        run: uv sync --all-extras --dev
+        run: uv sync --dev
 
       - name: Verify formatting
         run: uv run ruff format --check .
 
       - name: Run lint
-        run: uv run pylint celune
+        run: |
+          uv run pylint celune
+          uv run pylint tests
 
       - name: Type check
-        run: uv run pyright celune
+        run: |
+          uv run pyright celune
+          uv run pyright tests
+
+      - name: Run unit tests
+        run: uv run pytest tests
 
       - name: Import smoke test
         run: |
-          uv run python -c "import celune"
-          uv run python -c "from celune.backends import resolve_backend"
+          uv run python -c "import celune; print(dir(celune))"
 
   launcher-smoke-linux:
     name: Linux Launcher Build Smoke Test
@@ -49,7 +55,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install build tools
         run: |
@@ -73,13 +79,23 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Build launcher with resources
+      - name: Build launcher
         shell: cmd
         run: |
           if not exist dist mkdir dist
-          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"
+
+          for /f "tokens=*" %%i in ('"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find VC\Auxiliary\Build\vcvars64.bat') do set "VCVARS=%%i"
+
+          if "%VCVARS%"=="" (
+            echo vcvars64.bat not found
+            exit /b 1
+          )
+
+          call "%VCVARS%"
+
+          where cl
           cl /nologo /O2 /MT launcher.c resources\celune.res /link /OUT:dist\celune.exe
 
       - name: Validate EXE

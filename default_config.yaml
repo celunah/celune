@@ -2,10 +2,14 @@
 # voxcpm2 = slower, high quality
 # if null, Celune will ask you to choose a backend before starting
 backend: null
-# clone = clone from Celune references
-# native = use Celune native models
-qwen3_mode: native
-# if enabled, detailed tracebacks will be displayed,
+# clone = clone from CEVOICE bundles
+# native = deprecated compatibility mode using Celune native models
+qwen3_mode: clone
+# if enabled, Qwen3 clone mode keeps speaker identity more tightly at the cost of some expression
+qwen3_x_vector_only: false
+# either a built-in bundle name under celune/voices or an explicit .cevoice path
+voice_bundle: default
+# if enabled, detailed tracebacks will be displayed, verbose logging messages will appear,
 # and Celune will self-analyze her own voice
 dev: false
 # if enabled, the UI is disabled and only extensions can send inputs
@@ -16,3 +20,13 @@ headless_nocolor: false
 theme: dark
 # if enabled, CeluneNorm will be loaded to normalize incoming text
 use_normalizer: false
+# if enabled, Celune will start her FastAPI server in the background
+api:
+  enabled: true
+  # host is selected automatically: token -> 0.0.0.0, no token -> 127.0.0.1
+  host: 0.0.0.0
+  port: 2060
+  # token can also be set with CELUNE_API_TOKEN.
+  # without a token, Celune binds the API to localhost only.
+  token: null
+  rate_limit_per_minute: 60

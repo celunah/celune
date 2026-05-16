@@ -1,10 +1,11 @@
+# SPDX-License-Identifier: MIT
 """Celune's extension annotations and classes."""
 
 from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, Optional, runtime_checkable
 
 import celune as _celune
 from celune.exceptions import IncompleteExtensionError
@@ -27,29 +28,55 @@ class LogCallable(Protocol):
             None: Implementations forward the message to a logger.
 
         Raises:
-            NotImplementedError: The protocol placeholder is called directly.
+            IncompleteExtensionError: The protocol placeholder is called directly.
         """
-        raise NotImplementedError
+        raise IncompleteExtensionError("protocol not defined")
+
+
+@runtime_checkable
+class DevLogCallable(Protocol):
+    """Extension callable developer logging annotation."""
+
+    def __call__(self, msg: str, severity: str = "info") -> None:
+        """Emit a developer log message.
+
+        Args:
+            msg: Message text to emit.
+            severity: Message severity level.
+
+        Returns:
+            None: Implementations forward the developer message to a logger.
+
+        Raises:
+            IncompleteExtensionError: The protocol placeholder is called directly.
+        """
+        raise IncompleteExtensionError("protocol not defined")
 
 
 @runtime_checkable
 class SayCallable(Protocol):
     """Extension callable speech request annotation."""
 
-    def __call__(self, text: str, save: bool = True) -> bool:
+    def __call__(
+        self,
+        text: str,
+        save: bool = True,
+        display_text: Optional[str] = None,
+    ) -> bool:
         """Queue text for speech.
 
         Args:
             text: Text to synthesize.
             save: Whether to save generated output artifacts.
+            display_text: Optional text to show in logs instead of the synthesis text.
 
         Returns:
             bool: ``True`` when the request was accepted.
 
         Raises:
-            NotImplementedError: The protocol placeholder is called directly.
+            IncompleteExtensionError: The protocol placeholder is called directly.
         """
-        raise NotImplementedError
+        raise IncompleteExtensionError("protocol not defined")
 
 
 @runtime_checkable
@@ -67,9 +94,9 @@ class PlayCallable(Protocol):
             bool: ``True`` when playback was queued.
 
         Raises:
-            NotImplementedError: The protocol placeholder is called directly.
+            IncompleteExtensionError: The protocol placeholder is called directly.
         """
-        raise NotImplementedError
+        raise IncompleteExtensionError("protocol not defined")
 
 
 @runtime_checkable
@@ -87,9 +114,9 @@ class StatusCallable(Protocol):
             None: Implementations forward the status update.
 
         Raises:
-            NotImplementedError: The protocol placeholder is called directly.
+            IncompleteExtensionError: The protocol placeholder is called directly.
         """
-        raise NotImplementedError
+        raise IncompleteExtensionError("protocol not defined")
 
 
 @runtime_checkable
@@ -106,9 +133,9 @@ class SetVoiceCallable(Protocol):
             bool: ``True`` when the voice change was accepted.
 
         Raises:
-            NotImplementedError: The protocol placeholder is called directly.
+            IncompleteExtensionError: The protocol placeholder is called directly.
         """
-        raise NotImplementedError
+        raise IncompleteExtensionError("protocol not defined")
 
 
 @runtime_checkable
@@ -122,9 +149,9 @@ class GetStateCallable(Protocol):
             str: Current state name.
 
         Raises:
-            NotImplementedError: The protocol placeholder is called directly.
+            IncompleteExtensionError: The protocol placeholder is called directly.
         """
-        raise NotImplementedError
+        raise IncompleteExtensionError("protocol not defined")
 
 
 @runtime_checkable
@@ -141,9 +168,9 @@ class WaitUntilReadyCallable(Protocol):
             bool: ``True`` when Celune is ready.
 
         Raises:
-            NotImplementedError: The protocol placeholder is called directly.
+            IncompleteExtensionError: The protocol placeholder is called directly.
         """
-        raise NotImplementedError
+        raise IncompleteExtensionError("protocol not defined")
 
 
 @dataclass(slots=True)
@@ -151,6 +178,7 @@ class CeluneContext:
     """Celune's extension context."""
 
     log: LogCallable
+    log_dev: DevLogCallable
     say: SayCallable
     play: PlayCallable
     status: StatusCallable
@@ -191,18 +219,10 @@ class CeluneContext:
 class CeluneExtension(ABC):
     """Celune extension abstract base class."""
 
-    EXTENSION_NAME = "UnnamedExtension"
+    EXTENSION_NAME = "Unknown Extension"
     AUTOSTART = False
 
     def __init__(self, context: CeluneContext) -> None:
-        """Initialize an extension instance.
-
-        Args:
-            context: Shared Celune extension context.
-
-        Returns:
-            None: This constructor stores the context for later use.
-        """
         self.ctx = context
 
     @property
@@ -261,12 +281,18 @@ class CeluneExtension(ABC):
         """
         self.ctx.log(f"[{self.name}] {msg}", severity)
 
-    def say(self, text: str, save: bool = True) -> bool:
+    def say(
+        self,
+        text: str,
+        save: bool = True,
+        display_text: Optional[str] = None,
+    ) -> bool:
         """Make Celune say something.
 
         Args:
             text: The text to queue for speech synthesis.
             save: Whether to save generated output artifacts.
+            display_text: Optional text to show in logs instead of the synthesis text.
 
         Returns:
             bool: ``True`` when the speech request was queued, otherwise ``False``.
@@ -274,7 +300,7 @@ class CeluneExtension(ABC):
         if not self.ctx.wait_until_ready():
             return False
 
-        return self.ctx.say(text, save=save)
+        return self.ctx.say(text, save=save, display_text=display_text)
 
     def play(self, sound_path: str, keep: bool = False) -> bool:
         """Play arbitrary sound through Celune.
