@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Celune's extension annotations and classes."""
 
 from __future__ import annotations
@@ -218,18 +219,10 @@ class CeluneContext:
 class CeluneExtension(ABC):
     """Celune extension abstract base class."""
 
-    EXTENSION_NAME = "UnnamedExtension"
+    EXTENSION_NAME = "Unknown Extension"
     AUTOSTART = False
 
     def __init__(self, context: CeluneContext) -> None:
-        """Initialize an extension instance.
-
-        Args:
-            context: Shared Celune extension context.
-
-        Returns:
-            None: This constructor stores the context for later use.
-        """
         self.ctx = context
 
     @property

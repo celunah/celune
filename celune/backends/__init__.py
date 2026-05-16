@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Celune backend initialization manager."""
 
 from typing import Callable, Union, Optional

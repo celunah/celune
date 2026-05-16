@@ -1,6 +1,7 @@
+# SPDX-License-Identifier: MIT
 """Textual theme assets."""
 
-from ..colors import SEVERITY_COLORS
+from .. import colors
 
 CELUNE_CSS = """
     Screen {
@@ -44,7 +45,7 @@ CELUNE_CSS = """
         width: 14;
         height: 3;
         border: round $primary;
-        margin-right: 1;
+        margin-left: 1;
         text-align: center;
         background: $background;
     }
@@ -66,16 +67,14 @@ CELUNE_CSS = """
         tint: transparent;
     }
 
-    #logs, #input {
-        margin-left: 1;
-        margin-right: 1;
+    #logs, #controls, #bottom, #header-container, #progress {
+        margin-left: 2;
+        margin-right: 2;
     }
 
     #bottom {
         height: 1;
         background: $background;
-        margin-left: 1;
-        margin-right: 1;
         margin-bottom: 1;
         color: $primary;
     }
@@ -122,10 +121,35 @@ CELUNE_CSS = """
         height: auto;
     }
 
+    #progress {
+        width: 1fr;
+    }
+
+    #progress > Bar {
+        width: 1fr;
+        margin-left: 1;
+        margin-right: 1;
+    }
+
+    #progress > Bar > .bar--bar {
+        color: $primary;
+        background: $accent;
+    }
+
+    #progress > Bar > .bar--indeterminate {
+        color: $accent;
+        background: $accent;
+    }
+
+    #progress > Bar > .bar--complete {
+        color: $primary;
+        background: $accent;
+    }
+
 """
 
 
 def severity_color(theme_name: str, severity: str = "info") -> str:
     """Return the configured color for a UI severity."""
-    palette = SEVERITY_COLORS.get(theme_name, SEVERITY_COLORS["celune"])
+    palette = colors.SEVERITY_COLORS.get(theme_name, colors.SEVERITY_COLORS["celune"])
     return palette.get(severity, palette["info"])

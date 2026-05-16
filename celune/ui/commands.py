@@ -1,14 +1,109 @@
+# SPDX-License-Identifier: MIT
 """Slash command handling for the Textual UI."""
 
 from __future__ import annotations
 
+import threading
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+import soundfile as sf
+
+from ..backends.qwen3 import Qwen3
 from ..exceptions import InvalidExtensionError
 from ..utils import format_error
 
 if TYPE_CHECKING:
     from .app import CeluneUI
+
+
+def tutorial(ui: CeluneUI) -> None:
+    """Run actions related to Celune's tutorial.
+
+    Args:
+        ui: The instance of CeluneUI that the tutorial will interact with.
+
+    Returns:
+        None: This function sends Celune tutorial commands automatically.
+    """
+    assets = Path(__file__).resolve().parents[1] / "assets"
+    if not assets.exists():
+        ui.safe_log("No tutorial assets found.", "warning")
+        return
+
+    clips = (
+        (assets / "tutorial1.wav", None),
+        (assets / "tutorial2.wav", lambda: ui.pulse_border("#input")),
+        (assets / "tutorial3.wav", lambda: ui.pulse_border("#style")),
+        (
+            assets / "tutorial4.wav",
+            lambda: ui.type_and_send("/help", process_commands=True),
+        ),
+    )
+
+    ui.begin_tutorial()
+    tutorial_token = ui.tutorial_token
+
+    def prepare_and_schedule() -> None:
+        """Prepare tutorial clip timings without blocking Textual."""
+
+        def wav_duration(pth: Path) -> float:
+            """Return the duration of a WAV file in seconds."""
+            if not pth.exists():
+                raise FileNotFoundError(f"tutorial clip not found: {pth}")
+
+            info = sf.info(str(pth))
+            return info.frames / info.samplerate
+
+        def play_tutorial_clip(pth: Path) -> None:
+            """Play a tutorial clip without blocking the Textual message loop."""
+
+            def worker() -> None:
+                """Queue tutorial audio on a background thread."""
+                try:
+                    ui.celune.play(str(pth))
+                except Exception as exc:
+                    ui.safe_log(
+                        f"Tutorial playback failed: {format_error(exc, ui.celune.dev)}",
+                        "warning",
+                    )
+                    ui.call_from_thread(ui.cancel_tutorial, True)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        try:
+            clip_durations = tuple(
+                (path, action, wav_duration(path)) for path, action in clips
+            )
+        except Exception as e:
+            ui.safe_log(
+                f"Tutorial failed: {format_error(e, ui.celune.dev)}",
+                "warning",
+            )
+            ui.call_from_thread(ui.cancel_tutorial, True)
+            return
+
+        def schedule() -> None:
+            """Schedule prepared tutorial actions on the UI thread."""
+            if tutorial_token != ui.tutorial_token or not ui.tutorial_active:
+                return
+
+            elapsed = 0.0
+            gap = 0.15
+
+            for path, action, duration in clip_durations:
+                ui.tutorial_after(elapsed, lambda pth=path: play_tutorial_clip(pth))
+
+                if action is not None:
+                    ui.tutorial_after(elapsed, action)
+
+                elapsed += duration + gap
+
+            ui.tutorial_after(elapsed, ui.finish_tutorial)
+
+        ui.call_from_thread(schedule)
+
+    threading.Thread(target=prepare_and_schedule, daemon=True).start()
 
 
 def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
@@ -49,12 +144,14 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         )
         ui.safe_log("/speed <speed> - Change speaking speed.")
         ui.safe_log("/reverb <strength> - Change reverb strength.")
+        ui.safe_log("/xvectoronly <true/false> - Toggle Qwen3 identity-only cloning.")
         ui.safe_log(
             "/play <file> - Play a sound effect by path. Only WAV files are supported."
         )
         ui.safe_log(
             "/seed [seed|random] - Set or clear the seed for speech outputs (VoxCPM2 only)."
         )
+        ui.safe_log("/tutorial - Run Celune's tutorial.")
         ui.safe_log("/stop - Terminate ongoing speech.")
         ui.safe_log("/exit - Exit Celune.")
         ui.safe_log("/help - Display this help message.")
@@ -165,6 +262,30 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         else:
             ui.safe_log(f"Reverb strength set to {args[0]}%.")
         return
+    if command == "xvectoronly":
+        backend = ui.celune.backend
+        if not isinstance(backend, Qwen3):
+            ui.safe_log(
+                "This setting is only available on the Qwen3 backend.", "warning"
+            )
+            return
+
+        if not args:
+            ui.safe_log("Usage: /xvectoronly <true/false>", "warning")
+            return
+
+        value = args[0].lower()
+        if value not in {"true", "false"}:
+            ui.safe_log(
+                f"Invalid argument for '{command}', must be true/false.",
+                "warning",
+            )
+            return
+
+        backend.x_vector_only = value == "true"
+        state = "enabled" if backend.x_vector_only else "disabled"
+        ui.safe_log(f"Qwen3 identity-only cloning {state}.")
+        return
     if command == "play":
         if not args:
             ui.safe_log("Usage: /play <path>", "warning")
@@ -207,6 +328,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.celune.backend.current_seed = value
         ui.celune.backend.random_seed = False
         ui.safe_log(f"Seed set to {value}.")
+        return
+    if command == "tutorial":
+        tutorial(ui)
         return
     if command == "stop":
         if not ui.celune.force_stop_speech():
