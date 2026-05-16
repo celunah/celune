@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Runtime and environment validation helpers for Celune."""
 
 import sys
@@ -105,9 +106,9 @@ def validate_runtime(
         return False
 
     if cuda_version is None:
-        log("Celune could not detect a CUDA runtime version.", "error")
+        log("Celune could not find a CUDA runtime.", "error")
         set_state("error")
-        error("Incompatible CUDA version")
+        error("No CUDA runtime found")
         return False
 
     cuda_version_tuple = tuple(map(int, cuda_version.split(".")))
@@ -169,7 +170,7 @@ def validate_runtime(
         return False
 
     if glow_connect_failed:
-        log("OpenRGB is not available.", "warning")
+        log("Cannot connect to OpenRGB. Presence features will be disabled.", "warning")
 
     try:
         __import__("flash_attn")
@@ -180,7 +181,7 @@ def validate_runtime(
 
     if has_flash_attn:
         log(
-            "Celune has detected that Flash Attention is installed, however it is not currently supported.",
+            "Flash Attention was found, but it is not usable at this time.",
             "warning",
         )
 

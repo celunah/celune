@@ -1,18 +1,22 @@
+# SPDX-License-Identifier: MIT
 """Celune audio processing functions."""
 
 import math
+from importlib.resources import as_file, files
 from typing import Iterable
 
 import numpy as np
 import numpy.typing as npt
+import soundfile as sf
 from scipy.signal import resample_poly
 from pedalboard import Pedalboard, Reverb
 
-from celune.exceptions import AudioMismatchError, BadAudioError
+from .constants import UtteranceLoudnessTier, BASE_SR
+from .exceptions import AudioMismatchError, BadAudioError
 
 
 def _resample_audio(
-    audio: npt.NDArray[np.float32], source_sr: int, target_sr: int = 48000
+    audio: npt.NDArray[np.float32], source_sr: int, target_sr: int = BASE_SR
 ) -> npt.NDArray[np.float32]:
     """Resample the given audio to the given sample rate.
 
@@ -85,7 +89,21 @@ def _to_48khz(
     Returns:
         npt.NDArray[np.float32]: The audio resampled to 48 kHz stereo.
     """
-    return _resample_audio(audio, source_sr, 48000)
+    return _resample_audio(audio, source_sr, BASE_SR)
+
+
+def readiness_signal() -> npt.NDArray[np.float32]:
+    """Load Celune's startup readiness sound."""
+    readiness_wav = files("celune").joinpath("assets", "readiness.wav")
+
+    # we did not find the Celune chord, return silence instead
+    if not readiness_wav.is_file():
+        return _to_48khz(np.zeros((BASE_SR, 2), dtype=np.float32), BASE_SR)
+
+    with as_file(readiness_wav) as path:
+        audio, sr = sf.read(path, dtype="float32")
+
+    return _to_48khz(np.asarray(audio, dtype=np.float32), sr)
 
 
 def _soften(
@@ -142,16 +160,30 @@ def _split(
         yield audio[i : i + frames]
 
 
+def is_silent_utterance(audio: npt.NDArray[np.float32]) -> tuple[bool, int]:
+    """Validate if this utterance is silent or not.
+
+    Args:
+        audio: NumPy array containing target audio.
+
+    Returns:
+        tuple[bool, int]: Whether this utterance is silent and how silent it is.
+    """
+    rms = np.sqrt(np.mean(np.square(audio)))
+
+    if rms <= 0.001:  # likely only contains surface noise
+        return True, UtteranceLoudnessTier.SILENT
+    if rms <= 0.01:  # some speech occurred, but it is suspicious
+        return True, UtteranceLoudnessTier.SUSPICIOUS
+
+    # Celune spoke normally
+    return False, UtteranceLoudnessTier.NORMAL
+
+
 class StreamingPedalboardReverb:
     """Stateful reverb based on `pedalboard`."""
 
     def __init__(self):
-        """Initialize reverb state.
-
-        Returns:
-            None: This constructor prepares the pedalboard and default reverb
-            parameters.
-        """
         self.strength = 0.0
         self._first_chunk = True
 
@@ -181,7 +213,7 @@ class StreamingPedalboardReverb:
         self.reverb.dry_level = 1.0
 
     def process(
-        self, audio: npt.NDArray[np.float32], sr: int = 48000
+        self, audio: npt.NDArray[np.float32], sr: int = BASE_SR
     ) -> npt.NDArray[np.float32]:
         """Apply reverb effect.
 
@@ -215,7 +247,7 @@ class StreamingPedalboardReverb:
         return np.ascontiguousarray(out.T.astype(np.float32, copy=False))
 
     def flush(
-        self, sr: int = 48000, threshold: float = 1e-4, max_secs: float = 3.0
+        self, sr: int = BASE_SR, threshold: float = 1e-4, max_secs: float = 3.0
     ) -> npt.NDArray[np.float32]:
         """Extract the remaining reverb by pushing silence.
 

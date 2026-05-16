@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """VoxCPM2 backend implementation for Celune."""
 
 from __future__ import annotations
@@ -5,10 +6,12 @@ from __future__ import annotations
 import os
 import glob
 import random
+import secrets
 import hashlib
 import contextlib
 from pathlib import Path
-from typing import Callable, Optional, Generator
+from typing import Callable, Optional
+from collections.abc import Iterator
 
 import torch
 import numpy as np
@@ -19,28 +22,61 @@ from huggingface_hub.constants import HF_HUB_CACHE
 
 from . import get_version
 from .base import CeluneBackend
+from ..cevoice import default_loader
 from ..exceptions import BackendError
+from ..constants import BASE_SR
 
 
 class VoxCPM2(CeluneBackend):
     """Celune VoxCPM2 backend."""
 
     name: str = "voxcpm2"
+    uses_voice_bundles: bool = True
+    chunk_rate: float = 6.25
+    max_new_tokens: int = 2048
+    supported_languages: tuple[str, ...] = (
+        "ar",
+        "my",
+        "zh-cn",
+        "da",
+        "nl",
+        "en",
+        "fi",
+        "fr",
+        "de",
+        "el",
+        "he",
+        "hi",
+        "id",
+        "it",
+        "ja",
+        "km",
+        "ko",
+        "lo",
+        "ms",
+        "no",
+        "pl",
+        "pt",
+        "ru",
+        "es",
+        "sw",
+        "sv",
+        "tl",
+        "th",
+        "tr",
+        "vi",
+    )
+
     voice_models: dict[str, str] = {
         "balanced": "openbmb/VoxCPM2",
         "calm": "openbmb/VoxCPM2",
         "bold": "openbmb/VoxCPM2",
         "upbeat": "openbmb/VoxCPM2",
     }
-    reference_wavs: dict[str, str] = {
-        "balanced": "refs/balanced.wav",
-        "calm": "refs/calm.wav",
-        "bold": "refs/bold.wav",
-        "upbeat": "refs/upbeat.wav",
-    }
 
     # the sane default CFG is 2.4 for most voices,
     # `calm` needs a higher CFG of 3.0 to capture the nuances without distorting
+    # however the max chunk length has to be limited to reduce the distortions over time
     voice_cfg: dict[str, float] = {
         "balanced": 2.4,
         "calm": 3.0,
@@ -50,28 +86,33 @@ class VoxCPM2(CeluneBackend):
     default_voice: str = "balanced"
 
     def __init__(self, log: Callable[[str, str], None]) -> None:
-        """Initialize the VoxCPM2 backend.
-
-        Args:
-            log: Logger callback used by the backend.
-
-        Returns:
-            None: This constructor prepares backend state and validates
-            reference audio.
-        """
         super().__init__(log=log)
         self.log = log
         self.optimize_enabled = False
+        self.random_seed = True
         self._validate_refs()
+
+    def _apply_seed(self) -> None:
+        """Seed all generation RNGs for the next backend operation."""
+        if self.random_seed:
+            self.current_seed = secrets.randbits(32)
+
+        if self.current_seed is None:
+            return
+
+        random.seed(self.current_seed)
+        np.random.seed(self.current_seed)
+        torch.cuda.manual_seed_all(self.current_seed)
+        torch.manual_seed(self.current_seed)
 
     @staticmethod
     @contextlib.contextmanager
-    def _suppress_backend_output():
+    def _suppress_backend_output() -> Iterator:
         """Suppress unnecessary backend output.
 
         Returns:
-            Generator[None, None, None]: A context manager that silences stdout
-            and stderr while backend code executes.
+            Iterator: A context manager that silences stdout
+                and stderr while backend code executes.
         """
         with open(os.devnull, "w", encoding="utf-8") as devnull:
             with contextlib.redirect_stdout(devnull):
@@ -87,7 +128,7 @@ class VoxCPM2(CeluneBackend):
 
         Returns:
             tuple[bool, Optional[str]]: A flag indicating cache availability and
-            the resolved snapshot path when present.
+                the resolved snapshot path when present.
         """
         base = HF_HUB_CACHE
         model_dir = os.path.join(base, f"models--{model.replace('/', '--')}")
@@ -139,10 +180,16 @@ class VoxCPM2(CeluneBackend):
 
         Returns:
             None: This method checks that reference files are accessible and logs
-            checksum status when checksums exist.
+                checksum status when checksums exist.
         """
-        for name, ref in self.reference_wavs.items():
-            full_path = Path(__file__).resolve().parents[1] / ref
+        loader = default_loader()
+        if loader is not None:
+            for name in loader.bundle.voice_order:
+                loader.materialize(name, "wav")
+            return
+
+        for name in self.voice_models:
+            full_path = self._reference_wave_path(name)
             try:
                 with open(full_path, "rb") as f:
                     checksum = hashlib.file_digest(f, "sha256").hexdigest()
@@ -167,6 +214,13 @@ class VoxCPM2(CeluneBackend):
                         "warning",
                     )
 
+    @staticmethod
+    def _reference_wave_path(name: str) -> Path:
+        loader = default_loader()
+        if loader is not None:
+            return loader.materialize(name, "wav")
+        return Path(__file__).resolve().parents[1] / "refs" / f"{name}.wav"
+
     def load_model(self, model_id: str, **kwargs) -> VoxCPM:
         """Load the given voice model.
 
@@ -181,13 +235,6 @@ class VoxCPM2(CeluneBackend):
         """
         available, path = self.model_is_available_locally(model_id)
 
-        # random seeding causes regenerations of Celune's output to be unique
-        # allowing you to fix a bad output
-        self.current_seed = random.randrange(2**32)
-        random.seed(self.current_seed)
-        np.random.seed(self.current_seed)
-        torch.cuda.manual_seed_all(self.current_seed)
-        torch.manual_seed(self.current_seed)
         torch.backends.cudnn.deterministic = True
         torch.use_deterministic_algorithms(True)
 
@@ -212,7 +259,7 @@ class VoxCPM2(CeluneBackend):
 
     def generate_stream(
         self, model: VoxCPM, **kwargs
-    ) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Generate Celune compatible audio chunks.
 
         Args:
@@ -220,8 +267,8 @@ class VoxCPM2(CeluneBackend):
             **kwargs: Streaming generation arguments passed to the backend.
 
         Returns:
-            Iterable[tuple]: An iterator of ``(audio, sample_rate, timing)``
-            tuples suitable for Celune's playback pipeline.
+            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of
+                ``(audio, sample_rate, timing)`` tuples suitable for Celune's playback pipeline.
 
         Raises:
             ValueError: The requested voice is unknown or input text is empty.
@@ -230,10 +277,14 @@ class VoxCPM2(CeluneBackend):
         voice = kwargs.pop("voice", self.default_voice)
         instruct = kwargs.pop("instruct", None)
         kwargs.pop("language", None)
-        kwargs.pop("chunk_size", None)
+        chunk_size = kwargs.pop("chunk_size", 1)
 
         try:
-            ref_wav = Path(__file__).resolve().parents[1] / self.reference_wavs[voice]
+            loader = default_loader()
+            if loader is not None:
+                ref_wav = loader.materialize(voice, "wav")
+            else:
+                ref_wav = self._reference_wave_path(voice)
             cfg = self.voice_cfg[voice]
         except KeyError as e:
             raise ValueError(
@@ -242,21 +293,80 @@ class VoxCPM2(CeluneBackend):
 
         text = kwargs.pop("text", None)
         if not text:
-            raise ValueError("expected input, nothing found")
+            # saying nothing makes no sense
+            raise ValueError("expected text to say")
 
         if instruct:
             # if this includes "music" or "singing", Celune may sing
+            # these instructions can also be injected manually
             text = f"({instruct}) {text}"
 
+        # random seeding causes regenerations of Celune's output to be unique
+        # while a custom seed makes the next output reproducible
+        self._apply_seed()
+
+        chunks_per_batch = max(1, round(chunk_size / (1 / self.chunk_rate)))
         if hasattr(model, "generate_streaming"):
-            with self._suppress_backend_output():
-                for chunk in model.generate_streaming(
-                    text,
-                    reference_wav_path=ref_wav,
-                    inference_timesteps=6,
-                    cfg_value=cfg,
-                ):  # Celune wants (audio, sr, timing)
-                    yield chunk, 48000, None
+            backend_stream = None
+            try:
+                with self._suppress_backend_output():
+                    backend_stream = model.generate_streaming(
+                        text,
+                        reference_wav_path=ref_wav,
+                        inference_timesteps=6,
+                        cfg_value=cfg,
+                        # the longer you speak, the higher the drift risk over time
+                        # 2048 tokens is also used by Qwen3-TTS
+                        # consistent context lengths help to combat drift, and consume less VRAM
+                        max_len=self.max_new_tokens,
+                    )
+
+                batch = []
+                chunk_index = 0
+                pending_audio: Optional[npt.NDArray[np.float32]] = None
+                pending_timing: Optional[dict] = None
+                while True:
+                    with self._suppress_backend_output():
+                        try:
+                            chunk = next(backend_stream)
+                        except StopIteration:
+                            break
+
+                    batch.append(chunk)
+                    if len(batch) >= chunks_per_batch:
+                        if pending_audio is not None and pending_timing is not None:
+                            yield pending_audio, BASE_SR, pending_timing
+
+                        audio = np.concatenate(batch)
+                        pending_timing = {
+                            "backend": self.name,
+                            "chunk_index": chunk_index,
+                            "chunk_steps": len(batch),
+                            "is_final": False,
+                        }
+                        pending_audio = audio
+                        batch.clear()
+                        chunk_index += 1
+
+                if batch:  # push remaining
+                    if pending_audio is not None and pending_timing is not None:
+                        yield pending_audio, BASE_SR, pending_timing
+
+                    audio = np.concatenate(batch)
+                    timing = {
+                        "backend": self.name,
+                        "chunk_index": chunk_index,
+                        "chunk_steps": len(batch),
+                        "is_final": True,
+                    }
+                    yield audio, BASE_SR, timing
+                elif pending_audio is not None and pending_timing is not None:
+                    pending_timing["is_final"] = True
+                    yield pending_audio, BASE_SR, pending_timing
+            finally:
+                if backend_stream is not None and hasattr(backend_stream, "close"):
+                    with contextlib.suppress(Exception):
+                        backend_stream.close()
         else:
             version = get_version("voxcpm")
             raise NotImplementedError(

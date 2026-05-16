@@ -53,7 +53,7 @@ jobs:
           ./appimagetool Celune.AppDir celune.appimage
 
       - name: Upload AppImage
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: Celune-Linux-x86_64
           path: celune.appimage

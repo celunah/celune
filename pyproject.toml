@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "3.3.1"
+version = "3.5.0"
 description = "Real-time AI TTS character engine with expressive voices and high-quality playback"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -10,16 +10,19 @@ authors = [
 
 dependencies = [
     # AI stack
+    # Please, only use CUDA 12.8.
     "torch==2.11.0+cu128",
     "torchaudio==2.11.0+cu128",
-    # Celune sounds best with faster-qwen3-tts 0.2.4 or 0.2.6.
-    # Do not use version 0.2.5. It may cause problems.
-    "faster-qwen3-tts!=0.2.5",
+    # Celune sounds best with faster-qwen3-tts 0.2.4.
+    # To match this version's behavior in 0.2.5 or newer, you may need to set non_streaming_mode=True.
+    # This parameter is ambiguously named, it doesn't actually disable streaming mode.
+    # If it did, Celune would have a problem operating.
+    "faster-qwen3-tts>=0.2.4",
     # If you want Celune to use the alternative VoxCPM2-based backend, install this package.
     # Note: This will fall back to voice cloning. If you want to use native Celune voices, use the Qwen3 backend.
-    "voxcpm>=2.0.2,<2.1.0",
+    "voxcpm>=2.0.2",
     # "I want to sound better." - she says.
-    # We want to implement Fish Audio S2 Pro here.
+	# However, Fish Audio S2 Pro refuses to give us the prosody and expression she needs.
     # "missing-library==2.0.6",
     # If not installed, Hugging Face falls back to the older Git LFS way of downloading models.
     "hf-xet",
@@ -45,6 +48,8 @@ dependencies = [
     "textual",
     "rich",
     "readchar",
+    # "You do want me to glow, do you?" - she says.
+    # Install this package and set up OpenRGB. You'll thank me later, or rather, her.
     "openrgb-python",
     # Celune uses this to plot the voice graph. If developer mode is disabled, this isn't needed.
     "matplotlib",
@@ -52,23 +57,24 @@ dependencies = [
     # Others
     "psutil",
     "pyyaml",
+    "langdetect>=1.0.0,<2.0.0",
+    "iso639-lang>=2.0.0,<3.0.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/lunahr"
-Repository = "https://github.com/lunahr/celune"
-Issues = "https://github.com/lunahr/celune/issues"
+Homepage = "https://github.com/celunah"
+Repository = "https://github.com/celunah/celune"
+Issues = "https://github.com/celunah/celune/issues"
 
 # Why does CodeRabbit think I'm uploading Celune to PyPI?
 # Her package is not standalone.
 [tool.setuptools.package-data]
-celune = ["refs/*.wav"]
+celune = ["assets/*.wav", "refs/*.wav", "refs/*.pt", "voices/*.cevoice"]
 
 # "CUDA 13.0 does exist, but I probably should wait a little more." - she says.
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128" }]
 torchaudio = [{ index = "pytorch-cu128" }]
-torchvision = [{ index = "pytorch-cu128" }]
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
@@ -76,12 +82,23 @@ url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [dependency-groups]
+# Install to run CI workflows.
 dev = [
+    "pytest",
     "pyright",
     "pylint",
     "ruff",
     # If not installed, type checkers may complain.
     "types-pyyaml",
+]
+
+[project.optional-dependencies]
+# Install to run the Celune API.
+api = [
+	"uvicorn",
+	"fastapi",
+    "python-multipart",
+    "pydantic",
 ]
 
 [tool.pyright]

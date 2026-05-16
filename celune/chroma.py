@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Celune Razer Chroma and OpenRGB-compatible RGB glow effect."""
 
 import os
@@ -6,6 +7,7 @@ import datetime
 import threading
 import contextlib
 from collections import deque
+from typing import Union
 
 import numpy as np
 import numpy.typing as npt
@@ -13,23 +15,16 @@ from openrgb import OpenRGBClient
 from openrgb.utils import RGBColor
 
 from .dsp import _split
-from .utils import to_rgb, lunar_info, range_interpolated
+from .constants import BASE_SR
+from .utils import to_rgb, lunar_info, range_interpolated, is_celune_day
+
+type RGBTuple = tuple[int, ...]
 
 
 class AudioRGBGlow:
     """OpenRGB-compatible speaking-aware glow effect."""
 
-    def __init__(self, color, host="127.0.0.1", port=6742):
-        """Initialize RGB glow state.
-
-        Args:
-            color: Base glow color accepted by ``to_rgb``.
-            host: OpenRGB server host.
-            port: OpenRGB server port.
-
-        Returns:
-            None: This constructor prepares device state and glow parameters.
-        """
+    def __init__(self, color: str, host: str = "127.0.0.1", port: int = 6742) -> None:
         self.color = np.array(
             self._fix_color_rendering(to_rgb(color)), dtype=np.float32
         )
@@ -63,12 +58,11 @@ class AudioRGBGlow:
 
         # Celune glows much brighter on Celune Day, else she'll glow according to the lunar phase.
         current_date = datetime.datetime.now()
-        if current_date.day == 2 and current_date.month == 6:
+        if is_celune_day():
             self.glow_multiplier *= 3.0
         else:
-            self.glow_multiplier *= range_interpolated(
-                lunar_info(datetime.datetime.now())[1], 1.0, 2.0
-            )
+            _, illumination, _ = lunar_info(current_date)
+            self.glow_multiplier *= range_interpolated(illumination, 1.0, 2.0)
 
         if not self.max_glow_forced:
             self.idle_brightness = 0.05 * self.glow_multiplier
@@ -135,7 +129,7 @@ class AudioRGBGlow:
         self._worker.start()
         return True
 
-    def stop(self, reset=True, wait=False) -> None:
+    def stop(self, reset: bool = True, wait: bool = False) -> None:
         """Hard-stop the glow effect.
 
         Args:
@@ -193,13 +187,13 @@ class AudioRGBGlow:
         if not self.start():
             return
 
-        chunks = _split(audio, 48000, 8)
+        chunks = _split(audio, BASE_SR, 8)
         now = time.monotonic()
         offset = 0.0
 
         with self._lock:
             for chunk in chunks:
-                duration = chunk.shape[0] / 48000.0
+                duration = chunk.shape[0] / float(BASE_SR)
                 self._scheduled_chunks.append((now + offset, chunk))
                 offset += duration
 
@@ -255,7 +249,7 @@ class AudioRGBGlow:
         return audio
 
     @staticmethod
-    def _fix_color_rendering(rgb: tuple) -> tuple[int, int, int]:
+    def _fix_color_rendering(rgb: RGBTuple) -> RGBTuple:
         """Compensate for LED green dominance and prevent channel clipping.
 
         Args:
@@ -297,7 +291,7 @@ class AudioRGBGlow:
         level = level ** (1.0 / self.gamma)
         return float(np.clip(level, 0.0, 1.0))
 
-    def _set_all_devices(self, rgb) -> None:
+    def _set_all_devices(self, rgb: Union[RGBTuple, npt.NDArray[np.floating]]) -> None:
         """Apply color to all registered OpenRGB devices.
 
         Args:

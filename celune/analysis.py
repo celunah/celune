@@ -1,26 +1,39 @@
+# SPDX-License-Identifier: MIT
 """Analyze a WAV file and generate a radar chart plus a text report."""
 
-import sys
 import pathlib
 import warnings
-from typing import Any, cast
+import contextlib
+from io import BytesIO
+from typing import Any, Optional, cast
 
+import torch
 import librosa
 import matplotlib
 import numpy as np
+import numpy.typing as npt
 from matplotlib import rcParams
 from matplotlib import pyplot as plt
 from matplotlib import colors as mcolors
 from matplotlib.projections import PolarAxes
+from transformers import AutoModel, AutoProcessor
+
+from .constants import VOICE_EMBEDDING_MODEL
+from .cevoice import default_loader
 
 matplotlib.use("Agg")
-# ensure you have installed this font
+
+# this font is included within Celune
+# check resources/fonts to find the font files
 rcParams["font.family"] = "Outfit Thin"
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 TextConfig = dict[str, Any]
+
+_EMBEDDING_MODEL: Any = None
+_EMBEDDING_PROCESSOR: Any = None
 
 TEXT_CONFIG: TextConfig = {
     "trait_labels": {
@@ -35,6 +48,7 @@ TEXT_CONFIG: TextConfig = {
     "graph": {
         "title": "Celune's Voice Report",
         "status_ok": "Celune is performing normally.",
+        "status_na": "Celune did not say anything.",
         "status_underperforming_single": "Celune's {traits} is underperforming.",
         "status_watch_single": "Celune's {traits} is driving her tone.",
         "status_watch_multi": "Celune's {traits} are driving her tone.",
@@ -63,6 +77,21 @@ TEXT_CONFIG: TextConfig = {
         "spectral_centroid_label": "Spectral centroid (Hz)",
         "zcr_label": "Zero-crossing rate",
         "hf_energy_label": "HF energy ratio (>=4kHz)",
+        "reference_voice_label": "Reference voice",
+        "voice_similarity_label": "Reference similarity",
+        "voice_similarity_raw_label": "Cosine similarity",
+        "voice_similarity_status_label": "Status",
+        "voice_similarity_status_ok": "OK",
+        "voice_similarity_status_mismatch": "MISMATCH",
+        "voice_similarity_best_match_label": "Best match",
+        "voice_similarity_next_closest_label": "Next closest",
+        "voice_similarity_margin_label": "Confidence margin",
+        "voice_drift_label": "Drift level",
+        "voice_drift_stable": "stable",
+        "voice_drift_expressive": "expressive",
+        "voice_drift_weak": "weak",
+        "voice_drift_wrong": "wrong",
+        "voice_similarity_na": "N/A",
     },
     "assessment": {
         "warning_short_audio": (
@@ -95,6 +124,13 @@ TEXT_CONFIG: TextConfig = {
         "overall_balanced": "Overall, the voice shows a balanced mix of traits.",
         "high_pause_ratio": (
             "A high pause ratio suggests deliberate pacing or significant silence."
+        ),
+        "reference_similarity": (
+            "Reference voice similarity is {percent:.1f}% "
+            "(cosine {cosine:.4f}) against {voice}."
+        ),
+        "reference_similarity_failed": (
+            "Reference voice similarity could not be calculated: {reason}."
         ),
     },
 }
@@ -144,20 +180,20 @@ def _join_trait_names(trait_names: list[str]) -> str:
     return ", ".join(display_names[:-1]) + f", and {display_names[-1]}"
 
 
-def load_audio(voice: pathlib.Path) -> tuple[np.ndarray, int]:
+def load_audio(voice: pathlib.Path) -> tuple[npt.NDArray[np.float32], int]:
     """Load a WAV file while preserving the native sample rate.
 
     Args:
         voice: Path to the voice sample to load.
 
     Returns:
-        tuple[np.ndarray, int]: The mono waveform and native sample rate.
+        tuple[npt.NDArray[np.float32], int]: The mono waveform and native sample rate.
     """
     y, sr = librosa.load(str(voice), sr=None, mono=True)
     return y, int(sr)
 
 
-def compute_raw_metrics(y: np.ndarray, sr: int) -> dict:
+def compute_raw_metrics(y: npt.NDArray[np.float32], sr: int) -> dict:
     """Compute low-level audio descriptors from a mono signal.
 
     Args:
@@ -203,6 +239,7 @@ def compute_raw_metrics(y: np.ndarray, sr: int) -> dict:
 
     hop_duration_s = 512 / sr
     num_voiced_frames = int(np.sum(voiced_flag))
+    metrics["voice_extraction_ok"] = num_voiced_frames > 0
     metrics["speaking_pace_proxy"] = float(
         num_voiced_frames * hop_duration_s / max(metrics["duration_s"], 1e-6)
     )
@@ -221,6 +258,251 @@ def compute_raw_metrics(y: np.ndarray, sr: int) -> dict:
     metrics["hf_energy_ratio"] = hf_energy / total_energy
 
     return metrics
+
+
+def _embedding_tensor_to_numpy(value: Any) -> npt.NDArray[np.float32]:
+    """Convert a supported embedding object to a normalized 1D NumPy array.
+
+    Args:
+        value: The embedding object to convert.
+
+    Returns:
+        npt.NDArray[np.float32]: The NumPy array representation of this embedding.
+
+    Raises:
+        ValueError: The embedding has an invalid or unexpected shape.
+    """
+    if isinstance(value, dict):
+        if "speaker_embedding" in value:
+            value = value["speaker_embedding"]
+        elif len(value) == 1:
+            value = next(iter(value.values()))
+        else:
+            raise ValueError("reference embedding dict has no speaker_embedding key")
+
+    if isinstance(value, torch.Tensor):
+        array = value.detach().cpu().float().numpy()
+    else:
+        array = np.asarray(value, dtype=np.float32)
+
+    array = np.squeeze(array).astype(np.float32, copy=False)
+    if array.ndim != 1:
+        raise ValueError(f"expected a 1D embedding, got shape {array.shape}")
+    if array.shape[0] != 2048:
+        raise ValueError(f"expected a 2048-d embedding, got {array.shape[0]}")
+    return array
+
+
+def _load_reference_embedding(voice: str) -> npt.NDArray[np.float32]:
+    """Load a packaged Qwen3 reference embedding for a Celune voice.
+
+    Args:
+        voice: The target Celune voice to load an embedding for.
+
+    Returns:
+        npt.NDArray[np.float32]: The NumPy array of the embedding.
+
+    Raises:
+        FileNotFoundError: No Celune voice was found by this name, or it has no embeddings.
+    """
+    loader = default_loader()
+    if loader is not None:
+        try:
+            data = loader.bundle.read_asset(voice, "pt")
+        except KeyError as error:
+            raise FileNotFoundError(f"{voice}.pt not found") from error
+        return _embedding_tensor_to_numpy(torch.load(BytesIO(data), map_location="cpu"))
+
+    ref_path = pathlib.Path(__file__).resolve().parent / "refs" / f"{voice}.pt"
+    if not ref_path.exists():
+        raise FileNotFoundError(f"{ref_path.name} not found")
+
+    return _embedding_tensor_to_numpy(torch.load(ref_path, map_location="cpu"))
+
+
+def _available_reference_voices() -> list[str]:
+    """Return available packaged reference embedding names.
+
+    Returns:
+        list[str]: The list of available embedding names.
+    """
+    loader = default_loader()
+    if loader is not None:
+        return sorted(
+            voice
+            for voice in loader.bundle.voices
+            if "pt" in loader.bundle.voices[voice].get("assets", {})
+        )
+
+    refs_dir = pathlib.Path(__file__).resolve().parent / "refs"
+    return sorted(path.stem for path in refs_dir.glob("*.pt"))
+
+
+def _load_embedding_model() -> tuple[Any, Any]:
+    """Load and cache the Qwen3 speaker embedding processor/model.
+
+    Returns:
+        tuple[Any, Any]: The loaded models and processor objects.
+    """
+    global _EMBEDDING_MODEL, _EMBEDDING_PROCESSOR
+
+    if _EMBEDDING_MODEL is None or _EMBEDDING_PROCESSOR is None:
+        _EMBEDDING_PROCESSOR = AutoProcessor.from_pretrained(
+            VOICE_EMBEDDING_MODEL,
+            trust_remote_code=True,
+        )
+        _EMBEDDING_MODEL = AutoModel.from_pretrained(
+            VOICE_EMBEDDING_MODEL,
+            trust_remote_code=True,
+        )
+        _EMBEDDING_MODEL.eval()
+        with contextlib.suppress(AttributeError):
+            _EMBEDDING_MODEL.to(torch.device("cpu"))
+
+    return _EMBEDDING_PROCESSOR, _EMBEDDING_MODEL
+
+
+def _compute_qwen3_embedding(
+    y: npt.NDArray[np.float32],
+    sr: int,
+) -> npt.NDArray[np.float32]:
+    """Compute a Qwen3 ECAPA-TDNN speaker embedding for a mono waveform.
+
+    Args:
+        y: The NumPy array of the voice waveform.
+        sr: The sample rate of the voice waveform.
+
+    Returns:
+        npt.NDArray[np.float32]: The computed embedding of the voice waveform.
+    """
+    processor, model = _load_embedding_model()
+    inputs = processor(y, sampling_rate=sr)
+    inputs = {
+        key: value.to("cpu") if isinstance(value, torch.Tensor) else value
+        for key, value in inputs.items()
+    }
+
+    with torch.no_grad():
+        output = model(**inputs).last_hidden_state
+
+    return _embedding_tensor_to_numpy(output)
+
+
+def _cosine_similarity_percent(
+    embedding: npt.NDArray[np.float32],
+    reference: npt.NDArray[np.float32],
+) -> tuple[float, float]:
+    """Return cosine similarity and a clipped percentage-style score.
+
+    Args:
+        embedding: The embedding to check.
+        reference: The target embedding to compare against.
+
+    Returns:
+        tuple[float, float]: The cosine and percentage similarity.
+
+    Raises:
+        ValueError: The embedding norm was zero.
+    """
+    denom = float(np.linalg.norm(embedding) * np.linalg.norm(reference))
+    if denom <= 1e-9:
+        raise ValueError("embedding norm is zero")
+
+    cosine = float(np.dot(embedding, reference) / denom)
+    cosine = float(np.clip(cosine, -1.0, 1.0))
+    percent = float(np.clip(cosine, 0.0, 1.0) * 100.0)
+    return cosine, percent
+
+
+def _voice_drift_level(drift_percent: float) -> str:
+    """Return a readable drift level for a reference similarity gap.
+
+    Args:
+        drift_percent: The drift percentage value.
+
+    Returns:
+        str: The human-readable drift tier.
+    """
+    if drift_percent <= 3.0:
+        return "stable"
+    if drift_percent <= 6.0:
+        return "expressive"
+    if drift_percent <= 10.0:
+        return "weak"
+    return "wrong"
+
+
+def add_reference_similarity_metrics(
+    metrics: dict,
+    y: npt.NDArray[np.float32],
+    sr: int,
+    reference_voice: Optional[str],
+) -> None:
+    """Add Qwen3 speaker embedding similarity metrics when possible.
+
+    Args:
+        metrics: The reference similarity metrics.
+        y: The NumPy array of the voice.
+        sr: The sample rete of the voice.
+        reference_voice: The reference voice to check against.
+
+    Returns:
+        None: This function adds the metrics to the graph.
+    """
+    if not reference_voice:
+        return
+
+    metrics["reference_voice"] = reference_voice
+    try:
+        generated_embedding = _compute_qwen3_embedding(y, sr)
+        reference_embedding = _load_reference_embedding(reference_voice)
+        cosine, percent = _cosine_similarity_percent(
+            generated_embedding,
+            reference_embedding,
+        )
+        matches: list[dict[str, Any]] = []
+        for voice in _available_reference_voices():
+            ref_embedding = _load_reference_embedding(voice)
+            ref_cosine, ref_percent = _cosine_similarity_percent(
+                generated_embedding,
+                ref_embedding,
+            )
+            matches.append(
+                {
+                    "voice": voice,
+                    "cosine": ref_cosine,
+                    "percent": ref_percent,
+                }
+            )
+    except Exception as exc:
+        metrics["voice_similarity_ok"] = False
+        metrics["voice_similarity_error"] = str(exc)
+        return
+
+    matches.sort(key=lambda match: match["percent"], reverse=True)
+    metrics["voice_similarity_ok"] = True
+    metrics["voice_similarity_cosine"] = cosine
+    metrics["voice_similarity_percent"] = percent
+    metrics["voice_drift_percent"] = 100.0 - percent
+    metrics["voice_drift_level"] = _voice_drift_level(metrics["voice_drift_percent"])
+    metrics["voice_similarity_matches"] = matches
+
+    # incorrect Celune voice
+    metrics["voice_similarity_status"] = "MISMATCH"
+    if matches:
+        best_match = matches[0]
+        metrics["voice_similarity_best_match"] = best_match
+        if best_match.get("voice") == reference_voice:
+            # correct Celune voice
+            metrics["voice_similarity_status"] = "OK"
+
+    if len(matches) > 1:
+        best_match = matches[0]
+        next_match = matches[1]
+        metrics["voice_similarity_next_closest"] = next_match
+        metrics["voice_similarity_margin"] = float(
+            best_match.get("percent", 0.0)
+        ) - float(next_match.get("percent", 0.0))
 
 
 def _clip_norm(value: float, low: float, high: float) -> float:
@@ -284,6 +566,9 @@ def _summarize_trait_status(traits: dict) -> tuple[str, str]:
         name: score for name, score in traits.items() if 0.6 <= score < 0.8
     }
     low_traits = {name: score for name, score in traits.items() if score < 0.3}
+
+    if all(not trait for trait in traits.values()):
+        return _text("graph", "status_na"), high_color
 
     if high_traits:
         joined = _join_trait_names(list(high_traits.keys())).lower()
@@ -374,7 +659,17 @@ def compute_traits(m: dict) -> dict:
         np.clip(0.35 * pitch_height + 0.35 * pitch_exp + 0.30 * pace_score, 0.0, 1.0)
     )
 
-    return traits
+    if m["voice_extraction_ok"]:
+        return traits
+    return {
+        "Calmness": 0.0,
+        "Energy": 0.0,
+        "Softness": 0.0,
+        "Clarity": 0.0,
+        "Expressiveness": 0.0,
+        "Presence": 0.0,
+        "Playfulness": 0.0,
+    }
 
 
 def generate_assessment(m: dict, traits: dict) -> list[str]:
@@ -464,16 +759,37 @@ def generate_assessment(m: dict, traits: dict) -> list[str]:
     if m["pause_ratio"] > 0.5:
         lines.append(_text("assessment", "high_pause_ratio"))
 
+    if m.get("voice_similarity_ok"):
+        lines.append(
+            _text("assessment", "reference_similarity").format(
+                percent=m["voice_similarity_percent"],
+                cosine=m["voice_similarity_cosine"],
+                voice=m["reference_voice"],
+            )
+        )
+    elif "voice_similarity_error" in m:
+        lines.append(
+            _text("assessment", "reference_similarity_failed").format(
+                reason=m["voice_similarity_error"]
+            )
+        )
+
     return lines
 
 
-def plot_radar(traits: dict, title: str, output_path: pathlib.Path) -> None:
+def plot_radar(
+    traits: dict,
+    title: str,
+    output_path: pathlib.Path,
+    metrics: Optional[dict] = None,
+) -> None:
     """Draw a filled radar chart of trait scores and save it as a PNG.
 
     Args:
         traits: Derived trait scores keyed by trait name.
         title: Subtitle to include in the chart.
         output_path: Path where the PNG chart should be written.
+        metrics: Optional raw metrics used to add contextual graph annotations.
 
     Returns:
         None: This function writes the chart to disk.
@@ -555,7 +871,7 @@ def plot_radar(traits: dict, title: str, output_path: pathlib.Path) -> None:
 
     fig.text(
         0.5,
-        0.04,
+        0.055 if metrics and metrics.get("voice_similarity_ok") else 0.04,
         status_text,
         ha="center",
         va="center",
@@ -564,7 +880,20 @@ def plot_radar(traits: dict, title: str, output_path: pathlib.Path) -> None:
         fontweight="bold",
     )
 
-    fig.subplots_adjust(top=0.82, bottom=0.12, left=0.05, right=0.95)
+    if metrics and metrics.get("voice_similarity_ok"):
+        fig.text(
+            0.5,
+            0.025,
+            f"{_text('report', 'voice_similarity_label')}: "
+            f"{metrics['voice_similarity_percent']:.1f}%",
+            ha="center",
+            va="center",
+            color=grid_color,
+            fontsize=10,
+            fontweight="bold",
+        )
+
+    fig.subplots_adjust(top=0.82, bottom=0.14, left=0.05, right=0.95)
     plt.savefig(str(output_path), dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -644,6 +973,57 @@ def write_report(
         file_handle.write(
             f"  {_text('report', 'hf_energy_label'):<22}: {m['hf_energy_ratio']:.6f}\n"
         )
+        if "reference_voice" in m:
+            file_handle.write(
+                f"  {_text('report', 'reference_voice_label'):<22}: {m['reference_voice']}\n"
+            )
+        if m.get("voice_similarity_ok"):
+            file_handle.write(
+                f"  {_text('report', 'voice_similarity_label'):<22}: "
+                f"{m['voice_similarity_percent']:.2f}%\n"
+            )
+            file_handle.write(
+                f"  {_text('report', 'voice_similarity_raw_label'):<22}: "
+                f"{m['voice_similarity_cosine']:.6f}\n"
+            )
+            drift_key = f"voice_drift_{m['voice_drift_level']}"
+            file_handle.write(
+                f"  {_text('report', 'voice_drift_label'):<22}: "
+                f"{_text('report', drift_key)} "
+                f"({m['voice_drift_percent']:.2f}%)\n"
+            )
+            status_key = (
+                "voice_similarity_status_ok"
+                if m["voice_similarity_status"] == "OK"
+                else "voice_similarity_status_mismatch"
+            )
+            file_handle.write(
+                f"  {_text('report', 'voice_similarity_status_label'):<22}: "
+                f"{_text('report', status_key)}\n"
+            )
+            best_match = m.get("voice_similarity_best_match")
+            next_closest = m.get("voice_similarity_next_closest")
+            if best_match is not None:
+                file_handle.write(
+                    f"  {_text('report', 'voice_similarity_best_match_label'):<22}: "
+                    f"{best_match['voice']} ({best_match['percent']:.2f}%)\n"
+                )
+            if next_closest is not None:
+                file_handle.write(
+                    f"  {_text('report', 'voice_similarity_next_closest_label'):<22}: "
+                    f"{next_closest['voice']} ({next_closest['percent']:.2f}%)\n"
+                )
+            if best_match is not None and next_closest is not None:
+                file_handle.write(
+                    f"  {_text('report', 'voice_similarity_margin_label'):<22}: "
+                    f"{best_match['voice']} - {next_closest['voice']} = "
+                    f"{m['voice_similarity_margin']:.2f}%\n"
+                )
+        elif "voice_similarity_error" in m:
+            file_handle.write(
+                f"  {_text('report', 'voice_similarity_label'):<22}: "
+                f"{_text('report', 'voice_similarity_na')}\n"
+            )
         file_handle.write("\n")
 
         file_handle.write(f"{_text('report', 'traits_header')}\n")
@@ -665,11 +1045,12 @@ def write_report(
 
 
 def _analyze_voice_data(
-    y: np.ndarray,
+    y: npt.NDArray[np.float32],
     sr: int,
     voice: pathlib.Path,
     out_dir: pathlib.Path,
     stem: str,
+    reference_voice: Optional[str] = None,
 ) -> None:
     """Analyze voice audio and write report artifacts.
 
@@ -679,6 +1060,8 @@ def _analyze_voice_data(
         voice: Display path for the analyzed voice sample.
         out_dir: Directory where report artifacts should be written.
         stem: File stem to use for report artifacts.
+        reference_voice: Optional Celune voice whose reference embedding should
+            be compared with the analyzed audio.
 
     Returns:
         None: This function writes report artifacts to ``out_dir``.
@@ -687,18 +1070,20 @@ def _analyze_voice_data(
     report_path = out_dir / f"{stem}_report.txt"
 
     metrics = compute_raw_metrics(y, sr)
+    add_reference_similarity_metrics(metrics, y, sr, reference_voice)
     traits = compute_traits(metrics)
     assessment = generate_assessment(metrics, traits)
-    plot_radar(traits, voice.name, radar_path)
+    plot_radar(traits, voice.name, radar_path, metrics)
     write_report(metrics, traits, assessment, voice, report_path)
 
 
 def analyze_voice_audio(
-    audio: np.ndarray,
+    audio: npt.NDArray[np.float32],
     sr: int,
     display_name: str,
     out_dir: pathlib.Path,
     stem: str,
+    reference_voice: Optional[str] = None,
 ) -> None:
     """Analyze in-memory voice audio without any saved SFX prefix.
 
@@ -708,6 +1093,8 @@ def analyze_voice_audio(
         display_name: File name to show in generated reports.
         out_dir: Directory where report artifacts should be written.
         stem: File stem to use for report artifacts.
+        reference_voice: Optional Celune voice whose reference embedding should
+            be compared with the analyzed audio.
 
     Returns:
         None: This function writes report artifacts to ``out_dir``.
@@ -716,7 +1103,31 @@ def analyze_voice_audio(
     if y.ndim == 2:
         y = np.mean(y, axis=1)
 
-    _analyze_voice_data(y, sr, pathlib.Path(display_name), out_dir, stem)
+    _analyze_voice_data(
+        y,
+        sr,
+        pathlib.Path(display_name),
+        out_dir,
+        stem,
+        reference_voice,
+    )
+
+
+def _has_reference_embedding(voice: str) -> bool:
+    """Does this voice have an embeddding?
+
+    Args:
+        voice: The voice to check from the CEVOICE bundle.
+
+    Returns:
+        bool: Whether this voice has an embedding included.
+    """
+
+    loader = default_loader()
+    if loader is not None:
+        return "pt" in loader.bundle.voices.get(voice, {}).get("assets", {})
+    refs_dir = pathlib.Path(__file__).resolve().parent / "refs"
+    return (refs_dir / f"{voice}.pt").exists()
 
 
 def analyze_voice(voice: pathlib.Path) -> None:
@@ -729,8 +1140,8 @@ def analyze_voice(voice: pathlib.Path) -> None:
         None: This function writes report artifacts next to the input file.
     """
     if not voice.exists():
-        print("Invalid voice path.", file=sys.stderr)
-        sys.exit(1)
+        return
 
     y, sr = load_audio(voice)
-    _analyze_voice_data(y, sr, voice, voice.parent, voice.stem)
+    reference_voice = voice.stem if _has_reference_embedding(voice.stem) else None
+    _analyze_voice_data(y, sr, voice, voice.parent, voice.stem, reference_voice)

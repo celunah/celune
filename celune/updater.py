@@ -1,10 +1,12 @@
-"""Celune self-update helpers."""
+# SPDX-License-Identifier: MIT
+"""Celune automatic update helpers."""
 
 from __future__ import annotations
 
 import os
 import re
 import subprocess
+from typing import Optional
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +15,7 @@ from .exceptions import UpdateError
 
 REMOTE_URL = "https://github.com/celunah/celune.git"
 SHORT_HASH_LENGTH = 7
+UPDATE_BRANCHES = {"main", "master"}
 
 
 @dataclass(frozen=True)
@@ -139,6 +142,21 @@ def _remote_head_revision() -> str:
     return output.split(maxsplit=1)[0]
 
 
+def _remote_branch_revision(branch: str) -> str:
+    output = _run_git(
+        ["ls-remote", REMOTE_URL, f"refs/heads/{branch}"],
+        timeout=20,
+    )
+    if not output:
+        return ""
+
+    return output.split(maxsplit=1)[0]
+
+
+def _current_branch() -> str:
+    return _run_git(["branch", "--show-current"])
+
+
 def _local_tag() -> str:
     try:
         return _normalize_tag(_run_git(["describe", "--tags", "--exact-match", "HEAD"]))
@@ -165,11 +183,11 @@ def _is_git_checkout() -> bool:
         return False
 
 
-def check_for_update() -> UpdateInfo | None:
+def check_for_update() -> Optional[UpdateInfo]:
     """Check GitHub for a newer Celune revision or tag.
 
     Returns:
-        UpdateInfo | None: Information about the update, or ``None`` when Celune
+        Optional[UpdateInfo]: Information about the update, or ``None`` when Celune
             appears current or update metadata cannot be read.
     """
     if os.getenv("CELUNE_SKIP_UPDATE") in {"1", "true", "on", "yes", "enabled"}:
@@ -179,12 +197,18 @@ def check_for_update() -> UpdateInfo | None:
         return None
 
     try:
+        branch = _current_branch()
+        if branch and branch not in UPDATE_BRANCHES:
+            return None
+
         if _has_local_changes():
             return None
 
         local_revision = _local_revision()
         local_tag = _local_tag()
-        remote_revision = _remote_head_revision()
+        remote_revision = (
+            _remote_branch_revision(branch) if branch else _remote_head_revision()
+        )
         latest_tag, latest_tag_revision = _latest_remote_tag()
     except (
         subprocess.CalledProcessError,
@@ -224,21 +248,37 @@ def update_to_latest() -> None:
         UpdateError: Celune cannot be updated safely.
     """
     if not _is_git_checkout():
-        raise UpdateError("Celune did not find a Git repository.")
+        raise UpdateError("did not find a repository")
 
     if _has_local_changes():
-        raise UpdateError(
-            "Celune has determined the local Git repository has not been committed yet."
-        )
+        raise UpdateError("repository not committed")
 
     try:
-        _run_git(["fetch", "--prune", REMOTE_URL, "HEAD"], timeout=120)
+        branch = _current_branch()
     except subprocess.CalledProcessError as exc:
         raise UpdateError(_format_git_error(exc)) from exc
     except subprocess.TimeoutExpired as exc:
-        raise UpdateError(f"Git fetch timed out after {exc.timeout} seconds.") from exc
+        raise UpdateError(
+            f"timed out checking the current branch after {exc.timeout} seconds"
+        ) from exc
     except FileNotFoundError as exc:
-        raise UpdateError("Celune could not find Git on this system.") from exc
+        raise UpdateError("git is not available") from exc
+
+    if branch and branch not in UPDATE_BRANCHES:
+        raise UpdateError(f"automatic updates are disabled on branch '{branch}'")
+
+    fetch_ref = f"refs/heads/{branch}" if branch else "HEAD"
+
+    try:
+        _run_git(["fetch", "--prune", REMOTE_URL, fetch_ref], timeout=120)
+    except subprocess.CalledProcessError as exc:
+        raise UpdateError(_format_git_error(exc)) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise UpdateError(
+            f"timed out fetching the repository after {exc.timeout} seconds"
+        ) from exc
+    except FileNotFoundError as exc:
+        raise UpdateError("git is not available") from exc
 
     try:
         can_fast_forward = _git_succeeds(
@@ -246,22 +286,19 @@ def update_to_latest() -> None:
         )
     except subprocess.TimeoutExpired as exc:
         raise UpdateError(
-            f"Git update validation timed out after {exc.timeout} seconds."
+            f"timed out validating the update after {exc.timeout} seconds"
         ) from exc
     except FileNotFoundError as exc:
-        raise UpdateError("Celune could not find Git on this system.") from exc
+        raise UpdateError("git is not available") from exc
 
     if not can_fast_forward:
-        raise UpdateError(
-            "Celune cannot update automatically because the local branch cannot "
-            "be fast-forwarded."
-        )
+        raise UpdateError("repository is not able to be fast-forwarded")
 
     try:
         _run_git(["merge", "--ff-only", "FETCH_HEAD"], timeout=120)
     except subprocess.CalledProcessError as exc:
         raise UpdateError(_format_git_error(exc)) from exc
     except subprocess.TimeoutExpired as exc:
-        raise UpdateError(f"Git merge timed out after {exc.timeout} seconds.") from exc
+        raise UpdateError(f"timed out merging after {exc.timeout} seconds") from exc
     except FileNotFoundError as exc:
-        raise UpdateError("Celune could not find Git on this system.") from exc
+        raise UpdateError("git is not available") from exc
