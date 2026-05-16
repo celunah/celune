@@ -650,7 +650,8 @@ class Celune:
         self.log("All voices are available.")
         try:
             self.model = self.backend.load_default_model()
-            self.model_name = self.backend.model_id_for_voice(self.voices[0])
+            active_voice = self.current_voice or self.voices[0]
+            self.model_name = self.backend.model_id_for_voice(active_voice)
         except Exception as e:
             self.log("Celune could not load the default model.", "error")
             self.log(format_error(e, self.dev), "error")
@@ -832,6 +833,7 @@ class Celune:
             warmup_end = time.perf_counter()
             warmup_took = warmup_end - warmup_start
             self.log_dev(f"[WARMUP] done, took {format_number(warmup_took, 2)} seconds")
+            self.progress_callback(1, 1)
             return True
 
         except Exception as e:

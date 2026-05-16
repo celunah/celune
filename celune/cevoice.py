@@ -207,8 +207,16 @@ def write_cevoice(
     manifest_voices: dict[str, dict[str, Any]] = {}
 
     for voice, assets in voices.items():
+        if "/" in voice or "\\" in voice or voice in {"", ".", ".."}:
+            raise CEVoiceError(f"invalid voice name '{voice}'")
         manifest_assets: dict[str, dict[str, Any]] = {}
         for kind, source in assets.items():
+            if "/" in kind or "\\" in kind or kind in {"", ".", ".."}:
+                raise CEVoiceError(f"invalid asset kind for voice '{voice}'")
+            if kind not in ALLOWED_ASSET_KINDS:
+                raise CEVoiceError(
+                    f"unsupported asset kind '{kind}' for voice '{voice}'"
+                )
             data = _read_source(source)
             manifest_assets[kind] = {
                 "offset": len(payload),

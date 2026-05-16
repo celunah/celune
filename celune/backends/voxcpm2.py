@@ -192,7 +192,7 @@ class VoxCPM2(CeluneBackend):
         """
         loader = default_loader()
         if loader is not None:
-            for name in self.reference_waves:
+            for name in loader.bundle.voice_order:
                 loader.materialize(name, "wav")
             return
 
@@ -288,7 +288,11 @@ class VoxCPM2(CeluneBackend):
         chunk_size = kwargs.pop("chunk_size", 1)
 
         try:
-            ref_wav = self._reference_wave_path(voice, self.reference_waves[voice])
+            loader = default_loader()
+            if loader is not None:
+                ref_wav = loader.materialize(voice, "wav")
+            else:
+                ref_wav = self._reference_wave_path(voice, self.reference_waves[voice])
             cfg = self.voice_cfg[voice]
         except KeyError as e:
             raise ValueError(

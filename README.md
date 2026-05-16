@@ -42,12 +42,12 @@ Browse the `demos` directory for demonstration content from the current version 
 > Keep language boundaries clear and explicit.
 >
 > **Good:**
-> ```
+> ```text
 > This is a sentence. This is another sentence. [laughter]
 > ```
 >
 > **Bad:**
-> ```
+> ```text
 > <think>Thinking text.</think>
 > This is a sentence, 中文, 日本語, 한국어.
 > ```

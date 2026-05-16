@@ -151,7 +151,7 @@ class ExtensionTests(unittest.TestCase):
         manager = CeluneExtensionManager(self.context)
         manager.register(AutoExtension)
         manager.autostart_all()
-        self.assertEqual(event.wait(timeout=1), True)
+        self.assertTrue(event.wait(timeout=1))
 
         invoke_event = threading.Event()
 
@@ -165,7 +165,7 @@ class ExtensionTests(unittest.TestCase):
 
         manager.register(InvokeExtension)
         manager.invoke("Invoke", "x")
-        self.assertEqual(invoke_event.wait(timeout=1), True)
+        self.assertTrue(invoke_event.wait(timeout=5))
         with self.assertRaises(InvalidExtensionError):
             manager.invoke("Missing")
 

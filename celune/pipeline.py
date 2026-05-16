@@ -20,7 +20,7 @@ import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 from iso639 import Lang
-from iso639.exceptions import InvalidLanguageValue
+from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
 from .dsp import (
     _resample_audio,
@@ -542,7 +542,7 @@ def queue_speech(
         # "zh-cn" has to be clipped to just "zh" to be a valid language code
         try:
             language = Lang(language_meta["language"][:2]).name
-        except InvalidLanguageValue:
+        except (InvalidLanguageValue, DeprecatedLanguageValue):
             language = language_meta["language"]
 
         engine.log(
