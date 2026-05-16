@@ -33,8 +33,7 @@ class VoxCPM2(CeluneBackend):
     name: str = "voxcpm2"
     uses_voice_bundles: bool = True
     chunk_rate: float = 6.25
-    max_new_tokens: int = 8192
-    retry_badcase_ratio_threshold: float = 6.0
+    max_new_tokens: int = 2048
     supported_languages: tuple[str, ...] = (
         "ar",
         "my",
@@ -67,12 +66,15 @@ class VoxCPM2(CeluneBackend):
         "tr",
         "vi",
     )
+
     voice_models: dict[str, str] = {
         "balanced": "openbmb/VoxCPM2",
         "calm": "openbmb/VoxCPM2",
         "bold": "openbmb/VoxCPM2",
         "upbeat": "openbmb/VoxCPM2",
     }
+
+    # old references, please use a CEVOICE going forward
     reference_waves: dict[str, str] = {
         "balanced": "refs/balanced.wav",
         "calm": "refs/calm.wav",
@@ -82,6 +84,7 @@ class VoxCPM2(CeluneBackend):
 
     # the sane default CFG is 2.4 for most voices,
     # `calm` needs a higher CFG of 3.0 to capture the nuances without distorting
+    # however the max chunk length has to be limited to reduce the distortions over time
     voice_cfg: dict[str, float] = {
         "balanced": 2.4,
         "calm": 3.0,
@@ -302,8 +305,8 @@ class VoxCPM2(CeluneBackend):
             # these instructions can also be injected manually
             text = f"({instruct}) {text}"
 
-        # Random seeding causes regenerations of Celune's output to be unique,
-        # while a custom seed makes the next output reproducible.
+        # random seeding causes regenerations of Celune's output to be unique
+        # while a custom seed makes the next output reproducible
         self._apply_seed()
 
         chunks_per_batch = max(1, round(chunk_size / (1 / self.chunk_rate)))
@@ -316,10 +319,10 @@ class VoxCPM2(CeluneBackend):
                         reference_wav_path=ref_wav,
                         inference_timesteps=6,
                         cfg_value=cfg,
+                        # the longer you speak, the higher the drift risk over time
+                        # 2048 tokens is also used by Qwen3-TTS
+                        # consistent context lengths help to combat drift, and consume less VRAM
                         max_len=self.max_new_tokens,
-                        retry_badcase_ratio_threshold=(
-                            self.retry_badcase_ratio_threshold
-                        ),
                     )
 
                 batch = []
