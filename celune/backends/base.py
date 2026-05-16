@@ -21,7 +21,6 @@ class CeluneBackend(ABC):
     chunk_rate: float = N_A_NUMERIC
     supported_languages: tuple = ()
     voice_models: Optional[dict[str, str]] = None
-    reference_waves: Optional[dict[str, str]] = None
     default_voice: Optional[str] = None
     uses_voice_bundles: bool = False
 

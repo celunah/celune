@@ -63,13 +63,6 @@ class Qwen3(CeluneBackend):
         "upbeat": "lunahr/Celune-1.7B-Upbeat",
     }
 
-    # fallback, please use a CEVOICE going forward
-    reference_waves: dict[str, str] = {
-        "balanced": "refs/balanced.wav",
-        "calm": "refs/calm.wav",
-        "bold": "refs/bold.wav",
-        "upbeat": "refs/upbeat.wav",
-    }
     reference_texts: dict[str, str] = {
         "balanced": (
             "My name is Celune, pronounced Celune. It is a pleasure to meet you."
@@ -227,8 +220,8 @@ class Qwen3(CeluneBackend):
                 loader.materialize(name, "wav")
             return
 
-        for name, ref in self.reference_waves.items():
-            full_path = self._reference_wave_path(name, ref)
+        for name in self.voice_models:
+            full_path = self._reference_wave_path(name)
             try:
                 with open(full_path, "rb") as f:
                     checksum = hashlib.file_digest(f, "sha256").hexdigest()
@@ -254,11 +247,11 @@ class Qwen3(CeluneBackend):
                     )
 
     @staticmethod
-    def _reference_wave_path(name: str, ref: str) -> Path:
+    def _reference_wave_path(name: str) -> Path:
         loader = default_loader()
         if loader is not None:
             return loader.materialize(name, "wav")
-        return Path(__file__).resolve().parents[1] / ref
+        return Path(__file__).resolve().parents[1] / "refs" / f"{name}.wav"
 
     def load_model(self, model_id: str, **kwargs) -> FasterQwen3TTS:
         """Load the given voice model.
@@ -321,9 +314,7 @@ class Qwen3(CeluneBackend):
                 if loader is not None:
                     ref_wav = loader.materialize(voice, "wav")
                 else:
-                    ref_wav = self._reference_wave_path(
-                        voice, self.reference_waves[voice]
-                    )
+                    ref_wav = self._reference_wave_path(voice)
                 ref_text = self.reference_texts.get(
                     voice, self.reference_texts[self.default_voice]
                 )
