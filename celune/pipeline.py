@@ -1173,13 +1173,6 @@ def playback_worker(engine: "Celune") -> None:
             return
 
         if not started:
-            while engine.audio_queue.qsize() < engine.prebuffer_chunks:
-                if engine.exit_requested:
-                    break
-                if engine.cur_state == "speaking" and not engine.audio_queue.empty():
-                    break
-                time.sleep(0.01)
-
             if engine.exit_requested:
                 continue
 

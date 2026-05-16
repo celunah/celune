@@ -29,6 +29,8 @@ class Qwen3(CeluneBackend):
     """Celune Qwen3-TTS backend."""
 
     name: str = "qwen3"
+    # will be set later
+    uses_voice_bundles: bool = False
     chunk_rate: float = 12.5
     max_new_tokens: int = 2048
     supported_languages: tuple[str, ...] = (
@@ -45,12 +47,16 @@ class Qwen3(CeluneBackend):
     )
     clone_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     supported_modes: tuple[str, ...] = ("native", "clone")
+
+    # these models are deprecated as of Celune 3.5.0
     voice_models: dict[str, str] = {
         "balanced": "lunahr/Celune-1.7B-Neutral",
         "calm": "lunahr/Celune-1.7B-Calm",
         "bold": "lunahr/Celune-1.7B-Energetic",
         "upbeat": "lunahr/Celune-1.7B-Upbeat",
     }
+
+    # fallback, please use a CEVOICE going forward
     reference_waves: dict[str, str] = {
         "balanced": "refs/balanced.wav",
         "calm": "refs/calm.wav",
@@ -84,18 +90,13 @@ class Qwen3(CeluneBackend):
         super().__init__(log=log)
         self.mode = mode
         self.uses_voice_bundles = self.mode == "clone"
-        self.deprecation_warning: Optional[str] = None
         if self.mode == "native":
-            message = (
-                "Qwen3 native mode is deprecated and will be removed soon. "
-                "Please load a CEVOICE pack for optimal operation."
-            )
             warnings.warn(
-                message,
+                "Qwen3 native mode is deprecated and will be removed soon. "
+                "Please load a CEVOICE pack for optimal operation.",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            self.deprecation_warning = message
         if self.mode == "clone":
             self.model_name = self.clone_model
             self._validate_refs()

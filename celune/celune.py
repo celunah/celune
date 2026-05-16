@@ -200,10 +200,9 @@ class Celune:
         self.tokenizer: Optional[PreTrainedTokenizerBase] = None
 
         self.current_voice: Optional[str] = None
+        self.current_character: Optional[str] = None
         self.voices: tuple[str, ...] = ()
         self.voice_prompt: Optional[str] = None
-
-        self.prebuffer_chunks = 5 if self.backend.name == "qwen3" else 10
 
         self.text_queue: queue.Queue[Any] = queue.Queue()
         self.audio_queue: queue.Queue[Any] = queue.Queue()
@@ -626,7 +625,9 @@ class Celune:
             return False
 
         if self.backend.uses_voice_bundles:
-            announce_default_bundle(self.log)
+            character = announce_default_bundle(self.log)
+            self.current_character = character
+            self.log(f"Current character: {character}")
 
         self.setup_extensions()
         self.progress_callback(None, None)

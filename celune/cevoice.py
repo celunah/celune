@@ -383,27 +383,37 @@ def default_loader() -> Optional[CEVoiceLoader]:
     return _DEFAULT_LOADER
 
 
-def announce_default_bundle(log: Callable[[str, str], None]) -> None:
+def announce_default_bundle(log: Callable[[str, str], None]) -> Optional[str]:
     """Log the default bundle result once at the caller's chosen lifecycle point.
 
     Args:
         log: The logging callback to the bound user interface.
 
     Returns:
-        None: This function announced to the bound user interface that a default CEVOICE bundle was or wasn't loaded.
+        Optional[str]: The selected bundle's character name, ``None`` if loading failed, ``"Celune"`` if
+            a fallback reference was loaded.
     """
     global _DEFAULT_LOADER_ANNOUNCED
     loader = default_loader()
     if _DEFAULT_LOADER_ANNOUNCED:
-        return
+        return None
 
     if loader is not None:
         name = loader.bundle.metadata.get("name", active_bundle_path().stem)
         log(f"Loading voice bundle: {name}", "info")
         _DEFAULT_LOADER_ANNOUNCED = True
-    elif _DEFAULT_LOADER_FAILED:
+        return name
+
+    if _DEFAULT_LOADER_FAILED:
         log(
-            "Could not load voice bundle, falling back to loose reference assets.",
+            "No voice bundles found or voice loading failed. "
+            "Loading a default character from loose references instead.",
             "warning",
         )
         _DEFAULT_LOADER_ANNOUNCED = True
+
+        # this is a fallback, and only Celune is available as old format voice data
+        # it only triggers if no CEVOICE is loadable, but the old format refs still exist
+        return "Celune"
+
+    return None
