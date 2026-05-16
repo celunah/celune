@@ -33,10 +33,14 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Run lint
-        run: uv run pylint celune
+        run: |
+          uv run pylint celune
+          uv run pylint tests
 
       - name: Type check
-        run: uv run pyright celune
+        run: |
+          uv run pyright celune
+          uv run pyright tests
 
       - name: Run unit tests
         run: uv run pytest tests
