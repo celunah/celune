@@ -1,0 +1,16 @@
+<svg viewBox="0 0 240 272" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <radialGradient id="moon-gradient" cx="40%" cy="50%">
+            <stop offset="0%" stop-color="#cebaff" />
+            <stop offset="100%" stop-color="#baa4ff" />
+        </radialGradient>
+
+        <mask id="crescent-mask" maskUnits="userSpaceOnUse">
+            <rect width="240" height="272" fill="black" />
+            <circle cx="136" cy="136" r="136" fill="white" />
+            <circle cx="172" cy="136" r="110" fill="black" />
+        </mask>
+    </defs>
+
+    <rect width="240" height="272" fill="url(#moon-gradient)" mask="url(#crescent-mask)" />
+</svg>
