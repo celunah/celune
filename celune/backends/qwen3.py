@@ -29,10 +29,14 @@ class Qwen3(CeluneBackend):
     """Celune Qwen3-TTS backend."""
 
     name: str = "qwen3"
-    # will be set later
+
+    # this is a default value, Celune sets this properly during backend initialization
     uses_voice_bundles: bool = False
     chunk_rate: float = 12.5
     max_new_tokens: int = 2048
+
+    # setting this parameter will lock in identity, but expression may be reduced
+    x_vector_only: bool = False
     supported_languages: tuple[str, ...] = (
         "zh-cn",
         "en",
@@ -46,7 +50,10 @@ class Qwen3(CeluneBackend):
         "it",
     )
     clone_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-    supported_modes: tuple[str, ...] = ("native", "clone")
+    supported_modes: tuple[str, ...] = (
+        "native",  # deprecated operation mode, will be removed soon
+        "clone",  # now uses CEVOICE voice packs
+    )
 
     # these models are deprecated as of Celune 3.5.0
     voice_models: dict[str, str] = {
@@ -80,6 +87,7 @@ class Qwen3(CeluneBackend):
         self,
         log: Callable[[str, str], None],
         mode: Literal["native", "clone"] = "clone",
+        x_vector_only: bool = False,
     ) -> None:
         if mode not in self.supported_modes:
             raise ValueError(
@@ -89,6 +97,7 @@ class Qwen3(CeluneBackend):
 
         super().__init__(log=log)
         self.mode = mode
+        self.x_vector_only = x_vector_only
         self.uses_voice_bundles = self.mode == "clone"
         if self.mode == "native":
             warnings.warn(
@@ -320,6 +329,7 @@ class Qwen3(CeluneBackend):
                 ref_audio=ref_wav,
                 ref_text=ref_text,
                 non_streaming_mode=False,  # VERY IMPORTANT ON >=0.2.5
+                xvec_only=self.x_vector_only,
                 **kwargs,
             )
         else:

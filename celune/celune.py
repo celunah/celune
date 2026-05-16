@@ -26,7 +26,7 @@ from .cevoice import announce_default_bundle, default_loader, select_voice_bundl
 from .config import config_bool, config_value
 from .constants import NORMALIZER_MODEL_ID, PipelineStates
 from .dsp import StreamingPedalboardReverb
-from .utils import format_number, format_error
+from .utils import format_number, format_error, discard
 from .chroma import AudioRGBGlow
 from .exceptions import NotAvailableError, WarmupError, BackendError
 from .extensions.base import CeluneContext
@@ -144,6 +144,7 @@ class Celune:
         )
 
         self.config = config
+        select_voice_bundle(config_value(config, "voice_bundle"))
 
         backend_kwargs = {}
 
@@ -152,6 +153,11 @@ class Celune:
             or (isinstance(tts_backend, type) and issubclass(tts_backend, Qwen3))
         ):
             backend_kwargs["mode"] = config_value(config, "qwen3_mode", "clone")
+            backend_kwargs["x_vector_only"] = config_bool(
+                config,
+                "CELUNE_QWEN3_X_VECTOR_ONLY",
+                "qwen3_x_vector_only",
+            )
 
         try:
             self.backend = resolve_backend(
@@ -246,7 +252,19 @@ class Celune:
 
         self.extension_manager: Optional[CeluneExtensionManager] = None
 
-        self.glow = AudioRGBGlow(color="#cebaff")
+        glow_color = "#cebaff"
+        loader = default_loader()
+        if loader is not None:
+            theme = loader.bundle.metadata.get("theme")
+            if isinstance(theme, dict):
+                accent = theme.get("accent")
+                if isinstance(accent, str):
+                    glow_color = accent
+
+                configured_glow = theme.get("glow_color")
+                if isinstance(configured_glow, str):
+                    glow_color = configured_glow
+        self.glow = AudioRGBGlow(color=glow_color)
         self.glow.start()
 
     @staticmethod
@@ -295,20 +313,13 @@ class Celune:
             None: This method clears model references and frees CUDA memory when
                 possible.
         """
-        _ = self.model
-        self.model = None
-        del _
+        discard(self, "model")
 
         self.backend.unload_model()
 
         if include_normalizer:
-            _ = self.llm
-            self.llm = None
-            del _
-
-            _ = self.tokenizer
-            self.tokenizer = None
-            del _
+            discard(self, "llm")
+            discard(self, "tokenizer")
 
         gc.collect()
 
@@ -353,7 +364,7 @@ class Celune:
             )
             return bool(voices)
 
-        voices = tuple(loader.bundle.voices)
+        voices = loader.bundle.voice_order
         configured_default = loader.bundle.metadata.get("default_voice")
         preferred_voice = (
             configured_default
@@ -499,7 +510,7 @@ class Celune:
         self.extension_manager.autoload("extensions")
 
         self.log_dev(
-            f"[EXT] Loaded extensions: {self.extension_manager.list_extensions()}"
+            f"[Core] Loaded extensions: {', '.join(self.extension_manager.list_extensions())}"
         )
 
     def log(self, msg: str, severity: str = "info") -> None:
@@ -627,7 +638,10 @@ class Celune:
         if self.backend.uses_voice_bundles:
             character = announce_default_bundle(self.log)
             self.current_character = character
-            self.log(f"Current character: {character}")
+            if character == "Celune":
+                self.log(f"Current character: {character} (default)")
+            else:
+                self.log(f"Current character: {character}")
 
         self.setup_extensions()
         self.progress_callback(None, None)

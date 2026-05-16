@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import soundfile as sf
 
+from ..backends.qwen3 import Qwen3
 from ..exceptions import InvalidExtensionError
 from ..utils import format_error
 
@@ -143,6 +144,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         )
         ui.safe_log("/speed <speed> - Change speaking speed.")
         ui.safe_log("/reverb <strength> - Change reverb strength.")
+        ui.safe_log("/xvectoronly <true/false> - Toggle Qwen3 identity-only cloning.")
         ui.safe_log(
             "/play <file> - Play a sound effect by path. Only WAV files are supported."
         )
@@ -259,6 +261,30 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.safe_log(f"Invalid argument: {args[0]}", "warning")
         else:
             ui.safe_log(f"Reverb strength set to {args[0]}%.")
+        return
+    if command == "xvectoronly":
+        backend = ui.celune.backend
+        if not isinstance(backend, Qwen3):
+            ui.safe_log(
+                "This setting is only available on the Qwen3 backend.", "warning"
+            )
+            return
+
+        if not args:
+            ui.safe_log("Usage: /xvectoronly <true/false>", "warning")
+            return
+
+        value = args[0].lower()
+        if value not in {"true", "false"}:
+            ui.safe_log(
+                f"Invalid argument for '{command}', must be true/false.",
+                "warning",
+            )
+            return
+
+        backend.x_vector_only = value == "true"
+        state = "enabled" if backend.x_vector_only else "disabled"
+        ui.safe_log(f"Qwen3 identity-only cloning {state}.")
         return
     if command == "play":
         if not args:

@@ -18,6 +18,7 @@ from .exceptions import CEVoiceError
 MAGIC = b"CEVOICE\0"
 VERSION = 1
 HEADER = struct.Struct("<8sHI")
+ALLOWED_ASSET_KINDS = {"wav", "pt"}
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,14 @@ class CEVoice:
         if not isinstance(voices, dict):
             raise CEVoiceError("metadata voices must be an object")
         return voices
+
+    @property
+    def voice_order(self) -> tuple[str, ...]:
+        """Return the preferred user-facing voice order."""
+        order = self.metadata.get("voice_order")
+        if isinstance(order, list) and all(isinstance(voice, str) for voice in order):
+            return tuple(order)
+        return tuple(self.voices)
 
     def asset(self, voice: str, kind: str) -> CEVoiceAsset:
         """Return metadata for one named voice asset.
@@ -252,6 +261,34 @@ def _validate_metadata(path: Path, metadata: Any, payload_offset: int) -> None:
     if not isinstance(voices, dict):
         raise CEVoiceError("metadata voices must be an object")
 
+    default_voice = metadata.get("default_voice")
+    if default_voice is not None and default_voice not in voices:
+        raise CEVoiceError("metadata default_voice must name a defined voice")
+
+    voice_order = metadata.get("voice_order")
+    if voice_order is not None:
+        if (
+            not isinstance(voice_order, list)
+            or not all(isinstance(voice, str) for voice in voice_order)
+        ):
+            raise CEVoiceError("metadata voice_order must be a list of voice names")
+        if len(set(voice_order)) != len(voice_order):
+            raise CEVoiceError("metadata voice_order must not contain duplicates")
+        if any(voice not in voices for voice in voice_order):
+            raise CEVoiceError("metadata voice_order must only name defined voices")
+        voice_order.extend(voice for voice in voices if voice not in voice_order)
+
+    theme = metadata.get("theme")
+    if theme is not None:
+        if not isinstance(theme, dict):
+            raise CEVoiceError("metadata theme must be an object")
+        for key in ("background", "accent", "glow_color"):
+            value = theme.get(key)
+            if key == "glow_color" and value is None:
+                continue
+            if not _is_hex_color(value):
+                raise CEVoiceError(f"metadata theme '{key}' must be a hex color")
+
     payload_length = path.stat().st_size - payload_offset
     for voice, voice_data in voices.items():
         if not isinstance(voice, str) or not isinstance(voice_data, dict):
@@ -266,6 +303,8 @@ def _validate_metadata(path: Path, metadata: Any, payload_offset: int) -> None:
                 raise CEVoiceError("invalid voice name")
             if "/" in kind or "\\" in kind or kind in {"", ".", ".."}:
                 raise CEVoiceError(f"invalid asset kind for voice '{voice}'")
+            if kind not in ALLOWED_ASSET_KINDS:
+                raise CEVoiceError(f"unsupported asset kind '{kind}' for voice '{voice}'")
             offset = asset.get("offset")
             length = asset.get("length")
             digest = asset.get("sha256")
@@ -276,12 +315,22 @@ def _validate_metadata(path: Path, metadata: Any, payload_offset: int) -> None:
                 or length < 0
                 or not isinstance(digest, str)
                 or len(digest) != 64
+                or any(character not in "0123456789abcdefABCDEF" for character in digest)
             ):
                 raise CEVoiceError(f"invalid asset metadata for voice '{voice}'")
             if offset + length > payload_length:
                 raise CEVoiceError(
                     f"asset '{kind}' for voice '{voice}' exceeds payload"
                 )
+
+
+def _is_hex_color(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 7
+        and value.startswith("#")
+        and all(character in "0123456789abcdefABCDEF" for character in value[1:])
+    )
 
 
 _DEFAULT_LOADER: Optional[CEVoiceLoader] = None

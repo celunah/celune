@@ -34,7 +34,8 @@ from ..utils import (
     is_april_fools,
 )
 from ..constants import SIGTSTP
-from ..colors import THEME, THEME_LIGHT, THEME_APRIL_FOOLS, SEVERITY_COLORS
+from ..cevoice import default_loader
+from .. import colors
 from .commands import process_command as process_ui_command
 from . import resources as ui_resources
 from .terminal import LogRedirect
@@ -218,9 +219,18 @@ class CeluneUI(App):
             None: This method sets up themes, widgets, output redirection, and
                 background initialization.
         """
-        self.register_theme(THEME)
-        self.register_theme(THEME_LIGHT)
-        self.register_theme(THEME_APRIL_FOOLS)
+        loader = default_loader()
+        if loader is not None:
+            theme = loader.bundle.metadata.get("theme")
+            if isinstance(theme, dict):
+                background = theme.get("background")
+                accent = theme.get("accent")
+                if isinstance(background, str) and isinstance(accent, str):
+                    colors.configure_theme(background, accent)
+
+        self.register_theme(colors.THEME)
+        self.register_theme(colors.THEME_LIGHT)
+        self.register_theme(colors.THEME_APRIL_FOOLS)
 
         if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
             "1",
@@ -559,7 +569,7 @@ class CeluneUI(App):
         if self.cur_state == "exiting" or self.status is None:
             return
 
-        if severity not in SEVERITY_COLORS["celune"]:
+        if severity not in colors.SEVERITY_COLORS["celune"]:
             self.safe_log(
                 f"[WARNING] Unknown severity '{severity}', defaulting to info",
                 "warning",
@@ -596,7 +606,7 @@ class CeluneUI(App):
         if self.cur_state == "exiting":
             return
 
-        if severity not in SEVERITY_COLORS["celune"]:
+        if severity not in colors.SEVERITY_COLORS["celune"]:
             severity = "info"
 
         self.log_history.append((msg, severity))

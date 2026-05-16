@@ -11,6 +11,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ..constants import N_A_NUMERIC
+from ..utils import discard
 
 
 class CeluneBackend(ABC):
@@ -137,7 +138,7 @@ class CeluneBackend(ABC):
             Optional[int]: Maximum generated codec/token steps for one text chunk,
                 or ``None`` when the backend does not expose a stable limit.
         """
-        del text  # mark this unused
+        discard(text)
 
     @staticmethod
     def generation_progress_steps(timing: Optional[dict]) -> int:
