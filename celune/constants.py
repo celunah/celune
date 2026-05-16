@@ -35,10 +35,10 @@ SIGTSTP = getattr(signal, "SIGTSTP", None)
 
 # types
 T = TypeVar("T")
-JSONSerializable = Union[
+type JSONSerializable = Union[
     None, bool, int, float, str, list["JSONSerializable"], dict[str, "JSONSerializable"]
 ]
-JSON = dict[str, JSONSerializable]
+type JSON = dict[str, JSONSerializable]
 
 
 # pipeline state objects

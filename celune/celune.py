@@ -88,6 +88,24 @@ class InputStateCallback(Protocol):
         raise NotImplementedError
 
 
+class VoiceLockStateCallback(Protocol):
+    """Callback accepting either positional or named lock state."""
+
+    def __call__(self, locked: bool) -> None:
+        """Handle voice lock-state changes.
+
+        Args:
+            locked: Whether voice changes should be treated as locked.
+
+        Returns:
+            None: Implementations update their voice lock state.
+
+        Raises:
+            NotImplementedError: The protocol placeholder is called directly.
+        """
+        raise NotImplementedError
+
+
 class ProgressCallback(Protocol):
     """Callback accepting progress and total values."""
 
@@ -124,6 +142,7 @@ class Celune:
         queue_avail_callback: Optional[Callable[[], None]] = None,
         voice_changed_callback: Optional[Callable[[str], None]] = None,
         change_input_state_callback: Optional[InputStateCallback] = None,
+        change_voice_lock_state_callback: Optional[VoiceLockStateCallback] = None,
         progress_callback: Optional[ProgressCallback] = None,
         dev: bool = False,
     ) -> None:
@@ -138,6 +157,9 @@ class Celune:
         self.voice_changed_callback = voice_changed_callback or (lambda name: None)
         self.change_input_state_callback: InputStateCallback = (
             change_input_state_callback or self._noop_input_state
+        )
+        self.change_voice_lock_state_callback: VoiceLockStateCallback = (
+            change_voice_lock_state_callback or self._noop_voice_lock_state
         )
         self.progress_callback: ProgressCallback = (
             progress_callback or self._noop_progress
@@ -274,6 +296,10 @@ class Celune:
     @staticmethod
     def _noop_input_state(locked: bool) -> None:
         """Discard an input lock-state callback."""
+
+    @staticmethod
+    def _noop_voice_lock_state(locked: bool) -> None:
+        """Discard a voice lock-state callback."""
 
     @staticmethod
     def _noop_progress(progress: Optional[float], total: Optional[float]) -> None:
@@ -625,10 +651,6 @@ class Celune:
         hf_logging.set_verbosity_error()
 
         log_runtime_banner(self.log, self.backend.name)
-        backend_warning = getattr(self.backend, "deprecation_warning", None)
-        if backend_warning:
-            self.log(f"DeprecationWarning: {backend_warning}", "warning")
-
         if not self.load_available_voices():
             self.log("No voices were loaded.", "error")
             self.progress_callback(0, 1)

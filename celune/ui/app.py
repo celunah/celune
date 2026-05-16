@@ -361,6 +361,7 @@ class CeluneUI(App):
                 if not self.celune.use_normalization:
                     self.safe_progress(1, 1)
                 self.change_input_state(locked=False)
+                self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
                 self.safe_log("New to Celune? Type /tutorial to begin the tutorial.")
 
         except Exception as e:
@@ -527,6 +528,30 @@ class CeluneUI(App):
                 self.set_timer(delay, run_frame)
 
         schedule_frame(0, frame_delay)
+
+    def change_voice_lock_state(self, locked: bool) -> None:
+        """Lock or unlock the ability to change Celune's voice.
+
+        Args:
+            locked: Whether voice changes should be disabled.
+
+        Returns:
+            None: This method locks or unlocks the voice change button.
+        """
+
+        def update() -> None:
+            """Apply the voice change lock state on the UI thread.
+
+            Returns:
+                None: This callback updates input widgets and resources
+            """
+            self.style_button.disabled = locked
+            self.update_resources()
+
+        if threading.current_thread() is threading.main_thread():
+            update()
+        else:
+            self.call_from_thread(update)
 
     def change_input_state(self, locked: bool) -> None:
         """Lock or unlock Celune's UI layer.
@@ -804,6 +829,7 @@ class CeluneUI(App):
         self._tutorial_timers.clear()
         self.celune.is_in_tutorial = False
         self.change_input_state(locked=False)
+        self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
 
     def cancel_tutorial(self, stop_audio: bool = True) -> bool:
         """Cancel pending tutorial actions and any active tutorial typing.
@@ -835,6 +861,7 @@ class CeluneUI(App):
         finally:
             self._suppress_input_change = False
         self.change_input_state(locked=False)
+        self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
 
         return True
 
@@ -1000,6 +1027,7 @@ class CeluneUI(App):
             self.style_button.disabled = True
         else:
             self.change_input_state(locked=False)
+            self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
         self.safe_status("Idle")
 
     def tts_queue_avail(
@@ -1019,6 +1047,7 @@ class CeluneUI(App):
             self.style_button.disabled = True
         else:
             self.change_input_state(locked=False)
+            self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
 
     def error(self, error: str) -> None:
         """Set the UI status to the error message.
