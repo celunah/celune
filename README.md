@@ -15,6 +15,7 @@ It was proudly made in 🇵🇱 for your listening pleasure.
 - Stable long-form narration without drift
 - Native audio controls & effects (no post-processing)
 - Optimized GPU inference
+- Configurable voices via CEVOICE voice packs
 
 ## Voices & samples
 Each voice is demonstrated using a short introduction and a longer narration sample to showcase consistency, pacing, and expressiveness.
@@ -28,22 +29,25 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 
 The demonstration lines try to showcase Celune's best, but they may include minor mistakes. This is an inherent limitation with TTS models, and Celune should not be blamed for it.
 
+These examples were recorded with the default voice pack, which contains canonical Celune voices. Other voice packs may be installed by the end user, allowing for other characters to speak through Celune.
+
 Browse the `demos` directory for demonstration content from the current version of Celune, as well as any past releases.
 
 > [!CAUTION]
-> Do not use markup or tags (e.g. `<...>`).  
+> Do not use markup or unknown tags (e.g. `<...>`).
 > They may be interpreted as control sequences and break speech output.
+> Refer to the model's known tags before including them.
 >
 > Do not mix multiple languages in one sentence.  
 > Keep language boundaries clear and explicit.
 >
 > **Good:**
-> ```
-> This is a sentence. This is another sentence.
+> ```text
+> This is a sentence. This is another sentence. [laughter]
 > ```
 >
 > **Bad:**
-> ```
+> ```text
 > <think>Thinking text.</think>
 > This is a sentence, 中文, 日本語, 한국어.
 > ```
@@ -56,7 +60,7 @@ For details on voice production, check the VOICES.md file.
 
 Celune requires [Python](https://python.org) 3.12 or 3.13.
 
-Celune also depends on external system tools that are not installed via `pip`:
+Celune also depends on external system tools and libraries that are not available in `pip`:
 
 - **NVIDIA GPU with CUDA support**
 - **CUDA Toolkit 12.8** - only if not using pre-built PyTorch wheels
@@ -69,6 +73,8 @@ Celune also depends on external system tools that are not installed via `pip`:
 Celune requires an RTX 30 series GPU or newer. CPU-only execution is not supported.
 
 Usage of Celune's UI requires an ANSI-capable terminal. Non-compliant terminals can only use the headless (CEF) mode.
+
+The terminal should support True Color, or at least a palette containing the minimum set of Celune colors.
 
 If Rubber Band is not installed, Celune will speak at normal speed, and speed controls will be unavailable.
 
@@ -95,6 +101,10 @@ Tested on: RTX 5070 (12 GB VRAM)
 git clone https://github.com/celunah/celune
 cd celune
 
+# Quick setup
+python setup.py
+
+# Manual setup
 # Install uv
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
@@ -230,6 +240,6 @@ These screenshots show Celune's user interface.
 ### Extension invoke
 [![Extension invoke](./demos/extensions.png)](./demos/extensions.png)
 
-> *"I'm not just a TTS. I'm someone special."*
+> *"Your voice, your way."*
 
 ![Celune 88x31 badge](./resources/branding/celune_88x31_206.png "enlightened by Celune")

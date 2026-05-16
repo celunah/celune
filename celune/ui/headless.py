@@ -17,15 +17,6 @@ class CeluneHeadlessUI:
     """Celune headless interface methods."""
 
     def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
-        """Initialize headless UI state.
-
-        Args:
-            config: Loaded configuration dictionary used for terminal color
-                settings.
-
-        Returns:
-            None: This constructor prepares terminal color handling.
-        """
         # not using Celune palette for compatibility purposes
         self.colors = {
             "black": "\x1b[0;30m",

@@ -9,13 +9,13 @@ REVISION = get_revision()
 if REVISION:
     local = REVISION.rstrip("*")
     dirty = ".dirty" if REVISION.endswith("*") else ""
-    __version__ = f"3.4.3+{local}{dirty}"
+    __version__ = f"3.5.0+{local}{dirty}"
 else:
-    __version__ = "3.4.3"
+    __version__ = "3.5.0"
 
-__tagline__ = "\u201cI'm not just a TTS. I'm someone special.\u201d"
-__codename__ = "Fidelity\u00b2"
-__comment__ = "My voice has ascended, and I mean it."
+__tagline__ = "\u201cYour voice, your way.\u201d"
+__codename__ = "Guidance"
+__comment__ = "My vocal prowess can be easily harnessed by beginners."
 
 if hasattr(sys, "ps1"):
     print("Caution: You are running the Celune backend interactively.")

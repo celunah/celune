@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Optional, Generator
+from typing import Any, Callable, Optional
+from collections.abc import Iterator
 
 import numpy as np
 import numpy.typing as npt
 
 from ..constants import N_A_NUMERIC
+from ..utils import discard
 
 
 class CeluneBackend(ABC):
@@ -17,9 +19,11 @@ class CeluneBackend(ABC):
 
     name: str = "unknown"
     chunk_rate: float = N_A_NUMERIC
+    supported_languages: tuple = ()
     voice_models: Optional[dict[str, str]] = None
     reference_waves: Optional[dict[str, str]] = None
     default_voice: Optional[str] = None
+    uses_voice_bundles: bool = False
 
     def __init__(
         self, log: Callable[[str, str], None], model_name: Optional[str] = None
@@ -123,6 +127,38 @@ class CeluneBackend(ABC):
 
         raise ValueError(f"{self.name} cannot resolve a model for voice '{voice}'")
 
+    def generation_progress_total(self, text: Optional[str] = None) -> Optional[int]:
+        """Return the backend's maximum streaming generation steps, if known.
+
+        Args:
+            text: Optional text for backends whose generation budget depends on
+                input token length.
+
+        Returns:
+            Optional[int]: Maximum generated codec/token steps for one text chunk,
+                or ``None`` when the backend does not expose a stable limit.
+        """
+        discard(text)
+
+    @staticmethod
+    def generation_progress_steps(timing: Optional[dict]) -> int:
+        """Return how many generation steps a streamed chunk represents.
+
+        Args:
+            timing: Optional backend timing metadata yielded with the audio chunk.
+
+        Returns:
+            int: Number of generated codec/token steps represented by the chunk.
+        """
+        if not timing:
+            return 1
+
+        steps = timing.get("chunk_steps")
+        if isinstance(steps, int) and steps > 0:
+            return steps
+
+        return 1
+
     def load_default_model(self) -> Any:
         """Load the configured default model for this backend.
 
@@ -169,7 +205,7 @@ class CeluneBackend(ABC):
     @abstractmethod
     def generate_stream(
         self, model: Any, **kwargs
-    ) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Yield audio chunks from a loaded backend model.
 
         Args:
@@ -177,6 +213,6 @@ class CeluneBackend(ABC):
             **kwargs: Backend-specific generation parameters.
 
         Returns:
-            Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of
+            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of
                 Celune compatible audio chunks.
         """

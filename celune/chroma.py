@@ -16,7 +16,7 @@ from openrgb.utils import RGBColor
 
 from .dsp import _split
 from .constants import BASE_SR
-from .utils import to_rgb, lunar_info, range_interpolated
+from .utils import to_rgb, lunar_info, range_interpolated, is_celune_day
 
 type RGBTuple = tuple[int, ...]
 
@@ -25,16 +25,6 @@ class AudioRGBGlow:
     """OpenRGB-compatible speaking-aware glow effect."""
 
     def __init__(self, color: str, host: str = "127.0.0.1", port: int = 6742) -> None:
-        """Initialize RGB glow state.
-
-        Args:
-            color: Base glow color accepted by ``to_rgb``.
-            host: OpenRGB server host.
-            port: OpenRGB server port.
-
-        Returns:
-            None: This constructor prepares device state and glow parameters.
-        """
         self.color = np.array(
             self._fix_color_rendering(to_rgb(color)), dtype=np.float32
         )
@@ -68,7 +58,7 @@ class AudioRGBGlow:
 
         # Celune glows much brighter on Celune Day, else she'll glow according to the lunar phase.
         current_date = datetime.datetime.now()
-        if current_date.day == 2 and current_date.month == 6:
+        if is_celune_day():
             self.glow_multiplier *= 3.0
         else:
             _, illumination, _ = lunar_info(current_date)

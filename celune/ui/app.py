@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Celune's frontend layer."""
 
-import datetime
 import os
 import sys
 import shlex
@@ -9,21 +8,34 @@ import signal
 import threading
 import itertools
 import contextlib
+import time
 from types import FrameType
-from typing import cast, Optional
+from typing import cast, Optional, Callable, Union
 from collections.abc import Iterator
 
 import yaml
 from textual import work, events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Label, RichLog, TextArea, Button
+from textual.color import Color
+from textual.css.types import EdgeStyle
+from textual.timer import Timer
+from textual.widget import Widget
+from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 from rich.text import Text
 
 from ..celune import Celune
-from ..utils import format_error, indent, replace_ipa
+from ..utils import (
+    format_error,
+    indent,
+    replace_ipa,
+    typing_animation,
+    typing_delay,
+    is_april_fools,
+)
 from ..constants import SIGTSTP
-from ..colors import THEME, THEME_LIGHT, THEME_APRIL_FOOLS, SEVERITY_COLORS
+from ..cevoice import default_loader
+from .. import colors
 from .commands import process_command as process_ui_command
 from . import resources as ui_resources
 from .terminal import LogRedirect
@@ -38,11 +50,6 @@ class CeluneUI(App):
     CSS = CELUNE_CSS
 
     def __init__(self) -> None:
-        """Initialize UI state.
-
-        Returns:
-            None: This constructor prepares widget references and runtime flags.
-        """
         super().__init__()
 
         self.logs = cast(RichLog, None)
@@ -50,8 +57,9 @@ class CeluneUI(App):
         self.style_button = cast(Button, None)
         self.status = cast(Label, None)
         self.resources = cast(Label, None)
+        self.progress_bar = cast(ProgressBar, None)
 
-        if self._is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
+        if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
             "1",
             "true",
             "on",
@@ -68,7 +76,7 @@ class CeluneUI(App):
 
         self.celune = cast(Celune, None)
         self.celune_ready = False
-        self.celune_styles: tuple[str, ...] = ("balanced", "calm", "bold", "upbeat")
+        self.celune_styles: tuple[str, ...] = ()
         self.celune_voices: Iterator[str] = itertools.cycle(self.celune_styles)
 
         self.style_index = 0
@@ -84,12 +92,11 @@ class CeluneUI(App):
         self.consume_on_boundary = False
         self._suppress_input_change = False
         self._resource_page = 0
-
-    @staticmethod
-    def _is_april_fools() -> bool:
-        """Return whether the UI should use the April Fools theme."""
-        now = datetime.datetime.now()
-        return now.month == 4 and now.day == 1
+        self._border_pulse_tokens: dict[int, int] = {}
+        self._border_pulse_widgets: dict[int, Widget] = {}
+        self._tutorial_timers: list[Timer] = []
+        self._tutorial_token = 0
+        self._tutorial_active = False
 
     def _severity_color(self, severity: str = "info") -> str:
         """Return the current theme color for a log severity.
@@ -111,11 +118,24 @@ class CeluneUI(App):
         Returns:
             None: This method updates theme state and redraws status and logs.
         """
+        self._clear_border_pulses()
         self.active_theme_name = theme_name
         self.theme = theme_name
         self._refresh_status()
         self._refresh_theme_text()
         self._refresh_logs()
+
+    def _clear_border_pulses(self) -> None:
+        """Remove temporary border pulse overrides so CSS can theme them."""
+        for widget_key, widget in list(self._border_pulse_widgets.items()):
+            self._border_pulse_tokens[widget_key] = (
+                self._border_pulse_tokens.get(widget_key, 0) + 1
+            )
+            widget.styles.border = None
+            widget.refresh(layout=False)
+
+        self._border_pulse_widgets.clear()
+        self._border_pulse_tokens.clear()
 
     def _refresh_theme_text(self) -> None:
         """Refresh widgets that use the active theme's normal text color.
@@ -182,11 +202,12 @@ class CeluneUI(App):
                 yield Label("Celune", id="header")
                 yield Label("", classes="line")
             yield RichLog(id="logs", wrap=True, markup=False)
+            yield ProgressBar(
+                id="progress", show_percentage=False, show_eta=False, total=1
+            )
             with Horizontal(id="controls"):
                 yield TextArea(id="input", placeholder="Please wait")
-                yield Button(
-                    self.celune_styles[0].capitalize(), id="style", disabled=True
-                )
+                yield Button("No Voice Set", id="style", disabled=True)
             with Horizontal(id="bottom"):
                 yield Label("", id="status")
                 yield Label("", id="resources")
@@ -198,11 +219,20 @@ class CeluneUI(App):
             None: This method sets up themes, widgets, output redirection, and
                 background initialization.
         """
-        self.register_theme(THEME)
-        self.register_theme(THEME_LIGHT)
-        self.register_theme(THEME_APRIL_FOOLS)
+        loader = default_loader()
+        if loader is not None:
+            theme = loader.bundle.metadata.get("theme")
+            if isinstance(theme, dict):
+                background = theme.get("background")
+                accent = theme.get("accent")
+                if isinstance(background, str) and isinstance(accent, str):
+                    colors.configure_theme(background, accent)
 
-        if self._is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
+        self.register_theme(colors.THEME)
+        self.register_theme(colors.THEME_LIGHT)
+        self.register_theme(colors.THEME_APRIL_FOOLS)
+
+        if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
             "1",
             "true",
             "on",
@@ -228,8 +258,10 @@ class CeluneUI(App):
         self.status = self.query_one("#status", Label)
         self.resources = self.query_one("#resources", Label)
         self.style_button = self.query_one("#style", Button)
+        self.progress_bar = self.query_one("#progress", ProgressBar)
         self._refresh_status()
         self._refresh_theme_text()
+        self._refresh_logs()
         ui_resources.prime_usage()
         self.set_interval(2.06, self.advance_resources)
 
@@ -312,28 +344,214 @@ class CeluneUI(App):
             None: This worker initializes the engine and updates UI state.
         """
         try:
-            tts_voices: tuple[str, ...] = tuple(self.celune.backend.voices)
-
-            self.celune.set_voices(tts_voices)
-            self.celune_styles = tts_voices or ("balanced", "calm", "bold", "upbeat")
-            self.celune_voices = itertools.cycle(tts_voices)
-            if self.celune.current_voice in self.celune_styles:
-                self.style_index = self.celune_styles.index(self.celune.current_voice)
-            else:
-                self.style_index = 0
-
             if self.celune.load():
+                self.celune_styles = self.celune.voices
+                self.celune_voices = itertools.cycle(self.celune_styles)
+                if self.celune.current_voice in self.celune_styles:
+                    self.style_index = self.celune_styles.index(
+                        self.celune.current_voice
+                    )
+                else:
+                    self.style_index = 0
                 self.celune_ready = True
                 self.safe_status("Idle")
                 self.tts_voice_changed(
                     self.celune.current_voice or self.celune_styles[0]
                 )
+                if not self.celune.use_normalization:
+                    self.safe_progress(1, 1)
                 self.change_input_state(locked=False)
+                self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
+                self.safe_log("New to Celune? Type /tutorial to begin the tutorial.")
 
         except Exception as e:
             self.safe_log(f"[INIT ERROR] {format_error(e, self.celune.dev)}", "error")
             self.error("Celune could not start")
             self.cur_state = "error"
+
+    def safe_progress(
+        self, progress: Optional[float], total: Optional[float] = None
+    ) -> None:
+        """Update current progress.
+
+        Args:
+            progress: Current progress, or ``None`` for an indeterminate bar.
+            total: Total progress, or ``None`` for an indeterminate bar.
+
+        Returns:
+            None: This method safely updates progress from any thread.
+        """
+        if self.cur_state == "exiting" or self.progress_bar is None:
+            return
+
+        def update() -> None:
+            """Apply a progress update on the UI thread."""
+            self.progress_bar.update(
+                total=total,
+                progress=0 if progress is None else progress,
+            )
+
+        if threading.current_thread() is threading.main_thread():
+            update()
+        else:
+            self.call_from_thread(update)
+
+    @staticmethod
+    def _with_brightness(color: Color, brightness: float) -> Color:
+        """Return ``color`` blended toward the requested brightness."""
+        brightness = max(0.0, min(1.0, brightness))
+        current = color.brightness
+
+        if abs(current - brightness) < 0.01:
+            return color
+
+        destination = Color(255, 255, 255) if current < brightness else Color(0, 0, 0)
+        destination_brightness = destination.brightness
+        factor = (brightness - current) / (destination_brightness - current)
+        return color.blend(destination, max(0.0, min(1.0, factor)))
+
+    @staticmethod
+    def _with_darkened_brightness(color: Color) -> Color:
+        """Return ``color`` with a visibly darker brightness."""
+        target_brightness = max(0.0, color.brightness * 0.6)
+        return CeluneUI._with_brightness(color, target_brightness)
+
+    def pulse_border(self, target: Union[str, Widget]) -> None:
+        """Softly pulse a widget border darker and back.
+
+        Args:
+            target: Widget or Textual selector for the target widget.
+
+        Returns:
+            None: This method schedules a border color pulse.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            self.call_from_thread(self.pulse_border, target)
+            return
+
+        duration = 2.06
+        steps = 10
+
+        widget = self.query_one(target) if isinstance(target, str) else target
+        original_border: tuple[EdgeStyle, ...] = tuple(widget.styles.border)
+
+        if not any(edge_type for edge_type, _ in original_border):
+            return
+
+        widget_key = id(widget)
+        token = self._border_pulse_tokens.get(widget_key, 0) + 1
+        self._border_pulse_tokens[widget_key] = token
+        self._border_pulse_widgets[widget_key] = widget
+
+        target_border: tuple[EdgeStyle, ...] = tuple(
+            (
+                edge_type,
+                self._with_darkened_brightness(color) if edge_type else color,
+            )
+            for edge_type, color in original_border
+        )
+        steps = max(1, steps)
+        duration = max(0.0, duration)
+        hold_duration = min(0.2, duration / 3)
+        transition_duration = max(0.0, duration - hold_duration)
+        frame_delay = transition_duration / (steps * 2) if transition_duration else 0.0
+
+        def set_border(border: tuple[EdgeStyle, ...]) -> None:
+            """Set each border edge directly and refresh the widget."""
+            (
+                widget.styles.border_top,
+                widget.styles.border_right,
+                widget.styles.border_bottom,
+                widget.styles.border_left,
+            ) = border
+            widget.refresh(layout=False)
+
+        def apply_blend(progress: float) -> None:
+            """Apply one transition frame if this pulse is still current."""
+            if self._border_pulse_tokens.get(widget_key) != token:
+                return
+
+            eased = progress * progress * (3 - 2 * progress)
+            set_border(
+                tuple(
+                    (
+                        edge_type,
+                        start_color.blend(end_color, eased)
+                        if edge_type
+                        else start_color,
+                    )
+                    for (edge_type, start_color), (_, end_color) in zip(
+                        original_border, target_border
+                    )
+                )
+            )
+
+        def restore() -> None:
+            """Return border styling to CSS/theme ownership."""
+            if self._border_pulse_tokens.get(widget_key) != token:
+                return
+            widget.styles.border = None
+            widget.refresh(layout=False)
+            self._border_pulse_tokens.pop(widget_key, None)
+            self._border_pulse_widgets.pop(widget_key, None)
+
+        def schedule_frame(index: int, delay: float) -> None:
+            """Schedule the next pulse frame without filling the timer queue."""
+            if self._border_pulse_tokens.get(widget_key) != token:
+                return
+
+            if index >= steps * 2:
+                restore()
+                return
+
+            def run_frame() -> None:
+                """Apply one frame and then queue the next one."""
+                if self._border_pulse_tokens.get(widget_key) != token:
+                    return
+
+                if index < steps:
+                    apply_blend((index + 1) / steps)
+                    next_delay = (
+                        hold_duration + frame_delay
+                        if index + 1 == steps
+                        else frame_delay
+                    )
+                else:
+                    apply_blend(1 - ((index - steps + 1) / steps))
+                    next_delay = frame_delay
+
+                schedule_frame(index + 1, next_delay)
+
+            if delay <= 0:
+                run_frame()
+            else:
+                self.set_timer(delay, run_frame)
+
+        schedule_frame(0, frame_delay)
+
+    def change_voice_lock_state(self, locked: bool) -> None:
+        """Lock or unlock the ability to change Celune's voice.
+
+        Args:
+            locked: Whether voice changes should be disabled.
+
+        Returns:
+            None: This method locks or unlocks the voice change button.
+        """
+
+        def update() -> None:
+            """Apply the voice change lock state on the UI thread.
+
+            Returns:
+                None: This callback updates input widgets and resources
+            """
+            self.style_button.disabled = locked
+            self.update_resources()
+
+        if threading.current_thread() is threading.main_thread():
+            update()
+        else:
+            self.call_from_thread(update)
 
     def change_input_state(self, locked: bool) -> None:
         """Lock or unlock Celune's UI layer.
@@ -376,7 +594,7 @@ class CeluneUI(App):
         if self.cur_state == "exiting" or self.status is None:
             return
 
-        if severity not in SEVERITY_COLORS["celune"]:
+        if severity not in colors.SEVERITY_COLORS["celune"]:
             self.safe_log(
                 f"[WARNING] Unknown severity '{severity}', defaulting to info",
                 "warning",
@@ -410,13 +628,16 @@ class CeluneUI(App):
         Returns:
             None: This method safely updates the log widget from any thread.
         """
-        if self.cur_state == "exiting" or self.logs is None:
+        if self.cur_state == "exiting":
             return
 
-        if severity not in SEVERITY_COLORS["celune"]:
+        if severity not in colors.SEVERITY_COLORS["celune"]:
             severity = "info"
 
         self.log_history.append((msg, severity))
+        if self.logs is None:
+            return
+
         entry = Text(msg, style=self._severity_color(severity))
 
         if threading.current_thread() is threading.main_thread():
@@ -523,6 +744,177 @@ class CeluneUI(App):
 
         self.celune.say(ipa_decoded, display_text=to_say)
 
+    def _submit_text(self, text: str, process_commands: bool = True) -> bool:
+        """Submit text through the same path as the input box.
+
+        Args:
+            text: The text to submit.
+            process_commands: Whether slash commands should be executed.
+
+        Returns:
+            bool: ``True`` when the text was handled, otherwise ``False``.
+        """
+        text = text.strip()
+
+        if not text:
+            return False
+
+        if process_commands and text.startswith("/"):
+            try:
+                parts = shlex.split(text[1:])
+            except ValueError as e:
+                self.safe_log(f"Command parsing error: {e}", "error")
+                return False
+
+            if not parts:
+                return False
+
+            command = parts[0].lower()
+            command_args = parts[1:]
+            self.process_command(command, command_args)
+            return True
+
+        ipa_decoded, unmatched = replace_ipa(text, strict=True)
+        if unmatched > 0:
+            self.safe_log_dev(
+                f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
+                "warning",
+            )
+
+        if not self.celune.say(ipa_decoded, display_text=text):
+            return False
+
+        self.style_button.disabled = True
+        self.input_box.placeholder = "Please wait"
+        self.input_box.load_text("")
+        self.update_resources()
+        return True
+
+    def tutorial_after(self, delay: float, callback: Callable[[], None]) -> None:
+        """Schedule a cancellable tutorial callback.
+
+        Args:
+            delay: Delay in seconds before running the callback.
+            callback: Callback to run if the tutorial has not been cancelled.
+
+        Returns:
+            None: This method stores a cancellable Textual timer.
+        """
+        token = self._tutorial_token
+
+        def run() -> None:
+            """Run a scheduled tutorial callback if still current."""
+            if token != self._tutorial_token:
+                return
+            callback()
+
+        if delay <= 0:
+            self.call_later(run)
+            return
+
+        timer = self.set_timer(delay, run)
+        self._tutorial_timers.append(timer)
+
+    def begin_tutorial(self) -> None:
+        """Start a new cancellable tutorial action sequence."""
+        self.cancel_tutorial(stop_audio=True)
+        self._tutorial_active = True
+        self.change_input_state(locked=True)
+        self.input_box.placeholder = "Currently in tutorial mode"
+        self.celune.is_in_tutorial = True
+
+    def finish_tutorial(self) -> None:
+        """Mark the current tutorial sequence as complete."""
+        self._tutorial_active = False
+        self._tutorial_timers.clear()
+        self.celune.is_in_tutorial = False
+        self.change_input_state(locked=False)
+        self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
+
+    def cancel_tutorial(self, stop_audio: bool = True) -> bool:
+        """Cancel pending tutorial actions and any active tutorial typing.
+
+        Args:
+            stop_audio: Whether active tutorial playback should be interrupted.
+
+        Returns:
+            bool: ``True`` when tutorial work was cancelled.
+        """
+        was_active = self._tutorial_active or bool(self._tutorial_timers)
+        if not was_active:
+            return False
+
+        self._tutorial_token += 1
+        self._tutorial_active = False
+        self.celune.is_in_tutorial = False
+
+        for timer in self._tutorial_timers:
+            timer.stop()
+        self._tutorial_timers.clear()
+
+        if stop_audio and was_active and self.celune is not None:
+            self.celune.force_stop_speech()
+
+        self._suppress_input_change = True
+        try:
+            self.input_box.load_text("")
+        finally:
+            self._suppress_input_change = False
+        self.change_input_state(locked=False)
+        self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
+
+        return True
+
+    def type_and_send(
+        self,
+        text: str,
+        process_commands: bool = False,
+        cancellable: bool = True,
+    ) -> None:
+        """Type text into the input box using Celune's typing animation and submit it.
+
+        Args:
+            text: The text to type into the input box.
+            process_commands: Whether typed slash commands should be executed.
+            cancellable: Whether tutorial cancellation should stop this typing.
+
+        Returns:
+            None: This method starts a background typing helper.
+        """
+        token = self._tutorial_token
+
+        def worker() -> None:
+            """Animate the text input without blocking Textual."""
+            typed = ""
+
+            def replace_input(value: str) -> None:
+                """Replace input text without triggering live consumption."""
+                self._suppress_input_change = True
+                try:
+                    self.input_box.load_text(value)
+                finally:
+                    self._suppress_input_change = False
+
+            self.call_from_thread(replace_input, "")
+
+            for char in typing_animation(text):
+                if cancellable and token != self._tutorial_token:
+                    return
+                if self.cur_state == "exiting":
+                    return
+                typed += char
+                self.call_from_thread(replace_input, typed)
+
+            final_char = text[-1] if text else " "
+            time.sleep(typing_delay(final_char))
+
+            if self.cur_state != "exiting" and (
+                not cancellable or token == self._tutorial_token
+            ):
+                self.call_from_thread(self._submit_text, typed, process_commands)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def on_key(self, event: events.Key) -> None:
         """Accept input and send text to Celune.
 
@@ -541,6 +933,12 @@ class CeluneUI(App):
                 event.stop()
                 self._graceful_exit()
                 return
+
+            if event.key in {"ctrl+j", "ctrl+enter"}:
+                if self.cancel_tutorial():
+                    event.prevent_default()
+                    event.stop()
+                    return
 
             if event.key == "ctrl+t":
                 if self.active_theme_name == "celune_april_fools":
@@ -564,39 +962,7 @@ class CeluneUI(App):
                 return
 
             if event.key == "ctrl+j":
-                text = self.input_box.text.strip()
-
-                if not text:
-                    return
-
-                if text.startswith("/"):
-                    try:
-                        parts = shlex.split(text[1:])
-                    except ValueError as e:
-                        self.safe_log(f"Command parsing error: {e}", "error")
-                        return
-
-                    if not parts:
-                        return
-
-                    command = parts[0].lower()
-                    command_args = parts[1:]
-
-                    self.process_command(command, command_args)
-                    return
-
-                ipa_decoded, unmatched = replace_ipa(text, strict=True)
-                if unmatched > 0:
-                    self.safe_log_dev(
-                        f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
-                        "warning",
-                    )
-
-                if self.celune.say(ipa_decoded, display_text=text):
-                    self.style_button.disabled = True
-                    self.input_box.placeholder = "Please wait"
-                    self.input_box.load_text("")
-                    self.update_resources()
+                if self._submit_text(self.input_box.text):
                     event.prevent_default()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -609,6 +975,9 @@ class CeluneUI(App):
             None: This handler cycles to the next available voice.
         """
         if self.cur_state == "exiting":
+            return
+
+        if self.celune.is_in_tutorial:
             return
 
         if event.button != self.style_button:
@@ -653,7 +1022,12 @@ class CeluneUI(App):
             return
         self.celune.locked = False
         self.celune.cur_state = "idle"
-        self.change_input_state(locked=False)
+        if self.celune.is_in_tutorial:
+            self.input_box.placeholder = "Currently in tutorial mode"
+            self.style_button.disabled = True
+        else:
+            self.change_input_state(locked=False)
+            self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
         self.safe_status("Idle")
 
     def tts_queue_avail(
@@ -668,7 +1042,12 @@ class CeluneUI(App):
             return
         self.celune.locked = False
         self.safe_status("Speaking")
-        self.change_input_state(locked=False)
+        if self.celune.is_in_tutorial:
+            self.input_box.placeholder = "Currently in tutorial mode"
+            self.style_button.disabled = True
+        else:
+            self.change_input_state(locked=False)
+            self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
 
     def error(self, error: str) -> None:
         """Set the UI status to the error message.
@@ -749,3 +1128,21 @@ class CeluneUI(App):
             self.call_later(self._graceful_exit)
         else:
             self.call_from_thread(self._graceful_exit)
+
+    @property
+    def tutorial_token(self) -> int:
+        """Property for accessing the tutorial token held by Celune.
+
+        Returns:
+            int: The tutorial token currently in use by Celune.
+        """
+        return self._tutorial_token
+
+    @property
+    def tutorial_active(self) -> bool:
+        """Property for accessing whether the tutorial is active or not.
+
+        Returns:
+            bool: Celune's current tutorial flag.
+        """
+        return self._tutorial_active
