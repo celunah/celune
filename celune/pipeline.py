@@ -12,7 +12,6 @@ import datetime
 import contextlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
-from collections.abc import Mapping
 
 import torch
 import numpy as np
@@ -41,7 +40,7 @@ from .utils import (
     rng_replace,
 )
 from .analysis import analyze_voice_audio
-from .constants import BASE_SR, N_A_NUMERIC
+from .constants import BASE_SR, N_A_NUMERIC, JSON, JSONSerializable
 from . import __version__
 
 if TYPE_CHECKING:
@@ -109,11 +108,11 @@ def _celune_metadata_payload(
     *,
     text: str,
     display_text: str,
-    generation_params: dict[str, object],
+    generation_params: JSON,
     sample_rate: int,
     subtype: str,
     included_kept_sfx: bool,
-) -> dict[str, object]:
+) -> JSON:
     """Build the Celune generation metadata payload.
 
     Args:
@@ -126,7 +125,7 @@ def _celune_metadata_payload(
         included_kept_sfx: Whether the included utterance has a preceding sound effect.
 
     Returns:
-        dict[str, object]: JSON-serializable metadata.
+        JSON: JSON-serializable metadata.
     """
     return {
         "format": "celune_metadata",
@@ -137,6 +136,7 @@ def _celune_metadata_payload(
         "display_text": display_text,
         "backend": getattr(engine, "tts_backend", None),
         "backend_mode": engine.config.get("qwen3_mode"),
+        "qwen3_x_vector_only": getattr(engine.backend, "x_vector_only", None),
         "model_name": getattr(engine, "model_name", ""),
         "voice": getattr(engine, "current_voice", None),
         "voice_prompt": getattr(engine, "voice_prompt", None),
@@ -248,7 +248,7 @@ def _encode_flac_metadata_blocks(blocks: list[tuple[int, bytes]]) -> bytes:
     return bytes(encoded)
 
 
-def _stringify_flac_metadata(value: object) -> str:
+def _stringify_flac_metadata(value: JSONSerializable) -> str:
     """Convert an arbitrary metadata value into a Vorbis comment value."""
     if isinstance(value, str):
         return value
@@ -256,7 +256,7 @@ def _stringify_flac_metadata(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def _write_flac_metadata(path: str, tags: Mapping[str, object]) -> None:
+def _write_flac_metadata(path: str, tags: JSON) -> None:
     """Write arbitrary valid FLAC Vorbis comment tags to ``path``."""
     valid_tags = {
         key: _stringify_flac_metadata(value)
@@ -302,7 +302,7 @@ def _write_celune_flac(
     audio: npt.NDArray[np.float32],
     sample_rate: int,
     subtype: str,
-    metadata: dict[str, object],
+    metadata: JSON,
 ) -> None:
     """Write a FLAC file with Celune metadata in Vorbis comments."""
     channels = 1 if audio.ndim == 1 else audio.shape[1]
@@ -318,14 +318,28 @@ def _write_celune_flac(
     ) as audio_file:
         audio_file.write(audio)
 
-    created_at = metadata.get("created_at")
-    tags: dict[str, object] = {
-        "encoder": f"Celune {__version__} via {engine.backend.name}",
-        "comment": encoded,
-    }
-    if isinstance(created_at, str):
-        tags["date"] = created_at
+    created_at = metadata.get(
+        "created_at", datetime.datetime.now(datetime.timezone.utc).isoformat()
+    )
+    display_text = metadata.get("display_text")
 
+    if not isinstance(display_text, str):
+        display_text = f"Celune speech from {created_at}"
+
+    prompt = display_text.split()
+    words = " ".join(prompt[:5])
+    if len(prompt) > 5:
+        words += "..."
+
+    tags: JSON = {
+        "encoder": f"Celune {__version__}",
+        "artist": engine.current_character or "Celune",
+        "album": f"Celune via {engine.backend.name}",
+        "title": words,
+        "comment": encoded,
+        "created_at": created_at,
+        "date": datetime.datetime.now(datetime.timezone.utc).year,
+    }
     _write_flac_metadata(path, tags)
 
 
@@ -345,7 +359,7 @@ def clear_queue(q: queue.Queue) -> None:
         pass
 
 
-def log_first_playback(engine: "Celune", timing: object) -> None:
+def log_first_playback(engine: "Celune", timing: JSON) -> None:
     """Log time to first playback for a queued speech timing object."""
     start_time = getattr(timing, "start_time", None)
     if not isinstance(start_time, float):

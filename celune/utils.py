@@ -12,7 +12,7 @@ import traceback
 import subprocess
 import multiprocessing
 from pathlib import Path
-from typing import Union, Callable, Optional, Literal, TypedDict
+from typing import Union, Callable, Optional, Literal, TypedDict, overload
 from collections.abc import Iterator
 
 import langdetect
@@ -699,3 +699,31 @@ def rng_replace(
         return target.lower()
 
     return pattern.sub(repl, text)
+
+
+@overload
+def discard(val: object) -> None: ...
+
+
+@overload
+def discard(val: object, attr: str) -> None:
+    """Overload for the implementation of celune.utils.discard()."""
+
+
+def discard(val: object, attr: Optional[str] = None) -> None:
+    """Discard a value or clear an explicitly named attribute.
+
+    Args:
+        val: Any value, or the object that owns ``attr``.
+        attr: Optional attribute name to clear on ``val``.
+
+    Returns:
+        None: One-argument calls only consume the value. Two-argument calls set
+            the named attribute to ``None``.
+    """
+    if attr is not None:
+        setattr(val, attr, None)
+        return
+
+    _ = val
+    del _
