@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """UI callback protocols."""
 
-from typing import Protocol
+from typing import Protocol, Optional
 
 from ..celune import Celune
 
@@ -42,6 +42,19 @@ class CeluneTextualUI(CeluneBaseUI, Protocol):
 
         Returns:
             None: Implementations update their status display.
+        """
+
+    def safe_progress(
+        self, progress: Optional[float], total: Optional[float] = None
+    ) -> None:
+        """Update current progress.
+
+        Args:
+            progress: Current progress, or ``None`` for an indeterminate bar.
+            total: Total progress, or ``None`` for an indeterminate bar.
+
+        Returns:
+            None: Implementations update their progress display.
         """
 
     def error(self, error: str) -> None:
@@ -86,6 +99,16 @@ class CeluneTextualUI(CeluneBaseUI, Protocol):
 
         Returns:
             None: Implementations update input availability.
+        """
+
+    def change_voice_lock_state(self, locked: bool) -> None:
+        """Lock or unlock Celune's voice change button.
+
+        Args:
+            locked: Whether voice changes should be disabled.
+
+        Returns:
+            None: Implementations update voice change availability.
         """
 
 

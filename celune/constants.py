@@ -4,7 +4,7 @@
 import signal
 import datetime
 from enum import IntEnum, Enum
-from typing import TypeVar
+from typing import TypeVar, Union
 
 # CeluneNorm v1.3 includes the most important changes, so that Celune can speak optimally.
 NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v1.3"
@@ -33,8 +33,12 @@ class ExitCodes(Enum):
 # SIGTSTP is not defined on Windows systems
 SIGTSTP = getattr(signal, "SIGTSTP", None)
 
-# generic type
+# types
 T = TypeVar("T")
+type JSONSerializable = Union[
+    None, bool, int, float, str, list["JSONSerializable"], dict[str, "JSONSerializable"]
+]
+type JSON = dict[str, JSONSerializable]
 
 
 # pipeline state objects

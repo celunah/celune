@@ -4,7 +4,6 @@
 import json
 import os
 import re
-import struct
 import time
 import queue
 import random
@@ -12,13 +11,16 @@ import pathlib
 import datetime
 import contextlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 import numpy as np
+import numpy.typing as npt
 import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
+from iso639 import Lang
+from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
 from .dsp import (
     _resample_audio,
@@ -29,13 +31,25 @@ from .dsp import (
     readiness_signal,
 )
 from .exceptions import NotAvailableError
-from .utils import format_number, run_async, format_error
+from .utils import (
+    format_number,
+    run_async,
+    format_error,
+    detect_language,
+    is_april_fools,
+    rng_replace,
+)
 from .analysis import analyze_voice_audio
-from .constants import BASE_SR
+from .constants import BASE_SR, N_A_NUMERIC, JSON, JSONSerializable
 from . import __version__
 
 if TYPE_CHECKING:
     from .celune import Celune
+
+_FLAC_MAGIC = b"fLaC"
+_FLAC_STREAMINFO_BLOCK = 0
+_FLAC_VORBIS_COMMENT_BLOCK = 4
+_MAX_FLAC_METADATA_BLOCK_SIZE = 0xFFFFFF
 
 
 @dataclass(frozen=True)
@@ -53,7 +67,7 @@ class SpeechDone:
     """Playback completion marker for one generated utterance."""
 
     saved_path: Optional[str] = None
-    analysis_audio: Optional[np.ndarray] = None
+    analysis_audio: Optional[npt.NDArray[np.float32]] = None
 
 
 @dataclass
@@ -77,105 +91,43 @@ class SpeechTiming:
     def ttfc_ms(self) -> float:
         """Return time to first generated chunk in milliseconds."""
         if self.first_chunk_time is None:
-            return float("nan")
+            return N_A_NUMERIC
 
         return (self.first_chunk_time - self.start_time) * 1000
 
     def ttfp_seconds(self) -> float:
         """Return time to first playback in seconds."""
         if self.first_playback_time is None:
-            return float("nan")
+            return N_A_NUMERIC
 
         return self.first_playback_time - self.start_time
 
 
-def _append_wav_chunk(path: str, chunk_id: bytes, payload: bytes) -> None:
-    """Append a RIFF/WAVE chunk and refresh the container size."""
-    if len(chunk_id) != 4:
-        raise ValueError("WAV chunk ID must be exactly four bytes")
-
-    with open(path, "r+b") as wav_file:
-        header = wav_file.read(12)
-        if len(header) != 12 or header[:4] != b"RIFF" or header[8:12] != b"WAVE":
-            raise ValueError("file is not a RIFF/WAVE file")
-
-        wav_file.seek(0, os.SEEK_END)
-        wav_file.write(chunk_id)
-        wav_file.write(struct.pack("<I", len(payload)))
-        wav_file.write(payload)
-        if len(payload) % 2:
-            wav_file.write(b"\x00")
-
-        file_size = wav_file.tell()
-        riff_size = file_size - 8
-        if riff_size > 0xFFFFFFFF:
-            raise ValueError("WAV file is too large for RIFF metadata")
-
-        wav_file.seek(4)
-        wav_file.write(struct.pack("<I", riff_size))
-
-
-def read_celune_wav_metadata(path: str) -> Optional[dict[str, Any]]:
-    """Read the newest Celune CLMT metadata chunk from a WAV file."""
-    metadata: Optional[dict[str, Any]] = None
-
-    with open(path, "rb") as wav_file:
-        header = wav_file.read(12)
-        if len(header) != 12 or header[:4] != b"RIFF" or header[8:12] != b"WAVE":
-            raise ValueError("file is not a RIFF/WAVE file")
-
-        while True:
-            chunk_header = wav_file.read(8)
-            if not chunk_header:
-                break
-            if len(chunk_header) != 8:
-                raise ValueError("truncated WAV chunk header")
-
-            chunk_id = chunk_header[:4]
-            chunk_size = struct.unpack("<I", chunk_header[4:])[0]
-            payload = wav_file.read(chunk_size)
-            if len(payload) != chunk_size:
-                raise ValueError("truncated WAV chunk payload")
-
-            if chunk_id == b"CLMT":
-                decoded = json.loads(payload.decode("utf-8"))
-                if not isinstance(decoded, dict):
-                    raise ValueError("Celune metadata payload is not a JSON object")
-                metadata = decoded
-
-            if chunk_size % 2:
-                wav_file.seek(1, os.SEEK_CUR)
-
-    return metadata
-
-
-def _write_celune_wav_metadata(
-    path: str,
+def _celune_metadata_payload(
     engine: "Celune",
     *,
     text: str,
     display_text: str,
-    generation_params: dict[str, object],
+    generation_params: JSON,
     sample_rate: int,
     subtype: str,
     included_kept_sfx: bool,
-) -> None:
-    """Store Celune generation metadata in a custom CLMT WAV chunk.
+) -> JSON:
+    """Build the Celune generation metadata payload.
 
     Args:
-        path: The path to the WAV file.
         engine: The instance of Celune to use data from.
         text: The input text given to Celune.
         display_text: The displayed text shown in Celune's UI.
         generation_params: The generation parameters used with this generation.
-        sample_rate: A fixed sample rate (Hz) of ``BASE_SR``.
-        subtype: A fixed PCM subtype value of ``PCM_24``.
+        sample_rate: The saved sample rate in Hz.
+        subtype: The saved audio subtype.
         included_kept_sfx: Whether the included utterance has a preceding sound effect.
 
     Returns:
-        None: This value injects a Celune metadata (CLMT) chunk to the target WAV file.
+        JSON: JSON-serializable metadata.
     """
-    payload = {
+    return {
         "format": "celune_metadata",
         "format_version": 1,
         "celune_version": __version__,
@@ -184,6 +136,7 @@ def _write_celune_wav_metadata(
         "display_text": display_text,
         "backend": getattr(engine, "tts_backend", None),
         "backend_mode": engine.config.get("qwen3_mode"),
+        "qwen3_x_vector_only": getattr(engine.backend, "x_vector_only", None),
         "model_name": getattr(engine, "model_name", ""),
         "voice": getattr(engine, "current_voice", None),
         "voice_prompt": getattr(engine, "voice_prompt", None),
@@ -197,8 +150,197 @@ def _write_celune_wav_metadata(
         "included_kept_sfx": included_kept_sfx,
         "generation": generation_params,
     }
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    _append_wav_chunk(path, b"CLMT", encoded)
+
+
+def _valid_vorbis_comment_key(key: str) -> bool:
+    """Return whether ``key`` is a valid Vorbis comment field name."""
+    return (
+        bool(key) and "=" not in key and all(0x20 <= ord(char) <= 0x7D for char in key)
+    )
+
+
+def _read_vorbis_string(payload: bytes, offset: int) -> tuple[bytes, int]:
+    """Read one little-endian length-prefixed Vorbis comment string."""
+    if offset + 4 > len(payload):
+        raise ValueError("truncated Vorbis comment")
+
+    length = int.from_bytes(payload[offset : offset + 4], "little")
+    offset += 4
+    end = offset + length
+    if end > len(payload):
+        raise ValueError("truncated Vorbis comment")
+
+    return payload[offset:end], end
+
+
+def _parse_vorbis_comment_block(payload: bytes) -> tuple[bytes, list[tuple[str, str]]]:
+    """Parse a Vorbis comment block into a vendor string and field pairs."""
+    vendor, offset = _read_vorbis_string(payload, 0)
+    if offset + 4 > len(payload):
+        raise ValueError("truncated Vorbis comment list")
+
+    comment_count = int.from_bytes(payload[offset : offset + 4], "little")
+    offset += 4
+    comments: list[tuple[str, str]] = []
+    for _ in range(comment_count):
+        raw_comment, offset = _read_vorbis_string(payload, offset)
+        decoded = raw_comment.decode("utf-8", errors="replace")
+        key, separator, value = decoded.partition("=")
+        if separator and _valid_vorbis_comment_key(key):
+            comments.append((key, value))
+
+    return vendor, comments
+
+
+def _encode_vorbis_comment_block(
+    vendor: bytes, comments: list[tuple[str, str]]
+) -> bytes:
+    """Encode Vorbis comments into a FLAC metadata block payload."""
+    payload = bytearray()
+    payload.extend(len(vendor).to_bytes(4, "little"))
+    payload.extend(vendor)
+    payload.extend(len(comments).to_bytes(4, "little"))
+    for key, value in comments:
+        raw_comment = f"{key}={value}".encode("utf-8")
+        payload.extend(len(raw_comment).to_bytes(4, "little"))
+        payload.extend(raw_comment)
+
+    return bytes(payload)
+
+
+def _flac_metadata_blocks(data: bytes) -> tuple[list[tuple[int, bytes]], int]:
+    """Return FLAC metadata blocks and the byte offset where audio frames start."""
+    if not data.startswith(_FLAC_MAGIC):
+        raise ValueError("not a FLAC file")
+
+    offset = len(_FLAC_MAGIC)
+    blocks: list[tuple[int, bytes]] = []
+    while True:
+        if offset + 4 > len(data):
+            raise ValueError("truncated FLAC metadata")
+
+        header = data[offset]
+        block_type = header & 0x7F
+        block_length = int.from_bytes(data[offset + 1 : offset + 4], "big")
+        offset += 4
+        end = offset + block_length
+        if end > len(data):
+            raise ValueError("truncated FLAC metadata")
+
+        blocks.append((block_type, data[offset:end]))
+        offset = end
+        if header & 0x80:
+            return blocks, offset
+
+
+def _encode_flac_metadata_blocks(blocks: list[tuple[int, bytes]]) -> bytes:
+    """Encode FLAC metadata blocks with the final-block flag repaired."""
+    encoded = bytearray(_FLAC_MAGIC)
+    for index, (block_type, payload) in enumerate(blocks):
+        if len(payload) > _MAX_FLAC_METADATA_BLOCK_SIZE:
+            raise ValueError("FLAC metadata block is too large")
+
+        final_flag = 0x80 if index == len(blocks) - 1 else 0
+        encoded.append(final_flag | block_type)
+        encoded.extend(len(payload).to_bytes(3, "big"))
+        encoded.extend(payload)
+
+    return bytes(encoded)
+
+
+def _stringify_flac_metadata(value: JSONSerializable) -> str:
+    """Convert an arbitrary metadata value into a Vorbis comment value."""
+    if isinstance(value, str):
+        return value
+
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _write_flac_metadata(path: str, tags: JSON) -> None:
+    """Write arbitrary valid FLAC Vorbis comment tags to ``path``."""
+    valid_tags = {
+        key: _stringify_flac_metadata(value)
+        for key, value in tags.items()
+        if _valid_vorbis_comment_key(key)
+    }
+    if not valid_tags:
+        return
+
+    path_obj = pathlib.Path(path)
+    data = path_obj.read_bytes()
+    blocks, audio_offset = _flac_metadata_blocks(data)
+    audio_data = data[audio_offset:]
+
+    comment_index: Optional[int] = None
+    vendor = f"Celune {__version__}".encode("utf-8")
+    comments: list[tuple[str, str]] = []
+    for index, (block_type, payload) in enumerate(blocks):
+        if block_type == _FLAC_VORBIS_COMMENT_BLOCK:
+            comment_index = index
+            vendor, comments = _parse_vorbis_comment_block(payload)
+            break
+
+    replaced_keys = {key.casefold() for key in valid_tags}
+    comments = [
+        (key, value) for key, value in comments if key.casefold() not in replaced_keys
+    ]
+    comments.extend(valid_tags.items())
+    vorbis_payload = _encode_vorbis_comment_block(vendor, comments)
+
+    if comment_index is None:
+        insert_index = 1 if blocks and blocks[0][0] == _FLAC_STREAMINFO_BLOCK else 0
+        blocks.insert(insert_index, (_FLAC_VORBIS_COMMENT_BLOCK, vorbis_payload))
+    else:
+        blocks[comment_index] = (_FLAC_VORBIS_COMMENT_BLOCK, vorbis_payload)
+
+    path_obj.write_bytes(_encode_flac_metadata_blocks(blocks) + audio_data)
+
+
+def _write_celune_flac(
+    engine: "Celune",
+    path: str,
+    audio: npt.NDArray[np.float32],
+    sample_rate: int,
+    subtype: str,
+    metadata: JSON,
+) -> None:
+    """Write a FLAC file with Celune metadata in Vorbis comments."""
+    channels = 1 if audio.ndim == 1 else audio.shape[1]
+    encoded = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+
+    with sf.SoundFile(
+        path,
+        mode="w",
+        samplerate=sample_rate,
+        channels=channels,
+        format="FLAC",
+        subtype=subtype,
+    ) as audio_file:
+        audio_file.write(audio)
+
+    created_at = metadata.get(
+        "created_at", datetime.datetime.now(datetime.timezone.utc).isoformat()
+    )
+    display_text = metadata.get("display_text")
+
+    if not isinstance(display_text, str):
+        display_text = f"Celune speech from {created_at}"
+
+    prompt = display_text.split()
+    words = " ".join(prompt[:5])
+    if len(prompt) > 5:
+        words += "..."
+
+    tags: JSON = {
+        "encoder": f"Celune {__version__}",
+        "artist": engine.current_character or "Celune",
+        "album": f"Celune via {engine.backend.name}",
+        "title": words,
+        "comment": encoded,
+        "created_at": created_at,
+        "date": datetime.datetime.now(datetime.timezone.utc).year,
+    }
+    _write_flac_metadata(path, tags)
 
 
 def clear_queue(q: queue.Queue) -> None:
@@ -217,7 +359,7 @@ def clear_queue(q: queue.Queue) -> None:
         pass
 
 
-def log_first_playback(engine: "Celune", timing: object) -> None:
+def log_first_playback(engine: "Celune", timing: JSON) -> None:
     """Log time to first playback for a queued speech timing object."""
     start_time = getattr(timing, "start_time", None)
     if not isinstance(start_time, float):
@@ -378,8 +520,13 @@ def queue_speech(
         bool: ``True`` when the text was queued successfully, otherwise
             ``False``.
     """
+    if engine.is_in_tutorial:
+        engine.log("Speech input is disabled during the tutorial.", "warning")
+        return False
+
     if not engine.model_ready.is_set():
         engine.status_callback("Waiting for model")
+        engine.progress_callback(None, None)
         engine.log("Speak request is waiting for model reload to finish.", "info")
 
     engine.model_ready.wait()
@@ -387,24 +534,41 @@ def queue_speech(
     if not engine.loaded:
         engine.log("Model became unavailable before speaking.", "warning")
         engine.error_callback("Celune is not currently ready")
+        engine.progress_callback(0, 1)
         return False
+
+    language_meta = detect_language(text, list(engine.backend.supported_languages))
+    if not language_meta["supported"]:
+        # "zh-cn" has to be clipped to just "zh" to be a valid language code
+        try:
+            language = Lang(language_meta["language"][:2]).name
+        except (InvalidLanguageValue, DeprecatedLanguageValue):
+            language = language_meta["language"]
+
+        engine.log(
+            f"Received unsupported input in the following language: {language}",
+            "warning",
+        )
+        engine.log("Celune may not say the input properly.", "warning")
 
     normalized = None
     if engine.use_normalization:
         engine.status_callback("Normalizing")
+        engine.progress_callback(None, None)
         normalized = engine.normalize(text)
 
-    date = datetime.datetime.now()
-    if (
-        date.month == 4
-        and date.day == 1
-        and os.getenv("CELUNE_DISABLE_APRIL_FOOLS")
-        not in {"1", "true", "on", "yes", "enabled"}
-    ):
+    if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
+        "1",
+        "true",
+        "on",
+        "yes",
+        "enabled",
+    }:
         engine.log("We are about to do a funny!")
-        text = text.replace("celune", "celine").replace("Celune", "Celine")
+        text = rng_replace(text, targets=["celune"], replacements=["celine"])
 
     if not acquire_pipeline(engine, "speak"):
+        engine.progress_callback(0, 1)
         return False
 
     try:
@@ -412,6 +576,7 @@ def queue_speech(
             engine.log("Model became unavailable before queueing speech.", "warning")
             engine.error_callback("Celune is not currently ready")
             release_pipeline(engine)
+            engine.progress_callback(0, 1)
             return False
 
         engine.cur_state = "generating"
@@ -424,6 +589,7 @@ def queue_speech(
             )
         )
         engine.status_callback("Generating")
+        engine.progress_callback(None, None)
         return True
     except Exception:
         release_pipeline(engine)
@@ -432,7 +598,7 @@ def queue_speech(
 
 def queue_sfx_audio(
     engine: "Celune",
-    audio: np.ndarray,
+    audio: npt.NDArray[np.float32],
     sample_rate: int,
     label: str,
     keep: bool = False,
@@ -710,8 +876,21 @@ def generation_worker(engine: "Celune") -> None:
                 }
 
                 chunks = split_text(engine, text)
-                buffer: list[np.ndarray] = []
-                full_audio: list[np.ndarray] = []
+                if not chunks:
+                    engine.progress_callback(0, 1)
+                    engine.error_callback("Nothing to say")
+                    release_pipeline(engine)
+                    if stream_queue is not None:
+                        stream_queue.put(NotAvailableError("nothing to say"))
+                        stream_queue.put(None)
+                    break
+
+                chunk_progress_totals = tuple(
+                    engine.backend.generation_progress_total(chunk_text)
+                    for chunk_text in chunks
+                )
+                buffer: list[npt.NDArray[np.float32]] = []
+                full_audio: list[npt.NDArray[np.float32]] = []
 
                 with engine.model_lock:
                     if engine.model is None:
@@ -727,11 +906,14 @@ def generation_worker(engine: "Celune") -> None:
                             break
 
                         is_first_chunk = chunk_index == 0
+                        progress_total = chunk_progress_totals[chunk_index]
+                        generated_steps = 0
+                        engine.progress_callback(0, progress_total or 1)
 
                         for (
                             audio_chunk,
                             sr,  # 24 kHz if Qwen3, 48 kHz if VoxCPM2
-                            _,
+                            timing,
                         ) in engine.backend.generate_stream(  # some args will be discarded as needed
                             engine.model,
                             text=chunk_text,
@@ -749,6 +931,15 @@ def generation_worker(engine: "Celune") -> None:
 
                             if engine.utterance_force_stop.is_set():
                                 break
+
+                            if progress_total is not None:
+                                generated_steps += (
+                                    engine.backend.generation_progress_steps(timing)
+                                )
+                                engine.progress_callback(
+                                    min(generated_steps, progress_total),
+                                    progress_total,
+                                )
 
                             speech_timing.mark_first_chunk()
 
@@ -814,6 +1005,9 @@ def generation_worker(engine: "Celune") -> None:
                                     engine.status_callback("Speaking")
                                     engine.cur_state = "speaking"
                                     engine.queue_avail_callback()
+
+                        if progress_total is None:
+                            engine.progress_callback(1, 1)
 
                 generation_time = time.monotonic() - start_time
 
@@ -911,33 +1105,35 @@ def generation_worker(engine: "Celune") -> None:
 
                         if os.path.exists("outputs"):
                             saved_path = (
-                                f"outputs/celune_speech_{timestamp}_{first_words}.wav"
+                                f"outputs/celune_speech_{timestamp}_{first_words}.flac"
                             )
                             sample_rate = BASE_SR
                             subtype = "PCM_24"
-                            sf.write(
-                                saved_path,
-                                wav,
-                                sample_rate,
+                            metadata = _celune_metadata_payload(
+                                engine,
+                                text=text,
+                                display_text=display_text,
+                                generation_params=generation_params,
+                                sample_rate=sample_rate,
                                 subtype=subtype,
+                                included_kept_sfx=kept_sfx_audio is not None,
                             )
                             try:
-                                _write_celune_wav_metadata(
-                                    saved_path,
+                                _write_celune_flac(
                                     engine,
-                                    text=text,
-                                    display_text=display_text,
-                                    generation_params=generation_params,
-                                    sample_rate=sample_rate,
+                                    saved_path,
+                                    wav,
+                                    sample_rate,
                                     subtype=subtype,
-                                    included_kept_sfx=kept_sfx_audio is not None,
+                                    metadata=metadata,
                                 )
                             except Exception as e:
                                 engine.log(
-                                    "Could not write WAV metadata: "
+                                    "Could not save FLAC output: "
                                     f"{format_error(e, engine.dev)}",
                                     "warning",
                                 )
+                                saved_path = None
 
                     engine.recently_saved = saved_path
                     engine.audio_queue.put(
@@ -961,6 +1157,7 @@ def generation_worker(engine: "Celune") -> None:
                 engine.cur_state = "error"
                 engine.locked = False
                 engine.playback_done.set()
+                engine.progress_callback(0, 1)
                 engine.error_callback("Celune could not generate the input")
                 break
 
@@ -990,13 +1187,6 @@ def playback_worker(engine: "Celune") -> None:
             return
 
         if not started:
-            while engine.audio_queue.qsize() < engine.prebuffer_chunks:
-                if engine.exit_requested:
-                    break
-                if engine.cur_state == "speaking" and not engine.audio_queue.empty():
-                    break
-                time.sleep(0.01)
-
             if engine.exit_requested:
                 continue
 
@@ -1101,7 +1291,7 @@ def playback_worker(engine: "Celune") -> None:
                 )
                 engine.stream.start()
                 started = True
-                engine.log(f"[PLAY] started stream at {sr} Hz")
+                engine.log_dev(f"[PLAY] started stream at {sr} Hz")
             except sd.PortAudioError:
                 if not engine.audio_unavailable:
                     engine.log("Celune could not initialize the audio stream.", "error")

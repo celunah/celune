@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "3.4.3"
+version = "3.5.0"
 description = "Real-time AI TTS character engine with expressive voices and high-quality playback"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -57,17 +57,19 @@ dependencies = [
     # Others
     "psutil",
     "pyyaml",
+    "langdetect>=1.0.0,<2.0.0",
+    "iso639-lang>=2.0.0,<3.0.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/lunahr"
-Repository = "https://github.com/lunahr/celune"
-Issues = "https://github.com/lunahr/celune/issues"
+Homepage = "https://github.com/celunah"
+Repository = "https://github.com/celunah/celune"
+Issues = "https://github.com/celunah/celune/issues"
 
 # Why does CodeRabbit think I'm uploading Celune to PyPI?
 # Her package is not standalone.
 [tool.setuptools.package-data]
-celune = ["refs/*.wav", "refs/*.pt"]
+celune = ["assets/*.wav", "refs/*.wav", "refs/*.pt", "voices/*.cevoice"]
 
 # "CUDA 13.0 does exist, but I probably should wait a little more." - she says.
 [tool.uv.sources]
@@ -82,6 +84,7 @@ explicit = true
 [dependency-groups]
 # Install to run CI workflows.
 dev = [
+    "pytest",
     "pyright",
     "pylint",
     "ruff",

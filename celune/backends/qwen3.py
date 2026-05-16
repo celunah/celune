@@ -6,8 +6,10 @@ from __future__ import annotations
 import os
 import glob
 import hashlib
+import warnings
 from pathlib import Path
-from typing import Callable, Generator, Literal, Optional
+from typing import Callable, Literal, Optional
+from collections.abc import Iterator
 
 import numpy as np
 import numpy.typing as npt
@@ -19,6 +21,7 @@ from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 
 from .base import CeluneBackend
+from ..cevoice import default_loader
 from ..exceptions import BackendError
 
 
@@ -26,15 +29,41 @@ class Qwen3(CeluneBackend):
     """Celune Qwen3-TTS backend."""
 
     name: str = "qwen3"
+
+    # this is a default value, Celune sets this properly during backend initialization
+    uses_voice_bundles: bool = False
     chunk_rate: float = 12.5
+    max_new_tokens: int = 2048
+
+    # setting this parameter will lock in identity, but expression may be reduced
+    x_vector_only: bool = False
+    supported_languages: tuple[str, ...] = (
+        "zh-cn",
+        "en",
+        "ja",
+        "ko",
+        "de",
+        "fr",
+        "ru",
+        "pt",
+        "es",
+        "it",
+    )
     clone_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-    supported_modes: tuple[str, ...] = ("native", "clone")
+    supported_modes: tuple[str, ...] = (
+        "native",  # deprecated operation mode, will be removed soon
+        "clone",  # now uses CEVOICE voice packs
+    )
+
+    # these models are deprecated as of Celune 3.5.0
     voice_models: dict[str, str] = {
         "balanced": "lunahr/Celune-1.7B-Neutral",
         "calm": "lunahr/Celune-1.7B-Calm",
         "bold": "lunahr/Celune-1.7B-Energetic",
         "upbeat": "lunahr/Celune-1.7B-Upbeat",
     }
+
+    # fallback, please use a CEVOICE going forward
     reference_waves: dict[str, str] = {
         "balanced": "refs/balanced.wav",
         "calm": "refs/calm.wav",
@@ -57,20 +86,9 @@ class Qwen3(CeluneBackend):
     def __init__(
         self,
         log: Callable[[str, str], None],
-        mode: Literal["native", "clone"] = "native",
+        mode: Literal["native", "clone"] = "clone",
+        x_vector_only: bool = False,
     ) -> None:
-        """Initialize the Qwen3 backend.
-
-        Args:
-            log: Logger callback used by the backend.
-            mode: Qwen3 generation mode to use.
-
-        Returns:
-            None: This constructor validates and stores the active mode.
-
-        Raises:
-            ValueError: The requested Qwen3 generation mode is unsupported.
-        """
         if mode not in self.supported_modes:
             raise ValueError(
                 f"unsupported qwen3 mode '{mode}' "
@@ -79,6 +97,15 @@ class Qwen3(CeluneBackend):
 
         super().__init__(log=log)
         self.mode = mode
+        self.x_vector_only = x_vector_only
+        self.uses_voice_bundles = self.mode == "clone"
+        if self.mode == "native":
+            warnings.warn(
+                "Qwen3 native mode is deprecated and will be removed soon. "
+                "Please load a CEVOICE pack for optimal operation.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if self.mode == "clone":
             self.model_name = self.clone_model
             self._validate_refs()
@@ -125,6 +152,10 @@ class Qwen3(CeluneBackend):
             return self.clone_model
 
         return super().model_id_for_voice(voice)
+
+    def generation_progress_total(self, text: Optional[str] = None) -> int:
+        """Return the Qwen3 streaming generation context length."""
+        return self.max_new_tokens
 
     @staticmethod
     def model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
@@ -190,8 +221,14 @@ class Qwen3(CeluneBackend):
             None: This method checks that reference files are accessible and logs
                 checksum status when checksums exist.
         """
+        loader = default_loader()
+        if loader is not None:
+            for name in loader.bundle.voice_order:
+                loader.materialize(name, "wav")
+            return
+
         for name, ref in self.reference_waves.items():
-            full_path = Path(__file__).resolve().parents[1] / ref
+            full_path = self._reference_wave_path(name, ref)
             try:
                 with open(full_path, "rb") as f:
                     checksum = hashlib.file_digest(f, "sha256").hexdigest()
@@ -216,6 +253,13 @@ class Qwen3(CeluneBackend):
                         "warning",
                     )
 
+    @staticmethod
+    def _reference_wave_path(name: str, ref: str) -> Path:
+        loader = default_loader()
+        if loader is not None:
+            return loader.materialize(name, "wav")
+        return Path(__file__).resolve().parents[1] / ref
+
     def load_model(self, model_id: str, **kwargs) -> FasterQwen3TTS:
         """Load the given voice model.
 
@@ -239,7 +283,7 @@ class Qwen3(CeluneBackend):
 
     def generate_stream(
         self, model: FasterQwen3TTS, **kwargs
-    ) -> Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Generate Celune compatible audio chunks.
 
         Args:
@@ -247,13 +291,15 @@ class Qwen3(CeluneBackend):
             **kwargs: Streaming generation keyword arguments to use.
 
         Returns:
-            Generator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of Qwen3 streaming audio chunks.
+            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of Qwen3 streaming audio chunks.
 
         Raises:
             ValueError: The current Qwen3 mode and/or requested voice is unsupported, or input text is empty.
         """
         if not kwargs.get("text", None):
             raise ValueError("expected text to say")
+
+        kwargs.setdefault("max_new_tokens", self.max_new_tokens)
 
         # if faster_qwen3_tts >= 0.2.5 use instructions, else remove this arg
         major, minor, patch = (int(num) for num in qwen3_ver.split("."))
@@ -271,11 +317,16 @@ class Qwen3(CeluneBackend):
             voice = kwargs.pop("voice", self.default_voice)
 
             try:
-                # this path resolves to celune/refs/[voice].wav
-                ref_wav = (
-                    Path(__file__).resolve().parents[1] / self.reference_waves[voice]
+                loader = default_loader()
+                if loader is not None:
+                    ref_wav = loader.materialize(voice, "wav")
+                else:
+                    ref_wav = self._reference_wave_path(
+                        voice, self.reference_waves[voice]
+                    )
+                ref_text = self.reference_texts.get(
+                    voice, self.reference_texts[self.default_voice]
                 )
-                ref_text = self.reference_texts[voice]
             except KeyError as e:
                 raise ValueError(
                     f"unknown voice '{voice}' for backend '{self.name}'"
@@ -285,6 +336,7 @@ class Qwen3(CeluneBackend):
                 ref_audio=ref_wav,
                 ref_text=ref_text,
                 non_streaming_mode=False,  # VERY IMPORTANT ON >=0.2.5
+                xvec_only=self.x_vector_only,
                 **kwargs,
             )
         else:

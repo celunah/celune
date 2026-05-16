@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Generator, Union
+from typing import Union
+from collections.abc import Iterator
 
 NAME_DAYS: dict[str, list[str]] = {
     "01-01": [],
@@ -474,11 +475,11 @@ def has_name_day(name: str, value: Union[date, datetime, str]) -> bool:
     return any(n.casefold() == needle for n in get_names_for_date(value))
 
 
-def iter_name_days() -> Generator[tuple[str, list[str]], None, None]:
+def iter_name_days() -> Iterator[tuple[str, list[str]]]:
     """Iterate over ``(MM-DD, names)`` pairs.
 
     Returns:
-        Generator[tuple[str, list[str]], None, None]: A generator that yields each date
+        Iterator[tuple[str, list[str]]]: A generator that yields each date
             key followed by its corresponding list of names.
     """
     yield from NAME_DAYS.items()

@@ -94,7 +94,7 @@ def _to_48khz(
 
 def readiness_signal() -> npt.NDArray[np.float32]:
     """Load Celune's startup readiness sound."""
-    readiness_wav = files("celune").joinpath("refs", "readiness.wav")
+    readiness_wav = files("celune").joinpath("assets", "readiness.wav")
 
     # we did not find the Celune chord, return silence instead
     if not readiness_wav.is_file():
@@ -184,12 +184,6 @@ class StreamingPedalboardReverb:
     """Stateful reverb based on `pedalboard`."""
 
     def __init__(self):
-        """Initialize reverb state.
-
-        Returns:
-            None: This constructor prepares the pedalboard and default reverb
-            parameters.
-        """
         self.strength = 0.0
         self._first_chunk = True
 
