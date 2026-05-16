@@ -89,7 +89,7 @@ def main() -> None:
     """
     try:
         date = datetime.datetime.now()
-        if has_name_day("Celine", date):
+        if has_name_day("Celine", date) and not env_bool("CELUNE_OVERRIDE_CELINE_DAY"):
             raise No
 
         if supports_ansi():
@@ -227,6 +227,7 @@ def main() -> None:
                 queue_avail_callback=ui.tts_queue_avail,
                 voice_changed_callback=ui.tts_voice_changed,
                 change_input_state_callback=ui.change_input_state,
+                change_voice_lock_state_callback=ui.change_voice_lock_state,
                 progress_callback=ui.safe_progress,
                 dev=dev,
                 config=config,
@@ -287,6 +288,8 @@ def main() -> None:
         print()
         print("Hint:")
         print(indent("Try again tomorrow.", spaces=4))
+        print("or set the following environment variable:")
+        print(indent("CELUNE_OVERRIDE_CELINE_DAY=1", spaces=4))
         sys.exit(
             ExitCodes.EXIT_CELINE_DAY.value
             if random.uniform(0, 1) < 0.5

@@ -3,15 +3,14 @@
 
 import unittest
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import cast
 from unittest import mock
 
 from celune.backends.qwen3 import Qwen3
 from celune import runtime
 from celune.ui.commands import process_command
 
-if TYPE_CHECKING:
-    from celune.ui.app import CeluneUI
+from celune.ui.app import CeluneUI
 
 
 class RuntimeTests(unittest.TestCase):
@@ -108,7 +107,7 @@ class UICommandTests(unittest.TestCase):
         Raises:
             None: Production command errors propagate normally.
         """
-        process_command(cast("CeluneUI", self.ui), command, args)
+        process_command(cast(CeluneUI, self.ui), command, args)
 
     def test_xvectoronly_command_requires_qwen3_and_valid_value(self) -> None:
         """Verify the Qwen3-only toggle command and argument checks.

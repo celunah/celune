@@ -101,6 +101,16 @@ class CeluneTextualUI(CeluneBaseUI, Protocol):
             None: Implementations update input availability.
         """
 
+    def change_voice_lock_state(self, locked: bool) -> None:
+        """Lock or unlock Celune's voice change button.
+
+        Args:
+            locked: Whether voice changes should be disabled.
+
+        Returns:
+            None: Implementations update voice change availability.
+        """
+
 
 class CeluneHeadlessBaseUI(CeluneBaseUI, Protocol):
     """Protocol for Celune's headless UI callbacks."""

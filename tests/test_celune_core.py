@@ -15,7 +15,8 @@ from tests.support import FakeBackend, FakeGlow
 class CeluneCoreTests(unittest.TestCase):
     """Tests for Celune orchestration without real model work."""
 
-    def _make_celune(self, config: dict) -> Celune:
+    @staticmethod
+    def _make_celune(config: dict) -> Celune:
         """Build a Celune instance with lightweight fakes.
 
         Args:

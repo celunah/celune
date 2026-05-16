@@ -11,6 +11,7 @@ import numpy as np
 import numpy.typing as npt
 
 from celune.backends.base import CeluneBackend
+from celune.utils import discard
 
 
 class FakeBackend(CeluneBackend):
@@ -134,7 +135,8 @@ class FakeGlow:
             None: This helper does not raise.
         """
 
-    def stop(self, reset: bool = True, wait: bool = False) -> None:
+    @staticmethod
+    def stop(reset: bool = True, wait: bool = False) -> None:
         """Accept a stop request without performing hardware work.
 
         Args:
@@ -147,7 +149,8 @@ class FakeGlow:
         Raises:
             None: This helper does not raise.
         """
-        del reset, wait
+        discard(reset)
+        discard(wait)
 
     def schedule(self, audio: npt.NDArray[np.float32]) -> None:
         """Record audio scheduled for glow processing.

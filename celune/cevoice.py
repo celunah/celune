@@ -253,7 +253,7 @@ def _read_header(stream: BinaryIO) -> tuple[bytes, int, int]:
     return magic, version, metadata_length
 
 
-def _read_source(source: bytes | str | Path) -> bytes:
+def _read_source(source: Union[bytes, str, Path]) -> bytes:
     if isinstance(source, bytes):
         return source
     return Path(source).read_bytes()

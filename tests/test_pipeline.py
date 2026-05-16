@@ -7,19 +7,17 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import cast
 from unittest import mock
 
 import numpy as np
 import soundfile as sf
 
 from celune import pipeline
+from celune.celune import Celune
 from celune.constants import JSON
 
 from tests.support import FakeStream, make_pipeline_engine
-
-if TYPE_CHECKING:
-    from celune.celune import Celune
 
 
 class PipelineTests(unittest.TestCase):
@@ -41,7 +39,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(q.empty(), True)
 
         engine = make_pipeline_engine()
-        celune_engine = cast("Celune", engine)
+        celune_engine = cast(Celune, engine)
         self.assertEqual(pipeline.acquire_pipeline(celune_engine, "speak"), True)
         self.assertEqual(engine.locked, True)
         self.assertEqual(pipeline.acquire_pipeline(celune_engine, "speak"), False)
@@ -67,7 +65,7 @@ class PipelineTests(unittest.TestCase):
             AssertionError: Speech queueing behavior changes unexpectedly.
         """
         engine = make_pipeline_engine()
-        celune_engine = cast("Celune", engine)
+        celune_engine = cast(Celune, engine)
         with mock.patch(
             "celune.pipeline.detect_language",
             return_value={
@@ -88,12 +86,12 @@ class PipelineTests(unittest.TestCase):
 
         engine = make_pipeline_engine()
         engine.is_in_tutorial = True
-        self.assertEqual(pipeline.queue_speech(cast("Celune", engine), "hello"), False)
+        self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), False)
         self.assertEqual(engine.messages[-1][1], "warning")
 
         engine = make_pipeline_engine()
         engine.loaded = False
-        self.assertEqual(pipeline.queue_speech(cast("Celune", engine), "hello"), False)
+        self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), False)
         self.assertEqual(engine.errors, ["Celune is not currently ready"])
 
     def test_flac_metadata_helpers_round_trip_tags(self) -> None:
@@ -149,7 +147,7 @@ class PipelineTests(unittest.TestCase):
             current_character="Fixture",
         )
         metadata = pipeline._celune_metadata_payload(
-            cast("Celune", engine),
+            cast(Celune, engine),
             text="hello",
             display_text="one two three four five six",
             generation_params={"temperature": 0.15},
@@ -163,7 +161,7 @@ class PipelineTests(unittest.TestCase):
             path = Path(temp_dir) / "voice.flac"
             metadata["created_at"] = "2026-05-16T10:00:00+00:00"
             pipeline._write_celune_flac(
-                cast("Celune", engine),
+                cast(Celune, engine),
                 str(path),
                 np.zeros((8, 2), dtype=np.float32),
                 48000,
@@ -195,17 +193,17 @@ class PipelineTests(unittest.TestCase):
         engine = make_pipeline_engine()
         timing = pipeline.SpeechTiming(start_time=1.0, first_playback_time=1.25)
         with mock.patch("celune.pipeline.time.monotonic", return_value=1.25):
-            pipeline.log_first_playback(cast("Celune", engine), cast(JSON, timing))
+            pipeline.log_first_playback(cast(Celune, engine), cast(JSON, timing))
         self.assertEqual(engine.messages[-1], ("TTFP: 0.25 seconds", "info"))
 
         stream = FakeStream()
         holder = SimpleNamespace(stream=stream, _stream=stream, _current_sr=48000)
-        pipeline.close_stream(cast("Celune", holder))
+        pipeline.close_stream(cast(Celune, holder))
         self.assertEqual(stream.stopped, True)
         self.assertEqual(stream.closed, True)
         self.assertIsNone(holder._stream)
 
         stream = FakeStream()
         holder = SimpleNamespace(stream=stream, _stream=stream, _current_sr=48000)
-        pipeline.close_stream(cast("Celune", holder), abort=True)
+        pipeline.close_stream(cast(Celune, holder), abort=True)
         self.assertEqual(stream.aborted, True)

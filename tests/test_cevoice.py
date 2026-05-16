@@ -25,8 +25,19 @@ class CEVoiceTests(unittest.TestCase):
             None: Temporary directory creation errors propagate normally.
         """
         self.temp_dir = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.temp_dir, True)
+        self.addCleanup(self._cleanup_temp_dir)
         self.path = self.temp_dir / "sample.cevoice"
+
+    def _cleanup_temp_dir(self) -> None:
+        """Remove the temporary fixture directory.
+
+        Returns:
+            None: This fixture removes temporary files created by the test.
+
+        Raises:
+            None: Cleanup ignores missing paths and other removal errors.
+        """
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def tearDown(self) -> None:
         """Reset shared CEVOICE loader globals after one test.
