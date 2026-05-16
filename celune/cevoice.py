@@ -267,9 +267,8 @@ def _validate_metadata(path: Path, metadata: Any, payload_offset: int) -> None:
 
     voice_order = metadata.get("voice_order")
     if voice_order is not None:
-        if (
-            not isinstance(voice_order, list)
-            or not all(isinstance(voice, str) for voice in voice_order)
+        if not isinstance(voice_order, list) or not all(
+            isinstance(voice, str) for voice in voice_order
         ):
             raise CEVoiceError("metadata voice_order must be a list of voice names")
         if len(set(voice_order)) != len(voice_order):
@@ -304,7 +303,9 @@ def _validate_metadata(path: Path, metadata: Any, payload_offset: int) -> None:
             if "/" in kind or "\\" in kind or kind in {"", ".", ".."}:
                 raise CEVoiceError(f"invalid asset kind for voice '{voice}'")
             if kind not in ALLOWED_ASSET_KINDS:
-                raise CEVoiceError(f"unsupported asset kind '{kind}' for voice '{voice}'")
+                raise CEVoiceError(
+                    f"unsupported asset kind '{kind}' for voice '{voice}'"
+                )
             offset = asset.get("offset")
             length = asset.get("length")
             digest = asset.get("sha256")
@@ -315,7 +316,9 @@ def _validate_metadata(path: Path, metadata: Any, payload_offset: int) -> None:
                 or length < 0
                 or not isinstance(digest, str)
                 or len(digest) != 64
-                or any(character not in "0123456789abcdefABCDEF" for character in digest)
+                or any(
+                    character not in "0123456789abcdefABCDEF" for character in digest
+                )
             ):
                 raise CEVoiceError(f"invalid asset metadata for voice '{voice}'")
             if offset + length > payload_length:

@@ -16,7 +16,17 @@ from tests.support import FakeBackend
 
 
 class BackendTests(unittest.TestCase):
+    """Tests for backend base behavior and backend resolution."""
+
     def test_base_backend_reports_models_and_progress(self) -> None:
+        """Verify model metadata and progress helpers on a fake backend.
+
+        Returns:
+            None: Assertions verify backend helper output.
+
+        Raises:
+            AssertionError: A backend helper returns an unexpected value.
+        """
         backend = FakeBackend(log=lambda _msg, _severity="info": None)
         self.assertEqual(backend.default_model_id, "fake/balanced")
         self.assertEqual(backend.all_model_ids, ["fake/balanced", "fake/bold"])
@@ -28,6 +38,14 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(backend.generation_progress_steps({"chunk_steps": 0}), 1)
 
     def test_resolve_backend_accepts_instance_type_and_rejects_unknown(self) -> None:
+        """Verify supported backend specifications and invalid input failures.
+
+        Returns:
+            None: Assertions verify backend resolution behavior.
+
+        Raises:
+            AssertionError: Backend resolution behavior changes unexpectedly.
+        """
         instance = FakeBackend(log=lambda _msg, _severity="info": None)
         self.assertIs(resolve_backend(instance), instance)
         self.assertIsInstance(resolve_backend(FakeBackend), FakeBackend)
@@ -38,6 +56,8 @@ class BackendTests(unittest.TestCase):
 
 
 class ExtensionTests(unittest.TestCase):
+    """Tests for extension context and manager behavior."""
+
     def setUp(self) -> None:
         self.logs: list[tuple[str, str]] = []
         self.dev_logs: list[tuple[str, str]] = []
@@ -54,6 +74,14 @@ class ExtensionTests(unittest.TestCase):
         )
 
     def test_context_and_extension_helpers_delegate_calls(self) -> None:
+        """Verify extension helper methods delegate through their context.
+
+        Returns:
+            None: Assertions verify delegated extension behavior.
+
+        Raises:
+            AssertionError: Extension delegation behavior changes unexpectedly.
+        """
         extension = DemoExtension(self.context)
         self.context.expose("token", "value")
         self.assertEqual(self.context.get("token"), "value")
@@ -65,6 +93,14 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(extension.set_voice("bold"), True)
 
     def test_manager_registers_invokes_and_autoloads_extensions(self) -> None:
+        """Verify registration, duplicate handling, and directory autoloading.
+
+        Returns:
+            None: Assertions verify extension registration behavior.
+
+        Raises:
+            AssertionError: Extension manager behavior changes unexpectedly.
+        """
         manager = CeluneExtensionManager(self.context)
         manager.register(DemoExtension)
         self.assertEqual(manager.list_extensions(), ["Demo"])
@@ -93,9 +129,19 @@ class ExtensionTests(unittest.TestCase):
         self.assertIn("Loaded", manager.list_extensions())
 
     def test_manager_invoke_and_autostart_run_in_threads(self) -> None:
+        """Verify threaded extension invocation and autostart behavior.
+
+        Returns:
+            None: Assertions verify asynchronous extension execution.
+
+        Raises:
+            AssertionError: Threaded extension behavior changes unexpectedly.
+        """
         event = threading.Event()
 
         class AutoExtension(DemoExtension):
+            """Autostart extension used by one manager test."""
+
             EXTENSION_NAME = "Auto"
             AUTOSTART = True
 
@@ -110,6 +156,8 @@ class ExtensionTests(unittest.TestCase):
         invoke_event = threading.Event()
 
         class InvokeExtension(DemoExtension):
+            """Invokable extension used by one manager test."""
+
             EXTENSION_NAME = "Invoke"
 
             def invoke(self, *args, **kwargs) -> None:
@@ -123,6 +171,8 @@ class ExtensionTests(unittest.TestCase):
 
 
 class DemoExtension(CeluneExtension):
+    """Simple extension implementation used by manager tests."""
+
     EXTENSION_NAME = "Demo"
 
     def invoke(self, *args, **kwargs) -> None:

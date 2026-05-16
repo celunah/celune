@@ -2,6 +2,7 @@
 """Tests for color and DSP helpers."""
 
 import unittest
+from typing import cast
 
 import numpy as np
 
@@ -12,10 +13,20 @@ from celune.exceptions import AudioMismatchError, BadAudioError
 
 
 class ColorTests(unittest.TestCase):
+    """Tests for generated Celune theme palettes."""
+
     def tearDown(self) -> None:
         colors.configure_theme()
 
     def test_default_and_custom_theme_palettes_are_configured(self) -> None:
+        """Verify default palettes and contrast-adjusted custom palettes.
+
+        Returns:
+            None: Assertions verify theme generation behavior.
+
+        Raises:
+            AssertionError: Theme behavior changes unexpectedly.
+        """
         colors.configure_theme()
         self.assertEqual(colors.THEME.primary, "#cebaff")
         self.assertEqual(colors.THEME_LIGHT.background, "#ece8ff")
@@ -23,7 +34,10 @@ class ColorTests(unittest.TestCase):
         colors.configure_theme("#101010", "#222222")
         self.assertEqual(colors.THEME.background, "#101010")
         self.assertGreaterEqual(
-            colors._contrast_ratio(colors.THEME.primary, colors.THEME.background),
+            colors._contrast_ratio(
+                colors.THEME.primary,
+                cast(str, colors.THEME.background),
+            ),
             4.5,
         )
         self.assertEqual(
@@ -33,7 +47,17 @@ class ColorTests(unittest.TestCase):
 
 
 class DspTests(unittest.TestCase):
+    """Tests for lightweight DSP helpers."""
+
     def test_make_stereo_and_resampling_validate_audio(self) -> None:
+        """Verify stereo conversion and sample-rate validation paths.
+
+        Returns:
+            None: Assertions verify DSP helper behavior.
+
+        Raises:
+            AssertionError: DSP behavior changes unexpectedly.
+        """
         mono = np.array([0.0, 1.0], dtype=np.float32)
         stereo = dsp._make_stereo(mono)
         self.assertEqual(stereo.shape, (2, 2))
@@ -46,6 +70,14 @@ class DspTests(unittest.TestCase):
         self.assertEqual(dsp._resample_audio(stereo, 48000).shape, (2, 2))
 
     def test_soften_split_and_silence_detection(self) -> None:
+        """Verify softening, chunk splitting, and loudness tiers.
+
+        Returns:
+            None: Assertions verify DSP output.
+
+        Raises:
+            AssertionError: DSP output changes unexpectedly.
+        """
         audio = np.ones((10, 2), dtype=np.float32)
         softened = dsp._soften(audio.copy(), sr=10, duration=0.2, start_gain=0.5)
         self.assertAlmostEqual(float(softened[0, 0]), 0.5)

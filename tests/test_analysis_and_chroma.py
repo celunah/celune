@@ -10,7 +10,17 @@ from celune.chroma import AudioRGBGlow
 
 
 class AnalysisTests(unittest.TestCase):
+    """Tests for deterministic analysis helper behavior."""
+
     def test_embedding_similarity_and_drift_helpers_validate_inputs(self) -> None:
+        """Validate embedding conversion, similarity, and drift helper paths.
+
+        Returns:
+            None: Assertions verify expected helper behavior.
+
+        Raises:
+            AssertionError: An analysis helper returns an unexpected result.
+        """
         embedding = np.ones(2048, dtype=np.float32)
         converted = analysis._embedding_tensor_to_numpy(embedding)
         self.assertEqual(converted.shape, (2048,))
@@ -33,6 +43,14 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(analysis._voice_drift_level(12.0), "wrong")
 
     def test_traits_and_assessment_cover_speech_and_empty_audio_paths(self) -> None:
+        """Check trait and assessment output for empty voice extraction data.
+
+        Returns:
+            None: Assertions verify fallback assessment behavior.
+
+        Raises:
+            AssertionError: Trait or assessment output changes unexpectedly.
+        """
         metrics = {
             "duration_s": 1.0,
             "pitch_extraction_ok": False,
@@ -57,7 +75,17 @@ class AnalysisTests(unittest.TestCase):
 
 
 class ChromaTests(unittest.TestCase):
+    """Tests for pure RGB glow helper behavior."""
+
     def test_pure_glow_helpers_process_audio_without_devices(self) -> None:
+        """Exercise glow math without connecting to RGB devices.
+
+        Returns:
+            None: Assertions verify pure helper outputs.
+
+        Raises:
+            AssertionError: A glow helper returns an unexpected value.
+        """
         stereo = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
         mono = AudioRGBGlow._to_mono(stereo)
         self.assertTrue(np.array_equal(mono, np.array([0.5, 0.5], dtype=np.float32)))
