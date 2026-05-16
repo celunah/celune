@@ -1113,6 +1113,23 @@ def analyze_voice_audio(
     )
 
 
+def _has_reference_embedding(voice: str) -> bool:
+    """Does this voice have an embeddding?
+
+    Args:
+        voice: The voice to check from the CEVOICE bundle.
+
+    Returns:
+        bool: Whether this voice has an embedding included.
+    """
+
+    loader = default_loader()
+    if loader is not None:
+        return "pt" in loader.bundle.voices.get(voice, {}).get("assets", {})
+    refs_dir = pathlib.Path(__file__).resolve().parent / "refs"
+    return (refs_dir / f"{voice}.pt").exists()
+
+
 def analyze_voice(voice: pathlib.Path) -> None:
     """Analyze incoming voice artifact.
 
@@ -1126,6 +1143,5 @@ def analyze_voice(voice: pathlib.Path) -> None:
         return
 
     y, sr = load_audio(voice)
-    refs_dir = pathlib.Path(__file__).resolve().parent / "refs"
-    reference_voice = voice.stem if (refs_dir / f"{voice.stem}.pt").exists() else None
+    reference_voice = voice.stem if _has_reference_embedding(voice.stem) else None
     _analyze_voice_data(y, sr, voice, voice.parent, voice.stem, reference_voice)

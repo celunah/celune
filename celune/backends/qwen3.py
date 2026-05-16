@@ -223,7 +223,7 @@ class Qwen3(CeluneBackend):
         """
         loader = default_loader()
         if loader is not None:
-            for name in self.reference_waves:
+            for name in loader.bundle.voice_order:
                 loader.materialize(name, "wav")
             return
 
@@ -317,9 +317,16 @@ class Qwen3(CeluneBackend):
             voice = kwargs.pop("voice", self.default_voice)
 
             try:
-                # this path resolves to celune/refs/[voice].wav
-                ref_wav = self._reference_wave_path(voice, self.reference_waves[voice])
-                ref_text = self.reference_texts[voice]
+                loader = default_loader()
+                if loader is not None:
+                    ref_wav = loader.materialize(voice, "wav")
+                else:
+                    ref_wav = self._reference_wave_path(
+                        voice, self.reference_waves[voice]
+                    )
+                ref_text = self.reference_texts.get(
+                    voice, self.reference_texts[self.default_voice]
+                )
             except KeyError as e:
                 raise ValueError(
                     f"unknown voice '{voice}' for backend '{self.name}'"
