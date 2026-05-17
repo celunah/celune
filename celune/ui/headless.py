@@ -22,8 +22,6 @@ class CeluneHeadlessUI:
         if CeluneHeadlessUI._instance is not None:
             raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
 
-        CeluneHeadlessUI._instance = self
-
         self.colors = {
             "black": "\x1b[0;30m",
             "red": "\x1b[0;31m",
@@ -42,6 +40,8 @@ class CeluneHeadlessUI:
             or not supports_ansi()
         )
         self.reset = "\x1b[0m" if not self.no_color else ""
+
+        CeluneHeadlessUI._instance = self
 
     def severity_color(self, severity: str) -> str:
         """Get color from the VGA text mode palette.
@@ -101,6 +101,18 @@ class CeluneHeadlessUI:
         while True:
             time.sleep(1)
 
+    def close(self) -> None:
+        """Exit from Celune's headless interface.
+
+        Returns:
+            None: This method closes the interface and exits from Celune.
+        """
+
+        if self.celune is not None:
+            self.celune.close()
+
+        CeluneHeadlessUI._instance = None
+
     def signal_handler(self, sig: int, _frame: Optional[FrameType]) -> None:
         """Exit Celune in headless mode on CTRL+C and handle CTRL+Z.
 
@@ -114,6 +126,5 @@ class CeluneHeadlessUI:
         if SIGTSTP is not None and sig == SIGTSTP:
             return
 
-        if self.celune is not None:
-            self.celune.close()
+        self.close()
         sys.exit(ExitCodes.EXIT_SUCCESS.value)

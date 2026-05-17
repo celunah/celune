@@ -16,7 +16,12 @@ class CeluneCoreTests(unittest.TestCase):
     """Tests for Celune orchestration without real model work."""
 
     @staticmethod
-    def _make_celune(config: dict) -> Celune:
+    def _close_celune(celune: Celune) -> None:
+        """Close a test instance if it still owns the singleton slot."""
+        if Celune._instance is celune:
+            celune.close()
+
+    def _make_celune(self, config: dict) -> Celune:
         """Build a Celune instance with lightweight fakes.
 
         Args:
@@ -32,7 +37,9 @@ class CeluneCoreTests(unittest.TestCase):
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
         ):
-            return Celune(config=config, tts_backend=FakeBackend)
+            celune = Celune(config=config, tts_backend=FakeBackend)
+            self.addCleanup(self._close_celune, celune)
+            return celune
 
     def test_constructor_validates_backend_and_chunk_size(self) -> None:
         """Verify constructor validation and derived chunk size behavior.
@@ -49,6 +56,7 @@ class CeluneCoreTests(unittest.TestCase):
         celune = self._make_celune({})
         self.assertEqual(celune.chunk_size, 8)
         self.assertEqual(getattr(celune.glow, "started"), True)
+        celune.close()
 
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
@@ -144,6 +152,7 @@ class CeluneCoreTests(unittest.TestCase):
             self.assertEqual(celune.load(), True)
         self.assertEqual(celune.loaded, True)
         self.assertEqual(getattr(celune.glow, "entered"), True)
+        celune.close()
 
         failing = self._make_celune({})
         failing.setup_extensions = mock.Mock()

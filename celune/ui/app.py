@@ -55,8 +55,6 @@ class CeluneUI(App):
         if CeluneUI._instance is not None:
             raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
 
-        CeluneUI._instance = self
-
         self.logs = cast(RichLog, None)
         self.input_box = cast(TextArea, None)
         self.style_button = cast(Button, None)
@@ -102,6 +100,8 @@ class CeluneUI(App):
         self._tutorial_timers: list[Timer] = []
         self._tutorial_token = 0
         self._tutorial_active = False
+
+        CeluneUI._instance = self
 
     def _run_on_ui_thread(self, callback: Callable[[], None]) -> None:
         if threading.current_thread() is threading.main_thread():
@@ -1023,6 +1023,8 @@ class CeluneUI(App):
             sys.stdout = self._old_stdout
         if hasattr(self, "_old_stderr"):
             sys.stderr = self._old_stderr
+
+        CeluneUI._instance = None
 
     def tts_idle(self) -> None:
         """Reset UI state after Celune stops talking.

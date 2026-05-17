@@ -151,8 +151,6 @@ class Celune:
         if Celune._instance is not None:
             raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
 
-        Celune._instance = self
-
         if tts_backend is None:
             raise BackendError("no backend set")
 
@@ -295,6 +293,7 @@ class Celune:
                     glow_color = configured_glow
         self.glow = AudioRGBGlow(color=glow_color)
         self.glow.start()
+        Celune._instance = self
 
     @staticmethod
     def _noop_message(msg: str, severity: str = "info") -> None:
@@ -1097,9 +1096,12 @@ class Celune:
         Returns:
             None: This method shuts down workers and unloads runtime state.
         """
-        close_pipeline(self)
-        with self._model_lock:
-            self.unload_runtime_state(include_normalizer=True)
+        try:
+            close_pipeline(self)
+            with self._model_lock:
+                self.unload_runtime_state(include_normalizer=True)
+        finally:
+            Celune._instance = None
 
     def _split_text(self, text: str) -> list[str]:
         """Split text into chunks.
