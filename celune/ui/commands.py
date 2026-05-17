@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 
 import soundfile as sf
 
+from ..utils import format_error
 from ..backends.qwen3 import Qwen3
 from ..exceptions import InvalidExtensionError
-from ..utils import format_error
 
 if TYPE_CHECKING:
     from .app import CeluneUI

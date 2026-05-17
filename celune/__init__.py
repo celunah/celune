@@ -3,8 +3,7 @@
 
 import sys as _sys
 
-from .utils import caller_is_repl as _caller_is_repl
-from .utils import get_revision as _get_revision
+from .utils import get_revision as _get_revision, caller_is_repl as _caller_is_repl
 
 REVISION = _get_revision()
 if REVISION:

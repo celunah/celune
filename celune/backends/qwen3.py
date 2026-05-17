@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import os
 import warnings
-from typing import Callable, Literal, Optional
 from collections.abc import Iterator
+from typing import Callable, Literal, Optional
 
 import numpy as np
 import numpy.typing as npt

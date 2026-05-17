@@ -3,8 +3,8 @@
 
 import unittest
 from pathlib import Path
-from typing import Any, cast
 from unittest import mock
+from typing import Any, cast
 
 from celune.celune import Celune
 from celune.exceptions import BackendError

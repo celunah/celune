@@ -4,8 +4,8 @@
 from typing import Callable, Union
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.modeling_utils import PreTrainedModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from .backends import CeluneBackend

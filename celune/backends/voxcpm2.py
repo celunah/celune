@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import os
 import contextlib
-from typing import Callable, Optional
 from collections.abc import Iterator
+from typing import Callable, Optional
 
 import torch
 import numpy as np
@@ -15,8 +15,8 @@ from voxcpm import VoxCPM
 
 from . import get_version
 from .base import CeluneBackend, cached_hf_snapshot_path
-from ..cevoice import default_loader
 from ..constants import BASE_SR
+from ..cevoice import default_loader
 
 
 class VoxCPM2(CeluneBackend):

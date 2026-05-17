@@ -3,24 +3,24 @@
 
 import os
 import sys
+import time
 import shlex
 import signal
 import threading
 import itertools
 import contextlib
-import time
 from types import FrameType
-from typing import cast, Optional, Callable, Union
 from collections.abc import Iterator
+from typing import cast, Optional, Callable, Union
 
 import yaml
+from textual.timer import Timer
+from textual.color import Color
 from textual import work, events
+from textual.widget import Widget
+from textual.css.types import EdgeStyle
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.color import Color
-from textual.css.types import EdgeStyle
-from textual.timer import Timer
-from textual.widget import Widget
 from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 from rich.text import Text
 

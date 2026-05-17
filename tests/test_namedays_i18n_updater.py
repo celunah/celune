@@ -2,8 +2,8 @@
 """Tests for lightweight data, localization, and update helpers."""
 
 import datetime
-import subprocess
 import unittest
+import subprocess
 from unittest import mock
 
 from celune import i18n, namedays, updater

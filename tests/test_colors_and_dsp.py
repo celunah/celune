@@ -6,8 +6,7 @@ from typing import cast
 
 import numpy as np
 
-from celune import colors
-from celune import dsp
+from celune import colors, dsp
 from celune.constants import UtteranceLoudnessTier
 from celune.exceptions import AudioMismatchError, BadAudioError
 

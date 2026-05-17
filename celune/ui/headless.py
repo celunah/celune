@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: MIT
 """Headless Celune UI."""
 
-import signal
 import sys
 import time
+import signal
 from types import FrameType
 from typing import Any, Optional, cast
 
 from ..celune import Celune
 from ..config import config_bool
+from ..utils import supports_ansi, discard
 from ..constants import ExitCodes, SIGTSTP
-from ..utils import supports_ansi
 
 
 class CeluneHeadlessUI:
@@ -113,12 +113,12 @@ class CeluneHeadlessUI:
 
         CeluneHeadlessUI._instance = None
 
-    def signal_handler(self, sig: int, _frame: Optional[FrameType]) -> None:
+    def signal_handler(self, sig: int, frame: Optional[FrameType]) -> None:
         """Exit Celune in headless mode on CTRL+C and handle CTRL+Z.
 
         Args:
             sig: The received signal number.
-            _frame: The current stack frame from the signal handler.
+            frame: The current stack frame from the signal handler.
 
         Returns:
             None: This handler closes Celune and exits the process.
@@ -126,5 +126,6 @@ class CeluneHeadlessUI:
         if SIGTSTP is not None and sig == SIGTSTP:
             return
 
+        discard(frame)
         self.close()
         sys.exit(ExitCodes.EXIT_SUCCESS.value)

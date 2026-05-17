@@ -8,6 +8,7 @@ import numpy as np
 
 from celune import analysis
 from celune.chroma import AudioRGBGlow
+from celune.constants import N_A_NUMERIC
 
 
 class AnalysisTests(unittest.TestCase):
@@ -55,8 +56,8 @@ class AnalysisTests(unittest.TestCase):
         metrics = {
             "duration_s": 1.0,
             "pitch_extraction_ok": False,
-            "pitch_mean_hz": float("nan"),
-            "pitch_variance": float("nan"),
+            "pitch_mean_hz": N_A_NUMERIC,
+            "pitch_variance": N_A_NUMERIC,
             "voice_extraction_ok": False,
             "dynamic_range_db": 0.0,
             "speaking_pace_proxy": 0.0,

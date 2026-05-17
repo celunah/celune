@@ -3,15 +3,15 @@
 
 import queue
 import threading
-from types import SimpleNamespace
-from typing import Any, Optional
 from unittest import mock
+from typing import Any, Optional
+from types import SimpleNamespace
 
 import numpy as np
 import numpy.typing as npt
 
-from celune.backends.base import CeluneBackend
 from celune.utils import discard
+from celune.backends.base import CeluneBackend
 
 
 class FakeBackend(CeluneBackend):
