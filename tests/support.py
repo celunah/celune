@@ -85,6 +85,8 @@ class FakeGlow:
         self.connect_failed = False
         self.started = False
         self.entered = False
+        self.finished = threading.Event()
+        self.finished.set()
         self.scheduled: list[npt.NDArray[np.float32]] = []
 
     def start(self) -> bool:
