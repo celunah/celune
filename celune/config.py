@@ -2,6 +2,7 @@
 """Configuration helpers for Celune."""
 
 import os
+from copy import deepcopy
 from typing import Any, Optional
 
 ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
@@ -62,3 +63,39 @@ def config_bool(
         bool: The resolved boolean setting.
     """
     return env_bool(env_name, bool(config_value(config, config_key, default)))
+
+
+def merge_missing_defaults(
+    config: Optional[dict[str, Any]],
+    defaults: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """Fill missing configuration fields from defaults without overriding users.
+
+    Args:
+        config: Loaded user configuration, or ``None`` for an empty config.
+        defaults: Default configuration fields to merge into ``config``.
+
+    Returns:
+        tuple[dict[str, Any], bool]: The merged configuration and whether any
+            fields were added.
+    """
+    merged = deepcopy(config) if config is not None else {}
+    changed = False
+
+    for key, default_value in defaults.items():
+        if key not in merged:
+            merged[key] = deepcopy(default_value)
+            changed = True
+            continue
+
+        current_value = merged[key]
+        if isinstance(current_value, dict) and isinstance(default_value, dict):
+            nested, nested_changed = merge_missing_defaults(
+                current_value,
+                default_value,
+            )
+            if nested_changed:
+                merged[key] = nested
+                changed = True
+
+    return merged, changed

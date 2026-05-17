@@ -6,7 +6,7 @@ backend: null
 # native = deprecated compatibility mode using Celune native models
 qwen3_mode: clone
 # if enabled, Qwen3 clone mode keeps speaker identity more tightly at the cost of some expression
-qwen3_x_vector_only: false
+qwen3_x_vector_only: true
 # either a built-in bundle name under celune/voices or an explicit .cevoice path
 voice_bundle: default
 # if enabled, detailed tracebacks will be displayed, verbose logging messages will appear,

@@ -39,7 +39,12 @@ try:
         CeluneTextualUI,
         SelectMenu,
     )
-    from celune.config import config_bool, config_value, env_bool
+    from celune.config import (
+        config_bool,
+        config_value,
+        env_bool,
+        merge_missing_defaults,
+    )
     from celune.utils import supports_ansi, indent, title_case
     from celune.constants import ExitCodes
 except ModuleNotFoundError as package:
@@ -101,6 +106,19 @@ def main() -> None:
 
         with open("config.yaml", encoding="utf-8") as cfg:
             config = yaml.safe_load(cfg)
+        with open("default_config.yaml", encoding="utf-8") as cfg:
+            default_config = yaml.safe_load(cfg)
+
+        if not isinstance(default_config, dict):
+            default_config = {}
+        if not isinstance(config, dict):
+            config = {}
+
+        config, config_updated = merge_missing_defaults(config, default_config)
+        if config_updated:
+            with open("config.yaml", "w", encoding="utf-8") as cfg:
+                yaml.safe_dump(config, cfg, sort_keys=False)
+            print("Celune configuration has been updated with new defaults.")
 
         dev = config_bool(config, "CELUNE_DEV", "dev")
         headless = config_bool(config, "CELUNE_HEADLESS", "headless")

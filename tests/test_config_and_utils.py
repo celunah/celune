@@ -56,6 +56,75 @@ class ConfigTests(unittest.TestCase):
                 True,
             )
 
+    def test_merge_missing_defaults_preserves_user_values_and_adds_nested_keys(
+        self,
+    ) -> None:
+        """Verify old configs gain new defaults without losing custom values.
+
+        Returns:
+            None: Assertions verify recursive default merging behavior.
+
+        Raises:
+            AssertionError: Config merging behavior changes unexpectedly.
+        """
+        current = {
+            "backend": "qwen3",
+            "api": {"enabled": False, "port": 9999},
+            "theme": "light",
+        }
+        defaults = {
+            "backend": None,
+            "api": {
+                "enabled": True,
+                "host": "0.0.0.0",
+                "port": 2060,
+                "token": None,
+            },
+            "theme": "dark",
+            "voice_bundle": "default",
+        }
+
+        merged, changed = config.merge_missing_defaults(current, defaults)
+
+        self.assertEqual(changed, True)
+        self.assertEqual(merged["backend"], "qwen3")
+        self.assertEqual(merged["theme"], "light")
+        self.assertEqual(merged["voice_bundle"], "default")
+        self.assertEqual(
+            merged["api"],
+            {
+                "enabled": False,
+                "host": "0.0.0.0",
+                "port": 9999,
+                "token": None,
+            },
+        )
+        self.assertEqual(
+            current,
+            {
+                "backend": "qwen3",
+                "api": {"enabled": False, "port": 9999},
+                "theme": "light",
+            },
+        )
+
+    def test_merge_missing_defaults_keeps_non_mapping_user_overrides(self) -> None:
+        """Verify explicit scalar overrides are not replaced by nested defaults.
+
+        Returns:
+            None: Assertions verify scalar override preservation.
+
+        Raises:
+            AssertionError: Config merging behavior changes unexpectedly.
+        """
+        merged, changed = config.merge_missing_defaults(
+            {"api": False},
+            {"api": {"enabled": True}},
+        )
+
+        self.assertEqual(changed, False)
+        self.assertEqual(merged, {"api": False})
+
 
 class UtilsTests(unittest.TestCase):
     """Tests for lightweight common utility functions."""
