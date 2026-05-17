@@ -212,6 +212,7 @@ class Qwen3(CeluneBackend):
             raise ValueError("expected text to say")
 
         kwargs.setdefault("max_new_tokens", self.max_new_tokens)
+        self._apply_seed()
 
         # if faster_qwen3_tts >= 0.2.5 use instructions, else remove this arg
         major, minor, patch = (int(num) for num in qwen3_ver.split("."))

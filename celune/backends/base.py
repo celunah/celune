@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import os
 import glob
+import random
+import secrets
 import hashlib
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Optional
 from collections.abc import Iterator
 from pathlib import Path
 
+import torch
 import numpy as np
 import numpy.typing as npt
 from huggingface_hub import snapshot_download
@@ -124,6 +127,19 @@ class CeluneBackend(ABC):
                     f"Checksum not found for '{name}', skipping checksum verification.",
                     "warning",
                 )
+
+    def _apply_seed(self) -> None:
+        """Seed all generation RNGs for the next backend operation."""
+        if self.random_seed:
+            self.current_seed = secrets.randbits(32)
+
+        if self.current_seed is None:
+            return
+
+        random.seed(self.current_seed)
+        np.random.seed(self.current_seed)
+        torch.cuda.manual_seed_all(self.current_seed)
+        torch.manual_seed(self.current_seed)
 
     @staticmethod
     @abstractmethod
