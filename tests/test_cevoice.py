@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from celune import cevoice
 from celune.exceptions import CEVoiceError
@@ -47,6 +48,8 @@ class CEVoiceTests(unittest.TestCase):
         cevoice._DEFAULT_LOADER_ANNOUNCED = False
         cevoice._DEFAULT_LOADER_FAILED = False
         cevoice._SELECTED_BUNDLE = None
+        cevoice._SELECTED_BUNDLE_IS_NAMED = False
+        cevoice._DEFAULT_LOADER_FELL_BACK_FROM = None
 
     def _write_bundle(self) -> cevoice.CEVoice:
         """Write and reopen one tiny valid CEVOICE fixture.
@@ -185,6 +188,73 @@ class CEVoiceTests(unittest.TestCase):
         cevoice.select_voice_bundle(invalid_path)
         self.assertIsNone(cevoice.default_loader())
         self.assertEqual(cevoice.announce_default_bundle(log), "Celune")
+        self.assertEqual(logs[-1][1], "warning")
+
+    def test_missing_named_bundle_falls_back_to_default_bundle(self) -> None:
+        """Verify absent named bundles load the built-in default before refs.
+
+        Returns:
+            None: Assertions verify bundle fallback behavior.
+
+        Raises:
+            AssertionError: Bundle fallback behavior changes unexpectedly.
+        """
+        default_path = self.temp_dir / "default.cevoice"
+        self._write_bundle()
+        shutil.copy(self.path, default_path)
+        cevoice.select_voice_bundle("missing")
+
+        with mock.patch(
+            "celune.cevoice.default_bundle_path", return_value=default_path
+        ):
+            loader = cevoice.default_loader()
+            logs: list[tuple[str, str]] = []
+            self.assertEqual(
+                cevoice.announce_default_bundle(
+                    lambda msg, severity: logs.append((msg, severity))
+                ),
+                "Fixture",
+            )
+
+        self.assertIsNotNone(loader)
+        if loader is not None:
+            self.assertEqual(loader.bundle.metadata["name"], "Fixture")
+        self.assertEqual(
+            logs,
+            [
+                (
+                    "Voice bundle missing not found, using default pack instead.",
+                    "warning",
+                ),
+                ("Loading voice bundle: Fixture", "info"),
+            ],
+        )
+
+    def test_missing_selected_and_default_bundles_use_reference_fallback(self) -> None:
+        """Verify loose refs are used only after selected and default bundles fail.
+
+        Returns:
+            None: Assertions verify final fallback behavior.
+
+        Raises:
+            AssertionError: Bundle fallback behavior changes unexpectedly.
+        """
+        cevoice.select_voice_bundle("missing")
+        missing_default = self.temp_dir / "default.cevoice"
+        logs: list[tuple[str, str]] = []
+
+        with mock.patch(
+            "celune.cevoice.default_bundle_path",
+            return_value=missing_default,
+        ):
+            self.assertIsNone(cevoice.default_loader())
+            self.assertEqual(
+                cevoice.announce_default_bundle(
+                    lambda msg, severity: logs.append((msg, severity))
+                ),
+                "Celune",
+            )
+
         self.assertEqual(logs[-1][1], "warning")
 
     def test_materialize_rejects_unsafe_names(self) -> None:

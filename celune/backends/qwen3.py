@@ -240,11 +240,11 @@ class Qwen3(CeluneBackend):
                         f"Checksum mismatch for '{name}', output may be affected.",
                         "warning",
                     )
-                else:
-                    self.log(
-                        f"Checksum not found for '{name}', skipping checksum verification.",
-                        "warning",
-                    )
+            else:
+                self.log(
+                    f"Checksum not found for '{name}', skipping checksum verification.",
+                    "warning",
+                )
 
     @staticmethod
     def _reference_wave_path(name: str) -> Path:

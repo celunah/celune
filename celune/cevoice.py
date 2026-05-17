@@ -349,6 +349,8 @@ _DEFAULT_LOADER_INITIALIZED = False
 _DEFAULT_LOADER_ANNOUNCED = False
 _DEFAULT_LOADER_FAILED = False
 _SELECTED_BUNDLE: Optional[Path] = None
+_SELECTED_BUNDLE_IS_NAMED = False
+_DEFAULT_LOADER_FELL_BACK_FROM: Optional[Path] = None
 
 
 def default_bundle_path() -> Path:
@@ -394,6 +396,7 @@ def select_voice_bundle(bundle: Optional[Union[str, Path]] = None) -> Path:
     """
     global _DEFAULT_LOADER, _DEFAULT_LOADER_INITIALIZED
     global _DEFAULT_LOADER_ANNOUNCED, _DEFAULT_LOADER_FAILED, _SELECTED_BUNDLE
+    global _SELECTED_BUNDLE_IS_NAMED, _DEFAULT_LOADER_FELL_BACK_FROM
 
     selected = resolve_bundle_path(bundle)
     if selected == active_bundle_path():
@@ -407,6 +410,14 @@ def select_voice_bundle(bundle: Optional[Union[str, Path]] = None) -> Path:
     _DEFAULT_LOADER_ANNOUNCED = False
     _DEFAULT_LOADER_FAILED = False
     _SELECTED_BUNDLE = selected
+    _DEFAULT_LOADER_FELL_BACK_FROM = None
+    if bundle is None:
+        _SELECTED_BUNDLE_IS_NAMED = False
+    else:
+        candidate = Path(bundle).expanduser()
+        _SELECTED_BUNDLE_IS_NAMED = (
+            not candidate.is_absolute() and candidate.parent == Path(".")
+        )
     return selected
 
 
@@ -426,11 +437,19 @@ def default_loader() -> Optional[CEVoiceLoader]:
         Optional[CEVoiceLoader]: The default CEVOICE bundle loader.
     """
     global _DEFAULT_LOADER, _DEFAULT_LOADER_INITIALIZED, _DEFAULT_LOADER_FAILED
+    global _DEFAULT_LOADER_FELL_BACK_FROM
     if not _DEFAULT_LOADER_INITIALIZED:
         _DEFAULT_LOADER_INITIALIZED = True
         path = active_bundle_path()
         if not path.exists():
-            return None
+            fallback_path = default_bundle_path()
+            if not _SELECTED_BUNDLE_IS_NAMED and path != fallback_path:
+                return None
+            if path == fallback_path or not fallback_path.exists():
+                _DEFAULT_LOADER_FAILED = True
+                return None
+            _DEFAULT_LOADER_FELL_BACK_FROM = path
+            path = fallback_path
 
         try:
             bundle = CEVoice.open(path)
@@ -459,6 +478,13 @@ def announce_default_bundle(log: Callable[[str, str], None]) -> Optional[str]:
         return None
 
     if loader is not None:
+        if _DEFAULT_LOADER_FELL_BACK_FROM is not None:
+            log(
+                "Voice bundle "
+                f"{_DEFAULT_LOADER_FELL_BACK_FROM.stem} not found, "
+                "using default pack instead.",
+                "warning",
+            )
         name = loader.bundle.metadata.get("name", active_bundle_path().stem)
         log(f"Loading voice bundle: {name}", "info")
         _DEFAULT_LOADER_ANNOUNCED = True
