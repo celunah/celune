@@ -126,10 +126,10 @@ class UpdaterTests(unittest.TestCase):
                                     ):
                                         update = updater.check_for_update()
         self.assertIsNotNone(update)
-        assert update is not None
-        self.assertEqual(update.local_revision, "aaaaaaa")
-        self.assertEqual(update.latest_revision, "bbbbbbb")
-        self.assertEqual(update.latest_version, "3.5.1")
+        if update is not None:
+            self.assertEqual(update.local_revision, "aaaaaaa")
+            self.assertEqual(update.latest_revision, "bbbbbbb")
+            self.assertEqual(update.latest_version, "3.5.1")
 
     def test_update_to_latest_rejects_unsafe_states(self) -> None:
         """Verify unsafe repository states reject automatic updates.

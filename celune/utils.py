@@ -15,9 +15,10 @@ from pathlib import Path
 from typing import Union, Callable, Optional, Literal, TypedDict, overload
 from collections.abc import Iterator
 
+import psutil
 import langdetect
 
-from celune.constants import REFERENCE_NEW_MOON
+from .constants import REFERENCE_NEW_MOON
 
 
 class CallerInfo(TypedDict):
@@ -727,3 +728,26 @@ def discard(val: object, attr: Optional[str] = None) -> None:
 
     _ = val
     del _
+
+
+def is_port_usable(port: int) -> bool:
+    """Check if a port can be bound.
+
+    Args:
+        port: The port to check.
+
+    Returns:
+        bool: Whether the port can be bound.
+    """
+    try:
+        for conn in psutil.net_connections():
+            laddr = conn.laddr
+
+            if not isinstance(laddr, tuple) and laddr.port == port:
+                return False
+
+        return True
+    except (psutil.Error, OSError):
+        return False
+
+    return False

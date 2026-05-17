@@ -7,10 +7,10 @@ from abc import ABC
 from dataclasses import dataclass, field
 from typing import Any, Protocol, Optional, runtime_checkable
 
-import celune as _celune
-from celune.exceptions import IncompleteExtensionError
+from celune import __version__
+from ..exceptions import IncompleteExtensionError
 
-CELUNE_VERSION = str(getattr(_celune, "__version__", "unknown"))
+CELUNE_VERSION = __version__
 
 
 @runtime_checkable
