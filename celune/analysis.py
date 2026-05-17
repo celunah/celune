@@ -1113,6 +1113,10 @@ def analyze_voice_audio(
     )
 
 
+def _reference_embedding_names() -> set[str]:
+    return set(_available_reference_voices())
+
+
 def _has_reference_embedding(voice: str) -> bool:
     """Does this voice have an embeddding?
 
@@ -1122,12 +1126,7 @@ def _has_reference_embedding(voice: str) -> bool:
     Returns:
         bool: Whether this voice has an embedding included.
     """
-
-    loader = default_loader()
-    if loader is not None:
-        return "pt" in loader.bundle.voices.get(voice, {}).get("assets", {})
-    refs_dir = pathlib.Path(__file__).resolve().parent / "refs"
-    return (refs_dir / f"{voice}.pt").exists()
+    return voice in _reference_embedding_names()
 
 
 def analyze_voice(voice: pathlib.Path) -> None:

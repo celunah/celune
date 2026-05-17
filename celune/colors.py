@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import colorsys
 import random
-from typing import Final
+from typing import Final, cast
 
 from textual.theme import Theme
+from .utils import to_rgb
 
 DEFAULT_BACKGROUND: Final[str] = "#1d1826"
 DEFAULT_ACCENT: Final[str] = "#cebaff"
@@ -28,11 +29,7 @@ def random_hex() -> str:
 
 
 def _rgb(color: str) -> RGB:
-    return (
-        int(color[1:3], 16),
-        int(color[3:5], 16),
-        int(color[5:7], 16),
-    )
+    return cast(RGB, to_rgb(color))
 
 
 def _hex(rgb: RGB) -> str:

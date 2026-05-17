@@ -69,16 +69,11 @@ def _format_git_error(exc: subprocess.CalledProcessError) -> str:
 
 
 def _git_succeeds(args: list[str], timeout: int = 15) -> bool:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=_repo_root(),
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        timeout=timeout,
-    )
-    return result.returncode == 0
+    try:
+        _run_git(args, timeout=timeout)
+        return True
+    except subprocess.CalledProcessError:
+        return False
 
 
 def _short_revision(revision: str) -> str:
@@ -134,23 +129,19 @@ def _latest_remote_tag() -> tuple[str, str]:
     return latest_tag, latest_revision
 
 
-def _remote_head_revision() -> str:
-    output = _run_git(["ls-remote", REMOTE_URL, "HEAD"], timeout=20)
+def _remote_revision(ref: str) -> str:
+    output = _run_git(["ls-remote", REMOTE_URL, ref], timeout=20)
     if not output:
         return ""
-
     return output.split(maxsplit=1)[0]
+
+
+def _remote_head_revision() -> str:
+    return _remote_revision("HEAD")
 
 
 def _remote_branch_revision(branch: str) -> str:
-    output = _run_git(
-        ["ls-remote", REMOTE_URL, f"refs/heads/{branch}"],
-        timeout=20,
-    )
-    if not output:
-        return ""
-
-    return output.split(maxsplit=1)[0]
+    return _remote_revision(f"refs/heads/{branch}")
 
 
 def _current_branch() -> str:

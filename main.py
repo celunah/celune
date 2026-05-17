@@ -279,6 +279,11 @@ def main() -> None:
             sys.exit(ExitCodes.EXIT_NO_ANSI.value)
     except Exception as e:
         if e.__class__ != No:
+            stdout = getattr(sys.stdout, "underlying_stdout", sys.stdout)
+            stderr = getattr(sys.stderr, "underlying_stderr", sys.stderr)
+            sys.stdout = stdout
+            sys.stderr = stderr
+
             print("An internal error occurred while Celune was running.")
             if INITIAL_DEV:
                 with contextlib.suppress(ModuleNotFoundError):

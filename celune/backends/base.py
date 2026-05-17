@@ -3,15 +3,57 @@
 
 from __future__ import annotations
 
+import os
+import glob
+import hashlib
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Optional
 from collections.abc import Iterator
+from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
+from huggingface_hub import snapshot_download
+from huggingface_hub.constants import HF_HUB_CACHE
 
 from ..constants import N_A_NUMERIC
 from ..utils import discard
+from ..exceptions import BackendError
+from ..cevoice import default_loader
+
+
+def cached_hf_snapshot_path(
+    model: str, expected_files: list[str]
+) -> tuple[bool, Optional[str]]:
+    """Return whether a cached Hugging Face cache path for a model is available and usable.
+
+    Args:
+        model: The model ID to return a cache path for.
+        expected_files: The files that are expected to already exist in the cache path, if found.
+
+    Returns:
+        tuple[bool, Optional[str]]: Whether there is a usable cache path for the model, and its location.
+    """
+    model_dir = os.path.join(HF_HUB_CACHE, f"models--{model.replace('/', '--')}")
+    refs_main = os.path.join(model_dir, "refs", "main")
+    snapshot_dir = os.path.join(model_dir, "snapshots")
+
+    if not os.path.exists(refs_main):
+        return False, None
+
+    with open(refs_main, encoding="utf-8") as f:
+        commit = f.read().strip()
+
+    snapshot_path = os.path.join(snapshot_dir, commit)
+    if not os.path.isdir(snapshot_path):
+        return False, None
+
+    if all(
+        glob.glob(os.path.join(snapshot_path, pattern)) for pattern in expected_files
+    ):
+        return True, snapshot_path
+
+    return False, None
 
 
 class CeluneBackend(ABC):
@@ -39,6 +81,49 @@ class CeluneBackend(ABC):
         self.log = log
         self.current_seed: Optional[int] = None
         self.random_seed = True
+
+    @staticmethod
+    def _reference_wave_path(name: str) -> Path:
+        loader = default_loader()
+        if loader is not None:
+            return loader.materialize(name, "wav")
+        return Path(__file__).resolve().parents[1] / "refs" / f"{name}.wav"
+
+    def _validate_refs(self) -> None:
+        loader = default_loader()
+        if loader is not None:
+            for name in loader.bundle.voice_order:
+                loader.materialize(name, "wav")
+            return
+
+        if not self.voice_models:
+            return
+
+        for name in self.voice_models:
+            full_path = self._reference_wave_path(name)
+            try:
+                with open(full_path, "rb") as f:
+                    checksum = hashlib.file_digest(f, "sha256").hexdigest()
+            except FileNotFoundError as e:
+                raise BackendError(f"reference audio for '{name}' not found") from e
+            except PermissionError as e:
+                raise BackendError(f"cannot access reference audio for '{name}'") from e
+
+            checksum_path = f"{os.path.splitext(full_path)[0]}.sha256"
+            if os.path.exists(checksum_path):
+                with open(checksum_path, "r", encoding="utf-8") as f:
+                    expected = f.read().strip()
+
+                if checksum != expected:
+                    self.log(
+                        f"Checksum mismatch for '{name}', output may be affected.",
+                        "warning",
+                    )
+            else:
+                self.log(
+                    f"Checksum not found for '{name}', skipping checksum verification.",
+                    "warning",
+                )
 
     @staticmethod
     @abstractmethod
@@ -172,13 +257,19 @@ class CeluneBackend(ABC):
         """
         self.model = None
 
-    @abstractmethod
     def preload_models(self) -> None:
         """Ensure all required models are available locally.
 
         Returns:
             None: Implementations prepare model assets for later loading.
         """
+        for model_id in self.all_model_ids:
+            available, _ = self.model_is_available_locally(model_id)
+            if not available:
+                self.log(f"Downloading {model_id}...", "info")
+                snapshot_download(repo_id=model_id)
+            else:
+                self.log(f"{model_id} is already available.", "info")
 
     @abstractmethod
     def load_model(self, model_id: str, **kwargs) -> Any:

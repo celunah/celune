@@ -4,12 +4,9 @@
 from __future__ import annotations
 
 import os
-import glob
 import random
 import secrets
-import hashlib
 import contextlib
-from pathlib import Path
 from typing import Callable, Optional
 from collections.abc import Iterator
 
@@ -17,13 +14,10 @@ import torch
 import numpy as np
 import numpy.typing as npt
 from voxcpm import VoxCPM
-from huggingface_hub import snapshot_download
-from huggingface_hub.constants import HF_HUB_CACHE
 
 from . import get_version
-from .base import CeluneBackend
+from .base import CeluneBackend, cached_hf_snapshot_path
 from ..cevoice import default_loader
-from ..exceptions import BackendError
 from ..constants import BASE_SR
 
 
@@ -130,96 +124,14 @@ class VoxCPM2(CeluneBackend):
             tuple[bool, Optional[str]]: A flag indicating cache availability and
                 the resolved snapshot path when present.
         """
-        base = HF_HUB_CACHE
-        model_dir = os.path.join(base, f"models--{model.replace('/', '--')}")
-
-        refs_main = os.path.join(model_dir, "refs", "main")
-        snapshots_dir = os.path.join(model_dir, "snapshots")
-
-        expected_files = [
-            "config.json",
-            "model*.safetensors",
-            "tokenizer_config.json",
-        ]
-
-        if not os.path.exists(refs_main):
-            return False, None
-
-        with open(refs_main, encoding="utf-8") as f:
-            commit = f.read().strip()
-
-        snapshot_path = os.path.join(snapshots_dir, commit)
-
-        if not os.path.isdir(snapshot_path):
-            return False, None
-
-        if all(
-            glob.glob(os.path.join(snapshot_path, pattern))
-            for pattern in expected_files
-        ):
-            return True, snapshot_path
-
-        return False, None
-
-    def preload_models(self) -> None:
-        """Ensure all known voice models are cached locally.
-
-        Returns:
-            None: This method downloads any missing backend models.
-        """
-        for model_id in self.all_model_ids:
-            available, _ = self.model_is_available_locally(model_id)
-            if not available:
-                self.log(f"Downloading {model_id}...", "info")
-                snapshot_download(repo_id=model_id)
-            else:
-                self.log(f"{model_id} is already available.", "info")
-
-    def _validate_refs(self) -> None:
-        """Validate bundled reference audio files.
-
-        Returns:
-            None: This method checks that reference files are accessible and logs
-                checksum status when checksums exist.
-        """
-        loader = default_loader()
-        if loader is not None:
-            for name in loader.bundle.voice_order:
-                loader.materialize(name, "wav")
-            return
-
-        for name in self.voice_models:
-            full_path = self._reference_wave_path(name)
-            try:
-                with open(full_path, "rb") as f:
-                    checksum = hashlib.file_digest(f, "sha256").hexdigest()
-            except FileNotFoundError as e:
-                raise BackendError(f"reference audio for '{name}' not found") from e
-            except PermissionError as e:
-                raise BackendError(f"cannot access reference audio for '{name}'") from e
-
-            checksum_path = f"{os.path.splitext(full_path)[0]}.sha256"
-            if os.path.exists(checksum_path):
-                with open(checksum_path, "r", encoding="utf-8") as f:
-                    expected = f.read().strip()
-
-                if checksum != expected:
-                    self.log(
-                        f"Checksum mismatch for '{name}', output may be affected.",
-                        "warning",
-                    )
-            else:
-                self.log(
-                    f"Checksum not found for '{name}', skipping checksum verification.",
-                    "warning",
-                )
-
-    @staticmethod
-    def _reference_wave_path(name: str) -> Path:
-        loader = default_loader()
-        if loader is not None:
-            return loader.materialize(name, "wav")
-        return Path(__file__).resolve().parents[1] / "refs" / f"{name}.wav"
+        return cached_hf_snapshot_path(
+            model,
+            [
+                "config.json",
+                "model*.safetensors",
+                "tokenizer_config.json",
+            ],
+        )
 
     def load_model(self, model_id: str, **kwargs) -> VoxCPM:
         """Load the given voice model.

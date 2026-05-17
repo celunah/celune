@@ -103,6 +103,12 @@ class CeluneUI(App):
         self._tutorial_token = 0
         self._tutorial_active = False
 
+    def _run_on_ui_thread(self, callback: Callable[[], None]) -> None:
+        if threading.current_thread() is threading.main_thread():
+            callback()
+        else:
+            self.call_from_thread(callback)
+
     def _severity_color(self, severity: str = "info") -> str:
         """Return the current theme color for a log severity.
 
@@ -314,10 +320,7 @@ class CeluneUI(App):
             text = pages[self._resource_page % len(pages)]
             self.resources.update(indent(text, spaces=2, direction="right"))
 
-        if threading.current_thread() is threading.main_thread():
-            update()
-        else:
-            self.call_from_thread(update)
+        self._run_on_ui_thread(update)
 
     def advance_resources(self) -> None:
         """Advance the resource footer to the next page and refresh it.
@@ -396,10 +399,7 @@ class CeluneUI(App):
                 progress=0 if progress is None else progress,
             )
 
-        if threading.current_thread() is threading.main_thread():
-            update()
-        else:
-            self.call_from_thread(update)
+        self._run_on_ui_thread(update)
 
     @staticmethod
     def _with_brightness(color: Color, brightness: float) -> Color:
@@ -553,10 +553,7 @@ class CeluneUI(App):
             self.style_button.disabled = locked
             self.update_resources()
 
-        if threading.current_thread() is threading.main_thread():
-            update()
-        else:
-            self.call_from_thread(update)
+        self._run_on_ui_thread(update)
 
     def change_input_state(self, locked: bool) -> None:
         """Lock or unlock Celune's UI layer.
@@ -581,10 +578,7 @@ class CeluneUI(App):
             self.style_button.disabled = locked
             self.update_resources()
 
-        if threading.current_thread() is threading.main_thread():
-            update()
-        else:
-            self.call_from_thread(update)
+        self._run_on_ui_thread(update)
 
     def safe_status(self, msg: str, severity: str = "info") -> None:
         """Update current status.
@@ -618,10 +612,7 @@ class CeluneUI(App):
             self._refresh_status()
             self.update_resources()
 
-        if threading.current_thread() is threading.main_thread():
-            update()
-        else:
-            self.call_from_thread(update)
+        self._run_on_ui_thread(update)
 
     def safe_log(self, msg: str, severity: str = "info") -> None:
         """Log a message.
@@ -1145,10 +1136,7 @@ class CeluneUI(App):
         if SIGTSTP is not None and sig == SIGTSTP:
             return
 
-        if threading.current_thread() is threading.main_thread():
-            self.call_later(self._graceful_exit)
-        else:
-            self.call_from_thread(self._graceful_exit)
+        self._run_on_ui_thread(self._graceful_exit)
 
     @property
     def tutorial_token(self) -> int:
