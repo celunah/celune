@@ -25,19 +25,25 @@ class RuntimeTests(unittest.TestCase):
         Raises:
             AssertionError: Runtime detection changes unexpectedly.
         """
-        with mock.patch("celune.runtime.torch.cuda.is_available", return_value=False):
-            with mock.patch(
+        with (
+            mock.patch("celune.runtime.torch.cuda.is_available", return_value=False),
+            mock.patch(
                 "celune.runtime.torch.backends.mps.is_available", return_value=False
-            ):
-                self.assertEqual(runtime.check_supported_backends(), ("CPU", False))
+            ),
+        ):
+            self.assertEqual(runtime.check_supported_backends(), ("CPU", False))
 
-        with mock.patch("celune.runtime.torch.cuda.is_available", return_value=True):
-            with mock.patch.object(runtime.torch.version, "hip", None):
-                self.assertEqual(runtime.check_supported_backends(), ("CUDA", True))
+        with (
+            mock.patch("celune.runtime.torch.cuda.is_available", return_value=True),
+            mock.patch.object(runtime.torch.version, "hip", None),
+        ):
+            self.assertEqual(runtime.check_supported_backends(), ("CUDA", True))
 
-        with mock.patch("celune.runtime.torch.cuda.is_available", return_value=True):
-            with mock.patch.object(runtime.torch.version, "hip", "6.0"):
-                self.assertEqual(runtime.check_supported_backends(), ("ROCm", False))
+        with (
+            mock.patch("celune.runtime.torch.cuda.is_available", return_value=True),
+            mock.patch.object(runtime.torch.version, "hip", "6.0"),
+        ):
+            self.assertEqual(runtime.check_supported_backends(), ("ROCm", False))
 
     def test_validate_runtime_rejects_unsupported_backends_without_cuda_work(
         self,
@@ -57,21 +63,23 @@ class RuntimeTests(unittest.TestCase):
         def log(msg: str, severity: str) -> None:
             logs.append((msg, severity))
 
-        with mock.patch("celune.runtime.sys.version_info", (3, 12, 0)):
-            with mock.patch(
+        with (
+            mock.patch("celune.runtime.sys.version_info", (3, 12, 0)),
+            mock.patch(
                 "celune.runtime.check_supported_backends", return_value=("CPU", False)
-            ):
-                self.assertEqual(
-                    runtime.validate_runtime(
-                        log,
-                        errors.append,
-                        states.append,
-                        False,
-                        lambda exc, dev: str(exc),
-                        False,
-                    ),
+            ),
+        ):
+            self.assertEqual(
+                runtime.validate_runtime(
+                    log,
+                    errors.append,
+                    states.append,
                     False,
-                )
+                    lambda exc, dev: str(exc),
+                    False,
+                ),
+                False,
+            )
         self.assertEqual(errors, ["No supported backend found"])
         self.assertEqual(states, ["error"])
 

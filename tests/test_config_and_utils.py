@@ -141,12 +141,14 @@ class UtilsTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             utils.custom_assert(False, "invalid")  # type: ignore[arg-type]
 
-        with mock.patch("celune.utils.langdetect.detect", return_value="en"):
-            with mock.patch(
+        with (
+            mock.patch("celune.utils.langdetect.detect", return_value="en"),
+            mock.patch(
                 "celune.utils.langdetect.detect_langs",
                 return_value=[mock.Mock(lang="en", prob=0.9)],
-            ):
-                result = utils.detect_language("Hello", ["en"])
+            ),
+        ):
+            result = utils.detect_language("Hello", ["en"])
         self.assertEqual(result["language"], "en")
         self.assertEqual(result["supported"], True)
 
@@ -157,12 +159,14 @@ class UtilsTests(unittest.TestCase):
             result = utils.detect_language("", ["en"])
         self.assertEqual(result["probabilities"], {"en": 1.0})
 
-        with mock.patch("celune.utils.random.random", return_value=0.0):
-            with mock.patch("celune.utils.random.choice", return_value="celine"):
-                self.assertEqual(
-                    utils.rng_replace("CELUNE Celune celune", ["celune"], ["celine"]),
-                    "CELINE Celine celine",
-                )
+        with (
+            mock.patch("celune.utils.random.random", return_value=0.0),
+            mock.patch("celune.utils.random.choice", return_value="celine"),
+        ):
+            self.assertEqual(
+                utils.rng_replace("CELUNE Celune celune", ["celune"], ["celine"]),
+                "CELINE Celine celine",
+            )
 
     def test_discard_can_clear_attributes(self) -> None:
         """Verify ``discard`` consumes values and clears attributes.

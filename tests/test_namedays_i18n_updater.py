@@ -90,10 +90,12 @@ class UpdaterTests(unittest.TestCase):
         Raises:
             AssertionError: Update suppression behavior changes unexpectedly.
         """
-        with mock.patch("celune.updater._is_git_checkout", return_value=True):
-            with mock.patch("celune.updater._current_branch", return_value="main"):
-                with mock.patch("celune.updater._has_local_changes", return_value=True):
-                    self.assertIsNone(updater.check_for_update())
+        with (
+            mock.patch("celune.updater._is_git_checkout", return_value=True),
+            mock.patch("celune.updater._current_branch", return_value="main"),
+            mock.patch("celune.updater._has_local_changes", return_value=True),
+        ):
+            self.assertIsNone(updater.check_for_update())
 
     def test_check_for_update_builds_update_info(self) -> None:
         """Verify update metadata assembly for a newer revision.
@@ -104,27 +106,23 @@ class UpdaterTests(unittest.TestCase):
         Raises:
             AssertionError: Update metadata behavior changes unexpectedly.
         """
-        with mock.patch.dict("os.environ", {}, clear=True):
-            with mock.patch("celune.updater._is_git_checkout", return_value=True):
-                with mock.patch("celune.updater._current_branch", return_value="main"):
-                    with mock.patch(
-                        "celune.updater._has_local_changes", return_value=False
-                    ):
-                        with mock.patch(
-                            "celune.updater._local_revision", return_value="a" * 40
-                        ):
-                            with mock.patch(
-                                "celune.updater._local_tag", return_value="3.5.0"
-                            ):
-                                with mock.patch(
-                                    "celune.updater._remote_branch_revision",
-                                    return_value="b" * 40,
-                                ):
-                                    with mock.patch(
-                                        "celune.updater._latest_remote_tag",
-                                        return_value=("3.5.1", "c" * 40),
-                                    ):
-                                        update = updater.check_for_update()
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch("celune.updater._is_git_checkout", return_value=True),
+            mock.patch("celune.updater._current_branch", return_value="main"),
+            mock.patch("celune.updater._has_local_changes", return_value=False),
+            mock.patch("celune.updater._local_revision", return_value="a" * 40),
+            mock.patch("celune.updater._local_tag", return_value="3.5.0"),
+            mock.patch(
+                "celune.updater._remote_branch_revision",
+                return_value="b" * 40,
+            ),
+            mock.patch(
+                "celune.updater._latest_remote_tag",
+                return_value=("3.5.1", "c" * 40),
+            ),
+        ):
+            update = updater.check_for_update()
         self.assertIsNotNone(update)
         if update is not None:
             self.assertEqual(update.local_revision, "aaaaaaa")
@@ -140,20 +138,26 @@ class UpdaterTests(unittest.TestCase):
         Raises:
             AssertionError: Update safety behavior changes unexpectedly.
         """
-        with mock.patch("celune.updater._is_git_checkout", return_value=False):
-            with self.assertRaisesRegex(updater.UpdateError, "did not find"):
-                updater.update_to_latest()
+        with (
+            mock.patch("celune.updater._is_git_checkout", return_value=False),
+            self.assertRaisesRegex(updater.UpdateError, "did not find"),
+        ):
+            updater.update_to_latest()
 
-        with mock.patch("celune.updater._is_git_checkout", return_value=True):
-            with mock.patch("celune.updater._has_local_changes", return_value=True):
-                with self.assertRaisesRegex(updater.UpdateError, "not committed"):
-                    updater.update_to_latest()
+        with (
+            mock.patch("celune.updater._is_git_checkout", return_value=True),
+            mock.patch("celune.updater._has_local_changes", return_value=True),
+            self.assertRaisesRegex(updater.UpdateError, "not committed"),
+        ):
+            updater.update_to_latest()
 
-        with mock.patch("celune.updater._is_git_checkout", return_value=True):
-            with mock.patch("celune.updater._has_local_changes", return_value=False):
-                with mock.patch(
-                    "celune.updater._current_branch",
-                    side_effect=subprocess.TimeoutExpired("git", 5),
-                ):
-                    with self.assertRaisesRegex(updater.UpdateError, "timed out"):
-                        updater.update_to_latest()
+        with (
+            mock.patch("celune.updater._is_git_checkout", return_value=True),
+            mock.patch("celune.updater._has_local_changes", return_value=False),
+            mock.patch(
+                "celune.updater._current_branch",
+                side_effect=subprocess.TimeoutExpired("git", 5),
+            ),
+            self.assertRaisesRegex(updater.UpdateError, "timed out"),
+        ):
+            updater.update_to_latest()
