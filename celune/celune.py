@@ -749,6 +749,7 @@ class Celune:
                 "warning",
             )
             token = None
+            host = "127.0.0.1"
         try:
             port = int(api_config.get("port", 2060))
         except (TypeError, ValueError):
