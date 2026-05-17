@@ -128,6 +128,8 @@ class ProgressCallback(Protocol):
 class Celune:
     """The character engine for Celune."""
 
+    _instance: Optional["Celune"] = None
+
     def __init__(
         self,
         config: dict[str, Any],
@@ -146,6 +148,11 @@ class Celune:
         progress_callback: Optional[ProgressCallback] = None,
         dev: bool = False,
     ) -> None:
+        if Celune._instance is not None:
+            raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
+
+        Celune._instance = self
+
         if tts_backend is None:
             raise BackendError("no backend set")
 

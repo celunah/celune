@@ -46,11 +46,16 @@ class CeluneUI(App):
     """Celune's user interface."""
 
     ENABLE_COMMAND_PALETTE = False
-
     CSS = CELUNE_CSS
+    _instance: Optional["CeluneUI"] = None
 
     def __init__(self) -> None:
         super().__init__()
+
+        if CeluneUI._instance is not None:
+            raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
+
+        CeluneUI._instance = self
 
         self.logs = cast(RichLog, None)
         self.input_box = cast(TextArea, None)
