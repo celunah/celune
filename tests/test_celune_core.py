@@ -28,9 +28,11 @@ class CeluneCoreTests(unittest.TestCase):
         Raises:
             BackendError: Celune initialization rejects the supplied config.
         """
-        with mock.patch("celune.celune.AudioRGBGlow", FakeGlow):
-            with mock.patch("celune.celune.default_loader", return_value=None):
-                return Celune(config=config, tts_backend=FakeBackend)
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+        ):
+            return Celune(config=config, tts_backend=FakeBackend)
 
     def test_constructor_validates_backend_and_chunk_size(self) -> None:
         """Verify constructor validation and derived chunk size behavior.
@@ -48,14 +50,16 @@ class CeluneCoreTests(unittest.TestCase):
         self.assertEqual(celune.chunk_size, 8)
         self.assertEqual(getattr(celune.glow, "started"), True)
 
-        with mock.patch("celune.celune.AudioRGBGlow", FakeGlow):
-            with mock.patch("celune.celune.default_loader", return_value=None):
-                with self.assertRaisesRegex(BackendError, "invalid chunk length"):
-                    Celune(
-                        config={},
-                        tts_backend=FakeBackend,
-                        target_chunk_length=0.65,
-                    )
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            self.assertRaisesRegex(BackendError, "invalid chunk length"),
+        ):
+            Celune(
+                config={},
+                tts_backend=FakeBackend,
+                target_chunk_length=0.65,
+            )
 
     def test_voice_loading_uses_backend_and_bundle_defaults(self) -> None:
         """Verify backend voices and bundle metadata determine defaults.
@@ -110,7 +114,7 @@ class CeluneCoreTests(unittest.TestCase):
 
         self.assertEqual(
             celune._api_settings(),
-            (True, "0.0.0.0", 2060, None, 60),
+            (True, "127.0.0.1", 2060, None, 60),
         )
         self.assertEqual(logs[-2][1], "warning")
         self.assertEqual(logs[-1][1], "warning")
@@ -131,13 +135,13 @@ class CeluneCoreTests(unittest.TestCase):
         celune.backend.preload_models = mock.Mock()
         celune.backend.load_default_model = mock.Mock(return_value={"model": "ok"})
         celune.backend.model_id_for_voice = mock.Mock(return_value="fake/balanced")
-        with mock.patch("celune.celune.threading.Thread") as thread_cls:
+        with (
+            mock.patch("celune.celune.threading.Thread") as thread_cls,
+            mock.patch("celune.celune.validate_runtime", return_value=True),
+            mock.patch("celune.celune.play_readiness_signal", return_value=False),
+        ):
             thread_cls.return_value.start = mock.Mock()
-            with mock.patch("celune.celune.validate_runtime", return_value=True):
-                with mock.patch(
-                    "celune.celune.play_readiness_signal", return_value=False
-                ):
-                    self.assertEqual(celune.load(), True)
+            self.assertEqual(celune.load(), True)
         self.assertEqual(celune.loaded, True)
         self.assertEqual(getattr(celune.glow, "entered"), True)
 
