@@ -90,7 +90,11 @@ class CEVoice:
 
     @property
     def voice_order(self) -> tuple[str, ...]:
-        """Return the preferred user-facing voice order."""
+        """Return the preferred user-facing voice order.
+
+        Returns:
+            tuple[str, ...]: The preferred user-facing voice order.
+        """
         order = self.metadata.get("voice_order")
         if isinstance(order, list) and all(isinstance(voice, str) for voice in order):
             return tuple(order)
