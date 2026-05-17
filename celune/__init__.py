@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: MIT
 """Celune main package."""
 
-import sys
+import sys as _sys
 
-from .utils import get_revision, caller_is_repl
+from .utils import caller_is_repl as _caller_is_repl
+from .utils import get_revision as _get_revision
 
-REVISION = get_revision()
+REVISION = _get_revision()
 if REVISION:
-    local = REVISION.rstrip("*")
-    dirty = ".dirty" if REVISION.endswith("*") else ""
-    __version__ = f"3.5.0+{local}{dirty}"
+    _local = REVISION.rstrip("*")
+    _dirty = ".dirty" if REVISION.endswith("*") else ""
+    __version__ = f"3.5.0+{_local}{_dirty}"
 else:
     __version__ = "3.5.0"
 
@@ -17,7 +18,7 @@ __tagline__ = "\u201cYour voice, your way.\u201d"
 __codename__ = "Guidance"
 __comment__ = "My vocal prowess can be easily harnessed by beginners."
 
-if hasattr(sys, "ps1"):
+if hasattr(_sys, "ps1"):
     print("Caution: You are running the Celune backend interactively.")
     print("This is not an intended mode of operation, usage may differ.")
     print()
@@ -34,11 +35,18 @@ try:
         "Celune",
         "CeluneContext",
         "CeluneExtension",
+        "REVISION",
         "__version__",
+        "__tagline__",
         "__codename__",
         "__comment__",
     ]
 except ModuleNotFoundError as package:
-    if caller_is_repl():
+    if _caller_is_repl():
         print(f"Missing dependency: {package.name}")
         print("Some functionality may be unavailable.")
+
+
+def __dir__() -> list[str]:
+    """Return Celune's intentionally public package surface for REPL users."""
+    return sorted(__all__)

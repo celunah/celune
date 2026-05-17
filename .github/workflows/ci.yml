@@ -5,7 +5,6 @@ on:
     branches:
       - main
       - dev
-      - release/*
   pull_request:
     branches:
       - main
@@ -36,14 +35,16 @@ jobs:
         run: |
           uv run pylint celune
           uv run pylint tests
+          uv run pylint main.py
 
       - name: Type check
         run: |
           uv run pyright celune
           uv run pyright tests
+          uv run pyright main.py
 
       - name: Run unit tests
-        run: uv run pytest tests
+        run: uv run pytest -v tests
 
       - name: Import smoke test
         run: |
