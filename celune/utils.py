@@ -695,7 +695,7 @@ def rng_replace(
             return target.upper()
 
         if source[:1].isupper():
-            return target[:1].upper() + target[1:]
+            return title_case(target)
 
         return target.lower()
 
@@ -703,12 +703,13 @@ def rng_replace(
 
 
 @overload
-def discard(val: object) -> None: ...
+def discard(val: object) -> None:
+    """Overload #1 for the implementation of celune.utils.discard()."""
 
 
 @overload
 def discard(val: object, attr: str) -> None:
-    """Overload for the implementation of celune.utils.discard()."""
+    """Overload #2 for the implementation of celune.utils.discard()."""
 
 
 def discard(val: object, attr: Optional[str] = None) -> None:
