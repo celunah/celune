@@ -2,12 +2,12 @@
 """Tests for runtime validation and lightweight UI commands."""
 
 import unittest
-from types import SimpleNamespace
 from typing import cast
 from unittest import mock
+from types import SimpleNamespace
 
-from celune.backends.qwen3 import Qwen3
 from celune import runtime
+from celune.backends.qwen3 import Qwen3
 from celune.ui.commands import process_command
 
 from celune.ui.app import CeluneUI

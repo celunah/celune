@@ -6,9 +6,9 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
-from pathlib import Path
 
 from . import __version__
 from .exceptions import UpdateError

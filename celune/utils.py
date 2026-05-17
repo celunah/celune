@@ -12,8 +12,8 @@ import traceback
 import subprocess
 import multiprocessing
 from pathlib import Path
-from typing import Union, Callable, Optional, Literal, TypedDict, overload
 from collections.abc import Iterator
+from typing import Union, Callable, Optional, Literal, TypedDict, overload
 
 import psutil
 import langdetect
@@ -91,7 +91,7 @@ def format_number(num: float, precision: int = 0, fallback: str = "N/A") -> str:
     return text or "0"
 
 
-def to_rgb(color: str) -> tuple[int, ...]:
+def to_rgb(color: str) -> tuple[int, int, int]:
     """Convert a hexadecimal color code to an RGB tuple.
 
     Args:
@@ -116,7 +116,11 @@ def to_rgb(color: str) -> tuple[int, ...]:
     if len(color) != 6 or any(c.lower() not in "0123456789abcdef" for c in color):
         raise ValueError(f"expected a 3 or 6-character hex code, found {color}")
 
-    return tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))
+    return (
+        int(color[0:2], 16),
+        int(color[2:4], 16),
+        int(color[4:6], 16),
+    )
 
 
 def lunar_info(dt: datetime.datetime) -> tuple[float, float, float]:

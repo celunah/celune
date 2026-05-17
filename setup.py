@@ -5,8 +5,8 @@
 No, this is not a setuptools remnant, this is Celune's bootstrapper.
 """
 
-import sys
 import os
+import sys
 import shutil
 import tomllib
 import platform

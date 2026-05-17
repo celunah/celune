@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
 from typing import Union
+from datetime import date, datetime
 from collections.abc import Iterator
 
 NAME_DAYS: dict[str, list[str]] = {

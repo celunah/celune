@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
-import colorsys
 import random
+import colorsys
 from typing import Final, cast
 
 from textual.theme import Theme
+
 from .utils import to_rgb
 
 DEFAULT_BACKGROUND: Final[str] = "#1d1826"

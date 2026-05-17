@@ -5,10 +5,10 @@ import json
 import queue
 import tempfile
 import unittest
-from pathlib import Path
-from types import SimpleNamespace
 from typing import cast
+from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
 
 import numpy as np
 import soundfile as sf

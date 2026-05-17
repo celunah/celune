@@ -3,13 +3,13 @@
 
 import tempfile
 import textwrap
-import threading
 import unittest
+import threading
 from pathlib import Path
 
 from celune.backends import resolve_backend
-from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.extensions.manager import CeluneExtensionManager
+from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.exceptions import ExtensionAlreadyRegisteredError, InvalidExtensionError
 
 from tests.support import FakeBackend

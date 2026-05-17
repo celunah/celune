@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Textual theme assets."""
 
-from .. import colors
+from ..colors import SEVERITY_COLORS
 
 CELUNE_CSS = """
     Screen {
@@ -159,5 +159,5 @@ def severity_color(theme_name: str, severity: str = "info") -> str:
     Returns:
         str: The configured UI severity color for this theme.
     """
-    palette = colors.SEVERITY_COLORS.get(theme_name, colors.SEVERITY_COLORS["celune"])
+    palette = SEVERITY_COLORS.get(theme_name, SEVERITY_COLORS["celune"])
     return palette.get(severity, palette["info"])

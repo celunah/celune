@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-import atexit
-import hashlib
 import json
 import shutil
 import struct
+import atexit
+import hashlib
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, BinaryIO, Callable, Mapping, Optional, Union
 
 from .exceptions import CEVoiceError

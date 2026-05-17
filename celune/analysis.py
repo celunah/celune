@@ -18,8 +18,8 @@ from matplotlib import colors as mcolors
 from matplotlib.projections import PolarAxes
 from transformers import AutoModel, AutoProcessor
 
-from .constants import VOICE_EMBEDDING_MODEL
 from .cevoice import default_loader
+from .constants import VOICE_EMBEDDING_MODEL, N_A_NUMERIC
 
 matplotlib.use("Agg")
 
@@ -230,8 +230,8 @@ def compute_raw_metrics(y: npt.NDArray[np.float32], sr: int) -> dict:
         metrics["pitch_variance"] = float(np.nanvar(voiced_f0))
         metrics["pitch_extraction_ok"] = True
     else:
-        metrics["pitch_mean_hz"] = float("nan")
-        metrics["pitch_variance"] = float("nan")
+        metrics["pitch_mean_hz"] = N_A_NUMERIC
+        metrics["pitch_variance"] = N_A_NUMERIC
         metrics["pitch_extraction_ok"] = False
 
     metrics["voiced_ratio"] = float(np.mean(voiced_flag))

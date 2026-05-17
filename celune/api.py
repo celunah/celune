@@ -1,29 +1,29 @@
 # SPDX-License-Identifier: MIT
 """Celune's API layer."""
 
-import datetime
-import io
 import os
-import queue
-import threading
+import io
 import time
 import uuid
-from collections import defaultdict, deque
+import queue
+import datetime
+import threading
 from hmac import compare_digest
+from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, Union
 
+import uvicorn
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
-import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from . import __version__
-from .dsp import _resample_audio
-from .utils import format_error
 from .constants import BASE_SR
+from .utils import format_error
+from .dsp import _resample_audio
 
 if TYPE_CHECKING:
     from .celune import Celune
