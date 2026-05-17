@@ -150,6 +150,14 @@ CELUNE_CSS = """
 
 
 def severity_color(theme_name: str, severity: str = "info") -> str:
-    """Return the configured color for a UI severity."""
+    """Return the configured color for a UI severity.
+
+    Args:
+        theme_name: The theme name to get colors from.
+        severity: The UI severity to get colors for.
+
+    Returns:
+        str: The configured UI severity color for this theme.
+    """
     palette = colors.SEVERITY_COLORS.get(theme_name, colors.SEVERITY_COLORS["celune"])
     return palette.get(severity, palette["info"])

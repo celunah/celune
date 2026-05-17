@@ -5,9 +5,9 @@ import datetime
 import io
 import os
 import queue
-import struct
 import threading
 import time
+import uuid
 from collections import defaultdict, deque
 from hmac import compare_digest
 from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, Union
@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import __version__
-from .dsp import _resample_audio, _split
+from .dsp import _resample_audio
 from .utils import format_error
 from .constants import BASE_SR
 
@@ -49,7 +49,14 @@ class StartedServer(uvicorn.Server):
         self.on_started = on_started
 
     async def startup(self, sockets: Optional[list[Any]] = None) -> None:
-        """Run Uvicorn startup and report only after the server is listening."""
+        """Run Uvicorn startup and report only after the server is listening.
+
+        Args:
+            sockets: A list of sockets to bind the server to.
+
+        Returns:
+            None: This method starts the server and announces a startup event.
+        """
         await super().startup(sockets=sockets)
         if self.started and self.on_started is not None:
             self.on_started()
@@ -72,7 +79,15 @@ def configure_api_security(
     token: Optional[str] = None,
     requests_per_minute: int = 60,
 ) -> None:
-    """Configure API authentication and rate limiting."""
+    """Configure API authentication and rate limiting.
+
+    Args:
+        token: A required token to send requests.
+        requests_per_minute: The max amount of requests per minute the user is allowed to send.
+
+    Returns:
+        None: This method configures API security configuration.
+    """
     global auth_token, rate_limit_per_minute
 
     auth_token = _clean_token(token) or _env_auth_token()
@@ -82,7 +97,15 @@ def configure_api_security(
 
 
 def resolve_api_host(token: Optional[str] = None, host: Optional[str] = None) -> str:
-    """Resolve the API bind host from authentication state."""
+    """Resolve the API bind host from authentication state.
+
+    Args:
+        token: The token set up with the API.
+        host: The host name or address explicitly set by the user.
+
+    Returns:
+        str: The host name or address the API is using.
+    """
     if host:
         return host
     configured_token = _clean_token(token) or _env_auth_token()
@@ -138,7 +161,15 @@ def _rate_limited(request: Request) -> bool:
 
 @api.middleware("http")
 async def api_security(request: Request, call_next: Any) -> Any:
-    """Apply token authentication and a simple per-client rate limit."""
+    """Apply token authentication and a simple per-client rate limit.
+
+    Args:
+        request: The request that should be protected.
+        call_next: What to run if security checks have passed.
+
+    Returns:
+        Any: The return value of the specified function.
+    """
     if not _authenticated(request):
         return JSONResponse(
             status_code=401,
@@ -169,13 +200,27 @@ async def api_security(request: Request, call_next: Any) -> Any:
 
 
 def bind_celune(celune: "Celune") -> None:
-    """Bind the running Celune instance to API routes."""
+    """Bind the running Celune instance to API routes.
+
+    Args:
+        celune: The instance of Celune to bind.
+
+    Returns:
+        None: This method binds Celune to an API route.
+    """
     global bound_celune
     bound_celune = celune
 
 
 def require_celune() -> "Celune":
-    """Return the bound Celune instance or fail the request."""
+    """Return the bound Celune instance or fail the request.
+
+    Returns:
+        Celune: The bound Celune instance set for the request.
+
+    Raises:
+        HTTPException: The user has requested an API route that required Celune, but Celune wasn't available.
+    """
     if bound_celune is None:
         raise HTTPException(
             status_code=503,
@@ -185,7 +230,16 @@ def require_celune() -> "Celune":
 
 
 def api_log(action: str, content: str, suffix: str = "") -> None:
-    """Print the API control log line."""
+    """Print the API control log line.
+
+    Args:
+        action: The request made by the user.
+        content: The request body sent by the user.
+        suffix: The suffix to append to the log line.
+
+    Returns:
+        None: This method prints the log line to any configured logger or terminal.
+    """
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     preview = content.replace("\n", "\\n").replace("\r", "\\r")[:64]
     if len(content) > 64:
@@ -193,54 +247,40 @@ def api_log(action: str, content: str, suffix: str = "") -> None:
     print(f"[{timestamp}] {action} {preview!r}{suffix}", flush=True)
 
 
-def wav_header() -> bytes:
-    """Return a streamable 48 kHz stereo PCM24 WAV header."""
-    channels = 2
-    sample_rate = BASE_SR
-    bits_per_sample = 24
-    block_align = channels * bits_per_sample // 8
-    byte_rate = sample_rate * block_align
-    unknown_size = 0xFFFFFFFF
+def _normalized_audio(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    """Return stereo audio in frame-major form for file encoding."""
+    normalized = np.asarray(audio, dtype=np.float32)
+    if normalized.ndim == 2 and normalized.shape[0] == 2 and normalized.shape[1] != 2:
+        return normalized.T
+    return normalized
 
-    return b"".join(
-        (
-            b"RIFF",  # RIFF header
-            struct.pack("<I", unknown_size),  # treat as stream
-            b"WAVE",  # WAV file
-            b"fmt ",  # format
-            struct.pack(
-                "<IHHIIHH",
-                16,
-                1,
-                channels,  # stereo
-                sample_rate,  # 48 kHz
-                byte_rate,  # 48 kHz * 2 channels * 24 bits // 8
-                block_align,  # 2 channels * 24 bits // 8
-                bits_per_sample,  # 24 bits
-            ),
-            b"data",  # data
-            struct.pack("<I", unknown_size),  # PCM data
-        )
+
+def _flac_bytes(audio: npt.NDArray[np.float32]) -> bytes:
+    """Encode 48 kHz audio as PCM24 FLAC bytes."""
+    buffer = io.BytesIO()
+    sf.write(
+        buffer,
+        _normalized_audio(audio),
+        BASE_SR,
+        format="FLAC",
+        subtype="PCM_24",
     )
-
-
-def float32_to_pcm24(audio: npt.NDArray[np.float32]) -> bytes:
-    """Convert normalized float32 audio to signed 24-bit little-endian PCM."""
-    audio = np.asarray(audio, dtype=np.float32)
-
-    if audio.ndim == 2 and audio.shape[0] == 2 and audio.shape[1] != 2:
-        audio = audio.T
-
-    clipped = np.clip(np.asarray(audio, dtype=np.float32), -1.0, 1.0)
-    scaled = np.where(clipped < 0.0, clipped * 8388608.0, clipped * 8388607.0)
-    pcm32 = scaled.astype("<i4", copy=False).reshape(-1)
-    pcm8 = pcm32.view(np.uint8).reshape(-1, 4)
-    return np.ascontiguousarray(pcm8[:, :3]).tobytes()
+    return buffer.getvalue()
 
 
 def audio_bytes(chunks: queue.Queue) -> Iterator[bytes]:
-    """Yield a WAV stream from 48 kHz stereo float32 audio chunks."""
-    yield wav_header()
+    """Yield one FLAC payload from queued 48 kHz stereo float32 chunks.
+
+    Args:
+        chunks: A queue of audio chunks.
+
+    Returns:
+        Iterator[bytes]: The audio chunk from the queue as raw bytes.
+
+    Raises:
+        Exception: The stream was interrupted by Celune.
+    """
+    audio_chunks: list[npt.NDArray[np.float32]] = []
     while True:
         item = chunks.get()
         if item is None:
@@ -248,13 +288,22 @@ def audio_bytes(chunks: queue.Queue) -> Iterator[bytes]:
         if isinstance(item, Exception):
             raise item
 
-        yield float32_to_pcm24(item)
+        audio_chunks.append(_normalized_audio(item))
+
+    if audio_chunks:
+        yield _flac_bytes(np.concatenate(audio_chunks))
+    else:
+        yield _flac_bytes(np.empty((0, 2), dtype=np.float32))
 
 
 def stream_headers() -> dict[str, str]:
-    """Return headers describing the WAV stream."""
+    """Return headers describing the FLAC response.
+
+    Returns:
+        dict[str, str]: Response headers for a FLAC response.
+    """
     return {
-        "X-Audio-Format": "wav-pcm24",
+        "X-Audio-Format": "flac-pcm24",
         "X-Sample-Rate": str(BASE_SR),
         "X-Channels": "2",
     }
@@ -317,7 +366,15 @@ def version() -> VersionResponse:
 
 @api.post("/v1/speak", response_model=None)
 def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
-    """Queue speech and stream generated audio chunks back to the caller."""
+    """Queue speech and stream generated audio chunks back to the caller.
+
+    Args:
+        body: A speech request body.
+
+    Returns:
+        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload if
+            generation failed.
+    """
     celune = require_celune()
     api_log("SPEAK", body.content)
     chunks = celune.say_stream(body.content, save=body.save)
@@ -332,14 +389,22 @@ def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
 
     return StreamingResponse(
         audio_bytes(chunks),
-        media_type="audio/wav",
+        media_type="audio/flac",
         headers=stream_headers(),
     )
 
 
 @api.post("/v1/voice", response_model=ActionResponse)
 def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
-    """Change Celune's active voice."""
+    """Change Celune's active voice.
+
+    Args:
+        body: A voice change request body.
+
+    Returns:
+        Union[ActionResponse, JSONResponse]: The voice change response, or a JSON error payload if
+            the voice change failed.
+    """
     celune = require_celune()
     api_log("VOICE", body.voice_name)
 
@@ -348,7 +413,7 @@ def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
             status_code=400,
             content={
                 "error": "invalid_value",
-                "message": "I am not able to speak in that tone.",
+                "message": "I don't know how to speak in that voice.",
             },
         )
 
@@ -357,7 +422,7 @@ def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
             status_code=500,
             content={
                 "error": "request_failed",
-                "message": "I can't change my tone right now.",
+                "message": "I can't change my voice right now.",
             },
         )
 
@@ -369,9 +434,18 @@ async def sfx(
     file: UploadFile = File(...),
     keep: bool = Form(True),
 ) -> Union[StreamingResponse, JSONResponse]:
-    """Play an uploaded SFX file and stream the audio chunks back to the caller."""
+    """Play an uploaded sound effect file and stream the audio chunks back to the caller.
+
+    Args:
+        file: The sound effect file to use with the request.
+        keep: Whether Celune should hold this sound effect until the next utterance.
+
+    Returns:
+        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload if
+            playback failed.
+    """
     celune = require_celune()
-    filename = file.filename or "uploaded SFX"
+    filename = file.filename or f"sfx_{uuid.uuid4()}"
     api_log("SFX", filename, f" (keep={keep})")
 
     data = await file.read(max_sfx_upload_bytes + 1)
@@ -406,14 +480,11 @@ async def sfx(
         )
 
     def chunks() -> Iterator[bytes]:
-        """Yield the uploaded SFX as 48 kHz stereo float32 chunks."""
-        yield wav_header()
-        for chunk in _split(audio, BASE_SR, celune.chunk_size):
-            yield float32_to_pcm24(chunk)
+        yield _flac_bytes(audio)
 
     return StreamingResponse(
         chunks(),
-        media_type="audio/wav",
+        media_type="audio/flac",
         headers=stream_headers(),
     )
 

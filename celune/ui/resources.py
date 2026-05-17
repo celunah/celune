@@ -22,7 +22,11 @@ _NVIDIA_SMI_USAGE: Optional[int] = None
 
 
 def format_vram() -> str:
-    """Return available CUDA memory in a compact display format."""
+    """Return available CUDA memory in a compact display format.
+
+    Returns:
+        str: The formatted CUDA memory usage.
+    """
     if not torch.cuda.is_available():
         return "VRAM: nothing to fetch"
 
@@ -36,7 +40,11 @@ def format_vram() -> str:
 
 
 def gpu_usage() -> Optional[int]:
-    """Read GPU utilization from nvidia-smi when it is available."""
+    """Read GPU utilization from nvidia-smi when it is available.
+
+    Returns:
+        Optional[int]: The GPU utilization, or ``None`` if unavailable.
+    """
     global _NVIDIA_SMI_PROC, _NVIDIA_SMI_USAGE  # pylint: disable=global-statement
 
     if not _NVIDIA_SMI:
@@ -84,7 +92,11 @@ def gpu_usage() -> Optional[int]:
 
 
 def format_usage() -> str:
-    """Return CPU/GPU utilization in a compact display format."""
+    """Return CPU/GPU utilization in a compact display format.
+
+    Returns:
+        str: The formatted CPU/GPU utilization.
+    """
     cpu = psutil.cpu_percent(interval=None)
     gpu = gpu_usage()
     gpu_text = f"{gpu}%" if gpu is not None else "N/A"
@@ -92,18 +104,37 @@ def format_usage() -> str:
 
 
 def prime_usage() -> None:
-    """Prime psutil CPU sampling for later footer updates."""
+    """Prime psutil CPU sampling for later footer updates.
+
+    Returns:
+        None: This method primes psutil so Celune can update the footer later.
+    """
     psutil.cpu_percent(interval=None)
 
 
 def format_seed(celune: Celune) -> str:
-    """Return the current backend seed when Celune exposes one."""
+    """Return the current backend seed when Celune exposes one.
+
+    Args:
+        celune: The instance of Celune to get the generation seed from.
+
+    Returns:
+        str: The formatted seed for UI displays.
+    """
     seed = getattr(celune.backend, "current_seed", None)
     return f"Seed: {seed}" if seed is not None else "Seed: N/A"
 
 
 def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[str, ...]:
-    """Return resource footer pages in their display order."""
+    """Return resource footer pages in their display order.
+
+    Args:
+        celune: The instance of Celune to get relevant data from.
+        theme_name: The current theme name.
+
+    Returns:
+        tuple[str, ...]: A variable amount of resource pages formatted as text.
+    """
     pages = [format_vram(), format_usage()]
 
     if getattr(celune.backend, "current_seed", None) is not None:

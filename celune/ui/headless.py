@@ -17,7 +17,6 @@ class CeluneHeadlessUI:
     """Celune headless interface methods."""
 
     def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
-        # not using Celune palette for compatibility purposes
         self.colors = {
             "black": "\x1b[0;30m",
             "red": "\x1b[0;31m",

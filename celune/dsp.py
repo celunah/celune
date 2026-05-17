@@ -93,7 +93,11 @@ def _to_48khz(
 
 
 def readiness_signal() -> npt.NDArray[np.float32]:
-    """Load Celune's startup readiness sound."""
+    """Load Celune's startup readiness sound.
+
+    Returns:
+        npt.NDArray[np.float32]: The readiness sound formatted as a NumPy array, or silent array if not found.
+    """
     readiness_wav = files("celune").joinpath("assets", "readiness.wav")
 
     # we did not find the Celune chord, return silence instead

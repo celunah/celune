@@ -707,7 +707,15 @@ class CeluneUI(App):
         self.safe_log(msg, severity)
 
     def process_command(self, command: str, args: list[str]) -> None:
-        """Process Celune control commands."""
+        """Process Celune control commands.
+
+        Args:
+            command: The control command to run.
+            args: The command arguments to use.
+
+        Returns:
+            None: This method asks Celune to process a control command.
+        """
         process_ui_command(self, command, args)
 
     def consume_buffer(self, text_len: int) -> None:
@@ -816,7 +824,11 @@ class CeluneUI(App):
         self._tutorial_timers.append(timer)
 
     def begin_tutorial(self) -> None:
-        """Start a new cancellable tutorial action sequence."""
+        """Start a new cancellable tutorial action sequence.
+
+        Returns:
+            None: This method sets Celune's tutorial flags and begins tutorial actions.
+        """
         self.cancel_tutorial(stop_audio=True)
         self._tutorial_active = True
         self.change_input_state(locked=True)
@@ -824,7 +836,11 @@ class CeluneUI(App):
         self.celune.is_in_tutorial = True
 
     def finish_tutorial(self) -> None:
-        """Mark the current tutorial sequence as complete."""
+        """Mark the current tutorial sequence as complete.
+
+        Returns:
+            None: This method unsets Celune's tutorial flags after a completed or cancelled tutorial.
+        """
         self._tutorial_active = False
         self._tutorial_timers.clear()
         self.celune.is_in_tutorial = False

@@ -78,7 +78,14 @@ class AnalysisTests(unittest.TestCase):
     def test_loose_reference_embeddings_are_discovered_without_bundle(
         self, _default_loader: mock.Mock
     ) -> None:
-        """Verify loose packaged embeddings remain available without CEVOICE."""
+        """Verify loose packaged embeddings remain available without CEVOICE.
+
+        Args:
+            _default_loader: A mock default loader.
+
+        Returns:
+            None: This function tests the loader to see if embeddings can be found without a CEVOICE bundle.
+        """
         self.assertEqual(
             analysis._available_reference_voices(),
             ["balanced", "bold", "calm", "upbeat"],
@@ -89,7 +96,15 @@ class AnalysisTests(unittest.TestCase):
     def test_loose_reference_embedding_loads_without_bundle(
         self, torch_load: mock.Mock, _default_loader: mock.Mock
     ) -> None:
-        """Verify loose packaged embeddings still load by derived voice path."""
+        """Verify loose packaged embeddings still load by derived voice path.
+
+        Args:
+            torch_load: A mock implementation of torch.load().
+            _default_loader: A mock default loader.
+
+        Returns:
+            None: This function tests the loader if embeddings can be loaded correctly without a CEVOICE bundle.
+        """
         torch_load.return_value = np.ones(2048, dtype=np.float32)
 
         embedding = analysis._load_reference_embedding("balanced")

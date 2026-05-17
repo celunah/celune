@@ -15,7 +15,11 @@ RGB = tuple[int, int, int]
 
 
 def random_hex() -> str:
-    """Return a random six-digit hex color."""
+    """Return a random six-digit hex color.
+
+    Returns:
+        str: The random hex color.
+    """
     hex_numbers = []
     for _ in range(6):
         hex_numbers.append(random.choice("123456789abcdef"))
@@ -79,7 +83,16 @@ def _contrast_ratio(first: str, second: str) -> float:
 
 
 def _ensure_contrast(color: str, background: str, minimum: float) -> str:
-    """Blend toward white or black until ``color`` is readable on ``background``."""
+    """Keep blending towards white or black until the specified accent and background color is readable against the UI.
+
+    Args:
+        color: The accent color to blend.
+        background: The background color to blend.
+        minimum: The minimum contrast threshold that has to be met.
+
+    Returns:
+        str: The color meeting the contrast threshold requirements.
+    """
     if _contrast_ratio(color, background) >= minimum:
         return color
 
@@ -196,7 +209,15 @@ def configure_theme(
     background: str = DEFAULT_BACKGROUND,
     accent: str = DEFAULT_ACCENT,
 ) -> None:
-    """Rebuild Celune's theme family from two bundle-provided seed colors."""
+    """Rebuild Celune's theme family from two bundle-provided seed colors.
+
+    Args:
+        background: The background color provided by a CEVOICE pack.
+        accent: The accent color provided by a CEVOICE pack.
+
+    Returns:
+        None: This function builds Celune's theme colors automatically.
+    """
     global THEME, THEME_LIGHT, SEVERITY_COLORS
 
     dark_palette = _derive_dark_palette(background, accent)

@@ -750,5 +750,3 @@ def is_port_usable(port: int) -> bool:
         return True
     except (psutil.Error, OSError):
         return False
-
-    return False

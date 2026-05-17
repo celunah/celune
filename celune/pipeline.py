@@ -79,24 +79,40 @@ class SpeechTiming:
     first_playback_time: Optional[float] = None
 
     def mark_first_chunk(self) -> None:
-        """Record when the backend yields its first audio chunk."""
+        """Record when the backend yields its first audio chunk.
+
+        Returns:
+            None: The time the first chunk was received.
+        """
         if self.first_chunk_time is None:
             self.first_chunk_time = time.monotonic()
 
     def mark_first_playback(self) -> None:
-        """Record when the first audio chunk is sent to the output stream."""
+        """Record when the first audio chunk is sent to the output stream.
+
+        Returns:
+            None: The time the first audio chunk was sent to the playback pipeline.
+        """
         if self.first_playback_time is None:
             self.first_playback_time = time.monotonic()
 
     def ttfc_ms(self) -> float:
-        """Return time to first generated chunk in milliseconds."""
+        """Return time to first generated chunk in milliseconds.
+
+        Returns:
+            float: How much time it took to generate the first chunk.
+        """
         if self.first_chunk_time is None:
             return N_A_NUMERIC
 
         return (self.first_chunk_time - self.start_time) * 1000
 
     def ttfp_seconds(self) -> float:
-        """Return time to first playback in seconds."""
+        """Return time to first playback in seconds.
+
+        Returns:
+            float: How much time it took to play any part of the current utterance.
+        """
         if self.first_playback_time is None:
             return N_A_NUMERIC
 
@@ -360,7 +376,15 @@ def clear_queue(q: queue.Queue) -> None:
 
 
 def log_first_playback(engine: "Celune", timing: JSON) -> None:
-    """Log time to first playback for a queued speech timing object."""
+    """Log time to first playback for a queued speech timing object.
+
+    Args:
+        engine: The instance of Celune to log back into.
+        timing: The JSON-formatted timing data.
+
+    Returns:
+        None: This function logs timing data to Celune's configured logger.
+    """
     start_time = getattr(timing, "start_time", None)
     if not isinstance(start_time, float):
         return
