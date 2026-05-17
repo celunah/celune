@@ -149,7 +149,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             "/play <file> - Play a sound effect by path. Only WAV files are supported."
         )
         ui.safe_log(
-            "/seed [seed|random] - Set or clear the seed for speech outputs (VoxCPM2 only)."
+            "/seed [seed|random] - Set or clear the seed for speech outputs, affecting pronunciation and/or prosody."
         )
         ui.safe_log("/tutorial - Run Celune's tutorial.")
         ui.safe_log("/stop - Terminate ongoing speech.")
