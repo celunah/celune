@@ -261,6 +261,7 @@ class Celune:
         self.kept_sfx_audio: Optional[npt.NDArray[np.float32]] = None
 
         self._last_flavor: Optional[str] = None
+        self._ready_announced = False
         self._model_ready = threading.Event()
         self._model_ready.set()
         self._exit_requested = False
@@ -584,6 +585,7 @@ class Celune:
         """
 
         self.log("Celune is reloading, please stand by...")
+        self._ready_announced = False
         self.status_callback("Reloading")
         self.progress_callback(None, None)
         self.cur_state = "reloading"
