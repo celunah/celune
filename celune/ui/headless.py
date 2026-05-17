@@ -16,7 +16,14 @@ from ..utils import supports_ansi
 class CeluneHeadlessUI:
     """Celune headless interface methods."""
 
+    _instance: Optional["CeluneHeadlessUI"] = None
+
     def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
+        if CeluneHeadlessUI._instance is not None:
+            raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
+
+        CeluneHeadlessUI._instance = self
+
         self.colors = {
             "black": "\x1b[0;30m",
             "red": "\x1b[0;31m",
