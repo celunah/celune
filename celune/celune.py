@@ -26,7 +26,7 @@ from .cevoice import announce_default_bundle, default_loader, select_voice_bundl
 from .config import config_bool, config_value
 from .constants import NORMALIZER_MODEL_ID, PipelineStates
 from .dsp import StreamingPedalboardReverb
-from .utils import format_number, format_error, discard
+from .utils import format_number, format_error, discard, is_port_usable, custom_assert
 from .chroma import AudioRGBGlow
 from .exceptions import NotAvailableError, WarmupError, BackendError
 from .extensions.base import CeluneContext
@@ -582,8 +582,6 @@ class Celune:
         self.progress_callback(None, None)
         self.cur_state = "reloading"
 
-        readiness_acquired = False
-
         try:
             with self._model_lock:
                 new_model_name = self.backend.model_id_for_voice(voice)
@@ -600,35 +598,33 @@ class Celune:
                         raise WarmupError("warmup failed after reload")
 
                 self.log_dev(
-                    "[RELOAD] The target model is the same as the model is currently in use."
+                    "[RELOAD] The target model is the same as the model currently in use."
                 )
 
                 self.current_voice = voice
                 self.loaded = True
 
-            # Play the readiness signal on voice change success. This is a "best effort"
-            # because a previous readiness signal may still be playing in configurations
-            # where Celune does not have to reload the model fully.
-            if play_readiness_signal(self):
-                readiness_acquired = True
-            else:
+            # play readiness signal upon voice change success
+            # may not always be possible in cases where many voice changes occurred
+            # while Celune did not have to reload completely because of the target model
+            # remaining the same
+            if not play_readiness_signal(self):
                 self.log_dev("Could not play the readiness signal.", "warning")
 
             self.voice_changed_callback(voice)
             self.log(f"Voice {voice} loaded.")
             self.progress_callback(1, 1)
-            if not readiness_acquired:
-                self.status_callback("Idle")
+            self.status_callback("Idle")
         except Exception as e:
             self.loaded = False
             self.log(f"[RELOAD ERROR] {format_error(e, self.dev)}", "error")
             self.status_callback("Celune could not reload", "error")
             self.progress_callback(0, 1)
             self.error_callback("Celune could not reload")
-
         finally:
             self._model_ready.set()
             self.change_input_state_callback(locked=False)
+            self.change_voice_lock_state_callback(locked=len(self.voices) < 2)
 
     def force_stop_speech(self) -> bool:
         """Forcefully stop Celune from speaking.
@@ -748,37 +744,60 @@ class Celune:
         token_value = api_config.get("token")
         token = str(token_value).strip() if token_value is not None else None
         if not token:
+            self.log(
+                "No API token set. Celune API will bind only to the local network.",
+                "warning",
+            )
             token = None
         try:
             port = int(api_config.get("port", 2060))
         except (TypeError, ValueError):
-            self.log("Celune API port is invalid, using 2060.", "warning")
+            invalid_port = api_config.get("port", 2060)
+            self.log(
+                f"Celune API port ({invalid_port}) is invalid, will use 2060 instead.",
+                "warning",
+            )
             port = 2060
 
         try:
             requests_per_minute = int(api_config.get("rate_limit_per_minute", 60))
         except (TypeError, ValueError):
-            self.log("Celune API rate limit is invalid, using 60/min.", "warning")
+            invalid_ratelimit = api_config.get("rate_limit_per_minute", 60)
+            self.log(
+                f"Celune API rate limit ({invalid_ratelimit}) is invalid, using 60/min.",
+                "warning",
+            )
             requests_per_minute = 60
 
         return enabled, host, port, token, max(0, requests_per_minute)
 
     def _start_configured_api(self) -> None:
-        """Start the API from config without blocking Celune startup."""
+        """Start the API from config without blocking Celune startup.
+
+        Returns:
+            None: This method tries to start the API detached from Celune.
+        """
         enabled, host, port, token, requests_per_minute = self._api_settings()
         if not enabled or self._api_thread is not None:
+            return
+
+        if not is_port_usable(port):
+            self.log("Port {port} is unavailable.", "warning")
+            self.log("Celune API will not be available.", "warning")
             return
 
         try:
             from .api import start_api
         except ModuleNotFoundError as package:
             self.log(
-                f"Cannot start the API. '{package.name}' is not installed.",
+                f"A required package ({package.name}) isn't installed.",
                 "warning",
             )
+            self.log("Celune API will not be available.", "warning")
             return
         except Exception as e:
-            self.log(f"Cannot import the API: {format_error(e, self.dev)}", "warning")
+            self.log(f"Package import failed: {format_error(e, self.dev)}", "warning")
+            self.log("Celune API will not be available.", "warning")
             return
 
         try:
@@ -790,7 +809,10 @@ class Celune:
                 requests_per_minute=requests_per_minute,
             )
         except Exception as e:
-            self.log(f"Cannot start the API: {format_error(e, self.dev)}", "warning")
+            self.log(
+                f"An internal error occurred: {format_error(e, self.dev)}", "warning"
+            )
+            self.log("Celune API will not be available.", "warning")
             return
 
     def load_normalizer(self) -> None:
@@ -857,7 +879,6 @@ class Celune:
             self.log_dev(f"[WARMUP] done, took {format_number(warmup_took, 2)} seconds")
             self.progress_callback(1, 1)
             return True
-
         except Exception as e:
             self.log(f"[WARMUP ERROR] {format_error(e, self.dev)}", "error")
             self.cur_state = "error"
@@ -903,9 +924,12 @@ class Celune:
 
                 # Are we using CeluneNorm?
                 norm_token_id = tokenizer.convert_tokens_to_ids(norm_token)
-                assert norm_token_id is not None, "not a CeluneNorm normalizer"
-                assert norm_token_id != tokenizer.unk_token_id, (
-                    "not a CeluneNorm normalizer"
+                custom_assert(
+                    norm_token_id is not None, ValueError("not a CeluneNorm normalizer")
+                )
+                custom_assert(
+                    norm_token_id != tokenizer.unk_token_id,
+                    ValueError("not a CeluneNorm normalizer"),
                 )
 
                 prompt = f"{bad_text}{norm_token}"

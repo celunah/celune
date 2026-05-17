@@ -11,7 +11,7 @@ import importlib.util
 from pathlib import Path
 from typing import Any, Type
 
-from celune.exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
+from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
 from .base import CeluneContext, CeluneExtension
 
 
