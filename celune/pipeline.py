@@ -478,6 +478,8 @@ def acquire_pipeline(engine: "Celune", action: str) -> bool:
             return False
 
         engine.locked = True
+        if action != "play readiness signal":
+            engine._ready_announced = False
         engine.playback_done.clear()
         engine.log_dev(f"[LOCK] acquired by {action}")
         return True
@@ -1285,7 +1287,9 @@ def playback_worker(engine: "Celune") -> None:
                             engine.current_voice,
                         )
 
-                    engine.log("Ready to speak.")
+                    if not getattr(engine, "_ready_announced", False):
+                        engine.log("Ready to speak.")
+                        engine._ready_announced = True
 
                 if torch.cuda.is_available():
                     avail, total = tuple(
