@@ -187,7 +187,7 @@ def is_silent_utterance(audio: npt.NDArray[np.float32]) -> tuple[bool, int]:
 class StreamingPedalboardReverb:
     """Stateful reverb based on `pedalboard`."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.strength = 0.0
         self._first_chunk = True
 

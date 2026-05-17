@@ -24,7 +24,7 @@ class SelectMenu(Generic[T]):
         choices: list[str],
         raw_choices: list[T],
         prompt: str = "Select an option",
-    ):
+    ) -> None:
         if not choices:
             raise ValueError("choices must not be empty")
         if len(choices) != len(raw_choices):
