@@ -782,7 +782,7 @@ class Celune:
             return
 
         if not is_port_usable(port):
-            self.log("Port {port} is unavailable.", "warning")
+            self.log(f"Port {port} is unavailable.", "warning")
             self.log("Celune API will not be available.", "warning")
             return
 
