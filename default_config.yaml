@@ -12,21 +12,23 @@ voice_bundle: default
 # if enabled, detailed tracebacks will be displayed, verbose logging messages will appear,
 # and Celune will self-analyze her own voice
 dev: false
-# if enabled, the UI is disabled and only extensions can send inputs
+# if enabled, the UI is disabled and only extensions or API callers can send inputs
 headless: false
 # if enabled, headless mode will not use ANSI colors
 headless_nocolor: false
-# you can use the light or dark Celune theme
+# you can use the light or dark theme derived from the current CEVOICE pack
 theme: dark
 # if enabled, CeluneNorm will be loaded to normalize incoming text
 use_normalizer: false
-# if enabled, Celune will start her FastAPI server in the background
+# if enabled, Celune will start her REST API in the background, allowing you to remotely control her
 api:
   enabled: true
   # host is selected automatically: token -> 0.0.0.0, no token -> 127.0.0.1
   host: 0.0.0.0
+  # the port has to be available, Celune will check availability automatically
   port: 2060
   # token can also be set with CELUNE_API_TOKEN.
   # without a token, Celune binds the API to localhost only.
   token: null
+  # it is advised to set this for public Celune APIs
   rate_limit_per_minute: 60
