@@ -4,11 +4,10 @@
 import json
 import queue
 import tempfile
-import unittest
 from typing import cast
 from pathlib import Path
-from unittest import mock
 from types import SimpleNamespace
+from unittest import mock, TestCase
 
 import numpy as np
 import soundfile as sf
@@ -20,7 +19,7 @@ from celune.constants import JSON
 from tests.support import FakeStream, make_pipeline_engine
 
 
-class PipelineTests(unittest.TestCase):
+class PipelineTests(TestCase):
     """Tests for lightweight pipeline behavior."""
 
     def test_queue_helpers_and_force_stop_cover_busy_and_idle_paths(self) -> None:

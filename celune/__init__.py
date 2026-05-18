@@ -1,5 +1,18 @@
 # SPDX-License-Identifier: MIT
-"""Celune main package."""
+"""Public package surface for the Celune character engine.
+
+Importing :mod:`celune` exposes the main :class:`Celune` engine together with
+the extension context and base class used by plugins. The package also publishes
+build metadata such as :data:`__version__`, :data:`REVISION`, and the small set
+of descriptive strings used by Celune's user-facing surfaces.
+
+Most implementation details live in submodules. The package root intentionally
+keeps a compact public API so applications can start from ``from celune import
+Celune`` without depending on the internal backend, pipeline, or UI layout.
+
+Only construct :class:`Celune` and its UI classes once per process. Creating multiple
+instances can exhaust GPU resources and is not a supported usage pattern.
+"""
 
 import sys as _sys
 

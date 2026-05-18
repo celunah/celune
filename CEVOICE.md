@@ -43,6 +43,8 @@ Asset offsets are relative to the start of the payload, not the start of the fil
   "version": 1,
   "voices": {
     "balanced": {
+      "cfg_scale": 2.4,
+      "reference_text": "My name is Celune...",
       "assets": {
         "wav": {
           "offset": 0,
@@ -70,6 +72,13 @@ Supported optional metadata fields are:
 | `voice_order` | Preferred UI order for voices |
 | `theme` | Optional UI colors: `background`, `accent`, and optional `glow_color` |
 
+Each voice entry may also include:
+
+| Field | Meaning |
+| --- | --- |
+| `cfg_scale` | Optional positive VoxCPM2 classifier-free guidance scale for that voice |
+| `reference_text` | Optional non-empty transcript for the voice's reference audio |
+
 Validation rules enforced by Celune:
 
 - `format` must be `"CEVOICE"` and `version` must be `1`
@@ -78,6 +87,8 @@ Validation rules enforced by Celune:
 - `voice_order`, when present, must be a duplicate-free list of defined voice names
 - if `voice_order` omits valid voices, Celune appends the missing ones when loading
 - `theme.background`, `theme.accent`, and `theme.glow_color` must be `#RRGGBB` hex colors when present
+- `voices.<name>.cfg_scale`, when present, must be a positive number
+- `voices.<name>.reference_text`, when present, must be a non-empty string
 - voice names and asset kinds may not contain path separators and may not be `""`, `"."`, or `".."`
 - only `wav` and `pt` asset kinds are supported
 - every asset entry needs a non-negative integer `offset`, a non-negative integer `length`, and a 64-character SHA-256 digest
@@ -93,8 +104,8 @@ At startup, Celune resolves `voice_bundle` from config:
 
 The loader parses and validates the bundle, then lazily materializes assets into a temporary directory only when a backend needs a filesystem path.
 
-- Qwen3 clone mode reads `wav` assets as reference audio.
-- VoxCPM2 reads `wav` assets as reference audio.
+- Qwen3 clone mode reads `wav` assets as reference audio and uses per-voice `reference_text` when present.
+- VoxCPM2 reads `wav` assets as reference audio and uses per-voice `cfg_scale` when present.
 - Analysis helpers read optional `pt` assets directly from the bundle.
 - `default_voice` controls the initial selected voice.
 - `voice_order` controls the user-facing order.
@@ -135,6 +146,20 @@ write_cevoice(
             "background": "#1d1826",
             "accent": "#cebaff",
             "glow_color": "#cebaff",
+        },
+    },
+    {
+        "balanced": {
+            "cfg_scale": 2.4,
+            "reference_text": "My reference transcript.",
+        },
+        "calm": {
+            "cfg_scale": 3.0,
+            "reference_text": "My calm reference transcript.",
+        },
+        "bold": {
+            "cfg_scale": 2.4,
+            "reference_text": "My bold reference transcript.",
         },
     },
 )
@@ -230,6 +255,8 @@ Celune's bundled `default.cevoice` uses:
 - `name`: `Celune`
 - `default_voice`: `balanced`
 - `voice_order`: `balanced`, `calm`, `bold`, `upbeat`
+- `cfg_scale`: `2.4` for `balanced`, `bold`, and `upbeat`; `3.0` for `calm`
+- `reference_text`: the transcript matching each bundled reference `wav`
 - both `wav` and `pt` assets for each voice
 
 That pack is a good real-world model if you want your own bundle to behave like the stock one.

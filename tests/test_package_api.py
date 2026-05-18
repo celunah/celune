@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT
 """Tests for Celune's package-level public surface."""
 
-import unittest
+from unittest import TestCase
 
 import celune
 
 
-class PackageApiTests(unittest.TestCase):
+class PackageApiTests(TestCase):
     """Tests for package exports and interactive inspection."""
 
     def test_dir_only_lists_curated_public_exports(self) -> None:

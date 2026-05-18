@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Tests for color and DSP helpers."""
 
-import unittest
 from typing import cast
+from unittest import TestCase
 
 import numpy as np
 
@@ -11,7 +11,7 @@ from celune.constants import UtteranceLoudnessTier
 from celune.exceptions import AudioMismatchError, BadAudioError
 
 
-class ColorTests(unittest.TestCase):
+class ColorTests(TestCase):
     """Tests for generated Celune theme palettes."""
 
     def tearDown(self) -> None:
@@ -45,7 +45,7 @@ class ColorTests(unittest.TestCase):
         )
 
 
-class DspTests(unittest.TestCase):
+class DspTests(TestCase):
     """Tests for lightweight DSP helpers."""
 
     def test_make_stereo_and_resampling_validate_audio(self) -> None:

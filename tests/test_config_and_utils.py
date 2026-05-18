@@ -3,14 +3,13 @@
 
 import math
 import datetime
-import unittest
-from unittest import mock
 from typing import Literal, cast
+from unittest import mock, TestCase
 
 from celune import config, utils
 
 
-class ConfigTests(unittest.TestCase):
+class ConfigTests(TestCase):
     """Tests for configuration value resolution."""
 
     def test_env_bool_uses_fallback_and_strict_enabled_values(self) -> None:
@@ -126,7 +125,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(merged, {"api": False})
 
 
-class UtilsTests(unittest.TestCase):
+class UtilsTests(TestCase):
     """Tests for lightweight common utility functions."""
 
     def test_format_number_handles_precision_and_non_finite_values(self) -> None:

@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Tests for Celune core behavior without real models or GPU work."""
 
-import unittest
 from pathlib import Path
-from unittest import mock
 from typing import Any, cast
+from unittest import mock, TestCase
 
 from celune.celune import Celune
 from celune.exceptions import BackendError
@@ -12,7 +11,7 @@ from celune.exceptions import BackendError
 from tests.support import FakeBackend, FakeGlow
 
 
-class CeluneCoreTests(unittest.TestCase):
+class CeluneCoreTests(TestCase):
     """Tests for Celune orchestration without real model work."""
 
     @staticmethod

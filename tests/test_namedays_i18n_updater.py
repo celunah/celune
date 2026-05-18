@@ -2,14 +2,13 @@
 """Tests for lightweight data, localization, and update helpers."""
 
 import datetime
-import unittest
 import subprocess
-from unittest import mock
+from unittest import mock, TestCase
 
 from celune import i18n, namedays, updater
 
 
-class NameDayTests(unittest.TestCase):
+class NameDayTests(TestCase):
     """Tests for name-day lookup helpers."""
 
     def test_lookup_helpers_cover_supported_inputs(self) -> None:
@@ -36,7 +35,7 @@ class NameDayTests(unittest.TestCase):
             namedays.get_names_for_date("bad-date")
 
 
-class I18nTests(unittest.TestCase):
+class I18nTests(TestCase):
     """Tests for localization fallback behavior."""
 
     def tearDown(self) -> None:
@@ -63,7 +62,7 @@ class I18nTests(unittest.TestCase):
             i18n.STRINGS.update(original)
 
 
-class UpdaterTests(unittest.TestCase):
+class UpdaterTests(TestCase):
     """Tests for pure updater decision logic."""
 
     def test_version_helpers_order_tags(self) -> None:

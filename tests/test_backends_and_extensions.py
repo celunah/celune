@@ -1,12 +1,20 @@
 # SPDX-License-Identifier: MIT
 """Tests for backend resolution and extension infrastructure."""
 
+import sys
 import tempfile
 import textwrap
-import unittest
 import threading
+import importlib
 from pathlib import Path
+from typing import Optional
+from types import SimpleNamespace
+from unittest import mock, TestCase
+from collections.abc import Iterator
 
+import numpy as np
+import numpy.typing as npt
+from celune.utils import discard
 from celune.backends import resolve_backend
 from celune.extensions.manager import CeluneExtensionManager
 from celune.extensions.base import CeluneContext, CeluneExtension
@@ -15,7 +23,7 @@ from celune.exceptions import ExtensionAlreadyRegisteredError, InvalidExtensionE
 from tests.support import FakeBackend
 
 
-class BackendTests(unittest.TestCase):
+class BackendTests(TestCase):
     """Tests for backend base behavior and backend resolution."""
 
     def test_base_backend_reports_models_and_progress(self) -> None:
@@ -54,8 +62,111 @@ class BackendTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "backend_name"):
             resolve_backend(123)  # type: ignore[arg-type]
 
+    def test_voxcpm2_uses_pack_cfg_scale_when_present(self) -> None:
+        """Verify CEVOICE can override VoxCPM2's per-voice CFG scale."""
+        with mock.patch.dict(sys.modules, {"voxcpm": SimpleNamespace(VoxCPM=object)}):
+            voxcpm2 = importlib.import_module("celune.backends.voxcpm2")
+            voxcpm2_cls = voxcpm2.VoxCPM2
 
-class ExtensionTests(unittest.TestCase):
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                def __init__(self) -> None:
+                    self.cfg_value = None
+
+                def generate_streaming(
+                    self, *args, **kwargs
+                ) -> Iterator[npt.NDArray[np.float32]]:
+                    """Generate a fake stream of VoxCPM2 audio chunks.
+
+                    Args:
+                        args: Not used.
+                        kwargs: Only used for a fake CFG scale value.
+
+                    Returns:
+                        npt.NDArray[np.float32]: Fake VoxCPM2 audio chunks.
+                    """
+                    discard(args)
+                    self.cfg_value = kwargs["cfg_value"]
+                    yield np.zeros((1,), dtype=np.float32)
+
+            loader = SimpleNamespace(
+                bundle=SimpleNamespace(voices={"calm": {"cfg_scale": 4.2}}),
+                materialize=lambda voice, kind: Path(f"{voice}.{kind}"),
+            )
+            with (
+                mock.patch.object(voxcpm2_cls, "_validate_refs"),
+                mock.patch(
+                    "celune.backends.voxcpm2.default_loader", return_value=loader
+                ),
+            ):
+                backend = voxcpm2_cls(log=lambda _msg, _severity="info": None)
+                model = FakeModel()
+                list(
+                    backend.generate_stream(
+                        model,
+                        text="hello",
+                        voice="calm",
+                        chunk_size=1,
+                    )
+                )
+
+            self.assertEqual(model.cfg_value, 4.2)
+
+    def test_qwen3_uses_pack_reference_text_when_present(self) -> None:
+        """Verify CEVOICE can override Qwen3's per-voice reference text."""
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "faster_qwen3_tts": SimpleNamespace(
+                    FasterQwen3TTS=object,
+                    __version__="0.2.5",
+                )
+            },
+        ):
+            qwen3 = importlib.import_module("celune.backends.qwen3")
+            qwen3_cls = qwen3.Qwen3
+
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                def __init__(self) -> None:
+                    self.ref_text = None
+
+                def generate_voice_clone_streaming(
+                    self, *args, **kwargs
+                ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+                    """Generate a fake stream of Qwen3 audio chunks.
+
+                    Args:
+                        args: Not used.
+                        kwargs: Not used.
+
+                    Returns:
+                        npt.NDArray[np.float32]: Fake Qwen3 audio chunks.
+                    """
+                    discard(args)
+                    self.ref_text = kwargs["ref_text"]
+                    yield np.zeros((1,), dtype=np.float32), 24000, None
+
+            loader = SimpleNamespace(
+                bundle=SimpleNamespace(
+                    voices={"calm": {"reference_text": "Pack reference."}}
+                ),
+                materialize=lambda voice, kind: Path(f"{voice}.{kind}"),
+            )
+            with (
+                mock.patch.object(qwen3_cls, "_validate_refs"),
+                mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
+            ):
+                backend = qwen3_cls(log=lambda _msg, _severity="info": None)
+                model = FakeModel()
+                list(backend.generate_stream(model, text="hello", voice="calm"))
+
+            self.assertEqual(model.ref_text, "Pack reference.")
+
+
+class ExtensionTests(TestCase):
     """Tests for extension context and manager behavior."""
 
     def setUp(self) -> None:
