@@ -45,7 +45,7 @@ try:
         env_bool,
         merge_missing_defaults,
     )
-    from celune.utils import supports_ansi, indent, title_case
+    from celune.utils import detected_ide, supports_ansi, indent, title_case
     from celune.constants import ExitCodes
 except ModuleNotFoundError as package:
     print(f"You do not have '{package.name}' installed.")
@@ -99,6 +99,13 @@ def main() -> None:
 
         if supports_ansi():
             print("\x1b]2;Celune\x07", end="", flush=True)
+
+        ide = detected_ide()
+        if ide is not None:
+            print(f"Celune is running from {ide}.")
+            print("Some IDE terminals may behave differently from a normal terminal.")
+            print()
+            time.sleep(5)
 
         if not os.path.exists("config.yaml"):
             shutil.copy("default_config.yaml", "config.yaml")
@@ -160,6 +167,7 @@ def main() -> None:
                         print(
                             "Celune updated successfully. Restart Celune to apply changes."
                         )
+                        time.sleep(5)
                         sys.exit(ExitCodes.EXIT_PENDING_UPDATE.value)
         elif check_for_update() and not supports_ansi():
             print("This terminal does not support ANSI.")
@@ -173,6 +181,7 @@ def main() -> None:
                 time.sleep(5)
             else:
                 print("Celune updated successfully. Restart Celune to apply changes.")
+                time.sleep(5)
                 sys.exit(ExitCodes.EXIT_PENDING_UPDATE.value)
 
         # ask for default backend if not set yet
@@ -204,6 +213,7 @@ def main() -> None:
             print("This terminal does not support ANSI.")
             print("Please select a backend manually.")
             print("Refer to Celune's configuration for details.")
+            time.sleep(5)
             sys.exit(ExitCodes.EXIT_NO_ANSI.value)
 
         if not env_bool("CELUNE_LAUNCHER"):
@@ -231,6 +241,7 @@ def main() -> None:
                             # you do not want to run multiple instances of Celune
                             # your memory doesn't want to either
                             print("Celune is already running.")
+                            time.sleep(5)
                             sys.exit(ExitCodes.EXIT_ALREADY_RUNNING.value)
 
         if not headless and supports_ansi():  # normal mode
@@ -265,7 +276,9 @@ def main() -> None:
             ui_headless.celune = celune
 
             if not celune.load():
+                print("Celune could not initialize.")
                 celune.close()
+                time.sleep(5)
                 sys.exit(ExitCodes.EXIT_FAILURE.value)
 
             print("Celune is running in headless mode.")
@@ -276,6 +289,7 @@ def main() -> None:
             print("Celune cannot start in normal mode.")
             print("Hint:")
             print(indent("Try using another terminal application.", spaces=4))
+            time.sleep(5)
             sys.exit(ExitCodes.EXIT_NO_ANSI.value)
     except Exception as e:
         if e.__class__ != No:
@@ -313,6 +327,7 @@ def main() -> None:
         print(indent("Try again tomorrow.", spaces=4))
         print("or set the following environment variable:")
         print(indent("CELUNE_OVERRIDE_CELINE_DAY=1", spaces=4))
+        time.sleep(5)
         sys.exit(
             ExitCodes.EXIT_CELINE_DAY.value
             if random.uniform(0, 1) < 0.5

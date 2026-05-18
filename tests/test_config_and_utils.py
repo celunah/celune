@@ -250,3 +250,12 @@ class UtilsTests(TestCase):
         self.assertIsNone(utils.discard("unused"))
         self.assertIsNone(utils.discard(holder, "value"))
         self.assertIsNone(holder.value)
+
+    def test_detected_ide_recognizes_supported_markers(self) -> None:
+        """Verify the supported IDE environment hints."""
+        with mock.patch.dict("os.environ", {"PYCHARM_HOSTED": "1"}, clear=True):
+            self.assertEqual(utils.detected_ide(), "PyCharm")
+        with mock.patch.dict("os.environ", {"TERM_PROGRAM": "vscode"}, clear=True):
+            self.assertEqual(utils.detected_ide(), "VS Code")
+        with mock.patch.dict("os.environ", {"TERM_PROGRAM": "wezterm"}, clear=True):
+            self.assertIsNone(utils.detected_ide())
