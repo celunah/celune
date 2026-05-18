@@ -4,6 +4,7 @@
 import sys
 import time
 import signal
+import warnings
 from types import FrameType
 from typing import Any, Optional, cast
 
@@ -42,6 +43,10 @@ class CeluneHeadlessUI:
         self.reset = "\x1b[0m" if not self.no_color else ""
 
         CeluneHeadlessUI._instance = self
+
+    def _has_celune(self) -> bool:
+        """Is Celune attached to this UI instance?"""
+        return self.celune is not None
 
     def severity_color(self, severity: str) -> str:
         """Get color from the VGA text mode palette.
@@ -95,6 +100,12 @@ class CeluneHeadlessUI:
             None: This method installs the signal handler and keeps the process
                 alive.
         """
+        if not self._has_celune():
+            warnings.warn(
+                f"{self.__class__.__name__} has no attached Celune instance: this will do nothing",
+                RuntimeWarning,
+            )
+
         signal.signal(signal.SIGINT, self.signal_handler)
         if SIGTSTP is not None:
             signal.signal(SIGTSTP, self.signal_handler)
