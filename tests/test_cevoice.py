@@ -176,7 +176,7 @@ class CEVoiceTests(unittest.TestCase):
             logs.append((msg, severity))
 
         self.assertEqual(cevoice.announce_default_bundle(log), "Fixture")
-        self.assertEqual(logs, [("Loading voice bundle: Fixture", "info")])
+        self.assertEqual(logs, [("Loading voice pack: Fixture", "info")])
         self.assertIsNone(cevoice.announce_default_bundle(log))
 
         cevoice.select_voice_bundle(self.temp_dir / "missing.cevoice")
@@ -223,10 +223,10 @@ class CEVoiceTests(unittest.TestCase):
             logs,
             [
                 (
-                    "Voice bundle missing not found, using default pack instead.",
+                    "Voice pack missing not found, using default pack instead.",
                     "warning",
                 ),
-                ("Loading voice bundle: Fixture", "info"),
+                ("Loading voice pack: Fixture", "info"),
             ],
         )
 

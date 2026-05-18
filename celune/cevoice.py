@@ -484,19 +484,19 @@ def announce_default_bundle(log: Callable[[str, str], None]) -> Optional[str]:
     if loader is not None:
         if _DEFAULT_LOADER_FELL_BACK_FROM is not None:
             log(
-                "Voice bundle "
+                "Voice pack "
                 f"{_DEFAULT_LOADER_FELL_BACK_FROM.stem} not found, "
                 "using default pack instead.",
                 "warning",
             )
         name = loader.bundle.metadata.get("name", active_bundle_path().stem)
-        log(f"Loading voice bundle: {name}", "info")
+        log(f"Loading voice pack: {name}", "info")
         _DEFAULT_LOADER_ANNOUNCED = True
         return name
 
     if _DEFAULT_LOADER_FAILED:
         log(
-            "No voice bundles found or voice loading failed. "
+            "No voice packs were found, or voice loading has failed. "
             "Loading a default character from loose references instead.",
             "warning",
         )
