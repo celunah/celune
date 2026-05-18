@@ -62,7 +62,6 @@ Celune requires [Python](https://python.org) 3.12 or 3.13.
 
 Celune also depends on external system tools and libraries that are not available in `pip`:
 
-- **NVIDIA GPU with CUDA support**
 - **CUDA Toolkit 12.8** - only if not using pre-built PyTorch wheels
 - **SoX (Sound eXchange)** - required for audio processing
 - **Rubber Band library** - required to control Celune's speed
@@ -74,7 +73,7 @@ Celune requires an RTX 30 series GPU or newer. CPU-only execution is not support
 
 Usage of Celune's UI requires an ANSI-capable terminal. Non-compliant terminals can only use the headless (CEF) mode.
 
-The terminal should support True Color, or at least a palette containing the minimum set of Celune colors.
+The terminal should support True Color, especially when using voice packs that declare new app themes.
 
 If Rubber Band is not installed, Celune will speak at normal speed, and speed controls will be unavailable.
 
