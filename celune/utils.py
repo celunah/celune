@@ -2,6 +2,7 @@
 """Celune common utility functions."""
 
 import re
+import os
 import sys
 import math
 import time
@@ -396,6 +397,20 @@ def caller_is_repl() -> bool:
         return caller["filename"].startswith("<python-input-")
 
     return False
+
+
+def detected_ide() -> Optional[str]:
+    """Return a known IDE name from common environment markers.
+
+    Returns:
+        Optional[str]: The recognized IDE name, or ``None`` when no supported
+            marker is present.
+    """
+    if os.environ.get("PYCHARM_HOSTED"):
+        return "PyCharm"
+    if os.environ.get("TERM_PROGRAM", "").casefold() == "vscode":
+        return "VS Code"
+    return None
 
 
 def title_case(text: str) -> str:
