@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 import warnings
 from collections.abc import Iterator
-from typing import Callable, Literal, Optional
+from typing import Callable, Literal, Optional, Final, Mapping
 
 import numpy as np
 import numpy.typing as npt
@@ -22,16 +22,16 @@ from ..cevoice import default_loader
 class Qwen3(CeluneBackend):
     """Celune Qwen3-TTS backend."""
 
-    name: str = "qwen3"
+    name: Final[str] = "qwen3"
 
     # this is a default value, Celune sets this properly during backend initialization
     uses_voice_bundles: bool = False
-    chunk_rate: float = 12.5
-    max_new_tokens: int = 2048
+    chunk_rate: Final[float] = 12.5
+    max_new_tokens: Final[int] = 2048
 
     # setting this parameter will lock in identity, but expression may be reduced
     x_vector_only: bool = True
-    supported_languages: tuple[str, ...] = (
+    supported_languages: Final[tuple[str, ...]] = (
         "zh-cn",
         "en",
         "ja",
@@ -43,21 +43,21 @@ class Qwen3(CeluneBackend):
         "es",
         "it",
     )
-    clone_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-    supported_modes: tuple[str, ...] = (
+    clone_model: Final[str] = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+    supported_modes: Final[tuple[str, ...]] = (
         "native",  # deprecated operation mode, will be removed soon
         "clone",  # now uses CEVOICE voice packs
     )
 
     # these models are deprecated as of Celune 3.5.0
-    voice_models: dict[str, str] = {
+    voice_models: Final[Mapping[str, str]] = {
         "balanced": "lunahr/Celune-1.7B-Neutral",
         "calm": "lunahr/Celune-1.7B-Calm",
         "bold": "lunahr/Celune-1.7B-Energetic",
         "upbeat": "lunahr/Celune-1.7B-Upbeat",
     }
 
-    reference_texts: dict[str, str] = {
+    reference_texts: Final[Mapping[str, str]] = {
         "balanced": (
             "My name is Celune, pronounced Celune. It is a pleasure to meet you."
         ),
@@ -68,7 +68,7 @@ class Qwen3(CeluneBackend):
             "might as well make it fun. Shall we?"
         ),
     }
-    default_voice: str = "balanced"
+    default_voice: Final[str] = "balanced"
 
     def __init__(
         self,
@@ -233,10 +233,18 @@ class Qwen3(CeluneBackend):
                 loader = default_loader()
                 if loader is not None:
                     ref_wav = loader.materialize(voice, "wav")
+                    configured_ref_text = loader.bundle.voices[voice].get(
+                        "reference_text"
+                    )
                 else:
                     ref_wav = self._reference_wave_path(voice)
-                ref_text = self.reference_texts.get(
-                    voice, self.reference_texts[self.default_voice]
+                    configured_ref_text = None
+                ref_text = (
+                    configured_ref_text
+                    if isinstance(configured_ref_text, str)
+                    else self.reference_texts.get(
+                        voice, self.reference_texts[self.default_voice]
+                    )
                 )
             except KeyError as e:
                 raise ValueError(

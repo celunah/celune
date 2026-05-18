@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 import contextlib
 from collections.abc import Iterator
-from typing import Callable, Optional
+from typing import Callable, Optional, Final, Mapping
 
 import torch
 import numpy as np
@@ -22,11 +22,11 @@ from ..cevoice import default_loader
 class VoxCPM2(CeluneBackend):
     """Celune VoxCPM2 backend."""
 
-    name: str = "voxcpm2"
-    uses_voice_bundles: bool = True
-    chunk_rate: float = 6.25
-    max_new_tokens: int = 2048
-    supported_languages: tuple[str, ...] = (
+    name: Final[str] = "voxcpm2"
+    uses_voice_bundles: Final[bool] = True
+    chunk_rate: Final[float] = 6.25
+    max_new_tokens: Final[int] = 2048
+    supported_languages: Final[tuple[str, ...]] = (
         "ar",
         "my",
         "zh-cn",
@@ -59,23 +59,22 @@ class VoxCPM2(CeluneBackend):
         "vi",
     )
 
-    voice_models: dict[str, str] = {
+    voice_models: Final[Mapping[str, str]] = {
         "balanced": "openbmb/VoxCPM2",
         "calm": "openbmb/VoxCPM2",
         "bold": "openbmb/VoxCPM2",
         "upbeat": "openbmb/VoxCPM2",
     }
 
-    # the sane default CFG is 2.4 for most voices,
-    # `calm` needs a higher CFG of 3.0 to capture the nuances without distorting
-    # however the max chunk length has to be limited to reduce the distortions over time
-    voice_cfg: dict[str, float] = {
+    # legacy fallback for loose refs, CEVOICE packs created before cfg_scale
+    # became pack-configurable
+    voice_cfg: Final[Mapping[str, float]] = {
         "balanced": 2.4,
         "calm": 3.0,
         "bold": 2.4,
         "upbeat": 2.4,
     }
-    default_voice: str = "balanced"
+    default_voice: Final[str] = "balanced"
 
     def __init__(self, log: Callable[[str, str], None]) -> None:
         super().__init__(log=log)
@@ -179,9 +178,16 @@ class VoxCPM2(CeluneBackend):
             loader = default_loader()
             if loader is not None:
                 ref_wav = loader.materialize(voice, "wav")
+                configured_cfg = loader.bundle.voices[voice].get("cfg_scale")
+                cfg = (
+                    float(configured_cfg)
+                    if isinstance(configured_cfg, (int, float))
+                    and not isinstance(configured_cfg, bool)
+                    else self.voice_cfg[voice]
+                )
             else:
                 ref_wav = self._reference_wave_path(voice)
-            cfg = self.voice_cfg[voice]
+                cfg = self.voice_cfg[voice]
         except KeyError as e:
             raise ValueError(
                 f"unknown voice '{voice}' for backend '{self.name}'"

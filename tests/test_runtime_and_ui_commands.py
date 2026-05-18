@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Tests for runtime validation and lightweight UI commands."""
 
-import unittest
 from typing import cast
-from unittest import mock
 from types import SimpleNamespace
+from unittest import mock, TestCase
 
 from celune import runtime
 from celune.backends.qwen3 import Qwen3
@@ -13,7 +12,7 @@ from celune.ui.commands import process_command
 from celune.ui.app import CeluneUI
 
 
-class RuntimeTests(unittest.TestCase):
+class RuntimeTests(TestCase):
     """Tests for runtime environment checks."""
 
     def test_check_supported_backends_reports_cpu_cuda_and_rocm(self) -> None:
@@ -84,7 +83,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(states, ["error"])
 
 
-class UICommandTests(unittest.TestCase):
+class UICommandTests(TestCase):
     """Tests for lightweight slash command behavior."""
 
     def setUp(self) -> None:

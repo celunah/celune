@@ -196,6 +196,7 @@ def write_cevoice(
     path: Union[str, Path],
     voices: Mapping[str, Mapping[str, Union[bytes, str, Path]]],
     metadata: Optional[Mapping[str, Any]] = None,
+    voice_metadata: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Path:
     """Write a CEVOICE bundle from per-voice binary assets.
 
@@ -203,12 +204,17 @@ def write_cevoice(
         path: The CEVOICE bundle to save as.
         voices: The voice files to bundle into this CEVOICE bundle.
         metadata: The metadata to bundle into this CEVOICE bundle.
+        voice_metadata: Extra metadata stored beside each voice's assets.
 
     Returns:
         Path: The path to the created CEVOICE bundle.
     """
     payload = bytearray()
     manifest_voices: dict[str, dict[str, Any]] = {}
+    unknown_voice_metadata = set(voice_metadata or {}) - set(voices)
+    if unknown_voice_metadata:
+        unknown = sorted(unknown_voice_metadata)[0]
+        raise CEVoiceError(f"voice metadata provided for unknown voice '{unknown}'")
 
     for voice, assets in voices.items():
         if "/" in voice or "\\" in voice or voice in {"", ".", ".."}:
@@ -228,7 +234,9 @@ def write_cevoice(
                 "sha256": hashlib.sha256(data).hexdigest(),
             }
             payload.extend(data)
-        manifest_voices[voice] = {"assets": manifest_assets}
+        voice_entry = dict((voice_metadata or {}).get(voice, {}))
+        voice_entry["assets"] = manifest_assets
+        manifest_voices[voice] = voice_entry
 
     manifest = dict(metadata or {})
     manifest["format"] = "CEVOICE"
@@ -304,6 +312,20 @@ def _validate_metadata(path: Path, metadata: Any, payload_offset: int) -> None:
     for voice, voice_data in voices.items():
         if not isinstance(voice, str) or not isinstance(voice_data, dict):
             raise CEVoiceError("invalid voice entry")
+        cfg_scale = voice_data.get("cfg_scale")
+        if cfg_scale is not None and (
+            not isinstance(cfg_scale, (int, float))
+            or isinstance(cfg_scale, bool)
+            or cfg_scale <= 0
+        ):
+            raise CEVoiceError(f"voice '{voice}' cfg_scale must be a positive number")
+        reference_text = voice_data.get("reference_text")
+        if reference_text is not None and (
+            not isinstance(reference_text, str) or not reference_text.strip()
+        ):
+            raise CEVoiceError(
+                f"voice '{voice}' reference_text must be a non-empty string"
+            )
         assets = voice_data.get("assets")
         if not isinstance(assets, dict):
             raise CEVoiceError(f"voice '{voice}' assets must be an object")

@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Tests for pure analysis helpers and RGB glow math."""
 
-import unittest
-from unittest import mock
+from unittest import mock, TestCase
 
 import numpy as np
 
@@ -11,7 +10,7 @@ from celune.chroma import AudioRGBGlow
 from celune.constants import N_A_NUMERIC
 
 
-class AnalysisTests(unittest.TestCase):
+class AnalysisTests(TestCase):
     """Tests for deterministic analysis helper behavior."""
 
     def test_embedding_similarity_and_drift_helpers_validate_inputs(self) -> None:
@@ -114,7 +113,7 @@ class AnalysisTests(unittest.TestCase):
         torch_load.assert_called_once()
 
 
-class ChromaTests(unittest.TestCase):
+class ChromaTests(TestCase):
     """Tests for pure RGB glow helper behavior."""
 
     def test_pure_glow_helpers_process_audio_without_devices(self) -> None:

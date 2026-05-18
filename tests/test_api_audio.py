@@ -3,7 +3,7 @@
 
 import io
 import queue
-import unittest
+from unittest import TestCase
 
 import numpy as np
 import soundfile as sf
@@ -11,7 +11,7 @@ import soundfile as sf
 from celune import api
 
 
-class ApiAudioTests(unittest.TestCase):
+class ApiAudioTests(TestCase):
     """Tests for API audio payload formatting."""
 
     def test_audio_bytes_encode_flac_from_stream_chunks(self) -> None:

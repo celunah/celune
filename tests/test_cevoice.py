@@ -5,15 +5,14 @@ import copy
 import json
 import shutil
 import tempfile
-import unittest
 from pathlib import Path
-from unittest import mock
+from unittest import mock, TestCase
 
 from celune import cevoice
 from celune.exceptions import CEVoiceError
 
 
-class CEVoiceTests(unittest.TestCase):
+class CEVoiceTests(TestCase):
     """Tests for CEVOICE bundle serialization and loader behavior."""
 
     def setUp(self) -> None:
@@ -76,6 +75,16 @@ class CEVoiceTests(unittest.TestCase):
                     "glow_color": "#fedcba",
                 },
             },
+            {
+                "balanced": {
+                    "cfg_scale": 2.4,
+                    "reference_text": "Balanced reference.",
+                },
+                "bold": {
+                    "cfg_scale": 3.0,
+                    "reference_text": "Bold reference.",
+                },
+            },
         )
         return cevoice.CEVoice.open(self.path)
 
@@ -90,6 +99,10 @@ class CEVoiceTests(unittest.TestCase):
         """
         bundle = self._write_bundle()
         self.assertEqual(bundle.voice_order, ("bold", "balanced"))
+        self.assertEqual(bundle.voices["balanced"]["cfg_scale"], 2.4)
+        self.assertEqual(
+            bundle.voices["balanced"]["reference_text"], "Balanced reference."
+        )
         self.assertEqual(bundle.read_asset("balanced", "wav"), b"wav")
         loader = cevoice.CEVoiceLoader(bundle)
         self.addCleanup(loader.close)
@@ -144,6 +157,20 @@ class CEVoiceTests(unittest.TestCase):
         metadata["theme"] = {"background": "#101010", "accent": "blue"}
         self._rewrite_metadata(metadata)
         with self.assertRaisesRegex(CEVoiceError, "hex color"):
+            cevoice.CEVoice.open(self.path)
+
+        bundle = self._write_bundle()
+        metadata = copy.deepcopy(bundle.metadata)
+        metadata["voices"]["balanced"]["cfg_scale"] = 0
+        self._rewrite_metadata(metadata)
+        with self.assertRaisesRegex(CEVoiceError, "cfg_scale"):
+            cevoice.CEVoice.open(self.path)
+
+        bundle = self._write_bundle()
+        metadata = copy.deepcopy(bundle.metadata)
+        metadata["voices"]["balanced"]["reference_text"] = " "
+        self._rewrite_metadata(metadata)
+        with self.assertRaisesRegex(CEVoiceError, "reference_text"):
             cevoice.CEVoice.open(self.path)
 
         bundle = self._write_bundle()
