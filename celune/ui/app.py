@@ -136,6 +136,10 @@ class CeluneUI(App):
         self._refresh_theme_text()
         self._refresh_logs()
 
+    def _has_celune(self) -> bool:
+        """Is Celune attached to this UI instance?"""
+        return self.celune is not None
+
     def _clear_border_pulses(self) -> None:
         """Remove temporary border pulse overrides so CSS can theme them."""
         for widget_key, widget in list(self._border_pulse_widgets.items()):
@@ -230,6 +234,11 @@ class CeluneUI(App):
             None: This method sets up themes, widgets, output redirection, and
                 background initialization.
         """
+        if not self._has_celune():
+            raise RuntimeError(
+                f"{self.__class__.__name__} requires an instance of Celune to be set"
+            )
+
         loader = default_loader()
         if loader is not None:
             theme = loader.bundle.metadata.get("theme")
