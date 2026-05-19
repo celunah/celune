@@ -10,6 +10,11 @@ on:
       - main
       - dev
 
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
 jobs:
   python-checks:
     name: Anti AI Slop & Vibe Coding Checks
@@ -103,3 +108,49 @@ jobs:
         shell: cmd
         run: |
           if not exist dist\celune.exe exit /b 1
+
+  notify-failure:
+    name: Comment on CI Failure
+    runs-on: ubuntu-latest
+    needs:
+      - python-checks
+      - launcher-smoke-linux
+      - launcher-smoke-windows
+    if: ${{ always() && contains(join(needs.*.result, ','), 'failure') }}
+
+    steps:
+      - name: Comment on pull request or commit
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PYTHON_CHECKS_RESULT: ${{ needs.python-checks.result }}
+          LINUX_SMOKE_RESULT: ${{ needs.launcher-smoke-linux.result }}
+          WINDOWS_SMOKE_RESULT: ${{ needs.launcher-smoke-windows.result }}
+        run: |
+          failed_jobs=""
+          if [ "$PYTHON_CHECKS_RESULT" = "failure" ]; then
+            failed_jobs="${failed_jobs}- Anti AI Slop & Vibe Coding Checks failed"$'\n'
+          fi
+          if [ "$LINUX_SMOKE_RESULT" = "failure" ]; then
+            failed_jobs="${failed_jobs}- Linux Launcher Build Smoke Test failed"$'\n'
+          fi
+          if [ "$WINDOWS_SMOKE_RESULT" = "failure" ]; then
+            failed_jobs="${failed_jobs}- Windows Launcher Build Smoke Test failed"$'\n'
+          fi
+
+          body="$(printf "Detected potential slop in commit \`%s\`.\n\nThe following jobs have failed:\n%s\nPlease check the logs and unslop your code: %s\n" "$SHA" "$failed_jobs" "$RUN_URL")"
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$body"
+          else
+            gh api \
+              --method POST \
+              "repos/$REPO/commits/$SHA/comments" \
+              -f body="$body"
+          fi
