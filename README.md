@@ -1,4 +1,6 @@
+<!-- markdownlint-disable-next-line MD041 -->
 ![Celune](./resources/branding/celune_wordmark_transparent.png "Celune wordmark")
+
 ---
 
 Celune is a real-time AI TTS character engine focused on expressive voice delivery with a well-made user experience.
@@ -18,6 +20,7 @@ It was proudly made in 🇵🇱 for your listening pleasure.
 - Configurable voices via CEVOICE voice packs
 
 ## Voices & samples
+
 Each voice is demonstrated using a short introduction and a longer narration sample to showcase consistency, pacing, and expressiveness.
 
 | Voice        | Intro (Qwen) | Narration (Qwen) | Intro (VoxCPM2) | Narration (VoxCPM2) |
@@ -42,11 +45,13 @@ Browse the `demos` directory for demonstration content from the current version 
 > Keep language boundaries clear and explicit.
 >
 > **Good:**
+>
 > ```text
 > This is a sentence. This is another sentence. [laughter]
 > ```
 >
 > **Bad:**
+>
 > ```text
 > <think>Thinking text.</think>
 > This is a sentence, 中文, 日本語, 한국어.
@@ -80,6 +85,7 @@ If Rubber Band is not installed, Celune will speak at normal speed, and speed co
 ## GPU requirements
 
 **GPU (CUDA):**
+
 - Minimum: 6 GB VRAM (e.g. RTX 3050, not optimal)
 
 Only the Qwen backend without normalization will work.
@@ -121,7 +127,11 @@ uv --version
 uv sync
 
 # Run
+# Command Prompt users
 celune
+
+# PowerShell users
+.\celune.exe
 
 # Or on Unix systems:
 ./celune.AppImage
@@ -130,13 +140,14 @@ celune
 You can also open Celune from within your desktop by running the aforementioned executables. They are usable as an entry point.
 
 ### SoX & Rubber Band installation
+
 If SoX & Rubber Band are already installed, you can skip this section.
 
-**Windows (Scoop)**
-```powershell
+#### Windows (Scoop)
+
+```bat
 # Install Scoop if you don't already have it
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-irm https://get.scoop.sh | iex
+powershell -ExecutionPolicy RemoteSigned -c "irm https://get.scoop.sh | iex"
 
 # Install SoX
 scoop install sox
@@ -145,17 +156,20 @@ scoop install sox
 scoop install rubberband
 ```
 
-**Linux (Debian/Ubuntu)**
+#### Linux (Debian/Ubuntu)
+
 ```bash
 sudo apt install sox rubberband-cli
 ```
 
-**Linux (Arch Linux)**
+#### Linux (Arch Linux)
+
 ```bash
 sudo pacman -S sox rubberband
 ```
 
-**Validate SoX & Rubber Band are installed**
+#### Validate SoX & Rubber Band are installed
+
 ```bash
 sox --version
 
@@ -169,9 +183,11 @@ rubberband --version
 ```
 
 ### OpenRGB installation
-To install OpenRGB, go to https://openrgb.org/, download and install a package appropriate for your platform. This will allow Celune to glow up your PC as she speaks.
+
+To install OpenRGB, go to <https://openrgb.org/>, download and install a package appropriate for your platform. This will allow Celune to glow up your PC as she speaks.
 
 ### C/C++ compiler setup
+
 Celune's VoxCPM2 backend may require a C/C++ compiler to compile dependencies. To install a suitable compiler, run one of the following commands:
 
 This is not required to use the Qwen backend, but you may need to install dependencies manually.
@@ -188,13 +204,15 @@ sudo pacman -S base-devel
 ```
 
 ### CUDA Toolkit 12.8 installation
+
 This step can be skipped if you are using pre-built PyTorch wheels.
 
 Download and install CUDA Toolkit 12.8 from NVIDIA:
 
-https://developer.nvidia.com/cuda-12-8-0-download-archive
+<https://developer.nvidia.com/cuda-12-8-0-download-archive>
 
 Make sure to:
+
 - Select the correct OS and version
 - Install both **CUDA Toolkit** and **NVIDIA drivers** (if not already installed)
 
@@ -213,30 +231,38 @@ You should see your GPU listed along with driver information.
 Symbolic links are recommended for best performance and compatibility.
 
 To enable them:
+
 - Enable **Developer Mode** in Windows settings  
   (Settings → Privacy & Security → For Developers)
 
 Without this, Celune may require elevated permissions or fall back to slower behavior.
 
-# Screenshots
+## Screenshots
+
 These screenshots show Celune's user interface.
 
 ### Before init
+
 [![Before init](./demos/init.png)](./demos/init.png)
 
 ### Ready
+
 [![Ready](./demos/ready.png)](./demos/ready.png)
 
 ### Talking
+
 [![Talking](./demos/speaking.png)](./demos/speaking.png)
 
 ### Change voice
+
 [![Change voice](./demos/change_voice.png)](./demos/change_voice.png)
 
 ### Commands
+
 [![Commands](./demos/commands.png)](./demos/commands.png)
 
 ### Extension invoke
+
 [![Extension invoke](./demos/extensions.png)](./demos/extensions.png)
 
 > *"Your voice, your way."*
