@@ -84,6 +84,24 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.statuses[-1], ("Generating", "info"))
 
         engine = make_pipeline_engine()
+        engine.use_normalization = True
+        engine.normalize = mock.Mock(return_value="normalized")
+        with mock.patch(
+            "celune.pipeline.detect_language",
+            return_value={
+                "language": "en",
+                "languages": ["en"],
+                "supported": True,
+                "probabilities": {"en": 1.0},
+            },
+        ):
+            self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "raw"), True)
+        engine.normalize.assert_not_called()
+        request = engine.text_queue.get_nowait()
+        self.assertEqual(request.text, "raw")
+        self.assertEqual(request.normalize, True)
+
+        engine = make_pipeline_engine()
         engine.is_in_tutorial = True
         self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), False)
         self.assertEqual(engine.messages[-1][1], "warning")

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Tests for runtime validation and lightweight UI commands."""
 
+import warnings
 from typing import cast
 from types import SimpleNamespace
 from unittest import mock, TestCase
@@ -10,6 +11,7 @@ from celune.backends.qwen3 import Qwen3
 from celune.ui.commands import process_command
 
 from celune.ui.app import CeluneUI
+from celune.ui.headless import CeluneHeadlessUI
 
 
 class RuntimeTests(TestCase):
@@ -161,3 +163,40 @@ class UICommandTests(TestCase):
         self.assertEqual(self.ui.celune.reverb.strength, 0.5)
         self._process_command("reverb", ["150"])
         self.assertEqual(self.logs[-1][1], "warning")
+
+
+class UIStartupTests(TestCase):
+    """Tests for UI startup guard rails."""
+
+    def tearDown(self) -> None:
+        """Reset singleton UI guards after each test."""
+        CeluneUI._instance = None
+        CeluneHeadlessUI._instance = None
+
+    def test_textual_ui_requires_attached_celune_on_mount(self) -> None:
+        """Verify the Textual UI fails clearly without an attached Celune."""
+        ui = CeluneUI()
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "CeluneUI requires an instance of Celune to be set",
+        ):
+            ui.on_mount()
+
+    def test_headless_ui_warns_without_attached_celune(self) -> None:
+        """Verify headless mode warns before doing nothing without Celune."""
+        ui = CeluneHeadlessUI({"headless_nocolor": True})
+        with (
+            warnings.catch_warnings(record=True) as caught,
+            mock.patch("celune.ui.headless.signal.signal"),
+            mock.patch("celune.ui.headless.time.sleep", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            warnings.simplefilter("always")
+            ui.run()
+
+        self.assertEqual(len(caught), 1)
+        self.assertTrue(issubclass(caught[0].category, RuntimeWarning))
+        self.assertIn(
+            "CeluneHeadlessUI has no attached Celune instance",
+            str(caught[0].message),
+        )

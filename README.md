@@ -237,6 +237,10 @@ To enable them:
 
 Without this, Celune may require elevated permissions or fall back to slower behavior.
 
+## REST API
+
+See [API.md](./API.md) for REST API configuration, authentication, endpoints, and curl examples.
+
 ## Screenshots
 
 These screenshots show Celune's user interface.

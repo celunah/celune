@@ -60,6 +60,7 @@ class SpeechRequest:
     display_text: str
     save: bool = True
     stream_queue: Optional[queue.Queue] = None
+    normalize: bool = False
 
 
 @dataclass(frozen=True)
@@ -577,12 +578,6 @@ def queue_speech(
         )
         engine.log("Celune may not say the input properly.", "warning")
 
-    normalized = None
-    if engine.use_normalization:
-        engine.status_callback("Normalizing")
-        engine.progress_callback(None, None)
-        normalized = engine.normalize(text)
-
     if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
         "1",
         "true",
@@ -608,10 +603,11 @@ def queue_speech(
         engine.cur_state = "generating"
         engine.text_queue.put(
             SpeechRequest(
-                normalized if normalized is not None else text,
+                text,
                 display_text=display_text if display_text is not None else text,
                 save=save,
                 stream_queue=stream_queue,
+                normalize=engine.use_normalization,
             )
         )
         engine.status_callback("Generating")
@@ -892,6 +888,13 @@ def generation_worker(engine: "Celune") -> None:
                 buffered_speech_len = 0.0
                 speech_timing = SpeechTiming(start_time)
                 pushed_audio = False
+
+                if item.normalize:
+                    engine.status_callback("Normalizing")
+                    engine.progress_callback(None, None)
+                    normalized = engine.normalize(text)
+                    if normalized is not None:
+                        text = normalized
 
                 # these generation parameters are fixed and do not change
                 generation_params = {
