@@ -8,6 +8,7 @@ import uuid
 import queue
 import datetime
 import threading
+from dataclasses import dataclass
 from hmac import compare_digest
 from collections import defaultdict, deque
 from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, Union
@@ -16,7 +17,7 @@ import uvicorn
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
@@ -35,6 +36,19 @@ rate_limit_per_minute = 60
 rate_limit_lock = threading.Lock()
 rate_limit_hits: defaultdict[str, deque[float]] = defaultdict(deque)
 max_sfx_upload_bytes = 25 * 1024 * 1024
+speech_jobs_lock = threading.Lock()
+speech_jobs: dict[str, "SpeechJob"] = {}
+speech_job_ttl_seconds = 15 * 60
+
+
+@dataclass
+class SpeechJob:
+    """In-memory state for an accepted speech request."""
+
+    status: str
+    created_at: float
+    audio: Optional[bytes] = None
+    error: Optional[str] = None
 
 
 class StartedServer(uvicorn.Server):
@@ -309,6 +323,68 @@ def stream_headers() -> dict[str, str]:
     }
 
 
+def _remember_speech_job(job_id: str, job: SpeechJob) -> None:
+    """Store one speech job and remove expired entries."""
+    with speech_jobs_lock:
+        _delete_expired_speech_jobs(time.time())
+        speech_jobs[job_id] = job
+
+
+def _delete_expired_speech_jobs(now: float) -> None:
+    """Remove jobs older than the in-memory job TTL."""
+    expired_ids = [
+        job_id
+        for job_id, job in speech_jobs.items()
+        if now - job.created_at > speech_job_ttl_seconds
+    ]
+    for job_id in expired_ids:
+        speech_jobs.pop(job_id, None)
+
+
+def _update_speech_job(
+    job_id: str,
+    *,
+    status: str,
+    audio: Optional[bytes] = None,
+    error: Optional[str] = None,
+) -> None:
+    """Update one speech job if it still exists."""
+    with speech_jobs_lock:
+        job = speech_jobs.get(job_id)
+        if job is None:
+            return
+        job.status = status
+        job.audio = audio
+        job.error = error
+
+
+def _speech_job_snapshot(job_id: str) -> Optional[SpeechJob]:
+    """Return a copy of one speech job for response handling."""
+    with speech_jobs_lock:
+        _delete_expired_speech_jobs(time.time())
+        job = speech_jobs.get(job_id)
+        if job is None:
+            return None
+        return SpeechJob(
+            status=job.status,
+            created_at=job.created_at,
+            audio=job.audio,
+            error=job.error,
+        )
+
+
+def _collect_speech_job(job_id: str, chunks: queue.Queue) -> None:
+    """Consume a speech stream queue and store its final FLAC payload."""
+    _update_speech_job(job_id, status="running")
+    try:
+        audio = b"".join(audio_bytes(chunks))
+    except Exception as e:
+        _update_speech_job(job_id, status="failed", error=str(e))
+        return
+
+    _update_speech_job(job_id, status="completed", audio=audio)
+
+
 class RootResponse(BaseModel):
     """Response returned by the API root endpoint."""
 
@@ -376,7 +452,7 @@ def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
             generation failed.
     """
     celune = require_celune()
-    api_log("SPEAK", body.content)
+    api_log("SPEAK(SYNC)", body.content)
     chunks = celune.say_stream(body.content, save=body.save)
     if chunks is None:
         return JSONResponse(
@@ -389,6 +465,79 @@ def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
 
     return StreamingResponse(
         audio_bytes(chunks),
+        media_type="audio/flac",
+        headers=stream_headers(),
+    )
+
+
+@api.post("/v1/speak/async", response_model=None)
+def speak_async(body: SpeakRequest) -> JSONResponse:
+    """Queue speech, return immediately, and expose the eventual result as a job.
+
+    Args:
+        body: A speech request body.
+
+    Returns:
+        JSONResponse: A 202 response with the created job ID, or an error payload.
+    """
+    celune = require_celune()
+    api_log("SPEAK(ASYNC)", body.content)
+    chunks = celune.say_stream(body.content, save=body.save)
+    if chunks is None:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "not_ready",
+                "message": "I'm currently busy. Try again later.",
+            },
+        )
+
+    job_id = uuid.uuid4().hex
+    location = f"/v1/speak/jobs/{job_id}"
+    _remember_speech_job(job_id, SpeechJob(status="queued", created_at=time.time()))
+    threading.Thread(
+        target=_collect_speech_job,
+        args=(job_id, chunks),
+        daemon=True,
+        name=f"CeluneSpeechJob-{job_id[:8]}",
+    ).start()
+
+    return JSONResponse(
+        status_code=202,
+        content={"status": "accepted", "job_id": job_id, "location": location},
+        headers={"Location": location},
+    )
+
+
+@api.get("/v1/speak/jobs/{job_id}", response_model=None)
+def speak_job(job_id: str) -> Union[Response, JSONResponse]:
+    """Return speech job status or the completed FLAC audio payload.
+
+    Args:
+        job_id: The speech job ID returned by ``/v1/speak/async``.
+
+    Returns:
+        Union[Response, JSONResponse]: A pending/error status payload, or audio.
+    """
+    job = _speech_job_snapshot(job_id)
+    if job is None:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": "not_found",
+                "message": "I don't know that speech job.",
+            },
+        )
+
+    if job.status != "completed":
+        status_code = 500 if job.status == "failed" else 202
+        content = {"status": job.status, "job_id": job_id}
+        if job.error is not None:
+            content["error"] = job.error
+        return JSONResponse(status_code=status_code, content=content)
+
+    return Response(
+        content=job.audio or _flac_bytes(np.empty((0, 2), dtype=np.float32)),
         media_type="audio/flac",
         headers=stream_headers(),
     )

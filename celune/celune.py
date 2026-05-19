@@ -990,6 +990,7 @@ class Celune:
                     return None
 
                 inf_total = time.perf_counter() - inf_start
+                self.log(f"Normalized text: {out}")
                 self.log(f"Normalization took {format_number(inf_total, 2)} seconds.")
 
                 return out
