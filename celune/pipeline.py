@@ -750,6 +750,58 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         # input is short, return as is
         return [text]
 
+    def split_long_unit(value: str) -> list[str]:
+        """Split a sentence-like unit that is too long for one chunk."""
+        pieces = [piece.strip() for piece in value.splitlines() if piece.strip()]
+        if not pieces:
+            pieces = value.split()
+
+        chunks = []
+        current = ""
+
+        for piece in pieces:
+            if len(piece) > max_length:
+                if current:
+                    chunks.append(current)
+                    current = ""
+                chunks.extend(split_words(piece))
+                continue
+
+            if current and len(current) + 1 + len(piece) > max_length:
+                chunks.append(current)
+                current = piece
+            elif current and len(current) >= chunk_length:
+                chunks.append(current)
+                current = piece
+            elif current:
+                current = f"{current} {piece}"
+            else:
+                current = piece
+
+        if current:
+            chunks.append(current)
+
+        return chunks
+
+    def split_words(value: str) -> list[str]:
+        """Split text on word boundaries when no stronger boundary exists."""
+        chunks = []
+        current = ""
+
+        for word in value.split():
+            if current and len(current) + 1 + len(word) > max_length:
+                chunks.append(current)
+                current = word
+            elif current:
+                current = f"{current} {word}"
+            else:
+                current = word
+
+        if current:
+            chunks.append(current)
+
+        return chunks
+
     def split_sentences(value: str) -> list[str]:
         """Split a text fragment into sentence-like units.
 
@@ -761,7 +813,14 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         """
 
         # match is a keyword, but it's allowed as an identifier
-        return [match.group(0).strip() for match in sentence_checker.finditer(value)]
+        units = []
+        for match in sentence_checker.finditer(value):
+            unit = match.group(0).strip()
+            if len(unit) > max_length:
+                units.extend(split_long_unit(unit))
+            elif unit:
+                units.append(unit)
+        return units
 
     def split_units(value: str) -> list[str]:
         """Split text into sentence units while isolating quoted sentences.
@@ -889,13 +948,6 @@ def generation_worker(engine: "Celune") -> None:
                 speech_timing = SpeechTiming(start_time)
                 pushed_audio = False
 
-                if item.normalize:
-                    engine.status_callback("Normalizing")
-                    engine.progress_callback(None, None)
-                    normalized = engine.normalize(text)
-                    if normalized is not None:
-                        text = normalized
-
                 # these generation parameters are fixed and do not change
                 generation_params = {
                     "temperature": 0.15,
@@ -914,30 +966,37 @@ def generation_worker(engine: "Celune") -> None:
                         stream_queue.put(None)
                     break
 
-                chunk_progress_totals = tuple(
-                    engine.backend.generation_progress_total(chunk_text)
-                    for chunk_text in chunks
-                )
                 buffer: list[npt.NDArray[np.float32]] = []
                 full_audio: list[npt.NDArray[np.float32]] = []
+                generated_text_parts: list[str] = []
 
-                with engine.model_lock:
-                    if engine.model is None:
-                        raise NotAvailableError(
-                            "cannot generate without a model reference"
-                        )
+                for chunk_index, chunk_text in enumerate(chunks):
+                    if engine.exit_requested:
+                        break
 
-                    for chunk_index, chunk_text in enumerate(chunks):
-                        if engine.exit_requested:
-                            break
+                    if engine.utterance_force_stop.is_set():
+                        break
 
-                        if engine.utterance_force_stop.is_set():
-                            break
+                    if item.normalize:
+                        engine.status_callback("Normalizing")
+                        engine.progress_callback(None, None)
+                        normalized = engine.normalize(chunk_text)
+                        if normalized is not None:
+                            chunk_text = normalized
 
-                        is_first_chunk = chunk_index == 0
-                        progress_total = chunk_progress_totals[chunk_index]
-                        generated_steps = 0
-                        engine.progress_callback(0, progress_total or 1)
+                    generated_text_parts.append(chunk_text)
+                    is_first_chunk = chunk_index == 0
+                    progress_total = engine.backend.generation_progress_total(
+                        chunk_text
+                    )
+                    generated_steps = 0
+                    engine.progress_callback(0, progress_total or 1)
+
+                    with engine.model_lock:
+                        if engine.model is None:
+                            raise NotAvailableError(
+                                "cannot generate without a model reference"
+                            )
 
                         for (
                             audio_chunk,
@@ -1037,6 +1096,9 @@ def generation_worker(engine: "Celune") -> None:
 
                         if progress_total is None:
                             engine.progress_callback(1, 1)
+
+                if generated_text_parts:
+                    text = " ".join(generated_text_parts)
 
                 generation_time = time.monotonic() - start_time
 
