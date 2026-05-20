@@ -6,10 +6,16 @@ import datetime
 from enum import IntEnum, Enum
 from typing import TypeVar, Union
 
-# CeluneNorm v1.3 includes the most important changes, so that Celune can speak optimally.
-NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v1.3"
+# CeluneNorm v2.0 inherits v1.3's feature set but at an extended context length
+# so Celune can process your normalized text more efficiently at either
+# 1024 or 2048 tokens of available max context length
 
-# voice embedding model
+# uncomment the normalizer you wish to use here
+# NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v2.0-ctx1024"
+NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v2.0-ctx2048"
+
+# this embedding model is used to extract a voice embedding vector out of the target utterance,
+# and analyze the voice automatically based on any given embeddings from your CEVOICE pack.
 VOICE_EMBEDDING_MODEL = "marksverdhei/Qwen3-Voice-Embedding-12Hz-1.7B"
 
 # "I use this to know when the next moon comes." - Celune
@@ -26,6 +32,8 @@ class ExitCodes(Enum):
     EXIT_NO_ANSI = 2  # Celune did not find an ANSI capable terminal.
     EXIT_ALREADY_RUNNING = 3  # Celune is already running.
     EXIT_MISSING_DEPENDENCIES = 4  # Celune is missing required dependencies.
+
+    # the following exit codes may be disabled by the end user
     EXIT_CELINE_DAY_SIX_SEVEN = 67  # Celune refuses to run on Celine Day.
     EXIT_CELINE_DAY = 103  # Celune refuses to run on Celine Day.
 

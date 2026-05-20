@@ -11,6 +11,8 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from .backends import CeluneBackend
 from .constants import NORMALIZER_MODEL_ID
 
+NORMALIZER_SPECIAL_TOKENS = ("<|im_start|>", "<|im_end|>", "<NORM>")
+
 
 def load_normalizer_components(
     log: Callable[[str, str], None],
@@ -32,7 +34,11 @@ def load_normalizer_components(
     if available:
         log("Normalizer is already available in cache", "info")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_ref)
+    tokenizer = AutoTokenizer.from_pretrained(model_ref, extra_special_tokens={})
+    tokenizer.add_special_tokens(
+        {"additional_special_tokens": list(NORMALIZER_SPECIAL_TOKENS)},
+        replace_additional_special_tokens=False,
+    )
     llm = AutoModelForCausalLM.from_pretrained(
         model_ref,
         torch_dtype=torch.bfloat16,

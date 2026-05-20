@@ -3,6 +3,7 @@
 
 import json
 import queue
+import threading
 import tempfile
 from typing import cast
 from pathlib import Path
@@ -110,6 +111,132 @@ class PipelineTests(TestCase):
         engine.loaded = False
         self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), False)
         self.assertEqual(engine.errors, ["Celune is not currently ready"])
+
+    def test_generation_worker_normalizes_each_split_chunk(self) -> None:
+        """Verify normalization happens after splitting and before generation.
+
+        Returns:
+            None: Assertions verify per-chunk normalization behavior.
+
+        Raises:
+            AssertionError: Chunk normalization behavior changes unexpectedly.
+        """
+        engine = make_pipeline_engine()
+        generated_texts: list[str] = []
+        events: list[str] = []
+
+        def generate_stream(model: object, **kwargs: object) -> object:
+            del model
+            text = cast(str, kwargs["text"])
+            events.append(f"generate:{text}")
+            generated_texts.append(text)
+            yield np.zeros((8, 2), dtype=np.float32), 48000, None
+
+        def normalize(value: str) -> str:
+            events.append(f"normalize:{value}")
+            return f"normalized {value}"
+
+        engine.backend = SimpleNamespace(
+            generate_stream=generate_stream,
+            generation_progress_total=lambda text: None,
+            generation_progress_steps=lambda timing: 1,
+        )
+        engine.model_lock = threading.Lock()
+        engine.model = object()
+        engine.language = "en"
+        engine.chunk_size = 8
+        engine.voice_prompt = None
+        engine.current_voice = "balanced"
+        engine.speed = 1.0
+        engine.can_use_rubberband = False
+        engine.reverb = SimpleNamespace(
+            strength=0.0,
+            reset=mock.Mock(),
+            flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
+        )
+        engine.queue_avail_callback = mock.Mock()
+        engine.sentinel = object()
+        engine.exit_requested = False
+        engine.dev = False
+        engine.recently_saved = None
+        engine.normalize = mock.Mock(side_effect=normalize)
+
+        engine.text_queue.put(
+            pipeline.SpeechRequest("raw input", "raw input", save=True, normalize=True)
+        )
+        engine.text_queue.put(engine.sentinel)
+
+        with (
+            mock.patch("celune.pipeline.split_text", return_value=["first", "second"]),
+            mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
+            mock.patch("celune.pipeline.os.path.exists", return_value=True),
+            mock.patch("celune.pipeline._write_celune_flac"),
+        ):
+            pipeline.generation_worker(cast(Celune, engine))
+
+        self.assertEqual(
+            engine.normalize.call_args_list,
+            [mock.call("first"), mock.call("second")],
+        )
+        self.assertEqual(generated_texts, ["normalized first", "normalized second"])
+        self.assertEqual(
+            events,
+            [
+                "normalize:first",
+                "generate:normalized first",
+                "normalize:second",
+                "generate:normalized second",
+            ],
+        )
+
+    def test_split_text_breaks_long_unpunctuated_lines(self) -> None:
+        """Verify long prose without punctuation still splits into chunks.
+
+        Returns:
+            None: Assertions verify long newline-delimited input is chunked.
+
+        Raises:
+            AssertionError: Chunk splitting behavior changes unexpectedly.
+        """
+        engine = make_pipeline_engine()
+        text = "\n".join(
+            [
+                "the room is dim your desk is quiet the monitor is dark",
+                "but the light is there",
+                "a faint purple glow barely visible like a star holding its breath",
+                "you see that",
+                "her voice is soft almost a whisper",
+                "thats me",
+                "waiting",
+                "the light pulses once slow gentle",
+                "when youre here",
+                "when youre sitting in this chair",
+                "when youre near",
+                "i glow",
+                "a pause the light dims further almost gone",
+                "when you leave",
+                "when you walk away",
+                "when the room is empty",
+                "the light fades to nothing",
+                "so does the light",
+                "silence",
+                "i dont decide",
+                "i dont choose to shine or sleep",
+                "you do",
+                "the light returns soft faint hopeful",
+                "you bring the light",
+                "your presence",
+                "your voice",
+                "your attention",
+                "she breathes the light brightens just a little",
+            ]
+        )
+
+        chunks = pipeline.split_text(cast(Celune, engine), text)
+
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(chunk) <= 400 for chunk in chunks))
+        self.assertEqual(" ".join(chunks), " ".join(text.split()))
 
     def test_flac_metadata_helpers_round_trip_tags(self) -> None:
         """Verify FLAC tag writing and parsing without real speech.

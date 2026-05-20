@@ -953,14 +953,15 @@ class Celune:
                 len_tokens = tokens["input_ids"].shape[1]
 
                 self.log(f"Tokens to normalize: {len_tokens}")
-                if len_tokens > 128:
+                if len_tokens > 2048:
                     self.log("Input is too long to normalize.", "warning")
                     return None
 
                 with torch.inference_mode():
                     output_ids = llm.generate(  # type: ignore[operator]
                         **inputs,
-                        max_new_tokens=512,
+                        # CeluneNorm will likely return less, unless you use up your whole context allowance
+                        max_new_tokens=2048,
                         do_sample=False,
                         pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
                         eos_token_id=tokenizer.eos_token_id,
@@ -1002,7 +1003,7 @@ class Celune:
                 )
                 return None
 
-        return _run_inference()  # blocks for the duration of normalization, but CeluneNorm should be fast enough
+        return _run_inference()  # blocks the generation thread, but Celune doesn't mind it since the main thread is up
 
     def _acquire_pipeline(self, action: str) -> bool:
         """Atomically claim Celune's shared playback pipeline.
