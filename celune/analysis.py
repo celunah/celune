@@ -479,7 +479,7 @@ def add_reference_similarity_metrics(
         metrics["voice_similarity_error"] = str(exc)
         return
 
-    matches.sort(key=lambda match: match["percent"], reverse=True)
+    matches.sort(key=lambda smatch: smatch["percent"], reverse=True)
     metrics["voice_similarity_ok"] = True
     metrics["voice_similarity_cosine"] = cosine
     metrics["voice_similarity_percent"] = percent

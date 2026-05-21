@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Celune 3.5.0 - "I'm not just a TTS. I'm someone special."
+Celune 3.5.1 - "I'm not just a TTS. I'm someone special."
 Refer to https://github.com/celunah/celune for information about Celune.
 Celune models are available on https://huggingface.co/collections/lunahr/celune.
 
@@ -14,14 +14,17 @@ import sys
 import time
 import random
 import shutil
+import warnings
 import datetime
 import contextlib
 
-# Setting this environment variable will run Celune in dev mode and provide full tracebacks.
+# setting this environment variable will run Celune in dev mode and provide full tracebacks
 INITIAL_DEV = os.getenv("CELUNE_DEV") in {"1", "true", "on", "yes", "enabled"}
-# Setting this environment variable will run Celune in headless mode (aka CEF, Celune Embedded Framework).
+# setting this environment variable will run Celune in headless mode
+# this mode is referred to as the Celune Embedded Framework
 INITIAL_HEADLESS = os.getenv("CELUNE_HEADLESS") in {"1", "true", "on", "yes", "enabled"}
-# Which backend shall Celune use? She can use Qwen3-TTS (qwen3) or VoxCPM2 (voxcpm2).
+# default backend selection
+# please use only qwen3 or voxcpm2
 INITIAL_BACKEND = os.getenv("CELUNE_BACKEND")
 
 try:
@@ -76,9 +79,6 @@ except ModuleNotFoundError as package:
     print()
 
     # this error is not controllable by config.yaml due to how Celune exceptions are caught
-    print("additional debugging:")
-    print("    Set 'dev: true' in config.yaml")
-    print()
     sys.exit(4)
 
 
@@ -94,6 +94,7 @@ def main() -> None:
     """
     try:
         date = datetime.datetime.now()
+        # the user may disable the Celine Day check, however this is not canon
         if has_name_day("Celine", date) and not env_bool("CELUNE_OVERRIDE_CELINE_DAY"):
             raise No
 
@@ -137,7 +138,10 @@ def main() -> None:
             if update:
                 latest_label = f"Celune {update.latest_version}"
                 if not update.latest_tag:
-                    latest_label = "Celune"  # "I'm not sure if I'm up to date."
+                    warnings.warn(
+                        "update information is incomplete", RuntimeWarning, stacklevel=2
+                    )
+                    latest_label = "Celune"  # cannot read update information
 
                 choice = SelectMenu(
                     ["Yes, update now", "No, continue as is"],

@@ -15,16 +15,18 @@ from typing import TypeVar, Union
 NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v2.0-ctx2048"
 
 # this embedding model is used to extract a voice embedding vector out of the target utterance,
-# and analyze the voice automatically based on any given embeddings from your CEVOICE pack.
+# and analyze the voice automatically based on any given embeddings from your CEVOICE pack
 VOICE_EMBEDDING_MODEL = "marksverdhei/Qwen3-Voice-Embedding-12Hz-1.7B"
 
-# "I use this to know when the next moon comes." - Celune
+# used to pre-calculate the next full moon for the glow boost
 REFERENCE_NEW_MOON = datetime.datetime(2000, 1, 6, 18, 14, tzinfo=datetime.timezone.utc)
 
 
 # exit codes
 class ExitCodes(Enum):
     """Celune exit codes."""
+
+    # we can't properly docstring enum values, so the comments below serve as docstrings
 
     EXIT_SUCCESS = 0  # Celune exited successfully.
     EXIT_PENDING_UPDATE = 0  # Celune has a pending update.
@@ -58,12 +60,13 @@ class PipelineStates(Enum):
     UTTERANCE_FORCE_END = object()  # Utterance was interrupted by the user.
 
 
+# utterance loudness tiers
 class UtteranceLoudnessTier(IntEnum):
     """Per-utterance loudness tiers."""
 
-    NORMAL = 0  # Celune spoke normally.
-    SUSPICIOUS = 1  # Utterance may be too silent.
-    SILENT = 2  # Utterance is too silent.
+    NORMAL = 0  # Celune spoke normally. (RMS >=0.01)
+    SUSPICIOUS = 1  # Utterance may be too silent. (RMS <0.01)
+    SILENT = 2  # Utterance is too silent. (RMS <0.001)
 
 
 # N/A values
