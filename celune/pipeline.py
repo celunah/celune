@@ -812,10 +812,9 @@ def split_text(engine: "Celune", text: str) -> list[str]:
             list[str]: Sentence-like units with surrounding whitespace removed.
         """
 
-        # match is a keyword, but it's allowed as an identifier
         units = []
-        for match in sentence_checker.finditer(value):
-            unit = match.group(0).strip()
+        for rmatch in sentence_checker.finditer(value):
+            unit = rmatch.group(0).strip()
             if len(unit) > max_length:
                 units.extend(split_long_unit(unit))
             elif unit:
@@ -834,10 +833,10 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         units = []
         start = 0
 
-        for match in quote_checker.finditer(value):
-            units.extend(split_sentences(value[start : match.start()]))
-            units.append(match.group(0).strip())
-            start = match.end()
+        for qmatch in quote_checker.finditer(value):
+            units.extend(split_sentences(value[start : qmatch.start()]))
+            units.append(qmatch.group(0).strip())
+            start = qmatch.end()
 
         units.extend(split_sentences(value[start:]))
         return [unit for unit in units if unit]

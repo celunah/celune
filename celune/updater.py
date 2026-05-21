@@ -90,12 +90,12 @@ def _normalize_tag(tag: str) -> str:
 
 def _version_key(tag: str) -> VersionKey:
     normalized = _normalize_tag(tag)
-    match = re.match(r"^(\d+(?:\.\d+)*)(.*)$", normalized)
-    if not match:
+    rmatch = re.match(r"^(\d+(?:\.\d+)*)(.*)$", normalized)
+    if not rmatch:
         return VersionKey((), normalized)
 
-    numbers = tuple(int(part) for part in match.group(1).split("."))
-    suffix = match.group(2)
+    numbers = tuple(int(part) for part in rmatch.group(1).split("."))
+    suffix = rmatch.group(2)
     return VersionKey(numbers, suffix)
 
 

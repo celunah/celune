@@ -540,18 +540,18 @@ def replace_ipa(text: str, strict: bool = True) -> tuple[str, int]:
     """
     total_unmatched = 0
 
-    def repl(match: re.Match[str]) -> str:
+    def repl(rmatch: re.Match[str]) -> str:
         nonlocal total_unmatched
 
-        ipa = match.group(1) or match.group(2) or ""
+        ipa = rmatch.group(1) or rmatch.group(2) or ""
 
         # PyCharm loves its "TYPO" warnings, but this is an IPA dictionary, not a word!
         ipa_markers = set("ŋʃʒθðɾɲçʎʁχɪɛæʌəʊɔɑɚʔɝɹˈˌː.")
 
         if strict and not ipa_markers.intersection(ipa):
-            return match.group(0)
+            return rmatch.group(0)
 
-        converted, unmatched = ipa_to_english(match.group(0))
+        converted, unmatched = ipa_to_english(rmatch.group(0))
         total_unmatched += unmatched
 
         return converted
@@ -702,8 +702,8 @@ def rng_replace(
     pattern_str = r"\b(" + "|".join(re.escape(t) for t in targets) + r")\b"
     pattern = re.compile(pattern_str, re.IGNORECASE)
 
-    def repl(match: re.Match) -> str:
-        source = match.group(0)
+    def repl(rmatch: re.Match) -> str:
+        source = rmatch.group(0)
 
         if random.random() >= rate:
             return source
