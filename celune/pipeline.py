@@ -593,7 +593,7 @@ def build_pyop_character_card(engine: "Celune") -> str:
     )
 
 
-def _pyop_history_limit(engine: "Celune") -> int:
+def _pyop_history_limit() -> int:
     """Return how many prior chat messages Celune should send to PYOP."""
     return PYOP_HISTORY_MESSAGES
 
@@ -605,7 +605,7 @@ def _pyop_history_messages(engine: "Celune") -> list[JSON]:
         return []
 
     messages: list[JSON] = []
-    for item in history[-_pyop_history_limit(engine) :]:
+    for item in history[-_pyop_history_limit() :]:
         if not isinstance(item, dict):
             continue
 
@@ -718,7 +718,7 @@ def think(engine: "Celune", request: str) -> bool:
                 {"role": "assistant", "content": spoken_text},
             ]
         )
-        limit = _pyop_history_limit(engine)
+        limit = _pyop_history_limit()
         if limit == 0:
             history.clear()
         elif len(history) > limit:
