@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Tests for pipeline helpers that do not perform real synthesis."""
 
-import json
+import json as _json
 import queue
 import threading
 import tempfile
@@ -152,16 +152,16 @@ class PipelineTests(TestCase):
                 self.endpoint = ""
                 self.payload: object = None
 
-            def post(self, endpoint: str, json_obj: JSON) -> FakeResponse:
+            def post(self, endpoint: str, json: JSON) -> FakeResponse:
                 """POST to the fake API endpoint.
 
                 Args:
                     endpoint: The fake endpoint.
-                    json_obj: The JSON data to post.
+                    json: The JSON data to post.
 
                 """
                 self.endpoint = endpoint
-                self.payload = json_obj
+                self.payload = json
                 return FakeResponse()
 
         engine = make_pipeline_engine()
@@ -462,7 +462,7 @@ class PipelineTests(TestCase):
         self.assertEqual(tags["artist"], "Fixture")
         self.assertEqual(tags["album"], "Celune via fake")
         self.assertEqual(tags["title"], "one two three four five...")
-        self.assertEqual(json.loads(tags["comment"])["text"], "hello")
+        self.assertEqual(_json.loads(tags["comment"])["text"], "hello")
 
     def test_log_and_stream_helpers_are_lightweight(self) -> None:
         """Verify playback timing logs and stream cleanup behavior.
