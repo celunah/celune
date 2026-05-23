@@ -11,8 +11,9 @@ import pathlib
 import datetime
 import contextlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
+import httpx
 import torch
 import numpy as np
 import numpy.typing as npt
@@ -31,6 +32,7 @@ from .dsp import (
     readiness_signal,
 )
 from .exceptions import NotAvailableError
+from .pyop import pyop_endpoint, pyop_model_id, pyop_quantization
 from .utils import (
     format_number,
     run_async,
@@ -38,9 +40,18 @@ from .utils import (
     detect_language,
     is_april_fools,
     rng_replace,
+    make_persona_card,
 )
 from .analysis import analyze_voice_audio
-from .constants import BASE_SR, N_A_NUMERIC, JSON, JSONSerializable
+from .constants import (
+    BASE_SR,
+    BASELINE_CHARACTER_PERSONA,
+    DEFAULT_CELUNE_PERSONA,
+    N_A_NUMERIC,
+    JSON,
+    JSONSerializable,
+    VOICE_STYLE_OVERLAYS,
+)
 from . import __version__
 
 if TYPE_CHECKING:
@@ -502,6 +513,229 @@ def release_pipeline(engine: "Celune") -> None:
         engine.log_dev("[LOCK] released")
 
 
+def _config_text(engine: "Celune", key: str, default: str) -> str:
+    """Read a string configuration value with a fallback."""
+    value = engine.config.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+
+    return default
+
+
+def _pyop_style_traits(engine: "Celune") -> dict[str, str]:
+    """Return the configured voice style traits for a PYOP request."""
+    voice = getattr(engine, "current_voice", None) or "balanced"
+    overlay = VOICE_STYLE_OVERLAYS.get(voice, VOICE_STYLE_OVERLAYS["balanced"])
+    return {key: str(value) for key, value in overlay.items()}
+
+
+def _default_pyop_persona(engine: "Celune") -> str:
+    """Return the default persona for the active character source."""
+    if getattr(engine, "voice_bundle_is_default", True):
+        return DEFAULT_CELUNE_PERSONA
+
+    return BASELINE_CHARACTER_PERSONA
+
+
+def _default_pyop_gender(engine: "Celune") -> str:
+    """Return a conservative gender default for the active character source."""
+    if getattr(engine, "voice_bundle_is_default", True):
+        return "female"
+
+    return "unknown"
+
+
+def _default_pyop_context(engine: "Celune") -> str:
+    """Return the default interaction context for the active character source."""
+    if getattr(engine, "voice_bundle_is_default", True):
+        return "Celune is speaking directly to the user through a real-time TTS engine."
+
+    return (
+        "The character is speaking directly to the user through a real-time TTS engine."
+    )
+
+
+def build_pyop_character_card(engine: "Celune") -> str:
+    """Build the character card sent with PYOP requests."""
+    name = getattr(engine, "current_character", None) or _config_text(
+        engine, "pyop_character_name", "Celune"
+    )
+    voice = getattr(engine, "current_voice", None) or "balanced"
+    voice_prompt = getattr(engine, "voice_prompt", None)
+    traits = _pyop_style_traits(engine)
+    extra = traits.pop("extra", "").strip()
+
+    voice_notes = f"Selected voice style: {voice}."
+    if extra:
+        voice_notes = f"{voice_notes}\n{extra}"
+    if isinstance(voice_prompt, str) and voice_prompt.strip():
+        voice_notes = f"{voice_notes}\nVoice prompt: {voice_prompt.strip()}"
+
+    return make_persona_card(
+        name=name,
+        age=_config_text(engine, "pyop_character_age", "unknown"),
+        gender=_config_text(
+            engine, "pyop_character_gender", _default_pyop_gender(engine)
+        ),
+        persona=_config_text(
+            engine,
+            "pyop_persona",
+            _default_pyop_persona(engine),
+        ),
+        traits=traits,
+        context=_config_text(
+            engine,
+            "pyop_context",
+            _default_pyop_context(engine),
+        ),
+        voice=voice_notes,
+    )
+
+
+def _pyop_history_limit(engine: "Celune") -> int:
+    """Return how many prior chat messages Celune should send to PYOP."""
+    pyop_config = engine.config.get("pyop", {})
+    if not isinstance(pyop_config, dict):
+        pyop_config = {}
+
+    value = pyop_config.get(
+        "max_history_messages", engine.config.get("pyop_max_history_messages", 24)
+    )
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 24
+
+
+def _pyop_history_messages(engine: "Celune") -> list[JSON]:
+    """Return prior PYOP chat messages in OpenAI chat format."""
+    history = getattr(engine, "pyop_history", [])
+    if not isinstance(history, list):
+        return []
+
+    messages: list[JSON] = []
+    for item in history[-_pyop_history_limit(engine) :]:
+        if not isinstance(item, dict):
+            continue
+
+        role = item.get("role")
+        content = item.get("content")
+        if (
+            role in {"user", "assistant"}
+            and isinstance(content, str)
+            and content.strip()
+        ):
+            messages.append({"role": role, "content": content.strip()})
+
+    return messages
+
+
+def build_pyop_messages(engine: "Celune", request: str) -> list[JSON]:
+    """Build OpenAI-style messages for the external PYOP service."""
+    return [
+        {"role": "system", "content": build_pyop_character_card(engine)},
+        *_pyop_history_messages(engine),
+        {"role": "user", "content": request.strip()},
+    ]
+
+
+def build_pyop_request(engine: "Celune", request: str) -> JSON:
+    """Build the JSON payload sent to the external PYOP service."""
+    character_card = build_pyop_character_card(engine)
+    clean_request = request.strip()
+    return {
+        "format": "celune_pyop_request",
+        "format_version": 1,
+        "model": pyop_model_id(engine.config),
+        "quantization": pyop_quantization(engine.config),
+        "quantized": True,
+        "character": getattr(engine, "current_character", None) or "Celune",
+        "voice": getattr(engine, "current_voice", None) or "balanced",
+        "character_card": character_card,
+        "system": character_card,
+        "user": clean_request,
+        "request": clean_request,
+        "messages": cast(JSONSerializable, build_pyop_messages(engine, clean_request)),
+    }
+
+
+def _extract_pyop_text(payload: JSONSerializable) -> str:
+    """Extract spoken text from common PYOP response payload shapes."""
+    if isinstance(payload, str):
+        return payload.strip()
+
+    if not isinstance(payload, dict):
+        return ""
+
+    for key in ("text", "response", "reply", "output", "content"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    message = payload.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+
+    choices = payload.get("choices")
+    if isinstance(choices, list) and choices:
+        first = choices[0]
+        if isinstance(first, dict):
+            return _extract_pyop_text(first)
+
+    return ""
+
+
+def think(engine: "Celune", request: str) -> bool:
+    """Let Celune think about the input given, and speak back.
+
+    Args:
+        engine: The Celune engine that should speak the output.
+        request: The input request that will be sent to by PYOP.
+    """
+    payload = build_pyop_request(engine, request)
+    endpoint = pyop_endpoint(engine.config)
+
+    try:
+        vision: Any = getattr(engine, "vision", None)
+        if vision is None:
+            engine.log("Persona system is not connected.", "warning")
+            return False
+
+        response = vision.post(endpoint, json=payload)
+        response.raise_for_status()
+        spoken_text = _extract_pyop_text(response.json())
+    except httpx.ReadTimeout:
+        engine.log("Persona system timed out.", "warning")
+        return False
+    except Exception as e:
+        engine.log(
+            f"Persona system request failed: {format_error(e, engine.dev)}", "warning"
+        )
+        return False
+
+    if not spoken_text:
+        engine.log("Persona system returned an empty response.", "warning")
+        return False
+
+    history = getattr(engine, "pyop_history", None)
+    if isinstance(history, list):
+        history.extend(
+            [
+                {"role": "user", "content": request.strip()},
+                {"role": "assistant", "content": spoken_text},
+            ]
+        )
+        limit = _pyop_history_limit(engine)
+        if limit == 0:
+            history.clear()
+        elif len(history) > limit:
+            del history[: len(history) - limit]
+
+    return queue_speech(engine, spoken_text, display_text=spoken_text)
+
+
 def say(
     engine: "Celune",
     text: str,
@@ -741,7 +975,7 @@ def split_text(engine: "Celune", text: str) -> list[str]:
     max_length = 400
 
     # detect sentences
-    sentence_checker = re.compile(r"\S.*?(?:[.!?]+[\"')\]]*(?=\s+|$)|$)", re.S)
+    unit_checker = re.compile(r"\S.*?(?:[.!?]+[\"')\]]*(?=\s+|$)|$)", re.S)
 
     # detected quoted text with a boundary
     quote_checker = re.compile(r'"[^"]*[.!?]"')
@@ -756,49 +990,49 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         if not pieces:
             pieces = value.split()
 
-        chunks = []
-        current = ""
+        unit_chunks = []
+        unit_current = ""
 
         for piece in pieces:
             if len(piece) > max_length:
-                if current:
-                    chunks.append(current)
-                    current = ""
-                chunks.extend(split_words(piece))
+                if unit_current:
+                    unit_chunks.append(unit_current)
+                    unit_current = ""
+                unit_chunks.extend(split_words(piece))
                 continue
 
-            if current and len(current) + 1 + len(piece) > max_length:
-                chunks.append(current)
-                current = piece
-            elif current and len(current) >= chunk_length:
-                chunks.append(current)
-                current = piece
-            elif current:
-                current = f"{current} {piece}"
+            if unit_current and len(unit_current) + 1 + len(piece) > max_length:
+                unit_chunks.append(unit_current)
+                unit_current = piece
+            elif unit_current and len(unit_current) >= chunk_length:
+                unit_chunks.append(unit_current)
+                unit_current = piece
+            elif unit_current:
+                unit_current = f"{unit_current} {piece}"
             else:
-                current = piece
+                unit_current = piece
 
-        if current:
-            chunks.append(current)
+        if unit_current:
+            unit_chunks.append(unit_current)
 
-        return chunks
+        return unit_chunks
 
     def split_words(value: str) -> list[str]:
         """Split text on word boundaries when no stronger boundary exists."""
-        chunks = []
-        current = ""
+        word_chunks = []
+        word_current = ""
 
         for word in value.split():
-            if current and len(current) + 1 + len(word) > max_length:
-                chunks.append(current)
-                current = word
-            elif current:
-                current = f"{current} {word}"
+            if word_current and len(word_current) + 1 + len(word) > max_length:
+                chunks.append(word_current)
+                word_current = word
+            elif word_current:
+                word_current = f"{word_current} {word}"
             else:
-                current = word
+                word_current = word
 
-        if current:
-            chunks.append(current)
+        if word_current:
+            word_chunks.append(word_current)
 
         return chunks
 
@@ -813,7 +1047,7 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         """
 
         units = []
-        for rmatch in sentence_checker.finditer(value):
+        for rmatch in unit_checker.finditer(value):
             unit = rmatch.group(0).strip()
             if len(unit) > max_length:
                 units.extend(split_long_unit(unit))

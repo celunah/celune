@@ -1,0 +1,29 @@
+[project]
+name = "celune-pyop"
+version = "0.1.0"
+description = "Detached PYOP persona API for Celune"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "accelerate",
+    "bitsandbytes",
+    "fastapi",
+    "pydantic",
+    "torch==2.11.0+cu128",
+    "transformers>=5.7.0",
+    "uvicorn",
+]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[project.scripts]
+pyop-api = "pyop_api.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pyop_api*"]

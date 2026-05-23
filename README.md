@@ -19,6 +19,15 @@ It was proudly made in 🇵🇱 for your listening pleasure.
 - Optimized GPU inference
 - Configurable voices via CEVOICE voice packs
 
+## Note on development
+Celune is against the stance of "vibe coding" used in development. 
+
+None of the 10,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
+
+All decisions and implementations were reviewed, validated, and approved by human developers.
+
+Celune never was, and will never become an "AI slop" project.
+
 ## Voices & samples
 
 Each voice is demonstrated using a short introduction and a longer narration sample to showcase consistency, pacing, and expressiveness.

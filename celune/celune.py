@@ -6,9 +6,11 @@ import time
 import queue
 import threading
 import contextlib
+import subprocess
 from pathlib import Path
 from typing import Any, Optional, Callable, Protocol, Union
 
+import httpx
 import torch
 import numpy as np
 import numpy.typing as npt
@@ -25,13 +27,27 @@ from .backends.qwen3 import Qwen3
 from .extensions.base import CeluneContext
 from .dsp import StreamingPedalboardReverb
 from .config import config_bool, config_value
-from .modeling import load_normalizer_components
+from .modeling import NORMALIZER_DEVICE, load_normalizer_components
 from .backends import CeluneBackend, resolve_backend
 from .extensions.manager import CeluneExtensionManager
 from .runtime import log_runtime_banner, validate_runtime
 from .constants import NORMALIZER_MODEL_ID, PipelineStates
 from .exceptions import NotAvailableError, WarmupError, BackendError
-from .cevoice import announce_default_bundle, default_loader, select_voice_bundle
+from .pyop import (
+    PYOP_TIMEOUT,
+    PYOP_STARTUP_TIMEOUT,
+    pyop_base_url,
+    pyop_enabled,
+    pyop_is_available,
+    start_pyop_detached,
+    stop_pyop_process,
+)
+from .cevoice import (
+    announce_default_bundle,
+    default_bundle_path,
+    default_loader,
+    select_voice_bundle,
+)
 from .utils import format_number, format_error, discard, is_port_usable, custom_assert
 from .pipeline import (
     acquire_pipeline,
@@ -46,6 +62,7 @@ from .pipeline import (
     queue_speech,
     release_pipeline,
     say as say_pipeline,
+    think as think_pipeline,
     split_text,
     play_readiness_signal,
 )
@@ -234,6 +251,8 @@ class Celune:
 
         self.current_voice: Optional[str] = None
         self.current_character: Optional[str] = None
+        self.voice_bundle_is_default = True
+        self.pyop_history: list[dict[str, str]] = []
         self.voices: tuple[str, ...] = ()
         self.voice_prompt: Optional[str] = None
 
@@ -243,6 +262,8 @@ class Celune:
         self._playback_thread: Optional[threading.Thread] = None
         self._generation_thread: Optional[threading.Thread] = None
         self._api_thread: Optional[threading.Thread] = None
+        self._pyop_thread: Optional[threading.Thread] = None
+        self._pyop_process: Optional[subprocess.Popen[bytes]] = None
 
         self._queue_lock = threading.Lock()
         self._utterance_force_stop = threading.Event()
@@ -292,8 +313,12 @@ class Celune:
                 configured_glow = theme.get("glow_color")
                 if isinstance(configured_glow, str):
                     glow_color = configured_glow
+
         self.glow = AudioRGBGlow(color=glow_color)
         self.glow.start()
+
+        self.vision = self._pyop_conn()
+
         Celune._instance = self
 
     @staticmethod
@@ -323,6 +348,34 @@ class Celune:
             None: This helper removes all currently pending items.
         """
         clear_queue(q)
+
+    def _pyop_conn(self) -> Optional[httpx.Client]:
+        """Return a connection to a PYOP server, if available.
+
+        Returns:
+            Optional[httpx.Client]: The client connection to the PYOP server, or ``None`` if unavailable.
+        """
+
+        if not pyop_enabled(self.config):
+            return None
+
+        url = pyop_base_url(self.config)
+        if not pyop_is_available(url):
+            process = start_pyop_detached(self.config)
+            if process is not None:
+                self._pyop_process = process
+            deadline = time.monotonic() + PYOP_STARTUP_TIMEOUT
+
+            while process is not None and time.monotonic() < deadline:
+                time.sleep(0.25)
+                if pyop_is_available(url):
+                    break
+
+        if not pyop_is_available(url):
+            self.log("Persona system not initialized due to a timeout.", "warning")
+            return None
+
+        return httpx.Client(base_url=url, timeout=PYOP_TIMEOUT)
 
     def _close_stream(self, abort: bool = False) -> None:
         """Close the current audio stream if one exists.
@@ -386,6 +439,7 @@ class Celune:
         select_voice_bundle(bundle)
         loader = default_loader()
         if loader is None:
+            self.voice_bundle_is_default = True
             voices = tuple(self.backend.voices)
             self.voices = voices
             self.current_voice = (
@@ -397,6 +451,7 @@ class Celune:
             )
             return bool(voices)
 
+        self.voice_bundle_is_default = loader.bundle.path == default_bundle_path()
         voices = loader.bundle.voice_order
         configured_default = loader.bundle.metadata.get("default_voice")
         preferred_voice = (
@@ -723,6 +778,12 @@ class Celune:
 
         self._start_configured_api()
 
+        if not pyop_is_available(pyop_base_url(self.config)):
+            self.log(
+                "Personas are unavailable. Celune is operating in speech-only mode.",
+                "warning",
+            )
+
         # notify readiness
         if not play_readiness_signal(self):
             self.log_dev("Could not play the readiness signal.", "warning")
@@ -850,10 +911,14 @@ class Celune:
                 self.log("Normalization will not be available.", "warning")
                 self.progress_callback(0, 1)
 
+        if self.vision is not None:
+            # we don't need to normalize out of the VLM
+            return
+
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
         self.progress_callback(None, None)
-        self.log(f"Loading normalizer {NORMALIZER_MODEL_ID}...")
+        self.log(f"Loading normalizer {NORMALIZER_MODEL_ID} on {NORMALIZER_DEVICE}...")
 
     def _warmup(self) -> bool:
         """Warm up Celune's speech capabilities.
@@ -1025,6 +1090,53 @@ class Celune:
         """
         release_pipeline(self)
 
+    def think(
+        self,
+        request: str,
+    ) -> bool:
+        """Let Celune reply to an input request.
+
+        Args:
+            request: The request that will be sent to PYOP for processing.
+
+        Returns:
+            bool: ``True`` if Celune processed this smart request, otherwise ``False``.
+        """
+        if self.is_in_tutorial:
+            self.log("Speech input is disabled during the tutorial.", "warning")
+            return False
+
+        with self.say_lock:
+            if self.locked or self.cur_state in {"generating", "speaking"}:
+                self.log("Tried to think while Celune was busy.", "warning")
+                self.error_callback("Celune is currently busy")
+                return False
+
+        self.status_callback("Thinking")
+        self.progress_callback(None, None)
+        self._ready_announced = False
+        thread = threading.Thread(
+            target=self._think_worker,
+            args=(request,),
+            daemon=True,
+        )
+        self._pyop_thread = thread
+        thread.start()
+        return True
+
+    def _think_worker(self, request: str) -> None:
+        """Fetch a PYOP response without blocking Celune's UI thread."""
+
+        if not self.vision:
+            self.vision = self._pyop_conn()
+            if not self.vision:
+                self.say(request)
+                return
+
+        if not think_pipeline(self, request):
+            self.log("Will say the input instead.", "warning")
+            self.say(request)
+
     def say(
         self,
         text: str,
@@ -1102,6 +1214,11 @@ class Celune:
         """
         try:
             close_pipeline(self)
+            if self.vision is not None:
+                self.vision.close()
+            if self._pyop_process is not None:
+                stop_pyop_process(self._pyop_process)
+                self._pyop_process = None
             with self._model_lock:
                 self.unload_runtime_state(include_normalizer=True)
         finally:

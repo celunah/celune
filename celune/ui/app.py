@@ -25,6 +25,7 @@ from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 from rich.text import Text
 
 from ..celune import Celune
+from ..pyop import pyop_base_url, pyop_is_available, pyop_talkback_enabled
 from ..utils import (
     format_error,
     indent,
@@ -36,10 +37,10 @@ from ..utils import (
 from ..constants import SIGTSTP
 from ..cevoice import default_loader
 from .. import colors
-from .commands import process_command as process_ui_command
 from . import resources as ui_resources
 from .terminal import LogRedirect
 from .theme import CELUNE_CSS, severity_color
+from .commands import process_command as process_ui_command
 
 
 class CeluneUI(App):
@@ -581,9 +582,12 @@ class CeluneUI(App):
             Returns:
                 None: This callback updates input widgets and resources.
             """
-            self.input_box.placeholder = (
-                "Please wait" if locked else "Enter text to speak here"
+            placeholder = (
+                "Say something..."
+                if pyop_is_available(pyop_base_url(self.celune.config))
+                else "Enter text to speak here"
             )
+            self.input_box.placeholder = "Please wait" if locked else placeholder
             self.style_button.disabled = locked
             self.update_resources()
 
@@ -787,14 +791,18 @@ class CeluneUI(App):
             self.process_command(command, command_args)
             return True
 
-        ipa_decoded, unmatched = replace_ipa(text, strict=True)
-        if unmatched > 0:
-            self.safe_log_dev(
-                f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
-                "warning",
-            )
+        if pyop_talkback_enabled(self.celune.config):
+            handled = self.celune.think(text)
+        else:
+            ipa_decoded, unmatched = replace_ipa(text, strict=True)
+            if unmatched > 0:
+                self.safe_log_dev(
+                    f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
+                    "warning",
+                )
+            handled = self.celune.say(ipa_decoded, display_text=text)
 
-        if not self.celune.say(ipa_decoded, display_text=text):
+        if not handled:
             return False
 
         self.style_button.disabled = True

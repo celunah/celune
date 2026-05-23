@@ -32,3 +32,10 @@ api:
   token: null
   # it is advised to set this for public Celune APIs
   rate_limit_per_minute: 60
+# PYOP is a VLM finetune used by Celune's persona-conditioned speech features
+# it cannot run together with Celune as it and Celune need versions of Transformers that are
+# mutually incompatible, Celune wants ==4.57.3, but PYOP wants >=5.7.0
+pyop:
+  enabled: true
+  # if disabled, regular UI input goes directly to speech instead of persona talkback
+  talkback: true

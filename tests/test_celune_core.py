@@ -35,6 +35,7 @@ class CeluneCoreTests(TestCase):
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.pyop_is_available", return_value=False),
         ):
             celune = Celune(config=config, tts_backend=FakeBackend)
             self.addCleanup(self._close_celune, celune)
@@ -60,6 +61,7 @@ class CeluneCoreTests(TestCase):
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.pyop_is_available", return_value=False),
             self.assertRaisesRegex(BackendError, "invalid chunk length"),
         ):
             Celune(
@@ -90,6 +92,136 @@ class CeluneCoreTests(TestCase):
         with mock.patch("celune.celune.default_loader", return_value=fake_loader):
             self.assertEqual(celune.load_voice_bundle(Path("fixture.cevoice")), True)
         self.assertEqual(celune.current_voice, "bold")
+
+    def test_pyop_connection_starts_detached_companion(self) -> None:
+        """Verify Celune connects to PYOP through the local detached API boundary.
+
+        Returns:
+            None: Assertions verify PYOP process startup and client setup.
+
+        Raises:
+            AssertionError: PYOP connection behavior changes unexpectedly.
+        """
+        client = mock.Mock()
+        process = mock.Mock()
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch(
+                "celune.celune.pyop_is_available",
+                side_effect=[False, True, True],
+            ) as available,
+            mock.patch(
+                "celune.celune.start_pyop_detached", return_value=process
+            ) as start,
+            mock.patch("celune.celune.stop_pyop_process") as stop,
+            mock.patch("celune.celune.httpx.Client", return_value=client) as client_cls,
+        ):
+            celune = Celune(config={"pyop": {"enabled": True}}, tts_backend=FakeBackend)
+            self.addCleanup(self._close_celune, celune)
+
+            self.assertIs(celune.vision, client)
+            self.assertIs(celune._pyop_process, process)
+            start.assert_called_once()
+            client_cls.assert_called_once()
+            self.assertEqual(
+                available.call_args_list[0].args[0], "http://127.0.0.1:2061"
+            )
+            celune.close()
+            stop.assert_called_once_with(process)
+
+    def test_pyop_launcher_passes_default_model_to_detached_process(self) -> None:
+        """Verify the detached PYOP API receives the default model id.
+
+        Returns:
+            None: Assertions verify launcher environment setup.
+
+        Raises:
+            AssertionError: PYOP launcher model configuration changes unexpectedly.
+        """
+        from celune import pyop
+
+        with (
+            mock.patch("celune.pyop.pyop_python", return_value=Path("pyop-python.exe")),
+            mock.patch("celune.pyop.pyop_entrypoint", return_value="-m pyop_api"),
+            mock.patch("celune.pyop.Path.exists", return_value=True),
+            mock.patch("celune.pyop.sys.executable", "celune-python.exe"),
+            mock.patch("celune.pyop.subprocess.Popen") as popen,
+        ):
+            process = pyop.start_pyop_detached({"pyop": {}})
+
+        self.assertIs(process, popen.return_value)
+
+        env = popen.call_args.kwargs["env"]
+        self.assertEqual(env["PYOP_MODEL"], "lunahr/pyop-2b")
+        self.assertEqual(env["PYOP_QUANTIZATION"], "4bit")
+        self.assertEqual(env["PYOP_QUANTIZED"], "1")
+
+    def test_pyop_launcher_hides_windows_console(self) -> None:
+        """Verify the detached PYOP API does not leave a console window open."""
+        from celune import pyop
+
+        with (
+            mock.patch("celune.pyop.pyop_python", return_value=Path("pyop-python.exe")),
+            mock.patch("celune.pyop.pyop_entrypoint", return_value="-m pyop_api"),
+            mock.patch("celune.pyop.Path.exists", return_value=True),
+            mock.patch("celune.pyop.sys.executable", "celune-python.exe"),
+            mock.patch("celune.pyop.sys.platform", "win32"),
+            mock.patch(
+                "celune.pyop.subprocess.CREATE_NO_WINDOW", 0x08000000, create=True
+            ),
+            mock.patch(
+                "celune.pyop.subprocess.CREATE_NEW_PROCESS_GROUP",
+                0x00000200,
+                create=True,
+            ),
+            mock.patch("celune.pyop.subprocess.Popen") as popen,
+        ):
+            process = pyop.start_pyop_detached({"pyop": {}})
+
+        self.assertIs(process, popen.return_value)
+        flags = popen.call_args.kwargs["creationflags"]
+        self.assertEqual(flags & 0x08000000, 0x08000000)
+        self.assertEqual(flags & 0x00000200, 0x00000200)
+        self.assertEqual(popen.call_args.kwargs["start_new_session"], False)
+
+    def test_pyop_talkback_config_can_disable_persona_input_mode(self) -> None:
+        """Verify persona talkback can be disabled without disabling PYOP."""
+        from celune.pyop import pyop_enabled, pyop_talkback_enabled
+
+        config = {"pyop": {"enabled": True, "talkback": False}}
+        self.assertEqual(pyop_enabled(config), True)
+        self.assertEqual(pyop_talkback_enabled(config), False)
+        self.assertEqual(pyop_talkback_enabled({"pyop": {}}), True)
+
+    def test_think_reconnects_to_pyop_before_speech_fallback(self) -> None:
+        """Verify stale Celune instances reconnect to PYOP on the next think call.
+
+        Returns:
+            None: Assertions verify lazy PYOP reconnect behavior.
+
+        Raises:
+            AssertionError: PYOP reconnect behavior changes unexpectedly.
+        """
+        celune = self._make_celune({})
+        celune.vision = None
+        celune.locked = False
+        celune.cur_state = "idle"
+        client = mock.Mock()
+        celune._pyop_conn = mock.Mock(return_value=client)
+        with (
+            mock.patch("celune.celune.think_pipeline", return_value=True) as think,
+            mock.patch.object(celune, "say", return_value=False) as say,
+        ):
+            self.assertEqual(celune.think("hello"), True)
+            pyop_thread = celune._pyop_thread
+            self.assertIsNotNone(pyop_thread)
+            assert pyop_thread is not None
+            pyop_thread.join(timeout=2)
+
+        self.assertIs(celune.vision, client)
+        think.assert_called_once_with(celune, "hello")
+        say.assert_not_called()
 
     def test_logging_waiting_and_api_settings_cover_edge_cases(self) -> None:
         """Verify logging gates, readiness checks, and API fallbacks.

@@ -1,4 +1,8 @@
 # SPDX-License-Identifier: MIT
+#
+# CEVOICE is pending a rewrite, allowing PYOP to use character data from it.
+# This rewrite will be dubbed "CECHAR v2", and focus on character personas, rather than just voices.
+#
 """CEVOICE bundle writer, parser, and lazy file loader."""
 
 from __future__ import annotations
