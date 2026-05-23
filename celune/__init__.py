@@ -22,9 +22,9 @@ REVISION = _get_revision()
 if REVISION:
     _local = REVISION.rstrip("*")
     _dirty = ".dirty" if REVISION.endswith("*") else ""
-    __version__ = f"3.5.1+{_local}{_dirty}"
+    __version__ = f"4.0.0+{_local}{_dirty}"
 else:
-    __version__ = "3.5.1"
+    __version__ = "4.0.0"
 
 __tagline__ = "\u201cYour voice, your way.\u201d"
 __codename__ = "Guidance"

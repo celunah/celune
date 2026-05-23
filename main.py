@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Celune 3.5.1 - "I'm not just a TTS. I'm someone special."
+Celune 4.0.0 - "I'm not just a TTS. I'm someone special."
 Refer to https://github.com/celunah/celune for information about Celune.
 Celune models are available on https://huggingface.co/collections/lunahr/celune.
 

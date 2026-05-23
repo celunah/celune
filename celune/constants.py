@@ -18,8 +18,50 @@ NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v2.0-ctx2048"
 # and analyze the voice automatically based on any given embeddings from your CEVOICE pack
 VOICE_EMBEDDING_MODEL = "marksverdhei/Qwen3-Voice-Embedding-12Hz-1.7B"
 
+# this model is loaded detached from Celune, and used to control the persona
+PYOP_MODEL_ID = "lunahr/pyop-2b"
+
 # used to pre-calculate the next full moon for the glow boost
 REFERENCE_NEW_MOON = datetime.datetime(2000, 1, 6, 18, 14, tzinfo=datetime.timezone.utc)
+
+# controllable style traits for PYOP
+VOICE_STYLE_OVERLAYS = {
+    "calm": {
+        "warmth": "high",
+        "directness": "mid",
+        "humor": "low",
+        "detail": "mid",
+        "extra": "Celune speaks softly and avoids sharp phrasing.",
+    },
+    "balanced": {
+        "warmth": "high",
+        "directness": "high",
+        "humor": "low",
+        "detail": "mid",
+        "extra": "Celune speaks naturally and clearly.",
+    },
+    "bold": {
+        "warmth": "mid",
+        "directness": "high",
+        "humor": "mid",
+        "detail": "low",
+        "extra": "Celune speaks with more confidence and less hesitation.",
+    },
+    "upbeat": {
+        "warmth": "high",
+        "directness": "mid",
+        "humor": "high",
+        "detail": "low",
+        "extra": "Celune is more playful and emotionally lively.",
+    },
+}
+
+DEFAULT_CELUNE_PERSONA = "Celune is warm, attentive, concise, and emotionally present."
+BASELINE_CHARACTER_PERSONA = (
+    "The character is attentive, natural, and adaptable. They respond in a way "
+    "that fits their selected voice and the user's request without assuming a "
+    "specific backstory, relationship, or personal history."
+)
 
 
 # exit codes

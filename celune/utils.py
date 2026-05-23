@@ -9,6 +9,7 @@ import time
 import random
 import inspect
 import datetime
+import textwrap
 import traceback
 import subprocess
 import multiprocessing
@@ -769,3 +770,81 @@ def is_port_usable(port: int) -> bool:
         return True
     except (psutil.Error, OSError):
         return False
+
+
+def make_persona_card(
+    name: str,
+    age: str,
+    gender: str,
+    persona: str,
+    traits: dict[str, str],
+    context: str,
+    voice: str,
+) -> str:
+    """Return a persona card for the current character.
+
+    Args:
+        name: The character name.
+        voice: The character's selected voice type.
+        age: The character's age.
+        gender: The character's gender or LGBT type.
+        persona: The character's personality description.
+        traits: The character's trait values. This must include values for the following traits:
+            "warmth", "directness", "humor", "detail". It cannot include other traits.
+        context: Additional context information for the character.
+
+    Returns:
+        str: The formatted persona card.
+    """
+    required_traits = ("warmth", "directness", "humor", "detail")
+    missing_traits = [trait for trait in required_traits if trait not in traits]
+    if missing_traits:
+        raise ValueError(f"persona card is missing traits: {', '.join(missing_traits)}")
+
+    unknown_traits = [trait for trait in traits if trait not in required_traits]
+    if unknown_traits:
+        raise ValueError(
+            f"undefined trait for persona card: {', '.join(unknown_traits)}"
+        )
+
+    base_card = """
+    # Speaker Profile
+
+    Name: {name}
+    Age: {age}
+    Gender: {gender}
+
+    ## Personality
+    {persona}
+
+    ## Response Style
+    - Warmth: {warmth}
+    - Directness: {directness}
+    - Humor: {humor}
+    - Detail: {detail}
+
+    ## Context
+    {context}
+
+    ## Voice
+    {voice}
+    """
+
+    custom_assert(bool(name.strip()), ValueError("persona card name cannot be empty"))
+
+    return (
+        textwrap.dedent(base_card)
+        .strip()
+        .format(
+            name=name,
+            age=age,
+            gender=gender,
+            persona=persona,
+            warmth=traits["warmth"],
+            directness=traits["directness"],
+            humor=traits["humor"],
+            detail=traits["detail"],
+            context=context,
+            voice=voice,
+        )
+    )

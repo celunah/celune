@@ -74,11 +74,11 @@ class UpdaterTests(TestCase):
         Raises:
             AssertionError: Version helper behavior changes unexpectedly.
         """
-        self.assertEqual(updater._normalize_tag("refs/tags/v3.5.1"), "3.5.1")
+        self.assertEqual(updater._normalize_tag("refs/tags/v4.0.0"), "4.0.0")
         self.assertEqual(updater._short_revision("abcdef123"), "abcdef1")
         self.assertEqual(updater._short_revision(""), "unknown")
-        self.assertEqual(updater._is_newer_version_tag("9.9.9", "3.5.1"), True)
-        self.assertEqual(updater._is_newer_version_tag("3.5.1", "3.5.1"), False)
+        self.assertEqual(updater._is_newer_version_tag("9.9.9", "4.0.0"), True)
+        self.assertEqual(updater._is_newer_version_tag("4.0.0", "4.0.0"), False)
 
     def test_check_for_update_returns_none_for_dirty_worktree(self) -> None:
         """Verify dirty repositories suppress update prompts.
@@ -118,7 +118,7 @@ class UpdaterTests(TestCase):
             ),
             mock.patch(
                 "celune.updater._latest_remote_tag",
-                return_value=("3.5.1", "c" * 40),
+                return_value=("4.0.0", "c" * 40),
             ),
         ):
             update = updater.check_for_update()
@@ -126,7 +126,7 @@ class UpdaterTests(TestCase):
         if update is not None:
             self.assertEqual(update.local_revision, "aaaaaaa")
             self.assertEqual(update.latest_revision, "bbbbbbb")
-            self.assertEqual(update.latest_version, "3.5.1")
+            self.assertEqual(update.latest_version, "4.0.0")
 
     def test_update_to_latest_rejects_unsafe_states(self) -> None:
         """Verify unsafe repository states reject automatic updates.

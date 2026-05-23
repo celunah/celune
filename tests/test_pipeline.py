@@ -5,17 +5,20 @@ import json
 import queue
 import threading
 import tempfile
-from typing import cast
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast, Optional
 from unittest import mock, TestCase
+from collections.abc import Iterator
 
 import numpy as np
+import numpy.typing as npt
 import soundfile as sf
 
 from celune import pipeline
 from celune.celune import Celune
-from celune.constants import JSON
+from celune.utils import discard
+from celune.constants import JSON, JSONSerializable
 
 from tests.support import FakeStream, make_pipeline_engine
 
@@ -112,6 +115,134 @@ class PipelineTests(TestCase):
         self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), False)
         self.assertEqual(engine.errors, ["Celune is not currently ready"])
 
+    def test_think_builds_pyop_payload_and_queues_response(self) -> None:
+        """Verify PYOP request formatting without loading a PYOP model.
+
+        Returns:
+            None: Assertions verify request payload and speech queueing behavior.
+
+        Raises:
+            AssertionError: PYOP request behavior changes unexpectedly.
+        """
+
+        class FakeResponse:
+            """Fake API response class."""
+
+            @staticmethod
+            def raise_for_status() -> None:
+                """Stub for raise_for_status() that does not raise.
+
+                Returns:
+                    None: This function does nothing.
+                """
+
+            @staticmethod
+            def json() -> JSONSerializable:
+                """Return a sample response.
+
+                Returns:
+                    JSONSerializable: A JSON-serializable response object.
+                """
+                return {"response": "I can help with that."}
+
+        class FakeVision:
+            """Fake vision API class object."""
+
+            def __init__(self) -> None:
+                self.endpoint = ""
+                self.payload: object = None
+
+            def post(self, endpoint: str, json_obj: JSON) -> FakeResponse:
+                """POST to the fake API endpoint.
+
+                Args:
+                    endpoint: The fake endpoint.
+                    json_obj: The JSON data to post.
+
+                """
+                self.endpoint = endpoint
+                self.payload = json_obj
+                return FakeResponse()
+
+        engine = make_pipeline_engine()
+        engine.config = {
+            "pyop_persona": "Celune is gentle and observant.",
+            "pyop_context": "The user is testing request formatting.",
+        }
+        engine.current_character = "Celune"
+        engine.current_voice = "calm"
+        engine.voice_prompt = "small pauses, soft delivery"
+        engine.pyop_history = [{"role": "assistant", "content": "Earlier reply."}]
+        engine.vision = FakeVision()
+        engine.dev = False
+
+        with mock.patch(
+            "celune.pipeline.detect_language",
+            return_value={
+                "language": "en",
+                "languages": ["en"],
+                "supported": True,
+                "probabilities": {"en": 1.0},
+            },
+        ):
+            self.assertEqual(pipeline.think(cast(Celune, engine), "What now?"), True)
+
+        request = engine.text_queue.get_nowait()
+        self.assertEqual(request.text, "I can help with that.")
+        self.assertEqual(engine.vision.endpoint, "/generate")
+
+        payload = cast(dict[str, object], engine.vision.payload)
+        self.assertEqual(payload["model"], "lunahr/pyop-2b")
+        self.assertEqual(payload["quantization"], "4bit")
+        self.assertEqual(payload["quantized"], True)
+        self.assertEqual(payload["request"], "What now?")
+        self.assertEqual(payload["user"], "What now?")
+        self.assertEqual(payload["character"], "Celune")
+        character_card = cast(str, payload["character_card"])
+        messages = cast(list[dict[str, str]], payload["messages"])
+        self.assertIn("Celune is gentle and observant.", character_card)
+        self.assertIn("Celune speaks softly", character_card)
+        self.assertEqual(messages[0], {"role": "system", "content": character_card})
+        self.assertEqual(messages[-1], {"role": "user", "content": "What now?"})
+        self.assertIn({"role": "assistant", "content": "Earlier reply."}, messages)
+        self.assertIn("small pauses", messages[0]["content"])
+        self.assertNotIn("User Request", character_card)
+        self.assertNotIn("Assistant Response", character_card)
+        self.assertEqual(
+            engine.pyop_history[-2:],
+            [
+                {"role": "user", "content": "What now?"},
+                {"role": "assistant", "content": "I can help with that."},
+            ],
+        )
+
+    def test_pyop_card_uses_baseline_persona_for_non_default_voice_pack(self) -> None:
+        """Verify custom CEVOICE packs do not inherit Celune-specific defaults.
+
+        Returns:
+            None: Assertions verify neutral persona card defaults.
+
+        Raises:
+            AssertionError: Persona card fallback behavior changes unexpectedly.
+        """
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Fixture"
+        engine.current_voice = "bold"
+        engine.voice_prompt = None
+        engine.voice_bundle_is_default = False
+
+        character_card = pipeline.build_pyop_character_card(cast(Celune, engine))
+
+        self.assertIn("Name: Fixture", character_card)
+        self.assertIn("Gender: unknown", character_card)
+        self.assertIn(
+            "The character is attentive, natural, and adaptable.", character_card
+        )
+        self.assertIn("The character is speaking directly", character_card)
+        self.assertNotIn("Celune is warm", character_card)
+        self.assertNotIn("Gender: female", character_card)
+
     def test_generation_worker_normalizes_each_split_chunk(self) -> None:
         """Verify normalization happens after splitting and before generation.
 
@@ -125,8 +256,16 @@ class PipelineTests(TestCase):
         generated_texts: list[str] = []
         events: list[str] = []
 
-        def generate_stream(model: object, **kwargs: object) -> object:
-            del model
+        def generate_stream(
+            model: object, **kwargs: object
+        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+            """Generate a fake stream of audio and return it.
+
+            Args:
+                model: The model object to generate from.
+                kwargs: Any extra model arguments.
+            """
+            discard(model)
             text = cast(str, kwargs["text"])
             events.append(f"generate:{text}")
             generated_texts.append(text)

@@ -12,6 +12,7 @@ from .backends import CeluneBackend
 from .constants import NORMALIZER_MODEL_ID
 
 NORMALIZER_SPECIAL_TOKENS = ("<|im_start|>", "<|im_end|>", "<NORM>")
+NORMALIZER_DEVICE = "cpu"
 
 
 def load_normalizer_components(
@@ -39,9 +40,10 @@ def load_normalizer_components(
         {"additional_special_tokens": list(NORMALIZER_SPECIAL_TOKENS)},
         replace_additional_special_tokens=False,
     )
+
     llm = AutoModelForCausalLM.from_pretrained(
         model_ref,
         torch_dtype=torch.bfloat16,
-        device_map="cuda",
+        device_map=NORMALIZER_DEVICE,
     )
     return tokenizer, llm
