@@ -1,15 +1,23 @@
 [project]
-name = "celune-pyop"
-version = "0.1.0"
-description = "Detached PYOP persona API for Celune"
+name = "celune-persona"
+version = "4.0.0"
+description = "Celune's persona system"
 requires-python = ">=3.12,<3.14"
 dependencies = [
+    # AI stack
+    "torch==2.11.0+cu128",
+    # Unlike Celune, we need this version here.
+    "transformers>=5.7.0",
+    # Other AI dependencies
+    # This helps the model be more efficient.
+    # VLMs are heavier on VRAM during inference.
     "accelerate",
     "bitsandbytes",
+    # We need this so Celune can process vision, else it's just an LLM.
+    "qwen-vl-utils",
+    # API
     "fastapi",
     "pydantic",
-    "torch==2.11.0+cu128",
-    "transformers>=5.7.0",
     "uvicorn",
 ]
 

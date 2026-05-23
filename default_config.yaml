@@ -37,5 +37,5 @@ api:
 # mutually incompatible, Celune wants ==4.57.3, but PYOP wants >=5.7.0
 pyop:
   enabled: true
-  # if disabled, regular UI input goes directly to speech instead of persona talkback
+  # if disabled, the persona is not used and Celune operates in speech-only mode
   talkback: true

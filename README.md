@@ -20,7 +20,8 @@ It was proudly made in 🇵🇱 for your listening pleasure.
 - Configurable voices via CEVOICE voice packs
 
 ## Note on development
-Celune is against the stance of "vibe coding" used in development. 
+
+Celune is against the stance of "vibe coding" used in development.
 
 None of the 10,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
 
