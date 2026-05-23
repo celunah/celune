@@ -243,6 +243,35 @@ class PipelineTests(TestCase):
         self.assertNotIn("Celune is warm", character_card)
         self.assertNotIn("Gender: female", character_card)
 
+    def test_pyop_messages_keep_only_recent_history(self) -> None:
+        """Verify stale PYOP turns do not dilute the current character card."""
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Celune"
+        engine.current_voice = "balanced"
+        engine.pyop_history = [
+            {"role": "user", "content": f"old user {index}"}
+            if index % 2 == 0
+            else {"role": "assistant", "content": f"old reply {index}"}
+            for index in range(12)
+        ]
+
+        messages = pipeline.build_pyop_messages(cast(Celune, engine), "current")
+
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertEqual(messages[-1], {"role": "user", "content": "current"})
+        self.assertEqual(
+            messages[1:-1],
+            [
+                {"role": "user", "content": "old user 6"},
+                {"role": "assistant", "content": "old reply 7"},
+                {"role": "user", "content": "old user 8"},
+                {"role": "assistant", "content": "old reply 9"},
+                {"role": "user", "content": "old user 10"},
+                {"role": "assistant", "content": "old reply 11"},
+            ],
+        )
+
     def test_generation_worker_normalizes_each_split_chunk(self) -> None:
         """Verify normalization happens after splitting and before generation.
 
