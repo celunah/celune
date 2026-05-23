@@ -50,6 +50,7 @@ from .constants import (
     N_A_NUMERIC,
     JSON,
     JSONSerializable,
+    PYOP_HISTORY_MESSAGES,
     VOICE_STYLE_OVERLAYS,
 )
 from . import __version__
@@ -594,17 +595,7 @@ def build_pyop_character_card(engine: "Celune") -> str:
 
 def _pyop_history_limit(engine: "Celune") -> int:
     """Return how many prior chat messages Celune should send to PYOP."""
-    pyop_config = engine.config.get("pyop", {})
-    if not isinstance(pyop_config, dict):
-        pyop_config = {}
-
-    value = pyop_config.get(
-        "max_history_messages", engine.config.get("pyop_max_history_messages", 24)
-    )
-    try:
-        return max(0, int(value))
-    except (TypeError, ValueError):
-        return 24
+    return PYOP_HISTORY_MESSAGES
 
 
 def _pyop_history_messages(engine: "Celune") -> list[JSON]:

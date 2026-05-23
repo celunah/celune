@@ -20,6 +20,7 @@ VOICE_EMBEDDING_MODEL = "marksverdhei/Qwen3-Voice-Embedding-12Hz-1.7B"
 
 # this model is loaded detached from Celune, and used to control the persona
 PYOP_MODEL_ID = "lunahr/pyop-2b"
+PYOP_HISTORY_MESSAGES = 6
 
 # used to pre-calculate the next full moon for the glow boost
 REFERENCE_NEW_MOON = datetime.datetime(2000, 1, 6, 18, 14, tzinfo=datetime.timezone.utc)
