@@ -24,7 +24,7 @@ class ModelingTests(TestCase):
             AssertionError: Normalizer loading compatibility changes unexpectedly.
         """
         tokenizer = mock.Mock()
-        llm = object()
+        llm = mock.Mock()
         backend = SimpleNamespace(
             model_is_available_locally=mock.Mock(return_value=(True, "local-model"))
         )

@@ -6,10 +6,10 @@ import time
 import signal
 import warnings
 from types import FrameType
-from typing import Any, Optional, cast
+from typing import Optional, cast
 
 from ..celune import Celune
-from ..config import config_bool
+from ..config import Config, config_bool
 from ..utils import supports_ansi, discard
 from ..constants import ExitCodes, SIGTSTP
 
@@ -19,7 +19,7 @@ class CeluneHeadlessUI:
 
     _instance: Optional["CeluneHeadlessUI"] = None
 
-    def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
+    def __init__(self, config: Optional[Config] = None) -> None:
         if CeluneHeadlessUI._instance is not None:
             raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
 

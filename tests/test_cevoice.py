@@ -6,6 +6,7 @@ import json
 import shutil
 import tempfile
 from pathlib import Path
+from typing import cast
 from unittest import mock, TestCase
 
 from celune import cevoice
@@ -161,21 +162,25 @@ class CEVoiceTests(TestCase):
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        metadata["voices"]["balanced"]["cfg_scale"] = 0
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])
+        voices["balanced"]["cfg_scale"] = 0
         self._rewrite_metadata(metadata)
         with self.assertRaisesRegex(CEVoiceError, "cfg_scale"):
             cevoice.CEVoice.open(self.path)
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        metadata["voices"]["balanced"]["reference_text"] = " "
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])
+        voices["balanced"]["reference_text"] = " "
         self._rewrite_metadata(metadata)
         with self.assertRaisesRegex(CEVoiceError, "reference_text"):
             cevoice.CEVoice.open(self.path)
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        metadata["voices"]["balanced"]["assets"]["json"] = {
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])
+        assets = cast(cevoice.Manifest, voices["balanced"]["assets"])
+        assets["json"] = {
             "offset": 0,
             "length": 0,
             "sha256": "0" * 64,

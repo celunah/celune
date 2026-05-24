@@ -3,9 +3,13 @@
 
 import os
 from copy import deepcopy
-from typing import Any, Optional
+from collections.abc import Mapping
+from typing import Optional
+
+from .constants import JSONSerializable
 
 ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
+type Config = dict[str, JSONSerializable]
 
 
 def env_bool(name: str, fallback: bool = False) -> bool:
@@ -16,7 +20,7 @@ def env_bool(name: str, fallback: bool = False) -> bool:
         fallback: Value to use when the variable is unset.
 
     Returns:
-        bool: ``True`` only for known enabled strings. Any other set value is
+        bool: ``True`` only for known enabled strings. Other set values are
             treated as disabled. When the variable is unset, ``fallback`` is
             returned.
     """
@@ -27,8 +31,10 @@ def env_bool(name: str, fallback: bool = False) -> bool:
 
 
 def config_value(
-    config: Optional[dict[str, Any]], key: str, default: Any = None
-) -> Any:
+    config: Optional[Mapping[str, JSONSerializable]],
+    key: str,
+    default: JSONSerializable = None,
+) -> JSONSerializable:
     """Safely read a value from the loaded YAML configuration.
 
     Args:
@@ -37,7 +43,7 @@ def config_value(
         default: Value returned when config or key is missing.
 
     Returns:
-        Any: The configured value or ``default``.
+        JSONSerializable: The configured value or ``default``.
     """
     if not config:
         return default
@@ -45,7 +51,7 @@ def config_value(
 
 
 def config_bool(
-    config: Optional[dict[str, Any]],
+    config: Optional[Mapping[str, JSONSerializable]],
     env_name: str,
     config_key: str,
     default: bool = False,
@@ -66,9 +72,9 @@ def config_bool(
 
 
 def merge_missing_defaults(
-    config: Optional[dict[str, Any]],
-    defaults: dict[str, Any],
-) -> tuple[dict[str, Any], bool]:
+    config: Optional[Mapping[str, JSONSerializable]],
+    defaults: Mapping[str, JSONSerializable],
+) -> tuple[Config, bool]:
     """Fill missing configuration fields from defaults without overriding users.
 
     Args:
@@ -76,10 +82,10 @@ def merge_missing_defaults(
         defaults: Default configuration fields to merge into ``config``.
 
     Returns:
-        tuple[dict[str, Any], bool]: The merged configuration and whether any
+        tuple[Config, bool]: The merged configuration and whether any
             fields were added.
     """
-    merged = deepcopy(config) if config is not None else {}
+    merged: Config = dict(deepcopy(config)) if config is not None else {}
     changed = False
 
     for key, default_value in defaults.items():

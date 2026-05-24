@@ -5,7 +5,8 @@ import pathlib
 import warnings
 import contextlib
 from io import BytesIO
-from typing import Any, Optional, cast
+from collections.abc import Mapping
+from typing import Optional, Protocol, TypedDict, Union, cast
 
 import torch
 import librosa
@@ -18,7 +19,7 @@ from matplotlib import colors as mcolors
 from matplotlib.projections import PolarAxes
 from transformers import AutoModel, AutoProcessor
 
-from .cevoice import default_loader
+from .cevoice import ManifestValue, default_loader
 from .constants import VOICE_EMBEDDING_MODEL, N_A_NUMERIC
 
 matplotlib.use("Agg")
@@ -30,10 +31,61 @@ rcParams["font.family"] = "Outfit Thin"
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-TextConfig = dict[str, Any]
+type TextConfigValue = Union[str, dict[str, "TextConfigValue"]]
+type TextConfig = dict[str, TextConfigValue]
+type EmbeddingPayload = Union[
+    torch.Tensor,
+    npt.NDArray[np.float32],
+    list[float],
+    Mapping[str, "EmbeddingPayload"],
+]
 
-_EMBEDDING_MODEL: Any = None
-_EMBEDDING_PROCESSOR: Any = None
+
+class EmbeddingOutput(Protocol):
+    """Speaker embedding model output used by Celune analysis."""
+
+    last_hidden_state: EmbeddingPayload
+
+
+class EmbeddingProcessor(Protocol):
+    """Processor callable returned by the embedding model package."""
+
+    def __call__(
+        self,
+        y: npt.NDArray[np.float32],
+        *,
+        sampling_rate: int,
+    ) -> Mapping[str, torch.Tensor]:
+        """Prepare model inputs from a waveform."""
+        raise NotImplementedError("protocol not defined")
+
+
+class EmbeddingModel(Protocol):
+    """Embedding model behavior used by Celune analysis."""
+
+    def eval(self) -> None:
+        """Switch the model into evaluation mode."""
+        raise NotImplementedError("protocol not defined")
+
+    def to(self, device: torch.device) -> torch.nn.Module:
+        """Move the model to a device."""
+        raise NotImplementedError("protocol not defined")
+
+    def __call__(self, **inputs: torch.Tensor) -> EmbeddingOutput:
+        """Run embedding inference."""
+        raise NotImplementedError("protocol not defined")
+
+
+class VoiceMatch(TypedDict):
+    """Similarity score for one reference voice."""
+
+    voice: str
+    cosine: float
+    percent: float
+
+
+_EMBEDDING_MODEL: Optional[EmbeddingModel] = None
+_EMBEDDING_PROCESSOR: Optional[EmbeddingProcessor] = None
 
 TEXT_CONFIG: TextConfig = {
     "trait_labels": {
@@ -145,8 +197,10 @@ def _text(*keys: str) -> str:
     Returns:
         str: The configured text value.
     """
-    value = TEXT_CONFIG
+    value: TextConfigValue = TEXT_CONFIG
     for key in keys:
+        if not isinstance(value, dict):
+            raise KeyError(key)
         value = value[key]
     return cast(str, value)
 
@@ -260,7 +314,7 @@ def compute_raw_metrics(y: npt.NDArray[np.float32], sr: int) -> dict:
     return metrics
 
 
-def _embedding_tensor_to_numpy(value: Any) -> npt.NDArray[np.float32]:
+def _embedding_tensor_to_numpy(value: EmbeddingPayload) -> npt.NDArray[np.float32]:
     """Convert a supported embedding object to a normalized 1D NumPy array.
 
     Args:
@@ -331,29 +385,39 @@ def _available_reference_voices() -> list[str]:
         return sorted(
             voice
             for voice in loader.bundle.voices
-            if "pt" in loader.bundle.voices[voice].get("assets", {})
+            if "pt"
+            in cast(
+                dict[str, ManifestValue],
+                loader.bundle.voices[voice].get("assets", {}),
+            )
         )
 
     refs_dir = pathlib.Path(__file__).resolve().parent / "refs"
     return sorted(path.stem for path in refs_dir.glob("*.pt"))
 
 
-def _load_embedding_model() -> tuple[Any, Any]:
+def _load_embedding_model() -> tuple[EmbeddingProcessor, EmbeddingModel]:
     """Load and cache the Qwen3 speaker embedding processor/model.
 
     Returns:
-        tuple[Any, Any]: The loaded models and processor objects.
+        tuple[EmbeddingProcessor, EmbeddingModel]: The loaded model and processor objects.
     """
     global _EMBEDDING_MODEL, _EMBEDDING_PROCESSOR
 
     if _EMBEDDING_MODEL is None or _EMBEDDING_PROCESSOR is None:
-        _EMBEDDING_PROCESSOR = AutoProcessor.from_pretrained(
-            VOICE_EMBEDDING_MODEL,
-            trust_remote_code=True,
+        _EMBEDDING_PROCESSOR = cast(
+            EmbeddingProcessor,
+            AutoProcessor.from_pretrained(
+                VOICE_EMBEDDING_MODEL,
+                trust_remote_code=True,
+            ),
         )
-        _EMBEDDING_MODEL = AutoModel.from_pretrained(
-            VOICE_EMBEDDING_MODEL,
-            trust_remote_code=True,
+        _EMBEDDING_MODEL = cast(
+            EmbeddingModel,
+            AutoModel.from_pretrained(
+                VOICE_EMBEDDING_MODEL,
+                trust_remote_code=True,
+            ),
         )
         _EMBEDDING_MODEL.eval()
         with contextlib.suppress(AttributeError):
@@ -460,7 +524,7 @@ def add_reference_similarity_metrics(
             generated_embedding,
             reference_embedding,
         )
-        matches: list[dict[str, Any]] = []
+        matches: list[VoiceMatch] = []
         for voice in _available_reference_voices():
             ref_embedding = _load_reference_embedding(voice)
             ref_cosine, ref_percent = _cosine_similarity_percent(

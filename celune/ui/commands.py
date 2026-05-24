@@ -318,7 +318,8 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.safe_log("Attachments cleared.")
             return
 
-        if getattr(ui.celune, "vision", object()) is None:
+        vision = getattr(ui.celune, "vision", "available")
+        if vision is None:
             ui.safe_log(
                 "Cannot add attachments while Celune is running in speech-only mode.",
                 "warning",

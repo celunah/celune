@@ -5,13 +5,13 @@ import os
 import io
 import time
 import uuid
-import queue
 import datetime
 import threading
+import socket
 from dataclasses import dataclass
 from hmac import compare_digest
 from collections import defaultdict, deque
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, Union
+from typing import TYPE_CHECKING, Callable, Iterator, Optional, Union
 
 import uvicorn
 import numpy as np
@@ -20,11 +20,13 @@ import soundfile as sf
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
+from starlette.middleware.base import RequestResponseEndpoint
 
 from . import __version__
 from .constants import BASE_SR
 from .utils import format_error
 from .dsp import _resample_audio
+from .pipeline import SpeechStreamQueue
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -62,7 +64,7 @@ class StartedServer(uvicorn.Server):
         super().__init__(config)
         self.on_started = on_started
 
-    async def startup(self, sockets: Optional[list[Any]] = None) -> None:
+    async def startup(self, sockets: Optional[list[socket.socket]] = None) -> None:
         """Run Uvicorn startup and report only after the server is listening.
 
         Args:
@@ -174,7 +176,10 @@ def _rate_limited(request: Request) -> bool:
 
 
 @api.middleware("http")
-async def api_security(request: Request, call_next: Any) -> Any:
+async def api_security(
+    request: Request,
+    call_next: RequestResponseEndpoint,
+) -> Response:
     """Apply token authentication and a simple per-client rate limit.
 
     Args:
@@ -182,7 +187,7 @@ async def api_security(request: Request, call_next: Any) -> Any:
         call_next: What to run if security checks have passed.
 
     Returns:
-        Any: The return value of the specified function.
+        Response: The response returned by the protected route or security layer.
     """
     if not _authenticated(request):
         return JSONResponse(
@@ -265,7 +270,7 @@ def _normalized_audio(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]
     """Return stereo audio in frame-major form for file encoding."""
     normalized = np.asarray(audio, dtype=np.float32)
     if normalized.ndim == 2 and normalized.shape[0] == 2 and normalized.shape[1] != 2:
-        return normalized.T
+        return normalized.transpose()
     return normalized
 
 
@@ -282,7 +287,7 @@ def _flac_bytes(audio: npt.NDArray[np.float32]) -> bytes:
     return buffer.getvalue()
 
 
-def audio_bytes(chunks: queue.Queue) -> Iterator[bytes]:
+def audio_bytes(chunks: SpeechStreamQueue) -> Iterator[bytes]:
     """Yield one FLAC payload from queued 48 kHz stereo float32 chunks.
 
     Args:
@@ -373,7 +378,7 @@ def _speech_job_snapshot(job_id: str) -> Optional[SpeechJob]:
         )
 
 
-def _collect_speech_job(job_id: str, chunks: queue.Queue) -> None:
+def _collect_speech_job(job_id: str, chunks: SpeechStreamQueue) -> None:
     """Consume a speech stream queue and store its final FLAC payload."""
     _update_speech_job(job_id, status="running")
     try:

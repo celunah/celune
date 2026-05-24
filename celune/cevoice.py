@@ -15,14 +15,18 @@ import hashlib
 import tempfile
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any, BinaryIO, Callable, Mapping, Optional, Union
+from typing import BinaryIO, Callable, Mapping, Optional, Union, cast
 
+from .constants import JSONSerializable
 from .exceptions import CEVoiceError
 
 MAGIC = b"CEVOICE\0"
 VERSION = 1
 HEADER = struct.Struct("<8sHI")
 ALLOWED_ASSET_KINDS = {"wav", "pt"}
+type ManifestValue = Union[JSONSerializable, "Manifest"]
+type Manifest = dict[str, ManifestValue]
+type VoiceManifest = dict[str, Manifest]
 
 
 @dataclass(frozen=True)
@@ -39,7 +43,7 @@ class CEVoice:
     """Parsed CEVOICE bundle metadata and payload access."""
 
     path: Path
-    metadata: dict[str, Any]
+    metadata: Manifest
     payload_offset: int
 
     @classmethod
@@ -78,11 +82,11 @@ class CEVoice:
         return cls(bundle_path, metadata, payload_offset)
 
     @property
-    def voices(self) -> dict[str, dict[str, Any]]:
+    def voices(self) -> VoiceManifest:
         """Return the voice manifest.
 
         Returns:
-            dict[str, dict[str, Any]]: The voice manifest of this CEVOICE bundle.
+            VoiceManifest: The voice manifest of this CEVOICE bundle.
 
         Raises:
             CEVoiceError: The CEVOICE bundle does not contain a valid voice manifest.
@@ -90,7 +94,7 @@ class CEVoice:
         voices = self.metadata.get("voices")
         if not isinstance(voices, dict):
             raise CEVoiceError("metadata voices must be an object")
-        return voices
+        return cast(VoiceManifest, voices)
 
     @property
     def voice_order(self) -> tuple[str, ...]:
@@ -101,7 +105,7 @@ class CEVoice:
         """
         order = self.metadata.get("voice_order")
         if isinstance(order, list) and all(isinstance(voice, str) for voice in order):
-            return tuple(order)
+            return tuple(cast(list[str], order))
         return tuple(self.voices)
 
     def asset(self, voice: str, kind: str) -> CEVoiceAsset:
@@ -118,14 +122,15 @@ class CEVoice:
             KeyError: The specified voice name does not have this kind of asset.
         """
         try:
-            raw_asset = self.voices[voice]["assets"][kind]
+            assets = cast(dict[str, Manifest], self.voices[voice]["assets"])
+            raw_asset = assets[kind]
         except KeyError as error:
             raise KeyError(f"asset '{kind}' for voice '{voice}' not found") from error
 
         return CEVoiceAsset(
-            offset=raw_asset["offset"],
-            length=raw_asset["length"],
-            sha256=raw_asset["sha256"],
+            offset=cast(int, raw_asset["offset"]),
+            length=cast(int, raw_asset["length"]),
+            sha256=cast(str, raw_asset["sha256"]),
         )
 
     def read_asset(self, voice: str, kind: str) -> bytes:
@@ -199,8 +204,8 @@ class CEVoiceLoader:
 def write_cevoice(
     path: Union[str, Path],
     voices: Mapping[str, Mapping[str, Union[bytes, str, Path]]],
-    metadata: Optional[Mapping[str, Any]] = None,
-    voice_metadata: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    metadata: Optional[Mapping[str, ManifestValue]] = None,
+    voice_metadata: Optional[Mapping[str, Mapping[str, ManifestValue]]] = None,
 ) -> Path:
     """Write a CEVOICE bundle from per-voice binary assets.
 
@@ -214,7 +219,7 @@ def write_cevoice(
         Path: The path to the created CEVOICE bundle.
     """
     payload = bytearray()
-    manifest_voices: dict[str, dict[str, Any]] = {}
+    manifest_voices: VoiceManifest = {}
     unknown_voice_metadata = set(voice_metadata or {}) - set(voices)
     if unknown_voice_metadata:
         unknown = sorted(unknown_voice_metadata)[0]
@@ -223,7 +228,7 @@ def write_cevoice(
     for voice, assets in voices.items():
         if "/" in voice or "\\" in voice or voice in {"", ".", ".."}:
             raise CEVoiceError(f"invalid voice name '{voice}'")
-        manifest_assets: dict[str, dict[str, Any]] = {}
+        manifest_assets: dict[str, Manifest] = {}
         for kind, source in assets.items():
             if "/" in kind or "\\" in kind or kind in {"", ".", ".."}:
                 raise CEVoiceError(f"invalid asset kind for voice '{voice}'")
@@ -239,13 +244,13 @@ def write_cevoice(
             }
             payload.extend(data)
         voice_entry = dict((voice_metadata or {}).get(voice, {}))
-        voice_entry["assets"] = manifest_assets
+        voice_entry["assets"] = cast(ManifestValue, manifest_assets)
         manifest_voices[voice] = voice_entry
 
     manifest = dict(metadata or {})
     manifest["format"] = "CEVOICE"
     manifest["version"] = VERSION
-    manifest["voices"] = manifest_voices
+    manifest["voices"] = cast(ManifestValue, manifest_voices)
     metadata_bytes = json.dumps(
         manifest,
         ensure_ascii=True,
@@ -275,7 +280,9 @@ def _read_source(source: Union[bytes, str, Path]) -> bytes:
     return Path(source).read_bytes()
 
 
-def _validate_metadata(path: Path, metadata: Any, payload_offset: int) -> None:
+def _validate_metadata(
+    path: Path, metadata: ManifestValue, payload_offset: int
+) -> None:
     if not isinstance(metadata, dict):
         raise CEVoiceError("metadata root must be an object")
     if metadata.get("format") != "CEVOICE" or metadata.get("version") != VERSION:
@@ -365,7 +372,7 @@ def _validate_metadata(path: Path, metadata: Any, payload_offset: int) -> None:
                 )
 
 
-def _is_hex_color(value: Any) -> bool:
+def _is_hex_color(value: ManifestValue) -> bool:
     return (
         isinstance(value, str)
         and len(value) == 7
@@ -516,6 +523,8 @@ def announce_default_bundle(log: Callable[[str, str], None]) -> Optional[str]:
                 "warning",
             )
         name = loader.bundle.metadata.get("name", active_bundle_path().stem)
+        if not isinstance(name, str):
+            name = active_bundle_path().stem
         log(f"Loading voice pack: {name}", "info")
         _DEFAULT_LOADER_ANNOUNCED = True
         return name

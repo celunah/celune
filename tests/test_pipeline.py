@@ -18,7 +18,7 @@ import soundfile as sf
 from celune import pipeline
 from celune.celune import Celune
 from celune.utils import discard
-from celune.constants import JSON, JSONSerializable
+from celune.constants import JSON, JSONSerializable, PipelineStates
 
 from tests.support import FakeStream, make_pipeline_engine
 
@@ -150,7 +150,7 @@ class PipelineTests(TestCase):
 
             def __init__(self) -> None:
                 self.endpoint = ""
-                self.payload: object = None
+                self.payload: Optional[JSON] = None
 
             def post(self, endpoint: str, json: JSON) -> FakeResponse:
                 """POST to the fake API endpoint.
@@ -191,7 +191,7 @@ class PipelineTests(TestCase):
         self.assertEqual(request.text, "I can help with that.")
         self.assertEqual(engine.vision.endpoint, "/generate")
 
-        payload = cast(dict[str, object], engine.vision.payload)
+        payload = cast(JSON, engine.vision.payload)
         self.assertEqual(payload["model"], "lunahr/pyop-2b")
         self.assertEqual(payload["quantization"], "4bit")
         self.assertEqual(payload["quantized"], True)
@@ -322,13 +322,13 @@ class PipelineTests(TestCase):
         events: list[str] = []
 
         def generate_stream(
-            model: object, **kwargs: object
+            model: mock.Mock, **kwargs: JSONSerializable
         ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
             """Generate a fake stream of audio and return it.
 
             Args:
-                model: The model object to generate from.
-                kwargs: Any extra model arguments.
+                model: The model to generate from.
+                kwargs: Extra model arguments.
             """
             discard(model)
             text = cast(str, kwargs["text"])
@@ -346,7 +346,7 @@ class PipelineTests(TestCase):
             generation_progress_steps=lambda timing: 1,
         )
         engine.model_lock = threading.Lock()
-        engine.model = object()
+        engine.model = mock.Mock()
         engine.language = "en"
         engine.chunk_size = 8
         engine.voice_prompt = None
@@ -359,7 +359,7 @@ class PipelineTests(TestCase):
             flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
         )
         engine.queue_avail_callback = mock.Mock()
-        engine.sentinel = object()
+        engine.sentinel = PipelineStates.TERMINATE
         engine.exit_requested = False
         engine.dev = False
         engine.recently_saved = None
@@ -541,7 +541,7 @@ class PipelineTests(TestCase):
         engine = make_pipeline_engine()
         timing = pipeline.SpeechTiming(start_time=1.0, first_playback_time=1.25)
         with mock.patch("celune.pipeline.time.monotonic", return_value=1.25):
-            pipeline.log_first_playback(cast(Celune, engine), cast(JSON, timing))
+            pipeline.log_first_playback(cast(Celune, engine), timing)
         self.assertEqual(engine.messages[-1], ("TTFP: 0.25 seconds", "info"))
 
         stream = FakeStream()

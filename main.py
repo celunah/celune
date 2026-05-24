@@ -130,7 +130,8 @@ def main() -> None:
 
         dev = config_bool(config, "CELUNE_DEV", "dev")
         headless = config_bool(config, "CELUNE_HEADLESS", "headless")
-        backend = INITIAL_BACKEND or config_value(config, "backend")
+        configured_backend = INITIAL_BACKEND or config_value(config, "backend")
+        backend = configured_backend if isinstance(configured_backend, str) else None
 
         # try to update if not up to date
         if not headless and supports_ansi():
@@ -191,11 +192,12 @@ def main() -> None:
         # ask for default backend if not set yet
         # Celune will save this preference
         if not backend and supports_ansi():
-            backend = SelectMenu(
+            selected_backend = SelectMenu(
                 ["Qwen3 - Fast", "VoxCPM2 - High quality"],
                 ["qwen3", "voxcpm2"],
                 "Which backend should Celune use?",
             ).start()
+            backend = selected_backend if isinstance(selected_backend, str) else None
 
             if backend == "qwen3":
                 print("Qwen3 uses CEVOICE-backed voice cloning by default.")

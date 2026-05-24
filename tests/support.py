@@ -3,8 +3,9 @@
 
 import queue
 import threading
+from collections.abc import Iterator
 from unittest import mock
-from typing import Any, Optional
+from typing import Optional, TypedDict
 from types import SimpleNamespace
 
 import numpy as np
@@ -12,6 +13,14 @@ import numpy.typing as npt
 
 from celune.utils import discard
 from celune.backends.base import CeluneBackend
+from celune.constants import JSONSerializable, PipelineStates
+
+
+class FakeModel(TypedDict):
+    """Metadata returned by the fake test backend."""
+
+    model_id: str
+    kwargs: dict[str, JSONSerializable]
 
 
 class FakeBackend(CeluneBackend):
@@ -43,7 +52,7 @@ class FakeBackend(CeluneBackend):
         """
         return None
 
-    def load_model(self, model_id: str, **kwargs) -> Any:
+    def load_model(self, model_id: str, **kwargs: JSONSerializable) -> FakeModel:
         """Return lightweight model metadata for one fake model.
 
         Args:
@@ -51,19 +60,22 @@ class FakeBackend(CeluneBackend):
             **kwargs: Backend-specific load arguments preserved for assertions.
 
         Returns:
-            Any: A dictionary describing the requested fake model.
+            FakeModel: A dictionary describing the requested fake model.
         """
         return {"model_id": model_id, "kwargs": kwargs}
 
-    def generate_stream(self, model: Any, **kwargs) -> Any:
+    def generate_stream(
+        self, model: FakeModel, **kwargs: JSONSerializable
+    ) -> Iterator[tuple[npt.NDArray[np.float32], int, dict[str, int]]]:
         """Yield one deterministic fake audio chunk.
 
         Args:
-            model: The fake model object passed by the caller.
+            model: The fake model passed by the caller.
             **kwargs: Generation arguments accepted for interface compatibility.
 
         Returns:
-            Any: An iterator yielding one fake audio chunk.
+            Iterator[tuple[npt.NDArray[np.float32], int, dict[str, int]]]:
+                An iterator yielding one fake audio chunk.
         """
         del model, kwargs
         yield np.zeros((8, 2), dtype=np.float32), 48000, {"chunk_steps": 2}
@@ -218,7 +230,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.playback_done.set()
     engine.utterance_force_stop = threading.Event()
     engine.kept_sfx_audio = None
-    engine.force_stop_marker = object()
+    engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
     engine.log = lambda msg, severity="info": messages.append((msg, severity))
     engine.log_dev = lambda msg, severity="info": messages.append((msg, severity))
     engine.error_callback = errors.append

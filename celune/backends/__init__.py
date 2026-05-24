@@ -5,7 +5,7 @@ from importlib import import_module
 from importlib.metadata import version, PackageNotFoundError
 from typing import Callable, Union, Optional
 
-from .base import CeluneBackend
+from .base import BackendModel, CeluneBackend
 
 BACKENDS = {
     "qwen3": ("celune.backends.qwen3", "Qwen3"),

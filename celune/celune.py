@@ -8,7 +8,7 @@ import threading
 import contextlib
 import subprocess
 from pathlib import Path
-from typing import Any, Optional, Callable, Protocol, Union
+from typing import Optional, Callable, Protocol, Union, cast
 
 import httpx
 import torch
@@ -18,7 +18,7 @@ import sounddevice as sd
 from transformers.utils import logging as hf_logging
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils.logging import disable_progress_bar
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 from huggingface_hub.utils import disable_progress_bars
 
 from . import __version__
@@ -26,12 +26,12 @@ from .chroma import AudioRGBGlow
 from .backends.qwen3 import Qwen3
 from .extensions.base import CeluneContext
 from .dsp import StreamingPedalboardReverb
-from .config import config_bool, config_value
+from .config import Config, config_bool, config_value
 from .modeling import NORMALIZER_DEVICE, load_normalizer_components
-from .backends import CeluneBackend, resolve_backend
+from .backends import BackendModel, CeluneBackend, resolve_backend
 from .extensions.manager import CeluneExtensionManager
 from .runtime import log_runtime_banner, validate_runtime
-from .constants import NORMALIZER_MODEL_ID, PipelineStates
+from .constants import JSONSerializable, NORMALIZER_MODEL_ID, PipelineStates
 from .exceptions import NotAvailableError, WarmupError, BackendError
 from .pyop import (
     PYOP_TIMEOUT,
@@ -50,6 +50,9 @@ from .cevoice import (
 )
 from .utils import format_number, format_error, discard, is_port_usable, custom_assert
 from .pipeline import (
+    AudioQueueItem,
+    SpeechStreamQueue,
+    TextQueueItem,
     acquire_pipeline,
     clear_queue,
     close as close_pipeline,
@@ -68,78 +71,83 @@ from .pipeline import (
 )
 
 
+def _config_str(value: JSONSerializable) -> Optional[str]:
+    """Return a config value only when it is a string."""
+    return value if isinstance(value, str) else None
+
+
+def _config_int(value: JSONSerializable, default: int) -> int:
+    """Return a config value as an integer when it is scalar-like."""
+    if isinstance(value, bool):
+        raise TypeError("boolean is not an integer config value")
+    if isinstance(value, (int, float, str)):
+        return int(value)
+    if value is None:
+        return default
+    raise TypeError("config value cannot be converted to int")
+
+
+class NormalizerTokenizer(Protocol):
+    """Tokenizer behavior CeluneNorm uses during normalization."""
+
+    unk_token_id: Optional[int]
+    pad_token_id: Optional[int]
+    eos_token_id: Optional[int]
+
+    def convert_tokens_to_ids(self, tokens: str) -> Optional[int]:
+        """Convert one token to its integer ID."""
+        raise NotImplementedError("protocol not defined")
+
+    def __call__(
+        self,
+        text: str,
+        *,
+        return_tensors: str,
+        add_special_tokens: bool,
+    ) -> BatchEncoding:
+        """Tokenize text for model input."""
+        raise NotImplementedError("protocol not defined")
+
+    def decode(
+        self,
+        token_ids: torch.Tensor,
+        *,
+        skip_special_tokens: bool,
+    ) -> Union[str, list[str]]:
+        """Decode generated token IDs."""
+        raise NotImplementedError("protocol not defined")
+
+
 class MessageCallback(Protocol):
     """Callback accepting a message and optional severity."""
 
     def __call__(self, msg: str, severity: str = "info") -> None:
-        """Handle a message emitted by Celune.
-
-        Args:
-            msg: Message text to handle.
-            severity: Severity label associated with the message.
-
-        Returns:
-            None: Implementations consume or forward the message.
-
-        Raises:
-            NotImplementedError: The protocol placeholder is called directly.
-        """
-        raise NotImplementedError
+        """Handle a message emitted by Celune."""
+        raise NotImplementedError("protocol not defined")
 
 
 class InputStateCallback(Protocol):
     """Callback accepting either positional or named lock state."""
 
     def __call__(self, locked: bool) -> None:
-        """Handle input lock-state changes.
-
-        Args:
-            locked: Whether input should be treated as locked.
-
-        Returns:
-            None: Implementations update their input state.
-
-        Raises:
-            NotImplementedError: The protocol placeholder is called directly.
-        """
-        raise NotImplementedError
+        """Handle input lock-state changes."""
+        raise NotImplementedError("protocol not defined")
 
 
 class VoiceLockStateCallback(Protocol):
     """Callback accepting either positional or named lock state."""
 
     def __call__(self, locked: bool) -> None:
-        """Handle voice lock-state changes.
-
-        Args:
-            locked: Whether voice changes should be treated as locked.
-
-        Returns:
-            None: Implementations update their voice lock state.
-
-        Raises:
-            NotImplementedError: The protocol placeholder is called directly.
-        """
-        raise NotImplementedError
+        """Handle voice lock-state changes."""
+        raise NotImplementedError("protocol not defined")
 
 
 class ProgressCallback(Protocol):
     """Callback accepting progress and total values."""
 
     def __call__(self, progress: Optional[float], total: Optional[float]) -> None:
-        """Handle a progress update emitted by Celune.
-
-        Args:
-            progress: Current progress, or ``None`` for an indeterminate bar.
-            total: Total progress, or ``None`` for an indeterminate bar.
-
-        Returns:
-            None: Implementations update their progress display.
-
-        Raises:
-            NotImplementedError: The protocol placeholder is called directly.
-        """
-        raise NotImplementedError
+        """Handle a progress update emitted by Celune."""
+        raise NotImplementedError("protocol not defined")
 
 
 class Celune:
@@ -149,7 +157,7 @@ class Celune:
 
     def __init__(
         self,
-        config: dict[str, Any],
+        config: Config,
         tts_backend: Optional[Union[str, CeluneBackend, type[CeluneBackend]]] = None,
         chunk_size: int = 0,  # defaulted to 0 because not all backends use this
         target_chunk_length: float = 0.64,
@@ -188,7 +196,7 @@ class Celune:
         )
 
         self.config = config
-        select_voice_bundle(config_value(config, "voice_bundle"))
+        select_voice_bundle(_config_str(config_value(config, "voice_bundle")))
 
         backend_kwargs = {}
 
@@ -244,7 +252,7 @@ class Celune:
 
         self.language = language
 
-        self.model: Optional[PreTrainedModel] = None
+        self.model: Optional[BackendModel] = None
         self.model_name = ""
         self.llm: Optional[PreTrainedModel] = None
         self.tokenizer: Optional[PreTrainedTokenizerBase] = None
@@ -257,8 +265,8 @@ class Celune:
         self.voices: tuple[str, ...] = ()
         self.voice_prompt: Optional[str] = None
 
-        self.text_queue: queue.Queue[Any] = queue.Queue()
-        self.audio_queue: queue.Queue[Any] = queue.Queue()
+        self.text_queue: queue.Queue[TextQueueItem] = queue.Queue()
+        self.audio_queue: queue.Queue[AudioQueueItem] = queue.Queue()
 
         self._playback_thread: Optional[threading.Thread] = None
         self._generation_thread: Optional[threading.Thread] = None
@@ -318,6 +326,7 @@ class Celune:
         self.glow = AudioRGBGlow(color=glow_color)
         self.glow.start()
 
+        self.vision: Optional[httpx.Client]
         self.vision = self._pyop_conn()
 
         Celune._instance = self
@@ -477,7 +486,9 @@ class Celune:
             bool: ``True`` when at least one voice is available.
         """
         if self.backend.uses_voice_bundles:
-            return self.load_voice_bundle(config_value(self.config, "voice_bundle"))
+            return self.load_voice_bundle(
+                _config_str(config_value(self.config, "voice_bundle"))
+            )
 
         voices = tuple(self.backend.voices)
         self.voices = voices
@@ -821,7 +832,7 @@ class Celune:
             token = None
             host = "127.0.0.1"
         try:
-            port = int(api_config.get("port", 2060))
+            port = _config_int(api_config.get("port", 2060), 2060)
         except (TypeError, ValueError):
             invalid_port = api_config.get("port", 2060)
             self.log(
@@ -831,7 +842,10 @@ class Celune:
             port = 2060
 
         try:
-            requests_per_minute = int(api_config.get("rate_limit_per_minute", 60))
+            requests_per_minute = _config_int(
+                api_config.get("rate_limit_per_minute", 60),
+                60,
+            )
         except (TypeError, ValueError):
             invalid_ratelimit = api_config.get("rate_limit_per_minute", 60)
             self.log(
@@ -982,8 +996,8 @@ class Celune:
         if self.llm is None or self.tokenizer is None:
             return None
 
-        llm: Any = self.llm
-        tokenizer: Any = self.tokenizer
+        llm: PreTrainedModel = self.llm
+        tokenizer = cast(NormalizerTokenizer, self.tokenizer)
 
         def _run_inference() -> Optional[str]:
             """Run a blocking normalization request.
@@ -1016,7 +1030,8 @@ class Celune:
                 )
 
                 inputs = tokens.to(llm.device)
-                len_tokens = tokens["input_ids"].shape[1]
+                token_ids = cast(torch.Tensor, tokens["input_ids"])
+                len_tokens = token_ids.shape[1]
 
                 self.log(f"Tokens to normalize: {len_tokens}")
                 if len_tokens > 2048:
@@ -1033,7 +1048,8 @@ class Celune:
                         eos_token_id=tokenizer.eos_token_id,
                     )
 
-                prompt_len = inputs["input_ids"].shape[1]
+                input_ids = cast(torch.Tensor, inputs["input_ids"])
+                prompt_len = input_ids.shape[1]
                 new_ids = output_ids[0][prompt_len:]
 
                 # CeluneNorm shouldn't do this, but if it does happen, stop Celune from saying nothing
@@ -1157,7 +1173,7 @@ class Celune:
         """
         return say_pipeline(self, text, save=save, display_text=display_text)
 
-    def say_stream(self, text: str, save: bool = True) -> Optional[queue.Queue]:
+    def say_stream(self, text: str, save: bool = True) -> Optional[SpeechStreamQueue]:
         """Queue text for playback and mirror generated chunks to a queue.
 
         Args:
@@ -1168,7 +1184,7 @@ class Celune:
             Optional[queue.Queue]: Queue receiving 48 kHz stereo float32 chunks,
                 or ``None`` when the request could not be queued.
         """
-        stream_queue: queue.Queue = queue.Queue(maxsize=2)
+        stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
         if not queue_speech(self, text, save=save, stream_queue=stream_queue):
             return None
         return stream_queue
@@ -1305,9 +1321,9 @@ class Celune:
         """Get the queue marker used to stop playback immediately.
 
         Returns:
-            object: The sentinel object inserted into the audio queue.
+            PipelineStates: The sentinel inserted into the audio queue.
         """
-        return PipelineStates.UTTERANCE_FORCE_END.value
+        return PipelineStates.UTTERANCE_FORCE_END
 
     @property
     def playback_done(self):
@@ -1332,18 +1348,18 @@ class Celune:
         """Get the marker that signals utterance completion.
 
         Returns:
-            object: The sentinel object inserted when generation finishes.
+            PipelineStates: The sentinel inserted when generation finishes.
         """
-        return PipelineStates.UTTERANCE_END.value
+        return PipelineStates.UTTERANCE_END
 
     @property
     def sentinel(self):
         """Get the global shutdown sentinel.
 
         Returns:
-            object: The sentinel object used to stop worker threads.
+            PipelineStates: The sentinel used to stop worker threads.
         """
-        return PipelineStates.TERMINATE.value
+        return PipelineStates.TERMINATE
 
     @property
     def generation_thread(self) -> Optional[threading.Thread]:

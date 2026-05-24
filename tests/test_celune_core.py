@@ -2,10 +2,14 @@
 """Tests for Celune core behavior without real models or GPU work."""
 
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 from unittest import mock, TestCase
 
+from transformers.modeling_utils import PreTrainedModel
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+
 from celune.celune import Celune
+from celune.config import Config
 from celune.exceptions import BackendError
 
 from tests.support import FakeBackend, FakeGlow
@@ -188,7 +192,8 @@ class CeluneCoreTests(TestCase):
         """Verify persona talkback can be disabled without disabling PYOP."""
         from celune.pyop import pyop_enabled, pyop_talkback_enabled
 
-        config = {"pyop": {"enabled": True, "talkback": False}}
+        pyop_config: Config = {"enabled": True, "talkback": False}
+        config: Config = {"pyop": pyop_config}
         self.assertEqual(pyop_enabled(config), True)
         self.assertEqual(pyop_talkback_enabled(config), False)
         self.assertEqual(pyop_talkback_enabled({"pyop": {}}), True)
@@ -303,10 +308,13 @@ class CeluneCoreTests(TestCase):
             AssertionError: Unload behavior changes unexpectedly.
         """
         celune = self._make_celune({})
-        celune.model = cast(Any, object())
-        celune.llm = cast(Any, object())
-        celune.tokenizer = cast(Any, object())
-        celune.backend.model = object()
+        celune.model = cast(PreTrainedModel, mock.Mock(spec=PreTrainedModel))
+        celune.llm = cast(PreTrainedModel, mock.Mock(spec=PreTrainedModel))
+        celune.tokenizer = cast(
+            PreTrainedTokenizerBase,
+            mock.Mock(spec=PreTrainedTokenizerBase),
+        )
+        celune.backend.model = mock.Mock()
         with mock.patch("celune.celune.torch.cuda.is_available", return_value=False):
             celune.unload_runtime_state(include_normalizer=True)
         self.assertIsNone(celune.model)

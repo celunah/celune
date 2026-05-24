@@ -11,7 +11,7 @@ import pathlib
 import datetime
 import contextlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import TYPE_CHECKING, Optional, Union, cast
 
 import httpx
 import torch
@@ -50,6 +50,7 @@ from .constants import (
     N_A_NUMERIC,
     JSON,
     JSONSerializable,
+    PipelineStates,
     PYOP_HISTORY_MESSAGES,
     VOICE_STYLE_OVERLAYS,
 )
@@ -71,7 +72,7 @@ class SpeechRequest:
     text: str
     display_text: str
     save: bool = True
-    stream_queue: Optional[queue.Queue] = None
+    stream_queue: Optional["SpeechStreamQueue"] = None
     normalize: bool = False
 
 
@@ -132,6 +133,39 @@ class SpeechTiming:
         return self.first_playback_time - self.start_time
 
 
+type SpeechStreamItem = Optional[Union[npt.NDArray[np.float32], Exception]]
+type SpeechStreamQueue = queue.Queue[SpeechStreamItem]
+type TextQueueItem = Union[SpeechRequest, PipelineStates]
+type AudioChunk = tuple[npt.NDArray[np.float32], int, Optional[SpeechTiming]]
+type AudioQueueItem = Union[AudioChunk, SpeechDone, PipelineStates]
+
+
+def _json_value(value: JSONSerializable) -> JSONSerializable:
+    """Return a value only when it is already JSON-compatible."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, list) and all(_is_json_value(item) for item in value):
+        return cast(list[JSONSerializable], value)
+    if isinstance(value, dict) and all(
+        isinstance(key, str) and _is_json_value(item) for key, item in value.items()
+    ):
+        return cast(dict[str, JSONSerializable], value)
+    return None
+
+
+def _is_json_value(value: JSONSerializable) -> bool:
+    """Return whether a value can be stored in Celune JSON metadata."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return True
+    if isinstance(value, list):
+        return all(_is_json_value(item) for item in value)
+    if isinstance(value, dict):
+        return all(
+            isinstance(key, str) and _is_json_value(item) for key, item in value.items()
+        )
+    return False
+
+
 def _celune_metadata_payload(
     engine: "Celune",
     *,
@@ -163,17 +197,19 @@ def _celune_metadata_payload(
         "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "text": text,
         "display_text": display_text,
-        "backend": getattr(engine, "tts_backend", None),
-        "backend_mode": engine.config.get("qwen3_mode"),
-        "qwen3_x_vector_only": getattr(engine.backend, "x_vector_only", None),
-        "model_name": getattr(engine, "model_name", ""),
-        "voice": getattr(engine, "current_voice", None),
-        "voice_prompt": getattr(engine, "voice_prompt", None),
-        "language": getattr(engine, "language", None),
-        "chunk_size": getattr(engine, "chunk_size", None),
-        "speed": getattr(engine, "speed", None),
-        "reverb_strength": getattr(engine.reverb, "strength", None),
-        "use_normalizer": getattr(engine, "use_normalization", None),
+        "backend": _json_value(getattr(engine, "tts_backend", None)),
+        "backend_mode": _json_value(engine.config.get("qwen3_mode")),
+        "qwen3_x_vector_only": _json_value(
+            getattr(engine.backend, "x_vector_only", None)
+        ),
+        "model_name": _json_value(getattr(engine, "model_name", "")),
+        "voice": _json_value(getattr(engine, "current_voice", None)),
+        "voice_prompt": _json_value(getattr(engine, "voice_prompt", None)),
+        "language": _json_value(getattr(engine, "language", None)),
+        "chunk_size": _json_value(getattr(engine, "chunk_size", None)),
+        "speed": _json_value(getattr(engine, "speed", None)),
+        "reverb_strength": _json_value(getattr(engine.reverb, "strength", None)),
+        "use_normalizer": _json_value(getattr(engine, "use_normalization", None)),
         "sample_rate": sample_rate,
         "subtype": subtype,
         "included_kept_sfx": included_kept_sfx,
@@ -388,7 +424,7 @@ def clear_queue(q: queue.Queue) -> None:
         pass
 
 
-def log_first_playback(engine: "Celune", timing: JSON) -> None:
+def log_first_playback(engine: "Celune", timing: Optional[SpeechTiming]) -> None:
     """Log time to first playback for a queued speech timing object.
 
     Args:
@@ -717,7 +753,7 @@ def think(engine: "Celune", request: str) -> bool:
     attachments = getattr(engine, "pyop_attachments", None)
 
     try:
-        vision: Any = getattr(engine, "vision", None)
+        vision = engine.vision
         if vision is None:
             engine.log("Persona system is not connected.", "warning")
             return False
@@ -787,7 +823,7 @@ def queue_speech(
     engine: "Celune",
     text: str,
     save: bool = True,
-    stream_queue: Optional[queue.Queue] = None,
+    stream_queue: Optional[SpeechStreamQueue] = None,
     display_text: Optional[str] = None,
 ) -> bool:
     """Queue text for Celune to say and optionally mirror audio chunks.
@@ -1167,6 +1203,7 @@ def generation_worker(engine: "Celune") -> None:
             engine.audio_queue.put(engine.sentinel)
             break
 
+        item = cast(SpeechRequest, item)
         text = item.text
         display_text = item.display_text
         save_output = item.save
@@ -1626,7 +1663,7 @@ def playback_worker(engine: "Celune") -> None:
                         )
             continue
 
-        audio_chunk, sr, timing = item
+        audio_chunk, sr, timing = cast(AudioChunk, item)
 
         if engine.stream is None:
             try:

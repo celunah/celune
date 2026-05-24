@@ -101,6 +101,9 @@ class CeluneUI(App):
         self._tutorial_timers: list[Timer] = []
         self._tutorial_token = 0
         self._tutorial_active = False
+        self._input_locked = True
+        self._pyop_available = False
+        self._pyop_probe_running = False
 
         CeluneUI._instance = self
 
@@ -565,6 +568,42 @@ class CeluneUI(App):
 
         self._run_on_ui_thread(update)
 
+    def _normal_input_placeholder(self) -> str:
+        """Return the unlocked input placeholder without blocking the UI."""
+        if (
+            self._pyop_available
+            and self.celune is not None
+            and pyop_talkback_enabled(self.celune.config)
+        ):
+            return "Say something..."
+
+        return "Enter text to speak here"
+
+    def _refresh_pyop_availability(self) -> None:
+        """Refresh PYOP availability in the background for placeholder text."""
+        if self._pyop_probe_running:
+            return
+
+        self._pyop_probe_running = True
+
+        def probe() -> None:
+            """Probe PYOP without pausing the Textual event loop."""
+            available = pyop_is_available(pyop_base_url())
+
+            def apply_result() -> None:
+                self._pyop_probe_running = False
+                if self.cur_state == "exiting":
+                    return
+
+                changed = self._pyop_available != available
+                self._pyop_available = available
+                if changed and not self._input_locked:
+                    self.input_box.placeholder = self._normal_input_placeholder()
+
+            self._run_on_ui_thread(apply_result)
+
+        threading.Thread(target=probe, daemon=True).start()
+
     def change_input_state(self, locked: bool) -> None:
         """Lock or unlock Celune's UI layer.
 
@@ -582,16 +621,16 @@ class CeluneUI(App):
             Returns:
                 None: This callback updates input widgets and resources.
             """
-            placeholder = (
-                "Say something..."
-                if pyop_is_available(pyop_base_url())
-                else "Enter text to speak here"
+            self._input_locked = locked
+            self.input_box.placeholder = (
+                "Please wait" if locked else self._normal_input_placeholder()
             )
-            self.input_box.placeholder = "Please wait" if locked else placeholder
             self.style_button.disabled = locked
             self.update_resources()
 
         self._run_on_ui_thread(update)
+        if not locked:
+            self._refresh_pyop_availability()
 
     def safe_status(self, msg: str, severity: str = "info") -> None:
         """Update current status.

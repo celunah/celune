@@ -9,7 +9,7 @@ import traceback
 import threading
 import importlib.util
 from pathlib import Path
-from typing import Any, Type
+from typing import Type
 
 from .base import CeluneContext, CeluneExtension
 from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
@@ -101,7 +101,7 @@ class CeluneExtensionManager:
         else:
             self.auto_started = True
 
-    def invoke(self, name: str, *args: Any, **kwargs: Any) -> Any:
+    def invoke(self, name: str, *args, **kwargs) -> None:
         """Manually invoke a Celune extension.
 
         Args:
@@ -110,8 +110,7 @@ class CeluneExtensionManager:
             **kwargs: Keyword arguments forwarded to the extension.
 
         Returns:
-            Any: The invocation thread is started asynchronously, so this returns
-                ``None``.
+            None: The invocation thread is started asynchronously.
 
         Raises:
             InvalidExtensionError: The requested extension is not registered.

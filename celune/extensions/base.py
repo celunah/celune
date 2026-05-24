@@ -5,9 +5,10 @@ from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import Any, Protocol, Optional, runtime_checkable
+from typing import Protocol, Optional, runtime_checkable
 
 from celune import __version__
+from ..constants import JSONSerializable
 from ..exceptions import IncompleteExtensionError
 
 CELUNE_VERSION = __version__
@@ -18,18 +19,7 @@ class LogCallable(Protocol):
     """Extension callable logging annotation."""
 
     def __call__(self, msg: str, severity: str = "info") -> None:
-        """Emit a log message.
-
-        Args:
-            msg: Message text to emit.
-            severity: Message severity level.
-
-        Returns:
-            None: Implementations forward the message to a logger.
-
-        Raises:
-            IncompleteExtensionError: The protocol placeholder is called directly.
-        """
+        """Emit a log message."""
         raise IncompleteExtensionError("protocol not defined")
 
 
@@ -38,18 +28,7 @@ class DevLogCallable(Protocol):
     """Extension callable developer logging annotation."""
 
     def __call__(self, msg: str, severity: str = "info") -> None:
-        """Emit a developer log message.
-
-        Args:
-            msg: Message text to emit.
-            severity: Message severity level.
-
-        Returns:
-            None: Implementations forward the developer message to a logger.
-
-        Raises:
-            IncompleteExtensionError: The protocol placeholder is called directly.
-        """
+        """Emit a developer log message."""
         raise IncompleteExtensionError("protocol not defined")
 
 
@@ -63,19 +42,7 @@ class SayCallable(Protocol):
         save: bool = True,
         display_text: Optional[str] = None,
     ) -> bool:
-        """Queue text for speech.
-
-        Args:
-            text: Text to synthesize.
-            save: Whether to save generated output artifacts.
-            display_text: Optional text to show in logs instead of the synthesis text.
-
-        Returns:
-            bool: ``True`` when the request was accepted.
-
-        Raises:
-            IncompleteExtensionError: The protocol placeholder is called directly.
-        """
+        """Queue text for speech."""
         raise IncompleteExtensionError("protocol not defined")
 
 
@@ -84,18 +51,7 @@ class PlayCallable(Protocol):
     """Extension callable play request annotation."""
 
     def __call__(self, sound_path: str, keep: bool = False) -> bool:
-        """Queue an audio file for playback.
-
-        Args:
-            sound_path: Path to the sound file.
-            keep: Whether to prepend this SFX to the next saved utterance.
-
-        Returns:
-            bool: ``True`` when playback was queued.
-
-        Raises:
-            IncompleteExtensionError: The protocol placeholder is called directly.
-        """
+        """Queue an audio file for playback."""
         raise IncompleteExtensionError("protocol not defined")
 
 
@@ -104,18 +60,7 @@ class StatusCallable(Protocol):
     """Extension callable status update annotation."""
 
     def __call__(self, msg: str, severity: str = "info") -> None:
-        """Emit a status update.
-
-        Args:
-            msg: Status message text.
-            severity: Status severity level.
-
-        Returns:
-            None: Implementations forward the status update.
-
-        Raises:
-            IncompleteExtensionError: The protocol placeholder is called directly.
-        """
+        """Emit a status update."""
         raise IncompleteExtensionError("protocol not defined")
 
 
@@ -124,17 +69,7 @@ class SetVoiceCallable(Protocol):
     """Extension callable voice setting request annotation."""
 
     def __call__(self, name: str) -> bool:
-        """Request a voice change.
-
-        Args:
-            name: Voice name to select.
-
-        Returns:
-            bool: ``True`` when the voice change was accepted.
-
-        Raises:
-            IncompleteExtensionError: The protocol placeholder is called directly.
-        """
+        """Request a voice change."""
         raise IncompleteExtensionError("protocol not defined")
 
 
@@ -143,14 +78,7 @@ class GetStateCallable(Protocol):
     """Extension callable state read annotation."""
 
     def __call__(self) -> str:
-        """Read the current runtime state.
-
-        Returns:
-            str: Current state name.
-
-        Raises:
-            IncompleteExtensionError: The protocol placeholder is called directly.
-        """
+        """Read the current runtime state."""
         raise IncompleteExtensionError("protocol not defined")
 
 
@@ -159,17 +87,7 @@ class WaitUntilReadyCallable(Protocol):
     """Extension callable wait until ready annotation."""
 
     def __call__(self, timeout: float = 30.0) -> bool:
-        """Wait for Celune to become ready.
-
-        Args:
-            timeout: Maximum seconds to wait.
-
-        Returns:
-            bool: ``True`` when Celune is ready.
-
-        Raises:
-            IncompleteExtensionError: The protocol placeholder is called directly.
-        """
+        """Wait for Celune to become ready."""
         raise IncompleteExtensionError("protocol not defined")
 
 
@@ -188,10 +106,10 @@ class CeluneContext:
 
     name: str = "Celune"
     version: str = CELUNE_VERSION
-    shared: dict[str, Any] = field(default_factory=dict)
+    shared: dict[str, JSONSerializable] = field(default_factory=dict)
     dev: bool = False
 
-    def expose(self, key: str, value: Any) -> None:
+    def expose(self, key: str, value: JSONSerializable) -> None:
         """Expose a shared object.
 
         Args:
@@ -203,7 +121,11 @@ class CeluneContext:
         """
         self.shared[key] = value
 
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(
+        self,
+        key: str,
+        default: JSONSerializable = None,
+    ) -> JSONSerializable:
         """Get a shared object.
 
         Args:
@@ -211,7 +133,7 @@ class CeluneContext:
             default: The fallback value returned when the key is missing.
 
         Returns:
-            Any: The stored shared value, or ``default`` when absent.
+            JSONSerializable: The stored shared value, or ``default`` when absent.
         """
         return self.shared.get(key, default)
 
