@@ -272,6 +272,42 @@ class PipelineTests(TestCase):
             ],
         )
 
+    def test_pyop_messages_include_pending_attachments(self) -> None:
+        """Verify visual attachments are sent in the next persona user turn."""
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Celune"
+        engine.current_voice = "balanced"
+        engine.pyop_attachments = [
+            {
+                "type": "image",
+                "path": "file:///C:/Users/user/Pictures/frame.png",
+                "name": "frame.png",
+            },
+            {
+                "type": "video",
+                "path": "file:///C:/Users/user/Videos/clip.mp4",
+                "name": "clip.mp4",
+            },
+        ]
+
+        messages = pipeline.build_pyop_messages(cast(Celune, engine), "What is this?")
+
+        user = messages[-1]
+        self.assertEqual(user["role"], "user")
+        content = cast(list[dict[str, str]], user["content"])
+        self.assertEqual(
+            content,
+            [
+                {
+                    "type": "image",
+                    "image": "file:///C:/Users/user/Pictures/frame.png",
+                },
+                {"type": "video", "video": "file:///C:/Users/user/Videos/clip.mp4"},
+                {"type": "text", "text": "What is this?"},
+            ],
+        )
+
     def test_generation_worker_normalizes_each_split_chunk(self) -> None:
         """Verify normalization happens after splitting and before generation.
 

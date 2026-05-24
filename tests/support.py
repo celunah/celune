@@ -201,6 +201,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     progress: list[tuple[Optional[float], Optional[float]]] = []
     engine = SimpleNamespace()
     engine.backend = SimpleNamespace(supported_languages=("en",))
+    engine.pyop_attachments = []
     engine.use_normalization = False
     engine.normalize = mock.Mock(return_value=None)
     engine.is_in_tutorial = False

@@ -16,6 +16,9 @@ from ..exceptions import InvalidExtensionError
 if TYPE_CHECKING:
     from .app import CeluneUI
 
+IMAGE_EXTENSIONS = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"}
+VIDEO_EXTENSIONS = {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"}
+
 
 def tutorial(ui: CeluneUI) -> None:
     """Run actions related to Celune's tutorial.
@@ -147,6 +150,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log("/xvectoronly <true/false> - Toggle Qwen3 identity-only cloning.")
         ui.safe_log(
             "/play <file> - Play a sound effect by path. Only WAV files are supported."
+        )
+        ui.safe_log(
+            "/attach <file> [file...] - Attach images or videos to the next persona reply."
         )
         ui.safe_log(
             "/seed [seed|random] - Set or clear the seed for speech outputs, affecting pronunciation and/or prosody."
@@ -301,6 +307,53 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 "error",
             )
             return
+        return
+    if command == "attach":
+        if not args:
+            ui.safe_log("Usage: /attach <file> [file...]", "warning")
+            return
+
+        if len(args) == 1 and args[0].lower() in {"clear", "reset", "none"}:
+            ui.celune.pyop_attachments.clear()
+            ui.safe_log("Attachments cleared.")
+            return
+
+        if getattr(ui.celune, "vision", object()) is None:
+            ui.safe_log(
+                "Cannot add attachments while Celune is running in speech-only mode.",
+                "warning",
+            )
+            return
+
+        added: list[str] = []
+        for raw_path in args:
+            path = Path(raw_path).expanduser()
+            if not path.exists() or not path.is_file():
+                ui.safe_log(f"Attachment not found: {raw_path}", "warning")
+                continue
+
+            suffix = path.suffix.lower()
+            if suffix in IMAGE_EXTENSIONS:
+                kind = "image"
+            elif suffix in VIDEO_EXTENSIONS:
+                kind = "video"
+            else:
+                ui.safe_log(f"Unsupported attachment type: {raw_path}", "warning")
+                continue
+
+            resolved = path.resolve()
+            ui.celune.pyop_attachments.append(
+                {"type": kind, "path": resolved.as_uri(), "name": resolved.name}
+            )
+            added.append(resolved.name)
+
+        if not added:
+            return
+
+        count = len(ui.celune.pyop_attachments)
+        ui.safe_log(
+            f"Attached {', '.join(added)}. {count} pending for the next persona reply."
+        )
         return
     if command == "seed":
         if not args:
