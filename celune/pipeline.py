@@ -621,12 +621,39 @@ def _pyop_history_messages(engine: "Celune") -> list[JSON]:
     return messages
 
 
+def _pyop_pending_attachments(engine: "Celune") -> list[JSON]:
+    """Return pending PYOP attachments in Qwen chat content format."""
+    attachments = getattr(engine, "pyop_attachments", [])
+    if not isinstance(attachments, list):
+        return []
+
+    content: list[JSON] = []
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+
+        kind = attachment.get("type")
+        path = attachment.get("path")
+        if kind in {"image", "video"} and isinstance(path, str) and path.strip():
+            content.append({"type": kind, kind: path.strip()})
+
+    return content
+
+
 def build_pyop_messages(engine: "Celune", request: str) -> list[JSON]:
     """Build OpenAI-style messages for the external PYOP service."""
+    attachments = _pyop_pending_attachments(engine)
+    user_content: JSONSerializable = request.strip()
+    if attachments:
+        user_content = [
+            *attachments,
+            {"type": "text", "text": request.strip()},
+        ]
+
     return [
         {"role": "system", "content": build_pyop_character_card(engine)},
         *_pyop_history_messages(engine),
-        {"role": "user", "content": request.strip()},
+        {"role": "user", "content": user_content},
     ]
 
 
@@ -687,6 +714,7 @@ def think(engine: "Celune", request: str) -> bool:
     """
     payload = build_pyop_request(engine, request)
     endpoint = pyop_endpoint()
+    attachments = getattr(engine, "pyop_attachments", None)
 
     try:
         vision: Any = getattr(engine, "vision", None)
@@ -705,6 +733,9 @@ def think(engine: "Celune", request: str) -> bool:
             f"Persona system request failed: {format_error(e, engine.dev)}", "warning"
         )
         return False
+    finally:
+        if isinstance(attachments, list):
+            attachments.clear()
 
     if not spoken_text:
         engine.log("Persona system returned an empty response.", "warning")

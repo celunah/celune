@@ -253,6 +253,7 @@ class Celune:
         self.current_character: Optional[str] = None
         self.voice_bundle_is_default = True
         self.pyop_history: list[dict[str, str]] = []
+        self.pyop_attachments: list[dict[str, str]] = []
         self.voices: tuple[str, ...] = ()
         self.voice_prompt: Optional[str] = None
 

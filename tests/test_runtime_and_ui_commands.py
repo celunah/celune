@@ -2,6 +2,7 @@
 """Tests for runtime validation and lightweight UI commands."""
 
 import warnings
+from pathlib import Path
 from typing import cast
 from types import SimpleNamespace
 from unittest import mock, TestCase
@@ -98,6 +99,7 @@ class UICommandTests(TestCase):
         self.ui.celune = SimpleNamespace(
             backend=SimpleNamespace(),
             voice_prompt=None,
+            pyop_attachments=[],
             can_use_rubberband=True,
             speed=1.0,
             reverb=SimpleNamespace(strength=0.0),
@@ -163,6 +165,21 @@ class UICommandTests(TestCase):
         self.assertEqual(self.ui.celune.reverb.strength, 0.5)
         self._process_command("reverb", ["150"])
         self.assertEqual(self.logs[-1][1], "warning")
+
+    def test_attach_command_stages_visual_media_for_persona_reply(self) -> None:
+        """Verify /attach validates media and stores Qwen-compatible file URIs."""
+        image = Path("demos/ready.png")
+
+        self._process_command("attach", [str(image)])
+
+        self.assertEqual(len(self.ui.celune.pyop_attachments), 1)
+        attachment = self.ui.celune.pyop_attachments[0]
+        self.assertEqual(attachment["type"], "image")
+        self.assertEqual(attachment["path"], image.resolve().as_uri())
+        self.assertEqual(self.logs[-1][1], "info")
+
+        self._process_command("attach", ["clear"])
+        self.assertEqual(self.ui.celune.pyop_attachments, [])
 
 
 class UIStartupTests(TestCase):
