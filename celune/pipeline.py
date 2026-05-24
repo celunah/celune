@@ -32,7 +32,7 @@ from .dsp import (
     readiness_signal,
 )
 from .exceptions import NotAvailableError
-from .pyop import pyop_endpoint, pyop_model_id, pyop_quantization
+from .pyop import pyop_endpoint, pyop_model_id
 from .utils import (
     format_number,
     run_async,
@@ -637,8 +637,8 @@ def build_pyop_request(engine: "Celune", request: str) -> JSON:
     return {
         "format": "celune_pyop_request",
         "format_version": 1,
-        "model": pyop_model_id(engine.config),
-        "quantization": pyop_quantization(engine.config),
+        "model": pyop_model_id(),
+        "quantization": "4bit",
         "quantized": True,
         "character": getattr(engine, "current_character", None) or "Celune",
         "voice": getattr(engine, "current_voice", None) or "balanced",
@@ -686,7 +686,7 @@ def think(engine: "Celune", request: str) -> bool:
         request: The input request that will be sent to by PYOP.
     """
     payload = build_pyop_request(engine, request)
-    endpoint = pyop_endpoint(engine.config)
+    endpoint = pyop_endpoint()
 
     try:
         vision: Any = getattr(engine, "vision", None)

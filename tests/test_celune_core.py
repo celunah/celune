@@ -148,13 +148,12 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.pyop.sys.executable", "celune-python.exe"),
             mock.patch("celune.pyop.subprocess.Popen") as popen,
         ):
-            process = pyop.start_pyop_detached({"pyop": {}})
+            process = pyop.start_pyop_detached()
 
         self.assertIs(process, popen.return_value)
 
         env = popen.call_args.kwargs["env"]
         self.assertEqual(env["PYOP_MODEL"], "lunahr/pyop-2b")
-        self.assertEqual(env["PYOP_QUANTIZATION"], "4bit")
         self.assertEqual(env["PYOP_QUANTIZED"], "1")
 
     def test_pyop_launcher_hides_windows_console(self) -> None:
@@ -177,7 +176,7 @@ class CeluneCoreTests(TestCase):
             ),
             mock.patch("celune.pyop.subprocess.Popen") as popen,
         ):
-            process = pyop.start_pyop_detached({"pyop": {}})
+            process = pyop.start_pyop_detached()
 
         self.assertIs(process, popen.return_value)
         flags = popen.call_args.kwargs["creationflags"]

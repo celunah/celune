@@ -359,9 +359,9 @@ class Celune:
         if not pyop_enabled(self.config):
             return None
 
-        url = pyop_base_url(self.config)
+        url = pyop_base_url()
         if not pyop_is_available(url):
-            process = start_pyop_detached(self.config)
+            process = start_pyop_detached()
             if process is not None:
                 self._pyop_process = process
             deadline = time.monotonic() + PYOP_STARTUP_TIMEOUT
@@ -778,7 +778,7 @@ class Celune:
 
         self._start_configured_api()
 
-        if not pyop_is_available(pyop_base_url(self.config)):
+        if not pyop_is_available(pyop_base_url()):
             self.log(
                 "Personas are unavailable. Celune is operating in speech-only mode.",
                 "warning",

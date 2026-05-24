@@ -584,7 +584,7 @@ class CeluneUI(App):
             """
             placeholder = (
                 "Say something..."
-                if pyop_is_available(pyop_base_url(self.celune.config))
+                if pyop_is_available(pyop_base_url())
                 else "Enter text to speak here"
             )
             self.input_box.placeholder = "Please wait" if locked else placeholder
