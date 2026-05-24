@@ -8,11 +8,14 @@ import sys
 import contextlib
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from collections.abc import Mapping
+from typing import Optional
 
 import httpx
 
 from .constants import PYOP_MODEL_ID
+from .constants import JSONSerializable
+from .config import Config
 
 PYOP_HOST = "127.0.0.1"
 PYOP_PORT = 2061
@@ -30,14 +33,14 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def pyop_config(config: dict[str, Any]) -> dict[str, Any]:
+def pyop_config(config: Mapping[str, JSONSerializable]) -> Config:
     """Return the normalized configuration block for the persona system.
 
     Args:
         config: The configuration data for the persona system.
 
     Returns:
-        dict[str, Any]: The normalized configuration data for the persona system.
+        Config: The normalized configuration data for the persona system.
     """
     raw = config.get("pyop", {})
     if isinstance(raw, bool):
@@ -50,7 +53,7 @@ def pyop_config(config: dict[str, Any]) -> dict[str, Any]:
     return dict(raw)
 
 
-def pyop_enabled(config: dict[str, Any]) -> bool:
+def pyop_enabled(config: Mapping[str, JSONSerializable]) -> bool:
     """Return whether Celune should try to use personas.
 
     Args:
@@ -62,7 +65,7 @@ def pyop_enabled(config: dict[str, Any]) -> bool:
     return bool(pyop_config(config).get("enabled", True))
 
 
-def pyop_talkback_enabled(config: dict[str, Any]) -> bool:
+def pyop_talkback_enabled(config: Mapping[str, JSONSerializable]) -> bool:
     """Return whether regular UI input should go through persona talkback.
 
     Args:

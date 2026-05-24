@@ -133,8 +133,6 @@ class ChromaTests(TestCase):
         self.assertEqual(len(fixed), 3)
         self.assertLessEqual(max(fixed), 255)
 
-        glow = object.__new__(AudioRGBGlow)
-        glow.input_gain = 4.0
-        glow.gamma = 1.4
+        glow = AudioRGBGlow("#ffffff")
         self.assertEqual(glow._speech_level(np.zeros((0, 2), dtype=np.float32)), 0.0)
         self.assertGreater(glow._speech_level(stereo), 0.0)

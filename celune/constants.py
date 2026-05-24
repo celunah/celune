@@ -4,7 +4,8 @@
 import signal
 import datetime
 from enum import IntEnum, Enum
-from typing import TypeVar, Union
+from enum import auto
+from typing import Union
 
 # CeluneNorm v2.0 inherits v1.3's feature set but at an extended context length
 # so Celune can process your normalized text more efficiently at either
@@ -86,8 +87,6 @@ class ExitCodes(Enum):
 # SIGTSTP is not defined on Windows systems
 SIGTSTP = getattr(signal, "SIGTSTP", None)
 
-# types
-T = TypeVar("T")
 type JSONSerializable = Union[
     None, bool, int, float, str, list["JSONSerializable"], dict[str, "JSONSerializable"]
 ]
@@ -98,9 +97,9 @@ type JSON = dict[str, JSONSerializable]
 class PipelineStates(Enum):
     """Pipeline state objects."""
 
-    TERMINATE = object()  # Celune is exiting.
-    UTTERANCE_END = object()  # Utterance ended normally.
-    UTTERANCE_FORCE_END = object()  # Utterance was interrupted by the user.
+    TERMINATE = auto()  # Celune is exiting.
+    UTTERANCE_END = auto()  # Utterance ended normally.
+    UTTERANCE_FORCE_END = auto()  # Utterance was interrupted by the user.
 
 
 # utterance loudness tiers

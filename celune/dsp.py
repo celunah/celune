@@ -239,7 +239,7 @@ class StreamingPedalboardReverb:
 
         self._update_params()
 
-        chunk = audio.T.astype(np.float32, copy=False)
+        chunk = audio.transpose().astype(np.float32, copy=False)
 
         out = self.board.process(
             chunk,
@@ -248,7 +248,7 @@ class StreamingPedalboardReverb:
         )
 
         self._first_chunk = False
-        return np.ascontiguousarray(out.T.astype(np.float32, copy=False))
+        return np.ascontiguousarray(out.transpose().astype(np.float32, copy=False))
 
     def flush(
         self, sr: int = BASE_SR, threshold: float = 1e-4, max_secs: float = 3.0

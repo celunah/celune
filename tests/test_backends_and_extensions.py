@@ -64,7 +64,14 @@ class BackendTests(TestCase):
 
     def test_voxcpm2_uses_pack_cfg_scale_when_present(self) -> None:
         """Verify CEVOICE can override VoxCPM2's per-voice CFG scale."""
-        with mock.patch.dict(sys.modules, {"voxcpm": SimpleNamespace(VoxCPM=object)}):
+
+        class StubVoxCPM:
+            """Import-time stand-in for the VoxCPM package class."""
+
+        with mock.patch.dict(
+            sys.modules,
+            {"voxcpm": SimpleNamespace(VoxCPM=StubVoxCPM)},
+        ):
             voxcpm2 = importlib.import_module("celune.backends.voxcpm2")
             voxcpm2_cls = voxcpm2.VoxCPM2
 
@@ -115,11 +122,15 @@ class BackendTests(TestCase):
 
     def test_qwen3_uses_pack_reference_text_when_present(self) -> None:
         """Verify CEVOICE can override Qwen3's per-voice reference text."""
+
+        class StubQwen3TTS:
+            """Import-time stand-in for the FasterQwen3TTS package class."""
+
         with mock.patch.dict(
             sys.modules,
             {
                 "faster_qwen3_tts": SimpleNamespace(
-                    FasterQwen3TTS=object,
+                    FasterQwen3TTS=StubQwen3TTS,
                     __version__="0.2.5",
                 )
             },
@@ -218,7 +229,7 @@ class ExtensionTests(TestCase):
         with self.assertRaises(ExtensionAlreadyRegisteredError):
             manager.register(DemoExtension)
         with self.assertRaises(InvalidExtensionError):
-            manager.register(object)  # type: ignore[arg-type]
+            manager.register(int)  # type: ignore[arg-type]
 
         with tempfile.TemporaryDirectory() as temp_dir:
             extension_file = Path(temp_dir) / "fixture.py"

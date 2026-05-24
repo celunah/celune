@@ -39,7 +39,7 @@ class ConfigTests(TestCase):
         Raises:
             AssertionError: Configuration precedence changes unexpectedly.
         """
-        values = {"enabled": True}
+        values: config.Config = {"enabled": True}
         self.assertEqual(config.config_value(values, "enabled"), True)
         self.assertEqual(config.config_value(None, "missing", 3), 3)
 

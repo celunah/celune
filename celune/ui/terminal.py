@@ -3,14 +3,14 @@
 
 import re
 import sys
-from typing import Callable, Generic
+from typing import Callable
 
 import readchar
 
-from ..constants import T
+from ..constants import JSONSerializable
 
 
-class SelectMenu(Generic[T]):
+class SelectMenu:
     """A selection menu.
 
     Args:
@@ -22,7 +22,7 @@ class SelectMenu(Generic[T]):
     def __init__(
         self,
         choices: list[str],
-        raw_choices: list[T],
+        raw_choices: list[JSONSerializable],
         prompt: str = "Select an option",
     ) -> None:
         if not choices:
@@ -51,7 +51,7 @@ class SelectMenu(Generic[T]):
         sys.stdout.write(f"\033[{len(self.choices)}A")
         sys.stdout.flush()
 
-    def start(self) -> T:
+    def start(self) -> JSONSerializable:
         """Start the selection menu.
 
         Returns:

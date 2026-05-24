@@ -14,6 +14,7 @@ import soundfile as sf
 from starlette.responses import Response
 
 from celune import api
+from celune.pipeline import SpeechStreamQueue
 
 
 class ApiAudioTests(TestCase):
@@ -21,7 +22,7 @@ class ApiAudioTests(TestCase):
 
     def test_audio_bytes_encode_flac_from_stream_chunks(self) -> None:
         """Verify queued speech audio is returned as PCM24 FLAC."""
-        chunks: queue.Queue[object] = queue.Queue()
+        chunks: SpeechStreamQueue = queue.Queue()
         chunks.put(np.zeros((2, 8), dtype=np.float32))
         chunks.put(None)
 
@@ -45,7 +46,7 @@ class ApiAudioTests(TestCase):
 
     def test_async_speak_returns_accepted_job_and_later_audio(self) -> None:
         """Verify async speech accepts immediately and exposes completed audio."""
-        chunks: queue.Queue[object] = queue.Queue()
+        chunks: SpeechStreamQueue = queue.Queue()
         chunks.put(np.zeros((2, 8), dtype=np.float32))
         chunks.put(None)
         previous_celune = api.bound_celune

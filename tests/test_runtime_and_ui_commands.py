@@ -7,10 +7,14 @@ from typing import cast
 from types import SimpleNamespace
 from unittest import mock, TestCase
 
+from textual.widgets import Button, Label, TextArea
+
 from celune import runtime
+from celune.celune import Celune
+from celune.config import Config
+from celune.constants import JSONSerializable
 from celune.backends.qwen3 import Qwen3
 from celune.ui.commands import process_command
-
 from celune.ui.app import CeluneUI
 from celune.ui.headless import CeluneHeadlessUI
 
@@ -129,7 +133,9 @@ class UICommandTests(TestCase):
         self._process_command("xvectoronly", [])
         self.assertEqual(self.logs[-1][1], "warning")
 
-        backend = object.__new__(Qwen3)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            backend = Qwen3(log=lambda msg, severity="info": None, mode="native")
         backend.x_vector_only = False
         self.ui.celune.backend = backend
         self._process_command("xvectoronly", [])
@@ -217,3 +223,33 @@ class UIStartupTests(TestCase):
             "CeluneHeadlessUI has no attached Celune instance",
             str(caught[0].message),
         )
+
+    def test_textual_input_lock_does_not_probe_pyop_on_ui_thread(self) -> None:
+        """Verify input state updates do not synchronously ping PYOP."""
+        ui = CeluneUI()
+        ui.input_box = TextArea()
+        ui.style_button = Button("Voice")
+        ui.resources = cast(Label, None)
+        pyop_config: Config = {"talkback": True}
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(config={"pyop": cast(JSONSerializable, pyop_config)}),
+        )
+
+        with mock.patch("celune.ui.app.pyop_is_available") as available:
+            ui.change_input_state(locked=True)
+
+        self.assertEqual(ui.input_box.placeholder, "Please wait")
+        self.assertEqual(ui.style_button.disabled, True)
+        available.assert_not_called()
+
+        with (
+            mock.patch("celune.ui.app.pyop_is_available") as available,
+            mock.patch("celune.ui.app.threading.Thread") as thread_cls,
+        ):
+            ui.change_input_state(locked=False)
+
+        self.assertEqual(ui.input_box.placeholder, "Enter text to speak here")
+        self.assertEqual(ui.style_button.disabled, False)
+        available.assert_not_called()
+        thread_cls.return_value.start.assert_called_once()

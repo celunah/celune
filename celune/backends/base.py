@@ -11,7 +11,7 @@ import hashlib
 from pathlib import Path
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from typing import Any, Callable, Optional
+from typing import Callable, Optional, Protocol
 
 import torch
 import numpy as np
@@ -23,6 +23,10 @@ from ..constants import N_A_NUMERIC
 from ..utils import discard
 from ..exceptions import BackendError
 from ..cevoice import default_loader
+
+
+class BackendModel(Protocol):
+    """Opaque backend model protocol for backend-independent storage."""
 
 
 def cached_hf_snapshot_path(
@@ -80,7 +84,7 @@ class CeluneBackend(ABC):
         else:
             self.model_name = None
 
-        self.model: Optional[Any] = None
+        self.model: Optional[BackendModel] = None
         self.log = log
         self.current_seed: Optional[int] = None
         self.random_seed = True
@@ -250,11 +254,11 @@ class CeluneBackend(ABC):
 
         return 1
 
-    def load_default_model(self) -> Any:
+    def load_default_model(self) -> BackendModel:
         """Load the configured default model for this backend.
 
         Returns:
-            Any: The loaded backend model instance.
+            BackendModel: The loaded backend model instance.
 
         Raises:
             ValueError: The backend does not have a configured model to load.
@@ -288,7 +292,7 @@ class CeluneBackend(ABC):
                 self.log(f"{model_id} is already available.", "info")
 
     @abstractmethod
-    def load_model(self, model_id: str, **kwargs) -> Any:
+    def load_model(self, model_id: str, **kwargs) -> BackendModel:
         """Load a model by backend-specific identifier.
 
         Args:
@@ -296,12 +300,12 @@ class CeluneBackend(ABC):
             **kwargs: Backend-specific load options (e.g., VoxCPM2's `load_denoiser` or `optimize`).
 
         Returns:
-            Any: The loaded backend model instance.
+            BackendModel: The loaded backend model instance.
         """
 
     @abstractmethod
     def generate_stream(
-        self, model: Any, **kwargs
+        self, model: BackendModel, **kwargs
     ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Yield audio chunks from a loaded backend model.
 

@@ -723,20 +723,20 @@ def rng_replace(
 
 
 @overload
-def discard(val: object) -> None:
+def discard(val) -> None:
     """Overload #1 for the implementation of celune.utils.discard()."""
 
 
 @overload
-def discard(val: object, attr: str) -> None:
+def discard(val, attr: str) -> None:
     """Overload #2 for the implementation of celune.utils.discard()."""
 
 
-def discard(val: object, attr: Optional[str] = None) -> None:
+def discard(val, attr: Optional[str] = None) -> None:
     """Discard a value or clear an explicitly named attribute.
 
     Args:
-        val: Any value, or the object that owns ``attr``.
+        val: Value to discard, or the attribute owner.
         attr: Optional attribute name to clear on ``val``.
 
     Returns:
