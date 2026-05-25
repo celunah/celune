@@ -18,6 +18,7 @@ It was proudly made in 🇵🇱 for your listening pleasure.
 - Native audio controls & effects (no post-processing)
 - Optimized GPU inference
 - Configurable voices via CEVOICE voice packs
+- Characters can respond back to you
 
 ## Note on development
 
