@@ -32,10 +32,13 @@ api:
   token: null
   # it is advised to set this for public Celune APIs
   rate_limit_per_minute: 60
-# PYOP is a VLM finetune used by Celune's persona-conditioned speech features
-# it cannot run together with Celune as it and Celune need versions of Transformers that are
-# mutually incompatible, Celune wants ==4.57.3, but PYOP wants >=5.7.0
-pyop:
+# Persona is Celune's thinking system using RAG (Retrieval Augmented Generation) to let characters
+# keep a conversational context and remember you as you speak with said characters
+# it uses Qwen/Qwen2.5-VL-3B-Instruct to ensure it can run on consumer hardware
+persona:
   enabled: true
+  model_id: Qwen/Qwen2.5-VL-3B-Instruct
+  memory:
+    max_short_term_messages: 20
   # if disabled, the persona is not used and Celune operates in speech-only mode
   talkback: true

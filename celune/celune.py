@@ -6,11 +6,9 @@ import time
 import queue
 import threading
 import contextlib
-import subprocess
 from pathlib import Path
 from typing import Optional, Callable, Protocol, Union, cast
 
-import httpx
 import torch
 import numpy as np
 import numpy.typing as npt
@@ -33,14 +31,13 @@ from .extensions.manager import CeluneExtensionManager
 from .runtime import log_runtime_banner, validate_runtime
 from .constants import JSONSerializable, NORMALIZER_MODEL_ID, PipelineStates
 from .exceptions import NotAvailableError, WarmupError, BackendError
-from .pyop import (
-    PYOP_TIMEOUT,
-    PYOP_STARTUP_TIMEOUT,
-    pyop_base_url,
-    pyop_enabled,
-    pyop_is_available,
-    start_pyop_detached,
-    stop_pyop_process,
+from .persona.impl import (
+    PERSONA_QUANTIZATION,
+    PersonaClient,
+    create_persona_client,
+    persona_enabled,
+    persona_is_available,
+    persona_model_id,
 )
 from .cevoice import (
     announce_default_bundle,
@@ -260,8 +257,8 @@ class Celune:
         self.current_voice: Optional[str] = None
         self.current_character: Optional[str] = None
         self.voice_bundle_is_default = True
-        self.pyop_history: list[dict[str, str]] = []
-        self.pyop_attachments: list[dict[str, str]] = []
+        self.persona_history: list[dict[str, str]] = []
+        self.persona_attachments: list[dict[str, str]] = []
         self.voices: tuple[str, ...] = ()
         self.voice_prompt: Optional[str] = None
 
@@ -271,9 +268,7 @@ class Celune:
         self._playback_thread: Optional[threading.Thread] = None
         self._generation_thread: Optional[threading.Thread] = None
         self._api_thread: Optional[threading.Thread] = None
-        self._pyop_thread: Optional[threading.Thread] = None
-        self._pyop_process: Optional[subprocess.Popen[bytes]] = None
-
+        self._persona_thread: Optional[threading.Thread] = None
         self._queue_lock = threading.Lock()
         self._utterance_force_stop = threading.Event()
         self.regenerate = False
@@ -326,8 +321,8 @@ class Celune:
         self.glow = AudioRGBGlow(color=glow_color)
         self.glow.start()
 
-        self.vision: Optional[httpx.Client]
-        self.vision = self._pyop_conn()
+        self.vision: Optional[PersonaClient]
+        self.vision = self._persona_conn()
 
         Celune._instance = self
 
@@ -359,33 +354,21 @@ class Celune:
         """
         clear_queue(q)
 
-    def _pyop_conn(self) -> Optional[httpx.Client]:
-        """Return a connection to a PYOP server, if available.
+    def _persona_conn(self) -> Optional[PersonaClient]:
+        """Return a connection to the Persona runtime, if available.
 
         Returns:
-            Optional[httpx.Client]: The client connection to the PYOP server, or ``None`` if unavailable.
+            Optional[PersonaClient]: The Persona client adapter, or ``None`` if unavailable.
         """
 
-        if not pyop_enabled(self.config):
+        if not persona_enabled(self.config):
             return None
 
-        url = pyop_base_url()
-        if not pyop_is_available(url):
-            process = start_pyop_detached()
-            if process is not None:
-                self._pyop_process = process
-            deadline = time.monotonic() + PYOP_STARTUP_TIMEOUT
-
-            while process is not None and time.monotonic() < deadline:
-                time.sleep(0.25)
-                if pyop_is_available(url):
-                    break
-
-        if not pyop_is_available(url):
-            self.log("Persona system not initialized due to a timeout.", "warning")
+        if not persona_is_available():
+            self.log("Persona could not be initialized.", "warning")
             return None
 
-        return httpx.Client(base_url=url, timeout=PYOP_TIMEOUT)
+        return create_persona_client(self.config, log_dev=self.log_dev)
 
     def _close_stream(self, abort: bool = False) -> None:
         """Close the current audio stream if one exists.
@@ -752,6 +735,22 @@ class Celune:
             self.error_callback("Default model failed to load")
             return False
 
+        if self.vision is not None:
+            self.log("Initializing Persona...")
+            try:
+                self.vision.load(
+                    persona_model_id(self.config),
+                    PERSONA_QUANTIZATION,
+                )
+            except Exception as e:
+                self.log("Persona not initialized.", "warning")
+                self.log("Continuing in speech-only mode.", "warning")
+                self.log(format_error(e, self.dev), "warning")
+                self.vision.close()
+                self.vision = None
+            else:
+                self.log("Persona initialized.")
+
         generation_thread = threading.Thread(
             target=self._generation_worker, daemon=True
         )
@@ -790,7 +789,7 @@ class Celune:
 
         self._start_configured_api()
 
-        if not pyop_is_available(pyop_base_url()):
+        if not persona_is_available():
             self.log(
                 "Personas are unavailable. Celune is operating in speech-only mode.",
                 "warning",
@@ -1114,7 +1113,7 @@ class Celune:
         """Let Celune reply to an input request.
 
         Args:
-            request: The request that will be sent to PYOP for processing.
+            request: The request that will be sent to Persona for processing.
 
         Returns:
             bool: ``True`` if Celune processed this smart request, otherwise ``False``.
@@ -1137,15 +1136,15 @@ class Celune:
             args=(request,),
             daemon=True,
         )
-        self._pyop_thread = thread
+        self._persona_thread = thread
         thread.start()
         return True
 
     def _think_worker(self, request: str) -> None:
-        """Fetch a PYOP response without blocking Celune's UI thread."""
+        """Fetch a Persona response without blocking Celune's UI thread."""
 
         if not self.vision:
-            self.vision = self._pyop_conn()
+            self.vision = self._persona_conn()
             if not self.vision:
                 self.say(request)
                 return
@@ -1233,9 +1232,6 @@ class Celune:
             close_pipeline(self)
             if self.vision is not None:
                 self.vision.close()
-            if self._pyop_process is not None:
-                stop_pyop_process(self._pyop_process)
-                self._pyop_process = None
             with self._model_lock:
                 self.unload_runtime_state(include_normalizer=True)
         finally:

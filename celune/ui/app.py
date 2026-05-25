@@ -25,7 +25,11 @@ from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 from rich.text import Text
 
 from ..celune import Celune
-from ..pyop import pyop_base_url, pyop_is_available, pyop_talkback_enabled
+from ..persona.impl import (
+    persona_is_available,
+    persona_talkback_enabled,
+    persona_enabled,
+)
 from ..utils import (
     format_error,
     indent,
@@ -102,8 +106,8 @@ class CeluneUI(App):
         self._tutorial_token = 0
         self._tutorial_active = False
         self._input_locked = True
-        self._pyop_available = False
-        self._pyop_probe_running = False
+        self._persona_available = False
+        self._persona_probe_running = False
 
         CeluneUI._instance = self
 
@@ -571,32 +575,32 @@ class CeluneUI(App):
     def _normal_input_placeholder(self) -> str:
         """Return the unlocked input placeholder without blocking the UI."""
         if (
-            self._pyop_available
-            and self.celune is not None
-            and pyop_talkback_enabled(self.celune.config)
+            self._persona_available
+            and persona_enabled(self.celune.config)
+            and persona_talkback_enabled(self.celune.config)
         ):
             return "Say something..."
 
         return "Enter text to speak here"
 
-    def _refresh_pyop_availability(self) -> None:
-        """Refresh PYOP availability in the background for placeholder text."""
-        if self._pyop_probe_running:
+    def _refresh_persona_availability(self) -> None:
+        """Refresh Persona availability in the background for placeholder text."""
+        if self._persona_probe_running:
             return
 
-        self._pyop_probe_running = True
+        self._persona_probe_running = True
 
         def probe() -> None:
-            """Probe PYOP without pausing the Textual event loop."""
-            available = pyop_is_available(pyop_base_url())
+            """Probe Persona without pausing the Textual event loop."""
+            available = persona_is_available()
 
             def apply_result() -> None:
-                self._pyop_probe_running = False
+                self._persona_probe_running = False
                 if self.cur_state == "exiting":
                     return
 
-                changed = self._pyop_available != available
-                self._pyop_available = available
+                changed = self._persona_available != available
+                self._persona_available = available
                 if changed and not self._input_locked:
                     self.input_box.placeholder = self._normal_input_placeholder()
 
@@ -630,7 +634,7 @@ class CeluneUI(App):
 
         self._run_on_ui_thread(update)
         if not locked:
-            self._refresh_pyop_availability()
+            self._refresh_persona_availability()
 
     def safe_status(self, msg: str, severity: str = "info") -> None:
         """Update current status.
@@ -830,7 +834,7 @@ class CeluneUI(App):
             self.process_command(command, command_args)
             return True
 
-        if pyop_talkback_enabled(self.celune.config):
+        if persona_talkback_enabled(self.celune.config):
             handled = self.celune.think(text)
         else:
             ipa_decoded, unmatched = replace_ipa(text, strict=True)

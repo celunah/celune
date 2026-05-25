@@ -103,7 +103,7 @@ class UICommandTests(TestCase):
         self.ui.celune = SimpleNamespace(
             backend=SimpleNamespace(),
             voice_prompt=None,
-            pyop_attachments=[],
+            persona_attachments=[],
             can_use_rubberband=True,
             speed=1.0,
             reverb=SimpleNamespace(strength=0.0),
@@ -178,14 +178,14 @@ class UICommandTests(TestCase):
 
         self._process_command("attach", [str(image)])
 
-        self.assertEqual(len(self.ui.celune.pyop_attachments), 1)
-        attachment = self.ui.celune.pyop_attachments[0]
+        self.assertEqual(len(self.ui.celune.persona_attachments), 1)
+        attachment = self.ui.celune.persona_attachments[0]
         self.assertEqual(attachment["type"], "image")
         self.assertEqual(attachment["path"], image.resolve().as_uri())
         self.assertEqual(self.logs[-1][1], "info")
 
         self._process_command("attach", ["clear"])
-        self.assertEqual(self.ui.celune.pyop_attachments, [])
+        self.assertEqual(self.ui.celune.persona_attachments, [])
 
 
 class UIStartupTests(TestCase):
@@ -224,19 +224,19 @@ class UIStartupTests(TestCase):
             str(caught[0].message),
         )
 
-    def test_textual_input_lock_does_not_probe_pyop_on_ui_thread(self) -> None:
-        """Verify input state updates do not synchronously ping PYOP."""
+    def test_textual_input_lock_does_not_probe_persona_on_ui_thread(self) -> None:
+        """Verify input state updates do not synchronously ping Persona."""
         ui = CeluneUI()
         ui.input_box = TextArea()
         ui.style_button = Button("Voice")
         ui.resources = cast(Label, None)
-        pyop_config: Config = {"talkback": True}
+        persona_config: Config = {"talkback": True}
         ui.celune = cast(
             Celune,
-            SimpleNamespace(config={"pyop": cast(JSONSerializable, pyop_config)}),
+            SimpleNamespace(config={"persona": cast(JSONSerializable, persona_config)}),
         )
 
-        with mock.patch("celune.ui.app.pyop_is_available") as available:
+        with mock.patch("celune.ui.app.persona_is_available") as available:
             ui.change_input_state(locked=True)
 
         self.assertEqual(ui.input_box.placeholder, "Please wait")
@@ -244,7 +244,7 @@ class UIStartupTests(TestCase):
         available.assert_not_called()
 
         with (
-            mock.patch("celune.ui.app.pyop_is_available") as available,
+            mock.patch("celune.ui.app.persona_is_available") as available,
             mock.patch("celune.ui.app.threading.Thread") as thread_cls,
         ):
             ui.change_input_state(locked=False)

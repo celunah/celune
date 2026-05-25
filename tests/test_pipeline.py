@@ -17,6 +17,7 @@ import soundfile as sf
 
 from celune import pipeline
 from celune.celune import Celune
+from celune.persona.prompts import PersonaPromptBuilder
 from celune.utils import discard
 from celune.constants import JSON, JSONSerializable, PipelineStates
 
@@ -115,14 +116,14 @@ class PipelineTests(TestCase):
         self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), False)
         self.assertEqual(engine.errors, ["Celune is not currently ready"])
 
-    def test_think_builds_pyop_payload_and_queues_response(self) -> None:
-        """Verify PYOP request formatting without loading a PYOP model.
+    def test_think_builds_persona_payload_and_queues_response(self) -> None:
+        """Verify Persona request formatting without loading a Persona model.
 
         Returns:
             None: Assertions verify request payload and speech queueing behavior.
 
         Raises:
-            AssertionError: PYOP request behavior changes unexpectedly.
+            AssertionError: Persona request behavior changes unexpectedly.
         """
 
         class FakeResponse:
@@ -149,30 +150,23 @@ class PipelineTests(TestCase):
             """Fake vision API class object."""
 
             def __init__(self) -> None:
-                self.endpoint = ""
                 self.payload: Optional[JSON] = None
 
-            def post(self, endpoint: str, json: JSON) -> FakeResponse:
-                """POST to the fake API endpoint.
-
-                Args:
-                    endpoint: The fake endpoint.
-                    json: The JSON data to post.
-
-                """
-                self.endpoint = endpoint
+            def post(self, json: JSON) -> FakeResponse:
+                """POST to the fake Persona runtime."""
                 self.payload = json
                 return FakeResponse()
 
         engine = make_pipeline_engine()
         engine.config = {
-            "pyop_persona": "Celune is gentle and observant.",
-            "pyop_context": "The user is testing request formatting.",
+            "persona": {"model_id": "fixture/persona-test"},
+            "persona_persona": "The active character is gentle and observant.",
+            "persona_context": "The user is testing request formatting.",
         }
         engine.current_character = "Celune"
         engine.current_voice = "calm"
         engine.voice_prompt = "small pauses, soft delivery"
-        engine.pyop_history = [{"role": "assistant", "content": "Earlier reply."}]
+        engine.persona_history = [{"role": "assistant", "content": "Earlier reply."}]
         engine.vision = FakeVision()
         engine.dev = False
 
@@ -189,34 +183,44 @@ class PipelineTests(TestCase):
 
         request = engine.text_queue.get_nowait()
         self.assertEqual(request.text, "I can help with that.")
-        self.assertEqual(engine.vision.endpoint, "/generate")
 
         payload = cast(JSON, engine.vision.payload)
-        self.assertEqual(payload["model"], "lunahr/pyop-2b")
+        self.assertEqual(payload["model"], "fixture/persona-test")
         self.assertEqual(payload["quantization"], "4bit")
         self.assertEqual(payload["quantized"], True)
         self.assertEqual(payload["request"], "What now?")
         self.assertEqual(payload["user"], "What now?")
         self.assertEqual(payload["character"], "Celune")
         character_card = cast(str, payload["character_card"])
+        system_prompt = cast(str, payload["system"])
         messages = cast(list[dict[str, str]], payload["messages"])
-        self.assertIn("Celune is gentle and observant.", character_card)
-        self.assertIn("Celune speaks softly", character_card)
-        self.assertEqual(messages[0], {"role": "system", "content": character_card})
+        self.assertIn("Name: Celune", character_card)
+        self.assertIn("The active character is gentle and observant.", character_card)
+        self.assertIn("The speaker uses a soft tone", character_card)
+        self.assertIn("<runtime>", system_prompt)
+        self.assertIn("<character_identity>", system_prompt)
+        self.assertIn("<persona_style>", system_prompt)
+        self.assertIn("<short_term_memory>", system_prompt)
+        self.assertIn("<request>", system_prompt)
+        self.assertIn("Earlier reply.", system_prompt)
+        self.assertNotIn("<vision_context>", system_prompt)
+        self.assertEqual(messages[0], {"role": "system", "content": system_prompt})
         self.assertEqual(messages[-1], {"role": "user", "content": "What now?"})
-        self.assertIn({"role": "assistant", "content": "Earlier reply."}, messages)
+        self.assertEqual(len(messages), 2)
         self.assertIn("small pauses", messages[0]["content"])
         self.assertNotIn("User Request", character_card)
         self.assertNotIn("Assistant Response", character_card)
         self.assertEqual(
-            engine.pyop_history[-2:],
+            engine.persona_history[-2:],
             [
                 {"role": "user", "content": "What now?"},
                 {"role": "assistant", "content": "I can help with that."},
             ],
         )
 
-    def test_pyop_card_uses_baseline_persona_for_non_default_voice_pack(self) -> None:
+    def test_persona_card_uses_baseline_persona_for_non_default_voice_pack(
+        self,
+    ) -> None:
         """Verify custom CEVOICE packs do not inherit Celune-specific defaults.
 
         Returns:
@@ -232,53 +236,200 @@ class PipelineTests(TestCase):
         engine.voice_prompt = None
         engine.voice_bundle_is_default = False
 
-        character_card = pipeline.build_pyop_character_card(cast(Celune, engine))
+        character_card = pipeline.build_persona_character_card(cast(Celune, engine))
 
         self.assertIn("Name: Fixture", character_card)
         self.assertIn("Gender: unknown", character_card)
         self.assertIn(
-            "The character is attentive, natural, and adaptable.", character_card
+            "Stay in character using the active character metadata,", character_card
         )
-        self.assertIn("The character is speaking directly", character_card)
-        self.assertNotIn("Celune is warm", character_card)
+        self.assertIn(
+            "The active character is replying to the user through a real-time speech system.",
+            character_card,
+        )
         self.assertNotIn("Gender: female", character_card)
 
-    def test_pyop_messages_keep_only_recent_history(self) -> None:
-        """Verify stale PYOP turns do not dilute the current character card."""
+    def test_persona_prompt_builder_renders_structured_context_blocks(self) -> None:
+        """Verify Persona prompts include the requested structured RAG sections."""
+        engine = make_pipeline_engine()
+        engine.config = {
+            "persona_character_profile": "A careful archivist with a dry wit.",
+            "persona_relationship_memory": "The user trusts the character with private notes.",
+            "persona_state": "Thoughtful and slightly tired.",
+            "persona_long_term_memory": [
+                "The user prefers concise answers.",
+                "The character once helped recover a lost journal.",
+            ],
+        }
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+        engine.voice_prompt = "steady cadence"
+        engine.persona_history = [
+            {"role": "user", "content": "Do you remember our last visit?"},
+            {"role": "assistant", "content": "Yes, we catalogued the letters."},
+        ]
+        engine.persona_attachments = [
+            {
+                "type": "image",
+                "path": "file:///C:/Users/user/Pictures/archive.png",
+                "name": "archive.png",
+            }
+        ]
+
+        context = pipeline.build_persona_context(
+            cast(Celune, engine), "What do you notice?"
+        )
+        prompt = PersonaPromptBuilder.build(context)
+
+        self.assertIn("<runtime>", prompt)
+        self.assertIn("<character_identity>", prompt)
+        self.assertIn("Name: Fixture", prompt)
+        self.assertIn("A careful archivist with a dry wit.", prompt)
+        self.assertIn("<relationship_to_user>", prompt)
+        self.assertIn("The user trusts the character with private notes.", prompt)
+        self.assertIn("<current_state>", prompt)
+        self.assertIn("Thoughtful and slightly tired.", prompt)
+        self.assertIn("<long_term_memory>", prompt)
+        self.assertIn("The user prefers concise answers.", prompt)
+        self.assertIn("<short_term_memory>", prompt)
+        self.assertIn("assistant: Yes, we catalogued the letters.", prompt)
+        self.assertIn("<vision_context>", prompt)
+        self.assertIn("image: archive.png", prompt)
+        self.assertIn("<request>", prompt)
+        self.assertIn("What do you notice?", prompt)
+
+    def test_persona_prompt_builder_omits_vision_context_without_attachments(
+        self,
+    ) -> None:
+        """Verify Persona prompts omit vision context when no media is attached."""
         engine = make_pipeline_engine()
         engine.config = {}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+        engine.persona_history = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+
+        context = pipeline.build_persona_context(cast(Celune, engine), "Continue.")
+        prompt = PersonaPromptBuilder.build(context)
+
+        self.assertNotIn("<vision_context>", prompt)
+        self.assertIn("<short_term_memory>", prompt)
+        self.assertIn("assistant: hi", prompt)
+
+    def test_persona_messages_keep_only_recent_history(self) -> None:
+        """Verify stale Persona turns do not dilute the current character card."""
+        engine = make_pipeline_engine()
+        engine.config = {"persona": {"memory": {"max_short_term_messages": 6}}}
         engine.current_character = "Celune"
         engine.current_voice = "balanced"
-        engine.pyop_history = [
+        engine.persona_history = [
             {"role": "user", "content": f"old user {index}"}
             if index % 2 == 0
             else {"role": "assistant", "content": f"old reply {index}"}
             for index in range(12)
         ]
 
-        messages = pipeline.build_pyop_messages(cast(Celune, engine), "current")
+        messages = pipeline.build_persona_messages(cast(Celune, engine), "current")
 
         self.assertEqual(messages[0]["role"], "system")
         self.assertEqual(messages[-1], {"role": "user", "content": "current"})
+        self.assertEqual(len(messages), 2)
+        system_prompt = cast(str, messages[0]["content"])
+        self.assertIn("<short_term_memory>", system_prompt)
+        self.assertIn("user: old user 6", system_prompt)
+        self.assertIn("assistant: old reply 11", system_prompt)
+        self.assertNotIn("old user 4", system_prompt)
+
+    def test_persona_history_uses_configured_short_term_message_limit(self) -> None:
+        """Verify Persona history rolls forward using the configured message limit."""
+        engine = make_pipeline_engine()
+        engine.config = {"persona": {"memory": {"max_short_term_messages": 4}}}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+        engine.persona_history = [
+            {"role": "user", "content": "old user 0"},
+            {"role": "assistant", "content": "old reply 1"},
+            {"role": "user", "content": "old user 2"},
+            {"role": "assistant", "content": "old reply 3"},
+        ]
+
+        class FakeResponse:
+            """Fake API response for rolling-history assertions."""
+
+            @staticmethod
+            def raise_for_status() -> None:
+                """Pretend the response status is successful."""
+
+            @staticmethod
+            def json() -> JSONSerializable:
+                """Return a sample persona reply."""
+                return {"response": "new reply"}
+
+        engine.vision = SimpleNamespace(
+            post=lambda json: FakeResponse(),  # noqa: ARG005
+        )
+        engine.dev = False
+
+        with mock.patch(
+            "celune.pipeline.detect_language",
+            return_value={
+                "language": "en",
+                "languages": ["en"],
+                "supported": True,
+                "probabilities": {"en": 1.0},
+            },
+        ):
+            self.assertEqual(pipeline.think(cast(Celune, engine), "new user"), True)
+
         self.assertEqual(
-            messages[1:-1],
+            engine.persona_history,
             [
-                {"role": "user", "content": "old user 6"},
-                {"role": "assistant", "content": "old reply 7"},
-                {"role": "user", "content": "old user 8"},
-                {"role": "assistant", "content": "old reply 9"},
-                {"role": "user", "content": "old user 10"},
-                {"role": "assistant", "content": "old reply 11"},
+                {"role": "user", "content": "old user 2"},
+                {"role": "assistant", "content": "old reply 3"},
+                {"role": "user", "content": "new user"},
+                {"role": "assistant", "content": "new reply"},
             ],
         )
 
-    def test_pyop_messages_include_pending_attachments(self) -> None:
+    def test_persona_prompt_builder_includes_short_term_summary_when_present(
+        self,
+    ) -> None:
+        """Verify short-term memory can include a session summary for later use."""
+        engine = make_pipeline_engine()
+        engine.config = {"persona": {"memory": {"max_short_term_messages": 2}}}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+        engine.persona_session_summary = (
+            "The user and character already discussed the archive."
+        )
+        engine.persona_history = [
+            {"role": "user", "content": "What did we cover?"},
+            {"role": "assistant", "content": "We reviewed the archive."},
+            {"role": "user", "content": "And after that?"},
+        ]
+
+        context = pipeline.build_persona_context(cast(Celune, engine), "Continue.")
+        prompt = PersonaPromptBuilder.build(context)
+
+        self.assertIn("<short_term_memory>", prompt)
+        self.assertIn("Summary:", prompt)
+        self.assertIn(
+            "The user and character already discussed the archive.",
+            prompt,
+        )
+        self.assertIn("assistant: We reviewed the archive.", prompt)
+        self.assertIn("user: And after that?", prompt)
+        self.assertNotIn("What did we cover?", prompt)
+
+    def test_persona_messages_include_pending_attachments(self) -> None:
         """Verify visual attachments are sent in the next persona user turn."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Celune"
         engine.current_voice = "balanced"
-        engine.pyop_attachments = [
+        engine.persona_attachments = [
             {
                 "type": "image",
                 "path": "file:///C:/Users/user/Pictures/frame.png",
@@ -291,7 +442,9 @@ class PipelineTests(TestCase):
             },
         ]
 
-        messages = pipeline.build_pyop_messages(cast(Celune, engine), "What is this?")
+        messages = pipeline.build_persona_messages(
+            cast(Celune, engine), "What is this?"
+        )
 
         user = messages[-1]
         self.assertEqual(user["role"], "user")
@@ -307,6 +460,74 @@ class PipelineTests(TestCase):
                 {"type": "text", "text": "What is this?"},
             ],
         )
+
+    def test_stale_attachment_does_not_leak_into_later_requests(self) -> None:
+        """Verify one-shot attachments do not persist after a Persona request."""
+
+        class FakeResponse:
+            """Fake Persona API response."""
+
+            @staticmethod
+            def raise_for_status() -> None:
+                """Pretend the response status is successful."""
+
+            @staticmethod
+            def json() -> JSONSerializable:
+                """Return a sample Persona response."""
+                return {"response": "noted"}
+
+        class FakeVision:
+            """Capture Persona request payloads."""
+
+            def __init__(self) -> None:
+                self.payloads: list[JSON] = []
+
+            def post(self, json: JSON) -> FakeResponse:
+                """Record one Persona request payload."""
+                self.payloads.append(json)
+                return FakeResponse()
+
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+        engine.persona_attachments = [
+            {
+                "type": "image",
+                "path": "file:///C:/Users/user/Pictures/frame.png",
+                "name": "frame.png",
+            }
+        ]
+        engine.vision = FakeVision()
+        engine.dev = False
+
+        with mock.patch(
+            "celune.pipeline.detect_language",
+            return_value={
+                "language": "en",
+                "languages": ["en"],
+                "supported": True,
+                "probabilities": {"en": 1.0},
+            },
+        ):
+            self.assertEqual(
+                pipeline.think(cast(Celune, engine), "What is this?"), True
+            )
+
+        self.assertEqual(engine.persona_attachments, [])
+        first_payload = engine.vision.payloads[0]
+        first_system = cast(str, first_payload["system"])
+        first_messages = cast(list[JSON], first_payload["messages"])
+        self.assertIn("<vision_context>", first_system)
+        self.assertIsInstance(first_messages[-1]["content"], list)
+
+        second_payload = pipeline.build_persona_request(
+            cast(Celune, engine), "And now?"
+        )
+        second_system = cast(str, second_payload["system"])
+        second_messages = cast(list[JSON], second_payload["messages"])
+        self.assertNotIn("<vision_context>", second_system)
+        self.assertEqual(second_messages[-1], {"role": "user", "content": "And now?"})
 
     def test_generation_worker_normalizes_each_split_chunk(self) -> None:
         """Verify normalization happens after splitting and before generation.

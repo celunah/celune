@@ -151,7 +151,7 @@ activemq-data/
 .env
 .envrc
 .venv
-.pyop/
+.persona/
 env/
 venv/
 ENV/

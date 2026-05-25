@@ -314,7 +314,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             return
 
         if len(args) == 1 and args[0].lower() in {"clear", "reset", "none"}:
-            ui.celune.pyop_attachments.clear()
+            ui.celune.persona_attachments.clear()
             ui.safe_log("Attachments cleared.")
             return
 
@@ -343,7 +343,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 continue
 
             resolved = path.resolve()
-            ui.celune.pyop_attachments.append(
+            ui.celune.persona_attachments.append(
                 {"type": kind, "path": resolved.as_uri(), "name": resolved.name}
             )
             added.append(resolved.name)
@@ -351,7 +351,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         if not added:
             return
 
-        count = len(ui.celune.pyop_attachments)
+        count = len(ui.celune.persona_attachments)
         ui.safe_log(
             f"Attached {', '.join(added)}. {count} pending for the next persona reply."
         )
