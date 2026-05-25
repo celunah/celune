@@ -9,7 +9,7 @@ import threading
 import contextlib
 from dataclasses import dataclass, field
 from collections.abc import Sequence
-from typing import Literal, Optional, Protocol, Any, cast
+from typing import Literal, Optional, Protocol, Any, Union, cast
 
 import torch
 from transformers import (
@@ -24,7 +24,7 @@ from ..constants import JSONSerializable, PERSONA_MODEL_ID
 
 Role = Literal["system", "user", "assistant"]
 type JSONDict = dict[str, JSONSerializable]
-MessageContent = str | list[JSONDict]
+MessageContent = Union[str, list[JSONDict]]
 
 
 class ChatTemplateRenderer(Protocol):
@@ -38,7 +38,7 @@ class ChatTemplateRenderer(Protocol):
         add_generation_prompt: bool = ...,
         return_dict: bool = ...,
         return_tensors: str = ...,
-    ) -> str | BatchEncoding:
+    ) -> Union[str, BatchEncoding]:
         """Render or tokenize a chat conversation."""
         raise NotImplementedError("protocol method")
 
@@ -46,7 +46,7 @@ class ChatTemplateRenderer(Protocol):
 class PersonaTokenizer(Protocol):
     """Tokenizer protocol used by the Persona runtime."""
 
-    eos_token_id: int | None
+    eos_token_id: Optional[int]
 
     def __call__(self, *, text: str, return_tensors: str) -> BatchEncoding:
         """Tokenize text into a batch encoding."""
@@ -80,7 +80,7 @@ class PersonaProcessor(ChatTemplateRenderer, Protocol):
 class PersonaModel(Protocol):
     """Model protocol used by the Persona runtime."""
 
-    device: torch.device | str
+    device: Union[torch.device, str]
 
     def generate(self, **kwargs: object) -> torch.Tensor:
         """Generate token IDs from prepared inputs."""
@@ -103,11 +103,11 @@ class ChatMessage:
 class GenerateRequest:
     """Celune-to-Persona generation request."""
 
-    model: str | None = None
-    quantization: str | None = None
+    model: Optional[str] = None
+    quantization: Optional[str] = None
     quantized: bool = True
-    system: str | None = None
-    user: str | None = None
+    system: Optional[str] = None
+    user: Optional[str] = None
     messages: list[ChatMessage] = field(default_factory=list)
     max_new_tokens: int = 220
     temperature: float = 0.75
@@ -355,8 +355,8 @@ class PersonaBackend:
             prompt = _render_chat_prompt(processor, messages)
             vision_info = cast(
                 tuple[
-                    list[object] | None,
-                    list[tuple[object, object]] | None,
+                    Optional[list[object]],
+                    Optional[list[tuple[object, object]]],
                     dict[str, object],
                 ],
                 process_vision_info(
@@ -415,16 +415,10 @@ class PersonaRuntime:
 
     def generate(self, request: GenerateRequest) -> GenerateResponse:
         """Generate a persona-formatted response."""
-        model_id = (
-            request.model
-            or os.getenv("PERSONA_MODEL")
-            or os.getenv("PYOP_MODEL")
-            or PERSONA_MODEL_ID
-        )
+        model_id = request.model or os.getenv("PERSONA_MODEL") or PERSONA_MODEL_ID
         quantization = (
             request.quantization
             or os.getenv("PERSONA_QUANTIZATION")
-            or os.getenv("PYOP_QUANTIZATION")
             or ("4bit" if request.quantized else "none")
         )
         self.load(model_id, quantization)
