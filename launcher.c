@@ -54,29 +54,29 @@ int get_exe_dir(char *out, size_t size) {
 
 #ifdef __linux__
 int run_unix(void) {
-	char base[1024];
-	char python[1024];
-	char main_py[1024];
-	char setup_py[1024];
+    char base[1024];
+    char python[1024];
+    char main_py[1024];
+    char setup_py[1024];
 
-	setenv("CELUNE_LAUNCHER", "1", 1);
+    setenv("CELUNE_LAUNCHER", "1", 1);
 
-	if (!get_exe_dir(base, sizeof(base))) {
-	    printfe("Celune could not determine the launcher location.\n");
-	    return 1;
-	}
+    if (!get_exe_dir(base, sizeof(base))) {
+        printfe("Celune could not determine the launcher location.\n");
+        return 1;
+    }
 
-	int python_len = snprintf(python, sizeof(python), "%s/.venv/bin/python", base);
-	int main_py_len = snprintf(main_py, sizeof(main_py), "%s/main.py", base);
-	int setup_py_len = snprintf(setup_py, sizeof(setup_py), "%s/setup.py", base);
+    int python_len = snprintf(python, sizeof(python), "%s/.venv/bin/python", base);
+    int main_py_len = snprintf(main_py, sizeof(main_py), "%s/main.py", base);
+    int setup_py_len = snprintf(setup_py, sizeof(setup_py), "%s/setup.py", base);
 
-	if (python_len < 0 || (size_t)python_len >= sizeof(python) ||
-	    main_py_len < 0 || (size_t)main_py_len >= sizeof(main_py) ||
-	    setup_py_len < 0 || (size_t)setup_py_len >= sizeof(setup_py)) {
-	    printfe("Celune cannot start in this location, the path is too long.\n");
-	    return 1;
-	   }
-	
+    if (python_len < 0 || (size_t)python_len >= sizeof(python) ||
+        main_py_len < 0 || (size_t)main_py_len >= sizeof(main_py) ||
+        setup_py_len < 0 || (size_t)setup_py_len >= sizeof(setup_py)) {
+        printfe("Celune cannot start in this location, the path is too long.\n");
+        return 1;
+    }
+
     if (access(python, X_OK) != 0) {
         const char *system_python[] = {"python3", "python"};
         int found_system_python = 0;
@@ -161,40 +161,40 @@ int run_unix(void) {
         if (WIFEXITED(status)) {
             return WEXITSTATUS(status);
         }
-		else if (WIFSIGNALED(status)) {
-			int sig = WTERMSIG(status);
+        else if (WIFSIGNALED(status)) {
+            int sig = WTERMSIG(status);
 
-			printfe("Celune was killed by signal %d.\n", sig);
-			return 128 + sig;
-		}
+            printfe("Celune was killed by signal %d.\n", sig);
+            return 128 + sig;
+        }
     }
 
     return 1;
 }
 #elif defined(_WIN32)
 int run_windows(void) {
-	char base[1024];
-	char python[1024];
-	char main_py[1024];
-	char setup_py[1024];
+    char base[1024];
+    char python[1024];
+    char main_py[1024];
+    char setup_py[1024];
 
-	SetEnvironmentVariableA("CELUNE_LAUNCHER", "1");
+    SetEnvironmentVariableA("CELUNE_LAUNCHER", "1");
 
-	if (!get_exe_dir(base, sizeof(base))) {
-	    printfe("Celune could not determine the launcher location.\n");
-	    return 1;
-	}
+    if (!get_exe_dir(base, sizeof(base))) {
+        printfe("Celune could not determine the launcher location.\n");
+        return 1;
+    }
 
-	int python_len = snprintf(python, sizeof(python), "%s\\.venv\\Scripts\\python.exe", base);
-	int main_py_len = snprintf(main_py, sizeof(main_py), "%s\\main.py", base);
-	int setup_py_len = snprintf(setup_py, sizeof(setup_py), "%s\\setup.py", base);
+    int python_len = snprintf(python, sizeof(python), "%s\\.venv\\Scripts\\python.exe", base);
+    int main_py_len = snprintf(main_py, sizeof(main_py), "%s\\main.py", base);
+    int setup_py_len = snprintf(setup_py, sizeof(setup_py), "%s\\setup.py", base);
 
-	if (python_len < 0 || (size_t)python_len >= sizeof(python) ||
-	    main_py_len < 0 || (size_t)main_py_len >= sizeof(main_py) ||
-	    setup_py_len < 0 || (size_t)setup_py_len >= sizeof(setup_py)) {
-	    printfe("Celune cannot start in this location, the path is too long.\n");
-	    return 1;
-	}
+    if (python_len < 0 || (size_t)python_len >= sizeof(python) ||
+        main_py_len < 0 || (size_t)main_py_len >= sizeof(main_py) ||
+        setup_py_len < 0 || (size_t)setup_py_len >= sizeof(setup_py)) {
+        printfe("Celune cannot start in this location, the path is too long.\n");
+        return 1;
+    }
 
     DWORD attr = GetFileAttributesA(python);
     if (attr == INVALID_FILE_ATTRIBUTES) {
@@ -313,8 +313,8 @@ int main(void) {
 #ifdef __linux__
     int return_code = run_unix();
 
-	if ( return_code != 0 ) {
-		struct termios oldt, newt;
+    if ( return_code != 0 ) {
+        struct termios oldt, newt;
         if (tcgetattr(STDIN_FILENO, &oldt) == 0) {
             newt = oldt;
             newt.c_lflag &= ~(ICANON | ECHO);
@@ -322,15 +322,15 @@ int main(void) {
             getchar();
             tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
         }
-	}
+    }
 
-	return return_code;
+    return return_code;
 #elif defined(_WIN32)
     int return_code = run_windows();
 
-	if ( return_code != 0 ) {
-		_getch();
-	}
+    if ( return_code != 0 ) {
+        _getch();
+    }
 
     return return_code;
 #else
