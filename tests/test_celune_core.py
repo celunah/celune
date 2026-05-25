@@ -39,7 +39,7 @@ class CeluneCoreTests(TestCase):
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
-            mock.patch("celune.celune.pyop_is_available", return_value=False),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
         ):
             celune = Celune(config=config, tts_backend=FakeBackend)
             self.addCleanup(self._close_celune, celune)
@@ -65,7 +65,7 @@ class CeluneCoreTests(TestCase):
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
-            mock.patch("celune.celune.pyop_is_available", return_value=False),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
             self.assertRaisesRegex(BackendError, "invalid chunk length"),
         ):
             Celune(
@@ -97,131 +97,145 @@ class CeluneCoreTests(TestCase):
             self.assertEqual(celune.load_voice_bundle(Path("fixture.cevoice")), True)
         self.assertEqual(celune.current_voice, "bold")
 
-    def test_pyop_connection_starts_detached_companion(self) -> None:
-        """Verify Celune connects to PYOP through the local detached API boundary.
+    def test_persona_connection_uses_in_process_runtime(self) -> None:
+        """Verify Celune connects to Persona through the local in-process runtime.
 
         Returns:
-            None: Assertions verify PYOP process startup and client setup.
+            None: Assertions verify Persona client setup.
 
         Raises:
-            AssertionError: PYOP connection behavior changes unexpectedly.
+            AssertionError: Persona connection behavior changes unexpectedly.
         """
         client = mock.Mock()
-        process = mock.Mock()
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch(
-                "celune.celune.pyop_is_available",
-                side_effect=[False, True, True],
+                "celune.celune.persona_is_available", return_value=True
             ) as available,
             mock.patch(
-                "celune.celune.start_pyop_detached", return_value=process
-            ) as start,
-            mock.patch("celune.celune.stop_pyop_process") as stop,
-            mock.patch("celune.celune.httpx.Client", return_value=client) as client_cls,
+                "celune.celune.create_persona_client", return_value=client
+            ) as create_client,
         ):
-            celune = Celune(config={"pyop": {"enabled": True}}, tts_backend=FakeBackend)
+            celune = Celune(
+                config={"persona": {"enabled": True}}, tts_backend=FakeBackend
+            )
             self.addCleanup(self._close_celune, celune)
 
             self.assertIs(celune.vision, client)
-            self.assertIs(celune._pyop_process, process)
-            start.assert_called_once()
-            client_cls.assert_called_once()
+            create_client.assert_called_once()
             self.assertEqual(
-                available.call_args_list[0].args[0], "http://127.0.0.1:2061"
+                create_client.call_args.args[0],
+                {"persona": {"enabled": True}},
             )
+            log_dev = create_client.call_args.kwargs["log_dev"]
+            self.assertIs(getattr(log_dev, "__self__", None), celune)
+            self.assertIs(getattr(log_dev, "__func__", None), Celune.log_dev)
+            available.assert_called_once_with()
             celune.close()
-            stop.assert_called_once_with(process)
+            client.close.assert_called_once_with()
 
-    def test_pyop_launcher_passes_default_model_to_detached_process(self) -> None:
-        """Verify the detached PYOP API receives the default model id.
+    def test_persona_client_is_created_when_runtime_is_available(self) -> None:
+        """Verify the Persona helper creates a local client when available.
 
         Returns:
-            None: Assertions verify launcher environment setup.
+            None: Assertions verify Persona client creation.
 
         Raises:
-            AssertionError: PYOP launcher model configuration changes unexpectedly.
+            AssertionError: Persona client creation changes unexpectedly.
         """
-        from celune import pyop
+        from celune import persona
 
+        with mock.patch("celune.persona.persona_is_available", return_value=True):
+            client = persona.create_persona_client({"persona": {"enabled": True}})
+
+        self.assertIsNotNone(client)
+        assert client is not None
+        self.assertEqual(persona.persona_model_id(), "Qwen/Qwen2.5-VL-3B-Instruct")
+        client.close()
+
+    def test_load_preloads_persona_runtime_when_available(self) -> None:
+        """Verify Celune explicitly loads Persona during startup."""
+        celune = self._make_celune({})
+        celune.setup_extensions = mock.Mock()
+        celune._warmup = mock.Mock(return_value=True)
+        celune._start_configured_api = mock.Mock()
+        celune.backend.preload_models = mock.Mock()
+        celune.backend.load_default_model = mock.Mock(return_value={"model": "ok"})
+        celune.backend.model_id_for_voice = mock.Mock(return_value="fake/balanced")
+        persona_client = mock.Mock()
+        celune.vision = persona_client
         with (
-            mock.patch("celune.pyop.pyop_python", return_value=Path("pyop-python.exe")),
-            mock.patch("celune.pyop.pyop_entrypoint", return_value="-m pyop_api"),
-            mock.patch("celune.pyop.Path.exists", return_value=True),
-            mock.patch("celune.pyop.sys.executable", "celune-python.exe"),
-            mock.patch("celune.pyop.subprocess.Popen") as popen,
+            mock.patch("celune.celune.threading.Thread") as thread_cls,
+            mock.patch("celune.celune.validate_runtime", return_value=True),
+            mock.patch("celune.celune.play_readiness_signal", return_value=False),
         ):
-            process = pyop.start_pyop_detached()
+            thread_cls.return_value.start = mock.Mock()
+            self.assertEqual(celune.load(), True)
 
-        self.assertIs(process, popen.return_value)
+        persona_client.load.assert_called_once_with(
+            "Qwen/Qwen2.5-VL-3B-Instruct",
+            "4bit",
+        )
 
-        env = popen.call_args.kwargs["env"]
-        self.assertEqual(env["PYOP_MODEL"], "lunahr/pyop-2b")
-        self.assertEqual(env["PYOP_QUANTIZED"], "1")
-
-    def test_pyop_launcher_hides_windows_console(self) -> None:
-        """Verify the detached PYOP API does not leave a console window open."""
-        from celune import pyop
-
+    def test_load_disables_persona_when_preload_fails(self) -> None:
+        """Verify Persona preload failures fall back to speech-only mode."""
+        celune = self._make_celune({})
+        celune.setup_extensions = mock.Mock()
+        celune._warmup = mock.Mock(return_value=True)
+        celune._start_configured_api = mock.Mock()
+        celune.backend.preload_models = mock.Mock()
+        celune.backend.load_default_model = mock.Mock(return_value={"model": "ok"})
+        celune.backend.model_id_for_voice = mock.Mock(return_value="fake/balanced")
+        persona_client = mock.Mock()
+        persona_client.load.side_effect = RuntimeError("persona boom")
+        celune.vision = persona_client
         with (
-            mock.patch("celune.pyop.pyop_python", return_value=Path("pyop-python.exe")),
-            mock.patch("celune.pyop.pyop_entrypoint", return_value="-m pyop_api"),
-            mock.patch("celune.pyop.Path.exists", return_value=True),
-            mock.patch("celune.pyop.sys.executable", "celune-python.exe"),
-            mock.patch("celune.pyop.sys.platform", "win32"),
-            mock.patch(
-                "celune.pyop.subprocess.CREATE_NO_WINDOW", 0x08000000, create=True
-            ),
-            mock.patch(
-                "celune.pyop.subprocess.CREATE_NEW_PROCESS_GROUP",
-                0x00000200,
-                create=True,
-            ),
-            mock.patch("celune.pyop.subprocess.Popen") as popen,
+            mock.patch("celune.celune.threading.Thread") as thread_cls,
+            mock.patch("celune.celune.validate_runtime", return_value=True),
+            mock.patch("celune.celune.play_readiness_signal", return_value=False),
         ):
-            process = pyop.start_pyop_detached()
+            thread_cls.return_value.start = mock.Mock()
+            self.assertEqual(celune.load(), True)
 
-        self.assertIs(process, popen.return_value)
-        flags = popen.call_args.kwargs["creationflags"]
-        self.assertEqual(flags & 0x08000000, 0x08000000)
-        self.assertEqual(flags & 0x00000200, 0x00000200)
-        self.assertEqual(popen.call_args.kwargs["start_new_session"], False)
+        persona_client.close.assert_called_once_with()
+        self.assertIsNone(celune.vision)
 
-    def test_pyop_talkback_config_can_disable_persona_input_mode(self) -> None:
-        """Verify persona talkback can be disabled without disabling PYOP."""
-        from celune.pyop import pyop_enabled, pyop_talkback_enabled
+    def test_persona_talkback_config_can_disable_persona_input_mode(self) -> None:
+        """Verify persona talkback can be disabled without disabling Persona."""
+        from celune.persona.impl import persona_enabled, persona_talkback_enabled
 
-        pyop_config: Config = {"enabled": True, "talkback": False}
-        config: Config = {"pyop": pyop_config}
-        self.assertEqual(pyop_enabled(config), True)
-        self.assertEqual(pyop_talkback_enabled(config), False)
-        self.assertEqual(pyop_talkback_enabled({"pyop": {}}), True)
+        persona_config: Config = {"enabled": True, "talkback": False}
+        config: Config = {"persona": persona_config}
+        self.assertEqual(persona_enabled(config), True)
+        self.assertEqual(persona_talkback_enabled(config), False)
+        self.assertEqual(persona_talkback_enabled({"persona": {}}), True)
+        self.assertEqual(persona_talkback_enabled({"pyop": {"talkback": False}}), False)
 
-    def test_think_reconnects_to_pyop_before_speech_fallback(self) -> None:
-        """Verify stale Celune instances reconnect to PYOP on the next think call.
+    def test_think_reconnects_to_persona_before_speech_fallback(self) -> None:
+        """Verify stale Celune instances reconnect to Persona on the next think call.
 
         Returns:
-            None: Assertions verify lazy PYOP reconnect behavior.
+            None: Assertions verify lazy Persona reconnect behavior.
 
         Raises:
-            AssertionError: PYOP reconnect behavior changes unexpectedly.
+            AssertionError: Persona reconnect behavior changes unexpectedly.
         """
         celune = self._make_celune({})
         celune.vision = None
         celune.locked = False
         celune.cur_state = "idle"
         client = mock.Mock()
-        celune._pyop_conn = mock.Mock(return_value=client)
+        celune._persona_conn = mock.Mock(return_value=client)
         with (
             mock.patch("celune.celune.think_pipeline", return_value=True) as think,
             mock.patch.object(celune, "say", return_value=False) as say,
         ):
             self.assertEqual(celune.think("hello"), True)
-            pyop_thread = celune._pyop_thread
-            self.assertIsNotNone(pyop_thread)
-            assert pyop_thread is not None
-            pyop_thread.join(timeout=2)
+            persona_thread = celune._persona_thread
+            self.assertIsNotNone(persona_thread)
+            assert persona_thread is not None
+            persona_thread.join(timeout=2)
 
         self.assertIs(celune.vision, client)
         think.assert_called_once_with(celune, "hello")

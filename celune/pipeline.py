@@ -13,7 +13,6 @@ import contextlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union, cast
 
-import httpx
 import torch
 import numpy as np
 import numpy.typing as npt
@@ -32,7 +31,7 @@ from .dsp import (
     readiness_signal,
 )
 from .exceptions import NotAvailableError
-from .pyop import pyop_endpoint, pyop_model_id
+from .persona.impl import persona_config, persona_model_id
 from .utils import (
     format_number,
     run_async,
@@ -40,18 +39,26 @@ from .utils import (
     detect_language,
     is_april_fools,
     rng_replace,
-    make_persona_card,
+)
+from .persona.prompts import (
+    CharacterProfile,
+    PersonaCard,
+    PersonaContext,
+    PersonaPromptBuilder,
+    RetrievedMemoryBundle,
+    ShortTermHistory,
+    VisualContext,
 )
 from .analysis import analyze_voice_audio
 from .constants import (
     BASE_SR,
-    BASELINE_CHARACTER_PERSONA,
-    DEFAULT_CELUNE_PERSONA,
+    DEFAULT_PERSONA_CONTEXT,
+    DEFAULT_PERSONA_DESCRIPTION,
     N_A_NUMERIC,
     JSON,
     JSONSerializable,
     PipelineStates,
-    PYOP_HISTORY_MESSAGES,
+    PERSONA_HISTORY_MESSAGES,
     VOICE_STYLE_OVERLAYS,
 )
 from . import __version__
@@ -559,89 +566,82 @@ def _config_text(engine: "Celune", key: str, default: str) -> str:
     return default
 
 
-def _pyop_style_traits(engine: "Celune") -> dict[str, str]:
-    """Return the configured voice style traits for a PYOP request."""
+def _config_lines(engine: "Celune", key: str) -> tuple[str, ...]:
+    """Read a text or text-list configuration value as non-empty lines."""
+    value = engine.config.get(key)
+    if isinstance(value, str):
+        stripped = value.strip()
+        return (stripped,) if stripped else ()
+    if isinstance(value, list):
+        lines = [
+            item.strip() for item in value if isinstance(item, str) and item.strip()
+        ]
+        return tuple(lines)
+    return ()
+
+
+def _persona_short_term_history_limit(engine: "Celune") -> int:
+    """Return the configured short-term memory length for Persona."""
+    memory = persona_config(engine.config).get("memory")
+    if isinstance(memory, dict):
+        configured = memory.get("max_short_term_messages")
+        if isinstance(configured, bool):
+            return PERSONA_HISTORY_MESSAGES
+        if isinstance(configured, (int, float)):
+            return max(0, int(configured))
+        if isinstance(configured, str):
+            stripped = configured.strip()
+            if stripped:
+                try:
+                    return max(0, int(stripped))
+                except ValueError:
+                    return PERSONA_HISTORY_MESSAGES
+    return PERSONA_HISTORY_MESSAGES
+
+
+def _persona_style_traits(engine: "Celune") -> dict[str, str]:
+    """Return the configured voice style traits for a Persona request."""
     voice = getattr(engine, "current_voice", None) or "balanced"
     overlay = VOICE_STYLE_OVERLAYS.get(voice, VOICE_STYLE_OVERLAYS["balanced"])
     return {key: str(value) for key, value in overlay.items()}
 
 
-def _default_pyop_persona(engine: "Celune") -> str:
-    """Return the default persona for the active character source."""
-    if getattr(engine, "voice_bundle_is_default", True):
-        return DEFAULT_CELUNE_PERSONA
-
-    return BASELINE_CHARACTER_PERSONA
+def _default_persona_persona(_engine: "Celune") -> str:
+    """Return the default persona instructions for the active character."""
+    return DEFAULT_PERSONA_DESCRIPTION
 
 
-def _default_pyop_gender(engine: "Celune") -> str:
+def _default_persona_gender(_engine: "Celune") -> str:
     """Return a conservative gender default for the active character source."""
-    if getattr(engine, "voice_bundle_is_default", True):
-        return "female"
-
     return "unknown"
 
 
-def _default_pyop_context(engine: "Celune") -> str:
+def _default_persona_context(_engine: "Celune") -> str:
     """Return the default interaction context for the active character source."""
-    if getattr(engine, "voice_bundle_is_default", True):
-        return "Celune is speaking directly to the user through a real-time TTS engine."
-
-    return (
-        "The character is speaking directly to the user through a real-time TTS engine."
-    )
+    return DEFAULT_PERSONA_CONTEXT
 
 
-def build_pyop_character_card(engine: "Celune") -> str:
-    """Build the character card sent with PYOP requests."""
-    name = getattr(engine, "current_character", None) or _config_text(
-        engine, "pyop_character_name", "Celune"
-    )
-    voice = getattr(engine, "current_voice", None) or "balanced"
-    voice_prompt = getattr(engine, "voice_prompt", None)
-    traits = _pyop_style_traits(engine)
-    extra = traits.pop("extra", "").strip()
-
-    voice_notes = f"Selected voice style: {voice}."
-    if extra:
-        voice_notes = f"{voice_notes}\n{extra}"
-    if isinstance(voice_prompt, str) and voice_prompt.strip():
-        voice_notes = f"{voice_notes}\nVoice prompt: {voice_prompt.strip()}"
-
-    return make_persona_card(
-        name=name,
-        age=_config_text(engine, "pyop_character_age", "unknown"),
-        gender=_config_text(
-            engine, "pyop_character_gender", _default_pyop_gender(engine)
-        ),
-        persona=_config_text(
-            engine,
-            "pyop_persona",
-            _default_pyop_persona(engine),
-        ),
-        traits=traits,
-        context=_config_text(
-            engine,
-            "pyop_context",
-            _default_pyop_context(engine),
-        ),
-        voice=voice_notes,
-    )
+def build_persona_character_card(engine: "Celune") -> str:
+    """Build the compact character and persona summary sent with requests."""
+    context = build_persona_context(engine, "")
+    return f"{context.character_profile.render()}\n\n{context.persona_card.render()}"
 
 
-def _pyop_history_limit() -> int:
-    """Return how many prior chat messages Celune should send to PYOP."""
-    return PYOP_HISTORY_MESSAGES
+def _persona_history_limit() -> int:
+    """Return the default short-term memory length for Persona."""
+    return PERSONA_HISTORY_MESSAGES
 
 
-def _pyop_history_messages(engine: "Celune") -> list[JSON]:
-    """Return prior PYOP chat messages in OpenAI chat format."""
-    history = getattr(engine, "pyop_history", [])
+def _persona_history_messages(engine: "Celune") -> list[JSON]:
+    """Return prior Persona chat messages in OpenAI chat format."""
+    history = getattr(engine, "persona_history", [])
     if not isinstance(history, list):
         return []
 
     messages: list[JSON] = []
-    for item in history[-_pyop_history_limit() :]:
+    limit = _persona_short_term_history_limit(engine)
+    window = history if limit <= 0 else history[-limit:]
+    for item in window:
         if not isinstance(item, dict):
             continue
 
@@ -657,9 +657,9 @@ def _pyop_history_messages(engine: "Celune") -> list[JSON]:
     return messages
 
 
-def _pyop_pending_attachments(engine: "Celune") -> list[JSON]:
-    """Return pending PYOP attachments in Qwen chat content format."""
-    attachments = getattr(engine, "pyop_attachments", [])
+def _persona_pending_attachments(engine: "Celune") -> list[JSON]:
+    """Return pending Persona attachments in Qwen chat content format."""
+    attachments = getattr(engine, "persona_attachments", [])
     if not isinstance(attachments, list):
         return []
 
@@ -676,9 +676,126 @@ def _pyop_pending_attachments(engine: "Celune") -> list[JSON]:
     return content
 
 
-def build_pyop_messages(engine: "Celune", request: str) -> list[JSON]:
-    """Build OpenAI-style messages for the external PYOP service."""
-    attachments = _pyop_pending_attachments(engine)
+def _build_visual_context(engine: "Celune") -> VisualContext:
+    """Return the optional visual context summary for the current request."""
+    attachments = getattr(engine, "persona_attachments", [])
+    if not isinstance(attachments, list):
+        return VisualContext()
+
+    items: list[str] = []
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        kind = attachment.get("type")
+        name = attachment.get("name")
+        path = attachment.get("path")
+        if not isinstance(kind, str) or not kind.strip():
+            continue
+        label = str(name).strip() if isinstance(name, str) and name.strip() else ""
+        source = str(path).strip() if isinstance(path, str) and path.strip() else ""
+        if label and source:
+            items.append(f"{kind.strip()}: {label} ({source})")
+        elif label:
+            items.append(f"{kind.strip()}: {label}")
+        elif source:
+            items.append(f"{kind.strip()}: {source}")
+
+    return VisualContext(items=tuple(items))
+
+
+def _build_short_term_history(engine: "Celune") -> ShortTermHistory:
+    """Return the current-run chat history for the Persona prompt."""
+    messages = _persona_history_messages(engine)
+    turns = [
+        (str(message["role"]).strip(), str(message["content"]).strip())
+        for message in messages
+        if isinstance(message, dict)
+        and isinstance(message.get("role"), str)
+        and isinstance(message.get("content"), str)
+    ]
+    session_summary = ""
+    raw_summary = getattr(engine, "persona_session_summary", None)
+    if isinstance(raw_summary, str) and raw_summary.strip():
+        session_summary = raw_summary.strip()
+    return ShortTermHistory(turns=tuple(turns), session_summary=session_summary)
+
+
+def _build_retrieved_memory_bundle(engine: "Celune") -> RetrievedMemoryBundle:
+    """Return retrieved long-term memory for the current request."""
+    direct_memories = getattr(engine, "retrieved_long_term_memory", None)
+    if isinstance(direct_memories, list):
+        memories = [
+            memory.strip()
+            for memory in direct_memories
+            if isinstance(memory, str) and memory.strip()
+        ]
+        return RetrievedMemoryBundle(memories=tuple(memories))
+
+    return RetrievedMemoryBundle(
+        memories=_config_lines(engine, "persona_long_term_memory")
+    )
+
+
+def build_persona_context(engine: "Celune", request: str) -> PersonaContext:
+    """Build structured Persona context for one user request."""
+    name = getattr(engine, "current_character", None) or _config_text(
+        engine, "persona_character_name", "Unknown"
+    )
+    voice = getattr(engine, "current_voice", None) or "balanced"
+    voice_prompt = getattr(engine, "voice_prompt", None)
+    traits = _persona_style_traits(engine)
+    extra = traits.pop("extra", "").strip()
+
+    voice_notes = f"Selected voice style: {voice}."
+    if extra:
+        voice_notes = f"{voice_notes}\n{extra}"
+    if isinstance(voice_prompt, str) and voice_prompt.strip():
+        voice_notes = f"{voice_notes}\nVoice prompt: {voice_prompt.strip()}"
+
+    character_profile = CharacterProfile(
+        name=name,
+        age=_config_text(engine, "persona_character_age", "unknown"),
+        gender=_config_text(
+            engine, "persona_character_gender", _default_persona_gender(engine)
+        ),
+        profile=_config_text(engine, "persona_character_profile", ""),
+    )
+    persona_card = PersonaCard(
+        persona=_config_text(
+            engine,
+            "persona_persona",
+            _default_persona_persona(engine),
+        ),
+        warmth=traits["warmth"],
+        directness=traits["directness"],
+        humor=traits["humor"],
+        detail=traits["detail"],
+        context=_config_text(
+            engine,
+            "persona_context",
+            _default_persona_context(engine),
+        ),
+        voice=voice_notes,
+    )
+    relationship_memory = _config_text(engine, "persona_relationship_memory", "")
+    mood_or_state = _config_text(engine, "persona_state", "Neutral.")
+
+    return PersonaContext(
+        character_profile=character_profile,
+        persona_card=persona_card,
+        relationship_memory=relationship_memory or "None.",
+        mood_or_state=mood_or_state,
+        retrieved_long_term_memory=_build_retrieved_memory_bundle(engine),
+        current_run_chat_history=_build_short_term_history(engine),
+        visual_context=_build_visual_context(engine),
+        user_message=request.strip(),
+    )
+
+
+def build_persona_messages(engine: "Celune", request: str) -> list[JSON]:
+    """Build OpenAI-style messages for the external Persona service."""
+    context = build_persona_context(engine, request)
+    attachments = _persona_pending_attachments(engine)
     user_content: JSONSerializable = request.strip()
     if attachments:
         user_content = [
@@ -687,34 +804,39 @@ def build_pyop_messages(engine: "Celune", request: str) -> list[JSON]:
         ]
 
     return [
-        {"role": "system", "content": build_pyop_character_card(engine)},
-        *_pyop_history_messages(engine),
+        {"role": "system", "content": PersonaPromptBuilder.build(context)},
         {"role": "user", "content": user_content},
     ]
 
 
-def build_pyop_request(engine: "Celune", request: str) -> JSON:
-    """Build the JSON payload sent to the external PYOP service."""
-    character_card = build_pyop_character_card(engine)
+def build_persona_request(engine: "Celune", request: str) -> JSON:
+    """Build the JSON payload sent to the external Persona service."""
+    context = build_persona_context(engine, request)
+    character_card = (
+        f"{context.character_profile.render()}\n\n{context.persona_card.render()}"
+    )
+    system_prompt = PersonaPromptBuilder.build(context)
     clean_request = request.strip()
     return {
-        "format": "celune_pyop_request",
+        "format": "celune_persona_request",
         "format_version": 1,
-        "model": pyop_model_id(),
+        "model": persona_model_id(engine.config),
         "quantization": "4bit",
         "quantized": True,
-        "character": getattr(engine, "current_character", None) or "Celune",
+        "character": getattr(engine, "current_character", None) or "Unknown",
         "voice": getattr(engine, "current_voice", None) or "balanced",
         "character_card": character_card,
-        "system": character_card,
+        "system": system_prompt,
         "user": clean_request,
         "request": clean_request,
-        "messages": cast(JSONSerializable, build_pyop_messages(engine, clean_request)),
+        "messages": cast(
+            JSONSerializable, build_persona_messages(engine, clean_request)
+        ),
     }
 
 
-def _extract_pyop_text(payload: JSONSerializable) -> str:
-    """Extract spoken text from common PYOP response payload shapes."""
+def _extract_persona_text(payload: JSONSerializable) -> str:
+    """Extract spoken text from common Persona response payload shapes."""
     if isinstance(payload, str):
         return payload.strip()
 
@@ -736,7 +858,7 @@ def _extract_pyop_text(payload: JSONSerializable) -> str:
     if isinstance(choices, list) and choices:
         first = choices[0]
         if isinstance(first, dict):
-            return _extract_pyop_text(first)
+            return _extract_persona_text(first)
 
     return ""
 
@@ -746,11 +868,10 @@ def think(engine: "Celune", request: str) -> bool:
 
     Args:
         engine: The Celune engine that should speak the output.
-        request: The input request that will be sent to by PYOP.
+        request: The input request that will be sent to by Persona.
     """
-    payload = build_pyop_request(engine, request)
-    endpoint = pyop_endpoint()
-    attachments = getattr(engine, "pyop_attachments", None)
+    payload = build_persona_request(engine, request)
+    attachments = getattr(engine, "persona_attachments", None)
 
     try:
         vision = engine.vision
@@ -758,12 +879,9 @@ def think(engine: "Celune", request: str) -> bool:
             engine.log("Persona system is not connected.", "warning")
             return False
 
-        response = vision.post(endpoint, json=payload)
+        response = vision.post(json=payload)
         response.raise_for_status()
-        spoken_text = _extract_pyop_text(response.json())
-    except httpx.ReadTimeout:
-        engine.log("Persona system timed out.", "warning")
-        return False
+        spoken_text = _extract_persona_text(response.json())
     except Exception as e:
         engine.log(
             f"Persona system request failed: {format_error(e, engine.dev)}", "warning"
@@ -777,7 +895,7 @@ def think(engine: "Celune", request: str) -> bool:
         engine.log("Persona system returned an empty response.", "warning")
         return False
 
-    history = getattr(engine, "pyop_history", None)
+    history = getattr(engine, "persona_history", None)
     if isinstance(history, list):
         history.extend(
             [
@@ -785,7 +903,7 @@ def think(engine: "Celune", request: str) -> bool:
                 {"role": "assistant", "content": spoken_text},
             ]
         )
-        limit = _pyop_history_limit()
+        limit = _persona_short_term_history_limit(engine)
         if limit == 0:
             history.clear()
         elif len(history) > limit:
