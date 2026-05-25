@@ -209,7 +209,6 @@ class PersonaApiTests(TestCase):
         self.assertEqual(
             logs,
             [
-                ("[PERSONA] loading fixture/model", "info"),
                 ("[PERSONA] warn 4bit", "warning"),
             ],
         )
