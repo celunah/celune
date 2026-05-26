@@ -1127,7 +1127,7 @@ def queue_speech(
         return False
 
     if getattr(engine, "sleeping", False):
-        engine.log("Celune is currently sleeping.", "warning")
+        engine.log("Cannot speak while Celune is sleeping.", "warning")
         engine.error_callback("Celune is currently sleeping")
         engine.progress_callback(0, 1)
         return False
