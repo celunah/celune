@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 import soundfile as sf
 
@@ -18,6 +20,28 @@ if TYPE_CHECKING:
 
 IMAGE_EXTENSIONS = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"}
+
+
+def _attachment_source(path: Path) -> str:
+    """Return a Persona-friendly attachment source string for one local file."""
+    resolved = path.resolve()
+    if os.name == "nt":
+        return resolved.as_posix()
+    return resolved.as_uri()
+
+
+def _remote_attachment_kind(source: str) -> str | None:
+    """Return the attachment kind for one supported remote URL."""
+    parsed = urlparse(source)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+
+    suffix = Path(parsed.path).suffix.lower()
+    if suffix in IMAGE_EXTENSIONS:
+        return "image"
+    if suffix in VIDEO_EXTENSIONS:
+        return "video"
+    return None
 
 
 def tutorial(ui: CeluneUI) -> None:
@@ -210,6 +234,15 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.safe_log("Extensions: " + ", ".join(names))
         return
     if command == "voiceprompt":
+        voice_prompt_supported = getattr(ui.celune, "voice_prompt_supported", None)
+        if callable(voice_prompt_supported) and not voice_prompt_supported():
+            ui.celune.voice_prompt = None
+            ui.safe_log(
+                "Voice prompts are unavailable on the active Qwen3 0.6B model.",
+                "warning",
+            )
+            return
+
         if not args:
             ui.safe_log("Usage: /voiceprompt <prompt>", "warning")
             return
@@ -328,6 +361,16 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         added: list[str] = []
         for raw_path in args:
+            remote_kind = _remote_attachment_kind(raw_path)
+            if remote_kind is not None:
+                parsed = urlparse(raw_path)
+                name = Path(parsed.path).name or raw_path
+                ui.celune.persona_attachments.append(
+                    {"type": remote_kind, "path": raw_path, "name": name}
+                )
+                added.append(name)
+                continue
+
             path = Path(raw_path).expanduser()
             if not path.exists() or not path.is_file():
                 ui.safe_log(f"Attachment not found: {raw_path}", "warning")
@@ -344,7 +387,11 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
             resolved = path.resolve()
             ui.celune.persona_attachments.append(
-                {"type": kind, "path": resolved.as_uri(), "name": resolved.name}
+                {
+                    "type": kind,
+                    "path": _attachment_source(resolved),
+                    "name": resolved.name,
+                }
             )
             added.append(resolved.name)
 

@@ -133,6 +133,26 @@ class ChromaTests(TestCase):
         self.assertEqual(len(fixed), 3)
         self.assertLessEqual(max(fixed), 255)
 
-        glow = AudioRGBGlow("#ffffff")
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
         self.assertEqual(glow._speech_level(np.zeros((0, 2), dtype=np.float32)), 0.0)
         self.assertGreater(glow._speech_level(stereo), 0.0)
+        self.assertEqual(glow.fatal_color_hex, "#ce2006")
+
+    def test_sleep_and_wake_preserve_prior_brightness_target(self) -> None:
+        """Verify sleep dimming stores and restores the earlier brightness target."""
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
+        glow.start = mock.Mock(return_value=True)
+        glow._current_brightness = 0.42
+        glow._target_brightness = 0.6
+        glow._state = "normal"
+
+        glow.sleep()
+
+        self.assertEqual(glow._state, "sleeping")
+        self.assertAlmostEqual(glow._sleep_restore_brightness, 0.6)
+        self.assertAlmostEqual(glow._target_brightness, glow.idle_brightness * 0.25)
+
+        glow.wake()
+
+        self.assertEqual(glow._state, "waking")
+        self.assertAlmostEqual(glow._target_brightness, 0.6)

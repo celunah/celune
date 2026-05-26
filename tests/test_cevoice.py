@@ -74,6 +74,33 @@ class CEVoiceTests(TestCase):
                     "background": "#101010",
                     "accent": "#abcdef",
                     "glow_color": "#fedcba",
+                    "sleeping_color": "#8866cc",
+                },
+                "persona": {
+                    "identity": {
+                        "name": "Fixture",
+                        "profile": "A watchful archivist with a dry wit.",
+                    },
+                    "speaking_style": "Measured, observant, and slightly playful.",
+                    "boundaries": [
+                        "Do not break character.",
+                        "Do not flatten the tone into generic assistant language.",
+                    ],
+                    "prompt_rules": [
+                        "Prefer concrete observations over vague reassurance.",
+                    ],
+                    "example_dialogue": [
+                        "User: i think i fixed it",
+                        "Fixture: Sounds like you finally wrestled it into behaving.",
+                    ],
+                    "style": {
+                        "warmth": "high",
+                        "directness": "mid",
+                        "humor": "mid",
+                        "detail": "high",
+                        "formality": "mid",
+                        "enthusiasm": "low",
+                    },
                 },
             },
             {
@@ -99,10 +126,34 @@ class CEVoiceTests(TestCase):
             AssertionError: CEVOICE behavior changes unexpectedly.
         """
         bundle = self._write_bundle()
+        self.assertEqual(bundle.metadata["format"], "CECHAR")
+        self.assertEqual(bundle.metadata["version"], 2)
         self.assertEqual(bundle.voice_order, ("bold", "balanced"))
         self.assertEqual(bundle.voices["balanced"]["cfg_scale"], 2.4)
         self.assertEqual(
             bundle.voices["balanced"]["reference_text"], "Balanced reference."
+        )
+        persona = cevoice.persona_metadata_from_manifest(bundle.metadata)
+        self.assertIsNotNone(persona)
+        assert persona is not None
+        self.assertEqual(persona.identity.name, "Fixture")
+        self.assertEqual(
+            persona.identity.profile, "A watchful archivist with a dry wit."
+        )
+        self.assertEqual(
+            persona.speaking_style, "Measured, observant, and slightly playful."
+        )
+        self.assertEqual(
+            persona.example_dialogue,
+            (
+                "User: i think i fixed it",
+                "Fixture: Sounds like you finally wrestled it into behaving.",
+            ),
+        )
+        self.assertEqual(persona.style.warmth, "high")
+        self.assertEqual(
+            cevoice.bundle_character_name(bundle),
+            "Fixture",
         )
         self.assertEqual(bundle.read_asset("balanced", "wav"), b"wav")
         loader = cevoice.CEVoiceLoader(bundle)
@@ -110,6 +161,31 @@ class CEVoiceTests(TestCase):
         path = loader.materialize("balanced", "wav")
         self.assertEqual(path.read_bytes(), b"wav")
         self.assertEqual(loader.materialize("balanced", "wav"), path)
+
+        magic, version, _ = cevoice.HEADER.unpack(
+            self.path.read_bytes()[: cevoice.HEADER.size]
+        )
+        self.assertEqual(magic, cevoice.MAGIC)
+        self.assertEqual(version, cevoice.VERSION)
+
+    def test_legacy_cevoice_v1_bundle_remains_loadable(self) -> None:
+        """Verify legacy CEVOICE v1 bundles still open after the schema rename."""
+        bundle = self._write_bundle()
+        metadata = copy.deepcopy(bundle.metadata)
+        metadata["format"] = cevoice.LEGACY_FORMAT_NAME
+        metadata["version"] = cevoice.LEGACY_VERSION
+        self._rewrite_bundle_header_and_metadata(
+            cevoice.LEGACY_MAGIC,
+            cevoice.LEGACY_VERSION,
+            metadata,
+        )
+
+        reopened = cevoice.CEVoice.open(self.path)
+
+        self.assertEqual(reopened.metadata["format"], "CEVOICE")
+        self.assertEqual(reopened.metadata["version"], 1)
+        self.assertEqual(reopened.voice_order, ("bold", "balanced"))
+        self.assertEqual(reopened.read_asset("balanced", "wav"), b"wav")
 
     def test_asset_lookup_and_checksum_failures_are_reported(self) -> None:
         """Verify missing assets and checksum corruption are reported.
@@ -140,6 +216,16 @@ class CEVoiceTests(TestCase):
             AssertionError: Metadata validation behavior changes unexpectedly.
         """
         bundle = self._write_bundle()
+        self.assertEqual(
+            cast(dict[str, str], bundle.metadata["theme"])["sleeping_color"],
+            "#8866cc",
+        )
+        self.assertEqual(
+            cast(dict[str, object], bundle.metadata["persona"])["speaking_style"],
+            "Measured, observant, and slightly playful.",
+        )
+
+        bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
         metadata["default_voice"] = "missing"
         self._rewrite_metadata(metadata)
@@ -158,6 +244,13 @@ class CEVoiceTests(TestCase):
         metadata["theme"] = {"background": "#101010", "accent": "blue"}
         self._rewrite_metadata(metadata)
         with self.assertRaisesRegex(CEVoiceError, "hex color"):
+            cevoice.CEVoice.open(self.path)
+
+        bundle = self._write_bundle()
+        metadata = copy.deepcopy(bundle.metadata)
+        metadata["persona"] = {"style": {"warmth": 3}}
+        self._rewrite_metadata(metadata)
+        with self.assertRaisesRegex(CEVoiceError, "persona style 'warmth'"):
             cevoice.CEVoice.open(self.path)
 
         bundle = self._write_bundle()
@@ -326,6 +419,29 @@ class CEVoiceTests(TestCase):
         payload = current[payload_offset:]
         self.path.write_bytes(
             cevoice.HEADER.pack(cevoice.MAGIC, cevoice.VERSION, len(metadata_bytes))
+            + metadata_bytes
+            + payload
+        )
+
+    def _rewrite_bundle_header_and_metadata(
+        self,
+        magic: bytes,
+        version: int,
+        metadata: dict,
+    ) -> None:
+        """Replace fixture header and metadata while preserving the original payload."""
+        metadata_bytes = json.dumps(
+            metadata,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        current = self.path.read_bytes()
+        _, _, metadata_length = cevoice.HEADER.unpack(current[: cevoice.HEADER.size])
+        payload_offset = cevoice.HEADER.size + metadata_length
+        payload = current[payload_offset:]
+        self.path.write_bytes(
+            cevoice.HEADER.pack(magic, version, len(metadata_bytes))
             + metadata_bytes
             + payload
         )

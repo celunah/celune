@@ -43,12 +43,13 @@ theme: dark
 use_normalizer: false
 
 # VRAM target settings
+# we recommend medium as a safe baseline for low VRAM users
 #
-# low (6GB) - Qwen3 0.6B + normalizer CPU
+# low (6GB) - Qwen3 0.6B + normalizer CPU (caution: may generate bad outputs more often)
 # medium (8GB) - Qwen3 1.7B + normalizer CPU
 # high (12GB) - Qwen3 1.7B / VoxCPM2 + Persona 4-bit + normalizer CPU
 # xhigh (16GB+) - everything allowed + Persona 8-bit + normalizer GPU
-vram: medium
+vram: high
 
 # sleep mode behavior
 #

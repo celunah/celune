@@ -6,6 +6,7 @@ import sys
 import time
 import shlex
 import signal
+import logging
 import threading
 import itertools
 import contextlib
@@ -26,7 +27,6 @@ from rich.text import Text
 
 from ..celune import Celune
 from ..persona.impl import (
-    persona_is_available,
     persona_talkback_enabled,
     persona_enabled,
 )
@@ -38,13 +38,30 @@ from ..utils import (
     typing_delay,
     is_april_fools,
 )
+
 from ..constants import SIGTSTP
 from ..cevoice import default_loader
 from .. import colors
 from . import resources as ui_resources
-from .terminal import LogRedirect
+from .terminal import LogRedirect, UILogHandler
 from .theme import CELUNE_CSS, severity_color
 from .commands import process_command as process_ui_command
+
+
+def _split_command_input(text: str) -> list[str]:
+    """Split one slash-command string into a command name and arguments."""
+    posix = os.name != "nt"
+    parts = shlex.split(text, posix=posix)
+    if posix:
+        return parts
+
+    normalized: list[str] = []
+    for part in parts:
+        if len(part) >= 2 and part[0] == part[-1] and part[0] in {"'", '"'}:
+            normalized.append(part[1:-1])
+        else:
+            normalized.append(part)
+    return normalized
 
 
 class CeluneUI(App):
@@ -94,6 +111,10 @@ class CeluneUI(App):
 
         self._log_stdout = cast(LogRedirect, None)
         self._log_stderr = cast(LogRedirect, None)
+        self._torch_flop_logger = cast(logging.Logger, None)
+        self._torch_flop_log_handler = cast(UILogHandler, None)
+        self._torch_flop_log_handlers = cast(list[logging.Handler], None)
+        self._torch_flop_log_propagate = True
 
         self.cur_state = "active"
 
@@ -103,6 +124,7 @@ class CeluneUI(App):
         self._border_pulse_tokens: dict[int, int] = {}
         self._border_pulse_widgets: dict[int, Widget] = {}
         self._tutorial_timers: list[Timer] = []
+        self._sleep_timer: Optional[Timer] = None
         self._tutorial_token = 0
         self._tutorial_active = False
         self._input_locked = True
@@ -253,8 +275,19 @@ class CeluneUI(App):
             if isinstance(theme, dict):
                 background = theme.get("background")
                 accent = theme.get("accent")
-                if isinstance(background, str) and isinstance(accent, str):
-                    colors.configure_theme(background, accent)
+                sleeping_color = theme.get("sleeping_color")
+                if (
+                    isinstance(background, str)
+                    and isinstance(accent, str)
+                    and (sleeping_color is None or isinstance(sleeping_color, str))
+                ):
+                    colors.configure_theme(
+                        background,
+                        accent,
+                        colors.DEFAULT_SLEEPING
+                        if sleeping_color is None
+                        else sleeping_color,
+                    )
 
         self.register_theme(colors.THEME)
         self.register_theme(colors.THEME_LIGHT)
@@ -310,6 +343,7 @@ class CeluneUI(App):
 
         sys.stdout = self._log_stdout
         sys.stderr = self._log_stderr
+        self._install_runtime_log_redirects()
 
         self.call_after_refresh(self.start_background_init)
         signal.signal(signal.SIGINT, self.signal_handler)
@@ -339,6 +373,30 @@ class CeluneUI(App):
 
         self._run_on_ui_thread(update)
 
+    def _install_runtime_log_redirects(self) -> None:
+        """Route known Python logger output into Celune's UI log widget."""
+        logger = logging.getLogger("torch.utils.flop_counter")
+        handler = UILogHandler(self.safe_log)
+        self._torch_flop_logger = logger
+        self._torch_flop_log_handler = handler
+        self._torch_flop_log_handlers = list(logger.handlers)
+        self._torch_flop_log_propagate = logger.propagate
+        logger.handlers = [handler]
+        logger.propagate = False
+
+    def _remove_runtime_log_redirects(self) -> None:
+        """Restore Python logger output handlers replaced by the UI."""
+        logger = self._torch_flop_logger
+        handler = self._torch_flop_log_handler
+        handlers = self._torch_flop_log_handlers
+        if logger is not None and handler is not None and handlers is not None:
+            logger.handlers = handlers
+            logger.propagate = self._torch_flop_log_propagate
+            handler.close()
+        self._torch_flop_logger = cast(logging.Logger, None)
+        self._torch_flop_log_handler = cast(UILogHandler, None)
+        self._torch_flop_log_handlers = cast(list[logging.Handler], None)
+
     def advance_resources(self) -> None:
         """Advance the resource footer to the next page and refresh it.
 
@@ -352,6 +410,62 @@ class CeluneUI(App):
             ui_resources.resource_pages(self.celune, self.active_theme_name)
         )
         self.update_resources()
+
+    def _cancel_sleep_timer(self) -> None:
+        """Cancel a pending automatic sleep transition."""
+        if threading.current_thread() is not threading.main_thread():
+            self.call_from_thread(self._cancel_sleep_timer)
+            return
+
+        if self._sleep_timer is not None:
+            self._sleep_timer.stop()
+            self._sleep_timer = None
+
+    def _schedule_sleep_timer(self) -> None:
+        """Schedule automatic sleep after the configured idle timeout."""
+        if threading.current_thread() is not threading.main_thread():
+            self.call_from_thread(self._schedule_sleep_timer)
+            return
+
+        self._cancel_sleep_timer()
+        if (
+            self.cur_state == "exiting"
+            or not self.celune_ready
+            or not hasattr(self.celune, "sleep_enabled")
+            or not self.celune.sleep_enabled()
+            or self.celune.sleeping
+            or self.celune.is_in_tutorial
+        ):
+            return
+
+        self._sleep_timer = self.set_timer(
+            self.celune.sleep_timeout_seconds(),
+            self._enter_sleep_mode,
+        )
+
+    def _enter_sleep_mode(self) -> None:
+        """Put Celune to sleep from the UI idle timer."""
+        self._sleep_timer = None
+        if self.cur_state == "exiting" or self.celune is None:
+            return
+
+        if self.celune.enter_sleep_mode():
+            self.safe_log(
+                "Celune is currently sleeping. Type anything to wake up.",
+                "sleeping",
+            )
+            self.safe_status("Sleeping", "sleeping")
+            self.change_voice_lock_state(locked=True)
+
+    @work(thread=True, exclusive=True)
+    def wake_from_sleep(self) -> None:
+        """Wake Celune after the user types into the sleeping UI."""
+        try:
+            if self.celune.wake_from_sleep():
+                self._schedule_sleep_timer()
+        finally:
+            if self.celune.sleeping:
+                self.safe_status("Sleeping", "sleeping")
 
     def start_background_init(self) -> None:
         """Run Celune's initialization function.
@@ -388,9 +502,11 @@ class CeluneUI(App):
                 self.change_input_state(locked=False)
                 self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
                 self.safe_log("New to Celune? Type /tutorial to begin the tutorial.")
+                self._schedule_sleep_timer()
 
         except Exception as e:
             self.safe_log(f"[INIT ERROR] {format_error(e, self.celune.dev)}", "error")
+            self.celune.glow.fatal()
             self.error("Celune could not start")
             self.cur_state = "error"
 
@@ -583,6 +699,10 @@ class CeluneUI(App):
 
         return "Enter text to speak here"
 
+    def _persona_loaded(self) -> bool:
+        """Return whether the attached Celune instance currently has Persona."""
+        return bool(getattr(self.celune, "vision", None))
+
     def _refresh_persona_availability(self) -> None:
         """Refresh Persona availability in the background for placeholder text."""
         if self._persona_probe_running:
@@ -592,7 +712,7 @@ class CeluneUI(App):
 
         def probe() -> None:
             """Probe Persona without pausing the Textual event loop."""
-            available = persona_is_available()
+            available = self._persona_loaded()
 
             def apply_result() -> None:
                 self._persona_probe_running = False
@@ -618,6 +738,9 @@ class CeluneUI(App):
             None: This method updates the input placeholder and style button
                 state.
         """
+
+        if not locked:
+            self._schedule_sleep_timer()
 
         def update() -> None:
             """Apply the input lock state on the UI thread.
@@ -819,9 +942,21 @@ class CeluneUI(App):
         if not text:
             return False
 
+        if self.celune.sleeping:
+            self._cancel_sleep_timer()
+            self.safe_status("Waking up")
+            self._suppress_input_change = True
+            try:
+                self.input_box.load_text("")
+            finally:
+                self._suppress_input_change = False
+            self.change_input_state(locked=True)
+            self.wake_from_sleep()
+            return True
+
         if process_commands and text.startswith("/"):
             try:
-                parts = shlex.split(text[1:])
+                parts = _split_command_input(text[1:])
             except ValueError as e:
                 self.safe_log(f"Command parsing error: {e}", "error")
                 return False
@@ -848,6 +983,7 @@ class CeluneUI(App):
         if not handled:
             return False
 
+        self._cancel_sleep_timer()
         self.style_button.disabled = True
         self.input_box.placeholder = "Please wait"
         self.input_box.load_text("")
@@ -1078,6 +1214,7 @@ class CeluneUI(App):
             self._log_stderr.flush()
 
         self.cur_state = "exiting"
+        self._remove_runtime_log_redirects()
 
         if hasattr(self, "_old_stdout"):
             sys.stdout = self._old_stdout
@@ -1095,6 +1232,9 @@ class CeluneUI(App):
         if self.cur_state == "exiting":
             return
         self.celune.locked = False
+        if self.celune.sleeping:
+            self.safe_status("Sleeping", "sleeping")
+            return
         self.celune.cur_state = "idle"
         if self.celune.is_in_tutorial:
             self.input_box.placeholder = "Currently in tutorial mode"
@@ -1103,6 +1243,7 @@ class CeluneUI(App):
             self.change_input_state(locked=False)
             self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
         self.safe_status("Idle")
+        self._schedule_sleep_timer()
 
     def tts_queue_avail(
         self,
@@ -1115,6 +1256,7 @@ class CeluneUI(App):
         if self.cur_state == "exiting":
             return
         self.celune.locked = False
+        self._cancel_sleep_timer()
         self.safe_status("Speaking")
         if self.celune.is_in_tutorial:
             self.input_box.placeholder = "Currently in tutorial mode"
@@ -1156,6 +1298,10 @@ class CeluneUI(App):
             return
 
         text = event.text_area.text
+        if self.celune.sleeping and text.strip():
+            self._submit_text(text, process_commands=False)
+            return
+
         line_count = text.count("\n") + 1
         min_lines = 1
         max_lines = 8

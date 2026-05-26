@@ -189,39 +189,6 @@ def main() -> None:
                 time.sleep(5)
                 sys.exit(ExitCodes.EXIT_PENDING_UPDATE.value)
 
-        # ask for default backend if not set yet
-        # Celune will save this preference
-        if not backend and supports_ansi():
-            selected_backend = SelectMenu(
-                ["Qwen3 - Fast", "VoxCPM2 - High quality"],
-                ["qwen3", "voxcpm2"],
-                "Which backend should Celune use?",
-            ).start()
-            backend = selected_backend if isinstance(selected_backend, str) else None
-
-            if backend == "qwen3":
-                print("Qwen3 uses CEVOICE-backed voice cloning by default.")
-                print(
-                    "Native mode remains available as a deprecated compatibility option."
-                )
-            elif backend == "voxcpm2":
-                print(
-                    "Note: VoxCPM2 only supports voice cloning, and it is significantly slower."
-                )
-                print(
-                    "By selecting this backend, you accept any tradeoffs that may occur later on."
-                )
-
-            config["backend"] = backend
-            with open("config.yaml", "w", encoding="utf-8") as cfg:
-                yaml.dump(config, cfg)
-        elif not backend and not supports_ansi():
-            print("This terminal does not support ANSI.")
-            print("Please select a backend manually.")
-            print("Refer to Celune's configuration for details.")
-            time.sleep(5)
-            sys.exit(ExitCodes.EXIT_NO_ANSI.value)
-
         if not env_bool("CELUNE_LAUNCHER"):
             launcher_exe = "celune.exe" if os.name == "nt" else "celune.appimage"
             print("Celune is not being launched via the Celune launcher.")

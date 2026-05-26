@@ -43,6 +43,10 @@ class ColorTests(TestCase):
             colors.SEVERITY_COLORS["celune"]["info"],
             colors.THEME.primary,
         )
+        self.assertEqual(colors.SEVERITY_COLORS["celune"]["sleeping"], "#9c88ce")
+
+        colors.configure_theme("#101010", "#222222", "#8866cc")
+        self.assertEqual(colors.SEVERITY_COLORS["celune"]["sleeping"], "#8866cc")
 
 
 class DspTests(TestCase):

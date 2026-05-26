@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Tests for runtime validation and lightweight UI commands."""
 
+import logging
 import warnings
 from pathlib import Path
 from typing import cast
@@ -14,8 +15,8 @@ from celune.celune import Celune
 from celune.config import Config
 from celune.constants import JSONSerializable
 from celune.backends.qwen3 import Qwen3
-from celune.ui.commands import process_command
-from celune.ui.app import CeluneUI
+from celune.ui.commands import _attachment_source, process_command
+from celune.ui.app import CeluneUI, _split_command_input
 from celune.ui.headless import CeluneHeadlessUI
 
 
@@ -172,6 +173,24 @@ class UICommandTests(TestCase):
         self._process_command("reverb", ["150"])
         self.assertEqual(self.logs[-1][1], "warning")
 
+    def test_voiceprompt_command_is_blocked_when_model_lacks_instruction_control(
+        self,
+    ) -> None:
+        """Verify voice prompts are refused on the Qwen3 0.6B preset."""
+        self.ui.celune.voice_prompt_supported = lambda: False
+        self.ui.celune.voice_prompt = "old"
+
+        self._process_command("voiceprompt", ["gentle", "tone"])
+
+        self.assertIsNone(self.ui.celune.voice_prompt)
+        self.assertEqual(
+            self.logs[-1],
+            (
+                "Voice prompts are unavailable on the active Qwen3 0.6B model.",
+                "warning",
+            ),
+        )
+
     def test_attach_command_stages_visual_media_for_persona_reply(self) -> None:
         """Verify /attach validates media and stores Qwen-compatible file URIs."""
         image = Path("demos/ready.png")
@@ -181,11 +200,36 @@ class UICommandTests(TestCase):
         self.assertEqual(len(self.ui.celune.persona_attachments), 1)
         attachment = self.ui.celune.persona_attachments[0]
         self.assertEqual(attachment["type"], "image")
-        self.assertEqual(attachment["path"], image.resolve().as_uri())
+        self.assertEqual(attachment["path"], _attachment_source(image.resolve()))
         self.assertEqual(self.logs[-1][1], "info")
 
         self._process_command("attach", ["clear"])
         self.assertEqual(self.ui.celune.persona_attachments, [])
+
+    def test_attach_command_accepts_remote_image_urls(self) -> None:
+        """Verify /attach accepts HTTP image URLs without local file checks."""
+        url = "https://example.com/images/reference.png"
+
+        self._process_command("attach", [url])
+
+        self.assertEqual(len(self.ui.celune.persona_attachments), 1)
+        attachment = self.ui.celune.persona_attachments[0]
+        self.assertEqual(attachment["type"], "image")
+        self.assertEqual(attachment["path"], url)
+        self.assertEqual(attachment["name"], "reference.png")
+        self.assertEqual(self.logs[-1][1], "info")
+
+    def test_windows_command_split_keeps_literal_backslashes(self) -> None:
+        """Verify Windows slash commands keep single-backslash file paths intact."""
+        with mock.patch("celune.ui.app.os.name", "nt"):
+            parts = _split_command_input(
+                r'attach "C:\Users\user\Downloads\bad suggestion.png"'
+            )
+
+        self.assertEqual(
+            parts,
+            ["attach", r"C:\Users\user\Downloads\bad suggestion.png"],
+        )
 
 
 class UIStartupTests(TestCase):
@@ -236,7 +280,7 @@ class UIStartupTests(TestCase):
             SimpleNamespace(config={"persona": cast(JSONSerializable, persona_config)}),
         )
 
-        with mock.patch("celune.ui.app.persona_is_available") as available:
+        with mock.patch.object(ui, "_persona_loaded") as available:
             ui.change_input_state(locked=True)
 
         self.assertEqual(ui.input_box.placeholder, "Please wait")
@@ -244,7 +288,7 @@ class UIStartupTests(TestCase):
         available.assert_not_called()
 
         with (
-            mock.patch("celune.ui.app.persona_is_available") as available,
+            mock.patch.object(ui, "_persona_loaded") as available,
             mock.patch("celune.ui.app.threading.Thread") as thread_cls,
         ):
             ui.change_input_state(locked=False)
@@ -253,3 +297,67 @@ class UIStartupTests(TestCase):
         self.assertEqual(ui.style_button.disabled, False)
         available.assert_not_called()
         thread_cls.return_value.start.assert_called_once()
+
+    def test_placeholder_uses_loaded_persona_not_runtime_capability(self) -> None:
+        """Verify the input placeholder reflects whether Persona actually loaded."""
+        ui = CeluneUI()
+        ui.input_box = TextArea()
+        ui.style_button = Button("Voice")
+        ui.resources = cast(Label, None)
+        persona_config: Config = {"enabled": True, "talkback": True}
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={
+                    "vram": "high",
+                    "persona": cast(JSONSerializable, persona_config),
+                },
+                vision=None,
+            ),
+        )
+
+        ui._persona_available = ui._persona_loaded()
+        self.assertEqual(ui._normal_input_placeholder(), "Enter text to speak here")
+
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={
+                    "vram": "high",
+                    "persona": cast(JSONSerializable, persona_config),
+                },
+                vision=object(),
+            ),
+        )
+        ui._persona_available = ui._persona_loaded()
+        self.assertEqual(ui._normal_input_placeholder(), "Say something...")
+
+    def test_runtime_logger_warning_is_routed_into_ui_logs(self) -> None:
+        """Verify known Python logger warnings do not bleed into the terminal."""
+        ui = CeluneUI()
+        captured: list[tuple[str, str]] = []
+        ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
+
+        logger = logging.getLogger("torch.utils.flop_counter")
+        original_handlers = list(logger.handlers)
+        original_propagate = logger.propagate
+        self.addCleanup(setattr, logger, "handlers", original_handlers)
+        self.addCleanup(setattr, logger, "propagate", original_propagate)
+
+        ui._install_runtime_log_redirects()
+        self.addCleanup(ui._remove_runtime_log_redirects)
+
+        logger.warning(
+            "triton not found; flop counting will not work for triton kernels"
+        )
+
+        self.assertEqual(
+            captured,
+            [
+                (
+                    "Internal runtime warning: triton not found; flop counting "
+                    "will not work for triton kernels",
+                    "warning",
+                )
+            ],
+        )

@@ -119,3 +119,13 @@ N_A = None
 
 # base values
 BASE_SR = 48000
+
+# VRAM tiers
+TIERS = ("low", "medium", "high", "xhigh")
+
+VRAM_REQUIREMENTS = {
+    "low": 6,
+    "medium": 8,
+    "high": 12,
+    "xhigh": 16,
+}

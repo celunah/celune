@@ -1,9 +1,5 @@
 # SPDX-License-Identifier: MIT
-#
-# CEVOICE is pending a rewrite, allowing Persona to use character data from it.
-# This rewrite will be dubbed "CECHAR v2", and focus on character personas, rather than just voices.
-#
-"""CEVOICE bundle writer, parser, and lazy file loader."""
+"""CEVOICE/CECHAR bundle writer, parser, and lazy file loader."""
 
 from __future__ import annotations
 
@@ -14,14 +10,18 @@ import atexit
 import hashlib
 import tempfile
 from pathlib import Path
-from dataclasses import dataclass
-from typing import BinaryIO, Callable, Mapping, Optional, Union, cast
+from dataclasses import dataclass, field
+from typing import BinaryIO, Callable, Final, Mapping, Optional, Union, cast
 
 from .constants import JSONSerializable
 from .exceptions import CEVoiceError
 
-MAGIC = b"CEVOICE\0"
-VERSION = 1
+MAGIC: Final[bytes] = b"CECHAR\0\0"
+VERSION: Final[int] = 2
+LEGACY_MAGIC: Final[bytes] = b"CEVOICE\0"
+LEGACY_VERSION: Final[int] = 1
+FORMAT_NAME: Final[str] = "CECHAR"
+LEGACY_FORMAT_NAME: Final[str] = "CEVOICE"
 HEADER = struct.Struct("<8sHI")
 ALLOWED_ASSET_KINDS = {"wav", "pt"}
 type ManifestValue = Union[JSONSerializable, "Manifest"]
@@ -62,9 +62,12 @@ class CEVoice:
         bundle_path = Path(path)
         with bundle_path.open("rb") as stream:
             magic, version, metadata_length = _read_header(stream)
-            if magic != MAGIC:
+            if magic not in {MAGIC, LEGACY_MAGIC}:
                 raise CEVoiceError("invalid CEVOICE magic")
-            if version != VERSION:
+            if (magic, version) not in {
+                (MAGIC, VERSION),
+                (LEGACY_MAGIC, LEGACY_VERSION),
+            }:
                 raise CEVoiceError(f"unsupported CEVOICE version {version}")
 
             metadata_bytes = stream.read(metadata_length)
@@ -160,6 +163,40 @@ class CEVoice:
         return data
 
 
+@dataclass(frozen=True, slots=True)
+class PersonaIdentity:
+    """Identity details supplied by a CEVOICE pack."""
+
+    name: str = ""
+    age: str = ""
+    gender: str = ""
+    profile: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PersonaStyleValues:
+    """Baseline speaking-style values supplied by a CEVOICE pack."""
+
+    warmth: str = ""
+    directness: str = ""
+    humor: str = ""
+    detail: str = ""
+    formality: str = ""
+    enthusiasm: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CEVoicePersona:
+    """Persona metadata supplied by a CEVOICE pack."""
+
+    identity: PersonaIdentity = field(default_factory=PersonaIdentity)
+    speaking_style: str = ""
+    boundaries: tuple[str, ...] = ()
+    prompt_rules: tuple[str, ...] = ()
+    example_dialogue: tuple[str, ...] = ()
+    style: PersonaStyleValues = field(default_factory=PersonaStyleValues)
+
+
 class CEVoiceLoader:
     """Lazily materialize CEVOICE assets as real files for path-only consumers."""
 
@@ -248,7 +285,7 @@ def write_cevoice(
         manifest_voices[voice] = voice_entry
 
     manifest = dict(metadata or {})
-    manifest["format"] = "CEVOICE"
+    manifest["format"] = FORMAT_NAME
     manifest["version"] = VERSION
     manifest["voices"] = cast(ManifestValue, manifest_voices)
     metadata_bytes = json.dumps(
@@ -285,7 +322,12 @@ def _validate_metadata(
 ) -> None:
     if not isinstance(metadata, dict):
         raise CEVoiceError("metadata root must be an object")
-    if metadata.get("format") != "CEVOICE" or metadata.get("version") != VERSION:
+    format_name = metadata.get("format")
+    manifest_version = metadata.get("version")
+    if (format_name, manifest_version) not in {
+        (FORMAT_NAME, VERSION),
+        (LEGACY_FORMAT_NAME, LEGACY_VERSION),
+    }:
         raise CEVoiceError("metadata format/version mismatch")
 
     voices = metadata.get("voices")
@@ -312,12 +354,16 @@ def _validate_metadata(
     if theme is not None:
         if not isinstance(theme, dict):
             raise CEVoiceError("metadata theme must be an object")
-        for key in ("background", "accent", "glow_color"):
+        for key in ("background", "accent", "glow_color", "sleeping_color"):
             value = theme.get(key)
-            if key == "glow_color" and value is None:
+            if key in {"glow_color", "sleeping_color"} and value is None:
                 continue
             if not _is_hex_color(value):
                 raise CEVoiceError(f"metadata theme '{key}' must be a hex color")
+
+    persona = metadata.get("persona")
+    if persona is not None:
+        _validate_persona_metadata(persona)
 
     payload_length = path.stat().st_size - payload_offset
     for voice, voice_data in voices.items():
@@ -379,6 +425,145 @@ def _is_hex_color(value: ManifestValue) -> bool:
         and value.startswith("#")
         and all(character in "0123456789abcdefABCDEF" for character in value[1:])
     )
+
+
+def _validate_optional_string(
+    value: ManifestValue,
+    field_name: str,
+) -> None:
+    """Validate one optional metadata field that must be a string."""
+    if value is not None and not isinstance(value, str):
+        raise CEVoiceError(f"{field_name} must be a string")
+
+
+def _validate_string_list_or_text(
+    value: ManifestValue,
+    field_name: str,
+) -> None:
+    """Validate one optional metadata field that may be text or text lines."""
+    if value is None or isinstance(value, str):
+        return
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return
+    raise CEVoiceError(f"{field_name} must be a string or list of strings")
+
+
+def _validate_persona_metadata(persona: ManifestValue) -> None:
+    """Validate the optional CEVOICE persona metadata block."""
+    if not isinstance(persona, dict):
+        raise CEVoiceError("metadata persona must be an object")
+
+    identity = persona.get("identity")
+    if identity is not None:
+        if not isinstance(identity, dict):
+            raise CEVoiceError("metadata persona identity must be an object")
+        for key in ("name", "age", "gender", "profile"):
+            _validate_optional_string(
+                cast(Manifest, identity).get(key),
+                f"metadata persona identity '{key}'",
+            )
+
+    _validate_optional_string(persona.get("profile"), "metadata persona 'profile'")
+    _validate_optional_string(
+        persona.get("speaking_style"),
+        "metadata persona 'speaking_style'",
+    )
+    _validate_string_list_or_text(
+        persona.get("boundaries"),
+        "metadata persona 'boundaries'",
+    )
+    _validate_string_list_or_text(
+        persona.get("prompt_rules"),
+        "metadata persona 'prompt_rules'",
+    )
+    _validate_string_list_or_text(
+        persona.get("example_dialogue"),
+        "metadata persona 'example_dialogue'",
+    )
+
+    style = persona.get("style")
+    if style is not None:
+        if not isinstance(style, dict):
+            raise CEVoiceError("metadata persona style must be an object")
+        for key in (
+            "warmth",
+            "directness",
+            "humor",
+            "detail",
+            "formality",
+            "enthusiasm",
+        ):
+            _validate_optional_string(
+                cast(Manifest, style).get(key),
+                f"metadata persona style '{key}'",
+            )
+
+
+def _text_tuple(value: ManifestValue) -> tuple[str, ...]:
+    """Normalize one text or text-list manifest value into a tuple."""
+    if isinstance(value, str):
+        stripped = value.strip()
+        return (stripped,) if stripped else ()
+    if isinstance(value, list):
+        lines = [
+            item.strip() for item in value if isinstance(item, str) and item.strip()
+        ]
+        return tuple(lines)
+    return ()
+
+
+def persona_metadata_from_manifest(
+    metadata: Mapping[str, ManifestValue],
+) -> Optional[CEVoicePersona]:
+    """Return typed persona metadata from a CEVOICE manifest when present."""
+    raw_persona = metadata.get("persona")
+    if not isinstance(raw_persona, dict):
+        return None
+
+    raw_identity = raw_persona.get("identity")
+    identity = cast(Manifest, raw_identity) if isinstance(raw_identity, dict) else {}
+    raw_style = raw_persona.get("style")
+    style = cast(Manifest, raw_style) if isinstance(raw_style, dict) else {}
+
+    profile = raw_persona.get("profile")
+    identity_profile = identity.get("profile")
+    return CEVoicePersona(
+        identity=PersonaIdentity(
+            name=_manifest_text(identity.get("name")),
+            age=_manifest_text(identity.get("age")),
+            gender=_manifest_text(identity.get("gender")),
+            profile=_manifest_text(identity_profile or profile),
+        ),
+        speaking_style=_manifest_text(raw_persona.get("speaking_style")),
+        boundaries=_text_tuple(raw_persona.get("boundaries")),
+        prompt_rules=_text_tuple(raw_persona.get("prompt_rules")),
+        example_dialogue=_text_tuple(raw_persona.get("example_dialogue")),
+        style=PersonaStyleValues(
+            warmth=_manifest_text(style.get("warmth")),
+            directness=_manifest_text(style.get("directness")),
+            humor=_manifest_text(style.get("humor")),
+            detail=_manifest_text(style.get("detail")),
+            formality=_manifest_text(style.get("formality")),
+            enthusiasm=_manifest_text(style.get("enthusiasm")),
+        ),
+    )
+
+
+def bundle_character_name(bundle: CEVoice) -> Optional[str]:
+    """Return the active character name implied by one CEVOICE bundle."""
+    persona = persona_metadata_from_manifest(bundle.metadata)
+    if persona is not None and persona.identity.name.strip():
+        return persona.identity.name.strip()
+
+    name = bundle.metadata.get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return None
+
+
+def _manifest_text(value: ManifestValue) -> str:
+    """Return a manifest value only when it is meaningful text."""
+    return value.strip() if isinstance(value, str) and value.strip() else ""
 
 
 _DEFAULT_LOADER: Optional[CEVoiceLoader] = None

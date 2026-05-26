@@ -409,6 +409,12 @@ class SpeakRequest(BaseModel):
     save: bool = True
 
 
+class ThinkRequest(BaseModel):
+    """Request body for asking Celune to think and reply."""
+
+    content: str = Field(min_length=1)
+
+
 class VoiceRequest(BaseModel):
     """Request body for changing Celune's voice."""
 
@@ -512,6 +518,31 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
         content={"status": "accepted", "job_id": job_id, "location": location},
         headers={"Location": location},
     )
+
+
+@api.post("/v1/think", response_model=None)
+def think(body: ThinkRequest) -> JSONResponse:
+    """Ask Celune to think about an input and reply through Persona.
+
+    Args:
+        body: A think request body.
+
+    Returns:
+        JSONResponse: An accepted response when Persona processing starts, or
+            a JSON error payload if Celune cannot think right now.
+    """
+    celune = require_celune()
+    api_log("THINK", body.content)
+    if not celune.think(body.content):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "not_ready",
+                "message": "I'm currently busy. Try again later.",
+            },
+        )
+
+    return JSONResponse(status_code=202, content={"status": "accepted"})
 
 
 @api.get("/v1/speak/jobs/{job_id}", response_model=None)

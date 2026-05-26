@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Terminal UI helpers."""
 
+import logging
 import re
 import sys
 from typing import Callable
@@ -161,3 +162,34 @@ class LogRedirect:
             bool: Whether the underlying terminal is a TTY.
         """
         return self.underlying_stdout.isatty()
+
+
+class UILogHandler(logging.Handler):
+    """Route Python logging records into Celune's UI log callback."""
+
+    def __init__(self, write_callback: Callable[[str, str], None]) -> None:
+        super().__init__()
+        self.write_callback = write_callback
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Forward one Python logging record into the UI log stream."""
+        try:
+            message = record.getMessage().strip()
+        except Exception:
+            self.handleError(record)
+            return
+
+        if not message:
+            return
+
+        if record.levelno >= logging.ERROR:
+            severity = "error"
+            prefix = "Internal runtime error:"
+        elif record.levelno >= logging.WARNING:
+            severity = "warning"
+            prefix = "Internal runtime warning:"
+        else:
+            severity = "info"
+            prefix = "Internal runtime notice:"
+
+        self.write_callback(" ".join([prefix, message]), severity)

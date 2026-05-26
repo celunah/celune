@@ -10,6 +10,7 @@ from typing import Callable, Optional
 
 from ..config import Config
 from ..constants import JSONSerializable, PERSONA_MODEL_ID
+from ..vram import resolve_vram_preset
 from .runtime import PersonaRuntime, request_from_json, response_to_json
 
 PERSONA_QUANTIZATION = "4bit"
@@ -33,8 +34,13 @@ class PersonaClientResponse:
 class PersonaClient:
     """In-process Persona client adapter used by Celune."""
 
-    def __init__(self, log_dev: Optional[DevLogCallback] = None) -> None:
-        self.runtime = PersonaRuntime()
+    def __init__(
+        self,
+        config: Optional[Mapping[str, JSONSerializable]] = None,
+        log_dev: Optional[DevLogCallback] = None,
+    ) -> None:
+        self.runtime = PersonaRuntime(config=config)
+        self.config = config
         self.log_dev = log_dev
 
     @contextlib.contextmanager
@@ -96,12 +102,21 @@ def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
 
 def persona_enabled(config: Mapping[str, JSONSerializable]) -> bool:
     """Return whether Celune should try to use personas."""
-    return bool(persona_config(config).get("enabled", True))
+    return resolve_vram_preset(config).persona_enabled and bool(
+        persona_config(config).get("enabled", True)
+    )
 
 
 def persona_talkback_enabled(config: Mapping[str, JSONSerializable]) -> bool:
     """Return whether regular UI input should go through persona talkback."""
-    return bool(persona_config(config).get("talkback", True))
+    return persona_enabled(config) and bool(
+        persona_config(config).get("talkback", True)
+    )
+
+
+def persona_quantization(config: Mapping[str, JSONSerializable]) -> str:
+    """Return the Persona quantization mode permitted by the VRAM tier."""
+    return resolve_vram_preset(config).persona_quantization
 
 
 def persona_model_id(config: Optional[Mapping[str, JSONSerializable]] = None) -> str:
@@ -134,4 +149,4 @@ def create_persona_client(
     if not persona_is_available():
         return None
 
-    return PersonaClient(log_dev=log_dev)
+    return PersonaClient(config=config, log_dev=log_dev)

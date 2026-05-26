@@ -1,0 +1,448 @@
+# SPDX-License-Identifier: MIT
+"""Persistent long-term memory helpers for the Persona system."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import uuid
+import datetime
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Optional
+
+
+_WORD_RE = re.compile(r"[a-z0-9']+")
+_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "be",
+    "can",
+    "do",
+    "for",
+    "from",
+    "i",
+    "if",
+    "in",
+    "is",
+    "it",
+    "me",
+    "my",
+    "of",
+    "on",
+    "or",
+    "please",
+    "remember",
+    "that",
+    "the",
+    "this",
+    "to",
+    "we",
+    "what",
+    "you",
+}
+
+
+def _utc_now() -> str:
+    """Return the current UTC timestamp in ISO 8601 format."""
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize one memory string for stable storage and matching."""
+    collapsed = " ".join(text.strip().split())
+    return collapsed.strip(" \t\r\n-:;,.")
+
+
+def _tokenize(text: str) -> set[str]:
+    """Return normalized matching tokens for one text string."""
+    lowered = text.casefold()
+    return {
+        token
+        for token in _WORD_RE.findall(lowered)
+        if token and token not in _STOPWORDS
+    }
+
+
+def _character_slug(name: str) -> str:
+    """Return a filesystem-safe identifier for one character name."""
+    cleaned = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")
+    return cleaned or "unknown"
+
+
+def default_memory_dir() -> Path:
+    """Return the default on-disk directory for Persona memories."""
+    local_appdata = os.getenv("LOCALAPPDATA")
+    if local_appdata:
+        return Path(local_appdata) / "Celune" / "persona_memory"
+
+    xdg_data_home = os.getenv("XDG_DATA_HOME")
+    if xdg_data_home:
+        return Path(xdg_data_home) / "celune" / "persona_memory"
+
+    return Path.home() / ".celune" / "persona_memory"
+
+
+@dataclass(slots=True, frozen=True)
+class MemoryRecord:
+    """One stored long-term memory record."""
+
+    id: str
+    content: str
+    importance: int
+    explicit: bool
+    created_at: str
+    updated_at: str
+    last_used_at: str
+
+    @staticmethod
+    def create(content: str, importance: int, explicit: bool) -> "MemoryRecord":
+        """Construct one new memory record."""
+        now = _utc_now()
+        return MemoryRecord(
+            id=uuid.uuid4().hex,
+            content=_normalize_text(content),
+            importance=max(1, min(3, int(importance))),
+            explicit=bool(explicit),
+            created_at=now,
+            updated_at=now,
+            last_used_at=now,
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class MemoryCandidate:
+    """Candidate memory extracted from a user message."""
+
+    content: str
+    importance: int
+    explicit: bool
+
+
+class PersonaMemoryStore:
+    """JSON-backed character-specific long-term memory store."""
+
+    def __init__(self, storage_dir: Optional[Path | str] = None) -> None:
+        self.storage_dir = (
+            Path(storage_dir) if storage_dir is not None else default_memory_dir()
+        )
+
+    def _path_for_character(self, character_name: str) -> Path:
+        """Return the JSON file path for one active character."""
+        return self.storage_dir / f"{_character_slug(character_name)}.json"
+
+    def load_records(self, character_name: str) -> list[MemoryRecord]:
+        """Load all memory records for one character."""
+        path = self._path_for_character(character_name)
+        if not path.exists():
+            return []
+
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return []
+
+        if not isinstance(raw, list):
+            return []
+
+        records: list[MemoryRecord] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content")
+            if not isinstance(content, str) or not _normalize_text(content):
+                continue
+            record_id = item.get("id")
+            created_at = item.get("created_at")
+            updated_at = item.get("updated_at")
+            last_used_at = item.get("last_used_at")
+            if not all(
+                isinstance(value, str) and value.strip()
+                for value in (record_id, created_at, updated_at, last_used_at)
+            ):
+                continue
+            record_id = str(record_id)
+            created_at = str(created_at)
+            updated_at = str(updated_at)
+            last_used_at = str(last_used_at)
+            importance = item.get("importance", 1)
+            explicit = item.get("explicit", False)
+            if isinstance(importance, bool):
+                importance = 1
+            if not isinstance(importance, (int, float)):
+                importance = 1
+            records.append(
+                MemoryRecord(
+                    id=record_id.strip(),
+                    content=_normalize_text(content),
+                    importance=max(1, min(3, int(importance))),
+                    explicit=bool(explicit),
+                    created_at=created_at.strip(),
+                    updated_at=updated_at.strip(),
+                    last_used_at=last_used_at.strip(),
+                )
+            )
+        return records
+
+    def save_records(self, character_name: str, records: list[MemoryRecord]) -> None:
+        """Persist all memory records for one character atomically."""
+        path = self._path_for_character(character_name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = [asdict(record) for record in records]
+        temp_path = path.with_suffix(".json.tmp")
+        temp_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        temp_path.replace(path)
+
+    def remember(
+        self,
+        character_name: str,
+        content: str,
+        *,
+        importance: int = 1,
+        explicit: bool = False,
+    ) -> Optional[MemoryRecord]:
+        """Store or update one memory for a character."""
+        normalized = _normalize_text(content)
+        if not normalized:
+            return None
+
+        records = self.load_records(character_name)
+        now = _utc_now()
+        for index, record in enumerate(records):
+            if record.content.casefold() != normalized.casefold():
+                continue
+            updated = MemoryRecord(
+                id=record.id,
+                content=record.content,
+                importance=max(record.importance, 1, min(3, int(importance))),
+                explicit=record.explicit or explicit,
+                created_at=record.created_at,
+                updated_at=now,
+                last_used_at=record.last_used_at,
+            )
+            records[index] = updated
+            self.save_records(character_name, records)
+            return updated
+
+        created = MemoryRecord.create(
+            normalized,
+            importance=max(1, min(3, int(importance))),
+            explicit=explicit,
+        )
+        records.append(created)
+        self.save_records(character_name, records)
+        return created
+
+    def collect_candidates(self, user_message: str) -> list[MemoryCandidate]:
+        """Extract explicit and automatic memory candidates from one message."""
+        text = _normalize_text(user_message)
+        if not text:
+            return []
+
+        explicit = self._explicit_candidate(text)
+        if explicit is not None:
+            return [explicit]
+
+        automatic = self._automatic_candidates(text)
+        unique: list[MemoryCandidate] = []
+        seen: set[str] = set()
+        for candidate in automatic:
+            key = candidate.content.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(candidate)
+        return unique
+
+    def remember_from_user_message(
+        self, character_name: str, user_message: str
+    ) -> list[MemoryRecord]:
+        """Store any memories that should be derived from one user message."""
+        saved: list[MemoryRecord] = []
+        for candidate in self.collect_candidates(user_message):
+            record = self.remember(
+                character_name,
+                candidate.content,
+                importance=candidate.importance,
+                explicit=candidate.explicit,
+            )
+            if record is not None:
+                saved.append(record)
+        return saved
+
+    def retrieve(
+        self, character_name: str, request: str, limit: int = 5
+    ) -> list[MemoryRecord]:
+        """Return the most relevant memories for the current request."""
+        records = self.load_records(character_name)
+        if not records or limit <= 0:
+            return []
+
+        request_text = _normalize_text(request)
+        if not request_text:
+            return []
+
+        request_tokens = _tokenize(request_text)
+        ranked: list[tuple[int, int, MemoryRecord]] = []
+        for index, record in enumerate(records):
+            content_tokens = _tokenize(record.content)
+            overlap = len(request_tokens & content_tokens)
+            if overlap <= 0:
+                continue
+
+            score = overlap * 10
+            score += record.importance * 3
+            if record.explicit:
+                score += 2
+            if request_text.casefold() in record.content.casefold():
+                score += 2
+            ranked.append((score, index, record))
+
+        if not ranked:
+            return []
+
+        ranked.sort(
+            key=lambda item: (
+                -item[0],
+                -item[2].importance,
+                not item[2].explicit,
+                item[1],
+            )
+        )
+        selected = [record for _, _, record in ranked[:limit]]
+        if not selected:
+            return []
+
+        now = _utc_now()
+        selected_ids = {record.id for record in selected}
+        updated_records = [
+            MemoryRecord(
+                id=record.id,
+                content=record.content,
+                importance=record.importance,
+                explicit=record.explicit,
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+                last_used_at=now if record.id in selected_ids else record.last_used_at,
+            )
+            for record in records
+        ]
+        self.save_records(character_name, updated_records)
+        return [
+            record
+            if record.id not in selected_ids
+            else next(updated for updated in updated_records if updated.id == record.id)
+            for record in selected
+        ]
+
+    @staticmethod
+    def _explicit_candidate(text: str) -> Optional[MemoryCandidate]:
+        """Return one explicit memory candidate when the user asks to remember."""
+        lowered = text.casefold()
+        if lowered.startswith("do you remember") or lowered.startswith(
+            "what do you remember"
+        ):
+            return None
+
+        patterns = (
+            r"^(?:please\s+)?remember(?:\s+that)?\s+(.+)$",
+            r"^(?:please\s+)?don't forget(?:\s+that)?\s+(.+)$",
+        )
+        for pattern in patterns:
+            match = re.match(pattern, text, flags=re.IGNORECASE)
+            if match is None:
+                continue
+            content = _normalize_text(match.group(1))
+            if content:
+                return MemoryCandidate(content=content, importance=3, explicit=True)
+        return None
+
+    @staticmethod
+    def _automatic_candidates(text: str) -> list[MemoryCandidate]:
+        """Return conservative automatic memory candidates."""
+        candidates: list[MemoryCandidate] = []
+        patterns: tuple[tuple[str, str, int], ...] = (
+            (
+                r"^my name is\s+(.+)$",
+                "The user's name is {value}.",
+                3,
+            ),
+            (
+                r"^call me\s+(.+)$",
+                "The user wants to be called {value}.",
+                3,
+            ),
+            (
+                r"^my favorite ([a-z0-9 _-]+?) is\s+(.+)$",
+                "The user's favorite {key} is {value}.",
+                3,
+            ),
+            (
+                r"^i prefer\s+(.+)$",
+                "The user prefers {value}.",
+                2,
+            ),
+            (
+                r"^i(?:'m| am) working on\s+(.+)$",
+                "The user is working on {value}.",
+                2,
+            ),
+            (
+                r"^my project is\s+(.+)$",
+                "The user's project is {value}.",
+                2,
+            ),
+            (
+                r"^we(?:'re| are) working on\s+(.+)$",
+                "The user is working on {value}.",
+                2,
+            ),
+            (
+                r"^my goal is\s+(.+)$",
+                "The user's goal is {value}.",
+                2,
+            ),
+            (
+                r"^i want to build\s+(.+)$",
+                "The user wants to build {value}.",
+                2,
+            ),
+        )
+
+        for pattern, template, importance in patterns:
+            match = re.match(pattern, text, flags=re.IGNORECASE)
+            if match is None:
+                continue
+
+            groups = match.groups()
+            if len(groups) == 1:
+                value = _normalize_text(groups[0])
+                if value:
+                    candidates.append(
+                        MemoryCandidate(
+                            content=template.format(value=value),
+                            importance=importance,
+                            explicit=False,
+                        )
+                    )
+                continue
+
+            if len(groups) == 2:
+                key = _normalize_text(groups[0])
+                value = _normalize_text(groups[1])
+                if key and value:
+                    candidates.append(
+                        MemoryCandidate(
+                            content=template.format(key=key, value=value),
+                            importance=importance,
+                            explicit=False,
+                        )
+                    )
+
+        return candidates

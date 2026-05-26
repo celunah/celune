@@ -84,19 +84,34 @@ class FakeBackend(CeluneBackend):
 class FakeGlow:
     """Minimal RGB glow fake that records lifecycle calls."""
 
-    def __init__(self, color: str) -> None:
+    def __init__(
+        self,
+        color: str,
+        celune: object | None = None,
+        host: str = "127.0.0.1",
+        port: int = 6742,
+    ) -> None:
         """Initialize fake glow state.
 
         Args:
             color: The configured glow color.
+            celune: Attached Celune instance, when provided.
+            host: Configured OpenRGB host.
+            port: Configured OpenRGB port.
 
         Returns:
             None: Constructors initialize state in place.
         """
         self.color = color
+        self.celune = celune
+        self.host = host
+        self.port = port
         self.connect_failed = False
         self.started = False
         self.entered = False
+        self.fatal_called = False
+        self.sleep_called = False
+        self.wake_called = False
         self.finished = threading.Event()
         self.finished.set()
         self.scheduled: list[npt.NDArray[np.float32]] = []
@@ -124,6 +139,18 @@ class FakeGlow:
         Returns:
             None: This fake intentionally performs no work.
         """
+
+    def fatal(self) -> None:
+        """Record that Celune entered a fatal glow state."""
+        self.fatal_called = True
+
+    def sleep(self) -> None:
+        """Record that Celune requested sleep dimming."""
+        self.sleep_called = True
+
+    def wake(self) -> None:
+        """Record that Celune requested brightness restoration."""
+        self.wake_called = True
 
     @staticmethod
     def stop(reset: bool = True, wait: bool = False) -> None:

@@ -75,6 +75,7 @@ class Qwen3(CeluneBackend):
         log: Callable[[str, str], None],
         mode: Literal["native", "clone"] = "clone",
         x_vector_only: bool = False,
+        clone_model_id: Optional[str] = None,
     ) -> None:
         if mode not in self.supported_modes:
             raise ValueError(
@@ -94,8 +95,9 @@ class Qwen3(CeluneBackend):
                 stacklevel=2,
             )
         if self.mode == "clone":
-            self.model_name = self.clone_model
+            self.model_name = clone_model_id or self.clone_model
             self._validate_refs()
+        self.clone_model_id = clone_model_id or self.clone_model
 
     @property
     def default_model_id(self) -> str:
@@ -105,7 +107,7 @@ class Qwen3(CeluneBackend):
             str: The default Qwen3 model identifier.
         """
         if self.mode == "clone":
-            return self.clone_model
+            return self.clone_model_id
         return super().default_model_id
 
     @property
@@ -116,7 +118,7 @@ class Qwen3(CeluneBackend):
             list[str]: The model identifiers needed by the selected mode.
         """
         if self.mode == "clone":
-            return [self.clone_model]
+            return [self.clone_model_id]
         return super().all_model_ids
 
     def model_id_for_voice(self, voice: str) -> str:
@@ -136,7 +138,7 @@ class Qwen3(CeluneBackend):
                 raise ValueError(
                     f"{self.name} cannot resolve a model for voice '{voice}'"
                 )
-            return self.clone_model
+            return self.clone_model_id
 
         return super().model_id_for_voice(voice)
 

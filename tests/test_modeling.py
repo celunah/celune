@@ -14,6 +14,13 @@ from celune.backends import CeluneBackend
 class ModelingTests(TestCase):
     """Tests for lightweight modeling helpers."""
 
+    def test_normalizer_device_follows_vram_preset(self) -> None:
+        """Verify CeluneNorm device selection follows the VRAM tier."""
+        with mock.patch("celune.vram.torch.cuda.is_available", return_value=False):
+            self.assertEqual(modeling.normalizer_device(None), "cpu")
+            self.assertEqual(modeling.normalizer_device({"vram": "high"}), "cpu")
+            self.assertEqual(modeling.normalizer_device({"vram": "xhigh"}), "cuda")
+
     def test_load_normalizer_components_uses_v4_tokenizer_compatibility(self) -> None:
         """Verify v5 tokenizer metadata is bypassed for Transformers v4.
 
@@ -31,6 +38,7 @@ class ModelingTests(TestCase):
         log = mock.Mock()
 
         with (
+            mock.patch("celune.vram.torch.cuda.is_available", return_value=False),
             mock.patch.object(
                 modeling.AutoTokenizer,
                 "from_pretrained",
@@ -43,7 +51,7 @@ class ModelingTests(TestCase):
             ) as model_loader,
         ):
             loaded_tokenizer, loaded_llm = modeling.load_normalizer_components(
-                log, cast(CeluneBackend, backend)
+                log, cast(CeluneBackend, backend), {"vram": "xhigh"}
             )
 
         self.assertIs(loaded_tokenizer, tokenizer)
@@ -56,6 +64,5 @@ class ModelingTests(TestCase):
         model_loader.assert_called_once_with(
             "local-model",
             torch_dtype=torch.bfloat16,
-            device_map=modeling.NORMALIZER_DEVICE,
+            device_map="cuda",
         )
-        self.assertEqual(modeling.NORMALIZER_DEVICE, "cpu")
