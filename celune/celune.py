@@ -913,7 +913,7 @@ class Celune:
                         self._raise_warmup_error("warmup failed after reload")
 
                     if not play_readiness_signal(self):
-                        self.log("Could not play the readiness signal.", "warning")
+                        self.log_dev("Could not play the readiness signal.", "warning")
 
                 self.log_dev(
                     "[RELOAD] The target model is the same as the model currently in use."
@@ -1394,7 +1394,7 @@ class Celune:
             return False
 
         if self.sleeping:
-            self.log("Celune is currently sleeping.", "warning")
+            self.log("Cannot think while Celune is sleeping.", "warning")
             self.error_callback("Celune is currently sleeping")
             return False
 
