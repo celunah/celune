@@ -13,6 +13,7 @@ from .utils import to_rgb
 
 DEFAULT_BACKGROUND: Final[str] = "#1d1826"
 DEFAULT_ACCENT: Final[str] = "#cebaff"
+DEFAULT_SLEEPING: Final[str] = "#9c88ce"
 RGB = tuple[int, int, int]
 
 
@@ -206,12 +207,14 @@ def _theme(name: str, palette: dict[str, str], *, dark: bool) -> Theme:
 def configure_theme(
     background: str = DEFAULT_BACKGROUND,
     accent: str = DEFAULT_ACCENT,
+    sleeping: str = DEFAULT_SLEEPING,
 ) -> None:
     """Rebuild Celune's theme family from two bundle-provided seed colors.
 
     Args:
         background: The background color provided by a CEVOICE pack.
         accent: The accent color provided by a CEVOICE pack.
+        sleeping: The sleeping-state accent color provided by a CEVOICE pack.
 
     Returns:
         None: This function builds Celune's theme colors automatically.
@@ -227,16 +230,19 @@ def configure_theme(
             "info": dark_palette["primary"],
             "warning": dark_palette["warning"],
             "error": dark_palette["error"],
+            "sleeping": sleeping,
         },
         "celune_light": {
             "info": light_palette["primary"],
             "warning": light_palette["warning"],
             "error": light_palette["error"],
+            "sleeping": sleeping,
         },
         "celune_april_fools": {
             "info": random_hex(),
             "warning": random_hex(),
             "error": random_hex(),
+            "sleeping": sleeping,
         },
     }
 

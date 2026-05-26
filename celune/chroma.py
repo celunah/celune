@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: MIT
 """Celune Razer Chroma and OpenRGB-compatible RGB glow effect."""
 
+from __future__ import annotations
+
 import os
 import time
 import datetime
 import threading
 import contextlib
-from typing import Union
+from typing import Union, Optional, TYPE_CHECKING
 from collections import deque
 
 import numpy as np
@@ -19,14 +21,32 @@ from .colors import RGB
 from .constants import BASE_SR
 from .utils import to_rgb, lunar_info, range_interpolated, is_celune_day
 
+if TYPE_CHECKING:
+    from .celune import Celune
+
 
 class AudioRGBGlow:
     """OpenRGB-compatible speaking-aware glow effect."""
 
-    def __init__(self, color: str, host: str = "127.0.0.1", port: int = 6742) -> None:
-        self.color = np.array(
+    fatal_color_hex = "#ce2006"
+
+    def __init__(
+        self,
+        celune: Optional["Celune"],
+        color: str,
+        host: str = "127.0.0.1",
+        port: int = 6742,
+    ) -> None:
+        self.base_color = np.array(
             self._fix_color_rendering(to_rgb(color)), dtype=np.float32
         )
+        self.fatal_color = np.array(
+            self._fix_color_rendering(to_rgb(self.fatal_color_hex)), dtype=np.float32
+        )
+        self._current_color = self.base_color.copy()
+        self._target_color = self.base_color.copy()
+
+        self.celune = celune
 
         self.host = host
         self.port = port
@@ -46,6 +66,7 @@ class AudioRGBGlow:
         self.fps = 60
 
         self.transition_rate = 0.02
+        self.color_transition_rate = 0.08
         self.glow_multiplier = 1.0
         self.max_glow_forced = os.getenv("CELUNE_FORCE_CELUNE_DAY") in {
             "1",
@@ -81,6 +102,7 @@ class AudioRGBGlow:
 
         self._current_brightness = 0.0
         self._target_brightness = self.idle_brightness
+        self._sleep_restore_brightness = self.idle_brightness
         self._last_speech_time = 0.0
 
         self._state = "none"
@@ -159,6 +181,44 @@ class AudioRGBGlow:
             self._state = "entering"
             self._current_brightness = 0.0
             self._target_brightness = self.idle_brightness
+            self._target_color = self.base_color.copy()
+
+    def fatal(self) -> None:
+        """Fade the glow into Celune's fixed fatal-error color."""
+        if not self.start():
+            return
+
+        with self._lock:
+            self._state = "fatal"
+            self._target_brightness = max(self.idle_brightness, 0.2)
+            self._target_color = self.fatal_color.copy()
+
+    def sleep(self) -> None:
+        """Fade the glow down to Celune's sleeping brightness."""
+        if not self.start():
+            return
+
+        with self._lock:
+            if self._state != "sleeping":
+                self._sleep_restore_brightness = max(
+                    self._target_brightness,
+                    self._current_brightness,
+                    self.idle_brightness,
+                )
+            self._state = "sleeping"
+            self._target_brightness = self.idle_brightness * 0.25
+
+    def wake(self) -> None:
+        """Restore the glow brightness that was active before sleep."""
+        if not self.start():
+            return
+
+        with self._lock:
+            self._state = "waking"
+            self._target_brightness = max(
+                self._sleep_restore_brightness,
+                self.idle_brightness,
+            )
 
     def leave(self) -> None:
         """Fade out from current brightness to black and stop.
@@ -172,6 +232,7 @@ class AudioRGBGlow:
         with self._lock:
             self._state = "leaving"
             self._target_brightness = 0.0
+            self._target_color = self._target_color.copy()
             self.finished.clear()
 
     def schedule(self, audio: npt.NDArray[np.float32]) -> None:
@@ -357,6 +418,29 @@ class AudioRGBGlow:
             elif state == "none":
                 self._current_brightness = 0.0
 
+            elif state == "fatal":
+                target = max(target, self.idle_brightness, 0.2)
+                alpha = self.transition_rate
+                self._current_brightness += (target - self._current_brightness) * alpha
+                self._current_brightness = float(
+                    np.clip(self._current_brightness, 0.0, target)
+                )
+
+            elif state == "sleeping":
+                target = self.idle_brightness * 0.25
+                alpha = self.transition_rate
+                self._current_brightness += (target - self._current_brightness) * alpha
+
+            elif state == "waking":
+                alpha = self.transition_rate
+                self._current_brightness += (target - self._current_brightness) * alpha
+
+                if abs(self._current_brightness - target) <= 0.001:
+                    self._current_brightness = target
+                    with self._lock:
+                        if self._state == "waking":
+                            self._state = "normal"
+
             else:
                 speaking_for = now - last_speech
 
@@ -383,7 +467,10 @@ class AudioRGBGlow:
                     )
                 )
 
-            current_rgb = self.color * self._current_brightness
+            self._current_color += (
+                self._target_color - self._current_color
+            ) * self.color_transition_rate
+            current_rgb = self._current_color * self._current_brightness
             self._set_all_devices(current_rgb)
             time.sleep(frame_sleep)
 

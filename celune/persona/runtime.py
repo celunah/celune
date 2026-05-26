@@ -8,8 +8,8 @@ import gc
 import threading
 import contextlib
 from dataclasses import dataclass, field
-from collections.abc import Sequence
-from typing import Literal, Optional, Protocol, Any, Union, cast
+from collections.abc import Mapping, Sequence
+from typing import Literal, Optional, Protocol, TypedDict, Union, cast
 
 import torch
 from transformers import (
@@ -21,10 +21,55 @@ from transformers import (
 from transformers.tokenization_utils_base import BatchEncoding
 
 from ..constants import JSONSerializable, PERSONA_MODEL_ID
+from ..vram import resolve_vram_preset
 
 Role = Literal["system", "user", "assistant"]
-type JSONDict = dict[str, JSONSerializable]
-MessageContent = Union[str, list[JSONDict]]
+type VideoMetadataScalar = Optional[Union[bool, int, float, str]]
+type VisionInput = Union[JSONSerializable, torch.Tensor, bytes, memoryview]
+type ProcessorKwargValue = Union[VideoMetadataScalar, Sequence[VideoMetadataScalar]]
+type ModelGenerateKwargValue = Union[torch.Tensor, int, float, bool]
+
+
+class TextContentItem(TypedDict):
+    """Text content block accepted by Persona chat messages."""
+
+    type: Literal["text"]
+    text: str
+
+
+class ImageContentItem(TypedDict):
+    """Image content block accepted by Persona chat messages."""
+
+    type: Literal["image"]
+    image: str
+
+
+class VideoContentItem(TypedDict):
+    """Video content block accepted by Persona chat messages."""
+
+    type: Literal["video"]
+    video: str
+
+
+type ContentItem = Union[TextContentItem, ImageContentItem, VideoContentItem]
+type VideoMetadata = dict[str, VideoMetadataScalar]
+type VideoInputWithMetadata = tuple[VisionInput, VideoMetadata]
+type VisionProcessorOutput = tuple[
+    Optional[list[VisionInput]],
+    Optional[list[VideoInputWithMetadata]],
+    dict[str, ProcessorKwargValue],
+]
+type MessageContent = Union[str, list[ContentItem]]
+
+
+class ChatMessagePayload(TypedDict):
+    """Serialized chat message structure used by the Persona runtime."""
+
+    role: Role
+    content: MessageContent
+
+
+type JSONDict = ChatMessagePayload
 
 
 class ChatTemplateRenderer(Protocol):
@@ -32,7 +77,7 @@ class ChatTemplateRenderer(Protocol):
 
     def apply_chat_template(
         self,
-        conversation: object,
+        conversation: Sequence[ChatMessagePayload],
         *,
         tokenize: bool = ...,
         add_generation_prompt: bool = ...,
@@ -60,18 +105,17 @@ class PersonaTokenizer(Protocol):
 class PersonaProcessor(ChatTemplateRenderer, Protocol):
     """Processor protocol used by the Persona runtime."""
 
-    tokenizer: PersonaTokenizer | None
+    tokenizer: Optional[PersonaTokenizer]
 
     def __call__(
         self,
         *,
         text: str,
-        images: object = ...,
-        videos: object = ...,
-        video_metadata: object = ...,
+        images: Optional[Sequence[VisionInput]] = ...,
+        videos: Optional[Sequence[VisionInput]] = ...,
+        video_metadata: Optional[Sequence[VideoMetadata]] = ...,
         return_tensors: str,
-        do_resize: bool = ...,
-        **kwargs: object,
+        **kwargs: ProcessorKwargValue,
     ) -> BatchEncoding:
         """Build multimodal model inputs."""
         raise NotImplementedError("protocol method")
@@ -82,11 +126,11 @@ class PersonaModel(Protocol):
 
     device: Union[torch.device, str]
 
-    def generate(self, **kwargs: object) -> torch.Tensor:
+    def generate(self, **kwargs: ModelGenerateKwargValue) -> torch.Tensor:
         """Generate token IDs from prepared inputs."""
         raise NotImplementedError("protocol method")
 
-    def eval(self) -> object:
+    def eval(self) -> None:
         """Switch the model into eval mode."""
         raise NotImplementedError("protocol method")
 
@@ -125,7 +169,10 @@ class GenerateResponse:
     quantization: str
 
 
-def _render_chat_prompt(renderer: object, messages: Sequence[JSONDict]) -> str:
+def _render_chat_prompt(
+    renderer: Union[ChatTemplateRenderer, PersonaTokenizer],
+    messages: Sequence[ChatMessagePayload],
+) -> str:
     """Render chat messages into one prompt string."""
     apply_chat_template = getattr(renderer, "apply_chat_template", None)
     if callable(apply_chat_template):
@@ -164,6 +211,11 @@ def _render_chat_prompt(renderer: object, messages: Sequence[JSONDict]) -> str:
     return "\n\n".join(parts)
 
 
+def _payload_from_message(message: ChatMessage) -> ChatMessagePayload:
+    """Convert one runtime chat message into the serialized payload shape."""
+    return ChatMessagePayload(role=message.role, content=message.content)
+
+
 class PersonaBackend:
     """Character-agnostic backend for Persona generation."""
 
@@ -186,27 +238,50 @@ class PersonaBackend:
 
         self.unload()
 
-        load_kwargs: dict[str, Any] = {"device_map": "auto"}
         normalized = quantization.casefold()
         if normalized in {"4bit", "nf4", "bnb4", "bitsandbytes-4bit"}:
             if not torch.cuda.is_available():
                 raise ValueError(
                     "Persona quantized loading requires a CUDA-enabled Torch build"
                 )
-            load_kwargs["quantization_config"] = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_use_double_quant=True,
+            model = cast(
+                PersonaModel,
+                Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                    model_id,
+                    trust_remote_code=True,
+                    device_map="auto",
+                    quantization_config=BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_compute_dtype=torch.bfloat16,
+                        bnb_4bit_use_double_quant=True,
+                    ),
+                ),
             )
         elif normalized in {"8bit", "bnb8", "bitsandbytes-8bit"}:
             if not torch.cuda.is_available():
                 raise ValueError(
                     "Persona quantized loading requires a CUDA-enabled Torch build"
                 )
-            load_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+            model = cast(
+                PersonaModel,
+                Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                    model_id,
+                    trust_remote_code=True,
+                    device_map="auto",
+                    quantization_config=BitsAndBytesConfig(load_in_8bit=True),
+                ),
+            )
         elif normalized in {"none", "false", "off", "disabled"}:
-            load_kwargs["torch_dtype"] = torch.bfloat16
+            model = cast(
+                PersonaModel,
+                Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                    model_id,
+                    trust_remote_code=True,
+                    device_map="auto",
+                    torch_dtype=torch.bfloat16,
+                ),
+            )
         else:
             raise ValueError(f"unsupported Persona quantization mode: {quantization}")
 
@@ -218,22 +293,14 @@ class PersonaBackend:
                     trust_remote_code=True,
                 ),
             )
-        except Exception:
-            processor = None
+        except Exception as exc:
+            raise ValueError(
+                f"Persona processor failed to load for model '{model_id}'"
+            ) from exc
 
-        model = cast(
-            PersonaModel,
-            Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                model_id,
-                trust_remote_code=True,
-                **load_kwargs,
-            ),
-        )
-        supports_vision = processor is not None and _processor_supports_native_vision(
-            processor
-        )
-
-        if processor is None:
+        supports_vision = True
+        tokenizer = processor.tokenizer
+        if tokenizer is None:
             tokenizer = cast(
                 PersonaTokenizer,
                 AutoTokenizer.from_pretrained(
@@ -241,16 +308,6 @@ class PersonaBackend:
                     trust_remote_code=True,
                 ),
             )
-        else:
-            tokenizer = processor.tokenizer
-            if tokenizer is None:
-                tokenizer = cast(
-                    PersonaTokenizer,
-                    AutoTokenizer.from_pretrained(
-                        model_id,
-                        trust_remote_code=True,
-                    ),
-                )
 
         model.eval()
         self.processor = processor
@@ -286,22 +343,19 @@ class PersonaBackend:
         if model is None or tokenizer is None:
             raise ValueError("Persona backend is not loaded")
 
-        message_dicts = cast(
-            list[JSONDict],
-            [
-                {"role": message.role, "content": message.content}
-                for message in messages
-            ],
-        )
+        message_dicts = [_payload_from_message(message) for message in messages]
         inputs = self._build_inputs(message_dicts)
-        generation_kwargs: dict[str, object] = {}
+        model_inputs = {
+            key: cast(torch.Tensor, value) for key, value in dict(inputs).items()
+        }
+        generation_kwargs: dict[str, int] = {}
         pad_token_id = tokenizer.eos_token_id
         if pad_token_id is not None:
             generation_kwargs["pad_token_id"] = pad_token_id
 
         with torch.inference_mode():
             output_ids = model.generate(
-                **inputs,
+                **model_inputs,
                 max_new_tokens=request.max_new_tokens,
                 do_sample=request.temperature > 0,
                 temperature=request.temperature,
@@ -320,7 +374,7 @@ class PersonaBackend:
             quantization=self.quantization,
         )
 
-    def _build_inputs(self, messages: Sequence[JSONDict]) -> BatchEncoding:
+    def _build_inputs(self, messages: Sequence[ChatMessagePayload]) -> BatchEncoding:
         """Build model inputs, including optional image and video content."""
         model = self.model
         if model is None:
@@ -328,7 +382,7 @@ class PersonaBackend:
 
         if _messages_have_vision(messages):
             processor = self.processor
-            if not self.supports_vision or processor is None:
+            if processor is None:
                 raise ValueError(
                     "Persona backend for the current model does not support vision input"
                 )
@@ -353,40 +407,48 @@ class PersonaBackend:
                 ) from exc
 
             prompt = _render_chat_prompt(processor, messages)
+            vision_messages = list(messages)
             vision_info = cast(
-                tuple[
-                    Optional[list[object]],
-                    Optional[list[tuple[object, object]]],
-                    dict[str, object],
-                ],
+                VisionProcessorOutput,
                 process_vision_info(
-                    list(messages),
-                    image_patch_size=16,
+                    cast(
+                        list[
+                            dict[
+                                str,
+                                Union[
+                                    TextContentItem, ImageContentItem, VideoContentItem
+                                ],
+                            ]
+                        ],
+                        vision_messages,
+                    ),
                     return_video_kwargs=True,
                     return_video_metadata=True,
                 ),
             )
             image_inputs, video_inputs, video_kwargs = vision_info
-            video_metadata = None
+            processed_video_inputs: Optional[list[VisionInput]] = None
+            video_metadata: Optional[list[VideoMetadata]] = None
             if video_inputs:
-                video_inputs, video_metadata = zip(*video_inputs)
-                video_inputs = list(video_inputs)
-                video_metadata = list(video_metadata)
+                raw_video_inputs, raw_video_metadata = zip(*video_inputs)
+                processed_video_inputs = list(raw_video_inputs)
+                video_metadata = list(raw_video_metadata)
 
             return processor(
                 text=prompt,
                 images=image_inputs,
-                videos=video_inputs,
+                videos=processed_video_inputs,
                 video_metadata=video_metadata,
                 return_tensors="pt",
-                do_resize=False,
                 **video_kwargs,
             ).to(model.device)
 
         tokenizer = self.tokenizer
-        renderer: object = self.processor if self.processor is not None else tokenizer
         if tokenizer is None:
             raise ValueError("Persona backend is not loaded")
+        renderer: Union[ChatTemplateRenderer, PersonaTokenizer] = (
+            self.processor if self.processor is not None else tokenizer
+        )
         prompt = _render_chat_prompt(renderer, messages)
         return tokenizer(text=prompt, return_tensors="pt").to(model.device)
 
@@ -394,8 +456,12 @@ class PersonaBackend:
 class PersonaRuntime:
     """Lazy Persona model runtime owned by the Celune process."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        config: Optional[Mapping[str, JSONSerializable]] = None,
+    ) -> None:
         self.backend = PersonaBackend()
+        self.config = config
         self.lock = threading.Lock()
 
     @property
@@ -410,6 +476,7 @@ class PersonaRuntime:
 
     def load(self, model_id: str, quantization: str) -> None:
         """Explicitly load the Persona backend with the requested model."""
+        quantization = self._allowed_quantization(quantization)
         with self.lock:
             self.backend.load(model_id, quantization)
 
@@ -421,6 +488,7 @@ class PersonaRuntime:
             or os.getenv("PERSONA_QUANTIZATION")
             or ("4bit" if request.quantized else "none")
         )
+        quantization = self._allowed_quantization(quantization)
         self.load(model_id, quantization)
         with self.lock:
             return self.backend.generate(request)
@@ -429,6 +497,20 @@ class PersonaRuntime:
         """Unload the active Persona backend state."""
         with self.lock:
             self.backend.unload()
+
+    def _allowed_quantization(self, requested: str) -> str:
+        """Clamp Persona quantization to what the VRAM preset allows."""
+        if self.config is None:
+            return requested
+
+        preset = resolve_vram_preset(self.config)
+        if not preset.persona_enabled:
+            raise ValueError(f"Persona is not available for VRAM tier '{preset.tier}'")
+
+        allowed = preset.persona_quantization
+        if requested.casefold() == allowed.casefold():
+            return requested
+        return allowed
 
 
 def request_from_json(payload: dict[str, JSONSerializable]) -> GenerateRequest:
@@ -445,19 +527,9 @@ def request_from_json(payload: dict[str, JSONSerializable]) -> GenerateRequest:
     repetition_penalty = payload.get("repetition_penalty")
     if isinstance(raw_messages, list):
         for item in raw_messages:
-            if not isinstance(item, dict):
-                continue
-            role = item.get("role")
-            content = item.get("content")
-            if role in {"system", "user", "assistant"} and isinstance(
-                content, (str, list)
-            ):
-                messages.append(
-                    ChatMessage(
-                        role=cast(Role, role),
-                        content=cast(MessageContent, content),
-                    )
-                )
+            message = _message_from_json(item)
+            if message is not None:
+                messages.append(message)
 
     return GenerateRequest(
         model=model if isinstance(model, str) else None,
@@ -501,7 +573,7 @@ def _messages_from_legacy_fields(request: GenerateRequest) -> list[ChatMessage]:
     return messages
 
 
-def _messages_have_vision(messages: Sequence[JSONDict]) -> bool:
+def _messages_have_vision(messages: Sequence[ChatMessagePayload]) -> bool:
     """Return whether any chat message contains image or video content."""
     for message in messages:
         content = message.get("content")
@@ -515,7 +587,60 @@ def _messages_have_vision(messages: Sequence[JSONDict]) -> bool:
     return False
 
 
-def _processor_supports_native_vision(processor: object) -> bool:
+def _processor_supports_native_vision(processor: PersonaProcessor) -> bool:
     """Return whether the processor exposes native multimodal chat rendering."""
     apply_chat_template = getattr(processor, "apply_chat_template", None)
     return callable(apply_chat_template)
+
+
+def _content_from_json(value: JSONSerializable) -> Optional[MessageContent]:
+    """Normalize serialized Persona message content."""
+    if isinstance(value, str):
+        return value
+
+    if not isinstance(value, list):
+        return None
+
+    items: list[ContentItem] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+
+        item_type = item.get("type")
+        if item_type == "text":
+            text = item.get("text")
+            if isinstance(text, str):
+                items.append(TextContentItem(type="text", text=text))
+        elif item_type == "image":
+            image = item.get("image")
+            if isinstance(image, str):
+                items.append(ImageContentItem(type="image", image=image))
+        elif item_type == "video":
+            video = item.get("video")
+            if isinstance(video, str):
+                items.append(VideoContentItem(type="video", video=video))
+
+    return items
+
+
+def _message_from_json(value: JSONSerializable) -> Optional[ChatMessage]:
+    """Normalize one serialized Persona chat message."""
+    if not isinstance(value, dict):
+        return None
+
+    role = value.get("role")
+    normalized_role: Role
+    if role == "system":
+        normalized_role = "system"
+    elif role == "user":
+        normalized_role = "user"
+    elif role == "assistant":
+        normalized_role = "assistant"
+    else:
+        return None
+
+    content = _content_from_json(value.get("content"))
+    if content is None:
+        return None
+
+    return ChatMessage(role=normalized_role, content=content)

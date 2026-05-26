@@ -31,7 +31,9 @@ from .dsp import (
     readiness_signal,
 )
 from .exceptions import NotAvailableError
-from .persona.impl import persona_config, persona_model_id
+from .persona.impl import persona_config, persona_model_id, persona_quantization
+from .persona.memory import PersonaMemoryStore
+from .cevoice import CEVoicePersona
 from .utils import (
     format_number,
     run_async,
@@ -59,7 +61,6 @@ from .constants import (
     JSONSerializable,
     PipelineStates,
     PERSONA_HISTORY_MESSAGES,
-    VOICE_STYLE_OVERLAYS,
 )
 from . import __version__
 
@@ -600,10 +601,32 @@ def _persona_short_term_history_limit(engine: "Celune") -> int:
 
 
 def _persona_style_traits(engine: "Celune") -> dict[str, str]:
-    """Return the configured voice style traits for a Persona request."""
-    voice = getattr(engine, "current_voice", None) or "balanced"
-    overlay = VOICE_STYLE_OVERLAYS.get(voice, VOICE_STYLE_OVERLAYS["balanced"])
-    return {key: str(value) for key, value in overlay.items()}
+    """Return the configured speaking-style traits for a Persona request."""
+    traits = {
+        "warmth": "mid",
+        "directness": "mid",
+        "humor": "low",
+        "detail": "mid",
+        "formality": "mid",
+        "enthusiasm": "mid",
+    }
+    persona = _pack_persona(engine)
+    if persona is None:
+        return traits
+
+    style = persona.style
+    configured = {
+        "warmth": style.warmth,
+        "directness": style.directness,
+        "humor": style.humor,
+        "detail": style.detail,
+        "formality": style.formality,
+        "enthusiasm": style.enthusiasm,
+    }
+    for key, value in configured.items():
+        if value.strip():
+            traits[key] = value.strip()
+    return traits
 
 
 def _default_persona_persona(_engine: "Celune") -> str:
@@ -611,14 +634,80 @@ def _default_persona_persona(_engine: "Celune") -> str:
     return DEFAULT_PERSONA_DESCRIPTION
 
 
+def _uses_default_celune_identity(engine: "Celune") -> bool:
+    """Return whether Persona defaults should use Celune's canonical identity."""
+    if not bool(getattr(engine, "voice_bundle_is_default", False)):
+        return False
+    return _persona_active_character_name(engine).strip().lower() == "celune"
+
+
+def _default_persona_age(engine: "Celune") -> str:
+    """Return the default age for the active character source."""
+    if _uses_default_celune_identity(engine):
+        return "28"
+    return "unknown"
+
+
 def _default_persona_gender(_engine: "Celune") -> str:
     """Return a conservative gender default for the active character source."""
+    if _uses_default_celune_identity(_engine):
+        return "female"
     return "unknown"
 
 
 def _default_persona_context(_engine: "Celune") -> str:
     """Return the default interaction context for the active character source."""
     return DEFAULT_PERSONA_CONTEXT
+
+
+def _pack_persona(engine: "Celune") -> Optional[CEVoicePersona]:
+    """Return typed CEVOICE persona metadata attached to the current engine."""
+    persona = getattr(engine, "current_character_persona", None)
+    return persona if isinstance(persona, CEVoicePersona) else None
+
+
+def _pack_identity_text(engine: "Celune", field_name: str) -> str:
+    """Read one CEVOICE persona identity field when present."""
+    persona = _pack_persona(engine)
+    if persona is None:
+        return ""
+    identity = persona.identity
+    value = getattr(identity, field_name, "")
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _persona_active_character_name(engine: "Celune") -> str:
+    """Return the active character name used for Persona memory isolation."""
+    current_character = getattr(engine, "current_character", None)
+    if isinstance(current_character, str) and current_character.strip():
+        return current_character.strip()
+
+    pack_identity_name = _pack_identity_text(engine, "name")
+    if pack_identity_name:
+        return pack_identity_name
+
+    return _config_text(engine, "persona_character_name", "Unknown")
+
+
+def _pack_persona_text(engine: "Celune", field_name: str) -> str:
+    """Read one top-level CEVOICE persona text field when present."""
+    persona = _pack_persona(engine)
+    if persona is None:
+        return ""
+    value = getattr(persona, field_name, "")
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _pack_persona_lines(engine: "Celune", field_name: str) -> tuple[str, ...]:
+    """Read one CEVOICE persona text-list field when present."""
+    persona = _pack_persona(engine)
+    if persona is None:
+        return ()
+    raw = getattr(persona, field_name, ())
+    if not isinstance(raw, tuple):
+        return ()
+    lines = [item.strip() for item in raw if isinstance(item, str) and item.strip()]
+    return tuple(lines)
 
 
 def build_persona_character_card(engine: "Celune") -> str:
@@ -671,9 +760,19 @@ def _persona_pending_attachments(engine: "Celune") -> list[JSON]:
         kind = attachment.get("type")
         path = attachment.get("path")
         if kind in {"image", "video"} and isinstance(path, str) and path.strip():
-            content.append({"type": kind, kind: path.strip()})
+            content.append({"type": kind, kind: _persona_attachment_source(path)})
 
     return content
+
+
+def _persona_attachment_source(path: str) -> str:
+    """Return a qwen-vl-utils-safe attachment path or URI."""
+    source = path.strip()
+    if os.name == "nt" and source.startswith("file:///"):
+        without_scheme = source.removeprefix("file:///")
+        if len(without_scheme) >= 2 and without_scheme[1] == ":":
+            return without_scheme
+    return source
 
 
 def _build_visual_context(engine: "Celune") -> VisualContext:
@@ -720,7 +819,45 @@ def _build_short_term_history(engine: "Celune") -> ShortTermHistory:
     return ShortTermHistory(turns=tuple(turns), session_summary=session_summary)
 
 
-def _build_retrieved_memory_bundle(engine: "Celune") -> RetrievedMemoryBundle:
+def _persona_memory_store(engine: "Celune") -> Optional[PersonaMemoryStore]:
+    """Return the configured Persona memory store for this engine."""
+    existing = getattr(engine, "persona_memory_store", None)
+    if isinstance(existing, PersonaMemoryStore):
+        return existing
+
+    memory_config = persona_config(engine.config).get("memory")
+    if isinstance(memory_config, dict):
+        enabled = memory_config.get("enabled", True)
+        if isinstance(enabled, bool) and not enabled:
+            return None
+        storage_dir = memory_config.get("storage_dir")
+        if isinstance(storage_dir, str) and storage_dir.strip():
+            store = PersonaMemoryStore(storage_dir=storage_dir.strip())
+        else:
+            store = PersonaMemoryStore()
+    else:
+        store = PersonaMemoryStore()
+
+    setattr(engine, "persona_memory_store", store)
+    return store
+
+
+def _store_persona_memories(engine: "Celune", request: str) -> None:
+    """Persist long-term memory candidates extracted from the user request."""
+    store = _persona_memory_store(engine)
+    if store is None:
+        return
+
+    character_name = _persona_active_character_name(engine)
+    if not character_name.strip():
+        return
+
+    store.remember_from_user_message(character_name, request)
+
+
+def _build_retrieved_memory_bundle(
+    engine: "Celune", request: str
+) -> RetrievedMemoryBundle:
     """Return retrieved long-term memory for the current request."""
     direct_memories = getattr(engine, "retrieved_long_term_memory", None)
     if isinstance(direct_memories, list):
@@ -731,6 +868,17 @@ def _build_retrieved_memory_bundle(engine: "Celune") -> RetrievedMemoryBundle:
         ]
         return RetrievedMemoryBundle(memories=tuple(memories))
 
+    store = _persona_memory_store(engine)
+    if store is not None:
+        character_name = _persona_active_character_name(engine)
+        memories = tuple(
+            record.content
+            for record in store.retrieve(character_name, request.strip())
+            if record.content.strip()
+        )
+        if memories:
+            return RetrievedMemoryBundle(memories=memories)
+
     return RetrievedMemoryBundle(
         memories=_config_lines(engine, "persona_long_term_memory")
     )
@@ -738,27 +886,25 @@ def _build_retrieved_memory_bundle(engine: "Celune") -> RetrievedMemoryBundle:
 
 def build_persona_context(engine: "Celune", request: str) -> PersonaContext:
     """Build structured Persona context for one user request."""
-    name = getattr(engine, "current_character", None) or _config_text(
-        engine, "persona_character_name", "Unknown"
-    )
+    name = _persona_active_character_name(engine)
     voice = getattr(engine, "current_voice", None) or "balanced"
-    voice_prompt = getattr(engine, "voice_prompt", None)
+    voice_prompt = _effective_voice_prompt(engine)
     traits = _persona_style_traits(engine)
-    extra = traits.pop("extra", "").strip()
 
-    voice_notes = f"Selected voice style: {voice}."
-    if extra:
-        voice_notes = f"{voice_notes}\n{extra}"
+    voice_notes = f"Selected voice: {voice}."
     if isinstance(voice_prompt, str) and voice_prompt.strip():
         voice_notes = f"{voice_notes}\nVoice prompt: {voice_prompt.strip()}"
 
     character_profile = CharacterProfile(
         name=name,
-        age=_config_text(engine, "persona_character_age", "unknown"),
-        gender=_config_text(
+        age=_pack_identity_text(engine, "age")
+        or _config_text(engine, "persona_character_age", _default_persona_age(engine)),
+        gender=_pack_identity_text(engine, "gender")
+        or _config_text(
             engine, "persona_character_gender", _default_persona_gender(engine)
         ),
-        profile=_config_text(engine, "persona_character_profile", ""),
+        profile=_pack_identity_text(engine, "profile")
+        or _config_text(engine, "persona_character_profile", ""),
     )
     persona_card = PersonaCard(
         persona=_config_text(
@@ -770,12 +916,18 @@ def build_persona_context(engine: "Celune", request: str) -> PersonaContext:
         directness=traits["directness"],
         humor=traits["humor"],
         detail=traits["detail"],
+        formality=traits["formality"],
+        enthusiasm=traits["enthusiasm"],
         context=_config_text(
             engine,
             "persona_context",
             _default_persona_context(engine),
         ),
         voice=voice_notes,
+        speaking_style=_pack_persona_text(engine, "speaking_style"),
+        boundaries=_pack_persona_lines(engine, "boundaries"),
+        prompt_rules=_pack_persona_lines(engine, "prompt_rules"),
+        example_dialogue=_pack_persona_lines(engine, "example_dialogue"),
     )
     relationship_memory = _config_text(engine, "persona_relationship_memory", "")
     mood_or_state = _config_text(engine, "persona_state", "Neutral.")
@@ -785,11 +937,23 @@ def build_persona_context(engine: "Celune", request: str) -> PersonaContext:
         persona_card=persona_card,
         relationship_memory=relationship_memory or "None.",
         mood_or_state=mood_or_state,
-        retrieved_long_term_memory=_build_retrieved_memory_bundle(engine),
+        retrieved_long_term_memory=_build_retrieved_memory_bundle(engine, request),
         current_run_chat_history=_build_short_term_history(engine),
         visual_context=_build_visual_context(engine),
         user_message=request.strip(),
     )
+
+
+def _effective_voice_prompt(engine: "Celune") -> Optional[str]:
+    """Return the active voice prompt only when the engine supports it."""
+    supported = getattr(engine, "voice_prompt_supported", None)
+    if callable(supported) and not supported():
+        return None
+    if supported is False:
+        return None
+
+    voice_prompt = getattr(engine, "voice_prompt", None)
+    return voice_prompt if isinstance(voice_prompt, str) else None
 
 
 def build_persona_messages(engine: "Celune", request: str) -> list[JSON]:
@@ -821,7 +985,7 @@ def build_persona_request(engine: "Celune", request: str) -> JSON:
         "format": "celune_persona_request",
         "format_version": 1,
         "model": persona_model_id(engine.config),
-        "quantization": "4bit",
+        "quantization": persona_quantization(engine.config),
         "quantized": True,
         "character": getattr(engine, "current_character", None) or "Unknown",
         "voice": getattr(engine, "current_voice", None) or "balanced",
@@ -870,6 +1034,7 @@ def think(engine: "Celune", request: str) -> bool:
         engine: The Celune engine that should speak the output.
         request: The input request that will be sent to by Persona.
     """
+    _store_persona_memories(engine, request)
     payload = build_persona_request(engine, request)
     attachments = getattr(engine, "persona_attachments", None)
 
@@ -959,6 +1124,12 @@ def queue_speech(
     """
     if engine.is_in_tutorial:
         engine.log("Speech input is disabled during the tutorial.", "warning")
+        return False
+
+    if getattr(engine, "sleeping", False):
+        engine.log("Celune is currently sleeping.", "warning")
+        engine.error_callback("Celune is currently sleeping")
+        engine.progress_callback(0, 1)
         return False
 
     if not engine.model_ready.is_set():
@@ -1392,7 +1563,12 @@ def generation_worker(engine: "Celune") -> None:
                         engine.progress_callback(None, None)
                         normalized = engine.normalize(chunk_text)
                         if normalized is not None:
-                            chunk_text = normalized
+                            if normalized == chunk_text:
+                                engine.log_dev(
+                                    "This input is already normalized.", "warning"
+                                )
+                            else:
+                                chunk_text = normalized
 
                     generated_text_parts.append(chunk_text)
                     is_first_chunk = chunk_index == 0
@@ -1417,7 +1593,7 @@ def generation_worker(engine: "Celune") -> None:
                             text=chunk_text,
                             language=engine.language,
                             chunk_size=engine.chunk_size,
-                            instruct=engine.voice_prompt,
+                            instruct=_effective_voice_prompt(engine),
                             voice=engine.current_voice,
                             temperature=generation_params["temperature"],
                             top_k=generation_params["top_k"],

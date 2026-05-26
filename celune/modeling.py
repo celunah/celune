@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Normalizer loading helpers for Celune."""
 
-from typing import Callable, Union
+from collections.abc import Mapping
+from typing import Callable, Union, Optional
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
@@ -9,21 +10,33 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from .backends import CeluneBackend
-from .constants import NORMALIZER_MODEL_ID
+from .constants import JSONSerializable, NORMALIZER_MODEL_ID
+from .vram import resolve_vram_preset
 
 NORMALIZER_SPECIAL_TOKENS = ("<|im_start|>", "<|im_end|>", "<NORM>")
 NORMALIZER_DEVICE = "cpu"
 
 
+def normalizer_device(
+    config: Optional[Mapping[str, JSONSerializable]] = None,
+) -> str:
+    """Return the runtime device used for CeluneNorm loading."""
+    if config is None:
+        return NORMALIZER_DEVICE
+    return resolve_vram_preset(config).normalizer_device
+
+
 def load_normalizer_components(
     log: Callable[[str, str], None],
     backend: Union[CeluneBackend, type[CeluneBackend]],
+    config: Optional[Mapping[str, JSONSerializable]] = None,
 ) -> tuple[PreTrainedTokenizerBase, PreTrainedModel]:
     """Load CeluneNorm and return its tokenizer and model.
 
     Args:
         log: Logging callback used to report cache and loading progress.
         backend: Backend type or instance used to resolve model cache helpers.
+        config: Celune configuration used to resolve the target device.
 
     Returns:
         tuple[PreTrainedTokenizerBase, PreTrainedModel]: The loaded tokenizer and
@@ -41,9 +54,10 @@ def load_normalizer_components(
         replace_additional_special_tokens=False,
     )
 
+    device = normalizer_device(config)
     llm = AutoModelForCausalLM.from_pretrained(
         model_ref,
         torch_dtype=torch.bfloat16,
-        device_map=NORMALIZER_DEVICE,
+        device_map=device,
     )
     return tokenizer, llm

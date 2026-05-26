@@ -27,8 +27,8 @@ else:
     __version__ = "4.0.0"
 
 __tagline__ = "\u201cYour voice, your way.\u201d"
-__codename__ = "Guidance"
-__comment__ = "My vocal prowess can be easily harnessed by beginners."
+__codename__ = "Personality"
+__comment__ = "I can finally talk with you."
 
 if hasattr(_sys, "ps1"):
     print("Caution: You are running the Celune backend interactively.")

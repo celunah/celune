@@ -10,7 +10,10 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from celune.celune import Celune
 from celune.config import Config
-from celune.exceptions import BackendError
+from celune.backends.qwen3 import Qwen3
+from celune.exceptions import BackendError, WarmupError
+from celune.persona.impl import persona_quantization
+from celune.vram import QWEN3_0_6B_MODEL
 
 from tests.support import FakeBackend, FakeGlow
 
@@ -54,8 +57,26 @@ class CeluneCoreTests(TestCase):
         Raises:
             AssertionError: Constructor behavior changes unexpectedly.
         """
-        with self.assertRaisesRegex(BackendError, "no backend set"):
-            Celune(config={}, tts_backend=None)
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+            mock.patch(
+                "celune.celune.resolve_backend",
+                return_value=FakeBackend(log=lambda _msg, _severity="info": None),
+            ) as resolve,
+        ):
+            celune = Celune(config={"vram": "low"}, tts_backend=None)
+            self.addCleanup(self._close_celune, celune)
+
+        resolve.assert_called_once()
+        self.assertEqual(resolve.call_args.args[0], "qwen3")
+        self.assertEqual(resolve.call_args.kwargs["mode"], "clone")
+        self.assertEqual(
+            resolve.call_args.kwargs["clone_model_id"],
+            "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+        )
+        celune.close()
 
         celune = self._make_celune({})
         self.assertEqual(celune.chunk_size, 8)
@@ -90,12 +111,33 @@ class CeluneCoreTests(TestCase):
 
         fake_bundle = mock.Mock()
         fake_bundle.voice_order = ("bold", "balanced")
-        fake_bundle.metadata = {"default_voice": "bold"}
+        fake_bundle.metadata = {
+            "name": "Pack Name",
+            "default_voice": "bold",
+            "persona": {
+                "identity": {
+                    "name": "Fixture",
+                    "profile": "A composed observer.",
+                },
+                "speaking_style": "Measured and calm.",
+                "style": {
+                    "warmth": "high",
+                    "detail": "high",
+                },
+            },
+        }
         fake_loader = mock.Mock(bundle=fake_bundle)
         celune.backend.uses_voice_bundles = True
         with mock.patch("celune.celune.default_loader", return_value=fake_loader):
             self.assertEqual(celune.load_voice_bundle(Path("fixture.cevoice")), True)
         self.assertEqual(celune.current_voice, "bold")
+        self.assertEqual(celune.current_character, "Fixture")
+        self.assertIsNotNone(celune.current_character_persona)
+        assert celune.current_character_persona is not None
+        self.assertEqual(
+            celune.current_character_persona.speaking_style,
+            "Measured and calm.",
+        )
 
     def test_persona_connection_uses_in_process_runtime(self) -> None:
         """Verify Celune connects to Persona through the local in-process runtime.
@@ -118,7 +160,8 @@ class CeluneCoreTests(TestCase):
             ) as create_client,
         ):
             celune = Celune(
-                config={"persona": {"enabled": True}}, tts_backend=FakeBackend
+                config={"vram": "high", "persona": {"enabled": True}},
+                tts_backend=FakeBackend,
             )
             self.addCleanup(self._close_celune, celune)
 
@@ -126,7 +169,7 @@ class CeluneCoreTests(TestCase):
             create_client.assert_called_once()
             self.assertEqual(
                 create_client.call_args.args[0],
-                {"persona": {"enabled": True}},
+                {"vram": "high", "persona": {"enabled": True}},
             )
             log_dev = create_client.call_args.kwargs["log_dev"]
             self.assertIs(getattr(log_dev, "__self__", None), celune)
@@ -147,7 +190,9 @@ class CeluneCoreTests(TestCase):
         from celune import persona
 
         with mock.patch("celune.persona.persona_is_available", return_value=True):
-            client = persona.create_persona_client({"persona": {"enabled": True}})
+            client = persona.create_persona_client(
+                {"vram": "high", "persona": {"enabled": True}}
+            )
 
         self.assertIsNotNone(client)
         assert client is not None
@@ -206,11 +251,75 @@ class CeluneCoreTests(TestCase):
         from celune.persona.impl import persona_enabled, persona_talkback_enabled
 
         persona_config: Config = {"enabled": True, "talkback": False}
-        config: Config = {"persona": persona_config}
+        config: Config = {"vram": "high", "persona": persona_config}
         self.assertEqual(persona_enabled(config), True)
         self.assertEqual(persona_talkback_enabled(config), False)
-        self.assertEqual(persona_talkback_enabled({"persona": {}}), True)
-        self.assertEqual(persona_talkback_enabled({"pyop": {"talkback": False}}), False)
+        self.assertEqual(
+            persona_talkback_enabled({"vram": "high", "persona": {}}), True
+        )
+        self.assertEqual(
+            persona_talkback_enabled({"vram": "high", "pyop": {"talkback": False}}),
+            False,
+        )
+        self.assertEqual(
+            persona_enabled({"vram": "low", "persona": {"enabled": True}}), False
+        )
+        self.assertEqual(
+            persona_talkback_enabled({"vram": "low", "persona": {}}), False
+        )
+        with mock.patch("celune.vram.torch.cuda.is_available", return_value=False):
+            self.assertEqual(persona_quantization({"vram": "high"}), "4bit")
+            self.assertEqual(persona_quantization({"vram": "xhigh"}), "8bit")
+
+    def test_low_vram_restricts_backend_and_native_qwen3_mode(self) -> None:
+        """Verify low VRAM falls back to the supported Qwen3 clone preset."""
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+            mock.patch(
+                "celune.celune.resolve_backend",
+                return_value=FakeBackend(log=lambda _msg, _severity="info": None),
+            ) as resolve,
+        ):
+            celune = Celune(
+                config={"vram": "low", "qwen3_mode": "native"},
+                tts_backend="voxcpm2",
+            )
+            self.addCleanup(self._close_celune, celune)
+
+        self.assertEqual(resolve.call_args.args[0], "qwen3")
+        self.assertEqual(resolve.call_args.kwargs["mode"], "clone")
+
+    def test_voice_prompt_support_tracks_qwen3_0_6b_capability(self) -> None:
+        """Verify voice prompts are disabled for the low-tier Qwen3 clone model."""
+        celune = self._make_celune({})
+        with mock.patch.object(Qwen3, "_validate_refs"):
+            celune.backend = Qwen3(
+                log=lambda _msg, _severity="info": None,
+                mode="clone",
+                clone_model_id=QWEN3_0_6B_MODEL,
+            )
+        celune.voice_prompt = "gentle"
+
+        self.assertEqual(celune.voice_prompt_supported(), False)
+        self.assertIsNone(celune.effective_voice_prompt())
+
+    def test_low_vram_rejects_heavy_backend_types(self) -> None:
+        """Verify low VRAM rejects explicitly requested heavy backend classes."""
+
+        class HeavyBackend(FakeBackend):
+            """A heavy fake backend for usage in tests."""
+
+            name = "voxcpm2"
+
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+            self.assertRaisesRegex(BackendError, "not available for VRAM tier 'low'"),
+        ):
+            Celune(config={"vram": "low"}, tts_backend=HeavyBackend)
 
     def test_think_reconnects_to_persona_before_speech_fallback(self) -> None:
         """Verify stale Celune instances reconnect to Persona on the next think call.
@@ -311,6 +420,7 @@ class CeluneCoreTests(TestCase):
         failing.error_callback = errors.append
         self.assertEqual(failing.load(), False)
         self.assertEqual(errors, ["Default model failed to load"])
+        self.assertEqual(getattr(failing.glow, "fatal_called"), True)
 
     def test_unload_runtime_state_clears_models_without_cuda(self) -> None:
         """Verify model references are cleared without touching CUDA.
@@ -335,3 +445,100 @@ class CeluneCoreTests(TestCase):
         self.assertIsNone(celune.llm)
         self.assertIsNone(celune.tokenizer)
         self.assertIsNone(celune.backend.model)
+
+    def test_sleep_mode_unloads_configured_models_and_wakes(self) -> None:
+        """Verify sleep mode honors unload settings and reloads on wake."""
+        celune = self._make_celune(
+            {
+                "vram": "high",
+                "sleep": {
+                    "enabled": True,
+                    "timeout": 1,
+                    "unload": {"persona": True, "normalizer": True, "tts": True},
+                },
+                "persona": {"enabled": True},
+                "use_normalizer": True,
+            }
+        )
+        celune.locked = False
+        celune.loaded = True
+        celune.cur_state = "idle"
+        celune.current_voice = "balanced"
+        celune.voices = ("balanced", "bold")
+        celune.model = {"model_id": "fake/balanced", "kwargs": {}}
+        celune.model_name = "fake/balanced"
+        celune.llm = cast(PreTrainedModel, mock.Mock(spec=PreTrainedModel))
+        celune.tokenizer = cast(
+            PreTrainedTokenizerBase,
+            mock.Mock(spec=PreTrainedTokenizerBase),
+        )
+        persona_client = mock.Mock()
+        celune.vision = persona_client
+        celune._warmup = mock.Mock(return_value=True)
+        celune.load_normalizer = mock.Mock()
+        celune._persona_conn = mock.Mock(return_value=persona_client)
+        old_backend = celune.backend
+
+        self.assertEqual(celune.enter_sleep_mode(), True)
+
+        self.assertEqual(celune.sleeping, True)
+        self.assertEqual(celune.loaded, False)
+        self.assertEqual(celune.cur_state, "sleeping")
+        self.assertEqual(getattr(celune.glow, "sleep_called"), True)
+        self.assertIsNone(celune.model)
+        self.assertEqual(celune.model_name, "")
+        self.assertIsNone(celune.llm)
+        self.assertIsNone(celune.tokenizer)
+        self.assertIsNone(celune.vision)
+        persona_client.close.assert_called_once_with()
+
+        self.assertEqual(celune.wake_from_sleep(), True)
+
+        self.assertIsNot(celune.backend, old_backend)
+        self.assertEqual(celune.sleeping, False)
+        self.assertEqual(celune.loaded, True)
+        self.assertEqual(celune.cur_state, "idle")
+        self.assertEqual(getattr(celune.glow, "wake_called"), True)
+        self.assertEqual(celune.model, {"model_id": "fake/balanced", "kwargs": {}})
+        self.assertEqual(celune.model_name, "fake/balanced")
+        celune._warmup.assert_called_once_with()
+        celune.load_normalizer.assert_called_once_with()
+        persona_client.load.assert_called_once_with(
+            "Qwen/Qwen2.5-VL-3B-Instruct",
+            "4bit",
+        )
+
+    def test_wake_failure_switches_glow_to_fatal_color(self) -> None:
+        """Verify wake failures trigger the fixed fatal OpenRGB glow state."""
+        celune = self._make_celune(
+            {
+                "vram": "high",
+                "sleep": {
+                    "enabled": True,
+                    "timeout": 1,
+                    "unload": {"persona": False, "normalizer": False, "tts": True},
+                },
+            }
+        )
+        celune.sleeping = True
+        celune.loaded = False
+        celune.cur_state = "sleeping"
+        celune.current_voice = "balanced"
+        celune.voices = ("balanced",)
+        failing_backend = FakeBackend(log=lambda _msg, _severity="info": None)
+        failing_backend.load_model = mock.Mock(side_effect=RuntimeError("boom"))
+
+        with mock.patch("celune.celune.resolve_backend", return_value=failing_backend):
+            self.assertEqual(celune.wake_from_sleep(), False)
+        self.assertEqual(getattr(celune.glow, "fatal_called"), True)
+
+    def test_raise_warmup_error_preserves_original_cause(self) -> None:
+        """Verify WarmupError keeps the underlying warmup failure as its cause."""
+        celune = self._make_celune({})
+        cause = RuntimeError("tensor mismatch")
+        celune._last_warmup_error = cause
+
+        with self.assertRaises(WarmupError) as exc_info:
+            celune._raise_warmup_error("warmup failed after sleep")
+
+        self.assertIs(exc_info.exception.__cause__, cause)

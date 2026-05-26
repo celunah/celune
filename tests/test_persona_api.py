@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Tests for the shared Persona runtime helpers."""
 
-from typing import cast
+from typing import Optional, cast
 from unittest import TestCase, mock
+from types import SimpleNamespace
 
 from celune.persona import impl
 from celune.persona import runtime
@@ -61,7 +62,7 @@ class _FakeModel:
 class _FakeProcessor:
     """Minimal processor fake exposing a chat template hook."""
 
-    def __init__(self, tokenizer: _FakeTokenizer | None = None) -> None:
+    def __init__(self, tokenizer: Optional[_FakeTokenizer] = None) -> None:
         self.tokenizer = tokenizer
 
     @staticmethod
@@ -72,22 +73,65 @@ class _FakeProcessor:
         return "prompt"
 
 
+class _FakeMultimodalProcessor:
+    """Minimal multimodal processor fake without native chat rendering."""
+
+    def __init__(self, tokenizer: Optional[_FakeTokenizer] = None) -> None:
+        self.tokenizer = tokenizer
+        self.image_processor = object()
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(self, **kwargs) -> _FakeEncoded:
+        """Return one encoded batch for multimodal processor calls."""
+        self.calls.append(dict(kwargs))
+        return _FakeEncoded()
+
+
 class PersonaApiTests(TestCase):
     """Tests for shared Persona runtime behavior."""
+
+    @staticmethod
+    def _text_message(role: runtime.Role, text: str) -> runtime.ChatMessagePayload:
+        """Build one typed text-only Persona message payload."""
+        return runtime.ChatMessagePayload(role=role, content=text)
+
+    @staticmethod
+    def _content_message(
+        role: runtime.Role,
+        content: list[runtime.ContentItem],
+    ) -> runtime.ChatMessagePayload:
+        """Build one typed multimodal Persona message payload."""
+        return runtime.ChatMessagePayload(role=role, content=content)
+
+    def test_runtime_clamps_quantization_and_rejects_disabled_persona(self) -> None:
+        """Verify VRAM presets constrain direct Persona runtime usage."""
+        with mock.patch("celune.vram.torch.cuda.is_available", return_value=False):
+            runtime_xhigh = runtime.PersonaRuntime(config={"vram": "xhigh"})
+            runtime_low = runtime.PersonaRuntime(config={"vram": "low"})
+
+            with mock.patch.object(runtime_xhigh.backend, "load") as load_backend:
+                runtime_xhigh.load("fixture/model", "4bit")
+
+            load_backend.assert_called_once_with("fixture/model", "8bit")
+
+            with self.assertRaisesRegex(
+                ValueError, "not available for VRAM tier 'low'"
+            ):
+                runtime_low.load("fixture/model", "8bit")
 
     def test_messages_have_vision_only_for_explicit_media_items(self) -> None:
         """Verify visual mode is enabled only for explicit media attachments."""
         self.assertEqual(
-            runtime._messages_have_vision([{"role": "user", "content": "hello"}]),
+            runtime._messages_have_vision([self._text_message("user", "hello")]),
             False,
         )
         self.assertEqual(
             runtime._messages_have_vision(
                 [
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": "hello"}],
-                    }
+                    self._content_message(
+                        "user",
+                        [runtime.TextContentItem(type="text", text="hello")],
+                    )
                 ]
             ),
             False,
@@ -95,10 +139,15 @@ class PersonaApiTests(TestCase):
         self.assertEqual(
             runtime._messages_have_vision(
                 [
-                    {
-                        "role": "user",
-                        "content": [{"type": "image", "image": "file:///frame.png"}],
-                    }
+                    self._content_message(
+                        "user",
+                        [
+                            runtime.ImageContentItem(
+                                type="image",
+                                image="file:///frame.png",
+                            )
+                        ],
+                    )
                 ]
             ),
             True,
@@ -106,10 +155,15 @@ class PersonaApiTests(TestCase):
         self.assertEqual(
             runtime._messages_have_vision(
                 [
-                    {
-                        "role": "user",
-                        "content": [{"type": "video", "video": "file:///clip.mp4"}],
-                    }
+                    self._content_message(
+                        "user",
+                        [
+                            runtime.VideoContentItem(
+                                type="video",
+                                video="file:///clip.mp4",
+                            )
+                        ],
+                    )
                 ]
             ),
             True,
@@ -124,10 +178,7 @@ class PersonaApiTests(TestCase):
         backend.model = cast(runtime.PersonaModel, _FakeModel())
         backend.supports_vision = True
 
-        messages = cast(
-            list[runtime.JSONDict],
-            [{"role": "user", "content": "hello"}],
-        )
+        messages = [self._text_message("user", "hello")]
         with mock.patch(
             "celune.persona.runtime._render_chat_prompt",
             return_value="User: hello\n\nAssistant:",
@@ -188,6 +239,105 @@ class PersonaApiTests(TestCase):
         self.assertIs(backend.processor, fake_processor)
         self.assertIs(backend.tokenizer, fake_tokenizer)
         self.assertTrue(backend.supports_vision)
+
+    def test_load_treats_multimodal_processor_as_vision_capable(self) -> None:
+        """Verify multimodal processors are accepted even without chat templates."""
+        backend = runtime.PersonaBackend()
+        fake_model = mock.Mock()
+        fake_model.eval.return_value = None
+        fake_tokenizer = _FakeTokenizer()
+        fake_processor = _FakeMultimodalProcessor(tokenizer=fake_tokenizer)
+
+        with (
+            mock.patch(
+                "celune.persona.runtime.AutoProcessor.from_pretrained",
+                return_value=fake_processor,
+            ),
+            mock.patch(
+                "celune.persona.runtime.Qwen2_5_VLForConditionalGeneration.from_pretrained",
+                return_value=fake_model,
+            ),
+            mock.patch(
+                "celune.persona.runtime.AutoTokenizer.from_pretrained",
+                return_value=fake_tokenizer,
+            ) as tokenizer_loader,
+        ):
+            backend.load("Qwen/Qwen2.5-VL-3B-Instruct", "none")
+
+        tokenizer_loader.assert_not_called()
+        self.assertIs(backend.processor, fake_processor)
+        self.assertTrue(backend.supports_vision)
+
+    def test_load_raises_when_processor_fails_for_vlm_model(self) -> None:
+        """Verify Persona does not silently downgrade a VLM to tokenizer-only mode."""
+        backend = runtime.PersonaBackend()
+        fake_model = mock.Mock()
+        fake_model.eval.return_value = None
+
+        with (
+            mock.patch(
+                "celune.persona.runtime.Qwen2_5_VLForConditionalGeneration.from_pretrained",
+                return_value=fake_model,
+            ),
+            mock.patch(
+                "celune.persona.runtime.AutoProcessor.from_pretrained",
+                side_effect=RuntimeError("processor boom"),
+            ),
+            self.assertRaisesRegex(
+                ValueError,
+                "Persona processor failed to load for model 'Qwen/Qwen2.5-VL-3B-Instruct'",
+            ) as exc_info,
+        ):
+            backend.load("Qwen/Qwen2.5-VL-3B-Instruct", "none")
+
+        self.assertIsInstance(exc_info.exception.__cause__, RuntimeError)
+
+    def test_vision_inputs_use_qwen_vl_utils_when_processor_is_loaded(self) -> None:
+        """Verify image requests go through qwen-vl-utils without capability gating."""
+        backend = runtime.PersonaBackend()
+        fake_processor = _FakeMultimodalProcessor(tokenizer=_FakeTokenizer())
+        backend.processor = cast(runtime.PersonaProcessor, fake_processor)
+        backend.tokenizer = cast(runtime.PersonaTokenizer, fake_processor.tokenizer)
+        backend.model = cast(runtime.PersonaModel, _FakeModel())
+        backend.supports_vision = False
+        messages = [
+            self._content_message(
+                "user",
+                [runtime.ImageContentItem(type="image", image="file:///frame.png")],
+            )
+        ]
+
+        captured_kwargs: dict[str, object] = {}
+
+        def _fake_process_vision_info(*_args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return [b"image"], None, {}
+
+        fake_qwen_vl_utils = SimpleNamespace(
+            process_vision_info=_fake_process_vision_info
+        )
+        with (
+            mock.patch.dict("sys.modules", {"qwen_vl_utils": fake_qwen_vl_utils}),
+            mock.patch(
+                "celune.persona.runtime._render_chat_prompt",
+                return_value="User: [image]\n\nAssistant:",
+            ),
+        ):
+            encoded = backend._build_inputs(messages)
+
+        self.assertIsInstance(encoded, _FakeEncoded)
+        self.assertEqual(encoded.device, "cpu")
+        self.assertEqual(len(fake_processor.calls), 1)
+        self.assertEqual(fake_processor.calls[0]["text"], "User: [image]\n\nAssistant:")
+        self.assertEqual(fake_processor.calls[0]["images"], [b"image"])
+        self.assertEqual(
+            captured_kwargs,
+            {
+                "return_video_kwargs": True,
+                "return_video_metadata": True,
+            },
+        )
+        self.assertNotIn("do_resize", fake_processor.calls[0])
 
     def test_persona_client_routes_backend_output_to_dev_logs(self) -> None:
         """Verify Persona backend stdout/stderr is captured into developer logs."""

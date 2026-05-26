@@ -848,3 +848,16 @@ def make_persona_card(
             voice=voice,
         )
     )
+
+
+def raise_test() -> None:
+    """Raise a testing exception. This is used only in development.
+
+    Returns:
+        None: This function raises before returning any values.
+
+    Raises:
+        RuntimeError: A testing exception.
+    """
+
+    raise RuntimeError("testing exception")

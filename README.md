@@ -251,6 +251,7 @@ Without this, Celune may require elevated permissions or fall back to slower beh
 ## REST API
 
 See [API.md](./API.md) for REST API configuration, authentication, endpoints, and curl examples.
+The API now exposes both literal speech routes and a `POST /v1/think` route for Persona-driven replies.
 
 ## Screenshots
 
