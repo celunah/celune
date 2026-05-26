@@ -50,6 +50,20 @@ use_normalizer: false
 # xhigh (16GB+) - everything allowed + Persona 8-bit + normalizer GPU
 vram: medium
 
+# sleep mode behavior
+#
+# Celune can automatically enter sleep mode to save your resources while idle
+sleep:
+  # should Celune sleep?
+  enabled: true
+  # how long to idle for in minutes before going to sleep
+  timeout: 10
+  # what to unload when entering sleep mode?
+  unload:
+    persona: true
+    normalizer: true
+    tts: false
+
 # Celune API settings
 #
 # Celune API allows users to interact with Celune over the network,
