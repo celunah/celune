@@ -912,19 +912,15 @@ class Celune:
                     if not self._warmup():
                         self._raise_warmup_error("warmup failed after reload")
 
+                    if not play_readiness_signal(self):
+                        self.log("Could not play the readiness signal.", "warning")
+
                 self.log_dev(
                     "[RELOAD] The target model is the same as the model currently in use."
                 )
 
                 self.current_voice = voice
                 self.loaded = True
-
-            # play readiness signal upon voice change success
-            # may not always be possible in cases where many voice changes occurred
-            # while Celune did not have to reload completely because of the target model
-            # remaining the same
-            if not play_readiness_signal(self):
-                self.log_dev("Could not play the readiness signal.", "warning")
 
             self.voice_changed_callback(voice)
             self.log(f"Voice {voice} loaded.")
