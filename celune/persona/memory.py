@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
+import json
 import uuid
 import datetime
-from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
+from dataclasses import asdict, dataclass
 
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
@@ -125,7 +125,7 @@ class MemoryCandidate:
 class PersonaMemoryStore:
     """JSON-backed character-specific long-term memory store."""
 
-    def __init__(self, storage_dir: Optional[Path | str] = None) -> None:
+    def __init__(self, storage_dir: Optional[Union[Path, str]] = None) -> None:
         self.storage_dir = (
             Path(storage_dir) if storage_dir is not None else default_memory_dir()
         )

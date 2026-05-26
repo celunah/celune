@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 from urllib.parse import urlparse
 
 import soundfile as sf
@@ -30,7 +30,7 @@ def _attachment_source(path: Path) -> str:
     return resolved.as_uri()
 
 
-def _remote_attachment_kind(source: str) -> str | None:
+def _remote_attachment_kind(source: str) -> Optional[str]:
     """Return the attachment kind for one supported remote URL."""
     parsed = urlparse(source)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:

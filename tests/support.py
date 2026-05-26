@@ -87,7 +87,7 @@ class FakeGlow:
     def __init__(
         self,
         color: str,
-        celune: object | None = None,
+        celune: Optional[object] = None,
         host: str = "127.0.0.1",
         port: int = 6742,
     ) -> None:
