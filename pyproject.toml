@@ -13,7 +13,9 @@ dependencies = [
     # Please, only use CUDA 12.8.
     "torch==2.11.0+cu128",
     "torchaudio==2.11.0+cu128",
-    "torchvision==0.26.0",
+    # This package is not required if you want to use Persona in text-only mode,
+    # or Celune operates in speech-only mode.
+    "torchvision==0.26.0+cu128",
     # Celune sounds best with faster-qwen3-tts 0.2.4.
     # To match this version's behavior in 0.2.5 or newer, you may need to set non_streaming_mode=True.
     # This parameter is ambiguously named, it doesn't actually disable streaming mode.
@@ -21,10 +23,8 @@ dependencies = [
     "faster-qwen3-tts>=0.2.4",
     # If you want Celune to use the alternative VoxCPM2-based backend, install this package.
     # Note: This will fall back to voice cloning. If you want to use native Celune voices, use the Qwen3 backend.
+    # This backend may not be available on some VRAM presets. Refer to Celune's default configuration for details.
     "voxcpm>=2.0.2",
-    # "I want to sound better." - she says.
-	# However, Fish Audio S2 Pro refuses to give us the prosody and expression she needs.
-    # "missing-library==2.0.6",
     # If not installed, Hugging Face falls back to the older Git LFS way of downloading models.
     "hf-xet",
     "accelerate",
@@ -62,6 +62,7 @@ dependencies = [
     "psutil",
     "pyyaml",
     "httpx",
+    # Used to detect language of input.
     "langdetect>=1.0.0,<2.0.0",
     "iso639-lang>=2.0.0,<3.0.0",
 ]
