@@ -401,7 +401,7 @@ requires-dist = [
     { name = "textual" },
     { name = "torch", specifier = "==2.11.0+cu128", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchaudio", specifier = "==2.11.0+cu128", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torchvision", specifier = "==0.26.0", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "torchvision", specifier = "==0.26.0+cu128", index = "https://download.pytorch.org/whl/cu128" },
     { name = "transformers", specifier = "<5.0.0" },
     { name = "uvicorn", marker = "extra == 'api'" },
     { name = "voxcpm", specifier = ">=2.0.2" },

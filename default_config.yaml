@@ -1,4 +1,6 @@
-# TTS backend (dictated by VRAM target)
+# TTS backend
+# you will be asked to choose, but VRAM presets may limit availibility
+# of certain backends
 #
 # qwen3 = faster, less expressive
 # voxcpm2 = slower, high quality
@@ -46,7 +48,7 @@ use_normalizer: false
 # medium (8GB) - Qwen3 1.7B + normalizer CPU
 # high (12GB) - Qwen3 1.7B / VoxCPM2 + Persona 4-bit + normalizer CPU
 # xhigh (16GB+) - everything allowed + Persona 8-bit + normalizer GPU
-vram: high
+vram: medium
 
 # sleep mode behavior
 #
