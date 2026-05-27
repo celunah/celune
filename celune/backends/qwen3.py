@@ -88,7 +88,7 @@ class Qwen3(CeluneBackend):
         self.uses_voice_bundles = self.mode == "clone"
         if self.mode == "native":
             warnings.warn(
-                "Qwen3 native mode is deprecated and will be removed soon. "
+                "Qwen3 native mode is deprecated and will be removed in Celune 4.0.0. "
                 "Please load a CEVOICE pack for optimal operation.",
                 DeprecationWarning,
                 stacklevel=2,
