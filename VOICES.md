@@ -25,13 +25,11 @@ The name is derived from the author's username.
 
 ## Models
 
-Qwen3 now uses voice cloning samples from the installed CEVOICE file by default. Native Qwen3 mode remains available only as a deprecated compatibility option, using non-cloning models.
+Qwen3 uses voice cloning from samples found in your CEVOICE file.
 
-Check <https://huggingface.co/collections/lunahr/celune> for a list of Celune models in use, or these model pages:
+Celune native models were removed as of version 4.0.0. If you wish to use them, please downgrade Celune to an older version.
 
-[Neutral](https://huggingface.co/lunahr/Celune-1.7B-Neutral)・[Calm](https://huggingface.co/lunahr/Celune-1.7B-Calm)・[Energetic](https://huggingface.co/lunahr/Celune-1.7B-Energetic)・[Upbeat](https://huggingface.co/lunahr/Celune-1.7B-Upbeat)
-
-The VoxCPM2 backend does use them, and the quality of expression is greatly improved with this model.
+Refer to https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base and https://huggingface.co/openbmb/VoxCPM2 for details about Celune's main TTS models.
 
 ## Reference text
 

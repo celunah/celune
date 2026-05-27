@@ -84,7 +84,18 @@ class ChatTemplateRenderer(Protocol):
         return_dict: bool = ...,
         return_tensors: str = ...,
     ) -> Union[str, BatchEncoding]:
-        """Render or tokenize a chat conversation."""
+        """Render or tokenize a chat conversation.
+
+        Args:
+            conversation: Value for `conversation`.
+            tokenize: Value for `tokenize`.
+            add_generation_prompt: Value for `add_generation_prompt`.
+            return_dict: Value for `return_dict`.
+            return_tensors: Value for `return_tensors`.
+
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
+        """
         raise NotImplementedError("protocol method")
 
 
@@ -98,7 +109,15 @@ class PersonaTokenizer(Protocol):
         raise NotImplementedError("protocol method")
 
     def decode(self, token_ids: torch.Tensor, *, skip_special_tokens: bool) -> str:
-        """Decode generated token IDs into text."""
+        """Decode generated token IDs into text.
+
+        Args:
+            token_ids: Value for `token_ids`.
+            skip_special_tokens: Value for `skip_special_tokens`.
+
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
+        """
         raise NotImplementedError("protocol method")
 
 
@@ -127,11 +146,22 @@ class PersonaModel(Protocol):
     device: Union[torch.device, str]
 
     def generate(self, **kwargs: ModelGenerateKwargValue) -> torch.Tensor:
-        """Generate token IDs from prepared inputs."""
+        """Generate token IDs from prepared inputs.
+
+        Args:
+            kwargs: Value for `kwargs`.
+
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
+        """
         raise NotImplementedError("protocol method")
 
     def eval(self) -> None:
-        """Switch the model into eval mode."""
+        """Switch the model into eval mode.
+
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
+        """
         raise NotImplementedError("protocol method")
 
 
@@ -228,7 +258,15 @@ class PersonaBackend:
         self.supports_vision = False
 
     def load(self, model_id: str, quantization: str) -> None:
-        """Load the requested model, quantized by default."""
+        """Load the requested model, quantized by default.
+
+        Args:
+            model_id: Value for `model_id`.
+            quantization: Value for `quantization`.
+
+        Raises:
+            ValueError: If `ValueError` needs to be raised.
+        """
         if (
             self.model is not None
             and self.model_id == model_id
@@ -334,7 +372,17 @@ class PersonaBackend:
                 torch.cuda.empty_cache()
 
     def generate(self, request: GenerateRequest) -> GenerateResponse:
-        """Generate a persona-formatted response."""
+        """Generate a persona-formatted response.
+
+        Args:
+            request: Value for `request`.
+
+        Returns:
+            Result of this function.
+
+        Raises:
+            ValueError: If `ValueError` needs to be raised.
+        """
         messages = request.messages or _messages_from_legacy_fields(request)
         if not messages:
             raise ValueError("Persona request has no messages")
@@ -344,35 +392,55 @@ class PersonaBackend:
             raise ValueError("Persona backend is not loaded")
 
         message_dicts = [_payload_from_message(message) for message in messages]
-        inputs = self._build_inputs(message_dicts)
-        model_inputs = {
-            key: cast(torch.Tensor, value) for key, value in dict(inputs).items()
-        }
-        generation_kwargs: dict[str, int] = {}
-        pad_token_id = tokenizer.eos_token_id
-        if pad_token_id is not None:
-            generation_kwargs["pad_token_id"] = pad_token_id
+        used_vision = _messages_have_vision(message_dicts)
+        inputs: Optional[BatchEncoding] = None
+        model_inputs: Optional[dict[str, torch.Tensor]] = None
+        output_ids: Optional[torch.Tensor] = None
+        new_ids: Optional[torch.Tensor] = None
+        try:
+            inputs = self._build_inputs(message_dicts)
+            model_inputs = {
+                key: cast(torch.Tensor, value) for key, value in dict(inputs).items()
+            }
+            generation_kwargs: dict[str, int] = {}
+            pad_token_id = tokenizer.eos_token_id
+            if pad_token_id is not None:
+                generation_kwargs["pad_token_id"] = pad_token_id
 
-        with torch.inference_mode():
-            output_ids = model.generate(
-                **model_inputs,
-                max_new_tokens=request.max_new_tokens,
-                do_sample=request.temperature > 0,
-                temperature=request.temperature,
-                top_p=request.top_p,
-                repetition_penalty=request.repetition_penalty,
-                **generation_kwargs,
+            with torch.inference_mode():
+                output_ids = model.generate(
+                    **model_inputs,
+                    max_new_tokens=request.max_new_tokens,
+                    do_sample=request.temperature > 0,
+                    temperature=request.temperature,
+                    top_p=request.top_p,
+                    repetition_penalty=request.repetition_penalty,
+                    **generation_kwargs,
+                )
+
+            input_ids = cast(torch.Tensor, inputs["input_ids"])
+            new_ids = output_ids[0, input_ids.shape[1] :]
+            text = tokenizer.decode(new_ids, skip_special_tokens=True).strip()
+            return GenerateResponse(
+                text=text,
+                response=text,
+                model=self.model_id,
+                quantization=self.quantization,
             )
-
-        input_ids = cast(torch.Tensor, inputs["input_ids"])
-        new_ids = output_ids[0, input_ids.shape[1] :]
-        text = tokenizer.decode(new_ids, skip_special_tokens=True).strip()
-        return GenerateResponse(
-            text=text,
-            response=text,
-            model=self.model_id,
-            quantization=self.quantization,
-        )
+        finally:
+            # Vision requests can allocate substantial transient GPU memory for
+            # decoded image/video inputs; drop those tensors as soon as the turn ends.
+            del new_ids
+            del output_ids
+            del model_inputs
+            del inputs
+            if used_vision:
+                gc.collect()
+                if torch.cuda.is_available():
+                    with contextlib.suppress(Exception):
+                        torch.cuda.synchronize()
+                    with contextlib.suppress(Exception):
+                        torch.cuda.empty_cache()
 
     def _build_inputs(self, messages: Sequence[ChatMessagePayload]) -> BatchEncoding:
         """Build model inputs, including optional image and video content."""
@@ -466,22 +534,42 @@ class PersonaRuntime:
 
     @property
     def model_id(self) -> str:
-        """Return the currently loaded model identifier."""
+        """Return the currently loaded model identifier.
+
+        Returns:
+            Result of this function.
+        """
         return self.backend.model_id
 
     @property
     def quantization(self) -> str:
-        """Return the currently loaded quantization mode."""
+        """Return the currently loaded quantization mode.
+
+        Returns:
+            Result of this function.
+        """
         return self.backend.quantization
 
     def load(self, model_id: str, quantization: str) -> None:
-        """Explicitly load the Persona backend with the requested model."""
+        """Explicitly load the Persona backend with the requested model.
+
+        Args:
+            model_id: Value for `model_id`.
+            quantization: Value for `quantization`.
+        """
         quantization = self._allowed_quantization(quantization)
         with self.lock:
             self.backend.load(model_id, quantization)
 
     def generate(self, request: GenerateRequest) -> GenerateResponse:
-        """Generate a persona-formatted response."""
+        """Generate a persona-formatted response.
+
+        Args:
+            request: Value for `request`.
+
+        Returns:
+            Result of this function.
+        """
         model_id = request.model or os.getenv("PERSONA_MODEL") or PERSONA_MODEL_ID
         quantization = (
             request.quantization
@@ -514,7 +602,14 @@ class PersonaRuntime:
 
 
 def request_from_json(payload: dict[str, JSONSerializable]) -> GenerateRequest:
-    """Convert a JSON-like payload into a Persona generation request."""
+    """Convert a JSON-like payload into a Persona generation request.
+
+    Args:
+        payload: Value for `payload`.
+
+    Returns:
+        Result of this function.
+    """
     raw_messages = payload.get("messages")
     messages: list[ChatMessage] = []
     model = payload.get("model")
@@ -554,7 +649,14 @@ def request_from_json(payload: dict[str, JSONSerializable]) -> GenerateRequest:
 
 
 def response_to_json(response: GenerateResponse) -> dict[str, JSONSerializable]:
-    """Convert a Persona generation response to a JSON-like payload."""
+    """Convert a Persona generation response to a JSON-like payload.
+
+    Args:
+        response: Value for `response`.
+
+    Returns:
+        Result of this function.
+    """
     return {
         "text": response.text,
         "response": response.response,

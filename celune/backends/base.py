@@ -8,6 +8,8 @@ import glob
 import random
 import secrets
 import hashlib
+import contextlib
+import gc
 from pathlib import Path
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
@@ -91,12 +93,14 @@ class CeluneBackend(ABC):
 
     @staticmethod
     def _reference_wave_path(name: str) -> Path:
+        """Return a path for a reference WAV file."""
         loader = default_loader()
         if loader is not None:
             return loader.materialize(name, "wav")
         return Path(__file__).resolve().parents[1] / "refs" / f"{name}.wav"
 
     def _validate_refs(self) -> None:
+        """Validate reference audio files found in the current CEVOICE pack."""
         loader = default_loader()
         if loader is not None:
             for name in loader.bundle.voice_order:
@@ -152,6 +156,7 @@ class CeluneBackend(ABC):
 
         Args:
             model: The model name to check availability of.
+
         Returns:
             tuple[bool, Optional[str]]: Whether the given model is available and relevant path.
         """
@@ -211,8 +216,8 @@ class CeluneBackend(ABC):
             str: The model identifier associated with the requested voice.
 
         Raises:
-            KeyError: The voice name is not defined by this backend.
             ValueError: The backend cannot resolve model IDs by voice.
+            KeyError: The voice name is not defined by this backend.
         """
         if self.voice_models:
             return self.voice_models[voice]
@@ -226,13 +231,13 @@ class CeluneBackend(ABC):
         """Return the backend's maximum streaming generation steps, if known.
 
         Args:
-            text: Optional text for backends whose generation budget depends on
-                input token length.
+            text: Optional text for backends whose generation budget depends on input token length.
 
         Returns:
-            Optional[int]: Maximum generated codec/token steps for one text chunk,
-                or ``None`` when the backend does not expose a stable limit.
+            Optional[int]: Maximum generated codec/token steps for one text chunk, or ``None`` when the backend
+                does not expose a stable limit.
         """
+        # this is a base implementation so we don't use the parameters
         discard(text)
 
     @staticmethod
@@ -270,19 +275,29 @@ class CeluneBackend(ABC):
         return self.model
 
     def unload_model(self) -> None:
-        """Release references held by the backend to its loaded model.
-
-        Returns:
-            None: This method clears the backend's cached model reference.
-        """
+        """Release references held by the backend to its loaded model."""
+        model = self.model
         self.model = None
+        if model is not None:
+            close = getattr(model, "close", None)
+            if callable(close):
+                with contextlib.suppress(Exception):
+                    close()
+            else:
+                unload = getattr(model, "unload", None)
+                if callable(unload):
+                    with contextlib.suppress(Exception):
+                        unload()
+
+        gc.collect()
+        if torch.cuda.is_available():
+            with contextlib.suppress(Exception):
+                torch.cuda.synchronize()
+            with contextlib.suppress(Exception):
+                torch.cuda.empty_cache()
 
     def preload_models(self) -> None:
-        """Ensure all required models are available locally.
-
-        Returns:
-            None: Implementations prepare model assets for later loading.
-        """
+        """Ensure all required models are available locally."""
         for model_id in self.all_model_ids:
             available, _ = self.model_is_available_locally(model_id)
             if not available:
@@ -297,7 +312,7 @@ class CeluneBackend(ABC):
 
         Args:
             model_id: The backend-specific model identifier to load.
-            **kwargs: Backend-specific load options (e.g., VoxCPM2's `load_denoiser` or `optimize`).
+            kwargs: Backend-specific load options (e.g., VoxCPM2's `load_denoiser` or `optimize`).
 
         Returns:
             BackendModel: The loaded backend model instance.
@@ -311,9 +326,8 @@ class CeluneBackend(ABC):
 
         Args:
             model: The backend model instance to use for generation.
-            **kwargs: Backend-specific generation parameters.
+            kwargs: Backend-specific generation parameters.
 
         Returns:
-            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of
-                Celune compatible audio chunks.
+            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of audio chunks.
         """

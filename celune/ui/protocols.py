@@ -12,11 +12,7 @@ class CeluneBaseUI(Protocol):
     celune: Celune
 
     def run(self) -> None:
-        """Run the UI's main loop.
-
-        Returns:
-            None: Implementations block until the UI exits.
-        """
+        """Run the UI's main loop."""
 
 
 class CeluneTextualUI(CeluneBaseUI, Protocol):
@@ -26,22 +22,16 @@ class CeluneTextualUI(CeluneBaseUI, Protocol):
         """Handle log messages coming from Celune.
 
         Args:
-            msg: The log message emitted by Celune.
-            severity: The log severity level.
-
-        Returns:
-            None: Implementations forward the log message.
+            msg: Value for `msg`.
+            severity: Value for `severity`.
         """
 
     def safe_status(self, msg: str, severity: str = "info") -> None:
         """Update current status.
 
         Args:
-            msg: The status text to display.
-            severity: The status severity level.
-
-        Returns:
-            None: Implementations update their status display.
+            msg: Value for `msg`.
+            severity: Value for `severity`.
         """
 
     def safe_progress(
@@ -50,65 +40,42 @@ class CeluneTextualUI(CeluneBaseUI, Protocol):
         """Update current progress.
 
         Args:
-            progress: Current progress, or ``None`` for an indeterminate bar.
-            total: Total progress, or ``None`` for an indeterminate bar.
-
-        Returns:
-            None: Implementations update their progress display.
+            progress: Value for `progress`.
+            total: Value for `total`.
         """
 
     def error(self, error: str) -> None:
         """Set the UI status to the error message.
 
         Args:
-            error: The error text to display.
-
-        Returns:
-            None: Implementations expose the error to the user.
+            error: Value for `error`.
         """
 
     def tts_idle(self) -> None:
-        """Reset UI state after Celune stops talking.
-
-        Returns:
-            None: Implementations restore idle state.
-        """
+        """Reset UI state after Celune stops talking."""
 
     def tts_queue_avail(self) -> None:
-        """Unlock input queueing after Celune completes generation.
-
-        Returns:
-            None: Implementations re-enable queueing while playback continues.
-        """
+        """Unlock input queueing after Celune completes generation."""
 
     def tts_voice_changed(self, name: str) -> None:
         """Set UI state after changing Celune's voice.
 
         Args:
-            name: The newly active voice name.
-
-        Returns:
-            None: Implementations synchronize visible voice state.
+            name: Value for `name`.
         """
 
     def change_input_state(self, locked: bool) -> None:
         """Lock or unlock Celune's UI layer.
 
         Args:
-            locked: Whether input should be disabled.
-
-        Returns:
-            None: Implementations update input availability.
+            locked: Value for `locked`.
         """
 
     def change_voice_lock_state(self, locked: bool) -> None:
         """Lock or unlock Celune's voice change button.
 
         Args:
-            locked: Whether voice changes should be disabled.
-
-        Returns:
-            None: Implementations update voice change availability.
+            locked: Value for `locked`.
         """
 
 
@@ -119,19 +86,13 @@ class CeluneHeadlessBaseUI(CeluneBaseUI, Protocol):
         """Log to the headless interface.
 
         Args:
-            msg: The log message to print.
-            severity: The log severity level.
-
-        Returns:
-            None: Implementations emit the log line.
+            msg: Value for `msg`.
+            severity: Value for `severity`.
         """
 
     def headless_error(self, error: str) -> None:
         """Log an error to the headless interface.
 
         Args:
-            error: The error message to print.
-
-        Returns:
-            None: Implementations emit the error line.
+            error: Value for `error`.
         """

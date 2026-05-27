@@ -45,11 +45,7 @@ class FakeBackend(CeluneBackend):
         return True, model
 
     def preload_models(self) -> None:
-        """Pretend to preload models without performing work.
-
-        Returns:
-            None: This fake intentionally performs no work.
-        """
+        """Pretend to preload models without performing work."""
         return None
 
     def load_model(self, model_id: str, **kwargs: JSONSerializable) -> FakeModel:
@@ -57,7 +53,7 @@ class FakeBackend(CeluneBackend):
 
         Args:
             model_id: The requested fake model identifier.
-            **kwargs: Backend-specific load arguments preserved for assertions.
+            kwargs: Backend-specific load arguments preserved for assertions.
 
         Returns:
             FakeModel: A dictionary describing the requested fake model.
@@ -71,11 +67,10 @@ class FakeBackend(CeluneBackend):
 
         Args:
             model: The fake model passed by the caller.
-            **kwargs: Generation arguments accepted for interface compatibility.
+            kwargs: Generation arguments accepted for interface compatibility.
 
         Returns:
-            Iterator[tuple[npt.NDArray[np.float32], int, dict[str, int]]]:
-                An iterator yielding one fake audio chunk.
+            Iterator[tuple[npt.NDArray[np.float32], int, dict[str, int]]]: An iterator yielding one fake audio chunk.
         """
         del model, kwargs
         yield np.zeros((8, 2), dtype=np.float32), 48000, {"chunk_steps": 2}
@@ -87,21 +82,11 @@ class FakeGlow:
     def __init__(
         self,
         color: str,
-        celune: object | None = None,
+        celune: Optional[object] = None,
         host: str = "127.0.0.1",
         port: int = 6742,
     ) -> None:
-        """Initialize fake glow state.
-
-        Args:
-            color: The configured glow color.
-            celune: Attached Celune instance, when provided.
-            host: Configured OpenRGB host.
-            port: Configured OpenRGB port.
-
-        Returns:
-            None: Constructors initialize state in place.
-        """
+        """Initialize fake glow state."""
         self.color = color
         self.celune = celune
         self.host = host
@@ -126,19 +111,11 @@ class FakeGlow:
         return True
 
     def enter(self) -> None:
-        """Record that Celune entered the ready state.
-
-        Returns:
-            None: This helper mutates fake state in place.
-        """
+        """Record that Celune entered the ready state."""
         self.entered = True
 
     def leave(self) -> None:
-        """Accept a leave request without performing hardware work.
-
-        Returns:
-            None: This fake intentionally performs no work.
-        """
+        """Accept a leave request without performing hardware work."""
 
     def fatal(self) -> None:
         """Record that Celune entered a fatal glow state."""
@@ -159,9 +136,6 @@ class FakeGlow:
         Args:
             reset: Whether real devices would be reset.
             wait: Whether a real worker would be joined.
-
-        Returns:
-            None: This fake intentionally performs no work.
         """
         discard(reset)
         discard(wait)
@@ -171,9 +145,6 @@ class FakeGlow:
 
         Args:
             audio: The audio chunk scheduled by the caller.
-
-        Returns:
-            None: This helper appends to fake state.
         """
         self.scheduled.append(audio)
 
@@ -182,38 +153,22 @@ class FakeStream:
     """Minimal output-stream fake that records lifecycle operations."""
 
     def __init__(self) -> None:
-        """Initialize fake stream state.
-
-        Returns:
-            None: Constructors initialize state in place.
-        """
+        """Initialize fake stream state."""
         self.stopped = False
         self.aborted = False
         self.closed = False
         self.written: list[npt.NDArray[np.float32]] = []
 
     def stop(self) -> None:
-        """Record a graceful stream stop.
-
-        Returns:
-            None: This helper mutates fake state in place.
-        """
+        """Record a graceful stream stop."""
         self.stopped = True
 
     def abort(self) -> None:
-        """Record an immediate stream abort.
-
-        Returns:
-            None: This helper mutates fake state in place.
-        """
+        """Record an immediate stream abort."""
         self.aborted = True
 
     def close(self) -> None:
-        """Record stream closure.
-
-        Returns:
-            None: This helper mutates fake state in place.
-        """
+        """Record stream closure."""
         self.closed = True
 
     def write(self, audio: npt.NDArray[np.float32]) -> None:
@@ -221,9 +176,6 @@ class FakeStream:
 
         Args:
             audio: The audio chunk written by the caller.
-
-        Returns:
-            None: This helper appends to fake state.
         """
         self.written.append(audio)
 
@@ -241,6 +193,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine = SimpleNamespace()
     engine.backend = SimpleNamespace(supported_languages=("en",))
     engine.persona_attachments = []
+    engine.persona_recent_visual_context = ()
     engine.use_normalization = False
     engine.normalize = mock.Mock(return_value=None)
     engine.is_in_tutorial = False

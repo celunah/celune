@@ -17,7 +17,14 @@ class _FakeEncoded:
         self.device = None
 
     def to(self, device: str) -> "_FakeEncoded":
-        """Record the requested device and return ``self``."""
+        """Record the requested device and return ``self``.
+
+        Args:
+            device: Value for `device`.
+
+        Returns:
+            Result of this function.
+        """
         self.device = device
         return self
 
@@ -36,7 +43,15 @@ class _FakeTokenizer:
 
     @staticmethod
     def decode(token_ids, skip_special_tokens: bool) -> str:
-        """Return a fixed decoded response string."""
+        """Return a fixed decoded response string.
+
+        Args:
+            token_ids: Value for `token_ids`.
+            skip_special_tokens: Value for `skip_special_tokens`.
+
+        Returns:
+            Result of this function.
+        """
         discard(token_ids)
         discard(skip_special_tokens)
         return "decoded"
@@ -50,9 +65,33 @@ class _FakeModel:
 
     @staticmethod
     def generate(**kwargs):
-        """Unused generate stub for protocol compatibility."""
+        """Unused generate stub for protocol compatibility.
+
+        Args:
+            kwargs: Value for `kwargs`.
+
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
+        """
         discard(kwargs)
         raise NotImplementedError("test fake does not generate")
+
+    @staticmethod
+    def eval() -> None:
+        """Unused eval stub for protocol compatibility."""
+
+
+class _FakeGenerativeModel:
+    """Minimal model fake that returns one short generated sequence."""
+
+    def __init__(self) -> None:
+        self.device = "cpu"
+        self.calls: list[dict[str, object]] = []
+
+    def generate(self, **kwargs) -> runtime.torch.Tensor:
+        """Record generation kwargs and return one synthetic completion."""
+        self.calls.append(dict(kwargs))
+        return runtime.torch.tensor([[1, 2, 3]], dtype=runtime.torch.long)
 
     @staticmethod
     def eval() -> None:
@@ -67,7 +106,15 @@ class _FakeProcessor:
 
     @staticmethod
     def apply_chat_template(*args, **kwargs) -> str:
-        """Return a fixed prompt rendering for load-time support checks."""
+        """Return a fixed prompt rendering for load-time support checks.
+
+        Args:
+            args: Value for `args`.
+            kwargs: Value for `kwargs`.
+
+        Returns:
+            Result of this function.
+        """
         discard(args)
         discard(kwargs)
         return "prompt"
@@ -338,6 +385,44 @@ class PersonaApiTests(TestCase):
             },
         )
         self.assertNotIn("do_resize", fake_processor.calls[0])
+
+    def test_generate_releases_transient_vram_after_vision_turn(self) -> None:
+        """Verify vision requests drop temporary GPU allocations after generation."""
+        backend = runtime.PersonaBackend()
+        backend.processor = cast(runtime.PersonaProcessor, _FakeMultimodalProcessor())
+        backend.tokenizer = cast(runtime.PersonaTokenizer, _FakeTokenizer())
+        backend.model = cast(runtime.PersonaModel, _FakeGenerativeModel())
+        backend.model_id = "fixture/model"
+        backend.quantization = "4bit"
+        backend.supports_vision = True
+        request = runtime.GenerateRequest(
+            messages=[
+                runtime.ChatMessage(
+                    "user",
+                    [runtime.ImageContentItem(type="image", image="file:///frame.png")],
+                )
+            ]
+        )
+
+        with (
+            mock.patch.object(
+                backend,
+                "_build_inputs",
+                return_value={"input_ids": runtime.torch.tensor([[1, 2]])},
+            ),
+            mock.patch("celune.persona.runtime.gc.collect") as collect,
+            mock.patch(
+                "celune.persona.runtime.torch.cuda.is_available", return_value=True
+            ),
+            mock.patch("celune.persona.runtime.torch.cuda.synchronize") as sync,
+            mock.patch("celune.persona.runtime.torch.cuda.empty_cache") as empty_cache,
+        ):
+            response = backend.generate(request)
+
+        self.assertEqual(response.text, "decoded")
+        collect.assert_called_once_with()
+        sync.assert_called_once_with()
+        empty_cache.assert_called_once_with()
 
     def test_persona_client_routes_backend_output_to_dev_logs(self) -> None:
         """Verify Persona backend stdout/stderr is captured into developer logs."""

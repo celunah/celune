@@ -63,6 +63,7 @@ class CeluneHeadlessUI:
             return self.colors["yellow"]
         if severity == "error":
             return self.colors["red"]
+        # sleeping severity does not have a match in the VGA palette
         return self.colors["white"]
 
     def headless_log(self, msg: str, severity: str = "info") -> None:
@@ -71,9 +72,6 @@ class CeluneHeadlessUI:
         Args:
             msg: The log message to print.
             severity: The log severity level.
-
-        Returns:
-            None: This method prints a formatted line to stdout.
         """
         prefix = ""
         if severity == "warning":
@@ -87,19 +85,11 @@ class CeluneHeadlessUI:
 
         Args:
             error: The error message to print.
-
-        Returns:
-            None: This method forwards the message as an error log.
         """
         self.headless_log(error, "error")
 
     def run(self) -> None:
-        """Start the headless interface.
-
-        Returns:
-            None: This method installs the signal handler and keeps the process
-                alive.
-        """
+        """Start the headless interface."""
         if not self._has_celune():
             warnings.warn(
                 f"{self.__class__.__name__} has no attached Celune instance: this will do nothing",
@@ -113,11 +103,7 @@ class CeluneHeadlessUI:
             time.sleep(1)
 
     def close(self) -> None:
-        """Exit from Celune's headless interface.
-
-        Returns:
-            None: This method closes the interface and exits from Celune.
-        """
+        """Exit from Celune's headless interface."""
 
         if self.celune is not None:
             self.celune.close()
@@ -130,9 +116,6 @@ class CeluneHeadlessUI:
         Args:
             sig: The received signal number.
             frame: The current stack frame from the signal handler.
-
-        Returns:
-            None: This handler closes Celune and exits the process.
         """
         if SIGTSTP is not None and sig == SIGTSTP:
             return

@@ -85,9 +85,6 @@ except ModuleNotFoundError as package:
 def main() -> None:
     """Instantiate and start Celune.
 
-    Returns:
-        None: This function runs the application or exits the process on failure.
-
     Raises:
         No: Celune refuses to run on a blocked name day.
         Exception: Re-raised in development mode for unexpected startup errors.

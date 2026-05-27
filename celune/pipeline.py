@@ -101,20 +101,12 @@ class SpeechTiming:
     first_playback_time: Optional[float] = None
 
     def mark_first_chunk(self) -> None:
-        """Record when the backend yields its first audio chunk.
-
-        Returns:
-            None: The time the first chunk was received.
-        """
+        """Record when the backend yields its first audio chunk."""
         if self.first_chunk_time is None:
             self.first_chunk_time = time.monotonic()
 
     def mark_first_playback(self) -> None:
-        """Record when the first audio chunk is sent to the output stream.
-
-        Returns:
-            None: The time the first audio chunk was sent to the playback pipeline.
-        """
+        """Record when the first audio chunk is sent to the output stream."""
         if self.first_playback_time is None:
             self.first_playback_time = time.monotonic()
 
@@ -184,20 +176,7 @@ def _celune_metadata_payload(
     subtype: str,
     included_kept_sfx: bool,
 ) -> JSON:
-    """Build the Celune generation metadata payload.
-
-    Args:
-        engine: The instance of Celune to use data from.
-        text: The input text given to Celune.
-        display_text: The displayed text shown in Celune's UI.
-        generation_params: The generation parameters used with this generation.
-        sample_rate: The saved sample rate in Hz.
-        subtype: The saved audio subtype.
-        included_kept_sfx: Whether the included utterance has a preceding sound effect.
-
-    Returns:
-        JSON: JSON-serializable metadata.
-    """
+    """Build the Celune generation metadata payload."""
     return {
         "format": "celune_metadata",
         "format_version": 1,
@@ -206,7 +185,6 @@ def _celune_metadata_payload(
         "text": text,
         "display_text": display_text,
         "backend": _json_value(getattr(engine, "tts_backend", None)),
-        "backend_mode": _json_value(engine.config.get("qwen3_mode")),
         "qwen3_x_vector_only": _json_value(
             getattr(engine.backend, "x_vector_only", None)
         ),
@@ -421,9 +399,6 @@ def clear_queue(q: queue.Queue) -> None:
 
     Args:
         q: The queue to empty.
-
-    Returns:
-        None: This method removes all currently pending items.
     """
     try:
         while True:
@@ -438,9 +413,6 @@ def log_first_playback(engine: "Celune", timing: Optional[SpeechTiming]) -> None
     Args:
         engine: The instance of Celune to log back into.
         timing: The JSON-formatted timing data.
-
-    Returns:
-        None: This function logs timing data to Celune's configured logger.
     """
     start_time = getattr(timing, "start_time", None)
     if not isinstance(start_time, float):
@@ -469,9 +441,6 @@ def close_stream(engine: "Celune", abort: bool = False) -> None:
     Args:
         engine: The Celune engine that owns the audio stream.
         abort: Whether to abort immediately instead of stopping gracefully.
-
-    Returns:
-        None: This method closes the active output stream and clears stream state.
     """
     if engine.stream is None:
         return
@@ -547,9 +516,6 @@ def release_pipeline(engine: "Celune") -> None:
 
     Args:
         engine: The Celune engine that owns the playback pipeline.
-
-    Returns:
-        None: This method clears the busy state and marks playback as done.
     """
     with engine.say_lock:
         engine.locked = False
@@ -711,7 +677,14 @@ def _pack_persona_lines(engine: "Celune", field_name: str) -> tuple[str, ...]:
 
 
 def build_persona_character_card(engine: "Celune") -> str:
-    """Build the compact character and persona summary sent with requests."""
+    """Build the compact character and persona summary sent with requests.
+
+    Args:
+        engine: Value for `engine`.
+
+    Returns:
+        Result of this function.
+    """
     context = build_persona_context(engine, "")
     return f"{context.character_profile.render()}\n\n{context.persona_card.render()}"
 
@@ -777,11 +750,12 @@ def _persona_attachment_source(path: str) -> str:
 
 def _build_visual_context(engine: "Celune") -> VisualContext:
     """Return the optional visual context summary for the current request."""
+    remembered = _recent_visual_context_items(engine)
     attachments = getattr(engine, "persona_attachments", [])
     if not isinstance(attachments, list):
-        return VisualContext()
+        return VisualContext(items=remembered)
 
-    items: list[str] = []
+    items = list(remembered)
     for attachment in attachments:
         if not isinstance(attachment, dict):
             continue
@@ -800,6 +774,61 @@ def _build_visual_context(engine: "Celune") -> VisualContext:
             items.append(f"{kind.strip()}: {source}")
 
     return VisualContext(items=tuple(items))
+
+
+def _recent_visual_context_items(engine: "Celune") -> tuple[str, ...]:
+    """Return textual carry-over context from the most recent visual request."""
+    items = getattr(engine, "persona_recent_visual_context", ())
+    if isinstance(items, str):
+        stripped = items.strip()
+        return (stripped,) if stripped else ()
+    if isinstance(items, (list, tuple)):
+        return tuple(
+            item.strip() for item in items if isinstance(item, str) and item.strip()
+        )
+    return ()
+
+
+def _remember_visual_context(
+    attachments: list[JSONSerializable],
+    engine: "Celune",
+    request: str,
+) -> None:
+    """Store a text summary for the most recent one-shot visual request."""
+    if not isinstance(attachments, list):
+        setattr(engine, "persona_recent_visual_context", ())
+        return
+
+    media_items: list[str] = []
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        kind = attachment.get("type")
+        name = attachment.get("name")
+        path = attachment.get("path")
+        if not isinstance(kind, str) or not kind.strip():
+            continue
+        label = str(name).strip() if isinstance(name, str) and name.strip() else ""
+        source = str(path).strip() if isinstance(path, str) and path.strip() else ""
+        if label and source:
+            media_items.append(f"{kind.strip()}: {label} ({source})")
+        elif label:
+            media_items.append(f"{kind.strip()}: {label}")
+        elif source:
+            media_items.append(f"{kind.strip()}: {source}")
+
+    if not media_items:
+        setattr(engine, "persona_recent_visual_context", ())
+        return
+
+    remembered = [
+        "Recent visual context from the last Persona request:",
+        *media_items,
+    ]
+    clean_request = request.strip()
+    if clean_request:
+        remembered.append(f"User request about that media: {clean_request}")
+    setattr(engine, "persona_recent_visual_context", tuple(remembered))
 
 
 def _build_short_term_history(engine: "Celune") -> ShortTermHistory:
@@ -885,7 +914,15 @@ def _build_retrieved_memory_bundle(
 
 
 def build_persona_context(engine: "Celune", request: str) -> PersonaContext:
-    """Build structured Persona context for one user request."""
+    """Build structured Persona context for one user request.
+
+    Args:
+        engine: Value for `engine`.
+        request: Value for `request`.
+
+    Returns:
+        Result of this function.
+    """
     name = _persona_active_character_name(engine)
     voice = getattr(engine, "current_voice", None) or "balanced"
     voice_prompt = _effective_voice_prompt(engine)
@@ -957,7 +994,15 @@ def _effective_voice_prompt(engine: "Celune") -> Optional[str]:
 
 
 def build_persona_messages(engine: "Celune", request: str) -> list[JSON]:
-    """Build OpenAI-style messages for the external Persona service."""
+    """Build OpenAI-style messages for the external Persona service.
+
+    Args:
+        engine: Value for `engine`.
+        request: Value for `request`.
+
+    Returns:
+        Result of this function.
+    """
     context = build_persona_context(engine, request)
     attachments = _persona_pending_attachments(engine)
     user_content: JSONSerializable = request.strip()
@@ -974,7 +1019,15 @@ def build_persona_messages(engine: "Celune", request: str) -> list[JSON]:
 
 
 def build_persona_request(engine: "Celune", request: str) -> JSON:
-    """Build the JSON payload sent to the external Persona service."""
+    """Build the JSON payload sent to the external Persona service.
+
+    Args:
+        engine: Value for `engine`.
+        request: Value for `request`.
+
+    Returns:
+        Result of this function.
+    """
     context = build_persona_context(engine, request)
     character_card = (
         f"{context.character_profile.render()}\n\n{context.persona_card.render()}"
@@ -1033,10 +1086,14 @@ def think(engine: "Celune", request: str) -> bool:
     Args:
         engine: The Celune engine that should speak the output.
         request: The input request that will be sent to by Persona.
+
+    Returns:
+        Result of this function.
     """
     _store_persona_memories(engine, request)
     payload = build_persona_request(engine, request)
     attachments = getattr(engine, "persona_attachments", None)
+    attachment_snapshot = list(attachments) if isinstance(attachments, list) else []
 
     try:
         vision = engine.vision
@@ -1059,6 +1116,8 @@ def think(engine: "Celune", request: str) -> bool:
     if not spoken_text:
         engine.log("Persona system returned an empty response.", "warning")
         return False
+
+    _remember_visual_context(attachment_snapshot, engine, request)
 
     history = getattr(engine, "persona_history", None)
     if isinstance(history, list):
@@ -1119,15 +1178,17 @@ def queue_speech(
         display_text: Optional text to show in logs instead of the synthesis text.
 
     Returns:
-        bool: ``True`` when the text was queued successfully, otherwise
-            ``False``.
+        bool: ``True`` when the text was queued successfully, otherwise ``False``.
+
+    Raises:
+        Exception: If `Exception` needs to be raised.
     """
     if engine.is_in_tutorial:
         engine.log("Speech input is disabled during the tutorial.", "warning")
         return False
 
     if getattr(engine, "sleeping", False):
-        engine.log("Celune is currently sleeping.", "warning")
+        engine.log("Cannot speak while Celune is sleeping.", "warning")
         engine.error_callback("Celune is currently sleeping")
         engine.progress_callback(0, 1)
         return False
@@ -1219,8 +1280,7 @@ def queue_sfx_audio(
         bool: ``True`` when playback was queued successfully, otherwise ``False``.
 
     Raises:
-        Exception: Re-raised after releasing the pipeline if SFX playback setup
-            fails.
+        Exception: Re-raised after releasing the pipeline if SFX playback setup fails.
     """
     if not acquire_pipeline(engine, "play"):
         return False
@@ -1261,8 +1321,7 @@ def play(engine: "Celune", sound_path: str, keep: bool = False) -> bool:
         bool: ``True`` when playback was queued successfully, otherwise ``False``.
 
     Raises:
-        Exception: Re-raised after releasing the pipeline if SFX playback setup
-            fails.
+        Exception: Re-raised after releasing the pipeline if SFX playback setup fails.
     """
     if not os.path.exists(sound_path):
         engine.log(f"Celune cannot find {sound_path}.", "warning")
@@ -1279,9 +1338,6 @@ def close(engine: "Celune") -> None:
 
     Args:
         engine: The Celune engine to shut down.
-
-    Returns:
-        None: This method stops worker threads, closes audio, and fades out RGB.
     """
     engine.log("Exiting...")
     engine._exit_requested = True
@@ -1332,7 +1388,6 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         return [text]
 
     def split_long_unit(value: str) -> list[str]:
-        """Split a sentence-like unit that is too long for one chunk."""
         pieces = [piece.strip() for piece in value.splitlines() if piece.strip()]
         if not pieces:
             pieces = value.split()
@@ -1365,7 +1420,6 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         return unit_chunks
 
     def split_words(value: str) -> list[str]:
-        """Split text on word boundaries when no stronger boundary exists."""
         word_chunks = []
         word_current = ""
 
@@ -1384,15 +1438,6 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         return chunks
 
     def split_sentences(value: str) -> list[str]:
-        """Split a text fragment into sentence-like units.
-
-        Args:
-            value: Text fragment to split.
-
-        Returns:
-            list[str]: Sentence-like units with surrounding whitespace removed.
-        """
-
         units = []
         for rmatch in unit_checker.finditer(value):
             unit = rmatch.group(0).strip()
@@ -1403,14 +1448,6 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         return units
 
     def split_units(value: str) -> list[str]:
-        """Split text into sentence units while isolating quoted sentences.
-
-        Args:
-            value: Text to split.
-
-        Returns:
-            list[str]: Sentence units and complete quoted sentence units.
-        """
         units = []
         start = 0
 
@@ -1477,9 +1514,6 @@ def generation_worker(engine: "Celune") -> None:
 
     Args:
         engine: The Celune engine whose generation queue should be processed.
-
-    Returns:
-        None: This worker loop runs until it receives the shutdown sentinel.
 
     Raises:
         NotAvailableError: The speech model is unavailable during generation.
@@ -1844,9 +1878,6 @@ def playback_worker(engine: "Celune") -> None:
 
     Args:
         engine: The Celune engine whose audio queue should be played back.
-
-    Returns:
-        None: This worker loop runs until playback is shut down.
 
     Raises:
         NotAvailableError: The audio stream is unavailable during playback.

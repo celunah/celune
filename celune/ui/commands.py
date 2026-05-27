@@ -6,8 +6,8 @@ from __future__ import annotations
 import os
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
 from urllib.parse import urlparse
+from typing import Optional, TYPE_CHECKING
 
 import soundfile as sf
 
@@ -18,8 +18,8 @@ from ..exceptions import InvalidExtensionError
 if TYPE_CHECKING:
     from .app import CeluneUI
 
-IMAGE_EXTENSIONS = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"}
-VIDEO_EXTENSIONS = {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"}
+IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
+VIDEO_EXTENSIONS = {".mp4", ".webm"}
 
 
 def _attachment_source(path: Path) -> str:
@@ -30,7 +30,20 @@ def _attachment_source(path: Path) -> str:
     return resolved.as_uri()
 
 
-def _remote_attachment_kind(source: str) -> str | None:
+def attachment_source(path: Path) -> str:
+    """Public interface for _attachment_source().
+
+    Args:
+        path: The path of the attachment.
+
+    Returns:
+        str: The return value of _attachment_source(), containing a Persona-friendly attachment source string.
+    """
+
+    return _attachment_source(path)
+
+
+def _remote_attachment_kind(source: str) -> Optional[str]:
     """Return the attachment kind for one supported remote URL."""
     parsed = urlparse(source)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -49,9 +62,6 @@ def tutorial(ui: CeluneUI) -> None:
 
     Args:
         ui: The instance of CeluneUI that the tutorial will interact with.
-
-    Returns:
-        None: This function sends Celune tutorial commands automatically.
     """
     assets = Path(__file__).resolve().parents[1] / "assets"
     if not assets.exists():
@@ -72,10 +82,7 @@ def tutorial(ui: CeluneUI) -> None:
     tutorial_token = ui.tutorial_token
 
     def prepare_and_schedule() -> None:
-        """Prepare tutorial clip timings without blocking Textual."""
-
         def wav_duration(pth: Path) -> float:
-            """Return the duration of a WAV file in seconds."""
             if not pth.exists():
                 raise FileNotFoundError(f"tutorial clip not found: {pth}")
 
@@ -83,10 +90,7 @@ def tutorial(ui: CeluneUI) -> None:
             return info.frames / info.samplerate
 
         def play_tutorial_clip(pth: Path) -> None:
-            """Play a tutorial clip without blocking the Textual message loop."""
-
             def worker() -> None:
-                """Queue tutorial audio on a background thread."""
                 try:
                     ui.celune.play(str(pth))
                 except Exception as exc:
@@ -111,7 +115,6 @@ def tutorial(ui: CeluneUI) -> None:
             return
 
         def schedule() -> None:
-            """Schedule prepared tutorial actions on the UI thread."""
             if tutorial_token != ui.tutorial_token or not ui.tutorial_active:
                 return
 
@@ -140,14 +143,11 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui: The instance of the CeluneUI to use here.
         command: The slash-command name without the leading slash.
         args: The parsed command arguments.
-
-    Returns:
-        None: This method mutates UI or engine state based on the command.
     """
 
     ui.input_box.load_text("")
     if command == "help":
-        ui.safe_log("Celune help topics")
+        ui.safe_log("--- Celune help topics ---")
         ui.safe_log("Available commands:")
         ui.safe_log(
             "Arguments marked in <> are required, those marked in [] are optional."
@@ -238,7 +238,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         if callable(voice_prompt_supported) and not voice_prompt_supported():
             ui.celune.voice_prompt = None
             ui.safe_log(
-                "Voice prompts are unavailable on the active Qwen3 0.6B model.",
+                "Voice prompts are unavailable with the currently loaded model.",
                 "warning",
             )
             return
@@ -400,7 +400,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         count = len(ui.celune.persona_attachments)
         ui.safe_log(
-            f"Attached {', '.join(added)}. {count} pending for the next persona reply."
+            f"Attached {', '.join(added)}. {count} attachments will be sent in the next pass."
         )
         return
     if command == "seed":
@@ -423,7 +423,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             return
 
         if not 0 <= value < 2**32:
-            ui.safe_log("Seed must be between 0 and 4294967295.", "warning")
+            ui.safe_log(f"Seed must be between 0 and {2**32 - 1}.", "warning")
             return
 
         ui.celune.backend.current_seed = value
@@ -431,6 +431,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(f"Seed set to {value}.")
         return
     if command == "tutorial":
+        ui.safe_log(
+            "Tutorial activated. Listen to what's said to learn how to use Celune."
+        )
         tutorial(ui)
         return
     if command == "stop":

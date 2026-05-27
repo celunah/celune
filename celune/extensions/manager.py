@@ -34,8 +34,7 @@ class CeluneExtensionManager:
 
         Raises:
             InvalidExtensionError: The object is not a CeluneExtension subclass.
-            ExtensionAlreadyRegisteredError: An extension with the same name is
-                already registered.
+            ExtensionAlreadyRegisteredError: An extension with the same name is already registered.
         """
         if not inspect.isclass(extension_cls) or not issubclass(
             extension_cls, CeluneExtension
@@ -58,11 +57,7 @@ class CeluneExtensionManager:
         return instance
 
     def autostart_all(self) -> None:
-        """Autostart all available Celune extensions.
-
-        Returns:
-            None: Matching extensions are started on background threads.
-        """
+        """Autostart all available Celune extensions."""
         if self.auto_started:
             self.context.log(
                 "[Core] Cannot autostart Celune extensions more than one time.",
@@ -76,15 +71,6 @@ class CeluneExtensionManager:
                 self.context.log_dev(f"[Core] Auto-starting: {name}")
 
                 def runner(e=ext, n=name):
-                    """Run one extension autostart hook.
-
-                    Args:
-                        e: Extension instance to start.
-                        n: Extension display name for logging.
-
-                    Returns:
-                        None: This worker logs autostart failures.
-                    """
                     try:
                         e.autostart()
                     except Exception as ex:
@@ -106,11 +92,8 @@ class CeluneExtensionManager:
 
         Args:
             name: The registered extension name to invoke.
-            *args: Positional arguments forwarded to the extension.
-            **kwargs: Keyword arguments forwarded to the extension.
-
-        Returns:
-            None: The invocation thread is started asynchronously.
+            args: Positional arguments forwarded to the extension.
+            kwargs: Keyword arguments forwarded to the extension.
 
         Raises:
             InvalidExtensionError: The requested extension is not registered.
@@ -136,9 +119,6 @@ class CeluneExtensionManager:
 
         Args:
             folder: The directory containing extension Python modules.
-
-        Returns:
-            None: This method imports and registers any valid extensions it finds.
         """
         extensions_dir = Path(folder)
 

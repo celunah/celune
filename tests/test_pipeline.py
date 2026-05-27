@@ -33,9 +33,6 @@ class PipelineTests(TestCase):
     def test_queue_helpers_and_force_stop_cover_busy_and_idle_paths(self) -> None:
         """Verify queue draining, lock handling, and force-stop behavior.
 
-        Returns:
-            None: Assertions verify pipeline state changes.
-
         Raises:
             AssertionError: Pipeline helper behavior changes unexpectedly.
         """
@@ -64,9 +61,6 @@ class PipelineTests(TestCase):
 
     def test_queue_speech_handles_success_and_failure_paths(self) -> None:
         """Verify speech queueing success and rejection paths.
-
-        Returns:
-            None: Assertions verify queueing behavior.
 
         Raises:
             AssertionError: Speech queueing behavior changes unexpectedly.
@@ -122,9 +116,6 @@ class PipelineTests(TestCase):
     def test_think_builds_persona_payload_and_queues_response(self) -> None:
         """Verify Persona request formatting without loading a Persona model.
 
-        Returns:
-            None: Assertions verify request payload and speech queueing behavior.
-
         Raises:
             AssertionError: Persona request behavior changes unexpectedly.
         """
@@ -134,19 +125,11 @@ class PipelineTests(TestCase):
 
             @staticmethod
             def raise_for_status() -> None:
-                """Stub for raise_for_status() that does not raise.
-
-                Returns:
-                    None: This function does nothing.
-                """
+                """Do nothing when asked to raise for status code."""
 
             @staticmethod
             def json() -> JSONSerializable:
-                """Return a sample response.
-
-                Returns:
-                    JSONSerializable: A JSON-serializable response object.
-                """
+                """Return a fake response."""
                 return {"response": "I can help with that."}
 
         class FakeVision:
@@ -156,7 +139,7 @@ class PipelineTests(TestCase):
                 self.payload: Optional[JSON] = None
 
             def post(self, json: JSON) -> FakeResponse:
-                """POST to the fake Persona runtime."""
+                """Send a fake POST request."""
                 self.payload = json
                 return FakeResponse()
 
@@ -285,9 +268,6 @@ class PipelineTests(TestCase):
     ) -> None:
         """Verify custom CEVOICE packs do not inherit Celune-specific defaults.
 
-        Returns:
-            None: Assertions verify neutral persona card defaults.
-
         Raises:
             AssertionError: Persona card fallback behavior changes unexpectedly.
         """
@@ -363,6 +343,18 @@ class PipelineTests(TestCase):
         self.assertIn("image: archive.png", prompt)
         self.assertIn("<request>", prompt)
         self.assertIn("What do you notice?", prompt)
+        self.assertIn(
+            "Treat saved vision context as a text summary, not as a live image or video you can inspect again.",
+            prompt,
+        )
+        self.assertIn(
+            "say you cannot",
+            prompt,
+        )
+        self.assertIn(
+            "re-check it because you only have the remembered summary now",
+            prompt,
+        )
 
     def test_persona_context_retrieves_persisted_long_term_memory(self) -> None:
         """Verify Persona prompts pull relevant persisted memory for the character."""
@@ -565,11 +557,11 @@ class PipelineTests(TestCase):
 
             @staticmethod
             def raise_for_status() -> None:
-                """Pretend the response status is successful."""
+                """Do nothing when asked to raise for status code."""
 
             @staticmethod
             def json() -> JSONSerializable:
-                """Return a sample persona reply."""
+                """Return a fake response."""
                 return {"response": "new reply"}
 
         engine.vision = SimpleNamespace(
@@ -606,11 +598,11 @@ class PipelineTests(TestCase):
 
             @staticmethod
             def raise_for_status() -> None:
-                """Pretend the response succeeded."""
+                """Do nothing when asked to raise for status code."""
 
             @staticmethod
             def json() -> JSONSerializable:
-                """Return one in-character acknowledgment."""
+                """Return a fake response."""
                 return {"response": "Alright. I'll remember it."}
 
         class FakeVision:
@@ -620,7 +612,7 @@ class PipelineTests(TestCase):
                 self.payload: Optional[JSON] = None
 
             def post(self, json: JSON) -> FakeResponse:
-                """Capture the request payload and return a fake reply."""
+                """Send a fake POST request."""
                 self.payload = json
                 return FakeResponse()
 
@@ -784,11 +776,11 @@ class PipelineTests(TestCase):
 
             @staticmethod
             def raise_for_status() -> None:
-                """Pretend the response status is successful."""
+                """Do nothing when asked to raise for status code."""
 
             @staticmethod
             def json() -> JSONSerializable:
-                """Return a sample Persona response."""
+                """Return a fake response."""
                 return {"response": "noted"}
 
         class FakeVision:
@@ -798,7 +790,7 @@ class PipelineTests(TestCase):
                 self.payloads: list[JSON] = []
 
             def post(self, json: JSON) -> FakeResponse:
-                """Record one Persona request payload."""
+                """Send a fake POST request."""
                 self.payloads.append(json)
                 return FakeResponse()
 
@@ -841,14 +833,61 @@ class PipelineTests(TestCase):
         )
         second_system = cast(str, second_payload["system"])
         second_messages = cast(list[JSON], second_payload["messages"])
-        self.assertNotIn("<vision_context>", second_system)
+        self.assertIn("<vision_context>", second_system)
+        self.assertIn(
+            "Recent visual context from the last Persona request:",
+            second_system,
+        )
+        self.assertIn("image: frame.png", second_system)
+        self.assertIn("User request about that media: What is this?", second_system)
+        self.assertNotIn("Character response about that media:", second_system)
+        self.assertIn(
+            "Treat saved vision context as a text summary, not as a live image or video you can inspect again.",
+            second_system,
+        )
         self.assertEqual(second_messages[-1], {"role": "user", "content": "And now?"})
+
+    def test_recent_visual_context_is_replaced_by_newer_visual_turn(self) -> None:
+        """Verify only the most recent visual turn is carried forward as text context."""
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+
+        pipeline._remember_visual_context(
+            [
+                {
+                    "type": "image",
+                    "path": "file:///C:/Users/user/Pictures/old.png",
+                    "name": "old.png",
+                }
+            ],
+            cast(Celune, engine),
+            "What was in the old file?",
+        )
+        pipeline._remember_visual_context(
+            [
+                {
+                    "type": "video",
+                    "path": "https://example.com/clip.mp4",
+                    "name": "clip.mp4",
+                }
+            ],
+            cast(Celune, engine),
+            "And this clip?",
+        )
+
+        prompt = PersonaPromptBuilder.build(
+            pipeline.build_persona_context(cast(Celune, engine), "Continue.")
+        )
+
+        self.assertIn("video: clip.mp4", prompt)
+        self.assertIn("User request about that media: And this clip?", prompt)
+        self.assertNotIn("Character response about that media:", prompt)
+        self.assertNotIn("old.png", prompt)
 
     def test_generation_worker_normalizes_each_split_chunk(self) -> None:
         """Verify normalization happens after splitting and before generation.
-
-        Returns:
-            None: Assertions verify per-chunk normalization behavior.
 
         Raises:
             AssertionError: Chunk normalization behavior changes unexpectedly.
@@ -860,12 +899,6 @@ class PipelineTests(TestCase):
         def generate_stream(
             model: mock.Mock, **kwargs: JSONSerializable
         ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
-            """Generate a fake stream of audio and return it.
-
-            Args:
-                model: The model to generate from.
-                kwargs: Extra model arguments.
-            """
             discard(model)
             text = cast(str, kwargs["text"])
             events.append(f"generate:{text}")
@@ -932,9 +965,6 @@ class PipelineTests(TestCase):
     def test_split_text_breaks_long_unpunctuated_lines(self) -> None:
         """Verify long prose without punctuation still splits into chunks.
 
-        Returns:
-            None: Assertions verify long newline-delimited input is chunked.
-
         Raises:
             AssertionError: Chunk splitting behavior changes unexpectedly.
         """
@@ -981,9 +1011,6 @@ class PipelineTests(TestCase):
     def test_flac_metadata_helpers_round_trip_tags(self) -> None:
         """Verify FLAC tag writing and parsing without real speech.
 
-        Returns:
-            None: Assertions verify metadata behavior.
-
         Raises:
             AssertionError: FLAC metadata behavior changes unexpectedly.
         """
@@ -1010,16 +1037,13 @@ class PipelineTests(TestCase):
     def test_celune_metadata_and_flac_writer_create_expected_tags(self) -> None:
         """Verify Celune metadata payloads and saved FLAC tags.
 
-        Returns:
-            None: Assertions verify Celune metadata behavior.
-
         Raises:
             AssertionError: Celune metadata behavior changes unexpectedly.
         """
         engine = SimpleNamespace(
             tts_backend="fake",
             backend=SimpleNamespace(name="fake", x_vector_only=True),
-            config={"qwen3_mode": "clone"},
+            config={},
             model_name="fake/model",
             current_voice="balanced",
             voice_prompt=None,
@@ -1067,9 +1091,6 @@ class PipelineTests(TestCase):
 
     def test_log_and_stream_helpers_are_lightweight(self) -> None:
         """Verify playback timing logs and stream cleanup behavior.
-
-        Returns:
-            None: Assertions verify helper behavior.
 
         Raises:
             AssertionError: Stream helper behavior changes unexpectedly.

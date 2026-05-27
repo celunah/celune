@@ -47,6 +47,15 @@ class SayCallable(Protocol):
 
 
 @runtime_checkable
+class ThinkCallable(Protocol):
+    """Extension callable think request annotation."""
+
+    def __call__(self, text: str) -> bool:
+        """Start a think request."""
+        raise IncompleteExtensionError("protocol not defined")
+
+
+@runtime_checkable
 class PlayCallable(Protocol):
     """Extension callable play request annotation."""
 
@@ -98,6 +107,7 @@ class CeluneContext:
     log: LogCallable
     log_dev: DevLogCallable
     say: SayCallable
+    think: ThinkCallable
     play: PlayCallable
     status: StatusCallable
     set_voice: SetVoiceCallable
@@ -115,9 +125,6 @@ class CeluneContext:
         Args:
             key: The name used to store the shared value.
             value: The object to expose to other extensions.
-
-        Returns:
-            None: This method updates the shared extension context.
         """
         self.shared[key] = value
 
@@ -166,26 +173,18 @@ class CeluneExtension(ABC):
         return self.ctx.get_state()
 
     def autostart(self) -> None:
-        """Run extension startup logic.
-
-        Returns:
-            None: The default implementation only logs that autostart is skipped.
-        """
+        """Run extension startup logic."""
         self.log(f"{self.name} has no autostart, skipping", "warning")
 
     def invoke(self, *args, **kwargs) -> None:
         """Run extension invocation logic.
 
         Args:
-            *args: Positional arguments forwarded by the extension manager.
-            **kwargs: Keyword arguments forwarded by the extension manager.
-
-        Returns:
-            None: Subclasses override this to perform extension work.
+            args: Positional arguments forwarded by the extension manager.
+            kwargs: Keyword arguments forwarded by the extension manager.
 
         Raises:
-            IncompleteExtensionError: The extension does not override
-                ``invoke``.
+            IncompleteExtensionError: The extension does not override ``invoke``.
         """
         raise IncompleteExtensionError(
             f"{self.__class__.__name__}.invoke() is not implemented"
@@ -197,9 +196,6 @@ class CeluneExtension(ABC):
         Args:
             msg: The message to append to Celune's log output.
             severity: The message severity level.
-
-        Returns:
-            None: This method forwards the message to Celune's logger.
         """
         self.ctx.log(f"[{self.name}] {msg}", severity)
 
@@ -224,6 +220,20 @@ class CeluneExtension(ABC):
 
         return self.ctx.say(text, save=save, display_text=display_text)
 
+    def think(self, text: str) -> bool:
+        """Make Celune process a Persona request, saying it later.
+
+        Args:
+            text: The text to have the Persona model process.
+
+        Returns:
+            bool: ``True`` if Persona returned a response, otherwise ``False``.
+        """
+        if not self.ctx.wait_until_ready():
+            return False
+
+        return self.ctx.think(text)
+
     def play(self, sound_path: str, keep: bool = False) -> bool:
         """Play arbitrary sound through Celune.
 
@@ -245,9 +255,6 @@ class CeluneExtension(ABC):
         Args:
             msg: The status message to show.
             severity: The status severity level.
-
-        Returns:
-            None: This method forwards the status update to Celune.
         """
         self.ctx.status(msg, severity)
 

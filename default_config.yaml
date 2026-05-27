@@ -6,9 +6,6 @@ backend: null
 
 # Qwen3 TTS settings
 #
-# clone = clone from CEVOICE bundles
-# native = deprecated compatibility mode using Celune native models
-qwen3_mode: clone
 # x-vectors make Celune adhere to the reference more strongly
 qwen3_x_vector_only: true
 

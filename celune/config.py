@@ -20,9 +20,8 @@ def env_bool(name: str, fallback: bool = False) -> bool:
         fallback: Value to use when the variable is unset.
 
     Returns:
-        bool: ``True`` only for known enabled strings. Other set values are
-            treated as disabled. When the variable is unset, ``fallback`` is
-            returned.
+        bool: ``True`` only for known enabled strings. Other set values are treated as disabled. When the variable
+            is unset, ``fallback`` is returned.
     """
     value = os.getenv(name)
     if value is None:
@@ -61,8 +60,7 @@ def config_bool(
     Args:
         config: Loaded configuration dictionary, or ``None``.
         env_name: Environment variable name to check first.
-        config_key: Configuration key used when the environment variable is
-            unset.
+        config_key: Configuration key used when the environment variable is unset.
         default: Fallback value when no setting is present.
 
     Returns:
@@ -82,8 +80,7 @@ def merge_missing_defaults(
         defaults: Default configuration fields to merge into ``config``.
 
     Returns:
-        tuple[Config, bool]: The merged configuration and whether any
-            fields were added.
+        tuple[Config, bool]: The merged configuration and whether any fields were added.
     """
     merged: Config = dict(deepcopy(config)) if config is not None else {}
     changed = False

@@ -16,9 +16,6 @@ class AnalysisTests(TestCase):
     def test_embedding_similarity_and_drift_helpers_validate_inputs(self) -> None:
         """Validate embedding conversion, similarity, and drift helper paths.
 
-        Returns:
-            None: Assertions verify expected helper behavior.
-
         Raises:
             AssertionError: An analysis helper returns an unexpected result.
         """
@@ -45,9 +42,6 @@ class AnalysisTests(TestCase):
 
     def test_traits_and_assessment_cover_speech_and_empty_audio_paths(self) -> None:
         """Check trait and assessment output for empty voice extraction data.
-
-        Returns:
-            None: Assertions verify fallback assessment behavior.
 
         Raises:
             AssertionError: Trait or assessment output changes unexpectedly.
@@ -82,9 +76,6 @@ class AnalysisTests(TestCase):
 
         Args:
             _default_loader: A mock default loader.
-
-        Returns:
-            None: This function tests the loader to see if embeddings can be found without a CEVOICE bundle.
         """
         self.assertEqual(
             analysis._available_reference_voices(),
@@ -101,9 +92,6 @@ class AnalysisTests(TestCase):
         Args:
             torch_load: A mock implementation of torch.load().
             _default_loader: A mock default loader.
-
-        Returns:
-            None: This function tests the loader if embeddings can be loaded correctly without a CEVOICE bundle.
         """
         torch_load.return_value = np.ones(2048, dtype=np.float32)
 
@@ -119,9 +107,6 @@ class ChromaTests(TestCase):
     def test_pure_glow_helpers_process_audio_without_devices(self) -> None:
         """Exercise glow math without connecting to RGB devices.
 
-        Returns:
-            None: Assertions verify pure helper outputs.
-
         Raises:
             AssertionError: A glow helper returns an unexpected value.
         """
@@ -136,7 +121,6 @@ class ChromaTests(TestCase):
         glow = AudioRGBGlow(celune=None, color="#ffffff")
         self.assertEqual(glow._speech_level(np.zeros((0, 2), dtype=np.float32)), 0.0)
         self.assertGreater(glow._speech_level(stereo), 0.0)
-        self.assertEqual(glow.fatal_color_hex, "#ce2006")
 
     def test_sleep_and_wake_preserve_prior_brightness_target(self) -> None:
         """Verify sleep dimming stores and restores the earlier brightness target."""

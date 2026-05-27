@@ -29,11 +29,17 @@ class VramPreset:
     persona_enabled: bool
     persona_quantization: str
     normalizer_device: str
-    qwen3_native_supported: bool
 
 
 def vram_tier(config: Optional[Mapping[str, JSONSerializable]]) -> VramTier:
-    """Return the configured VRAM tier with a safe fallback."""
+    """Return the configured VRAM tier with a safe fallback.
+
+    Args:
+        config: Value for `config`.
+
+    Returns:
+        Result of this function.
+    """
     if config is not None:
         raw = config.get("vram")
         if isinstance(raw, str):
@@ -46,7 +52,14 @@ def vram_tier(config: Optional[Mapping[str, JSONSerializable]]) -> VramTier:
 def validate_vram_preset(
     config: Optional[Mapping[str, JSONSerializable]],
 ) -> Optional[str]:
-    """Validate a VRAM preset and return an appropriate warning message."""
+    """Validate a VRAM preset and return an appropriate warning message.
+
+    Args:
+        config: Value for `config`.
+
+    Returns:
+        Result of this function.
+    """
     configured_tier = vram_tier(config)
 
     if torch.cuda.is_available():
@@ -71,7 +84,14 @@ def validate_vram_preset(
 def resolve_vram_preset(
     config: Optional[Mapping[str, JSONSerializable]],
 ) -> VramPreset:
-    """Resolve Celune runtime settings from the documented VRAM presets."""
+    """Resolve Celune runtime settings from the documented VRAM presets.
+
+    Args:
+        config: Value for `config`.
+
+    Returns:
+        Result of this function.
+    """
     configured_tier = vram_tier(config)
     tier = configured_tier
 
@@ -92,7 +112,6 @@ def resolve_vram_preset(
             persona_enabled=False,
             persona_quantization="4bit",
             normalizer_device="cpu",
-            qwen3_native_supported=False,
         )
 
     if tier == "medium":
@@ -104,7 +123,6 @@ def resolve_vram_preset(
             persona_enabled=False,
             persona_quantization="4bit",
             normalizer_device="cpu",
-            qwen3_native_supported=True,
         )
 
     if tier == "high":
@@ -116,7 +134,6 @@ def resolve_vram_preset(
             persona_enabled=True,
             persona_quantization="4bit",
             normalizer_device="cpu",
-            qwen3_native_supported=True,
         )
 
     return VramPreset(
@@ -127,7 +144,6 @@ def resolve_vram_preset(
         persona_enabled=True,
         persona_quantization="8bit",
         normalizer_device="cuda",
-        qwen3_native_supported=True,
     )
 
 
@@ -135,7 +151,15 @@ def resolve_backend_name(
     config: Optional[Mapping[str, JSONSerializable]],
     requested_backend: Optional[str],
 ) -> str:
-    """Return the backend permitted by the configured VRAM tier."""
+    """Return the backend permitted by the configured VRAM tier.
+
+    Args:
+        config: Value for `config`.
+        requested_backend: Value for `requested_backend`.
+
+    Returns:
+        Result of this function.
+    """
     preset = resolve_vram_preset(config)
     if requested_backend is None:
         return preset.default_backend
@@ -152,7 +176,15 @@ def backend_allowed(
     config: Optional[Mapping[str, JSONSerializable]],
     backend_name: str,
 ) -> bool:
-    """Return whether the named backend is permitted by the VRAM tier."""
+    """Return whether the named backend is permitted by the VRAM tier.
+
+    Args:
+        config: Value for `config`.
+        backend_name: Value for `backend_name`.
+
+    Returns:
+        Result of this function.
+    """
     normalized = backend_name.strip().lower()
     preset = resolve_vram_preset(config)
     if normalized == "qwen3":

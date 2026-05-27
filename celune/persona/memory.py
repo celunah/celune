@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
+import json
 import uuid
 import datetime
-from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
+from dataclasses import asdict, dataclass
 
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
@@ -74,7 +74,11 @@ def _character_slug(name: str) -> str:
 
 
 def default_memory_dir() -> Path:
-    """Return the default on-disk directory for Persona memories."""
+    """Return the default on-disk directory for Persona memories.
+
+    Returns:
+        Result of this function.
+    """
     local_appdata = os.getenv("LOCALAPPDATA")
     if local_appdata:
         return Path(local_appdata) / "Celune" / "persona_memory"
@@ -100,7 +104,16 @@ class MemoryRecord:
 
     @staticmethod
     def create(content: str, importance: int, explicit: bool) -> "MemoryRecord":
-        """Construct one new memory record."""
+        """Construct one new memory record.
+
+        Args:
+            content: Value for `content`.
+            importance: Value for `importance`.
+            explicit: Value for `explicit`.
+
+        Returns:
+            Result of this function.
+        """
         now = _utc_now()
         return MemoryRecord(
             id=uuid.uuid4().hex,
@@ -125,7 +138,7 @@ class MemoryCandidate:
 class PersonaMemoryStore:
     """JSON-backed character-specific long-term memory store."""
 
-    def __init__(self, storage_dir: Optional[Path | str] = None) -> None:
+    def __init__(self, storage_dir: Optional[Union[Path, str]] = None) -> None:
         self.storage_dir = (
             Path(storage_dir) if storage_dir is not None else default_memory_dir()
         )
@@ -135,7 +148,14 @@ class PersonaMemoryStore:
         return self.storage_dir / f"{_character_slug(character_name)}.json"
 
     def load_records(self, character_name: str) -> list[MemoryRecord]:
-        """Load all memory records for one character."""
+        """Load all memory records for one character.
+
+        Args:
+            character_name: Value for `character_name`.
+
+        Returns:
+            Result of this function.
+        """
         path = self._path_for_character(character_name)
         if not path.exists():
             return []
@@ -188,7 +208,12 @@ class PersonaMemoryStore:
         return records
 
     def save_records(self, character_name: str, records: list[MemoryRecord]) -> None:
-        """Persist all memory records for one character atomically."""
+        """Persist all memory records for one character atomically.
+
+        Args:
+            character_name: Value for `character_name`.
+            records: Value for `records`.
+        """
         path = self._path_for_character(character_name)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = [asdict(record) for record in records]
@@ -207,7 +232,17 @@ class PersonaMemoryStore:
         importance: int = 1,
         explicit: bool = False,
     ) -> Optional[MemoryRecord]:
-        """Store or update one memory for a character."""
+        """Store or update one memory for a character.
+
+        Args:
+            character_name: Value for `character_name`.
+            content: Value for `content`.
+            importance: Value for `importance`.
+            explicit: Value for `explicit`.
+
+        Returns:
+            Result of this function.
+        """
         normalized = _normalize_text(content)
         if not normalized:
             return None
@@ -240,7 +275,14 @@ class PersonaMemoryStore:
         return created
 
     def collect_candidates(self, user_message: str) -> list[MemoryCandidate]:
-        """Extract explicit and automatic memory candidates from one message."""
+        """Extract explicit and automatic memory candidates from one message.
+
+        Args:
+            user_message: Value for `user_message`.
+
+        Returns:
+            Result of this function.
+        """
         text = _normalize_text(user_message)
         if not text:
             return []
@@ -263,7 +305,15 @@ class PersonaMemoryStore:
     def remember_from_user_message(
         self, character_name: str, user_message: str
     ) -> list[MemoryRecord]:
-        """Store any memories that should be derived from one user message."""
+        """Store any memories that should be derived from one user message.
+
+        Args:
+            character_name: Value for `character_name`.
+            user_message: Value for `user_message`.
+
+        Returns:
+            Result of this function.
+        """
         saved: list[MemoryRecord] = []
         for candidate in self.collect_candidates(user_message):
             record = self.remember(
@@ -279,7 +329,16 @@ class PersonaMemoryStore:
     def retrieve(
         self, character_name: str, request: str, limit: int = 5
     ) -> list[MemoryRecord]:
-        """Return the most relevant memories for the current request."""
+        """Return the most relevant memories for the current request.
+
+        Args:
+            character_name: Value for `character_name`.
+            request: Value for `request`.
+            limit: Value for `limit`.
+
+        Returns:
+            Result of this function.
+        """
         records = self.load_records(character_name)
         if not records or limit <= 0:
             return []

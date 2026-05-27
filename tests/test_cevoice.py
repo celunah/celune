@@ -17,29 +17,17 @@ class CEVoiceTests(TestCase):
     """Tests for CEVOICE bundle serialization and loader behavior."""
 
     def setUp(self) -> None:
-        """Create an isolated temporary directory for one test.
-
-        Returns:
-            None: This fixture prepares per-test paths.
-        """
+        """Create an isolated temporary directory for one test."""
         self.temp_dir = Path(tempfile.mkdtemp())
         self.addCleanup(self._cleanup_temp_dir)
         self.path = self.temp_dir / "sample.cevoice"
 
     def _cleanup_temp_dir(self) -> None:
-        """Remove the temporary fixture directory.
-
-        Returns:
-            None: This fixture removes temporary files created by the test.
-        """
+        """Remove the temporary fixture directory."""
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def tearDown(self) -> None:
-        """Reset shared CEVOICE loader globals after one test.
-
-        Returns:
-            None: This fixture clears process-wide CEVOICE state.
-        """
+        """Reset shared CEVOICE loader globals after one test."""
         loader = cevoice._DEFAULT_LOADER
         if loader is not None:
             loader.close()
@@ -52,14 +40,7 @@ class CEVoiceTests(TestCase):
         cevoice._DEFAULT_LOADER_FELL_BACK_FROM = None
 
     def _write_bundle(self) -> cevoice.CEVoice:
-        """Write and reopen one tiny valid CEVOICE fixture.
-
-        Returns:
-            CEVoice: The reopened CEVOICE fixture bundle.
-
-        Raises:
-            CEVoiceError: Fixture writing or loading fails unexpectedly.
-        """
+        """Write and reopen one tiny valid CEVOICE fixture."""
         cevoice.write_cevoice(
             self.path,
             {
@@ -74,7 +55,7 @@ class CEVoiceTests(TestCase):
                     "background": "#101010",
                     "accent": "#abcdef",
                     "glow_color": "#fedcba",
-                    "sleeping_color": "#8866cc",
+                    "faded_accent": "#8866cc",
                 },
                 "persona": {
                     "identity": {
@@ -118,9 +99,6 @@ class CEVoiceTests(TestCase):
 
     def test_write_open_read_and_materialize_bundle_assets(self) -> None:
         """Verify CEVOICE writes, reads, ordering, and materialization.
-
-        Returns:
-            None: Assertions verify CEVOICE success behavior.
 
         Raises:
             AssertionError: CEVOICE behavior changes unexpectedly.
@@ -190,9 +168,6 @@ class CEVoiceTests(TestCase):
     def test_asset_lookup_and_checksum_failures_are_reported(self) -> None:
         """Verify missing assets and checksum corruption are reported.
 
-        Returns:
-            None: Assertions verify CEVOICE failure behavior.
-
         Raises:
             AssertionError: CEVOICE failure handling changes unexpectedly.
         """
@@ -209,20 +184,23 @@ class CEVoiceTests(TestCase):
     def test_invalid_metadata_is_rejected(self) -> None:
         """Verify malformed CEVOICE metadata is rejected.
 
-        Returns:
-            None: Assertions verify metadata validation behavior.
-
         Raises:
             AssertionError: Metadata validation behavior changes unexpectedly.
         """
         bundle = self._write_bundle()
         self.assertEqual(
-            cast(dict[str, str], bundle.metadata["theme"])["sleeping_color"],
+            cast(dict[str, str], bundle.metadata["theme"])["faded_accent"],
             "#8866cc",
         )
         self.assertEqual(
             cast(dict[str, object], bundle.metadata["persona"])["speaking_style"],
             "Measured, observant, and slightly playful.",
+        )
+
+        bundle = self._write_legacy_sleeping_color_bundle()
+        self.assertEqual(
+            cast(dict[str, str], bundle.metadata["theme"])["faded_accent"],
+            "#8866cc",
         )
 
         bundle = self._write_bundle()
@@ -282,11 +260,25 @@ class CEVoiceTests(TestCase):
         with self.assertRaisesRegex(CEVoiceError, "unsupported asset kind"):
             cevoice.CEVoice.open(self.path)
 
+    def _write_legacy_sleeping_color_bundle(self) -> cevoice.CEVoice:
+        """Write and reopen one fixture that still uses the legacy sleeping_color key."""
+        cevoice.write_cevoice(
+            self.path,
+            {
+                "balanced": {"wav": b"wav", "pt": b"pt"},
+            },
+            {
+                "theme": {
+                    "background": "#101010",
+                    "accent": "#abcdef",
+                    "sleeping_color": "#8866cc",
+                },
+            },
+        )
+        return cevoice.CEVoice.open(self.path)
+
     def test_default_loader_and_announcement_cover_success_and_failure(self) -> None:
         """Verify loader selection and announcement fallback paths.
-
-        Returns:
-            None: Assertions verify loader behavior.
 
         Raises:
             AssertionError: Loader behavior changes unexpectedly.
@@ -317,9 +309,6 @@ class CEVoiceTests(TestCase):
 
     def test_missing_named_bundle_falls_back_to_default_bundle(self) -> None:
         """Verify absent named bundles load the built-in default before refs.
-
-        Returns:
-            None: Assertions verify bundle fallback behavior.
 
         Raises:
             AssertionError: Bundle fallback behavior changes unexpectedly.
@@ -358,9 +347,6 @@ class CEVoiceTests(TestCase):
     def test_missing_selected_and_default_bundles_use_reference_fallback(self) -> None:
         """Verify loose refs are used only after selected and default bundles fail.
 
-        Returns:
-            None: Assertions verify final fallback behavior.
-
         Raises:
             AssertionError: Bundle fallback behavior changes unexpectedly.
         """
@@ -385,9 +371,6 @@ class CEVoiceTests(TestCase):
     def test_materialize_rejects_unsafe_names(self) -> None:
         """Verify unsafe voice and asset names cannot be materialized.
 
-        Returns:
-            None: Assertions verify path safety behavior.
-
         Raises:
             AssertionError: Path safety behavior changes unexpectedly.
         """
@@ -399,14 +382,7 @@ class CEVoiceTests(TestCase):
             loader.materialize("balanced", "../wav")
 
     def _rewrite_metadata(self, metadata: dict) -> None:
-        """Replace fixture metadata while preserving the original payload.
-
-        Args:
-            metadata: Metadata object to serialize into the fixture bundle.
-
-        Returns:
-            None: This helper rewrites the current fixture file.
-        """
+        """Replace fixture metadata while preserving the original payload."""
         metadata_bytes = json.dumps(
             metadata,
             ensure_ascii=True,
