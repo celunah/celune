@@ -69,9 +69,6 @@ class StartedServer(uvicorn.Server):
 
         Args:
             sockets: A list of sockets to bind the server to.
-
-        Returns:
-            None: This method starts the server and announces a startup event.
         """
         await super().startup(sockets=sockets)
         if self.started and self.on_started is not None:
@@ -100,9 +97,6 @@ def configure_api_security(
     Args:
         token: A required token to send requests.
         requests_per_minute: The max amount of requests per minute the user is allowed to send.
-
-    Returns:
-        None: This method configures API security configuration.
     """
     global auth_token, rate_limit_per_minute
 
@@ -223,9 +217,6 @@ def bind_celune(celune: "Celune") -> None:
 
     Args:
         celune: The instance of Celune to bind.
-
-    Returns:
-        None: This method binds Celune to an API route.
     """
     global bound_celune
     bound_celune = celune
@@ -255,9 +246,6 @@ def api_log(action: str, content: str, suffix: str = "") -> None:
         action: The request made by the user.
         content: The request body sent by the user.
         suffix: The suffix to append to the log line.
-
-    Returns:
-        None: This method prints the log line to any configured logger or terminal.
     """
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     preview = content.replace("\n", "\\n").replace("\r", "\\r")[:64]
@@ -297,6 +285,7 @@ def audio_bytes(chunks: SpeechStreamQueue) -> Iterator[bytes]:
         Iterator[bytes]: The audio chunk from the queue as raw bytes.
 
     Raises:
+        item: If `item` needs to be raised.
         Exception: The stream was interrupted by Celune.
     """
     audio_chunks: list[npt.NDArray[np.float32]] = []
@@ -459,8 +448,8 @@ def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
         body: A speech request body.
 
     Returns:
-        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload if
-            generation failed.
+        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload
+            if generation failed.
     """
     celune = require_celune()
     api_log("SPEAK(SYNC)", body.content)
@@ -528,8 +517,8 @@ def think(body: ThinkRequest) -> JSONResponse:
         body: A think request body.
 
     Returns:
-        JSONResponse: An accepted response when Persona processing starts, or
-            a JSON error payload if Celune cannot think right now.
+        JSONResponse: An accepted response when Persona processing starts, or a JSON error payload if Celune
+            cannot think right now.
     """
     celune = require_celune()
     api_log("THINK", body.content)
@@ -587,8 +576,8 @@ def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
         body: A voice change request body.
 
     Returns:
-        Union[ActionResponse, JSONResponse]: The voice change response, or a JSON error payload if
-            the voice change failed.
+        Union[ActionResponse, JSONResponse]: The voice change response, or a JSON error payload if the
+            voice change failed.
     """
     celune = require_celune()
     api_log("VOICE", body.voice_name)
@@ -626,8 +615,8 @@ async def sfx(
         keep: Whether Celune should hold this sound effect until the next utterance.
 
     Returns:
-        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload if
-            playback failed.
+        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload
+            if playback failed.
     """
     celune = require_celune()
     filename = file.filename or f"sfx_{uuid.uuid4()}"
@@ -691,9 +680,6 @@ def run_api(
         token: Token required for API requests.
         requests_per_minute: Maximum requests allowed per client each minute.
         on_started: Callback called after the server socket is listening.
-
-    Returns:
-        None: This function starts the API in the background.
     """
     if celune is not None:
         bind_celune(celune)
@@ -749,13 +735,11 @@ def start_api(
     failed = threading.Event()
 
     def _started(bind_host: str, bind_port: int) -> None:
-        """Log that Uvicorn has successfully started listening."""
         http = "http"
         celune.log(f"Celune API has started on {http}://{bind_host}:{bind_port}")
         started.set()
 
     def _runner() -> None:
-        """Run the API server without taking Celune down on failure."""
         bind_host = resolve_api_host(token=token, host=host)
         try:
             run_api(

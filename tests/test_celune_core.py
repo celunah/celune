@@ -2,6 +2,8 @@
 """Tests for Celune core behavior without real models or GPU work."""
 
 from pathlib import Path
+import threading
+from types import SimpleNamespace
 from typing import cast
 from unittest import mock, TestCase
 
@@ -28,17 +30,7 @@ class CeluneCoreTests(TestCase):
             celune.close()
 
     def _make_celune(self, config: dict) -> Celune:
-        """Build a Celune instance with lightweight fakes.
-
-        Args:
-            config: Configuration dictionary supplied to Celune.
-
-        Returns:
-            Celune: A Celune instance with fake glow and backend objects.
-
-        Raises:
-            BackendError: Celune initialization rejects the supplied config.
-        """
+        """Build a Celune instance with lightweight fakes."""
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
@@ -50,9 +42,6 @@ class CeluneCoreTests(TestCase):
 
     def test_constructor_validates_backend_and_chunk_size(self) -> None:
         """Verify constructor validation and derived chunk size behavior.
-
-        Returns:
-            None: Assertions verify constructor behavior.
 
         Raises:
             AssertionError: Constructor behavior changes unexpectedly.
@@ -71,7 +60,6 @@ class CeluneCoreTests(TestCase):
 
         resolve.assert_called_once()
         self.assertEqual(resolve.call_args.args[0], "qwen3")
-        self.assertEqual(resolve.call_args.kwargs["mode"], "clone")
         self.assertEqual(
             resolve.call_args.kwargs["clone_model_id"],
             "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
@@ -97,9 +85,6 @@ class CeluneCoreTests(TestCase):
 
     def test_voice_loading_uses_backend_and_bundle_defaults(self) -> None:
         """Verify backend voices and bundle metadata determine defaults.
-
-        Returns:
-            None: Assertions verify voice selection behavior.
 
         Raises:
             AssertionError: Voice loading behavior changes unexpectedly.
@@ -142,9 +127,6 @@ class CeluneCoreTests(TestCase):
     def test_persona_connection_uses_in_process_runtime(self) -> None:
         """Verify Celune connects to Persona through the local in-process runtime.
 
-        Returns:
-            None: Assertions verify Persona client setup.
-
         Raises:
             AssertionError: Persona connection behavior changes unexpectedly.
         """
@@ -180,9 +162,6 @@ class CeluneCoreTests(TestCase):
 
     def test_persona_client_is_created_when_runtime_is_available(self) -> None:
         """Verify the Persona helper creates a local client when available.
-
-        Returns:
-            None: Assertions verify Persona client creation.
 
         Raises:
             AssertionError: Persona client creation changes unexpectedly.
@@ -271,8 +250,8 @@ class CeluneCoreTests(TestCase):
             self.assertEqual(persona_quantization({"vram": "high"}), "4bit")
             self.assertEqual(persona_quantization({"vram": "xhigh"}), "8bit")
 
-    def test_low_vram_restricts_backend_and_native_qwen3_mode(self) -> None:
-        """Verify low VRAM falls back to the supported Qwen3 clone preset."""
+    def test_low_vram_restricts_backend_to_qwen3(self) -> None:
+        """Verify low VRAM falls back to the supported Qwen3 preset."""
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
@@ -283,13 +262,12 @@ class CeluneCoreTests(TestCase):
             ) as resolve,
         ):
             celune = Celune(
-                config={"vram": "low", "qwen3_mode": "native"},
+                config={"vram": "low"},
                 tts_backend="voxcpm2",
             )
             self.addCleanup(self._close_celune, celune)
 
         self.assertEqual(resolve.call_args.args[0], "qwen3")
-        self.assertEqual(resolve.call_args.kwargs["mode"], "clone")
 
     def test_voice_prompt_support_tracks_qwen3_0_6b_capability(self) -> None:
         """Verify voice prompts are disabled for the low-tier Qwen3 clone model."""
@@ -297,7 +275,6 @@ class CeluneCoreTests(TestCase):
         with mock.patch.object(Qwen3, "_validate_refs"):
             celune.backend = Qwen3(
                 log=lambda _msg, _severity="info": None,
-                mode="clone",
                 clone_model_id=QWEN3_0_6B_MODEL,
             )
         celune.voice_prompt = "gentle"
@@ -324,9 +301,6 @@ class CeluneCoreTests(TestCase):
     def test_think_reconnects_to_persona_before_speech_fallback(self) -> None:
         """Verify stale Celune instances reconnect to Persona on the next think call.
 
-        Returns:
-            None: Assertions verify lazy Persona reconnect behavior.
-
         Raises:
             AssertionError: Persona reconnect behavior changes unexpectedly.
         """
@@ -350,11 +324,25 @@ class CeluneCoreTests(TestCase):
         think.assert_called_once_with(celune, "hello")
         say.assert_not_called()
 
+    def test_setup_extensions_exposes_think_to_extension_context(self) -> None:
+        """Verify extension context receives Celune's think entrypoint.
+
+        Raises:
+            AssertionError: Extension context wiring changes unexpectedly.
+        """
+        celune = self._make_celune({})
+        celune.think = mock.Mock(return_value=True)
+        with mock.patch("celune.celune.CeluneExtensionManager.autoload"):
+            celune.setup_extensions()
+
+        self.assertIsNotNone(celune.extension_manager)
+        assert celune.extension_manager is not None
+        think = celune.extension_manager.context.think
+        self.assertEqual(think("hello"), True)
+        celune.think.assert_called_once_with("hello")
+
     def test_logging_waiting_and_api_settings_cover_edge_cases(self) -> None:
         """Verify logging gates, readiness checks, and API fallbacks.
-
-        Returns:
-            None: Assertions verify core utility behavior.
 
         Raises:
             AssertionError: Core utility behavior changes unexpectedly.
@@ -387,9 +375,6 @@ class CeluneCoreTests(TestCase):
 
     def test_load_success_and_model_failure_paths_are_stubbed(self) -> None:
         """Verify successful startup and default-model failure handling.
-
-        Returns:
-            None: Assertions verify startup behavior.
 
         Raises:
             AssertionError: Startup behavior changes unexpectedly.
@@ -425,9 +410,6 @@ class CeluneCoreTests(TestCase):
     def test_unload_runtime_state_clears_models_without_cuda(self) -> None:
         """Verify model references are cleared without touching CUDA.
 
-        Returns:
-            None: Assertions verify unload behavior.
-
         Raises:
             AssertionError: Unload behavior changes unexpectedly.
         """
@@ -445,6 +427,62 @@ class CeluneCoreTests(TestCase):
         self.assertIsNone(celune.llm)
         self.assertIsNone(celune.tokenizer)
         self.assertIsNone(celune.backend.model)
+
+    def test_unload_runtime_state_runs_model_close_hooks(self) -> None:
+        """Verify TTS and normalizer teardown calls object-level release hooks."""
+        celune = self._make_celune({})
+        tts_model = SimpleNamespace(close=mock.Mock())
+        llm = SimpleNamespace(close=mock.Mock())
+        tokenizer = SimpleNamespace(close=mock.Mock())
+        celune.model = cast(PreTrainedModel, tts_model)
+        celune.backend.model = tts_model
+        celune.llm = cast(PreTrainedModel, llm)
+        celune.tokenizer = cast(PreTrainedTokenizerBase, tokenizer)
+
+        with mock.patch("celune.celune.torch.cuda.is_available", return_value=False):
+            celune.unload_runtime_state(include_normalizer=True)
+
+        tts_model.close.assert_called_once_with()
+        llm.close.assert_called_once_with()
+        tokenizer.close.assert_called_once_with()
+        self.assertIsNone(celune.model)
+        self.assertIsNone(celune.backend.model)
+        self.assertIsNone(celune.llm)
+        self.assertIsNone(celune.tokenizer)
+
+    def test_stale_normalizer_load_does_not_restore_released_references(self) -> None:
+        """Verify background normalizer loads cannot repopulate state after unload."""
+        celune = self._make_celune({})
+        ready = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        fake_tokenizer = cast(
+            PreTrainedTokenizerBase,
+            mock.Mock(spec=PreTrainedTokenizerBase),
+        )
+        fake_llm = cast(PreTrainedModel, mock.Mock(spec=PreTrainedModel))
+
+        def fake_load_components(*_args, **_kwargs):
+            ready.set()
+            self.assertTrue(release.wait(timeout=2))
+            finished.set()
+            return fake_tokenizer, fake_llm
+
+        with (
+            mock.patch(
+                "celune.celune.load_normalizer_components",
+                side_effect=fake_load_components,
+            ),
+            mock.patch("celune.celune.torch.cuda.is_available", return_value=False),
+        ):
+            celune.load_normalizer()
+            self.assertTrue(ready.wait(timeout=2))
+            celune.unload_normalizer_state()
+            release.set()
+            self.assertTrue(finished.wait(timeout=2))
+
+        self.assertIsNone(celune.llm)
+        self.assertIsNone(celune.tokenizer)
 
     def test_sleep_mode_unloads_configured_models_and_wakes(self) -> None:
         """Verify sleep mode honors unload settings and reloads on wake."""
@@ -507,6 +545,19 @@ class CeluneCoreTests(TestCase):
             "Qwen/Qwen2.5-VL-3B-Instruct",
             "4bit",
         )
+
+    def test_sleep_mode_closes_persona_even_if_close_raises(self) -> None:
+        """Verify sleep still clears Persona references when client shutdown fails."""
+        celune = self._make_celune(
+            {"sleep": {"enabled": True, "unload": {"persona": True, "tts": False}}}
+        )
+        celune.locked = False
+        celune.loaded = True
+        celune.cur_state = "idle"
+        celune.vision = mock.Mock(close=mock.Mock(side_effect=RuntimeError("boom")))
+
+        self.assertEqual(celune.enter_sleep_mode(), True)
+        self.assertIsNone(celune.vision)
 
     def test_wake_failure_switches_glow_to_fatal_color(self) -> None:
         """Verify wake failures trigger the fixed fatal OpenRGB glow state."""

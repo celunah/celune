@@ -5,8 +5,9 @@ from importlib import import_module
 from importlib.metadata import version, PackageNotFoundError
 from typing import Callable, Union, Optional
 
-from .base import BackendModel
-from .base import CeluneBackend
+from .base import BackendModel, CeluneBackend
+
+__all__ = ["BackendModel", "CeluneBackend", "get_version", "resolve_backend"]
 
 BACKENDS = {
     "qwen3": ("celune.backends.qwen3", "Qwen3"),
@@ -15,15 +16,7 @@ BACKENDS = {
 
 
 def _default_log(_msg: str, _severity: str = "info") -> None:
-    """Default log signature for type checking.
-
-    Args:
-        _msg: To be redefined.
-        _severity: To be redefined.
-
-    Returns:
-        None: This signature is meant to be inherited from.
-    """
+    """Default log signature for type checking."""
 
 
 def get_version(package: str) -> str:
@@ -33,8 +26,7 @@ def get_version(package: str) -> str:
         package: The package name to resolve through import metadata.
 
     Returns:
-        str: The installed package version, or ``"unknown"`` when the package
-            cannot be found.
+        str: The installed package version, or ``"unknown"`` when the package cannot be found.
     """
     try:
         return version(package)
@@ -52,7 +44,7 @@ def resolve_backend(
     Args:
         backend_name: A backend name, backend class, or backend instance.
         log: Optional log callback to expose during backend construction.
-        **backend_kwargs: Backend-specific constructor options.
+        backend_kwargs: Backend-specific constructor options.
 
     Returns:
         CeluneBackend: The resolved backend instance.

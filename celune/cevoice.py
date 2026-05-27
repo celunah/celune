@@ -216,6 +216,9 @@ class CEVoiceLoader:
 
         Returns:
             Path: The path to the extracted voice asset.
+
+        Raises:
+            CEVoiceError: If `CEVoiceError` needs to be raised.
         """
         key = (voice, kind)
         if key not in self._paths:
@@ -231,10 +234,7 @@ class CEVoiceLoader:
         return self._paths[key]
 
     def close(self) -> None:
-        """Remove extracted temporary files.
-
-        Returns:
-            None: This function cleans up temporary voice assets."""
+        """Remove extracted temporary files."""
         shutil.rmtree(self._directory, ignore_errors=True)
 
 
@@ -254,6 +254,9 @@ def write_cevoice(
 
     Returns:
         Path: The path to the created CEVOICE bundle.
+
+    Raises:
+        CEVoiceError: If `CEVoiceError` needs to be raised.
     """
     payload = bytearray()
     manifest_voices: VoiceManifest = {}
@@ -354,9 +357,14 @@ def _validate_metadata(
     if theme is not None:
         if not isinstance(theme, dict):
             raise CEVoiceError("metadata theme must be an object")
-        for key in ("background", "accent", "glow_color", "sleeping_color"):
+        if (
+            theme.get("faded_accent") is None
+            and theme.get("sleeping_color") is not None
+        ):
+            theme["faded_accent"] = str(theme.get("sleeping_color", "#9c88ce"))
+        for key in ("background", "accent", "glow_color", "faded_accent"):
             value = theme.get(key)
-            if key in {"glow_color", "sleeping_color"} and value is None:
+            if key in {"glow_color", "faded_accent"} and value is None:
                 continue
             if not _is_hex_color(value):
                 raise CEVoiceError(f"metadata theme '{key}' must be a hex color")
@@ -515,7 +523,14 @@ def _text_tuple(value: ManifestValue) -> tuple[str, ...]:
 def persona_metadata_from_manifest(
     metadata: Mapping[str, ManifestValue],
 ) -> Optional[CEVoicePersona]:
-    """Return typed persona metadata from a CEVOICE manifest when present."""
+    """Return typed persona metadata from a CEVOICE manifest when present.
+
+    Args:
+        metadata: Value for `metadata`.
+
+    Returns:
+        Result of this function.
+    """
     raw_persona = metadata.get("persona")
     if not isinstance(raw_persona, dict):
         return None
@@ -550,7 +565,14 @@ def persona_metadata_from_manifest(
 
 
 def bundle_character_name(bundle: CEVoice) -> Optional[str]:
-    """Return the active character name implied by one CEVOICE bundle."""
+    """Return the active character name implied by one CEVOICE bundle.
+
+    Args:
+        bundle: Value for `bundle`.
+
+    Returns:
+        Result of this function.
+    """
     persona = persona_metadata_from_manifest(bundle.metadata)
     if persona is not None and persona.identity.name.strip():
         return persona.identity.name.strip()
@@ -588,8 +610,7 @@ def resolve_bundle_path(bundle: Optional[Union[str, Path]] = None) -> Path:
     """Resolve a configured CEVOICE bundle name or path.
 
     Args:
-        bundle: Either a built-in bundle name, an explicit bundle path, or
-            ``None`` to select Celune's default bundle.
+        bundle: Either a built-in bundle name, an explicit bundle path, or ``None`` to select Celune's default bundle.
 
     Returns:
         Path: The resolved CEVOICE bundle path.
@@ -610,8 +631,7 @@ def select_voice_bundle(bundle: Optional[Union[str, Path]] = None) -> Path:
     """Select the CEVOICE bundle used by Celune's shared loader.
 
     Args:
-        bundle: Either a built-in bundle name, an explicit bundle path, or
-            ``None`` to restore Celune's default bundle.
+        bundle: Either a built-in bundle name, an explicit bundle path, or ``None`` to restore Celune's default bundle.
 
     Returns:
         Path: The selected CEVOICE bundle path.
@@ -691,8 +711,8 @@ def announce_default_bundle(log: Callable[[str, str], None]) -> Optional[str]:
         log: The logging callback to the bound user interface.
 
     Returns:
-        Optional[str]: The selected bundle's character name, ``None`` if loading failed, ``"Celune"`` if
-            a fallback reference was loaded.
+        Optional[str]: The selected bundle's character name, ``None`` if loading failed, ``"Celune"`` if a
+            fallback reference was loaded.
     """
     global _DEFAULT_LOADER_ANNOUNCED
     loader = default_loader()

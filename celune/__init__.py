@@ -60,9 +60,5 @@ except ModuleNotFoundError as package:
 
 
 def __dir__() -> list[str]:
-    """Return Celune's intentionally public package surface for REPL users.
-
-    Returns:
-        list[str]: Celune's public package surface.
-    """
+    """Return Celune's intentionally public package surface for REPL users."""
     return sorted(__all__)

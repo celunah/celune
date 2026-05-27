@@ -17,9 +17,6 @@ def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> No
     Args:
         log: Logging callback that receives the generated banner lines.
         backend_name: Optional backend name shown in the runtime banner.
-
-    Returns:
-        None: This function emits startup information through the log callback.
     """
     cuda_version = torch.version.cuda
 
@@ -78,8 +75,7 @@ def validate_runtime(
         dev: Whether developer mode is enabled.
 
     Returns:
-        bool: ``True`` when the runtime environment is supported and usable,
-            otherwise ``False``.
+        bool: ``True`` when the runtime environment is supported and usable, otherwise ``False``.
     """
     cuda_version = torch.version.cuda
 
@@ -181,7 +177,7 @@ def validate_runtime(
 
     if has_flash_attn:
         log(
-            "Flash Attention was found, but it is not usable at this time.",
+            "Flash Attention is not compatible.",
             "warning",
         )
 

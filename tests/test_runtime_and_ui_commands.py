@@ -15,8 +15,8 @@ from celune.celune import Celune
 from celune.config import Config
 from celune.constants import JSONSerializable
 from celune.backends.qwen3 import Qwen3
-from celune.ui.commands import _attachment_source, process_command
-from celune.ui.app import CeluneUI, _split_command_input
+from celune.ui.commands import attachment_source, process_command
+from celune.ui.app import CeluneUI
 from celune.ui.headless import CeluneHeadlessUI
 
 
@@ -25,9 +25,6 @@ class RuntimeTests(TestCase):
 
     def test_check_supported_backends_reports_cpu_cuda_and_rocm(self) -> None:
         """Verify backend labels across supported runtime branches.
-
-        Returns:
-            None: Assertions verify runtime detection behavior.
 
         Raises:
             AssertionError: Runtime detection changes unexpectedly.
@@ -56,9 +53,6 @@ class RuntimeTests(TestCase):
         self,
     ) -> None:
         """Verify unsupported backends fail before CUDA work begins.
-
-        Returns:
-            None: Assertions verify runtime rejection behavior.
 
         Raises:
             AssertionError: Runtime rejection behavior changes unexpectedly.
@@ -111,22 +105,11 @@ class UICommandTests(TestCase):
         )
 
     def _process_command(self, command: str, args: list[str]) -> None:
-        """Process one command against the typed UI test double.
-
-        Args:
-            command: Command name without a leading slash.
-            args: Parsed command arguments.
-
-        Returns:
-            None: This helper forwards to the production command handler.
-        """
+        """Process one command against the typed UI test double."""
         process_command(cast(CeluneUI, self.ui), command, args)
 
     def test_xvectoronly_command_requires_qwen3_and_valid_value(self) -> None:
         """Verify the Qwen3-only toggle command and argument checks.
-
-        Returns:
-            None: Assertions verify command behavior.
 
         Raises:
             AssertionError: Command behavior changes unexpectedly.
@@ -136,7 +119,7 @@ class UICommandTests(TestCase):
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
-            backend = Qwen3(log=lambda msg, severity="info": None, mode="native")
+            backend = Qwen3(log=lambda msg, severity="info": None)
         backend.x_vector_only = False
         self.ui.celune.backend = backend
         self._process_command("xvectoronly", [])
@@ -151,9 +134,6 @@ class UICommandTests(TestCase):
 
     def test_common_commands_update_state_and_validate_inputs(self) -> None:
         """Verify prompt, speed, and reverb command paths.
-
-        Returns:
-            None: Assertions verify command behavior.
 
         Raises:
             AssertionError: Command behavior changes unexpectedly.
@@ -186,7 +166,7 @@ class UICommandTests(TestCase):
         self.assertEqual(
             self.logs[-1],
             (
-                "Voice prompts are unavailable on the active Qwen3 0.6B model.",
+                "Voice prompts are unavailable with the currently loaded model.",
                 "warning",
             ),
         )
@@ -200,7 +180,7 @@ class UICommandTests(TestCase):
         self.assertEqual(len(self.ui.celune.persona_attachments), 1)
         attachment = self.ui.celune.persona_attachments[0]
         self.assertEqual(attachment["type"], "image")
-        self.assertEqual(attachment["path"], _attachment_source(image.resolve()))
+        self.assertEqual(attachment["path"], attachment_source(image.resolve()))
         self.assertEqual(self.logs[-1][1], "info")
 
         self._process_command("attach", ["clear"])
@@ -222,7 +202,7 @@ class UICommandTests(TestCase):
     def test_windows_command_split_keeps_literal_backslashes(self) -> None:
         """Verify Windows slash commands keep single-backslash file paths intact."""
         with mock.patch("celune.ui.app.os.name", "nt"):
-            parts = _split_command_input(
+            parts = CeluneUI._split_command_input(
                 r'attach "C:\Users\user\Downloads\bad suggestion.png"'
             )
 
@@ -295,7 +275,7 @@ class UIStartupTests(TestCase):
 
         self.assertEqual(ui.input_box.placeholder, "Enter text to speak here")
         self.assertEqual(ui.style_button.disabled, False)
-        available.assert_not_called()
+        available.assert_called_once_with()
         thread_cls.return_value.start.assert_called_once()
 
     def test_placeholder_uses_loaded_persona_not_runtime_capability(self) -> None:

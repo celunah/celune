@@ -27,7 +27,11 @@ class PersonaClientResponse:
         """Mirror the ``httpx`` response API for local in-process calls."""
 
     def json(self) -> dict[str, JSONSerializable]:
-        """Return the stored response payload."""
+        """Return the stored response payload.
+
+        Returns:
+            Result of this function.
+        """
         return dict(self._payload)
 
 
@@ -64,12 +68,24 @@ class PersonaClient:
         model_id: str,
         quantization: str = PERSONA_QUANTIZATION,
     ) -> None:
-        """Explicitly load the Persona runtime."""
+        """Explicitly load the Persona runtime.
+
+        Args:
+            model_id: Value for `model_id`.
+            quantization: Value for `quantization`.
+        """
         with self._capture_backend_output():
             self.runtime.load(model_id, quantization)
 
     def post(self, json: dict[str, JSONSerializable]) -> PersonaClientResponse:
-        """Handle a Persona generation request without leaving the process."""
+        """Handle a Persona generation request without leaving the process.
+
+        Args:
+            json: Value for `json`.
+
+        Returns:
+            Result of this function.
+        """
         request = request_from_json(json)
         with self._capture_backend_output():
             response = self.runtime.generate(request)
@@ -101,26 +117,54 @@ def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
 
 
 def persona_enabled(config: Mapping[str, JSONSerializable]) -> bool:
-    """Return whether Celune should try to use personas."""
+    """Return whether Celune should try to use personas.
+
+    Args:
+        config: Value for `config`.
+
+    Returns:
+        Result of this function.
+    """
     return resolve_vram_preset(config).persona_enabled and bool(
         persona_config(config).get("enabled", True)
     )
 
 
 def persona_talkback_enabled(config: Mapping[str, JSONSerializable]) -> bool:
-    """Return whether regular UI input should go through persona talkback."""
+    """Return whether regular UI input should go through persona talkback.
+
+    Args:
+        config: Value for `config`.
+
+    Returns:
+        Result of this function.
+    """
     return persona_enabled(config) and bool(
         persona_config(config).get("talkback", True)
     )
 
 
 def persona_quantization(config: Mapping[str, JSONSerializable]) -> str:
-    """Return the Persona quantization mode permitted by the VRAM tier."""
+    """Return the Persona quantization mode permitted by the VRAM tier.
+
+    Args:
+        config: Value for `config`.
+
+    Returns:
+        Result of this function.
+    """
     return resolve_vram_preset(config).persona_quantization
 
 
 def persona_model_id(config: Optional[Mapping[str, JSONSerializable]] = None) -> str:
-    """Return the Persona model ID Celune should load."""
+    """Return the Persona model ID Celune should load.
+
+    Args:
+        config: Value for `config`.
+
+    Returns:
+        Result of this function.
+    """
     if config is not None:
         configured = persona_config(config).get("model_id")
         if isinstance(configured, str) and configured.strip():
@@ -130,7 +174,11 @@ def persona_model_id(config: Optional[Mapping[str, JSONSerializable]] = None) ->
 
 
 def persona_is_available() -> bool:
-    """Check whether the in-process Persona runtime can be used."""
+    """Check whether the in-process Persona runtime can be used.
+
+    Returns:
+        Result of this function.
+    """
     try:
         PersonaRuntime()
         return True
@@ -142,7 +190,15 @@ def create_persona_client(
     config: Optional[Mapping[str, JSONSerializable]] = None,
     log_dev: Optional[DevLogCallback] = None,
 ) -> Optional[PersonaClient]:
-    """Create a Celune-managed in-process Persona client when enabled."""
+    """Create a Celune-managed in-process Persona client when enabled.
+
+    Args:
+        config: Value for `config`.
+        log_dev: Value for `log_dev`.
+
+    Returns:
+        Result of this function.
+    """
     if config is not None and not persona_enabled(config):
         return None
 

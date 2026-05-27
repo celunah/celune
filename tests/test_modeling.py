@@ -24,9 +24,6 @@ class ModelingTests(TestCase):
     def test_load_normalizer_components_uses_v4_tokenizer_compatibility(self) -> None:
         """Verify v5 tokenizer metadata is bypassed for Transformers v4.
 
-        Returns:
-            None: Assertions verify tokenizer loading arguments.
-
         Raises:
             AssertionError: Normalizer loading compatibility changes unexpectedly.
         """

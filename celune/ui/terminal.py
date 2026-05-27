@@ -4,7 +4,7 @@
 import logging
 import re
 import sys
-from typing import Callable
+from typing import Callable, Optional
 
 import readchar
 
@@ -37,11 +37,7 @@ class SelectMenu:
         self.idx = 0
 
     def render(self) -> None:
-        """Render available selections.
-
-        Returns:
-            None: This function does not return a value.
-        """
+        """Render available selections."""
         sys.stdout.write("\r")
         for n, choice in enumerate(self.choices):
             if n == self.idx:
@@ -86,28 +82,29 @@ class LogRedirect:
         stderr,
         write_callback: Callable[[str, str], None],
         default_severity: str = "info",
+        filter_messages: Optional[list[str]] = None,
     ) -> None:
         self.write_callback = write_callback
         self.default_severity = default_severity
         self._buffer = ""
         self.underlying_stdout = stdout
         self.underlying_stderr = stderr
-        self.filter_messages = []  # these messages will be filtered out by the logger
+        self.filter_messages = (
+            filter_messages  # these messages will be filtered out by the logger
+        )
 
     def write(self, text: str) -> None:
         """Write text to the logger.
 
         Args:
             text: The raw text chunk captured from redirected output.
-
-        Returns:
-            None: This method buffers partial lines and forwards complete ones.
         """
         if not text:
             return
 
-        if text in self.filter_messages:
-            return
+        if self.filter_messages is not None:
+            if text in self.filter_messages:
+                return
 
         # strip any incoming ANSI, but keep TTY specific input
         ansi_regex = re.compile(
@@ -133,9 +130,6 @@ class LogRedirect:
 
         Args:
             escape: The ANSI escape code(s) to process.
-
-        Returns:
-            None: This function writes ANSI escape codes to the underlying terminal.
         """
         ansi_regex = re.compile(
             r"\x1b(?:\[[0-?]*[ -/]*[@-~]|][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])"
@@ -146,11 +140,7 @@ class LogRedirect:
             self.underlying_stdout.write(escapes)
 
     def flush(self) -> None:
-        """Flush the buffers.
-
-        Returns:
-            None: This method emits any buffered text and clears the buffer.
-        """
+        """Flush the buffers."""
         if self._buffer.strip():
             self.write_callback(self._buffer.strip(), self.default_severity)
         self._buffer = ""
@@ -172,7 +162,11 @@ class UILogHandler(logging.Handler):
         self.write_callback = write_callback
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Forward one Python logging record into the UI log stream."""
+        """Forward one Python logging record into the UI log stream.
+
+        Args:
+            record: Value for `record`.
+        """
         try:
             message = record.getMessage().strip()
         except Exception:

@@ -85,12 +85,7 @@ class VoxCPM2(CeluneBackend):
     @staticmethod
     @contextlib.contextmanager
     def _suppress_backend_output() -> Iterator:
-        """Suppress unnecessary backend output.
-
-        Returns:
-            Iterator: A context manager that silences stdout
-                and stderr while backend code executes.
-        """
+        """Suppress unnecessary backend output."""
         with open(os.devnull, "w", encoding="utf-8") as devnull:
             with contextlib.redirect_stdout(devnull):
                 with contextlib.redirect_stderr(devnull):
@@ -104,8 +99,7 @@ class VoxCPM2(CeluneBackend):
             model: The Hugging Face repository ID to inspect.
 
         Returns:
-            tuple[bool, Optional[str]]: A flag indicating cache availability and
-                the resolved snapshot path when present.
+            tuple[bool, Optional[str]]: A cache availability flag and the resolved snapshot path when present.
         """
         return cached_hf_snapshot_path(
             model,
@@ -121,9 +115,7 @@ class VoxCPM2(CeluneBackend):
 
         Args:
             model_id: The VoxCPM model repository ID to load.
-            **kwargs:
-                - load_denoiser: Whether to load the denoiser model.
-                - optimize: Whether to try to optimize the model.
+            kwargs: Value for `kwargs`.
 
         Returns:
             VoxCPM: The loaded VoxCPM model instance.
@@ -159,7 +151,7 @@ class VoxCPM2(CeluneBackend):
 
         Args:
             model: The loaded VoxCPM model instance.
-            **kwargs: Streaming generation arguments passed to the backend.
+            kwargs: Streaming generation arguments passed to the backend.
 
         Returns:
             Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of
@@ -167,6 +159,7 @@ class VoxCPM2(CeluneBackend):
 
         Raises:
             ValueError: The requested voice is unknown or input text is empty.
+            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         # convert/remove invalid params
         voice = kwargs.pop("voice", self.default_voice)

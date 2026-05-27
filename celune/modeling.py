@@ -20,7 +20,14 @@ NORMALIZER_DEVICE = "cpu"
 def normalizer_device(
     config: Optional[Mapping[str, JSONSerializable]] = None,
 ) -> str:
-    """Return the runtime device used for CeluneNorm loading."""
+    """Return the runtime device used for CeluneNorm loading.
+
+    Args:
+        config: Value for `config`.
+
+    Returns:
+        Result of this function.
+    """
     if config is None:
         return NORMALIZER_DEVICE
     return resolve_vram_preset(config).normalizer_device
@@ -39,8 +46,7 @@ def load_normalizer_components(
         config: Celune configuration used to resolve the target device.
 
     Returns:
-        tuple[PreTrainedTokenizerBase, PreTrainedModel]: The loaded tokenizer and
-            causal language model.
+        tuple[PreTrainedTokenizerBase, PreTrainedModel]: The loaded tokenizer and causal language model.
     """
     available, path = backend.model_is_available_locally(NORMALIZER_MODEL_ID)
     model_ref = path if available and path is not None else NORMALIZER_MODEL_ID

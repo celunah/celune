@@ -7,6 +7,7 @@ from typing import Union
 from datetime import date, datetime
 from collections.abc import Iterator
 
+# some of these entries are empty because no suitable corresponding English name exists for certain Polish names
 NAME_DAYS: dict[str, list[str]] = {
     "01-01": [],
     "01-02": ["Basil", "Stephanie"],
@@ -387,15 +388,7 @@ NAME_DAYS: dict[str, list[str]] = {
 
 
 def _key(month: int, day: int) -> str:
-    """Format a month/day pair as a name-day lookup key.
-
-    Args:
-        month: Month number.
-        day: Day of month.
-
-    Returns:
-        str: A zero-padded ``MM-DD`` key.
-    """
+    """Format a month/day pair as a name-day lookup key."""
     return f"{month:02d}-{day:02d}"
 
 
@@ -479,7 +472,7 @@ def iter_name_days() -> Iterator[tuple[str, list[str]]]:
     """Iterate over ``(MM-DD, names)`` pairs.
 
     Returns:
-        Iterator[tuple[str, list[str]]]: A generator that yields each date
-            key followed by its corresponding list of names.
+        Iterator[tuple[str, list[str]]]: A generator that yields each date key followed by its corresponding list
+            of names.
     """
     yield from NAME_DAYS.items()

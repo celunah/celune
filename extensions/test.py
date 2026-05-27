@@ -14,11 +14,7 @@ class TestExtension(CeluneExtension):
     AUTOSTART = False  # if you want Celune to load this demo, set it to True
 
     def autostart(self) -> None:
-        """Demonstrate extension behavior during autostart.
-
-        Returns:
-            None: This method performs example logging, speech, and playback work.
-        """
+        """Demonstrate extension behavior during autostart."""
         self.log("Log test")
         time.sleep(1)  # due to threading, this does not block
         self.status("Status test")
@@ -45,10 +41,6 @@ class TestExtension(CeluneExtension):
         self.say("You will only hear this once.", save=False)
 
     def invoke(self) -> None:
-        """Demonstrate manual extension invocation behavior.
-
-        Returns:
-            None: This method logs and speaks a confirmation message.
-        """
+        """Demonstrate manual extension invocation behavior."""
         self.log("You invoked the extension.")
         self.say("You invoked the extension.")

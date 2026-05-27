@@ -15,9 +15,6 @@ class ConfigTests(TestCase):
     def test_env_bool_uses_fallback_and_strict_enabled_values(self) -> None:
         """Verify strict environment booleans and unset fallbacks.
 
-        Returns:
-            None: Assertions verify configuration behavior.
-
         Raises:
             AssertionError: Environment parsing changes unexpectedly.
         """
@@ -32,9 +29,6 @@ class ConfigTests(TestCase):
 
     def test_config_value_and_config_bool_precedence(self) -> None:
         """Verify configuration lookup and environment precedence.
-
-        Returns:
-            None: Assertions verify configuration resolution behavior.
 
         Raises:
             AssertionError: Configuration precedence changes unexpectedly.
@@ -59,9 +53,6 @@ class ConfigTests(TestCase):
         self,
     ) -> None:
         """Verify old configs gain new defaults without losing custom values.
-
-        Returns:
-            None: Assertions verify recursive default merging behavior.
 
         Raises:
             AssertionError: Config merging behavior changes unexpectedly.
@@ -110,9 +101,6 @@ class ConfigTests(TestCase):
     def test_merge_missing_defaults_keeps_non_mapping_user_overrides(self) -> None:
         """Verify explicit scalar overrides are not replaced by nested defaults.
 
-        Returns:
-            None: Assertions verify scalar override preservation.
-
         Raises:
             AssertionError: Config merging behavior changes unexpectedly.
         """
@@ -131,9 +119,6 @@ class UtilsTests(TestCase):
     def test_format_number_handles_precision_and_non_finite_values(self) -> None:
         """Verify number formatting and invalid precision handling.
 
-        Returns:
-            None: Assertions verify formatting behavior.
-
         Raises:
             AssertionError: Formatting behavior changes unexpectedly.
         """
@@ -145,9 +130,6 @@ class UtilsTests(TestCase):
 
     def test_color_and_text_helpers_validate_inputs(self) -> None:
         """Verify RGB parsing and simple text helpers.
-
-        Returns:
-            None: Assertions verify helper behavior.
 
         Raises:
             AssertionError: Helper behavior changes unexpectedly.
@@ -171,9 +153,6 @@ class UtilsTests(TestCase):
     def test_lunar_cuda_and_interpolation_helpers(self) -> None:
         """Verify lunar, interpolation, and CUDA label helpers.
 
-        Returns:
-            None: Assertions verify helper output.
-
         Raises:
             AssertionError: Helper output changes unexpectedly.
         """
@@ -194,9 +173,6 @@ class UtilsTests(TestCase):
 
     def test_assertions_language_and_random_replacement(self) -> None:
         """Verify assertions, language fallback, and random replacement.
-
-        Returns:
-            None: Assertions verify utility behavior.
 
         Raises:
             AssertionError: Utility behavior changes unexpectedly.
@@ -238,9 +214,6 @@ class UtilsTests(TestCase):
 
     def test_discard_can_clear_attributes(self) -> None:
         """Verify ``discard`` consumes values and clears attributes.
-
-        Returns:
-            None: Assertions verify discard behavior.
 
         Raises:
             AssertionError: Discard behavior changes unexpectedly.

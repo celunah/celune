@@ -48,9 +48,6 @@ def set_locale(locale: str) -> None:
 
     Args:
         locale: The locale code to store as the current language selection.
-
-    Returns:
-        None: This method updates global locale state in place.
     """
     global _current_locale
     _current_locale = locale
@@ -70,9 +67,8 @@ def string(key: str, locale: Optional[str] = None, **kwargs) -> str:
 
     Args:
         key: The translation key to look up.
-        locale: An optional locale override. When omitted, the current locale is
-            used.
-        **kwargs: Optional format values interpolated into the resolved string.
+        locale: An optional locale override. When omitted, the current locale is used.
+        kwargs: Optional format values interpolated into the resolved string.
 
     Returns:
         str: The translated string, or the key itself when no translation exists.

@@ -44,8 +44,8 @@ def get_revision() -> str:
     """Get the current Git repository revision.
 
     Returns:
-        str: The short commit hash, suffixed with ``*`` when the worktree is dirty,
-            or an empty string when Git metadata is unavailable.
+        str: The short commit hash, suffixed with ``*`` when the worktree is dirty, or an empty string when
+            Git metadata is unavailable.
     """
     try:
         rev = (
@@ -97,8 +97,7 @@ def to_rgb(color: str) -> tuple[int, int, int]:
     """Convert a hexadecimal color code to an RGB tuple.
 
     Args:
-        color: A 3-digit or 6-digit hexadecimal color string, optionally prefixed
-            with ``#`` or ``0x``.
+        color: A 3-digit or 6-digit hexadecimal color string, optionally prefixed with ``#`` or ``0x``.
 
     Returns:
         tuple[int, ...]: The parsed ``(red, green, blue)`` color components.
@@ -149,6 +148,7 @@ def lunar_phase(phase: float) -> str:
 
     Args:
         phase: The floating point phase.
+
     Returns:
         str: The corresponding phase name.
     """
@@ -175,6 +175,7 @@ def celune_day_status(now: datetime.datetime) -> str:
 
     Args:
         now: The current date and time.
+
     Returns:
         str: The formatted Celune Day status message.
     """
@@ -222,8 +223,7 @@ def cuda_architecture(capability: tuple[int, int]) -> str:
         str: The architecture name.
 
     Raises:
-        NotImplementedError: The CUDA capability is below Celune's supported
-            minimum.
+        NotImplementedError: The CUDA capability is below Celune's supported minimum.
         ValueError: The CUDA capability is not recognized.
     """
 
@@ -248,14 +248,13 @@ def cuda_architecture(capability: tuple[int, int]) -> str:
 def run_async(
     func: Callable, *args, daemon: bool = True, **kwargs
 ) -> multiprocessing.Process:
-    """Run a function asynchronously.
-    The function must not return a value or affect Celune directly, because it will run
-        detached from Celune.
+    """Run a function asynchronously. The function must not return a value or affect Celune directly,
+        because it will run detached from Celune.
 
     Args:
         func: The function to call.
-        args: The arguments to pass to the function.
         daemon: Whether to use a daemon process. Defaults to ``True``.
+        args: The arguments to pass to the function.
         kwargs: Keyword arguments to pass to the function.
 
     Returns:
@@ -404,8 +403,7 @@ def detected_ide() -> Optional[str]:
     """Return a known IDE name from common environment markers.
 
     Returns:
-        Optional[str]: The recognized IDE name, or ``None`` when no supported
-            marker is present.
+        Optional[str]: The recognized IDE name, or ``None`` when no supported marker is present.
     """
     if os.environ.get("PYCHARM_HOSTED"):
         return "PyCharm"
@@ -428,15 +426,13 @@ def title_case(text: str) -> str:
 
 
 def ipa_to_english(ipa: str) -> tuple[str, int]:
-    """Return an English approximation of the input IPA.
-        The output may be inaccurate with non-English IPA inputs.
+    """Return an English approximation of the input IPA. The output may be inaccurate with non-English IPA inputs.
 
     Args:
         ipa: The IPA to approximate.
 
     Returns:
-        tuple[str, int]: The English approximation of the input IPA,
-            and the amount of unmatched IPA characters.
+        tuple[str, int]: The English approximation of the input IPA, and the amount of unmatched IPA characters.
     """
 
     ipa_map = {
@@ -532,12 +528,11 @@ def replace_ipa(text: str, strict: bool = True) -> tuple[str, int]:
 
     Args:
         text: The IPA to approximate.
-        strict: Whether the input text must be delimited by IPA brackets (slashes or square brackets)
-            to be treated as IPA or not.
+        strict: Whether the input text must be delimited by IPA brackets (slashes or square brackets) to be
+            treated as IPA or not.
 
     Returns:
-        tuple[str, int]: The English approximation of the input IPA,
-            and the amount of unmatched IPA characters.
+        tuple[str, int]: The English approximation of the input IPA, and the amount of unmatched IPA characters.
     """
     total_unmatched = 0
 
@@ -568,13 +563,11 @@ def custom_assert(condition: bool, exception: Optional[Exception]) -> None:
         condition: The condition to assert against.
         exception: The exception to raise if the condition was not met.
 
-    Returns:
-        None: This function raises an exception upon a failed assertion.
-
     Raises:
-        Exception: A specified exception class was raised because assertion failed.
-        TypeError: An object was specified to be raised that was not an instance of Exception.
+        exception: If `exception` needs to be raised.
         AssertionError: An exception class was not specified, while assertion failed.
+        TypeError: An object was specified to be raised that was not an instance of Exception.
+        Exception: A specified exception class was raised because assertion failed.
     """
     if not condition:
         if isinstance(exception, Exception):
@@ -625,8 +618,7 @@ def typing_animation(text: str) -> Iterator[str]:
 
 
 def detect_language(text: str, supported: list[str]) -> LanguageResult:
-    """Detect possible languages in input text and report if it is in the supported
-        language list.
+    """Detect possible languages in input text and report if it is in the supported language list.
 
     Args:
         text: The text to detect language of.
@@ -674,7 +666,7 @@ def is_april_fools() -> bool:
 
 
 def is_celune_day() -> bool:
-    """Is today Celune Day? (June 2nd)
+    """Is today Celune Day? (June 2nd).
 
     Returns:
         bool: Whether today is Celune Day.
@@ -724,12 +716,21 @@ def rng_replace(
 
 @overload
 def discard(val) -> None:
-    """Overload #1 for the implementation of celune.utils.discard()."""
+    """Overload #1 for the implementation of celune.utils.discard().
+
+    Args:
+        val: Value for `val`.
+    """
 
 
 @overload
 def discard(val, attr: str) -> None:
-    """Overload #2 for the implementation of celune.utils.discard()."""
+    """Overload #2 for the implementation of celune.utils.discard().
+
+    Args:
+        val: Value for `val`.
+        attr: Value for `attr`.
+    """
 
 
 def discard(val, attr: Optional[str] = None) -> None:
@@ -738,10 +739,6 @@ def discard(val, attr: Optional[str] = None) -> None:
     Args:
         val: Value to discard, or the attribute owner.
         attr: Optional attribute name to clear on ``val``.
-
-    Returns:
-        None: One-argument calls only consume the value. Two-argument calls set
-            the named attribute to ``None``.
     """
     if attr is not None:
         setattr(val, attr, None)
@@ -785,16 +782,20 @@ def make_persona_card(
 
     Args:
         name: The character name.
-        voice: The character's selected voice type.
         age: The character's age.
         gender: The character's gender or LGBT type.
         persona: The character's personality description.
-        traits: The character's trait values. This must include values for the following traits:
-            "warmth", "directness", "humor", "detail". It cannot include other traits.
+        traits: The character's trait values.
+        - This must include values for the following traits: "warmth", "directness", "humor", "detail".
+        - It cannot include other traits.
         context: Additional context information for the character.
+        voice: The character's selected voice type.
 
     Returns:
         str: The formatted persona card.
+
+    Raises:
+        ValueError: If `ValueError` needs to be raised.
     """
     required_traits = ("warmth", "directness", "humor", "detail")
     missing_traits = [trait for trait in required_traits if trait not in traits]
@@ -852,9 +853,6 @@ def make_persona_card(
 
 def raise_test() -> None:
     """Raise a testing exception. This is used only in development.
-
-    Returns:
-        None: This function raises before returning any values.
 
     Raises:
         RuntimeError: A testing exception.

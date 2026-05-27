@@ -29,9 +29,6 @@ class BackendTests(TestCase):
     def test_base_backend_reports_models_and_progress(self) -> None:
         """Verify model metadata and progress helpers on a fake backend.
 
-        Returns:
-            None: Assertions verify backend helper output.
-
         Raises:
             AssertionError: A backend helper returns an unexpected value.
         """
@@ -47,9 +44,6 @@ class BackendTests(TestCase):
 
     def test_resolve_backend_accepts_instance_type_and_rejects_unknown(self) -> None:
         """Verify supported backend specifications and invalid input failures.
-
-        Returns:
-            None: Assertions verify backend resolution behavior.
 
         Raises:
             AssertionError: Backend resolution behavior changes unexpectedly.
@@ -84,15 +78,7 @@ class BackendTests(TestCase):
                 def generate_streaming(
                     self, *args, **kwargs
                 ) -> Iterator[npt.NDArray[np.float32]]:
-                    """Generate a fake stream of VoxCPM2 audio chunks.
-
-                    Args:
-                        args: Not used.
-                        kwargs: Only used for a fake CFG scale value.
-
-                    Returns:
-                        npt.NDArray[np.float32]: Fake VoxCPM2 audio chunks.
-                    """
+                    """Generate fake VoxCPM2 chunks."""
                     discard(args)
                     self.cfg_value = kwargs["cfg_value"]
                     yield np.zeros((1,), dtype=np.float32)
@@ -147,15 +133,7 @@ class BackendTests(TestCase):
                 def generate_voice_clone_streaming(
                     self, *args, **kwargs
                 ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
-                    """Generate a fake stream of Qwen3 audio chunks.
-
-                    Args:
-                        args: Not used.
-                        kwargs: Not used.
-
-                    Returns:
-                        npt.NDArray[np.float32]: Fake Qwen3 audio chunks.
-                    """
+                    """Generate fake Qwen3 chunks."""
                     discard(args)
                     self.ref_text = kwargs["ref_text"]
                     yield np.zeros((1,), dtype=np.float32), 24000, None
@@ -188,6 +166,7 @@ class ExtensionTests(TestCase):
             log=lambda msg, severity="info": self.logs.append((msg, severity)),
             log_dev=lambda msg, severity="info": self.dev_logs.append((msg, severity)),
             say=lambda text, save=True, display_text=None: True,
+            think=lambda text: True,
             play=lambda sound_path, keep=False: True,
             status=lambda msg, severity="info": None,
             set_voice=lambda name: True,
@@ -197,9 +176,6 @@ class ExtensionTests(TestCase):
 
     def test_context_and_extension_helpers_delegate_calls(self) -> None:
         """Verify extension helper methods delegate through their context.
-
-        Returns:
-            None: Assertions verify delegated extension behavior.
 
         Raises:
             AssertionError: Extension delegation behavior changes unexpectedly.
@@ -211,14 +187,12 @@ class ExtensionTests(TestCase):
         extension.log("hello")
         self.assertEqual(self.logs[-1], ("[Demo] hello", "info"))
         self.assertEqual(extension.say("hello"), True)
+        self.assertEqual(extension.think("hello"), True)
         self.assertEqual(extension.play("tone.wav"), True)
         self.assertEqual(extension.set_voice("bold"), True)
 
     def test_manager_registers_invokes_and_autoloads_extensions(self) -> None:
         """Verify registration, duplicate handling, and directory autoloading.
-
-        Returns:
-            None: Assertions verify extension registration behavior.
 
         Raises:
             AssertionError: Extension manager behavior changes unexpectedly.
@@ -252,9 +226,6 @@ class ExtensionTests(TestCase):
 
     def test_manager_invoke_and_autostart_run_in_threads(self) -> None:
         """Verify threaded extension invocation and autostart behavior.
-
-        Returns:
-            None: Assertions verify asynchronous extension execution.
 
         Raises:
             AssertionError: Threaded extension behavior changes unexpectedly.

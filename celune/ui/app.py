@@ -25,6 +25,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 from rich.text import Text
 
+from .. import colors
 from ..celune import Celune
 from ..persona.impl import (
     persona_talkback_enabled,
@@ -37,31 +38,14 @@ from ..utils import (
     typing_animation,
     typing_delay,
     is_april_fools,
+    discard,
 )
-
 from ..constants import SIGTSTP
 from ..cevoice import default_loader
-from .. import colors
 from . import resources as ui_resources
 from .terminal import LogRedirect, UILogHandler
 from .theme import CELUNE_CSS, severity_color
 from .commands import process_command as process_ui_command
-
-
-def _split_command_input(text: str) -> list[str]:
-    """Split one slash-command string into a command name and arguments."""
-    posix = os.name != "nt"
-    parts = shlex.split(text, posix=posix)
-    if posix:
-        return parts
-
-    normalized: list[str] = []
-    for part in parts:
-        if len(part) >= 2 and part[0] == part[-1] and part[0] in {"'", '"'}:
-            normalized.append(part[1:-1])
-        else:
-            normalized.append(part)
-    return normalized
 
 
 class CeluneUI(App):
@@ -140,25 +124,11 @@ class CeluneUI(App):
             self.call_from_thread(callback)
 
     def _severity_color(self, severity: str = "info") -> str:
-        """Return the current theme color for a log severity.
-
-        Args:
-            severity: The severity label to map to a theme color.
-
-        Returns:
-            str: The configured color string for the requested severity.
-        """
+        """Return the current theme color for a log severity."""
         return severity_color(self.active_theme_name, severity)
 
     def _apply_theme(self, theme_name: str) -> None:
-        """Apply theme and repaint theme-sensitive widgets.
-
-        Args:
-            theme_name: The theme name to activate.
-
-        Returns:
-            None: This method updates theme state and redraws status and logs.
-        """
+        """Apply theme and repaint theme-sensitive widgets."""
         self._clear_border_pulses()
         self.active_theme_name = theme_name
         self.theme = theme_name
@@ -183,11 +153,7 @@ class CeluneUI(App):
         self._border_pulse_tokens.clear()
 
     def _refresh_theme_text(self) -> None:
-        """Refresh widgets that use the active theme's normal text color.
-
-        Returns:
-            None: This method reapplies the active theme color to widgets.
-        """
+        """Refresh widgets that use the active theme's normal text color."""
         color = self._severity_color("info")
         if self.logs is not None:
             self.logs.styles.color = color
@@ -195,23 +161,13 @@ class CeluneUI(App):
             self.resources.styles.color = color
 
     def _refresh_status(self) -> None:
-        """Refresh the status color for the active theme.
-
-        Returns:
-            None: This method reapplies the active severity color to the status
-                widget.
-        """
+        """Refresh the status color for the active theme."""
         if self.status is None:
             return
         self.status.styles.color = self._severity_color(self.status_severity)
 
     def _refresh_logs(self) -> None:
-        """Repaint existing log entries using the active theme colors.
-
-        Returns:
-            None: This method redraws the log widget while preserving scroll
-                position.
-        """
+        """Repaint existing log entries using the active theme colors."""
         if self.logs is None:
             return
 
@@ -260,9 +216,8 @@ class CeluneUI(App):
     def on_mount(self) -> None:
         """Prepare Celune.
 
-        Returns:
-            None: This method sets up themes, widgets, output redirection, and
-                background initialization.
+        Raises:
+            RuntimeError: If `RuntimeError` needs to be raised.
         """
         if not self._has_celune():
             raise RuntimeError(
@@ -275,18 +230,18 @@ class CeluneUI(App):
             if isinstance(theme, dict):
                 background = theme.get("background")
                 accent = theme.get("accent")
-                sleeping_color = theme.get("sleeping_color")
+                faded_accent = theme.get("faded_accent")
+                if faded_accent is None:
+                    faded_accent = theme.get("sleeping_color")
                 if (
                     isinstance(background, str)
                     and isinstance(accent, str)
-                    and (sleeping_color is None or isinstance(sleeping_color, str))
+                    and (faded_accent is None or isinstance(faded_accent, str))
                 ):
                     colors.configure_theme(
                         background,
                         accent,
-                        colors.DEFAULT_SLEEPING
-                        if sleeping_color is None
-                        else sleeping_color,
+                        faded_accent,
                     )
 
         self.register_theme(colors.THEME)
@@ -353,20 +308,11 @@ class CeluneUI(App):
         self.update_resources()
 
     def update_resources(self) -> None:
-        """Refresh the currently selected resource footer page.
-
-        Returns:
-            None: This method updates the footer widget when available.
-        """
+        """Refresh the currently selected resource footer page."""
         if self.cur_state == "exiting" or self.resources is None:
             return
 
         def update() -> None:
-            """Update the resource widget on the UI thread.
-
-            Returns:
-                None: This callback writes the selected resource page.
-            """
             pages = ui_resources.resource_pages(self.celune, self.active_theme_name)
             text = pages[self._resource_page % len(pages)]
             self.resources.update(indent(text, spaces=2, direction="right"))
@@ -398,11 +344,7 @@ class CeluneUI(App):
         self._torch_flop_log_handlers = cast(list[logging.Handler], None)
 
     def advance_resources(self) -> None:
-        """Advance the resource footer to the next page and refresh it.
-
-        Returns:
-            None: This method rotates the footer page index.
-        """
+        """Advance the resource footer to the next page and refresh it."""
         if self.cur_state == "exiting" or self.resources is None:
             return
 
@@ -468,20 +410,12 @@ class CeluneUI(App):
                 self.safe_status("Sleeping", "sleeping")
 
     def start_background_init(self) -> None:
-        """Run Celune's initialization function.
-
-        Returns:
-            None: This method triggers background TTS loading.
-        """
+        """Run Celune's initialization function."""
         self.load_tts()
 
     @work(thread=True, exclusive=True)
     def load_tts(self) -> None:
-        """Load Celune.
-
-        Returns:
-            None: This worker initializes the engine and updates UI state.
-        """
+        """Load Celune."""
         try:
             if self.celune.load():
                 self.celune_styles = self.celune.voices
@@ -495,7 +429,7 @@ class CeluneUI(App):
                 self.celune_ready = True
                 self.safe_status("Idle")
                 self.tts_voice_changed(
-                    self.celune.current_voice or self.celune_styles[0]
+                    self.celune.current_voice or self.celune.voices[0]
                 )
                 if not self.celune.use_normalization:
                     self.safe_progress(1, 1)
@@ -518,15 +452,11 @@ class CeluneUI(App):
         Args:
             progress: Current progress, or ``None`` for an indeterminate bar.
             total: Total progress, or ``None`` for an indeterminate bar.
-
-        Returns:
-            None: This method safely updates progress from any thread.
         """
         if self.cur_state == "exiting" or self.progress_bar is None:
             return
 
         def update() -> None:
-            """Apply a progress update on the UI thread."""
             self.progress_bar.update(
                 total=total,
                 progress=0 if progress is None else progress,
@@ -559,9 +489,6 @@ class CeluneUI(App):
 
         Args:
             target: Widget or Textual selector for the target widget.
-
-        Returns:
-            None: This method schedules a border color pulse.
         """
         if threading.current_thread() is not threading.main_thread():
             self.call_from_thread(self.pulse_border, target)
@@ -595,7 +522,6 @@ class CeluneUI(App):
         frame_delay = transition_duration / (steps * 2) if transition_duration else 0.0
 
         def set_border(border: tuple[EdgeStyle, ...]) -> None:
-            """Set each border edge directly and refresh the widget."""
             (
                 widget.styles.border_top,
                 widget.styles.border_right,
@@ -605,7 +531,6 @@ class CeluneUI(App):
             widget.refresh(layout=False)
 
         def apply_blend(progress: float) -> None:
-            """Apply one transition frame if this pulse is still current."""
             if self._border_pulse_tokens.get(widget_key) != token:
                 return
 
@@ -625,7 +550,6 @@ class CeluneUI(App):
             )
 
         def restore() -> None:
-            """Return border styling to CSS/theme ownership."""
             if self._border_pulse_tokens.get(widget_key) != token:
                 return
             widget.styles.border = None
@@ -634,7 +558,6 @@ class CeluneUI(App):
             self._border_pulse_widgets.pop(widget_key, None)
 
         def schedule_frame(index: int, delay: float) -> None:
-            """Schedule the next pulse frame without filling the timer queue."""
             if self._border_pulse_tokens.get(widget_key) != token:
                 return
 
@@ -643,7 +566,6 @@ class CeluneUI(App):
                 return
 
             def run_frame() -> None:
-                """Apply one frame and then queue the next one."""
                 if self._border_pulse_tokens.get(widget_key) != token:
                     return
 
@@ -672,17 +594,9 @@ class CeluneUI(App):
 
         Args:
             locked: Whether voice changes should be disabled.
-
-        Returns:
-            None: This method locks or unlocks the voice change button.
         """
 
         def update() -> None:
-            """Apply the voice change lock state on the UI thread.
-
-            Returns:
-                None: This callback updates input widgets and resources
-            """
             self.style_button.disabled = locked
             self.update_resources()
 
@@ -691,7 +605,8 @@ class CeluneUI(App):
     def _normal_input_placeholder(self) -> str:
         """Return the unlocked input placeholder without blocking the UI."""
         if (
-            self._persona_available
+            self._persona_loaded()
+            and self._persona_available
             and persona_enabled(self.celune.config)
             and persona_talkback_enabled(self.celune.config)
         ):
@@ -711,7 +626,6 @@ class CeluneUI(App):
         self._persona_probe_running = True
 
         def probe() -> None:
-            """Probe Persona without pausing the Textual event loop."""
             available = self._persona_loaded()
 
             def apply_result() -> None:
@@ -733,21 +647,12 @@ class CeluneUI(App):
 
         Args:
             locked: Whether user input should be disabled.
-
-        Returns:
-            None: This method updates the input placeholder and style button
-                state.
         """
 
         if not locked:
             self._schedule_sleep_timer()
 
         def update() -> None:
-            """Apply the input lock state on the UI thread.
-
-            Returns:
-                None: This callback updates input widgets and resources.
-            """
             self._input_locked = locked
             self.input_box.placeholder = (
                 "Please wait" if locked else self._normal_input_placeholder()
@@ -765,9 +670,6 @@ class CeluneUI(App):
         Args:
             msg: The status text to display.
             severity: The status severity level.
-
-        Returns:
-            None: This method safely updates the status widget from any thread.
         """
         if self.cur_state == "exiting" or self.status is None:
             return
@@ -782,11 +684,6 @@ class CeluneUI(App):
         self.status_severity = severity
 
         def update() -> None:
-            """Apply a status update on the UI thread.
-
-            Returns:
-                None: This callback updates status text and color.
-            """
             self.status.update(indent(msg, spaces=2))
             self._refresh_status()
             self.update_resources()
@@ -799,9 +696,6 @@ class CeluneUI(App):
         Args:
             msg: The log line to append.
             severity: The log severity level.
-
-        Returns:
-            None: This method safely updates the log widget from any thread.
         """
         if self.cur_state == "exiting":
             return
@@ -826,9 +720,6 @@ class CeluneUI(App):
         Args:
             msg: The log line to append.
             severity: The log severity level.
-
-        Returns:
-            None: This method safely updates the log widget from any thread.
         """
         if self.celune.dev:
             self.safe_log(msg, severity)
@@ -838,9 +729,6 @@ class CeluneUI(App):
 
         Args:
             name: The newly active voice name.
-
-        Returns:
-            None: This method synchronizes the style button label with Celune.
         """
         if self.cur_state == "exiting":
             return
@@ -856,11 +744,6 @@ class CeluneUI(App):
         else:
 
             def update() -> None:
-                """Apply a voice label update on the UI thread.
-
-                Returns:
-                    None: This callback updates the style button label.
-                """
                 self.style_button.label = label
                 self.update_resources()
 
@@ -872,9 +755,6 @@ class CeluneUI(App):
         Args:
             msg: The log message emitted by Celune.
             severity: The log severity level.
-
-        Returns:
-            None: This method forwards engine logs to the UI log panel.
         """
         if self.cur_state == "exiting":
             return
@@ -887,9 +767,6 @@ class CeluneUI(App):
         Args:
             command: The control command to run.
             args: The command arguments to use.
-
-        Returns:
-            None: This method asks Celune to process a control command.
         """
         process_ui_command(self, command, args)
 
@@ -898,9 +775,6 @@ class CeluneUI(App):
 
         Args:
             text_len: The number of characters to consume from the input buffer.
-
-        Returns:
-            None: This method removes the consumed text and queues it for speech.
         """
         to_say = self.input_box.text[:text_len].strip()
 
@@ -928,15 +802,7 @@ class CeluneUI(App):
         self.celune.say(ipa_decoded, display_text=to_say)
 
     def _submit_text(self, text: str, process_commands: bool = True) -> bool:
-        """Submit text through the same path as the input box.
-
-        Args:
-            text: The text to submit.
-            process_commands: Whether slash commands should be executed.
-
-        Returns:
-            bool: ``True`` when the text was handled, otherwise ``False``.
-        """
+        """Submit text through the same path as the input box."""
         text = text.strip()
 
         if not text:
@@ -956,7 +822,7 @@ class CeluneUI(App):
 
         if process_commands and text.startswith("/"):
             try:
-                parts = _split_command_input(text[1:])
+                parts = self._split_command_input(text[1:])
             except ValueError as e:
                 self.safe_log(f"Command parsing error: {e}", "error")
                 return False
@@ -996,14 +862,10 @@ class CeluneUI(App):
         Args:
             delay: Delay in seconds before running the callback.
             callback: Callback to run if the tutorial has not been cancelled.
-
-        Returns:
-            None: This method stores a cancellable Textual timer.
         """
         token = self._tutorial_token
 
         def run() -> None:
-            """Run a scheduled tutorial callback if still current."""
             if token != self._tutorial_token:
                 return
             callback()
@@ -1016,11 +878,7 @@ class CeluneUI(App):
         self._tutorial_timers.append(timer)
 
     def begin_tutorial(self) -> None:
-        """Start a new cancellable tutorial action sequence.
-
-        Returns:
-            None: This method sets Celune's tutorial flags and begins tutorial actions.
-        """
+        """Start a new cancellable tutorial action sequence."""
         self.cancel_tutorial(stop_audio=True)
         self._tutorial_active = True
         self.change_input_state(locked=True)
@@ -1028,11 +886,7 @@ class CeluneUI(App):
         self.celune.is_in_tutorial = True
 
     def finish_tutorial(self) -> None:
-        """Mark the current tutorial sequence as complete.
-
-        Returns:
-            None: This method unsets Celune's tutorial flags after a completed or cancelled tutorial.
-        """
+        """Mark the current tutorial sequence as complete."""
         self._tutorial_active = False
         self._tutorial_timers.clear()
         self.celune.is_in_tutorial = False
@@ -1085,18 +939,13 @@ class CeluneUI(App):
             text: The text to type into the input box.
             process_commands: Whether typed slash commands should be executed.
             cancellable: Whether tutorial cancellation should stop this typing.
-
-        Returns:
-            None: This method starts a background typing helper.
         """
         token = self._tutorial_token
 
         def worker() -> None:
-            """Animate the text input without blocking Textual."""
             typed = ""
 
             def replace_input(value: str) -> None:
-                """Replace input text without triggering live consumption."""
                 self._suppress_input_change = True
                 try:
                     self.input_box.load_text(value)
@@ -1128,9 +977,6 @@ class CeluneUI(App):
 
         Args:
             event: The key event received from Textual.
-
-        Returns:
-            None: This handler processes shortcuts, commands, and speech requests.
         """
         with contextlib.suppress(EOFError):
             if self.cur_state == "exiting":
@@ -1178,9 +1024,6 @@ class CeluneUI(App):
 
         Args:
             event: The button press event emitted by Textual.
-
-        Returns:
-            None: This handler cycles to the next available voice.
         """
         if self.cur_state == "exiting":
             return
@@ -1200,11 +1043,7 @@ class CeluneUI(App):
         ).start()
 
     def on_unmount(self) -> None:
-        """Unload Celune.
-
-        Returns:
-            None: This handler shuts down Celune and restores redirected output.
-        """
+        """Unload Celune."""
         if self.celune is not None:
             self.celune.close()
 
@@ -1224,11 +1063,7 @@ class CeluneUI(App):
         CeluneUI._instance = None
 
     def tts_idle(self) -> None:
-        """Reset UI state after Celune stops talking.
-
-        Returns:
-            None: This method restores idle UI state when playback finishes.
-        """
+        """Reset UI state after Celune stops talking."""
         if self.cur_state == "exiting":
             return
         self.celune.locked = False
@@ -1248,11 +1083,7 @@ class CeluneUI(App):
     def tts_queue_avail(
         self,
     ) -> None:  # allow enqueuing new inputs while speaking but after generation
-        """Unlock input queueing after Celune completes generation.
-
-        Returns:
-            None: This method re-enables input while Celune is still speaking.
-        """
+        """Unlock input queueing after Celune completes generation."""
         if self.cur_state == "exiting":
             return
         self.celune.locked = False
@@ -1270,9 +1101,6 @@ class CeluneUI(App):
 
         Args:
             error: The error text to display.
-
-        Returns:
-            None: This method shows the message with error severity.
         """
         if self.cur_state == "exiting":
             return
@@ -1283,10 +1111,6 @@ class CeluneUI(App):
 
         Args:
             event: The Textual text-area change event.
-
-        Returns:
-            None: This handler resizes the input and optionally consumes
-                sentence-boundary text.
         """
         if self.cur_state == "exiting":
             return
@@ -1316,34 +1140,24 @@ class CeluneUI(App):
                 self.consume_buffer(len(text))
 
     def _graceful_exit(self) -> None:
-        """Exit from Celune gracefully.
-
-        Returns:
-            None: This method requests a normal Textual application exit.
-        """
+        """Exit from Celune gracefully."""
         self.exit()
 
     def graceful_exit(self) -> None:
-        """Public interface for CeluneUI._graceful_exit().
-
-        Returns:
-            None: This method returns the same value as CeluneUI._graceful_exit().
-        """
+        """Public interface for CeluneUI._graceful_exit()."""
         self._graceful_exit()
 
-    def signal_handler(self, sig: int, _frame: Optional[FrameType]) -> None:
+    def signal_handler(self, sig: int, frame: Optional[FrameType]) -> None:
         """Trap CTRL+C and exit Celune if pressed, while ignoring CTRL+Z.
 
         Args:
             sig: The received signal number.
-            _frame: The current stack frame from the signal handler.
-
-        Returns:
-            None: This handler schedules a graceful application shutdown.
+            frame: Value for `frame`.
         """
         if SIGTSTP is not None and sig == SIGTSTP:
             return
 
+        discard(frame)
         self._run_on_ui_thread(self._graceful_exit)
 
     @property
@@ -1363,3 +1177,32 @@ class CeluneUI(App):
             bool: Celune's current tutorial flag.
         """
         return self._tutorial_active
+
+    @staticmethod
+    def _split_command_input(text: str) -> list[str]:
+        """Split one slash-command string into a command name and arguments."""
+        posix = os.name != "nt"
+        parts = shlex.split(text, posix=posix)
+        if posix:
+            return parts
+
+        normalized: list[str] = []
+        for part in parts:
+            if len(part) >= 2 and part[0] == part[-1] and part[0] in {"'", '"'}:
+                normalized.append(part[1:-1])
+            else:
+                normalized.append(part)
+        return normalized
+
+    @staticmethod
+    def split_command_input(text: str) -> list[str]:
+        """Public interface for CeluneUI._split_command_input().
+
+        Args:
+            text: The command input to split.
+
+        Returns:
+            list[str]: The return value of _split_command_input(), containing a split command name and arguments.
+        """
+
+        return CeluneUI._split_command_input(text)
