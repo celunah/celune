@@ -8,9 +8,15 @@ import re
 import json
 import uuid
 import datetime
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union, cast
 from dataclasses import asdict, dataclass
+
+import numpy as np
+import numpy.typing as npt
+
+from ..constants import PERSONA_MEMORY_EMBEDDING_MODEL
 
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
@@ -44,6 +50,9 @@ _STOPWORDS = {
     "what",
     "you",
 }
+type EmbeddingVector = npt.NDArray[np.float32]
+_EMBEDDING_BACKENDS: dict[str, tuple[Any, Any]] = {}
+_FAILED_EMBEDDING_MODELS: set[str] = set()
 
 
 def _utc_now() -> str:
@@ -65,6 +74,90 @@ def _tokenize(text: str) -> set[str]:
         for token in _WORD_RE.findall(lowered)
         if token and token not in _STOPWORDS
     }
+
+
+def _clamp_similarity_threshold(value: object, fallback: float = 0.62) -> float:
+    """Normalize one semantic match threshold into the valid cosine range."""
+    if isinstance(value, bool):
+        return fallback
+    if isinstance(value, (int, float)):
+        return max(-1.0, min(1.0, float(value)))
+    return fallback
+
+
+def _clamp_overlap_threshold(value: object, fallback: int = 1) -> int:
+    """Normalize the fallback token-overlap threshold."""
+    if isinstance(value, bool):
+        return fallback
+    if isinstance(value, (int, float)):
+        return max(1, int(value))
+    return fallback
+
+
+def _cosine_similarity(first: EmbeddingVector, second: EmbeddingVector) -> float:
+    """Return cosine similarity between two embedding vectors."""
+    denom = float(np.linalg.norm(first) * np.linalg.norm(second))
+    if denom <= 0:
+        raise ValueError("embedding norm is zero")
+    return float(np.dot(first, second) / denom)
+
+
+def _load_transformer_text_embedder(model_name: str) -> Optional[tuple[Any, Any]]:
+    """Load one lazy text-embedding backend, or return ``None`` when unavailable."""
+    if model_name in _FAILED_EMBEDDING_MODELS:
+        return None
+    if model_name in _EMBEDDING_BACKENDS:
+        return _EMBEDDING_BACKENDS[model_name]
+
+    try:
+        import torch
+        from transformers import AutoModel, AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+        model = AutoModel.from_pretrained(model_name, local_files_only=True)
+        model.eval()
+        model.to(torch.device("cpu"))
+    except Exception:
+        _FAILED_EMBEDDING_MODELS.add(model_name)
+        return None
+
+    backend = (tokenizer, model)
+    _EMBEDDING_BACKENDS[model_name] = backend
+    return backend
+
+
+def _compute_text_embeddings(
+    texts: Sequence[str],
+    model_name: str,
+) -> Optional[list[EmbeddingVector]]:
+    """Return semantic text embeddings for the requested texts when available."""
+    backend = _load_transformer_text_embedder(model_name)
+    if backend is None:
+        return None
+
+    tokenizer, model = backend
+    try:
+        import torch
+        from torch.nn import functional
+
+        encoded = tokenizer(
+            list(texts),
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+        )
+        with torch.no_grad():
+            outputs = model(**encoded)
+        hidden = outputs.last_hidden_state
+        attention = encoded["attention_mask"].unsqueeze(-1).to(hidden.dtype)
+        pooled = (hidden * attention).sum(dim=1) / attention.sum(dim=1).clamp(min=1)
+        normalized = functional.normalize(pooled, p=2, dim=1)
+        array = normalized.cpu().numpy().astype(np.float32)
+        return [cast(EmbeddingVector, row) for row in array]
+    except Exception:
+        _FAILED_EMBEDDING_MODELS.add(model_name)
+        _EMBEDDING_BACKENDS.pop(model_name, None)
+        return None
 
 
 def _character_slug(name: str) -> str:
@@ -138,10 +231,25 @@ class MemoryCandidate:
 class PersonaMemoryStore:
     """JSON-backed character-specific long-term memory store."""
 
-    def __init__(self, storage_dir: Optional[Union[Path, str]] = None) -> None:
+    def __init__(
+        self,
+        storage_dir: Optional[Union[Path, str]] = None,
+        *,
+        semantic_similarity_threshold: float = 0.62,
+        fallback_token_overlap_threshold: int = 1,
+        embedding_model: str = PERSONA_MEMORY_EMBEDDING_MODEL,
+    ) -> None:
         self.storage_dir = (
             Path(storage_dir) if storage_dir is not None else default_memory_dir()
         )
+        self.semantic_similarity_threshold = _clamp_similarity_threshold(
+            semantic_similarity_threshold
+        )
+        self.fallback_token_overlap_threshold = _clamp_overlap_threshold(
+            fallback_token_overlap_threshold
+        )
+        self.embedding_model = embedding_model.strip() or PERSONA_MEMORY_EMBEDDING_MODEL
+        self._embedding_cache: dict[str, EmbeddingVector] = {}
 
     def _path_for_character(self, character_name: str) -> Path:
         """Return the JSON file path for one active character."""
@@ -347,21 +455,9 @@ class PersonaMemoryStore:
         if not request_text:
             return []
 
-        request_tokens = _tokenize(request_text)
-        ranked: list[tuple[int, int, MemoryRecord]] = []
-        for index, record in enumerate(records):
-            content_tokens = _tokenize(record.content)
-            overlap = len(request_tokens & content_tokens)
-            if overlap <= 0:
-                continue
-
-            score = overlap * 10
-            score += record.importance * 3
-            if record.explicit:
-                score += 2
-            if request_text.casefold() in record.content.casefold():
-                score += 2
-            ranked.append((score, index, record))
+        ranked = self._semantic_rank_records(records, request_text)
+        if not ranked:
+            ranked = self._fallback_rank_records(records, request_text)
 
         if not ranked:
             return []
@@ -399,6 +495,88 @@ class PersonaMemoryStore:
             else next(updated for updated in updated_records if updated.id == record.id)
             for record in selected
         ]
+
+    def _embedding_cache_key(self, text: str) -> str:
+        """Return the cache key used for one normalized text embedding."""
+        return f"{self.embedding_model}\0{text.casefold()}"
+
+    def _embed_texts(self, texts: Sequence[str]) -> Optional[list[EmbeddingVector]]:
+        """Return embeddings for normalized texts, using an in-memory cache."""
+        results: list[Optional[EmbeddingVector]] = []
+        missing_indices: list[int] = []
+        missing_texts: list[str] = []
+        for index, text in enumerate(texts):
+            cache_key = self._embedding_cache_key(text)
+            cached = self._embedding_cache.get(cache_key)
+            if cached is None:
+                results.append(None)
+                missing_indices.append(index)
+                missing_texts.append(text)
+                continue
+            results.append(cached)
+
+        if missing_texts:
+            fresh = _compute_text_embeddings(missing_texts, self.embedding_model)
+            if fresh is None or len(fresh) != len(missing_texts):
+                return None
+            for index, text, embedding in zip(missing_indices, missing_texts, fresh):
+                cache_key = self._embedding_cache_key(text)
+                self._embedding_cache[cache_key] = embedding
+                results[index] = embedding
+
+        if any(embedding is None for embedding in results):
+            return None
+        return [cast(EmbeddingVector, embedding) for embedding in results]
+
+    def _semantic_rank_records(
+        self,
+        records: Sequence[MemoryRecord],
+        request_text: str,
+    ) -> Optional[list[tuple[float, int, MemoryRecord]]]:
+        """Return semantic similarity matches, or ``None`` when embeddings are unavailable."""
+        texts = [request_text, *(record.content for record in records)]
+        embeddings = self._embed_texts(texts)
+        if embeddings is None:
+            return None
+
+        request_embedding = embeddings[0]
+        ranked: list[tuple[float, int, MemoryRecord]] = []
+        for index, (record, embedding) in enumerate(zip(records, embeddings[1:])):
+            similarity = _cosine_similarity(request_embedding, embedding)
+            if similarity < self.semantic_similarity_threshold:
+                continue
+
+            score = similarity * 100.0
+            score += record.importance * 3.0
+            if record.explicit:
+                score += 2.0
+            if request_text.casefold() in record.content.casefold():
+                score += 2.0
+            ranked.append((score, index, record))
+        return ranked
+
+    def _fallback_rank_records(
+        self,
+        records: Sequence[MemoryRecord],
+        request_text: str,
+    ) -> list[tuple[float, int, MemoryRecord]]:
+        """Return the legacy token-overlap ranking when semantic embeddings are unavailable."""
+        request_tokens = _tokenize(request_text)
+        ranked: list[tuple[float, int, MemoryRecord]] = []
+        for index, record in enumerate(records):
+            content_tokens = _tokenize(record.content)
+            overlap = len(request_tokens & content_tokens)
+            if overlap < self.fallback_token_overlap_threshold:
+                continue
+
+            score = float(overlap * 10)
+            score += record.importance * 3.0
+            if record.explicit:
+                score += 2.0
+            if request_text.casefold() in record.content.casefold():
+                score += 2.0
+            ranked.append((score, index, record))
+        return ranked
 
     @staticmethod
     def _explicit_candidate(text: str) -> Optional[MemoryCandidate]:

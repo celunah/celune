@@ -154,6 +154,83 @@ class BackendTests(TestCase):
 
             self.assertEqual(model.ref_text, "Pack reference.")
 
+    def test_qwen3_manually_pumps_and_closes_backend_stream(self) -> None:
+        """Verify Qwen3 iterates and closes its backend stream explicitly."""
+
+        class StubQwen3TTS:
+            """Import-time stand-in for the FasterQwen3TTS package class."""
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "faster_qwen3_tts": SimpleNamespace(
+                    FasterQwen3TTS=StubQwen3TTS,
+                    __version__="0.2.5",
+                )
+            },
+        ):
+            qwen3 = importlib.import_module("celune.backends.qwen3")
+            qwen3_cls = qwen3.Qwen3
+
+            class FakeStream:
+                """Minimal iterator exposing a close hook for one backend test."""
+
+                def __init__(self) -> None:
+                    self._chunks = [
+                        (np.zeros((1,), dtype=np.float32), 24000, {"chunk_steps": 1}),
+                        (np.ones((1,), dtype=np.float32), 24000, {"chunk_steps": 1}),
+                    ]
+                    self.closed = False
+
+                def __iter__(self) -> "FakeStream":
+                    """Return the iterator object itself."""
+                    return self
+
+                def __next__(
+                    self,
+                ) -> tuple[npt.NDArray[np.float32], int, Optional[dict]]:
+                    """Return the next fake streamed chunk."""
+                    if not self._chunks:
+                        raise StopIteration
+                    return self._chunks.pop(0)
+
+                def close(self) -> None:
+                    """Record that the fake stream was closed."""
+                    self.closed = True
+
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                def __init__(self) -> None:
+                    self.stream = FakeStream()
+
+                def generate_voice_clone_streaming(self, *args, **kwargs) -> FakeStream:
+                    """Return one fake Qwen3 stream."""
+                    discard(args)
+                    discard(kwargs)
+                    return self.stream
+
+            loader = SimpleNamespace(
+                bundle=SimpleNamespace(
+                    voices={"calm": {"reference_text": "Pack reference."}}
+                ),
+                materialize=lambda voice, kind: Path(f"{voice}.{kind}"),
+            )
+            with (
+                mock.patch.object(qwen3_cls, "_validate_refs"),
+                mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
+            ):
+                backend = qwen3_cls(log=lambda _msg, _severity="info": None)
+                model = FakeModel()
+                chunks = list(
+                    backend.generate_stream(model, text="hello", voice="calm")
+                )
+
+            self.assertEqual(len(chunks), 2)
+            self.assertEqual(chunks[0][1], 24000)
+            self.assertEqual(chunks[1][0].tolist(), [1.0])
+            self.assertEqual(model.stream.closed, True)
+
 
 class ExtensionTests(TestCase):
     """Tests for extension context and manager behavior."""

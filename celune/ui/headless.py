@@ -10,7 +10,7 @@ from typing import Optional, cast
 
 from ..celune import Celune
 from ..config import Config, config_bool
-from ..utils import supports_ansi, discard
+from ..utils import discard
 from ..constants import ExitCodes, SIGTSTP
 
 
@@ -36,9 +36,8 @@ class CeluneHeadlessUI:
         self.celune = cast(Celune, None)
 
         # for Celune terminals not supporting colored text
-        self.no_color = (
-            config_bool(config, "CELUNE_HEADLESS_NOCOLOR", "headless_nocolor")
-            or not supports_ansi()
+        self.no_color = config_bool(
+            config, "CELUNE_HEADLESS_NOCOLOR", "headless_nocolor"
         )
         self.reset = "\x1b[0m" if not self.no_color else ""
 
@@ -63,8 +62,10 @@ class CeluneHeadlessUI:
             return self.colors["yellow"]
         if severity == "error":
             return self.colors["red"]
+        if severity == "sleeping":
+            return self.colors["blue"]
         # sleeping severity does not have a match in the VGA palette
-        return self.colors["white"]
+        return self.colors["magenta"]
 
     def headless_log(self, msg: str, severity: str = "info") -> None:
         """Log to the headless interface.

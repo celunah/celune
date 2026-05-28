@@ -18,6 +18,8 @@ NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v2.0-ctx2048"
 # this embedding model is used to extract a voice embedding vector out of the target utterance,
 # and analyze the voice automatically based on any given embeddings from your CEVOICE pack
 VOICE_EMBEDDING_MODEL = "marksverdhei/Qwen3-Voice-Embedding-12Hz-1.7B"
+# this embedding model is used to retrieve long-term Persona memories semantically when available
+PERSONA_MEMORY_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 # this model is loaded by Celune, and used to control the persona
 PERSONA_MODEL_ID = "Qwen/Qwen2.5-VL-3B-Instruct"

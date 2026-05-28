@@ -96,5 +96,13 @@ persona:
   memory:
     # how much do you want Celune to remember
     max_short_term_messages: 20
+    # where semantic long-term memory retrieval should persist data
+    storage_dir: null
+    # minimum cosine similarity for semantic long-term memory retrieval
+    semantic_similarity_threshold: 0.62
+    # token overlap required by the safe fallback matcher when embeddings are unavailable
+    fallback_token_overlap_threshold: 1
+    # transformer model used for semantic long-term memory retrieval when available locally
+    semantic_embedding_model: sentence-transformers/all-MiniLM-L6-v2
   # use persona or speak directly?
   talkback: true

@@ -5,12 +5,10 @@ import os
 import sys
 import time
 import shlex
-import signal
 import logging
 import threading
 import itertools
 import contextlib
-from types import FrameType
 from collections.abc import Iterator
 from typing import cast, Optional, Callable, Union
 
@@ -38,9 +36,7 @@ from ..utils import (
     typing_animation,
     typing_delay,
     is_april_fools,
-    discard,
 )
-from ..constants import SIGTSTP
 from ..cevoice import default_loader
 from . import resources as ui_resources
 from .terminal import LogRedirect, UILogHandler
@@ -95,6 +91,7 @@ class CeluneUI(App):
 
         self._log_stdout = cast(LogRedirect, None)
         self._log_stderr = cast(LogRedirect, None)
+        self._runtime_log_capture_enabled = False
         self._torch_flop_logger = cast(logging.Logger, None)
         self._torch_flop_log_handler = cast(UILogHandler, None)
         self._torch_flop_log_handlers = cast(list[logging.Handler], None)
@@ -224,6 +221,8 @@ class CeluneUI(App):
                 f"{self.__class__.__name__} requires an instance of Celune to be set"
             )
 
+        colors.configure_theme()
+
         loader = default_loader()
         if loader is not None:
             theme = loader.bundle.metadata.get("theme")
@@ -281,6 +280,27 @@ class CeluneUI(App):
         ui_resources.prime_usage()
         self.set_interval(2.06, self.advance_resources)
 
+        self.call_after_refresh(self.start_background_init)
+        self.safe_status("Initializing")
+        self.update_resources()
+
+    def update_resources(self) -> None:
+        """Refresh the currently selected resource footer page."""
+        if self.cur_state == "exiting" or self.resources is None:
+            return
+
+        def update() -> None:
+            pages = ui_resources.resource_pages(self.celune, self.active_theme_name)
+            text = pages[self._resource_page % len(pages)]
+            self.resources.update(indent(text, spaces=2, direction="right"))
+
+        self._run_on_ui_thread(update)
+
+    def _enable_runtime_log_capture(self) -> None:
+        """Capture Celune runtime output after the Textual app has started cleanly."""
+        if self._runtime_log_capture_enabled:
+            return
+
         self._old_stdout = sys.stdout
         self._old_stderr = sys.stderr
         self._log_stdout = LogRedirect(
@@ -299,28 +319,10 @@ class CeluneUI(App):
         sys.stdout = self._log_stdout
         sys.stderr = self._log_stderr
         self._install_runtime_log_redirects()
-
-        self.call_after_refresh(self.start_background_init)
-        signal.signal(signal.SIGINT, self.signal_handler)
-        if SIGTSTP is not None:
-            signal.signal(SIGTSTP, self.signal_handler)
-        self.safe_status("Initializing")
-        self.update_resources()
-
-    def update_resources(self) -> None:
-        """Refresh the currently selected resource footer page."""
-        if self.cur_state == "exiting" or self.resources is None:
-            return
-
-        def update() -> None:
-            pages = ui_resources.resource_pages(self.celune, self.active_theme_name)
-            text = pages[self._resource_page % len(pages)]
-            self.resources.update(indent(text, spaces=2, direction="right"))
-
-        self._run_on_ui_thread(update)
+        self._runtime_log_capture_enabled = True
 
     def _install_runtime_log_redirects(self) -> None:
-        """Route known Python logger output into Celune's UI log widget."""
+        """Route known runtime logger output into Celune's UI log widget."""
         logger = logging.getLogger("torch.utils.flop_counter")
         handler = UILogHandler(self.safe_log)
         self._torch_flop_logger = logger
@@ -342,6 +344,19 @@ class CeluneUI(App):
         self._torch_flop_logger = cast(logging.Logger, None)
         self._torch_flop_log_handler = cast(UILogHandler, None)
         self._torch_flop_log_handlers = cast(list[logging.Handler], None)
+
+    def _disable_runtime_log_capture(self) -> None:
+        """Restore global stdio once the UI is shutting down."""
+        if self._log_stdout is not None:
+            self._log_stdout.flush()
+        if self._log_stderr is not None:
+            self._log_stderr.flush()
+
+        self._remove_runtime_log_redirects()
+
+        sys.stdout = self._old_stdout
+        sys.stderr = self._old_stderr
+        self._runtime_log_capture_enabled = False
 
     def advance_resources(self) -> None:
         """Advance the resource footer to the next page and refresh it."""
@@ -435,6 +450,7 @@ class CeluneUI(App):
                     self.safe_progress(1, 1)
                 self.change_input_state(locked=False)
                 self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
+                self.call_from_thread(self._enable_runtime_log_capture)
                 self.safe_log("New to Celune? Type /tutorial to begin the tutorial.")
                 self._schedule_sleep_timer()
 
@@ -1047,18 +1063,9 @@ class CeluneUI(App):
         if self.celune is not None:
             self.celune.close()
 
-        if self._log_stdout is not None:
-            self._log_stdout.flush()
-        if self._log_stderr is not None:
-            self._log_stderr.flush()
-
         self.cur_state = "exiting"
-        self._remove_runtime_log_redirects()
-
-        if hasattr(self, "_old_stdout"):
-            sys.stdout = self._old_stdout
-        if hasattr(self, "_old_stderr"):
-            sys.stderr = self._old_stderr
+        if self._runtime_log_capture_enabled:
+            self._disable_runtime_log_capture()
 
         CeluneUI._instance = None
 
@@ -1146,19 +1153,6 @@ class CeluneUI(App):
     def graceful_exit(self) -> None:
         """Public interface for CeluneUI._graceful_exit()."""
         self._graceful_exit()
-
-    def signal_handler(self, sig: int, frame: Optional[FrameType]) -> None:
-        """Trap CTRL+C and exit Celune if pressed, while ignoring CTRL+Z.
-
-        Args:
-            sig: The received signal number.
-            frame: Value for `frame`.
-        """
-        if SIGTSTP is not None and sig == SIGTSTP:
-            return
-
-        discard(frame)
-        self._run_on_ui_thread(self._graceful_exit)
 
     @property
     def tutorial_token(self) -> int:

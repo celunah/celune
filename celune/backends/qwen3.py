@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Iterator
 from typing import Callable, Optional, Final, Mapping
@@ -14,7 +15,7 @@ import numpy.typing as npt
 # it's not in __all__, but that's not Celune's job, so we have to ignore the warning
 from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
 
-from .base import CeluneBackend, cached_hf_snapshot_path
+from .base import CeluneBackend, cached_hf_snapshot_path, BackendModel
 from ..cevoice import default_loader
 
 
@@ -142,7 +143,7 @@ class Qwen3(CeluneBackend):
             ],
         )
 
-    def load_model(self, model_id: str, **kwargs) -> FasterQwen3TTS:
+    def load_model(self, model_id: str, **kwargs) -> Optional[BackendModel]:
         """Load the given voice model.
 
         Args:
@@ -211,10 +212,19 @@ class Qwen3(CeluneBackend):
                 f"unknown voice '{voice}' for backend '{self.name}'"
             ) from e
 
-        yield from model.generate_voice_clone_streaming(
-            ref_audio=ref_wav,
-            ref_text=ref_text,
-            non_streaming_mode=False,  # VERY IMPORTANT ON >=0.2.5
-            xvec_only=self.x_vector_only,
-            **kwargs,
-        )
+        stream = None
+        try:
+            stream = model.generate_voice_clone_streaming(
+                ref_audio=ref_wav,
+                ref_text=ref_text,
+                non_streaming_mode=False,  # VERY IMPORTANT ON >=0.2.5
+                xvec_only=self.x_vector_only,
+                **kwargs,
+            )
+
+            for chunk in stream:  # pylint: disable=R1737
+                yield chunk
+        finally:
+            if stream is not None and hasattr(stream, "close"):
+                with contextlib.suppress(Exception):
+                    stream.close()
