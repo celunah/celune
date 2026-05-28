@@ -14,7 +14,7 @@ import numpy.typing as npt
 from voxcpm import VoxCPM
 
 from . import get_version
-from .base import CeluneBackend, cached_hf_snapshot_path
+from .base import CeluneBackend, cached_hf_snapshot_path, BackendModel
 from ..constants import BASE_SR
 from ..cevoice import default_loader
 
@@ -85,7 +85,12 @@ class VoxCPM2(CeluneBackend):
     @staticmethod
     @contextlib.contextmanager
     def _suppress_backend_output() -> Iterator:
-        """Suppress unnecessary backend output."""
+        """Suppress unnecessary backend output.
+
+        Returns:
+            Iterator: A context manager that silences stdout
+                and stderr while backend code executes.
+        """
         with open(os.devnull, "w", encoding="utf-8") as devnull:
             with contextlib.redirect_stdout(devnull):
                 with contextlib.redirect_stderr(devnull):
@@ -99,7 +104,8 @@ class VoxCPM2(CeluneBackend):
             model: The Hugging Face repository ID to inspect.
 
         Returns:
-            tuple[bool, Optional[str]]: A cache availability flag and the resolved snapshot path when present.
+            tuple[bool, Optional[str]]: A flag indicating cache availability and
+                the resolved snapshot path when present.
         """
         return cached_hf_snapshot_path(
             model,
@@ -110,12 +116,14 @@ class VoxCPM2(CeluneBackend):
             ],
         )
 
-    def load_model(self, model_id: str, **kwargs) -> VoxCPM:
+    def load_model(self, model_id: str, **kwargs) -> Optional[BackendModel]:
         """Load the given voice model.
 
         Args:
             model_id: The VoxCPM model repository ID to load.
-            kwargs: Value for `kwargs`.
+            **kwargs:
+                - load_denoiser: Whether to load the denoiser model.
+                - optimize: Whether to try to optimize the model.
 
         Returns:
             VoxCPM: The loaded VoxCPM model instance.
@@ -159,9 +167,8 @@ class VoxCPM2(CeluneBackend):
 
         Raises:
             ValueError: The requested voice is unknown or input text is empty.
-            NotImplementedError: If `NotImplementedError` needs to be raised.
+            NotImplementedError: If streaming support is unavailable.
         """
-        # convert/remove invalid params
         voice = kwargs.pop("voice", self.default_voice)
         instruct = kwargs.pop("instruct", None)
         kwargs.pop("language", None)
@@ -188,82 +195,70 @@ class VoxCPM2(CeluneBackend):
 
         text = kwargs.pop("text", None)
         if not text:
-            # saying nothing makes no sense
             raise ValueError("expected text to say")
 
         if instruct:
-            # if this includes "music" or "singing", Celune may sing
-            # these instructions can also be injected manually
             text = f"({instruct}) {text}"
 
-        # random seeding causes regenerations of Celune's output to be unique
-        # while a custom seed makes the next output reproducible
         self._apply_seed()
 
-        chunks_per_batch = max(1, round(chunk_size / (1 / self.chunk_rate)))
-        if hasattr(model, "generate_streaming"):
-            backend_stream = None
-            try:
-                with self._suppress_backend_output():
-                    backend_stream = model.generate_streaming(
-                        text,
-                        reference_wav_path=ref_wav,
-                        inference_timesteps=6,
-                        cfg_value=cfg,
-                        # the longer you speak, the higher the drift risk over time
-                        # 2048 tokens is also used by Qwen3-TTS
-                        # consistent context lengths help to combat drift, and consume less VRAM
-                        max_len=self.max_new_tokens,
-                    )
-
-                batch = []
-                chunk_index = 0
-                pending_audio: Optional[npt.NDArray[np.float32]] = None
-                pending_timing: Optional[dict] = None
-                while True:
-                    with self._suppress_backend_output():
-                        try:
-                            chunk = next(backend_stream)
-                        except StopIteration:
-                            break
-
-                    batch.append(chunk)
-                    if len(batch) >= chunks_per_batch:
-                        if pending_audio is not None and pending_timing is not None:
-                            yield pending_audio, BASE_SR, pending_timing
-
-                        audio = np.concatenate(batch)
-                        pending_timing = {
-                            "backend": self.name,
-                            "chunk_index": chunk_index,
-                            "chunk_steps": len(batch),
-                            "is_final": False,
-                        }
-                        pending_audio = audio
-                        batch.clear()
-                        chunk_index += 1
-
-                if batch:  # push remaining
-                    if pending_audio is not None and pending_timing is not None:
-                        yield pending_audio, BASE_SR, pending_timing
-
-                    audio = np.concatenate(batch)
-                    timing = {
-                        "backend": self.name,
-                        "chunk_index": chunk_index,
-                        "chunk_steps": len(batch),
-                        "is_final": True,
-                    }
-                    yield audio, BASE_SR, timing
-                elif pending_audio is not None and pending_timing is not None:
-                    pending_timing["is_final"] = True
-                    yield pending_audio, BASE_SR, pending_timing
-            finally:
-                if backend_stream is not None and hasattr(backend_stream, "close"):
-                    with contextlib.suppress(Exception):
-                        backend_stream.close()
-        else:
+        if not hasattr(model, "generate_streaming"):
             version = get_version("voxcpm")
             raise NotImplementedError(
                 f"streaming support not available (requires voxcpm>=1.5.0, installed: {version})"
             )
+
+        chunks_per_batch = max(1, round(chunk_size / (1 / self.chunk_rate)))
+
+        stream = None
+        try:
+            with self._suppress_backend_output():
+                stream = model.generate_streaming(
+                    text,
+                    reference_wav_path=ref_wav,
+                    inference_timesteps=6,
+                    cfg_value=cfg,
+                    max_len=self.max_new_tokens,
+                )
+
+                batch: list[npt.NDArray[np.float32]] = []
+                chunk_index = 0
+
+                for chunk in stream:
+                    batch.append(chunk)
+
+                    if len(batch) < chunks_per_batch:
+                        continue
+
+                    audio = np.concatenate(batch)
+                    yield (
+                        audio,
+                        BASE_SR,
+                        {
+                            "backend": self.name,
+                            "chunk_index": chunk_index,
+                            "chunk_steps": len(batch),
+                            "is_final": False,
+                        },
+                    )
+
+                    batch.clear()
+                    chunk_index += 1
+
+                if batch:
+                    audio = np.concatenate(batch)
+                    yield (
+                        audio,
+                        BASE_SR,
+                        {
+                            "backend": self.name,
+                            "chunk_index": chunk_index,
+                            "chunk_steps": len(batch),
+                            "is_final": True,
+                        },
+                    )
+
+        finally:
+            if stream is not None and hasattr(stream, "close"):
+                with contextlib.suppress(Exception):
+                    stream.close()

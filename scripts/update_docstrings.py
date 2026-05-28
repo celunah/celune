@@ -333,8 +333,16 @@ def collect_replacements(source: str, tree: ast.AST) -> list[Replacement]:
             kind = function_kind(self.parents, node.name)
             parsed = parse_docstring(doc_expr.value.value)
             start = line_offsets[doc_expr.lineno - 1]
-            end = line_offsets[doc_expr.end_lineno]
-            indent = re.match(r"\s*", lines[doc_expr.lineno - 1]).group(0)
+            if doc_expr.end_lineno is None:
+                raise SyntaxError("unterminated docstring")
+
+            end_lineno = doc_expr.end_lineno
+            end = line_offsets[end_lineno]
+
+            indent_match = re.match(r"\s*", lines[doc_expr.lineno - 1])
+            if indent_match is None:
+                raise RuntimeError("failed to determine indentation")
+            indent = indent_match.group(0)
 
             if kind == "nested":
                 if len(node.body) == 1:

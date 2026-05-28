@@ -1333,7 +1333,7 @@ class Celune:
                 if isinstance(out, list):
                     out = out[0] if out else ""
 
-                # too many <NORM>s can break splitting
+                # too many <NORM>'s can break splitting
                 if "<NORM>" in out:
                     out = out.split("<NORM>", 1)[0].strip()
 

@@ -56,9 +56,10 @@ from .constants import (
     BASE_SR,
     DEFAULT_PERSONA_CONTEXT,
     DEFAULT_PERSONA_DESCRIPTION,
-    N_A_NUMERIC,
     JSON,
     JSONSerializable,
+    N_A_NUMERIC,
+    PERSONA_MEMORY_EMBEDDING_MODEL,
     PipelineStates,
     PERSONA_HISTORY_MESSAGES,
 )
@@ -860,10 +861,39 @@ def _persona_memory_store(engine: "Celune") -> Optional[PersonaMemoryStore]:
         if isinstance(enabled, bool) and not enabled:
             return None
         storage_dir = memory_config.get("storage_dir")
+        similarity_threshold = memory_config.get("semantic_similarity_threshold", 0.62)
+        overlap_threshold = memory_config.get("fallback_token_overlap_threshold", 1)
+        embedding_model = memory_config.get("semantic_embedding_model")
+        embedding_model_name = (
+            embedding_model.strip()
+            if isinstance(embedding_model, str) and embedding_model.strip()
+            else None
+        )
         if isinstance(storage_dir, str) and storage_dir.strip():
-            store = PersonaMemoryStore(storage_dir=storage_dir.strip())
+            store = PersonaMemoryStore(
+                storage_dir=storage_dir.strip(),
+                semantic_similarity_threshold=float(similarity_threshold)
+                if isinstance(similarity_threshold, (int, float))
+                and not isinstance(similarity_threshold, bool)
+                else 0.62,
+                fallback_token_overlap_threshold=int(overlap_threshold)
+                if isinstance(overlap_threshold, (int, float))
+                and not isinstance(overlap_threshold, bool)
+                else 1,
+                embedding_model=embedding_model_name or PERSONA_MEMORY_EMBEDDING_MODEL,
+            )
         else:
-            store = PersonaMemoryStore()
+            store = PersonaMemoryStore(
+                semantic_similarity_threshold=float(similarity_threshold)
+                if isinstance(similarity_threshold, (int, float))
+                and not isinstance(similarity_threshold, bool)
+                else 0.62,
+                fallback_token_overlap_threshold=int(overlap_threshold)
+                if isinstance(overlap_threshold, (int, float))
+                and not isinstance(overlap_threshold, bool)
+                else 1,
+                embedding_model=embedding_model_name or PERSONA_MEMORY_EMBEDDING_MODEL,
+            )
     else:
         store = PersonaMemoryStore()
 

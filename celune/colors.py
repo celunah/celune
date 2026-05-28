@@ -212,11 +212,13 @@ def configure_theme(
         faded_accent: The sleep-state accent color provided by a CEVOICE pack.
     """
     global THEME, THEME_LIGHT, SEVERITY_COLORS
-
-    dark_palette = _derive_dark_palette(background, accent)
-    light_palette = _derive_light_palette(background, accent)
     dark_sleeping = FADED_ACCENT if faded_accent is None else faded_accent
+    truecolor_dark_palette = _derive_dark_palette(background, accent)
+    truecolor_light_palette = _derive_light_palette(background, accent)
+    dark_palette = truecolor_dark_palette
+    light_palette = truecolor_light_palette
     light_sleeping = _darken(dark_sleeping, 0.51)
+
     THEME = _theme("celune", dark_palette, dark=True)
     THEME_LIGHT = _theme("celune_light", light_palette, dark=False)
     SEVERITY_COLORS = {

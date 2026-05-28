@@ -280,10 +280,12 @@ def main() -> None:
             print("For full traceback:")
             if os.name == "nt":
                 print("set CELUNE_DEV=1")
-                print(indent("python {os.path.basename(__file__)}", spaces=4))
+                print(indent(f"python {os.path.basename(__file__)}", spaces=4))
             else:
                 print(
-                    indent("CELUNE_DEV=1 python {os.path.basename(__file__)}", spaces=4)
+                    indent(
+                        f"CELUNE_DEV=1 python {os.path.basename(__file__)}", spaces=4
+                    )
                 )
             print()
             print("additional debugging:")

@@ -2,13 +2,14 @@
 """Tests for runtime validation and lightweight UI commands."""
 
 import logging
+import sys
 import warnings
 from pathlib import Path
 from typing import cast
 from types import SimpleNamespace
 from unittest import mock, TestCase
 
-from textual.widgets import Button, Label, TextArea
+from textual.widgets import Button, Label, RichLog, TextArea
 
 from celune import runtime
 from celune.celune import Celune
@@ -18,6 +19,7 @@ from celune.backends.qwen3 import Qwen3
 from celune.ui.commands import attachment_source, process_command
 from celune.ui.app import CeluneUI
 from celune.ui.headless import CeluneHeadlessUI
+from celune.ui import resources as ui_resources
 
 
 class RuntimeTests(TestCase):
@@ -229,6 +231,71 @@ class UIStartupTests(TestCase):
         ):
             ui.on_mount()
 
+    def test_textual_ui_delays_stdio_redirects_until_runtime_is_ready(self) -> None:
+        """Verify mount keeps real stdio until Celune explicitly enables capture."""
+        ui = CeluneUI()
+        fake_widgets = {
+            "#logs": RichLog(),
+            "#input": TextArea(),
+            "#status": Label(),
+            "#resources": Label(),
+            "#style": Button(),
+            "#progress": SimpleNamespace(update=lambda **_: None),
+        }
+        ui.celune = cast(Celune, SimpleNamespace(config={}, close=lambda: None))
+
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+
+        with (
+            mock.patch("celune.ui.app.colors.configure_theme"),
+            mock.patch("celune.ui.app.default_loader", return_value=None),
+            mock.patch("celune.ui.app.ui_resources.prime_usage"),
+            mock.patch.object(
+                ui,
+                "query_one",
+                side_effect=lambda selector, *_args: fake_widgets[selector],
+            ),
+            mock.patch.object(ui, "set_interval"),
+            mock.patch.object(ui, "call_after_refresh"),
+            mock.patch.object(ui, "safe_status"),
+            mock.patch.object(ui, "update_resources"),
+            mock.patch.object(ui, "_refresh_status"),
+            mock.patch.object(ui, "_refresh_theme_text"),
+            mock.patch.object(ui, "_refresh_logs"),
+        ):
+            ui.on_mount()
+
+        self.assertIs(sys.stdout, original_stdout)
+        self.assertIs(sys.stderr, original_stderr)
+        self.assertFalse(ui._runtime_log_capture_enabled)
+
+    def test_runtime_log_capture_restores_stdio_after_shutdown(self) -> None:
+        """Verify explicit runtime capture swaps and restores stdio cleanly."""
+        ui = CeluneUI()
+        ui.safe_log = lambda *_args, **_kwargs: None
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+
+        try:
+            with (
+                mock.patch.object(ui, "_install_runtime_log_redirects"),
+                mock.patch.object(ui, "_remove_runtime_log_redirects"),
+            ):
+                ui._enable_runtime_log_capture()
+                self.assertTrue(ui._runtime_log_capture_enabled)
+                self.assertIs(sys.stdout, ui._log_stdout)
+                self.assertIs(sys.stderr, ui._log_stderr)
+
+                ui._disable_runtime_log_capture()
+
+            self.assertFalse(ui._runtime_log_capture_enabled)
+            self.assertIs(sys.stdout, original_stdout)
+            self.assertIs(sys.stderr, original_stderr)
+        finally:
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+
     def test_headless_ui_warns_without_attached_celune(self) -> None:
         """Verify headless mode warns before doing nothing without Celune."""
         ui = CeluneHeadlessUI({"headless_nocolor": True})
@@ -247,6 +314,22 @@ class UIStartupTests(TestCase):
             "CeluneHeadlessUI has no attached Celune instance",
             str(caught[0].message),
         )
+
+    def test_textual_resource_footer_only_advertises_ctrl_q_exit(self) -> None:
+        """Verify the Textual UI footer no longer advertises CTRL+C exit."""
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                is_in_tutorial=False,
+                config={"theme": "dark"},
+                backend=SimpleNamespace(current_seed=None),
+            ),
+        )
+
+        pages = ui_resources.resource_pages(celune, "celune")
+
+        exit_page = next(page for page in pages if "CTRL+Q exit" in page)
+        self.assertNotIn("CTRL+C", exit_page)
 
     def test_textual_input_lock_does_not_probe_persona_on_ui_thread(self) -> None:
         """Verify input state updates do not synchronously ping Persona."""
