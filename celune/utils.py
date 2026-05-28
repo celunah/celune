@@ -20,7 +20,7 @@ import psutil
 import langdetect
 
 from .constants import REFERENCE_NEW_MOON
-from .terminal_colors import supports_ansi as terminal_supports_ansi
+from .terminal import supports_ansi as terminal_supports_ansi
 
 
 class CallerInfo(TypedDict):
