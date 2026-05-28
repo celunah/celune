@@ -662,7 +662,9 @@ def rng_replace(
         source = rmatch.group(0)
 
         if random.random() >= rate:
-            return source.decode("utf-8")
+            if isinstance(source, bytes):
+                return source.decode("utf-8")
+            return source
 
         target = random.choice(replacements)
 

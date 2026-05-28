@@ -1060,7 +1060,7 @@ class Celune:
 
         self._start_configured_api()
 
-        if not persona_is_available():
+        if persona_enabled(self.config) and not persona_is_available():
             self.log(
                 "Personas are unavailable. Celune is operating in speech-only mode.",
                 "warning",
@@ -1102,6 +1102,13 @@ class Celune:
             invalid_port = api_config.get("port", 2060)
             self.log(
                 f"Celune API port ({invalid_port}) is invalid, will use 2060 instead.",
+                "warning",
+            )
+            port = 2060
+
+        if not 1 <= port <= 65535:
+            self.log(
+                f"Celune API port ({port}) is out of range, will use 2060 instead.",
                 "warning",
             )
             port = 2060

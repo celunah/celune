@@ -191,4 +191,6 @@ def backend_allowed(
         return True
     if normalized == "voxcpm2":
         return preset.allow_voxcpm2
-    return True
+    if normalized == "fake":  # NOTE: only for testing!
+        return True
+    return False

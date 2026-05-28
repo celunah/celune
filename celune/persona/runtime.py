@@ -577,8 +577,8 @@ class PersonaRuntime:
             or ("4bit" if request.quantized else "none")
         )
         quantization = self._allowed_quantization(quantization)
-        self.load(model_id, quantization)
         with self.lock:
+            self.backend.load(model_id, quantization)
             return self.backend.generate(request)
 
     def close(self) -> None:

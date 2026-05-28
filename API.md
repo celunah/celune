@@ -65,7 +65,8 @@ curl.exe -i -X POST http://127.0.0.1:2060/v1/think ^
 Response:
 
 - `202 application/json` with `{"status":"accepted"}` when Celune starts processing the Persona request.
-- `409 application/json` when Celune is busy or unavailable.
+- `409 application/json` when Celune is busy.
+- `503 application/json` when Celune is unavailable.
 
 ## Speak (Synchronous)
 
