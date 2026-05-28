@@ -378,7 +378,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'api'" },
     { name = "faster-qwen3-tts", specifier = ">=0.2.4" },
     { name = "hf-xet" },
-    { name = "httpx" },
+    { name = "httpx", specifier = ">=0.27.0,<0.29.0" },
     { name = "huggingface-hub", specifier = "<1.0.0" },
     { name = "iso639-lang", specifier = ">=2.0.0,<3.0.0" },
     { name = "langdetect", specifier = ">=1.0.0,<2.0.0" },

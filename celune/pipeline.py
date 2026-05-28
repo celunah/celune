@@ -1455,7 +1455,7 @@ def split_text(engine: "Celune", text: str) -> list[str]:
 
         for word in value.split():
             if word_current and len(word_current) + 1 + len(word) > max_length:
-                chunks.append(word_current)
+                word_chunks.append(word_current)
                 word_current = word
             elif word_current:
                 word_current = f"{word_current} {word}"
@@ -1465,7 +1465,7 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         if word_current:
             word_chunks.append(word_current)
 
-        return chunks
+        return word_chunks
 
     def split_sentences(value: str) -> list[str]:
         units = []

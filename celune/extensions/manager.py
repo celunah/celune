@@ -13,6 +13,7 @@ from typing import Type
 
 from .base import CeluneContext, CeluneExtension
 from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
+from ..utils import format_error
 
 
 class CeluneExtensionManager:
@@ -102,9 +103,17 @@ class CeluneExtensionManager:
         if ext is None:
             raise InvalidExtensionError(f"extension '{name}' is not registered")
 
-        threading.Thread(
-            target=ext.invoke, daemon=True, args=args, kwargs=kwargs
-        ).start()
+        def runner() -> None:
+            try:
+                ext.invoke(*args, **kwargs)
+            except Exception as ex:
+                self.context.log(
+                    f"[Core] Failed to invoke '{name}': "
+                    f"{format_error(ex, self.context.dev)}",
+                    "warning",
+                )
+
+        threading.Thread(target=runner, daemon=True).start()
 
     def list_extensions(self) -> list[str]:
         """List all installed Celune extensions.

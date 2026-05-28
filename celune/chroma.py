@@ -378,7 +378,7 @@ class AudioRGBGlow:
                 self._current_brightness += (target - self._current_brightness) * alpha
 
             elif state == "waking":
-                target = self.idle_brightness
+                target = max(target, self.idle_brightness)
                 alpha = self.transition_rate
                 self._current_brightness += (target - self._current_brightness) * alpha
 

@@ -75,7 +75,8 @@ def supports_ansi(stream: Optional[IO[str]] = None) -> bool:
         return False
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    stdout_handle = kernel32.GetStdHandle(-11)
+    handle_id = -12 if output is sys.stderr else -11
+    stdout_handle = kernel32.GetStdHandle(handle_id)
     invalid_handle = ctypes.c_void_p(-1).value
     if stdout_handle in (0, invalid_handle):
         return False
@@ -131,11 +132,10 @@ def resolve_color_mode(
 ) -> ResolvedColorMode:
     """Resolve the color mode Celune should actually use on this terminal."""
     configured = configured_color_mode(config)
+    if no_color_requested() and configured != "none":
+        return "none"
     if configured != "auto":
         return cast(ResolvedColorMode, configured)
-
-    if no_color_requested():
-        return "none"
 
     detected = _normalize_reported_color_system(reported_color_system)
     if detected == "truecolor":

@@ -136,11 +136,20 @@ class VoxCPM2(CeluneBackend):
         if available and path is not None:
             os.environ["HF_HUB_OFFLINE"] = "1"
             with self._suppress_backend_output():
-                self.model = VoxCPM.from_pretrained(
-                    path,
-                    load_denoiser=kwargs.get("load_denoiser", False),
-                    optimize=kwargs.get("optimize", False),
-                )
+                previous_offline = os.environ.get("HF_HUB_OFFLINE")
+                try:
+                    os.environ["HF_HUB_OFFLINE"] = "1"
+                    self.model = VoxCPM.from_pretrained(
+                        path,
+                        load_denoiser=kwargs.get("load_denoiser", False),
+                        optimize=kwargs.get("optimize", False),
+                    )
+                finally:
+                    if previous_offline is None:
+                        os.environ.pop("HF_HUB_OFFLINE", None)
+                    else:
+                        os.environ["HF_HUB_OFFLINE"] = previous_offline
+
             return self.model
 
         self.log("Downloading TTS model...", "info")
@@ -222,6 +231,8 @@ class VoxCPM2(CeluneBackend):
                 )
 
                 batch: list[npt.NDArray[np.float32]] = []
+                pending_audio: Optional[npt.NDArray[np.float32]] = None
+                pending_steps = 0
                 chunk_index = 0
 
                 for chunk in stream:
@@ -230,30 +241,55 @@ class VoxCPM2(CeluneBackend):
                     if len(batch) < chunks_per_batch:
                         continue
 
-                    audio = np.concatenate(batch)
-                    yield (
-                        audio,
-                        BASE_SR,
-                        {
-                            "backend": self.name,
-                            "chunk_index": chunk_index,
-                            "chunk_steps": len(batch),
-                            "is_final": False,
-                        },
-                    )
+                    if pending_audio is not None:
+                        yield (
+                            pending_audio,
+                            BASE_SR,
+                            {
+                                "backend": self.name,
+                                "chunk_index": chunk_index,
+                                "chunk_steps": pending_steps,
+                                "is_final": False,
+                            },
+                        )
+                        chunk_index += 1
 
+                    pending_audio = np.concatenate(batch)
+                    pending_steps = len(batch)
                     batch.clear()
-                    chunk_index += 1
 
                 if batch:
-                    audio = np.concatenate(batch)
+                    if pending_audio is not None:
+                        yield (
+                            pending_audio,
+                            BASE_SR,
+                            {
+                                "backend": self.name,
+                                "chunk_index": chunk_index,
+                                "chunk_steps": len(batch),
+                                "is_final": False,
+                            },
+                        )
+                        chunk_index += 1
+
                     yield (
-                        audio,
+                        np.concatenate(batch),
                         BASE_SR,
                         {
                             "backend": self.name,
                             "chunk_index": chunk_index,
                             "chunk_steps": len(batch),
+                            "is_final": True,
+                        },
+                    )
+                elif pending_audio is not None:
+                    yield (
+                        pending_audio,
+                        BASE_SR,
+                        {
+                            "backend": self.name,
+                            "chunk_index": chunk_index,
+                            "chunk_steps": pending_steps,
                             "is_final": True,
                         },
                     )

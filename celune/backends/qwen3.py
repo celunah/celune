@@ -108,6 +108,9 @@ class Qwen3(CeluneBackend):
         Raises:
             ValueError: The requested voice is unknown.
         """
+        loader = default_loader()
+        if loader is not None:
+            return self.clone_model_id
         if voice not in self.reference_texts:
             raise ValueError(f"{self.name} cannot resolve a model for voice '{voice}'")
         return self.clone_model_id
@@ -156,8 +159,15 @@ class Qwen3(CeluneBackend):
         available, path = self.model_is_available_locally(model_id)
 
         if available and path is not None:
-            os.environ["HF_HUB_OFFLINE"] = "1"
-            self.model = FasterQwen3TTS.from_pretrained(path)
+            previous_offline = os.environ.get("HF_HUB_OFFLINE")
+            try:
+                os.environ["HF_HUB_OFFLINE"] = "1"
+                self.model = FasterQwen3TTS.from_pretrained(path)
+            finally:
+                if previous_offline is None:
+                    os.environ.pop("HF_HUB_OFFLINE", None)
+                else:
+                    os.environ["HF_HUB_OFFLINE"] = previous_offline
             return self.model
 
         self.log("Downloading TTS model...", "info")
@@ -186,8 +196,7 @@ class Qwen3(CeluneBackend):
         self._apply_seed()
 
         # if faster_qwen3_tts >= 0.2.5 use instructions, else remove this arg
-        major, minor, patch = (int(num) for num in qwen3_ver.split("."))
-        if not (major >= 0 and minor >= 2 and patch >= 5):
+        if tuple(int(num) for num in qwen3_ver.split(".")[:3]) < (0, 2, 5):
             kwargs.pop("instruct", None)
 
         voice = kwargs.pop("voice", self.default_voice)

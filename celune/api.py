@@ -521,7 +521,7 @@ def think(body: ThinkRequest) -> JSONResponse:
             cannot think right now.
     """
     celune = require_celune()
-    api_log("THINK", body.content)
+    api_log("THINK", body.content if celune.dev else "[content protected]")
     if not celune.think(body.content):
         return JSONResponse(
             status_code=409,
