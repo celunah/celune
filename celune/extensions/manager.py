@@ -11,7 +11,6 @@ import threading
 import traceback
 from typing import Type
 
-from ..utils import format_error
 from .base import CeluneContext, CeluneExtension
 from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
 from ..utils import format_error
