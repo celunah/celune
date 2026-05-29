@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-import atexit
-from dataclasses import dataclass, field
-import hashlib
 import json
-from pathlib import Path
+import atexit
 import shutil
 import struct
+import hashlib
 import tempfile
+from pathlib import Path
+from dataclasses import dataclass, field
 from typing import BinaryIO, Callable, Final, Mapping, Optional, Union, cast
 
 from .exceptions import CEVoiceError
@@ -711,8 +711,8 @@ def announce_default_bundle(log: Callable[[str, str], None]) -> Optional[str]:
         log: The logging callback to the bound user interface.
 
     Returns:
-        Optional[str]: The selected bundle's character name, ``None`` if loading failed, ``"Celune"`` if a
-            fallback reference was loaded.
+        Optional[str]: The selected bundle's character name, ``None`` if loading failed, ``"Celune"`` if a fallback
+        reference was loaded.
     """
     global _DEFAULT_LOADER_ANNOUNCED
     loader = default_loader()

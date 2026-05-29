@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT
 """Lightweight test fakes for Celune's unit test suite."""
 
-from collections.abc import Iterator
 import queue
 import threading
-from types import SimpleNamespace
-from typing import Optional, TypedDict
 from unittest import mock
+from collections.abc import Iterator
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Optional, TypedDict
 
 import numpy as np
 import numpy.typing as npt
@@ -14,6 +14,9 @@ import numpy.typing as npt
 from celune.utils import discard
 from celune.backends.base import CeluneBackend
 from celune.constants import JSONSerializable, PipelineStates
+
+if TYPE_CHECKING:
+    from celune.celune import Celune
 
 
 class FakeModel(TypedDict):
@@ -82,7 +85,7 @@ class FakeGlow:
     def __init__(
         self,
         color: str,
-        celune: Optional[object] = None,
+        celune: Optional["Celune"] = None,
         host: str = "127.0.0.1",
         port: int = 6742,
     ) -> None:

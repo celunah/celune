@@ -3,18 +3,18 @@
 
 from __future__ import annotations
 
-from collections import deque
-import contextlib
-import datetime
 import os
-import threading
 import time
+import datetime
+import threading
+import contextlib
+from collections import deque
 from typing import Union, Optional, TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
-from openrgb import OpenRGBClient
 from openrgb.utils import RGBColor
+from openrgb import OpenRGBClient
 
 from .colors import RGB
 from .dsp import _split

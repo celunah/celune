@@ -1,22 +1,22 @@
 # SPDX-License-Identifier: MIT
 """Analyze a WAV file and generate a radar chart plus a text report."""
 
-from collections.abc import Mapping
+import pathlib
+import warnings
 import contextlib
 from io import BytesIO
-import pathlib
+from collections.abc import Mapping
 from typing import Optional, Protocol, TypedDict, Union, cast
-import warnings
 
+import torch
 import librosa
 import matplotlib
-from matplotlib import rcParams
-from matplotlib import pyplot as plt
-from matplotlib import colors as mcolors
-from matplotlib.projections import PolarAxes
 import numpy as np
 import numpy.typing as npt
-import torch
+from matplotlib import rcParams
+from matplotlib.projections import PolarAxes
+from matplotlib import pyplot as plt
+from matplotlib import colors as mcolors
 from transformers import AutoModel, AutoProcessor
 
 from .cevoice import ManifestValue, default_loader

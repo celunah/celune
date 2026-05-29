@@ -1,13 +1,25 @@
 # SPDX-License-Identifier: MIT
 """Tests for the shared Persona runtime helpers."""
 
-from types import SimpleNamespace
-from typing import Optional, cast
 from unittest import TestCase, mock
+from types import SimpleNamespace
+from typing import Optional, Union, cast
 
 from celune.persona import impl
 from celune.utils import discard
 from celune.persona import runtime
+
+type _RecordedKwargValue = Optional[
+    Union[
+        str,
+        bool,
+        bytes,
+        list[bytes],
+        runtime.torch.Tensor,
+        runtime.torch.dtype,
+        runtime.torch.device,
+    ]
+]
 
 
 class _FakeEncoded:
@@ -86,7 +98,7 @@ class _FakeGenerativeModel:
 
     def __init__(self) -> None:
         self.device = "cpu"
-        self.calls: list[dict[str, object]] = []
+        self.calls: list[dict[str, _RecordedKwargValue]] = []
 
     def generate(self, **kwargs) -> runtime.torch.Tensor:
         """Record generation kwargs and return one synthetic completion.
@@ -133,7 +145,7 @@ class _FakeMultimodalProcessor:
     def __init__(self, tokenizer: Optional[_FakeTokenizer] = None) -> None:
         self.tokenizer = tokenizer
         self.image_processor = object()
-        self.calls: list[dict[str, object]] = []
+        self.calls: list[dict[str, _RecordedKwargValue]] = []
 
     def __call__(self, **kwargs) -> _FakeEncoded:
         """Return one encoded batch for multimodal processor calls."""
@@ -361,7 +373,7 @@ class PersonaApiTests(TestCase):
             )
         ]
 
-        captured_kwargs: dict[str, object] = {}
+        captured_kwargs: dict[str, bool] = {}
 
         def _fake_process_vision_info(*_args, **kwargs):
             captured_kwargs.update(kwargs)

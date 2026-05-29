@@ -1,35 +1,35 @@
 # SPDX-License-Identifier: MIT
 """Celune's backend layer."""
 
-import contextlib
 import gc
-from pathlib import Path
+import time
 import queue
 import threading
-import time
+import contextlib
+from pathlib import Path
 from typing import Optional, Callable, Protocol, Union, cast
 
-from huggingface_hub.utils import disable_progress_bars
+import torch
 import numpy as np
 import numpy.typing as npt
 import sounddevice as sd
-import torch
-from transformers.utils import logging as hf_logging
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils.logging import disable_progress_bar
+from transformers.utils import logging as hf_logging
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
+from huggingface_hub.utils import disable_progress_bars
 
+from .backends.qwen3 import Qwen3
 from . import __version__
 from .chroma import AudioRGBGlow
-from .backends.qwen3 import Qwen3
-from .dsp import StreamingPedalboardReverb
 from .extensions.base import CeluneContext
-from .config import Config, config_bool, config_value
 from .extensions.manager import CeluneExtensionManager
+from .dsp import StreamingPedalboardReverb
+from .config import Config, config_bool, config_value
 from .runtime import log_runtime_banner, validate_runtime
 from .backends import BackendModel, CeluneBackend, resolve_backend
-from .modeling import normalizer_device, load_normalizer_components
 from .exceptions import NotAvailableError, WarmupError, BackendError
+from .modeling import normalizer_device, load_normalizer_components
 from .constants import JSONSerializable, NORMALIZER_MODEL_ID, PipelineStates
 from .utils import format_number, format_error, discard, is_port_usable, custom_assert
 from .vram import (
@@ -94,7 +94,35 @@ def _config_int(value: JSONSerializable, default: int) -> int:
     raise TypeError("config value cannot be converted to int")
 
 
-def _release_loaded_object(value: object) -> None:
+class _SupportsClose(Protocol):
+    def close(self) -> None:
+        """Fake return value of close().
+
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
+        """
+        raise NotImplementedError("protocol not defined")
+
+
+class _SupportsUnload(Protocol):
+    def unload(self) -> None:
+        """Fake return value of unload().
+
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
+        """
+        raise NotImplementedError("protocol not defined")
+
+
+type _ReleasableObject = Union[
+    _SupportsClose,
+    _SupportsUnload,
+    PreTrainedModel,
+    PreTrainedTokenizerBase,
+]
+
+
+def _release_loaded_object(value: _ReleasableObject) -> None:
     """Best-effort release hook for one loaded runtime object."""
     close = getattr(value, "close", None)
     if callable(close):
@@ -1270,8 +1298,8 @@ class Celune:
             text: The raw text to normalize before speech generation.
 
         Returns:
-            Optional[str]: The normalized text, the original text for blank input, or ``None`` when
-                normalization is unavailable or has failed.
+            Optional[str]: The normalized text, the original text for blank input, or ``None`` when normalization is
+            unavailable or has failed.
         """
 
         if not self.use_normalization:
@@ -1455,8 +1483,8 @@ class Celune:
             save: Whether to save generated output artifacts.
 
         Returns:
-            Optional[queue.Queue]: Queue receiving 48 kHz stereo float32 chunks, or ``None`` when the
-                request could not be queued.
+            Optional[queue.Queue]: Queue receiving 48 kHz stereo float32 chunks, or ``None`` when the request could not
+            be queued.
         """
         stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
         if not queue_speech(self, text, save=save, stream_queue=stream_queue):

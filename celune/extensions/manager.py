@@ -3,17 +3,17 @@
 
 from __future__ import annotations
 
-import importlib.util
-import inspect
-from pathlib import Path
 import sys
+import inspect
+import importlib.util
 import threading
 import traceback
+from pathlib import Path
 from typing import Type
 
+from ..utils import format_error
 from .base import CeluneContext, CeluneExtension
 from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
-from ..utils import format_error
 
 
 class CeluneExtensionManager:

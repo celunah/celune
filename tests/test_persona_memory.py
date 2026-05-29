@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: MIT
 """Tests for Persona long-term memory persistence and retrieval."""
 
-from collections.abc import Sequence
-from pathlib import Path
 import tempfile
+from pathlib import Path
+from collections.abc import Sequence
 from unittest import TestCase
+from typing import Union, Optional
 
 import numpy as np
 
@@ -16,12 +17,12 @@ class StubEmbeddingMemoryStore(PersonaMemoryStore):
 
     def __init__(
         self,
-        storage_dir: str | Path | None = None,
+        storage_dir: Optional[Union[str, Path]] = None,
         *,
         semantic_similarity_threshold: float = 0.62,
         fallback_token_overlap_threshold: int = 1,
         embedding_model: str = "stub",
-        embedding_map: dict[str, tuple[float, ...]] | None = None,
+        embedding_map: Optional[dict[str, tuple[float, ...]]] = None,
     ) -> None:
         super().__init__(
             storage_dir=storage_dir,
@@ -32,7 +33,7 @@ class StubEmbeddingMemoryStore(PersonaMemoryStore):
         self.embedding_map = embedding_map or {}
         self.return_none = False
 
-    def _embed_texts(self, texts: Sequence[str]) -> list[np.ndarray] | None:
+    def _embed_texts(self, texts: Sequence[str]) -> Optional[list[np.ndarray]]:
         if self.return_none:
             return None
         return [np.array(self.embedding_map[text], dtype=np.float32) for text in texts]

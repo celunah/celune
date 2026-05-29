@@ -1,29 +1,29 @@
 # SPDX-License-Identifier: MIT
 """Celune's API layer."""
 
-from collections import defaultdict, deque
-from dataclasses import dataclass
-import datetime
-from hmac import compare_digest
-import io
 import os
-import socket
-import threading
+import io
 import time
-from typing import TYPE_CHECKING, Callable, Iterator, Optional, Union
 import uuid
+import socket
+import datetime
+import threading
+from dataclasses import dataclass
+from hmac import compare_digest
+from collections import defaultdict, deque
+from typing import TYPE_CHECKING, Callable, Iterator, Optional, Union
 
-from fastapi.responses import JSONResponse, Response, StreamingResponse
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+import uvicorn
 import numpy as np
 import numpy.typing as npt
-from pydantic import BaseModel, Field
 import soundfile as sf
+from pydantic import BaseModel, Field
 from starlette.middleware.base import RequestResponseEndpoint
-import uvicorn
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 
-from . import __version__
 from .constants import BASE_SR
+from . import __version__
 from .utils import format_error
 from .dsp import _resample_audio
 from .pipeline import SpeechStreamQueue
@@ -285,6 +285,7 @@ def audio_bytes(chunks: SpeechStreamQueue) -> Iterator[bytes]:
         Iterator[bytes]: The audio chunk from the queue as raw bytes.
 
     Raises:
+        item: If `item` needs to be raised.
         Exception: The stream was interrupted by Celune.
     """
     audio_chunks: list[npt.NDArray[np.float32]] = []
@@ -447,8 +448,8 @@ def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
         body: A speech request body.
 
     Returns:
-        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload if
-            generation failed.
+        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload if generation
+        failed.
     """
     celune = require_celune()
     api_log("SPEAK(SYNC)", body.content)
@@ -516,8 +517,8 @@ def think(body: ThinkRequest) -> JSONResponse:
         body: A think request body.
 
     Returns:
-        JSONResponse: An accepted response when Persona processing starts, or a JSON error payload if Celune
-            cannot think right now.
+        JSONResponse: An accepted response when Persona processing starts, or a JSON error payload if Celune cannot
+        think right now.
     """
     celune = require_celune()
     api_log("THINK", body.content if celune.dev else "[content protected]")
@@ -575,8 +576,8 @@ def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
         body: A voice change request body.
 
     Returns:
-        Union[ActionResponse, JSONResponse]: The voice change response, or a JSON error payload if the
-            voice change failed.
+        Union[ActionResponse, JSONResponse]: The voice change response, or a JSON error payload if the voice change
+        failed.
     """
     celune = require_celune()
     api_log("VOICE", body.voice_name)
@@ -614,8 +615,8 @@ async def sfx(
         keep: Whether Celune should hold this sound effect until the next utterance.
 
     Returns:
-        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload
-            if playback failed.
+        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload if playback
+        failed.
     """
     celune = require_celune()
     filename = file.filename or f"sfx_{uuid.uuid4()}"

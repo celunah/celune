@@ -3,11 +3,11 @@
 
 import io
 import json
-import queue
 import time
-from types import SimpleNamespace
+import queue
 from typing import cast
 from unittest import TestCase
+from types import SimpleNamespace
 
 import numpy as np
 import soundfile as sf

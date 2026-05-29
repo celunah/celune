@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-import contextlib
-import ctypes
-import locale as _locale  # else it gets shadowed
 import os
-from types import SimpleNamespace
+import ctypes
+import contextlib
+import locale as _locale  # else it gets shadowed
 from typing import Optional
+from types import SimpleNamespace
 
 DEFAULT_LOCALE = "en"
 

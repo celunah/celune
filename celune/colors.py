@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-import colorsys
 import random
-from typing import Final, cast
+import colorsys
+from typing import Final, Optional, cast
 
 from textual.theme import Theme
 
@@ -202,7 +202,7 @@ def _theme(name: str, palette: dict[str, str], *, dark: bool) -> Theme:
 def configure_theme(
     background: str = DEFAULT_BACKGROUND,
     accent: str = DEFAULT_ACCENT,
-    faded_accent: str | None = None,
+    faded_accent: Optional[str] = None,
 ) -> None:
     """Rebuild Celune's theme family from two bundle-provided seed colors.
 

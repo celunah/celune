@@ -4,15 +4,15 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import threading
-from typing import Optional, TYPE_CHECKING
+from pathlib import Path
 from urllib.parse import urlparse
+from typing import Optional, TYPE_CHECKING
 
 import soundfile as sf
 
-from ..utils import format_error
 from ..backends.qwen3 import Qwen3
+from ..utils import format_error
 from ..exceptions import InvalidExtensionError
 
 if TYPE_CHECKING:

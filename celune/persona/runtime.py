@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import os
+import gc
+import threading
 import contextlib
 from dataclasses import dataclass, field
-import gc
-import os
-import threading
+from collections.abc import Mapping, Sequence
 from typing import Literal, Optional, Protocol, TypedDict, Union, cast
 
 import torch

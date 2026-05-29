@@ -4,15 +4,10 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, cast
-
-if TYPE_CHECKING:
-    from typing import Mapping
-
-    from celune.cevoice import ManifestValue
+from typing import TypedDict, Mapping, Union, Optional, cast
 
 try:
-    from celune.cevoice import write_cevoice
+    from celune.cevoice import write_cevoice, ManifestValue
 except ModuleNotFoundError:
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -54,9 +49,9 @@ class PersonaMetadata(TypedDict, total=False):
     identity: PersonaIdentityMetadata
     profile: str
     speaking_style: str
-    boundaries: str | list[str]
-    prompt_rules: str | list[str]
-    example_dialogue: str | list[str]
+    boundaries: Union[str, list[str]]
+    prompt_rules: Union[str, list[str]]
+    example_dialogue: Union[str, list[str]]
     style: PersonaStyleMetadata
 
 
@@ -109,13 +104,13 @@ def ask_required_text(prompt: str, error: str) -> str:
         print(error)
 
 
-def ask_optional_text(prompt: str) -> str | None:
+def ask_optional_text(prompt: str) -> Optional[str]:
     """Ask for optional text and normalize empty input to ``None``."""
     value = ask(prompt)
     return value or None
 
 
-def ask_optional_text_list(prompt: str) -> list[str] | None:
+def ask_optional_text_list(prompt: str) -> Optional[list[str]]:
     """Ask for an optional ``|``-separated text list."""
     value = ask(prompt)
     if not value:
@@ -140,7 +135,7 @@ def ask_positive_int(prompt: str) -> int:
         return value
 
 
-def ask_optional_float(prompt: str) -> float | None:
+def ask_optional_float(prompt: str) -> Optional[float]:
     """Ask for an optional positive float."""
     while True:
         raw_value = ask(prompt)
@@ -171,7 +166,7 @@ def ask_existing_file(prompt: str, missing_error: str) -> Path:
         return path
 
 
-def ask_optional_existing_file(prompt: str) -> Path | None:
+def ask_optional_existing_file(prompt: str) -> Optional[Path]:
     """Ask for an optional file path and ensure it exists when provided."""
     while True:
         raw_value = ask(prompt)
@@ -189,7 +184,7 @@ def build_output_path(bundle_name: str) -> Path:
     return Path(f"{bundle_name}.cevoice")
 
 
-def collect_theme_metadata() -> ThemeMetadata | None:
+def collect_theme_metadata() -> Optional[ThemeMetadata]:
     """Collect optional CEVOICE theme metadata."""
     theme: ThemeMetadata = {}
     for key, prompt in (
@@ -204,7 +199,7 @@ def collect_theme_metadata() -> ThemeMetadata | None:
     return theme or None
 
 
-def collect_persona_metadata() -> PersonaMetadata | None:
+def collect_persona_metadata() -> Optional[PersonaMetadata]:
     """Collect optional CEVOICE persona metadata."""
     persona: PersonaMetadata = {}
 
@@ -298,7 +293,7 @@ def collect_voice_assets(index: int) -> tuple[str, VoiceAssets, VoiceEntryMetada
     return voice_name, assets, metadata
 
 
-def collect_voice_order(voice_names: list[str]) -> list[str] | None:
+def collect_voice_order(voice_names: list[str]) -> Optional[list[str]]:
     """Collect an optional explicit voice order."""
     order_text = ask_optional_text(
         "Preferred voice order as comma-separated names, leave empty to keep entry order"
@@ -321,7 +316,7 @@ def collect_voice_order(voice_names: list[str]) -> list[str] | None:
     return requested
 
 
-def collect_default_voice(voice_names: list[str]) -> str | None:
+def collect_default_voice(voice_names: list[str]) -> Optional[str]:
     """Collect an optional default voice and validate that it exists."""
     default_voice = ask_optional_text("Default voice name, leave empty to skip")
     if default_voice is None:
@@ -381,7 +376,7 @@ def collect_character_data() -> CharacterData:
 def create_cevoice(data: CharacterData) -> Path:
     """Create a CEVOICE bundle with the collected wizard data."""
     voices = cast(
-        "Mapping[str, Mapping[str, bytes | str | Path]]",
+        "Mapping[str, Mapping[str, Union[bytes, str, Path]]]",
         data["voices"],
     )
     metadata = cast("Mapping[str, ManifestValue]", data["metadata"])
