@@ -22,16 +22,16 @@ class CeluneTextualUI(CeluneBaseUI, Protocol):
         """Handle log messages coming from Celune.
 
         Args:
-            msg: Value for `msg`.
-            severity: Value for `severity`.
+            msg: The message to be logged.
+            severity: The severity to log the message as.
         """
 
     def safe_status(self, msg: str, severity: str = "info") -> None:
         """Update current status.
 
         Args:
-            msg: Value for `msg`.
-            severity: Value for `severity`.
+            msg: The message to be logged.
+            severity: The severity to log the message as.
         """
 
     def safe_progress(
@@ -40,15 +40,15 @@ class CeluneTextualUI(CeluneBaseUI, Protocol):
         """Update current progress.
 
         Args:
-            progress: Value for `progress`.
-            total: Value for `total`.
+            progress: How many steps were processed.
+            total: How many total steps are to be processed.
         """
 
     def error(self, error: str) -> None:
         """Set the UI status to the error message.
 
         Args:
-            error: Value for `error`.
+            error: The error message to log.
         """
 
     def tts_idle(self) -> None:
@@ -61,21 +61,21 @@ class CeluneTextualUI(CeluneBaseUI, Protocol):
         """Set UI state after changing Celune's voice.
 
         Args:
-            name: Value for `name`.
+            name: The loaded voice name.
         """
 
     def change_input_state(self, locked: bool) -> None:
         """Lock or unlock Celune's UI layer.
 
         Args:
-            locked: Value for `locked`.
+            locked: The new UI lock state.
         """
 
     def change_voice_lock_state(self, locked: bool) -> None:
         """Lock or unlock Celune's voice change button.
 
         Args:
-            locked: Value for `locked`.
+            locked: The new voice change lock state.
         """
 
 
@@ -86,13 +86,13 @@ class CeluneHeadlessBaseUI(CeluneBaseUI, Protocol):
         """Log to the headless interface.
 
         Args:
-            msg: Value for `msg`.
-            severity: Value for `severity`.
+            msg: The message to be logged.
+            severity: The severity to log the message as.
         """
 
     def headless_error(self, error: str) -> None:
         """Log an error to the headless interface.
 
         Args:
-            error: Value for `error`.
+            error: The error message to log.
         """

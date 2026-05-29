@@ -3,28 +3,28 @@
 
 from __future__ import annotations
 
-import os
-import glob
-import random
-import secrets
-import hashlib
-import contextlib
-import gc
-from pathlib import Path
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
+import contextlib
+import gc
+import glob
+import hashlib
+import os
+from pathlib import Path
+import random
+import secrets
 from typing import Callable, Optional, Protocol
 
-import torch
-import numpy as np
-import numpy.typing as npt
 from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
+import numpy as np
+import numpy.typing as npt
+import torch
 
-from ..constants import N_A_NUMERIC
 from ..utils import discard
-from ..exceptions import BackendError
+from ..constants import N_A_NUMERIC
 from ..cevoice import default_loader
+from ..exceptions import BackendError
 
 
 class BackendModel(Protocol):
@@ -234,8 +234,8 @@ class CeluneBackend(ABC):
             text: Optional text for backends whose generation budget depends on input token length.
 
         Returns:
-            Optional[int]: Maximum generated codec/token steps for one text chunk, or ``None`` when the backend
-                does not expose a stable limit.
+            Optional[int]: Maximum generated codec/token steps for one text chunk, or ``None`` when the
+                backend does not expose a stable limit.
         """
         # this is a base implementation so we don't use the parameters
         discard(text)

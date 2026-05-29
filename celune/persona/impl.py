@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Iterator
 import contextlib
 import io
-from collections.abc import Mapping, Iterator
 from typing import Callable, Optional
 
 from ..config import Config
-from ..constants import JSONSerializable, PERSONA_MODEL_ID
 from ..vram import resolve_vram_preset
+from ..constants import JSONSerializable, PERSONA_MODEL_ID
 from .runtime import PersonaRuntime, request_from_json, response_to_json
 
 PERSONA_QUANTIZATION = "4bit"
@@ -30,7 +30,7 @@ class PersonaClientResponse:
         """Return the stored response payload.
 
         Returns:
-            Result of this function.
+            str: The stored JSON response payload.
         """
         return dict(self._payload)
 
@@ -71,8 +71,8 @@ class PersonaClient:
         """Explicitly load the Persona runtime.
 
         Args:
-            model_id: Value for `model_id`.
-            quantization: Value for `quantization`.
+            model_id: The Persona model ID.
+            quantization: The requested quantization mode.
         """
         with self._capture_backend_output():
             self.runtime.load(model_id, quantization)
@@ -81,10 +81,10 @@ class PersonaClient:
         """Handle a Persona generation request without leaving the process.
 
         Args:
-            json: Value for `json`.
+            json: A JSON serializable payload to be sent.
 
         Returns:
-            Result of this function.
+            PersonaClientResponse: The client response received from Persona.
         """
         request = request_from_json(json)
         with self._capture_backend_output():
@@ -117,13 +117,13 @@ def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
 
 
 def persona_enabled(config: Mapping[str, JSONSerializable]) -> bool:
-    """Return whether Celune should try to use personas.
+    """Return whether Celune should try to use Persona.
 
     Args:
-        config: Value for `config`.
+        config: Celune's current configuration.
 
     Returns:
-        Result of this function.
+        bool: Whether Persona is enabled.
     """
     return resolve_vram_preset(config).persona_enabled and bool(
         persona_config(config).get("enabled", True)
@@ -134,10 +134,10 @@ def persona_talkback_enabled(config: Mapping[str, JSONSerializable]) -> bool:
     """Return whether regular UI input should go through persona talkback.
 
     Args:
-        config: Value for `config`.
+        config: Celune's current configuration.
 
     Returns:
-        Result of this function.
+        bool: Whether Celune should use Persona if enabled, or not.
     """
     return persona_enabled(config) and bool(
         persona_config(config).get("talkback", True)
@@ -148,10 +148,10 @@ def persona_quantization(config: Mapping[str, JSONSerializable]) -> str:
     """Return the Persona quantization mode permitted by the VRAM tier.
 
     Args:
-        config: Value for `config`.
+        config: Celune's current configuration.
 
     Returns:
-        Result of this function.
+        str: The resolved permitted quantization type for Persona from current VRAM tier.
     """
     return resolve_vram_preset(config).persona_quantization
 
@@ -160,10 +160,10 @@ def persona_model_id(config: Optional[Mapping[str, JSONSerializable]] = None) ->
     """Return the Persona model ID Celune should load.
 
     Args:
-        config: Value for `config`.
+        config: Celune's current configuration.
 
     Returns:
-        Result of this function.
+        str: The currently selected Persona model ID: Qwen/Qwen2.5-VL-3B-Instruct or a derivative.
     """
     if config is not None:
         configured = persona_config(config).get("model_id")
@@ -177,12 +177,12 @@ def persona_is_available() -> bool:
     """Check whether the in-process Persona runtime can be used.
 
     Returns:
-        Result of this function.
+        bool: Whether the in-process Persona is usable.
     """
     try:
         PersonaRuntime()
         return True
-    except Exception:
+    except Exception:  # noqa
         return False
 
 
@@ -193,11 +193,11 @@ def create_persona_client(
     """Create a Celune-managed in-process Persona client when enabled.
 
     Args:
-        config: Value for `config`.
-        log_dev: Value for `log_dev`.
+        config: Celune's current configuration.
+        log_dev: The logging callback to Celune's UI.
 
     Returns:
-        Result of this function.
+        Optional[PersonaClient]: ``PersonaClient`` if Persona is enabled, else ``None``.
     """
     if config is not None and not persona_enabled(config):
         return None

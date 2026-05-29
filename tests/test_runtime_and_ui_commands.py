@@ -2,24 +2,25 @@
 """Tests for runtime validation and lightweight UI commands."""
 
 import logging
-import sys
-import warnings
 from pathlib import Path
-from typing import cast
+import sys
+import tempfile
 from types import SimpleNamespace
+from typing import cast
 from unittest import mock, TestCase
+import warnings
 
 from textual.widgets import Button, Label, RichLog, TextArea
 
 from celune import runtime
 from celune.celune import Celune
 from celune.config import Config
-from celune.constants import JSONSerializable
-from celune.backends.qwen3 import Qwen3
-from celune.ui.commands import attachment_source, process_command
 from celune.ui.app import CeluneUI
-from celune.ui.headless import CeluneHeadlessUI
+from celune.backends.qwen3 import Qwen3
+from celune.constants import JSONSerializable
 from celune.ui import resources as ui_resources
+from celune.ui.headless import CeluneHeadlessUI
+from celune.ui.commands import attachment_source, process_command
 
 
 class RuntimeTests(TestCase):
@@ -175,15 +176,16 @@ class UICommandTests(TestCase):
 
     def test_attach_command_stages_visual_media_for_persona_reply(self) -> None:
         """Verify /attach validates media and stores Qwen-compatible file URIs."""
-        image = Path("demos/ready.png")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image = Path(temp_dir) / "ready.png"
+            image.write_bytes(b"\x89PNG\r\n\x1a\n")
+            self._process_command("attach", [str(image)])
 
-        self._process_command("attach", [str(image)])
-
-        self.assertEqual(len(self.ui.celune.persona_attachments), 1)
-        attachment = self.ui.celune.persona_attachments[0]
-        self.assertEqual(attachment["type"], "image")
-        self.assertEqual(attachment["path"], attachment_source(image.resolve()))
-        self.assertEqual(self.logs[-1][1], "info")
+            self.assertEqual(len(self.ui.celune.persona_attachments), 1)
+            attachment = self.ui.celune.persona_attachments[0]
+            self.assertEqual(attachment["type"], "image")
+            self.assertEqual(attachment["path"], attachment_source(image.resolve()))
+            self.assertEqual(self.logs[-1][1], "info")
 
         self._process_command("attach", ["clear"])
         self.assertEqual(self.ui.celune.persona_attachments, [])
@@ -331,8 +333,8 @@ class UIStartupTests(TestCase):
         exit_page = next(page for page in pages if "CTRL+Q exit" in page)
         self.assertNotIn("CTRL+C", exit_page)
 
-    def test_textual_input_lock_does_not_probe_persona_on_ui_thread(self) -> None:
-        """Verify input state updates do not synchronously ping Persona."""
+    def test_textual_input_lock_update_with_persona_on_ui_thread(self) -> None:
+        """Verify input state updates update with Persona."""
         ui = CeluneUI()
         ui.input_box = TextArea()
         ui.style_button = Button("Voice")

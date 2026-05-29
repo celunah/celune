@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Configuration helpers for Celune."""
 
-import os
-from copy import deepcopy
 from collections.abc import Mapping
+from copy import deepcopy
+import os
 from typing import Optional
 
 from .constants import JSONSerializable
@@ -20,8 +20,8 @@ def env_bool(name: str, fallback: bool = False) -> bool:
         fallback: Value to use when the variable is unset.
 
     Returns:
-        bool: ``True`` only for known enabled strings. Other set values are treated as disabled. When the variable
-            is unset, ``fallback`` is returned.
+        bool: ``True`` only for known enabled strings. Other set values are treated as disabled. When the
+            variable is unset, ``fallback`` is returned.
     """
     value = os.getenv(name)
     if value is None:

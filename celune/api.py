@@ -1,26 +1,26 @@
 # SPDX-License-Identifier: MIT
 """Celune's API layer."""
 
-import os
-import io
-import time
-import uuid
-import datetime
-import threading
-import socket
-from dataclasses import dataclass
-from hmac import compare_digest
 from collections import defaultdict, deque
+from dataclasses import dataclass
+import datetime
+from hmac import compare_digest
+import io
+import os
+import socket
+import threading
+import time
 from typing import TYPE_CHECKING, Callable, Iterator, Optional, Union
+import uuid
 
-import uvicorn
-import numpy as np
-import numpy.typing as npt
-import soundfile as sf
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+import numpy as np
+import numpy.typing as npt
 from pydantic import BaseModel, Field
+import soundfile as sf
 from starlette.middleware.base import RequestResponseEndpoint
+import uvicorn
 
 from . import __version__
 from .constants import BASE_SR
@@ -285,7 +285,6 @@ def audio_bytes(chunks: SpeechStreamQueue) -> Iterator[bytes]:
         Iterator[bytes]: The audio chunk from the queue as raw bytes.
 
     Raises:
-        item: If `item` needs to be raised.
         Exception: The stream was interrupted by Celune.
     """
     audio_chunks: list[npt.NDArray[np.float32]] = []
@@ -448,8 +447,8 @@ def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
         body: A speech request body.
 
     Returns:
-        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload
-            if generation failed.
+        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload if
+            generation failed.
     """
     celune = require_celune()
     api_log("SPEAK(SYNC)", body.content)
@@ -521,7 +520,7 @@ def think(body: ThinkRequest) -> JSONResponse:
             cannot think right now.
     """
     celune = require_celune()
-    api_log("THINK", body.content)
+    api_log("THINK", body.content if celune.dev else "[content protected]")
     if not celune.think(body.content):
         return JSONResponse(
             status_code=409,

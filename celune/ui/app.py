@@ -1,30 +1,35 @@
 # SPDX-License-Identifier: MIT
 """Celune's frontend layer."""
 
-import os
-import sys
-import time
-import shlex
-import logging
-import threading
-import itertools
-import contextlib
 from collections.abc import Iterator
+import contextlib
+import itertools
+import logging
+import os
+import shlex
+import sys
+import threading
+import time
 from typing import cast, Optional, Callable, Union
 
-import yaml
-from textual.timer import Timer
+from rich.text import Text
 from textual.color import Color
+from textual.timer import Timer
 from textual import work, events
 from textual.widget import Widget
 from textual.css.types import EdgeStyle
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
-from rich.text import Text
+import yaml
 
 from .. import colors
 from ..celune import Celune
+from ..cevoice import default_loader
+from . import resources as ui_resources
+from .theme import CELUNE_CSS, severity_color
+from .terminal import LogRedirect, UILogHandler
+from .commands import process_command as process_ui_command
 from ..persona.impl import (
     persona_talkback_enabled,
     persona_enabled,
@@ -37,11 +42,6 @@ from ..utils import (
     typing_delay,
     is_april_fools,
 )
-from ..cevoice import default_loader
-from . import resources as ui_resources
-from .terminal import LogRedirect, UILogHandler
-from .theme import CELUNE_CSS, severity_color
-from .commands import process_command as process_ui_command
 
 
 class CeluneUI(App):
@@ -214,7 +214,7 @@ class CeluneUI(App):
         """Prepare Celune.
 
         Raises:
-            RuntimeError: If `RuntimeError` needs to be raised.
+            RuntimeError: ``CeluneUI`` was run without an instance of ``Celune``.
         """
         if not self._has_celune():
             raise RuntimeError(

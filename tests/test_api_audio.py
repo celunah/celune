@@ -5,8 +5,8 @@ import io
 import json
 import queue
 import time
-from typing import cast
 from types import SimpleNamespace
+from typing import cast
 from unittest import TestCase
 
 import numpy as np

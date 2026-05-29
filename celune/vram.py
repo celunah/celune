@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass
 from collections.abc import Mapping
+from dataclasses import dataclass
+import math
 from typing import Literal, Optional, cast
 
 import torch
@@ -35,10 +35,10 @@ def vram_tier(config: Optional[Mapping[str, JSONSerializable]]) -> VramTier:
     """Return the configured VRAM tier with a safe fallback.
 
     Args:
-        config: Value for `config`.
+        config: Celune's current configuration.
 
     Returns:
-        Result of this function.
+        VramTier: The VRAM tier from current configuration.
     """
     if config is not None:
         raw = config.get("vram")
@@ -55,10 +55,10 @@ def validate_vram_preset(
     """Validate a VRAM preset and return an appropriate warning message.
 
     Args:
-        config: Value for `config`.
+        config: Celune's current configuration.
 
     Returns:
-        Result of this function.
+        Optional[str]: The warning message, if applicable.
     """
     configured_tier = vram_tier(config)
 
@@ -87,10 +87,10 @@ def resolve_vram_preset(
     """Resolve Celune runtime settings from the documented VRAM presets.
 
     Args:
-        config: Value for `config`.
+        config: Celune's current configuration.
 
     Returns:
-        Result of this function.
+        VramPreset: The resolved VRAM preset from configuration.
     """
     configured_tier = vram_tier(config)
     tier = configured_tier
@@ -154,11 +154,11 @@ def resolve_backend_name(
     """Return the backend permitted by the configured VRAM tier.
 
     Args:
-        config: Value for `config`.
-        requested_backend: Value for `requested_backend`.
+        config: Celune's current configuration.
+        requested_backend: A backend name requested by the caller.
 
     Returns:
-        Result of this function.
+        str: The resolved permitted TTS backend by the currently configured VRAM tier.
     """
     preset = resolve_vram_preset(config)
     if requested_backend is None:
@@ -179,11 +179,12 @@ def backend_allowed(
     """Return whether the named backend is permitted by the VRAM tier.
 
     Args:
-        config: Value for `config`.
-        backend_name: Value for `backend_name`.
+        config: Celune's current configuration.
+        backend_name: A backend name requested by the caller.
 
     Returns:
-        Result of this function.
+        bool: Whether this backend is allowed by this VRAM tier, or ``False`` if the name is not a known
+            Celune backend type name.
     """
     normalized = backend_name.strip().lower()
     preset = resolve_vram_preset(config)
@@ -191,4 +192,6 @@ def backend_allowed(
         return True
     if normalized == "voxcpm2":
         return preset.allow_voxcpm2
-    return True
+    if normalized == "fake":  # NOTE: only for testing!
+        return True
+    return False

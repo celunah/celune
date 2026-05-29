@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Edit this Celune extension to suit your needs."""
 
-import time
 from pathlib import Path
+import time
 
 from celune import CeluneExtension
 

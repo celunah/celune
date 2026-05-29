@@ -5,14 +5,14 @@
 No, this is not a setuptools remnant, this is Celune's bootstrapper.
 """
 
-import os
-import sys
-import shutil
-import tomllib
-import platform
-import subprocess
 import contextlib
+import os
 from pathlib import Path
+import platform
+import shutil
+import subprocess
+import sys
+import tomllib
 from typing import Optional
 
 with contextlib.suppress(IndexError):

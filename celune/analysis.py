@@ -1,22 +1,22 @@
 # SPDX-License-Identifier: MIT
 """Analyze a WAV file and generate a radar chart plus a text report."""
 
-import pathlib
-import warnings
+from collections.abc import Mapping
 import contextlib
 from io import BytesIO
-from collections.abc import Mapping
+import pathlib
 from typing import Optional, Protocol, TypedDict, Union, cast
+import warnings
 
-import torch
 import librosa
 import matplotlib
-import numpy as np
-import numpy.typing as npt
 from matplotlib import rcParams
 from matplotlib import pyplot as plt
 from matplotlib import colors as mcolors
 from matplotlib.projections import PolarAxes
+import numpy as np
+import numpy.typing as npt
+import torch
 from transformers import AutoModel, AutoProcessor
 
 from .cevoice import ManifestValue, default_loader
@@ -67,7 +67,7 @@ class EmbeddingModel(Protocol):
         """Switch the model into evaluation mode.
 
         Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
+            NotImplementedError: The protocol was called directly.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -75,10 +75,10 @@ class EmbeddingModel(Protocol):
         """Move the model to a device.
 
         Args:
-            device: Value for `device`.
+            device: A device to dispatch to.
 
         Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
+            NotImplementedError: The protocol was called directly.
         """
         raise NotImplementedError("protocol not defined")
 

@@ -1,23 +1,23 @@
 # SPDX-License-Identifier: MIT
 """Celune common utility functions."""
 
-import re
-import os
-import math
-import time
-import random
-import inspect
-import datetime
-import textwrap
-import traceback
-import subprocess
-import multiprocessing
-from pathlib import Path
 from collections.abc import Iterator
+import datetime
+import inspect
+import math
+import multiprocessing
+import os
+from pathlib import Path
+import random
+import re
+import subprocess
+import textwrap
+import time
+import traceback
 from typing import Union, Callable, Optional, Literal, TypedDict, overload
 
-import psutil
 import langdetect
+import psutil
 
 from .constants import REFERENCE_NEW_MOON
 from .terminal import supports_ansi as terminal_supports_ansi
@@ -248,8 +248,8 @@ def cuda_architecture(capability: tuple[int, int]) -> str:
 def run_async(
     func: Callable, *args, daemon: bool = True, **kwargs
 ) -> multiprocessing.Process:
-    """Run a function asynchronously. The function must not return a value or affect Celune directly,
-        because it will run detached from Celune.
+    """Run a function asynchronously.
+    The function must not return a value or affect Celune directly, because it will run detached from Celune.
 
     Args:
         func: The function to call.
@@ -527,7 +527,7 @@ def custom_assert(condition: bool, exception: Optional[Exception]) -> None:
         exception: The exception to raise if the condition was not met.
 
     Raises:
-        exception: If `exception` needs to be raised.
+        exception: An exception object was raised directly.
         AssertionError: An exception class was not specified, while assertion failed.
         TypeError: An object was specified to be raised that was not an instance of Exception.
         Exception: A specified exception class was raised because assertion failed.
@@ -662,7 +662,9 @@ def rng_replace(
         source = rmatch.group(0)
 
         if random.random() >= rate:
-            return source.decode("utf-8")
+            if isinstance(source, bytes):
+                return source.decode("utf-8")
+            return source
 
         target = random.choice(replacements)
 
@@ -682,7 +684,7 @@ def discard(val) -> None:
     """Overload #1 for the implementation of celune.utils.discard().
 
     Args:
-        val: Value for `val`.
+        val: A discardable value.
     """
 
 
@@ -691,8 +693,8 @@ def discard(val, attr: str) -> None:
     """Overload #2 for the implementation of celune.utils.discard().
 
     Args:
-        val: Value for `val`.
-        attr: Value for `attr`.
+        val: A discardable value.
+        attr: A discardable attribute on an object.
     """
 
 
@@ -749,8 +751,6 @@ def make_persona_card(
         gender: The character's gender or LGBT type.
         persona: The character's personality description.
         traits: The character's trait values.
-        - This must include values for the following traits: "warmth", "directness", "humor", "detail".
-        - It cannot include other traits.
         context: Additional context information for the character.
         voice: The character's selected voice type.
 
@@ -758,7 +758,7 @@ def make_persona_card(
         str: The formatted persona card.
 
     Raises:
-        ValueError: If `ValueError` needs to be raised.
+        ValueError: The Persona card has missing or invalid traits.
     """
     required_traits = ("warmth", "directness", "humor", "detail")
     missing_traits = [trait for trait in required_traits if trait not in traits]

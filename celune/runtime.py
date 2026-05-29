@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Runtime and environment validation helpers for Celune."""
 
-import sys
 import platform
+import sys
 from typing import Callable
 
 import torch

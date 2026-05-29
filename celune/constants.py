@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT
 """Shared Celune constants."""
 
-import signal
 import datetime
-from enum import IntEnum, Enum
 from enum import auto
+from enum import IntEnum, Enum
+import signal
 from typing import Union
 
 # CeluneNorm v2.0 inherits v1.3's feature set but at an extended context length

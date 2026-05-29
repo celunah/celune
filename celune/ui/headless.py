@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: MIT
 """Headless Celune UI."""
 
+import signal
 import sys
 import time
-import signal
-import warnings
 from types import FrameType
 from typing import Optional, cast
+import warnings
 
 from ..celune import Celune
-from ..config import Config, config_bool
 from ..utils import discard
+from ..config import Config, config_bool
 from ..constants import ExitCodes, SIGTSTP
 
 

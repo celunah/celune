@@ -3,20 +3,20 @@
 
 from __future__ import annotations
 
-import os
-import contextlib
 from collections.abc import Iterator
+import contextlib
+import os
 from typing import Callable, Optional, Final, Mapping
 
-import torch
 import numpy as np
 import numpy.typing as npt
+import torch
 from voxcpm import VoxCPM
 
 from . import get_version
-from .base import CeluneBackend, cached_hf_snapshot_path, BackendModel
 from ..constants import BASE_SR
 from ..cevoice import default_loader
+from .base import CeluneBackend, cached_hf_snapshot_path, BackendModel
 
 
 class VoxCPM2(CeluneBackend):
@@ -85,12 +85,7 @@ class VoxCPM2(CeluneBackend):
     @staticmethod
     @contextlib.contextmanager
     def _suppress_backend_output() -> Iterator:
-        """Suppress unnecessary backend output.
-
-        Returns:
-            Iterator: A context manager that silences stdout
-                and stderr while backend code executes.
-        """
+        """Suppress unnecessary backend output."""
         with open(os.devnull, "w", encoding="utf-8") as devnull:
             with contextlib.redirect_stdout(devnull):
                 with contextlib.redirect_stderr(devnull):
@@ -104,8 +99,8 @@ class VoxCPM2(CeluneBackend):
             model: The Hugging Face repository ID to inspect.
 
         Returns:
-            tuple[bool, Optional[str]]: A flag indicating cache availability and
-                the resolved snapshot path when present.
+            tuple[bool, Optional[str]]: A flag indicating cache availability and the resolved snapshot
+                path when present.
         """
         return cached_hf_snapshot_path(
             model,
@@ -120,13 +115,11 @@ class VoxCPM2(CeluneBackend):
         """Load the given voice model.
 
         Args:
-            model_id: The VoxCPM model repository ID to load.
-            **kwargs:
-                - load_denoiser: Whether to load the denoiser model.
-                - optimize: Whether to try to optimize the model.
+            model_id: The VoxCPM2 model repository ID to load.
+            kwargs: Additional keyword arguments to use while loading VoxCPM2.
 
         Returns:
-            VoxCPM: The loaded VoxCPM model instance.
+            VoxCPM: The loaded VoxCPM2 model instance.
         """
         available, path = self.model_is_available_locally(model_id)
 
@@ -136,11 +129,20 @@ class VoxCPM2(CeluneBackend):
         if available and path is not None:
             os.environ["HF_HUB_OFFLINE"] = "1"
             with self._suppress_backend_output():
-                self.model = VoxCPM.from_pretrained(
-                    path,
-                    load_denoiser=kwargs.get("load_denoiser", False),
-                    optimize=kwargs.get("optimize", False),
-                )
+                previous_offline = os.environ.get("HF_HUB_OFFLINE")
+                try:
+                    os.environ["HF_HUB_OFFLINE"] = "1"
+                    self.model = VoxCPM.from_pretrained(
+                        path,
+                        load_denoiser=kwargs.get("load_denoiser", False),
+                        optimize=kwargs.get("optimize", False),
+                    )
+                finally:
+                    if previous_offline is None:
+                        os.environ.pop("HF_HUB_OFFLINE", None)
+                    else:
+                        os.environ["HF_HUB_OFFLINE"] = previous_offline
+
             return self.model
 
         self.log("Downloading TTS model...", "info")
@@ -222,6 +224,8 @@ class VoxCPM2(CeluneBackend):
                 )
 
                 batch: list[npt.NDArray[np.float32]] = []
+                pending_audio: Optional[npt.NDArray[np.float32]] = None
+                pending_steps = 0
                 chunk_index = 0
 
                 for chunk in stream:
@@ -230,30 +234,55 @@ class VoxCPM2(CeluneBackend):
                     if len(batch) < chunks_per_batch:
                         continue
 
-                    audio = np.concatenate(batch)
-                    yield (
-                        audio,
-                        BASE_SR,
-                        {
-                            "backend": self.name,
-                            "chunk_index": chunk_index,
-                            "chunk_steps": len(batch),
-                            "is_final": False,
-                        },
-                    )
+                    if pending_audio is not None:
+                        yield (
+                            pending_audio,
+                            BASE_SR,
+                            {
+                                "backend": self.name,
+                                "chunk_index": chunk_index,
+                                "chunk_steps": pending_steps,
+                                "is_final": False,
+                            },
+                        )
+                        chunk_index += 1
 
+                    pending_audio = np.concatenate(batch)
+                    pending_steps = len(batch)
                     batch.clear()
-                    chunk_index += 1
 
                 if batch:
-                    audio = np.concatenate(batch)
+                    if pending_audio is not None:
+                        yield (
+                            pending_audio,
+                            BASE_SR,
+                            {
+                                "backend": self.name,
+                                "chunk_index": chunk_index,
+                                "chunk_steps": len(batch),
+                                "is_final": False,
+                            },
+                        )
+                        chunk_index += 1
+
                     yield (
-                        audio,
+                        np.concatenate(batch),
                         BASE_SR,
                         {
                             "backend": self.name,
                             "chunk_index": chunk_index,
                             "chunk_steps": len(batch),
+                            "is_final": True,
+                        },
+                    )
+                elif pending_audio is not None:
+                    yield (
+                        pending_audio,
+                        BASE_SR,
+                        {
+                            "backend": self.name,
+                            "chunk_index": chunk_index,
+                            "chunk_steps": pending_steps,
                             "is_final": True,
                         },
                     )
