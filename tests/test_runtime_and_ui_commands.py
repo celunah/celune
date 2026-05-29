@@ -1,25 +1,25 @@
 # SPDX-License-Identifier: MIT
 """Tests for runtime validation and lightweight UI commands."""
 
-import logging
-from pathlib import Path
 import sys
+import logging
 import tempfile
-from types import SimpleNamespace
-from typing import cast
-from unittest import mock, TestCase
 import warnings
+from typing import cast
+from pathlib import Path
+from unittest import mock, TestCase
+from types import SimpleNamespace
 
 from textual.widgets import Button, Label, RichLog, TextArea
 
-from celune import runtime
+from celune.backends.qwen3 import Qwen3
 from celune.celune import Celune
 from celune.config import Config
+from celune import runtime
 from celune.ui.app import CeluneUI
-from celune.backends.qwen3 import Qwen3
+from celune.ui.headless import CeluneHeadlessUI
 from celune.constants import JSONSerializable
 from celune.ui import resources as ui_resources
-from celune.ui.headless import CeluneHeadlessUI
 from celune.ui.commands import attachment_source, process_command
 
 

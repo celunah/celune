@@ -3,18 +3,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-import contextlib
 import os
+import contextlib
+from collections.abc import Iterator
 from typing import Callable, Optional, Final, Mapping
 
+import torch
 import numpy as np
 import numpy.typing as npt
-import torch
 from voxcpm import VoxCPM
 
-from . import get_version
 from ..constants import BASE_SR
+from . import get_version
 from ..cevoice import default_loader
 from .base import CeluneBackend, cached_hf_snapshot_path, BackendModel
 
@@ -99,8 +99,8 @@ class VoxCPM2(CeluneBackend):
             model: The Hugging Face repository ID to inspect.
 
         Returns:
-            tuple[bool, Optional[str]]: A flag indicating cache availability and the resolved snapshot
-                path when present.
+            tuple[bool, Optional[str]]: A flag indicating cache availability and the resolved snapshot path when
+            present.
         """
         return cached_hf_snapshot_path(
             model,
@@ -164,8 +164,8 @@ class VoxCPM2(CeluneBackend):
             kwargs: Streaming generation arguments passed to the backend.
 
         Returns:
-            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of
-                ``(audio, sample_rate, timing)`` tuples suitable for Celune's playback pipeline.
+            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of ``(audio, sample_rate,
+            timing)`` tuples suitable for Celune's playback pipeline.
 
         Raises:
             ValueError: The requested voice is unknown or input text is empty.

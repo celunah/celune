@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import os
 import sys
+from collections.abc import Mapping
 from typing import IO, Final, Literal, Optional, cast
 
 from .config import config_value
@@ -32,7 +32,7 @@ _ANSI_TERM_HINTS: Final[tuple[str, ...]] = (
 )
 
 
-def normalize_color_mode(value: object) -> Optional[ColorMode]:
+def normalize_color_mode(value: JSONSerializable) -> Optional[ColorMode]:
     """Normalize one configured color-mode value.
 
     Args:
@@ -121,7 +121,7 @@ def supports_ansi(stream: Optional[IO[str]] = None) -> bool:
     )
 
 
-def _normalize_reported_color_system(value: object) -> Optional[str]:
+def _normalize_reported_color_system(value: Optional[str]) -> Optional[str]:
     """Normalize a Rich/Textual-reported color-system label."""
     if isinstance(value, str):
         lowered = value.strip().lower()
@@ -152,7 +152,7 @@ def _ansi_hint_from_environment() -> bool:
 def resolve_color_mode(
     config: Optional[Config] = None,
     *,
-    reported_color_system: object = None,
+    reported_color_system: Optional[str] = None,
     stream: Optional[IO[str]] = None,
 ) -> ResolvedColorMode:
     """Resolve the color mode Celune should actually use on this terminal.
@@ -187,7 +187,7 @@ def resolve_color_mode(
 def supports_truecolor(
     config: Optional[Config] = None,
     *,
-    reported_color_system: object = None,
+    reported_color_system: Optional[str] = None,
     stream: Optional[IO[str]] = None,
 ) -> bool:
     """Return whether Celune should emit true-color styles.

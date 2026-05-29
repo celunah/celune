@@ -3,20 +3,24 @@
 
 from __future__ import annotations
 
+import os
+import re
+import json
+import uuid
+import datetime
+from pathlib import Path
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-import datetime
-import json
-import os
-from pathlib import Path
-import re
-from typing import Any, Optional, Union, cast
-import uuid
+from typing import TYPE_CHECKING, Optional, Union, cast
 
 import numpy as np
 import numpy.typing as npt
 
-from ..constants import PERSONA_MEMORY_EMBEDDING_MODEL
+from ..constants import JSONSerializable, PERSONA_MEMORY_EMBEDDING_MODEL
+
+if TYPE_CHECKING:
+    from transformers.modeling_utils import PreTrainedModel
+    from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
@@ -51,7 +55,9 @@ _STOPWORDS = {
     "you",
 }
 type EmbeddingVector = npt.NDArray[np.float32]
-_EMBEDDING_BACKENDS: dict[str, tuple[Any, Any]] = {}
+type _EmbeddingBackend = tuple["PreTrainedTokenizerBase", "PreTrainedModel"]
+
+_EMBEDDING_BACKENDS: dict[str, _EmbeddingBackend] = {}
 _FAILED_EMBEDDING_MODELS: set[str] = set()
 
 
@@ -76,7 +82,9 @@ def _tokenize(text: str) -> set[str]:
     }
 
 
-def _clamp_similarity_threshold(value: object, fallback: float = 0.62) -> float:
+def _clamp_similarity_threshold(
+    value: JSONSerializable, fallback: float = 0.62
+) -> float:
     """Normalize one semantic match threshold into the valid cosine range."""
     if isinstance(value, bool):
         return fallback
@@ -85,7 +93,7 @@ def _clamp_similarity_threshold(value: object, fallback: float = 0.62) -> float:
     return fallback
 
 
-def _clamp_overlap_threshold(value: object, fallback: int = 1) -> int:
+def _clamp_overlap_threshold(value: JSONSerializable, fallback: int = 1) -> int:
     """Normalize the fallback token-overlap threshold."""
     if isinstance(value, bool):
         return fallback
@@ -102,7 +110,7 @@ def _cosine_similarity(first: EmbeddingVector, second: EmbeddingVector) -> float
     return float(np.dot(first, second) / denom)
 
 
-def _load_transformer_text_embedder(model_name: str) -> Optional[tuple[Any, Any]]:
+def _load_transformer_text_embedder(model_name: str) -> Optional[_EmbeddingBackend]:
     """Load one lazy text-embedding backend, or return ``None`` when unavailable."""
     if model_name in _FAILED_EMBEDDING_MODELS:
         return None
@@ -149,7 +157,8 @@ def _compute_text_embeddings(
         with torch.no_grad():
             outputs = model(**encoded)
         hidden = outputs.last_hidden_state
-        attention = encoded["attention_mask"].unsqueeze(-1).to(hidden.dtype)
+        attention_mask = cast(torch.Tensor, encoded["attention_mask"])
+        attention = attention_mask.unsqueeze(-1).to(hidden.dtype)
         pooled = (hidden * attention).sum(dim=1) / attention.sum(dim=1).clamp(min=1)
         normalized = functional.normalize(pooled, p=2, dim=1)
         array = normalized.cpu().numpy().astype(np.float32)

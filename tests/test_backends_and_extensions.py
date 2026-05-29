@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: MIT
 """Tests for backend resolution and extension infrastructure."""
 
-from collections.abc import Iterator
-import importlib
-from pathlib import Path
 import sys
 import tempfile
 import textwrap
+import importlib
 import threading
-from types import SimpleNamespace
+from pathlib import Path
+from collections.abc import Iterator
 from typing import Optional
 from unittest import mock, TestCase
+from types import SimpleNamespace
 
 import numpy as np
 import numpy.typing as npt
@@ -78,7 +78,12 @@ class BackendTests(TestCase):
                 def generate_streaming(
                     self, *args, **kwargs
                 ) -> Iterator[npt.NDArray[np.float32]]:
-                    """Generate fake VoxCPM2 chunks."""
+                    """Generate fake VoxCPM2 chunks.
+
+                    Args:
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
+                    """
                     discard(args)
                     self.cfg_value = kwargs["cfg_value"]
                     yield np.zeros((1,), dtype=np.float32)
@@ -133,7 +138,12 @@ class BackendTests(TestCase):
                 def generate_voice_clone_streaming(
                     self, *args, **kwargs
                 ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
-                    """Generate fake Qwen3 chunks."""
+                    """Generate fake Qwen3 chunks.
+
+                    Args:
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
+                    """
                     discard(args)
                     self.ref_text = kwargs["ref_text"]
                     yield np.zeros((1,), dtype=np.float32), 24000, None
@@ -203,7 +213,15 @@ class BackendTests(TestCase):
                     self.stream = FakeStream()
 
                 def generate_voice_clone_streaming(self, *args, **kwargs) -> FakeStream:
-                    """Generate fake Qwen3 chunks."""
+                    """Generate fake Qwen3 chunks.
+
+                    Args:
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
+
+                    Returns:
+                        FakeStream: A fake stream of Qwen3 chunks.
+                    """
                     discard(args)
                     discard(kwargs)
                     return self.stream

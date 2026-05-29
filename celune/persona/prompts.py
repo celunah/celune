@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import textwrap
+from dataclasses import dataclass, field
 
 
 def _render_lines(lines: list[str]) -> str:

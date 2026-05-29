@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-import contextlib
 import os
+import contextlib
+from collections.abc import Iterator
 from typing import Callable, Optional, Final, Mapping
 
-from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
 import numpy as np
 import numpy.typing as npt
+from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
 
 from ..cevoice import default_loader
 from .base import CeluneBackend, cached_hf_snapshot_path, BackendModel

@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Iterator
-import contextlib
 import io
+import contextlib
+from collections.abc import Mapping, Iterator
 from typing import Callable, Optional
 
 from ..config import Config

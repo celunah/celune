@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import re
 import subprocess
+from pathlib import Path
 from typing import Optional
+from dataclasses import dataclass
 
 from . import __version__
 from .exceptions import UpdateError
@@ -196,8 +196,8 @@ def check_for_update() -> Optional[UpdateInfo]:
     """Check GitHub for a newer Celune revision or tag.
 
     Returns:
-        Optional[UpdateInfo]: Information about the update, or ``None`` when Celune appears current or
-            update metadata cannot be read.
+        Optional[UpdateInfo]: Information about the update, or ``None`` when Celune appears current or update metadata
+        cannot be read.
     """
     if os.getenv("CELUNE_SKIP_UPDATE") in {"1", "true", "on", "yes", "enabled"}:
         return None

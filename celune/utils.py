@@ -1,23 +1,23 @@
 # SPDX-License-Identifier: MIT
 """Celune common utility functions."""
 
-from collections.abc import Iterator
-import datetime
-import inspect
-import math
-import multiprocessing
 import os
-from pathlib import Path
-import random
 import re
-import subprocess
-import textwrap
+import math
 import time
+import random
+import inspect
+import datetime
+import textwrap
 import traceback
+import subprocess
+import multiprocessing
+from pathlib import Path
+from collections.abc import Iterator
 from typing import Union, Callable, Optional, Literal, TypedDict, overload
 
-import langdetect
 import psutil
+import langdetect
 
 from .constants import REFERENCE_NEW_MOON
 from .terminal import supports_ansi as terminal_supports_ansi
@@ -44,8 +44,8 @@ def get_revision() -> str:
     """Get the current Git repository revision.
 
     Returns:
-        str: The short commit hash, suffixed with ``*`` when the worktree is dirty, or an empty string when
-            Git metadata is unavailable.
+        str: The short commit hash, suffixed with ``*`` when the worktree is dirty, or an empty string when Git metadata
+        is unavailable.
     """
     try:
         rev = (
@@ -248,8 +248,8 @@ def cuda_architecture(capability: tuple[int, int]) -> str:
 def run_async(
     func: Callable, *args, daemon: bool = True, **kwargs
 ) -> multiprocessing.Process:
-    """Run a function asynchronously.
-    The function must not return a value or affect Celune directly, because it will run detached from Celune.
+    """Run a function asynchronously. The function must not return a value or affect Celune directly, because it will
+    run detached from Celune.
 
     Args:
         func: The function to call.
@@ -491,8 +491,8 @@ def replace_ipa(text: str, strict: bool = True) -> tuple[str, int]:
 
     Args:
         text: The IPA to approximate.
-        strict: Whether the input text must be delimited by IPA brackets (slashes or square brackets) to be
-            treated as IPA or not.
+        strict: Whether the input text must be delimited by IPA brackets (slashes or square brackets) to be treated as
+            IPA or not.
 
     Returns:
         tuple[str, int]: The English approximation of the input IPA, and the amount of unmatched IPA characters.

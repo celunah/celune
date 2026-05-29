@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
+from typing import Union
 from collections.abc import Iterator
 from datetime import date, datetime
-from typing import Union
 
 # some of these entries are empty because no suitable corresponding English name exists for certain Polish names
 NAME_DAYS: dict[str, list[str]] = {
@@ -472,7 +472,7 @@ def iter_name_days() -> Iterator[tuple[str, list[str]]]:
     """Iterate over ``(MM-DD, names)`` pairs.
 
     Returns:
-        Iterator[tuple[str, list[str]]]: A generator that yields each date key followed by its corresponding
-            list of names.
+        Iterator[tuple[str, list[str]]]: A generator that yields each date key followed by its corresponding list of
+        names.
     """
     yield from NAME_DAYS.items()

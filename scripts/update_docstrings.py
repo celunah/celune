@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import ast
 import re
-from dataclasses import dataclass
+import ast
+import textwrap
 from pathlib import Path
-from typing import Iterable
+from dataclasses import dataclass
+from typing import Iterable, Optional, Union
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +36,7 @@ class Replacement:
 SECTION_PATTERN = re.compile(
     r"^(Args|Arguments|Parameters|Returns|Yields|Raises)\s*:\s*$"
 )
+MAX_LINE_LENGTH = 120
 
 
 def target_files() -> list[Path]:
@@ -60,6 +62,23 @@ def clean_inline(text: str) -> str:
     return " ".join(text.strip().split())
 
 
+def wrap_doc_line(
+    text: str,
+    *,
+    initial_indent: str,
+    subsequent_indent: str,
+) -> list[str]:
+    """Wrap one generated docstring line to the configured maximum width."""
+    return textwrap.wrap(
+        text,
+        width=MAX_LINE_LENGTH,
+        initial_indent=initial_indent,
+        subsequent_indent=subsequent_indent,
+        break_long_words=False,
+        break_on_hyphens=False,
+    ) or [initial_indent.rstrip()]
+
+
 def parse_docstring(doc: str) -> ParsedDoc:
     lines = doc.expandtabs().splitlines()
     section = "description"
@@ -67,7 +86,7 @@ def parse_docstring(doc: str) -> ParsedDoc:
     args: dict[str, str] = {}
     returns_lines: list[str] = []
     raises: dict[str, str] = {}
-    current_name: str | None = None
+    current_name: Optional[str] = None
 
     for raw_line in lines:
         stripped = raw_line.strip()
@@ -125,6 +144,10 @@ def parse_docstring(doc: str) -> ParsedDoc:
 
 
 def function_kind(parents: list[tuple[str, str]], name: str) -> str:
+    if parents and parents[-1][0] == "class":
+        if name.startswith("_"):
+            return "private"
+        return "public"
     if any(kind == "func" for kind, _ in parents):
         return "nested"
     if name.startswith("_"):
@@ -237,10 +260,12 @@ def public_docstring(node: ast.AST, indent: str, parsed: ParsedDoc) -> str:
     description = normalize_sentence(
         parsed.description or ast.get_docstring(node, clean=False) or ""
     )
-    lines = [
-        f'{indent}"""{description}',
-        "",
-    ]
+    lines = wrap_doc_line(
+        description,
+        initial_indent=f'{indent}"""',
+        subsequent_indent=indent,
+    )
+    lines.append("")
 
     params: list[str] = []
     all_args = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
@@ -254,9 +279,14 @@ def public_docstring(node: ast.AST, indent: str, parsed: ParsedDoc) -> str:
 
     if params:
         lines.append(f"{indent}Args:")
-        lines.extend(
-            f"{indent}    {name}: {arg_description(name, parsed)}" for name in params
-        )
+        for name in params:
+            lines.extend(
+                wrap_doc_line(
+                    arg_description(name, parsed),
+                    initial_indent=f"{indent}    {name}: ",
+                    subsequent_indent=f"{indent}        ",
+                )
+            )
         lines.append("")
 
     annotation = node.returns
@@ -265,7 +295,13 @@ def public_docstring(node: ast.AST, indent: str, parsed: ParsedDoc) -> str:
         returns_needed = False
     if returns_needed:
         lines.append(f"{indent}Returns:")
-        lines.append(f"{indent}    {inferred_return_text(parsed)}")
+        lines.extend(
+            wrap_doc_line(
+                inferred_return_text(parsed),
+                initial_indent=f"{indent}    ",
+                subsequent_indent=f"{indent}    ",
+            )
+        )
         lines.append("")
 
     raise_names = list(dict.fromkeys(name for name in iter_direct_raises(node) if name))
@@ -275,10 +311,14 @@ def public_docstring(node: ast.AST, indent: str, parsed: ParsedDoc) -> str:
                 raise_names.append(name)
     if raise_names:
         lines.append(f"{indent}Raises:")
-        lines.extend(
-            f"{indent}    {name}: {raise_description(name, parsed)}"
-            for name in raise_names
-        )
+        for name in raise_names:
+            lines.extend(
+                wrap_doc_line(
+                    raise_description(name, parsed),
+                    initial_indent=f"{indent}    {name}: ",
+                    subsequent_indent=f"{indent}        ",
+                )
+            )
         lines.append("")
 
     if lines[-1] == "":
@@ -316,7 +356,7 @@ def collect_replacements(source: str, tree: ast.AST) -> list[Replacement]:
         def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
             self._handle(node)
 
-        def _handle(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        def _handle(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> None:
             if not node.body:
                 return
             doc_expr = node.body[0]

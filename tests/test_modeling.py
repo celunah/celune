@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Tests for model loading helpers."""
 
-from types import SimpleNamespace
 from typing import cast
 from unittest import TestCase, mock
+from types import SimpleNamespace
 
 import torch
 

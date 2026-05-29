@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: MIT
 """Tests for Celune core behavior without real models or GPU work."""
 
-from pathlib import Path
 import threading
-from types import SimpleNamespace
 from typing import cast
+from pathlib import Path
 from unittest import mock, TestCase
+from types import SimpleNamespace
 
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
+from celune.backends.qwen3 import Qwen3
 from celune.celune import Celune
 from celune.config import Config
-from celune.backends.qwen3 import Qwen3
 from celune.vram import QWEN3_0_6B_MODEL
 from celune.persona.impl import persona_quantization
 from celune.exceptions import BackendError, WarmupError

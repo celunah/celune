@@ -6,8 +6,8 @@ from unittest import mock, TestCase
 import numpy as np
 
 from celune import analysis
-from celune.chroma import AudioRGBGlow
 from celune.constants import N_A_NUMERIC
+from celune.chroma import AudioRGBGlow
 
 
 class AnalysisTests(TestCase):

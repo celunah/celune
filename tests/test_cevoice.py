@@ -3,10 +3,10 @@
 
 import copy
 import json
-from pathlib import Path
 import shutil
 import tempfile
 from typing import cast
+from pathlib import Path
 from unittest import mock, TestCase
 
 from celune import cevoice
@@ -193,7 +193,7 @@ class CEVoiceTests(TestCase):
             "#8866cc",
         )
         self.assertEqual(
-            cast(dict[str, object], bundle.metadata["persona"])["speaking_style"],
+            cast(dict[str, str], bundle.metadata["persona"])["speaking_style"],
             "Measured, observant, and slightly playful.",
         )
 
