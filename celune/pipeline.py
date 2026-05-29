@@ -1,27 +1,33 @@
 # SPDX-License-Identifier: MIT
 """Speech pipeline helpers for Celune."""
 
-import os
-import re
-import json
-import time
-import queue
-import random
-import pathlib
-import datetime
 import contextlib
 from dataclasses import dataclass
+import datetime
+import json
+import os
+import pathlib
+import queue
+import random
+import re
+import time
 from typing import TYPE_CHECKING, Optional, Union, cast
 
-import torch
-import numpy as np
-import numpy.typing as npt
-import soundfile as sf
-import sounddevice as sd
-import pyrubberband as rb
 from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
+import numpy as np
+import numpy.typing as npt
+import pyrubberband as rb
+import sounddevice as sd
+import soundfile as sf
+import torch
 
+from . import __version__
+from .cevoice import CEVoicePersona
+from .analysis import analyze_voice_audio
+from .exceptions import NotAvailableError
+from .persona.memory import PersonaMemoryStore
+from .persona.impl import persona_config, persona_model_id, persona_quantization
 from .dsp import (
     _resample_audio,
     _soften,
@@ -30,10 +36,6 @@ from .dsp import (
     is_silent_utterance,
     readiness_signal,
 )
-from .exceptions import NotAvailableError
-from .persona.impl import persona_config, persona_model_id, persona_quantization
-from .persona.memory import PersonaMemoryStore
-from .cevoice import CEVoicePersona
 from .utils import (
     format_number,
     run_async,
@@ -51,7 +53,6 @@ from .persona.prompts import (
     ShortTermHistory,
     VisualContext,
 )
-from .analysis import analyze_voice_audio
 from .constants import (
     BASE_SR,
     DEFAULT_PERSONA_CONTEXT,
@@ -63,7 +64,6 @@ from .constants import (
     PipelineStates,
     PERSONA_HISTORY_MESSAGES,
 )
-from . import __version__
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -681,10 +681,10 @@ def build_persona_character_card(engine: "Celune") -> str:
     """Build the compact character and persona summary sent with requests.
 
     Args:
-        engine: Value for `engine`.
+        engine: The instance of Celune to use.
 
     Returns:
-        Result of this function.
+        str: The formatted Persona character card and summary.
     """
     context = build_persona_context(engine, "")
     return f"{context.character_profile.render()}\n\n{context.persona_card.render()}"
@@ -947,11 +947,11 @@ def build_persona_context(engine: "Celune", request: str) -> PersonaContext:
     """Build structured Persona context for one user request.
 
     Args:
-        engine: Value for `engine`.
-        request: Value for `request`.
+        engine: The instance of Celune to use.
+        request: The user's request.
 
     Returns:
-        Result of this function.
+        PersonaContext: The built RAG context for Persona.
     """
     name = _persona_active_character_name(engine)
     voice = getattr(engine, "current_voice", None) or "balanced"
@@ -1024,14 +1024,14 @@ def _effective_voice_prompt(engine: "Celune") -> Optional[str]:
 
 
 def build_persona_messages(engine: "Celune", request: str) -> list[JSON]:
-    """Build OpenAI-style messages for the external Persona service.
+    """Build OpenAI-style messages for the Persona model.
 
     Args:
-        engine: Value for `engine`.
-        request: Value for `request`.
+        engine: The instance of Celune to use.
+        request: The user's request.
 
     Returns:
-        Result of this function.
+        list[JSON]: A list of JSON objects containing current message history.
     """
     context = build_persona_context(engine, request)
     attachments = _persona_pending_attachments(engine)
@@ -1049,14 +1049,14 @@ def build_persona_messages(engine: "Celune", request: str) -> list[JSON]:
 
 
 def build_persona_request(engine: "Celune", request: str) -> JSON:
-    """Build the JSON payload sent to the external Persona service.
+    """Build the JSON payload sent to the Persona model.
 
     Args:
-        engine: Value for `engine`.
-        request: Value for `request`.
+        engine: The instance of Celune to use.
+        request: The user's request.
 
     Returns:
-        Result of this function.
+        JSON: The JSON payload to be sent to the Persona model.
     """
     context = build_persona_context(engine, request)
     character_card = (
@@ -1115,10 +1115,10 @@ def think(engine: "Celune", request: str) -> bool:
 
     Args:
         engine: The Celune engine that should speak the output.
-        request: The input request that will be sent to by Persona.
+        request: The input request that will be sent to Persona.
 
     Returns:
-        Result of this function.
+        bool: Whether Celune completed the thinking action successfully or not.
     """
     _store_persona_memories(engine, request)
     payload = build_persona_request(engine, request)
@@ -1211,7 +1211,7 @@ def queue_speech(
         bool: ``True`` when the text was queued successfully, otherwise ``False``.
 
     Raises:
-        Exception: If `Exception` needs to be raised.
+        Exception: An exception was caught and subsequently raised to propagate it to Celune.
     """
     if engine.is_in_tutorial:
         engine.log("Speech input is disabled during the tutorial.", "warning")
@@ -1455,7 +1455,7 @@ def split_text(engine: "Celune", text: str) -> list[str]:
 
         for word in value.split():
             if word_current and len(word_current) + 1 + len(word) > max_length:
-                chunks.append(word_current)
+                word_chunks.append(word_current)
                 word_current = word
             elif word_current:
                 word_current = f"{word_current} {word}"
@@ -1465,7 +1465,7 @@ def split_text(engine: "Celune", text: str) -> list[str]:
         if word_current:
             word_chunks.append(word_current)
 
-        return chunks
+        return word_chunks
 
     def split_sentences(value: str) -> list[str]:
         units = []

@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import os
+from pathlib import Path
 import re
 import subprocess
-from pathlib import Path
 from typing import Optional
-from dataclasses import dataclass
 
 from . import __version__
 from .exceptions import UpdateError

@@ -3,15 +3,15 @@
 
 from __future__ import annotations
 
-import os
-import re
-import json
-import uuid
-import datetime
 from collections.abc import Sequence
-from pathlib import Path
-from typing import Any, Optional, Union, cast
 from dataclasses import asdict, dataclass
+import datetime
+import json
+import os
+from pathlib import Path
+import re
+from typing import Any, Optional, Union, cast
+import uuid
 
 import numpy as np
 import numpy.typing as npt
@@ -170,7 +170,7 @@ def default_memory_dir() -> Path:
     """Return the default on-disk directory for Persona memories.
 
     Returns:
-        Result of this function.
+        Path: The current location of where Celune's Persona memories are stored.
     """
     local_appdata = os.getenv("LOCALAPPDATA")
     if local_appdata:
@@ -200,12 +200,12 @@ class MemoryRecord:
         """Construct one new memory record.
 
         Args:
-            content: Value for `content`.
-            importance: Value for `importance`.
-            explicit: Value for `explicit`.
+            content: The memory's content.
+            importance: The memory's importance value.
+            explicit: Whether this memory was created explicitly or not.
 
         Returns:
-            Result of this function.
+            MemoryRecord: The created memory record.
         """
         now = _utc_now()
         return MemoryRecord(
@@ -259,10 +259,10 @@ class PersonaMemoryStore:
         """Load all memory records for one character.
 
         Args:
-            character_name: Value for `character_name`.
+            character_name: The character name to retrieve memory records for.
 
         Returns:
-            Result of this function.
+            list[MemoryRecord]: All memory records for the selected character.
         """
         path = self._path_for_character(character_name)
         if not path.exists():
@@ -319,8 +319,8 @@ class PersonaMemoryStore:
         """Persist all memory records for one character atomically.
 
         Args:
-            character_name: Value for `character_name`.
-            records: Value for `records`.
+            character_name: The character name to save memory records for.
+            records: The memory records to save.
         """
         path = self._path_for_character(character_name)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -343,13 +343,13 @@ class PersonaMemoryStore:
         """Store or update one memory for a character.
 
         Args:
-            character_name: Value for `character_name`.
-            content: Value for `content`.
-            importance: Value for `importance`.
-            explicit: Value for `explicit`.
+            character_name: The character name to save or update a memory record for.
+            content: The memory's content.
+            importance: The memory's importance value.
+            explicit: Whether the memory is explicit or not.
 
         Returns:
-            Result of this function.
+            Optional[MemoryRecord]: A stored or updated memory record, or ``None`` if memory normalization failed.
         """
         normalized = _normalize_text(content)
         if not normalized:
@@ -386,10 +386,10 @@ class PersonaMemoryStore:
         """Extract explicit and automatic memory candidates from one message.
 
         Args:
-            user_message: Value for `user_message`.
+            user_message: The user message to get memory candidates from.
 
         Returns:
-            Result of this function.
+            list[MemoryCandidate]: All possible candidates to be stored as memories.
         """
         text = _normalize_text(user_message)
         if not text:
@@ -416,11 +416,11 @@ class PersonaMemoryStore:
         """Store any memories that should be derived from one user message.
 
         Args:
-            character_name: Value for `character_name`.
-            user_message: Value for `user_message`.
+            character_name: The character name to save memory records for from current user message.
+            user_message: The user message containing memory records to save.
 
         Returns:
-            Result of this function.
+            list[MemoryRecord]: A list of memories saved from the current user message.
         """
         saved: list[MemoryRecord] = []
         for candidate in self.collect_candidates(user_message):
@@ -440,12 +440,12 @@ class PersonaMemoryStore:
         """Return the most relevant memories for the current request.
 
         Args:
-            character_name: Value for `character_name`.
-            request: Value for `request`.
-            limit: Value for `limit`.
+            character_name: The character name to retrieve memory records for.
+            request: The user request to retrieve memory records back to.
+            limit: How many memory records should be retrieved at a time.
 
         Returns:
-            Result of this function.
+            list[MemoryRecord]: Up to ``limit`` most recent memories stored for the current character.
         """
         records = self.load_records(character_name)
         if not records or limit <= 0:

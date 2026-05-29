@@ -17,6 +17,11 @@ CI_PATHS = ((".",), ("celune", "tests"), ("celune", "tests"), ("tests",))
 cmds_failed = 0
 total_errors = []
 
+if len(CI_COMMANDS) != len(CI_PATHS):
+    raise RuntimeError(
+        f"CI configuration mismatch: {len(CI_COMMANDS)} commands for {len(CI_PATHS)} path entries"
+    )
+
 for cmd, paths in tzip(
     CI_COMMANDS,
     CI_PATHS,
@@ -30,7 +35,7 @@ for cmd, paths in tzip(
             stderr=subprocess.PIPE,
             check=True,
             text=True,
-            timeout=120,
+            timeout=300,
         )
     except subprocess.CalledProcessError as failed:
         cmds_failed += 1

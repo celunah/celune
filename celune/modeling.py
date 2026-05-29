@@ -10,8 +10,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from .backends import CeluneBackend
-from .constants import JSONSerializable, NORMALIZER_MODEL_ID
 from .vram import resolve_vram_preset
+from .constants import JSONSerializable, NORMALIZER_MODEL_ID
 
 NORMALIZER_SPECIAL_TOKENS = ("<|im_start|>", "<|im_end|>", "<NORM>")
 NORMALIZER_DEVICE = "cpu"
@@ -23,10 +23,10 @@ def normalizer_device(
     """Return the runtime device used for CeluneNorm loading.
 
     Args:
-        config: Value for `config`.
+        config: Celune's current configuration.
 
     Returns:
-        Result of this function.
+        str: The selected normalizer device based on current VRAM preset.
     """
     if config is None:
         return NORMALIZER_DEVICE
@@ -61,9 +61,11 @@ def load_normalizer_components(
     )
 
     device = normalizer_device(config)
+    supported_dispatch = {"auto", "balanced", "balanced_low_0", "sequential"}
+    device_map = device if device in supported_dispatch else {"": device}
     llm = AutoModelForCausalLM.from_pretrained(
         model_ref,
         torch_dtype=torch.bfloat16,
-        device_map=device,
+        device_map=device_map,
     )
     return tokenizer, llm

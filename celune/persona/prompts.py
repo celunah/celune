@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import textwrap
 from dataclasses import dataclass, field
+import textwrap
 
 
 def _render_lines(lines: list[str]) -> str:
@@ -36,7 +36,7 @@ class CharacterProfile:
         """Return the character identity block.
 
         Returns:
-            Result of this function.
+            str: The formatted character identity block.
         """
         lines = [
             f"Name: {self.name.strip() or 'Unknown'}",
@@ -70,7 +70,7 @@ class PersonaCard:
         """Return the persona style block.
 
         Returns:
-            Result of this function.
+            str: The formatted style block.
         """
         lines = [
             "Persona:",
@@ -113,7 +113,7 @@ class RetrievedMemoryBundle:
         """Return the long-term memory block.
 
         Returns:
-            Result of this function.
+            str: The formatted long-term memory block.
         """
         return _render_lines([f"- {memory}" for memory in self.memories])
 
@@ -129,7 +129,7 @@ class ShortTermHistory:
         """Return the short-term memory block.
 
         Returns:
-            Result of this function.
+            str: The formatted short-term memory block.
         """
         lines: list[str] = []
         if self.session_summary.strip():
@@ -148,7 +148,7 @@ class VisualContext:
         """Return the visual context block.
 
         Returns:
-            Result of this function.
+            str: The formatted visual context block.
         """
         return _render_lines([f"- {item}" for item in self.items])
 
@@ -177,10 +177,10 @@ class PersonaPromptBuilder:
         """Return the structured Persona runtime prompt.
 
         Args:
-            context: Value for `context`.
+            context: The current character context.
 
         Returns:
-            Result of this function.
+            str: The formatted RAG prompt for persona.
         """
         sections = [
             textwrap.dedent(

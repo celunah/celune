@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 import os
-import threading
 from pathlib import Path
-from urllib.parse import urlparse
+import threading
 from typing import Optional, TYPE_CHECKING
+from urllib.parse import urlparse
 
 import soundfile as sf
 

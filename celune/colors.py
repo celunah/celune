@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import random
 import colorsys
+import random
 from typing import Final, cast
 
 from textual.theme import Theme

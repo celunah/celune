@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import os
 import sys
-from collections.abc import Mapping
 from typing import IO, Final, Literal, Optional, cast
 
 from .config import config_value
@@ -33,7 +33,14 @@ _ANSI_TERM_HINTS: Final[tuple[str, ...]] = (
 
 
 def normalize_color_mode(value: object) -> Optional[ColorMode]:
-    """Normalize one configured color-mode value."""
+    """Normalize one configured color-mode value.
+
+    Args:
+        value: The color-mode value.
+
+    Returns:
+        Optional[ColorMode]: The normalized color-mode value.
+    """
     if not isinstance(value, str):
         return None
     normalized = value.strip().lower()
@@ -43,7 +50,14 @@ def normalize_color_mode(value: object) -> Optional[ColorMode]:
 
 
 def configured_color_mode(config: Optional[Config] = None) -> ColorMode:
-    """Return the requested Celune color mode before capability detection."""
+    """Return the requested Celune color mode before capability detection.
+
+    Args:
+        config: Celune's current configuration.
+
+    Returns:
+        ColorMode: The currently selected color mode. It isn't used at this time.
+    """
     env_value = normalize_color_mode(os.getenv("CELUNE_COLOR_MODE"))
     if env_value is not None:
         return env_value
@@ -55,12 +69,23 @@ def configured_color_mode(config: Optional[Config] = None) -> ColorMode:
 
 
 def no_color_requested() -> bool:
-    """Return whether the ``NO_COLOR`` convention disables color output."""
+    """Return whether the ``NO_COLOR`` convention disables color output.
+
+    Returns:
+        bool: Whether Celune was requested to run without colors.
+    """
     return "NO_COLOR" in os.environ
 
 
 def supports_ansi(stream: Optional[IO[str]] = None) -> bool:
-    """Return whether the current terminal supports ANSI escape codes."""
+    """Return whether the current terminal supports ANSI escape codes.
+
+    Args:
+        stream: The terminal's stream.
+
+    Returns:
+        bool: Whether the underlying terminal supports ANSI.
+    """
     output = sys.stdout if stream is None else stream
     is_tty = hasattr(output, "isatty") and output.isatty()
     if not is_tty:
@@ -75,7 +100,8 @@ def supports_ansi(stream: Optional[IO[str]] = None) -> bool:
         return False
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    stdout_handle = kernel32.GetStdHandle(-11)
+    handle_id = -12 if output is sys.stderr else -11
+    stdout_handle = kernel32.GetStdHandle(handle_id)
     invalid_handle = ctypes.c_void_p(-1).value
     if stdout_handle in (0, invalid_handle):
         return False
@@ -129,13 +155,21 @@ def resolve_color_mode(
     reported_color_system: object = None,
     stream: Optional[IO[str]] = None,
 ) -> ResolvedColorMode:
-    """Resolve the color mode Celune should actually use on this terminal."""
+    """Resolve the color mode Celune should actually use on this terminal.
+
+    Args:
+        config: Celune's current configuration.
+        reported_color_system: The reported color system.
+        stream: The terminal's stream.
+
+    Returns:
+        ResolvedColorMode: The color mode Celune should actually use at this time.
+    """
     configured = configured_color_mode(config)
+    if no_color_requested() and configured != "none":
+        return "none"
     if configured != "auto":
         return cast(ResolvedColorMode, configured)
-
-    if no_color_requested():
-        return "none"
 
     detected = _normalize_reported_color_system(reported_color_system)
     if detected == "truecolor":
@@ -156,7 +190,16 @@ def supports_truecolor(
     reported_color_system: object = None,
     stream: Optional[IO[str]] = None,
 ) -> bool:
-    """Return whether Celune should emit true-color styles."""
+    """Return whether Celune should emit true-color styles.
+
+    Args:
+        config: Celune's current configuration.
+        reported_color_system: The reported color system.
+        stream: The terminal's stream.
+
+    Returns:
+        bool: Whether the underlying supports True Color.
+    """
     return (
         resolve_color_mode(
             config,

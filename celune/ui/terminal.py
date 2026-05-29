@@ -165,7 +165,7 @@ class UILogHandler(logging.Handler):
         """Forward one Python logging record into the UI log stream.
 
         Args:
-            record: Value for `record`.
+            record: The logging record to be emitted.
         """
         try:
             message = record.getMessage().strip()

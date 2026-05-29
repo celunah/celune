@@ -3,21 +3,21 @@
 
 from __future__ import annotations
 
-import os
-import time
-import datetime
-import threading
-import contextlib
-from typing import Union, Optional, TYPE_CHECKING
 from collections import deque
+import contextlib
+import datetime
+import os
+import threading
+import time
+from typing import Union, Optional, TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
 from openrgb import OpenRGBClient
 from openrgb.utils import RGBColor
 
-from .dsp import _split
 from .colors import RGB
+from .dsp import _split
 from .constants import BASE_SR
 from .utils import to_rgb, lunar_info, range_interpolated, is_celune_day
 
@@ -378,7 +378,7 @@ class AudioRGBGlow:
                 self._current_brightness += (target - self._current_brightness) * alpha
 
             elif state == "waking":
-                target = self.idle_brightness
+                target = max(target, self.idle_brightness)
                 alpha = self.transition_rate
                 self._current_brightness += (target - self._current_brightness) * alpha
 
@@ -390,6 +390,7 @@ class AudioRGBGlow:
 
             else:
                 speaking_for = now - last_speech
+                target = self.idle_brightness
 
                 if speaking_for > self.hold_duration:
                     target = self.idle_brightness

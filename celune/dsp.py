@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: MIT
 """Celune audio processing functions."""
 
+from importlib.resources import as_file, files
 import math
 from typing import Iterable
-from importlib.resources import as_file, files
 
 import numpy as np
 import numpy.typing as npt
-import soundfile as sf
-from scipy.signal import resample_poly
 from pedalboard import Pedalboard, Reverb
+from scipy.signal import resample_poly
+import soundfile as sf
 
 from .constants import UtteranceLoudnessTier, BASE_SR
 from .exceptions import AudioMismatchError, BadAudioError

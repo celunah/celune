@@ -3,25 +3,25 @@
 
 from __future__ import annotations
 
-import os
-import gc
-import threading
+from collections.abc import Mapping, Sequence
 import contextlib
 from dataclasses import dataclass, field
-from collections.abc import Mapping, Sequence
+import gc
+import os
+import threading
 from typing import Literal, Optional, Protocol, TypedDict, Union, cast
 
 import torch
+from transformers.tokenization_utils_base import BatchEncoding
 from transformers import (
     Qwen2_5_VLForConditionalGeneration,
     AutoProcessor,
     AutoTokenizer,
     BitsAndBytesConfig,
 )
-from transformers.tokenization_utils_base import BatchEncoding
 
-from ..constants import JSONSerializable, PERSONA_MODEL_ID
 from ..vram import resolve_vram_preset
+from ..constants import JSONSerializable, PERSONA_MODEL_ID
 
 Role = Literal["system", "user", "assistant"]
 type VideoMetadataScalar = Optional[Union[bool, int, float, str]]
@@ -87,16 +87,16 @@ class ChatTemplateRenderer(Protocol):
         """Render or tokenize a chat conversation.
 
         Args:
-            conversation: Value for `conversation`.
-            tokenize: Value for `tokenize`.
-            add_generation_prompt: Value for `add_generation_prompt`.
-            return_dict: Value for `return_dict`.
-            return_tensors: Value for `return_tensors`.
+            conversation: The current Persona conversation.
+            tokenize: Whether the conversation should be tokenized.
+            add_generation_prompt: Whether the generation prompt should be appended.
+            return_dict: Whether a Python dict should be returned.
+            return_tensors: Whether PyTorch tensors should be returned.
 
         Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
+            NotImplementedError: The protocol was called directly.
         """
-        raise NotImplementedError("protocol method")
+        raise NotImplementedError("protocol not defined")
 
 
 class PersonaTokenizer(Protocol):
@@ -106,19 +106,19 @@ class PersonaTokenizer(Protocol):
 
     def __call__(self, *, text: str, return_tensors: str) -> BatchEncoding:
         """Tokenize text into a batch encoding."""
-        raise NotImplementedError("protocol method")
+        raise NotImplementedError("protocol not defined")
 
     def decode(self, token_ids: torch.Tensor, *, skip_special_tokens: bool) -> str:
         """Decode generated token IDs into text.
 
         Args:
-            token_ids: Value for `token_ids`.
-            skip_special_tokens: Value for `skip_special_tokens`.
+            token_ids: The token IDs to decode.
+            skip_special_tokens: Whether special token IDs should be skipped while decoding.
 
         Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
+            NotImplementedError: The protocol was called directly.
         """
-        raise NotImplementedError("protocol method")
+        raise NotImplementedError("protocol not defined")
 
 
 class PersonaProcessor(ChatTemplateRenderer, Protocol):
@@ -137,7 +137,7 @@ class PersonaProcessor(ChatTemplateRenderer, Protocol):
         **kwargs: ProcessorKwargValue,
     ) -> BatchEncoding:
         """Build multimodal model inputs."""
-        raise NotImplementedError("protocol method")
+        raise NotImplementedError("protocol not defined")
 
 
 class PersonaModel(Protocol):
@@ -149,20 +149,20 @@ class PersonaModel(Protocol):
         """Generate token IDs from prepared inputs.
 
         Args:
-            kwargs: Value for `kwargs`.
+            kwargs: Generation-specific keyword arguments to use.
 
         Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
+            NotImplementedError: The protocol was called directly.
         """
-        raise NotImplementedError("protocol method")
+        raise NotImplementedError("protocol not defined")
 
     def eval(self) -> None:
         """Switch the model into eval mode.
 
         Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
+            NotImplementedError: The protocol was called directly.
         """
-        raise NotImplementedError("protocol method")
+        raise NotImplementedError("protocol not defined")
 
 
 @dataclass(slots=True)
@@ -261,11 +261,11 @@ class PersonaBackend:
         """Load the requested model, quantized by default.
 
         Args:
-            model_id: Value for `model_id`.
-            quantization: Value for `quantization`.
+            model_id: The model ID to load.
+            quantization: The requested quantization mode to use.
 
         Raises:
-            ValueError: If `ValueError` needs to be raised.
+            ValueError: Quantization was requested when CUDA wasn't available.
         """
         if (
             self.model is not None
@@ -375,13 +375,13 @@ class PersonaBackend:
         """Generate a persona-formatted response.
 
         Args:
-            request: Value for `request`.
+            request: The request to be processed by Persona.
 
         Returns:
-            Result of this function.
+            GenerateResponse: A response generated from Persona.
 
         Raises:
-            ValueError: If `ValueError` needs to be raised.
+            ValueError: Persona request has no message or Persona was not loaded while the caller wanted to use it.
         """
         messages = request.messages or _messages_from_legacy_fields(request)
         if not messages:
@@ -537,7 +537,7 @@ class PersonaRuntime:
         """Return the currently loaded model identifier.
 
         Returns:
-            Result of this function.
+            str: The currently loaded Persona model ID, Qwen/Qwen2.5-VL-3B-Instruct or a derivative.
         """
         return self.backend.model_id
 
@@ -546,7 +546,7 @@ class PersonaRuntime:
         """Return the currently loaded quantization mode.
 
         Returns:
-            Result of this function.
+            str: The Persona quantization mode currently in use.
         """
         return self.backend.quantization
 
@@ -554,8 +554,8 @@ class PersonaRuntime:
         """Explicitly load the Persona backend with the requested model.
 
         Args:
-            model_id: Value for `model_id`.
-            quantization: Value for `quantization`.
+            model_id: The model ID to load.
+            quantization: The quantization mode to use.
         """
         quantization = self._allowed_quantization(quantization)
         with self.lock:
@@ -565,10 +565,10 @@ class PersonaRuntime:
         """Generate a persona-formatted response.
 
         Args:
-            request: Value for `request`.
+            request: The request to be processed by Persona.
 
         Returns:
-            Result of this function.
+            GenerateResponse: A generated Persona response.
         """
         model_id = request.model or os.getenv("PERSONA_MODEL") or PERSONA_MODEL_ID
         quantization = (
@@ -577,8 +577,8 @@ class PersonaRuntime:
             or ("4bit" if request.quantized else "none")
         )
         quantization = self._allowed_quantization(quantization)
-        self.load(model_id, quantization)
         with self.lock:
+            self.backend.load(model_id, quantization)
             return self.backend.generate(request)
 
     def close(self) -> None:
@@ -605,10 +605,10 @@ def request_from_json(payload: dict[str, JSONSerializable]) -> GenerateRequest:
     """Convert a JSON-like payload into a Persona generation request.
 
     Args:
-        payload: Value for `payload`.
+        payload: The JSON-serializable payload to process as a Persona request.
 
     Returns:
-        Result of this function.
+        GenerateRequest: A generated Persona request from JSON data.
     """
     raw_messages = payload.get("messages")
     messages: list[ChatMessage] = []
@@ -652,10 +652,10 @@ def response_to_json(response: GenerateResponse) -> dict[str, JSONSerializable]:
     """Convert a Persona generation response to a JSON-like payload.
 
     Args:
-        response: Value for `response`.
+        response: The response to convert to a JSON-serializable payload.
 
     Returns:
-        Result of this function.
+        dict[str, JSONSerializable]: A JSON-serializable representation of the Persona response.
     """
     return {
         "text": response.text,

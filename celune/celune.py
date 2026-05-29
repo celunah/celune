@@ -1,36 +1,44 @@
 # SPDX-License-Identifier: MIT
 """Celune's backend layer."""
 
+import contextlib
 import gc
-import time
+from pathlib import Path
 import queue
 import threading
-import contextlib
-from pathlib import Path
+import time
 from typing import Optional, Callable, Protocol, Union, cast
 
-import torch
+from huggingface_hub.utils import disable_progress_bars
 import numpy as np
 import numpy.typing as npt
 import sounddevice as sd
+import torch
 from transformers.utils import logging as hf_logging
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils.logging import disable_progress_bar
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
-from huggingface_hub.utils import disable_progress_bars
 
 from . import __version__
 from .chroma import AudioRGBGlow
 from .backends.qwen3 import Qwen3
-from .extensions.base import CeluneContext
 from .dsp import StreamingPedalboardReverb
+from .extensions.base import CeluneContext
 from .config import Config, config_bool, config_value
-from .modeling import normalizer_device, load_normalizer_components
-from .backends import BackendModel, CeluneBackend, resolve_backend
 from .extensions.manager import CeluneExtensionManager
 from .runtime import log_runtime_banner, validate_runtime
-from .constants import JSONSerializable, NORMALIZER_MODEL_ID, PipelineStates
+from .backends import BackendModel, CeluneBackend, resolve_backend
+from .modeling import normalizer_device, load_normalizer_components
 from .exceptions import NotAvailableError, WarmupError, BackendError
+from .constants import JSONSerializable, NORMALIZER_MODEL_ID, PipelineStates
+from .utils import format_number, format_error, discard, is_port_usable, custom_assert
+from .vram import (
+    QWEN3_0_6B_MODEL,
+    backend_allowed,
+    resolve_backend_name,
+    resolve_vram_preset,
+    validate_vram_preset,
+)
 from .persona.impl import (
     PersonaClient,
     create_persona_client,
@@ -48,7 +56,6 @@ from .cevoice import (
     persona_metadata_from_manifest,
     select_voice_bundle,
 )
-from .utils import format_number, format_error, discard, is_port_usable, custom_assert
 from .pipeline import (
     AudioQueueItem,
     SpeechStreamQueue,
@@ -68,13 +75,6 @@ from .pipeline import (
     think as think_pipeline,
     split_text,
     play_readiness_signal,
-)
-from .vram import (
-    QWEN3_0_6B_MODEL,
-    backend_allowed,
-    resolve_backend_name,
-    resolve_vram_preset,
-    validate_vram_preset,
 )
 
 
@@ -119,10 +119,10 @@ class NormalizerTokenizer(Protocol):
         """Convert one token to its integer ID.
 
         Args:
-            tokens: Value for `tokens`.
+            tokens: A token to convert to ID.
 
         Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
+            NotImplementedError: The protocol was called directly.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -145,11 +145,11 @@ class NormalizerTokenizer(Protocol):
         """Decode generated token IDs.
 
         Args:
-            token_ids: Value for `token_ids`.
-            skip_special_tokens: Value for `skip_special_tokens`.
+            token_ids: Token IDs to decode.
+            skip_special_tokens: Whether special tokens should be skipped while decoding.
 
         Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
+            NotImplementedError: The protocol was called directly.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -546,7 +546,7 @@ class Celune:
         """Return whether automatic sleep mode is enabled.
 
         Returns:
-            Result of this function.
+            bool: Whether automatic sleep mode is enabled.
         """
         enabled, _, _ = self._sleep_config()
         return enabled
@@ -555,7 +555,7 @@ class Celune:
         """Return the configured idle timeout in seconds.
 
         Returns:
-            Result of this function.
+            float: The configured idle timeout in seconds.
         """
         _, timeout_minutes, _ = self._sleep_config()
         return timeout_minutes * 60.0
@@ -564,7 +564,7 @@ class Celune:
         """Put Celune to sleep and unload models according to configuration.
 
         Returns:
-            Result of this function.
+            bool: Whether Celune was put to sleep.
         """
         enabled, _, unload = self._sleep_config()
         if not enabled or self.sleeping:
@@ -599,10 +599,11 @@ class Celune:
         """Wake Celune and reload anything unloaded by sleep mode.
 
         Returns:
-            Result of this function.
+            bool: Whether Celune was woken up from sleep.
 
         Raises:
-            NotAvailableError: If `NotAvailableError` needs to be raised.
+            NotAvailableError: Celune has no valid model ID to reload after waking up.
+            WarmupError: Celune cannot warm up after waking up.
         """
         if not self.sleeping:
             return True
@@ -872,7 +873,7 @@ class Celune:
         """Return whether the active TTS configuration supports voice prompts.
 
         Returns:
-            Result of this function.
+            bool: Whether the currently loaded TTS model supports voice prompting.
         """
         backend = self.backend
         return not (
@@ -883,7 +884,7 @@ class Celune:
         """Return the active voice prompt only when the current model supports it.
 
         Returns:
-            Result of this function.
+            Optional[str]: The current voice prompt if voice prompts are supported, else ``None``.
         """
         if not self.voice_prompt_supported():
             return None
@@ -1060,7 +1061,7 @@ class Celune:
 
         self._start_configured_api()
 
-        if not persona_is_available():
+        if persona_enabled(self.config) and not persona_is_available():
             self.log(
                 "Personas are unavailable. Celune is operating in speech-only mode.",
                 "warning",
@@ -1102,6 +1103,13 @@ class Celune:
             invalid_port = api_config.get("port", 2060)
             self.log(
                 f"Celune API port ({invalid_port}) is invalid, will use 2060 instead.",
+                "warning",
+            )
+            port = 2060
+
+        if not 1 <= port <= 65535:
+            self.log(
+                f"Celune API port ({port}) is out of range, will use 2060 instead.",
                 "warning",
             )
             port = 2060
@@ -1169,6 +1177,9 @@ class Celune:
         def _worker():
             loaded_tokenizer: Optional[PreTrainedTokenizerBase] = None
             loaded_llm: Optional[PreTrainedModel] = None
+
+            discard(loaded_tokenizer)
+            discard(loaded_llm)
             try:
                 loaded_tokenizer, loaded_llm = load_normalizer_components(
                     self.log, self.backend, self.config
@@ -1259,8 +1270,8 @@ class Celune:
             text: The raw text to normalize before speech generation.
 
         Returns:
-            Optional[str]: The normalized text, the original text for blank input, or ``None`` when normalization
-                is unavailable or has failed.
+            Optional[str]: The normalized text, the original text for blank input, or ``None`` when
+                normalization is unavailable or has failed.
         """
 
         if not self.use_normalization:
@@ -1444,8 +1455,8 @@ class Celune:
             save: Whether to save generated output artifacts.
 
         Returns:
-            Optional[queue.Queue]: Queue receiving 48 kHz stereo float32 chunks, or ``None`` when the request
-                could not be queued.
+            Optional[queue.Queue]: Queue receiving 48 kHz stereo float32 chunks, or ``None`` when the
+                request could not be queued.
         """
         stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
         if not queue_speech(self, text, save=save, stream_queue=stream_queue):

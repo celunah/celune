@@ -7,7 +7,7 @@ from abc import ABC
 from dataclasses import dataclass, field
 from typing import Protocol, Optional, runtime_checkable
 
-from celune import __version__
+from .. import __version__
 from ..constants import JSONSerializable
 from ..exceptions import IncompleteExtensionError
 

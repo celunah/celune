@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Tests for Persona long-term memory persistence and retrieval."""
 
-import tempfile
 from collections.abc import Sequence
 from pathlib import Path
+import tempfile
 from unittest import TestCase
 
 import numpy as np
@@ -191,7 +191,10 @@ class PersonaMemoryTests(TestCase):
 
     def test_semantic_similarity_threshold_controls_retrieval(self) -> None:
         """Verify the configured semantic threshold gates borderline matches."""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with (
+            tempfile.TemporaryDirectory() as strict_dir,
+            tempfile.TemporaryDirectory() as relaxed_dir,
+        ):
             memory = "The user prefers tabs for indentation"
             request = "Should I keep that formatting habit?"
             embedding_map = {
@@ -199,7 +202,7 @@ class PersonaMemoryTests(TestCase):
                 memory: (0.65, np.sqrt(1 - (0.65**2)), 0.0),
             }
             strict_store = StubEmbeddingMemoryStore(
-                storage_dir=temp_dir,
+                storage_dir=strict_dir,
                 semantic_similarity_threshold=0.7,
                 embedding_map=embedding_map,
             )
@@ -207,7 +210,7 @@ class PersonaMemoryTests(TestCase):
             self.assertEqual(strict_store.retrieve("Celune", request), [])
 
             relaxed_store = StubEmbeddingMemoryStore(
-                storage_dir=temp_dir,
+                storage_dir=relaxed_dir,
                 semantic_similarity_threshold=0.6,
                 embedding_map=embedding_map,
             )

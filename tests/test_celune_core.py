@@ -13,10 +13,9 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from celune.celune import Celune
 from celune.config import Config
 from celune.backends.qwen3 import Qwen3
-from celune.exceptions import BackendError, WarmupError
-from celune.persona.impl import persona_quantization
 from celune.vram import QWEN3_0_6B_MODEL
-
+from celune.persona.impl import persona_quantization
+from celune.exceptions import BackendError, WarmupError
 from tests.support import FakeBackend, FakeGlow
 
 

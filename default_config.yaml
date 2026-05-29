@@ -72,7 +72,7 @@ api:
   # enabled?
   enabled: true
   # where to bind
-  host: 0.0.0.0
+  host: 127.0.0.1
   # what port to bind
   port: 2060
   # what authentication token users must use

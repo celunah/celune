@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: MIT
 """Tests for the shared Persona runtime helpers."""
 
+from types import SimpleNamespace
 from typing import Optional, cast
 from unittest import TestCase, mock
-from types import SimpleNamespace
 
 from celune.persona import impl
-from celune.persona import runtime
 from celune.utils import discard
+from celune.persona import runtime
 
 
 class _FakeEncoded:
@@ -20,10 +20,10 @@ class _FakeEncoded:
         """Record the requested device and return ``self``.
 
         Args:
-            device: Value for `device`.
+            device: The device to load to.
 
         Returns:
-            Result of this function.
+            _FakeEncoded: A fake encoded class object.
         """
         self.device = device
         return self
@@ -46,11 +46,11 @@ class _FakeTokenizer:
         """Return a fixed decoded response string.
 
         Args:
-            token_ids: Value for `token_ids`.
-            skip_special_tokens: Value for `skip_special_tokens`.
+            token_ids: The token IDs to decode.
+            skip_special_tokens: Whether to skip special tokens while decoding.
 
         Returns:
-            Result of this function.
+            str: The fake decoded tokens.
         """
         discard(token_ids)
         discard(skip_special_tokens)
@@ -68,10 +68,10 @@ class _FakeModel:
         """Unused generate stub for protocol compatibility.
 
         Args:
-            kwargs: Value for `kwargs`.
+            kwargs: Keyword arguments to use while generating.
 
         Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
+            NotImplementedError: The fake generation method was called outside of Celune's test harness.
         """
         discard(kwargs)
         raise NotImplementedError("test fake does not generate")
@@ -89,7 +89,14 @@ class _FakeGenerativeModel:
         self.calls: list[dict[str, object]] = []
 
     def generate(self, **kwargs) -> runtime.torch.Tensor:
-        """Record generation kwargs and return one synthetic completion."""
+        """Record generation kwargs and return one synthetic completion.
+
+        Args:
+            kwargs: Keyword arguments to use while generating.
+
+        Returns:
+            runtime.torch.Tensor: A fake PyTorch tensor.
+        """
         self.calls.append(dict(kwargs))
         return runtime.torch.tensor([[1, 2, 3]], dtype=runtime.torch.long)
 
@@ -109,11 +116,11 @@ class _FakeProcessor:
         """Return a fixed prompt rendering for load-time support checks.
 
         Args:
-            args: Value for `args`.
-            kwargs: Value for `kwargs`.
+            args: Arguments to use while generating.
+            kwargs: Keyword arguments to use while generating.
 
         Returns:
-            Result of this function.
+            str: A fake formatted chat template.
         """
         discard(args)
         discard(kwargs)

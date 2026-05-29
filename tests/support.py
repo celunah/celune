@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT
 """Lightweight test fakes for Celune's unit test suite."""
 
+from collections.abc import Iterator
 import queue
 import threading
-from collections.abc import Iterator
-from unittest import mock
-from typing import Optional, TypedDict
 from types import SimpleNamespace
+from typing import Optional, TypedDict
+from unittest import mock
 
 import numpy as np
 import numpy.typing as npt

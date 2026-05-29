@@ -1,25 +1,25 @@
 # SPDX-License-Identifier: MIT
 """Tests for backend resolution and extension infrastructure."""
 
+from collections.abc import Iterator
+import importlib
+from pathlib import Path
 import sys
 import tempfile
 import textwrap
 import threading
-import importlib
-from pathlib import Path
-from typing import Optional
 from types import SimpleNamespace
+from typing import Optional
 from unittest import mock, TestCase
-from collections.abc import Iterator
 
 import numpy as np
 import numpy.typing as npt
+
 from celune.utils import discard
 from celune.backends import resolve_backend
 from celune.extensions.manager import CeluneExtensionManager
 from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.exceptions import ExtensionAlreadyRegisteredError, InvalidExtensionError
-
 from tests.support import FakeBackend
 
 
@@ -183,19 +183,17 @@ class BackendTests(TestCase):
                     self.closed = False
 
                 def __iter__(self) -> "FakeStream":
-                    """Return the iterator object itself."""
                     return self
 
                 def __next__(
                     self,
                 ) -> tuple[npt.NDArray[np.float32], int, Optional[dict]]:
-                    """Return the next fake streamed chunk."""
                     if not self._chunks:
                         raise StopIteration
                     return self._chunks.pop(0)
 
                 def close(self) -> None:
-                    """Record that the fake stream was closed."""
+                    """Close the stream."""
                     self.closed = True
 
             class FakeModel:
@@ -205,7 +203,7 @@ class BackendTests(TestCase):
                     self.stream = FakeStream()
 
                 def generate_voice_clone_streaming(self, *args, **kwargs) -> FakeStream:
-                    """Return one fake Qwen3 stream."""
+                    """Generate fake Qwen3 chunks."""
                     discard(args)
                     discard(kwargs)
                     return self.stream

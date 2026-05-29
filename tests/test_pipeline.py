@@ -1,29 +1,28 @@
 # SPDX-License-Identifier: MIT
 """Tests for pipeline helpers that do not perform real synthesis."""
 
+from collections.abc import Iterator
 import json as _json
 import os
-import queue
-import threading
-import tempfile
 from pathlib import Path
+import queue
+import tempfile
+import threading
 from types import SimpleNamespace
 from typing import cast, Optional
 from unittest import mock, TestCase
-from collections.abc import Iterator
 
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
 
 from celune import pipeline
-from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
 from celune.celune import Celune
-from celune.persona.prompts import PersonaPromptBuilder
-from celune.persona.memory import PersonaMemoryStore
 from celune.utils import discard
+from celune.persona.memory import PersonaMemoryStore
+from celune.persona.prompts import PersonaPromptBuilder
 from celune.constants import JSON, JSONSerializable, PipelineStates
-
+from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
 from tests.support import FakeStream, make_pipeline_engine
 
 
@@ -125,7 +124,7 @@ class PipelineTests(TestCase):
 
             @staticmethod
             def raise_for_status() -> None:
-                """Do nothing when asked to raise for status code."""
+                """Fake return of raise_for_status()."""
 
             @staticmethod
             def json() -> JSONSerializable:
@@ -139,7 +138,7 @@ class PipelineTests(TestCase):
                 self.payload: Optional[JSON] = None
 
             def post(self, json: JSON) -> FakeResponse:
-                """Send a fake POST request."""
+                """Post a fake request."""
                 self.payload = json
                 return FakeResponse()
 
@@ -557,7 +556,7 @@ class PipelineTests(TestCase):
 
             @staticmethod
             def raise_for_status() -> None:
-                """Do nothing when asked to raise for status code."""
+                """Fake return of raise_for_status()."""
 
             @staticmethod
             def json() -> JSONSerializable:
@@ -598,7 +597,7 @@ class PipelineTests(TestCase):
 
             @staticmethod
             def raise_for_status() -> None:
-                """Do nothing when asked to raise for status code."""
+                """Fake return of raise_for_status()."""
 
             @staticmethod
             def json() -> JSONSerializable:
@@ -612,7 +611,7 @@ class PipelineTests(TestCase):
                 self.payload: Optional[JSON] = None
 
             def post(self, json: JSON) -> FakeResponse:
-                """Send a fake POST request."""
+                """Post a fake request."""
                 self.payload = json
                 return FakeResponse()
 
@@ -776,7 +775,7 @@ class PipelineTests(TestCase):
 
             @staticmethod
             def raise_for_status() -> None:
-                """Do nothing when asked to raise for status code."""
+                """Fake return of raise_for_status()."""
 
             @staticmethod
             def json() -> JSONSerializable:
@@ -790,7 +789,7 @@ class PipelineTests(TestCase):
                 self.payloads: list[JSON] = []
 
             def post(self, json: JSON) -> FakeResponse:
-                """Send a fake POST request."""
+                """Post a fake response."""
                 self.payloads.append(json)
                 return FakeResponse()
 
