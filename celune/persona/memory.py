@@ -259,6 +259,7 @@ class PersonaMemoryStore:
         )
         self.embedding_model = embedding_model.strip() or PERSONA_MEMORY_EMBEDDING_MODEL
         self._embedding_cache: dict[str, EmbeddingVector] = {}
+        self._embedding_cache_max = 2048
 
     def _path_for_character(self, character_name: str) -> Path:
         """Return the JSON file path for one active character."""
@@ -465,7 +466,7 @@ class PersonaMemoryStore:
             return []
 
         ranked = self._semantic_rank_records(records, request_text)
-        if not ranked:
+        if ranked is None:
             ranked = self._fallback_rank_records(records, request_text)
 
         if not ranked:
@@ -516,6 +517,9 @@ class PersonaMemoryStore:
         missing_texts: list[str] = []
         for index, text in enumerate(texts):
             cache_key = self._embedding_cache_key(text)
+            if len(self._embedding_cache) >= self._embedding_cache_max:
+                self._embedding_cache.pop(next(iter(self._embedding_cache)), None)
+
             cached = self._embedding_cache.get(cache_key)
             if cached is None:
                 results.append(None)
