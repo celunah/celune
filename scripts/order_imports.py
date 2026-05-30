@@ -270,6 +270,11 @@ def rewrite_file(path: Path) -> bool:
         return False
 
     start, end = bounds
+
+    covered = sum(statement.end - statement.start for statement in statements)
+    if covered != end - start:
+        return False
+
     updated_block = render_import_block(statements)
 
     if lines[start:end] == updated_block:
