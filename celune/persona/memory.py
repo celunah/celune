@@ -466,7 +466,7 @@ class PersonaMemoryStore:
             return []
 
         ranked = self._semantic_rank_records(records, request_text)
-        if ranked is None:
+        if ranked is None or ranked == []:
             ranked = self._fallback_rank_records(records, request_text)
 
         if not ranked:
