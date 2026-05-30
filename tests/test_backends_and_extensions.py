@@ -247,6 +247,119 @@ class BackendTests(TestCase):
             self.assertEqual(chunks[1][0].tolist(), [1.0])
             self.assertEqual(model.stream.closed, True)
 
+    def test_qwen3_marks_final_chunk_when_eos_was_not_observed(self) -> None:
+        """Verify Qwen3 marks exhausted generations that never surfaced EOS."""
+
+        class StubQwen3TTS:
+            """Import-time stand-in for the FasterQwen3TTS package class."""
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "faster_qwen3_tts": SimpleNamespace(
+                    FasterQwen3TTS=StubQwen3TTS,
+                    __version__="0.2.5",
+                )
+            },
+        ):
+            qwen3 = importlib.import_module("celune.backends.qwen3")
+            qwen3_cls = qwen3.Qwen3
+
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                @staticmethod
+                def generate_voice_clone_streaming(
+                    *args, **kwargs
+                ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+                    """Generate fake Qwen3 chunks.
+
+                    Args:
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
+                    """
+                    discard(args)
+                    discard(kwargs)
+                    yield (
+                        np.zeros((1,), dtype=np.float32),
+                        24000,
+                        {
+                            "chunk_steps": 512,
+                            "total_steps_so_far": 512,
+                            "is_final": True,
+                        },
+                    )
+
+            loader = SimpleNamespace(
+                bundle=SimpleNamespace(
+                    voices={"calm": {"reference_text": "Pack reference."}}
+                ),
+                materialize=lambda voice, kind: Path(f"{voice}.{kind}"),
+            )
+            with (
+                mock.patch.object(qwen3_cls, "_validate_refs"),
+                mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
+            ):
+                backend = qwen3_cls(log=lambda _msg, _severity="info": None)
+                chunk = next(
+                    backend.generate_stream(FakeModel(), text="hello", voice="calm")
+                )
+
+            self.assertEqual(chunk[2]["missing_eos"], True)
+
+    def test_voxcpm2_marks_final_chunk_when_stop_token_was_not_observed(self) -> None:
+        """Verify VoxCPM2 marks exhausted generations that never surfaced a stop."""
+
+        class StubVoxCPM:
+            """Import-time stand-in for the VoxCPM package class."""
+
+        with mock.patch.dict(
+            sys.modules,
+            {"voxcpm": SimpleNamespace(VoxCPM=StubVoxCPM)},
+        ):
+            voxcpm2 = importlib.import_module("celune.backends.voxcpm2")
+            voxcpm2_cls = voxcpm2.VoxCPM2
+
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                @staticmethod
+                def generate_streaming(
+                    *args, **kwargs
+                ) -> Iterator[npt.NDArray[np.float32]]:
+                    """Generate fake VoxCPM2 chunks.
+
+                    Args:
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
+                    """
+                    discard(args)
+                    discard(kwargs)
+                    for _ in range(512):
+                        yield np.ones((1,), dtype=np.float32)
+
+            loader = SimpleNamespace(
+                bundle=SimpleNamespace(voices={"calm": {"cfg_scale": 4.2}}),
+                materialize=lambda voice, kind: Path(f"{voice}.{kind}"),
+            )
+            with (
+                mock.patch.object(voxcpm2_cls, "_validate_refs"),
+                mock.patch(
+                    "celune.backends.voxcpm2.default_loader", return_value=loader
+                ),
+            ):
+                backend = voxcpm2_cls(log=lambda _msg, _severity="info": None)
+                chunks = list(
+                    backend.generate_stream(
+                        FakeModel(),
+                        text="hello",
+                        voice="calm",
+                        chunk_size=1,
+                    )
+                )
+
+            self.assertEqual(chunks[-1][2]["missing_eos"], True)
+
 
 class ExtensionTests(TestCase):
     """Tests for extension context and manager behavior."""

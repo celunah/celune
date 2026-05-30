@@ -1640,6 +1640,7 @@ def generation_worker(engine: "Celune") -> None:
                         chunk_text
                     )
                     generated_steps = 0
+                    last_timing: Optional[dict] = None
                     engine.progress_callback(0, progress_total or 1)
 
                     with engine.model_lock:
@@ -1664,6 +1665,8 @@ def generation_worker(engine: "Celune") -> None:
                             top_p=generation_params["top_p"],
                             repetition_penalty=generation_params["repetition_penalty"],
                         ):
+                            if timing is not None:
+                                last_timing = timing
                             if engine.exit_requested:
                                 break
 
@@ -1746,6 +1749,19 @@ def generation_worker(engine: "Celune") -> None:
 
                         if progress_total is None:
                             engine.progress_callback(1, 1)
+
+                        if (
+                            not engine.exit_requested
+                            and not engine.utterance_force_stop.is_set()
+                            and last_timing is not None
+                            and last_timing.get("is_final")
+                            and bool(last_timing.get("missing_eos"))
+                        ):
+                            engine.log(
+                                "Generation reached the token limit before completion."
+                                "Output may be truncated or sound incorrect.",
+                                "warning",
+                            )
 
                 if generated_text_parts:
                     text = " ".join(generated_text_parts)

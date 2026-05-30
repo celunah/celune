@@ -7,7 +7,9 @@ import time
 import uuid
 import socket
 import datetime
+import textwrap
 import threading
+from pathlib import Path
 from dataclasses import dataclass
 from hmac import compare_digest
 from collections import defaultdict, deque
@@ -19,8 +21,14 @@ import numpy.typing as npt
 import soundfile as sf
 from pydantic import BaseModel, Field
 from starlette.middleware.base import RequestResponseEndpoint
-from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import (
+    JSONResponse,
+    Response,
+    StreamingResponse,
+    HTMLResponse,
+    FileResponse,
+)
 
 from .constants import BASE_SR
 from . import __version__
@@ -416,8 +424,81 @@ class ActionResponse(BaseModel):
     status: str
 
 
+@api.get("/favicon.ico", include_in_schema=False)
+def favicon() -> FileResponse:
+    """Celune's favicon.ico file page.
+
+    Returns:
+        FileResponse: Celune's favicon.ico file.
+    """
+
+    return FileResponse(
+        # this is a symbolic link to the in Celune.AppDir/
+        Path(__file__).parents[1] / "resources" / "branding" / "celune.png",
+        media_type="image/png",
+    )
+
+
+@api.get("/")
+def root() -> HTMLResponse:
+    """Celune's root page.
+
+    Returns:
+        HTMLResponse: Celune's root page as HTML.
+    """
+
+    return HTMLResponse(
+        textwrap.dedent("""
+            <!DOCTYPE html>
+            <html lang="en">
+                <head>
+                    <title>Celune</title>
+                    <meta name="color-scheme" content="dark">
+                    <style>
+                        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap');
+
+                        h1, p {
+                            margin: 0.5em;
+                        }
+
+                        p {
+                            color: #baa4ff;
+                        }
+
+                        .container {
+                            display: flex;
+                            flex-direction: column;
+                            align-items: center;
+                            justify-content: center;
+                            width: 100vw;
+                            height: 100dvh;
+                        }
+
+                        body {
+                            background: #1d1826;
+                            color: #cebaff;
+                            font-family: "Outfit", sans-serif;
+                            margin: 0;
+                        }
+
+                        html {
+                            color-scheme: dark;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <h1>Nothing Usable</h1>
+                        <p>The API is functioning correctly. Please return to the app to talk to me.</p>
+                    </div>
+                </body>
+            </html>
+        """)
+    )
+
+
 @api.get("/v1", response_model=RootResponse)
-def root() -> RootResponse:
+def api_root() -> RootResponse:
     """Celune API root endpoint.
 
     Returns:

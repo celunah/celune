@@ -11,20 +11,20 @@ It was proudly made in 🇵🇱 for your listening pleasure.
 
 ## Features
 
-- Real-time speech generation pipeline
-- Distinct voice styles (Calm, Balanced, Bold, Upbeat)
-- Multiple operation modes
-- Stable long-form narration without drift
-- Native audio controls & effects (no post-processing)
-- Optimized GPU inference
-- Configurable voices via CEVOICE voice packs
+- Real-time buffered speech generation pipeline
+- Distinct default voice styles: calm, balanced, bold, upbeat
+- Multiple operation modes: frontend, API and extensions
+- Stable long-form narration with low risk of drifting
+- Native audio controls & effects via built-in DSP
+- Optimized GPU inference where possible
+- Configurable character voices via CEVOICE voice packs
 - Characters can respond back to you
 
 ## Note on development
 
 Celune is against the stance of "vibe coding" used in development.
 
-None of the 10,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
+None of the 15,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
 
 All decisions and implementations were reviewed, validated, and approved by human developers.
 
@@ -43,7 +43,7 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 
 The demonstration lines try to showcase Celune's best, but they may include minor mistakes. This is an inherent limitation with TTS models, and Celune should not be blamed for it.
 
-These examples were recorded with the default voice pack, which contains canonical Celune voices. Other voice packs may be installed by the end user, allowing for other characters to speak through Celune.
+These examples were recorded with the default voice pack, which contains canonical Celune voices. Other voice packs may be created and installed by the end user, allowing for other characters to speak through Celune.
 
 Browse the `demos` directory for demonstration content from the current version of Celune, as well as any past releases.
 
@@ -68,7 +68,7 @@ Browse the `demos` directory for demonstration content from the current version 
 > This is a sentence, 中文, 日本語, 한국어.
 > ```
 
-Samples were captured from Celune's output directory. No extra post-processing was applied.
+Samples were captured directly from Celune's output directory. No extra post-processing was applied.
 
 For details on voice production, check the VOICES.md file.
 
@@ -76,7 +76,7 @@ For details on voice production, check the VOICES.md file.
 
 Celune requires [Python](https://python.org) 3.12 or 3.13.
 
-Celune also depends on external system tools and libraries that are not available in `pip`:
+Celune also depends on external system dependencies that are not available in `pip`:
 
 - **CUDA Toolkit 12.8** - only if not using pre-built PyTorch wheels
 - **SoX (Sound eXchange)** - required for audio processing
@@ -91,7 +91,9 @@ Usage of Celune's UI requires an ANSI-capable terminal. Non-compliant terminals 
 
 The terminal should support True Color, especially when using voice packs that declare new app themes.
 
-If Rubber Band is not installed, Celune will speak at normal speed, and speed controls will be unavailable.
+Terminals not supporting True Color may look incorrect, as Textual will fall back to a lower color mode.
+
+If Rubber Band is not installed or fails to run, Celune will speak at normal speed, and speed controls will be unavailable.
 
 ## GPU requirements
 
