@@ -25,7 +25,7 @@ class VoxCPM2(CeluneBackend):
     name: Final[str] = "voxcpm2"
     uses_voice_bundles: Final[bool] = True
     chunk_rate: Final[float] = 6.25
-    max_new_tokens: Final[int] = 2048
+    max_new_tokens: Final[int] = 512
     supported_languages: Final[tuple[str, ...]] = (
         "ar",
         "my",
@@ -227,6 +227,7 @@ class VoxCPM2(CeluneBackend):
                 pending_audio: Optional[npt.NDArray[np.float32]] = None
                 pending_steps = 0
                 chunk_index = 0
+                total_steps = 0
 
                 for chunk in stream:
                     batch.append(chunk)
@@ -235,6 +236,7 @@ class VoxCPM2(CeluneBackend):
                         continue
 
                     if pending_audio is not None:
+                        total_steps += pending_steps
                         yield (
                             pending_audio,
                             BASE_SR,
@@ -242,6 +244,7 @@ class VoxCPM2(CeluneBackend):
                                 "backend": self.name,
                                 "chunk_index": chunk_index,
                                 "chunk_steps": pending_steps,
+                                "total_steps_so_far": total_steps,
                                 "is_final": False,
                             },
                         )
@@ -253,6 +256,7 @@ class VoxCPM2(CeluneBackend):
 
                 if batch:
                     if pending_audio is not None:
+                        total_steps += pending_steps
                         yield (
                             pending_audio,
                             BASE_SR,
@@ -260,11 +264,13 @@ class VoxCPM2(CeluneBackend):
                                 "backend": self.name,
                                 "chunk_index": chunk_index,
                                 "chunk_steps": len(batch),
+                                "total_steps_so_far": total_steps,
                                 "is_final": False,
                             },
                         )
                         chunk_index += 1
 
+                    total_steps += len(batch)
                     yield (
                         np.concatenate(batch),
                         BASE_SR,
@@ -272,10 +278,13 @@ class VoxCPM2(CeluneBackend):
                             "backend": self.name,
                             "chunk_index": chunk_index,
                             "chunk_steps": len(batch),
+                            "total_steps_so_far": total_steps,
                             "is_final": True,
+                            "missing_eos": total_steps >= self.max_new_tokens,
                         },
                     )
                 elif pending_audio is not None:
+                    total_steps += pending_steps
                     yield (
                         pending_audio,
                         BASE_SR,
@@ -283,7 +292,9 @@ class VoxCPM2(CeluneBackend):
                             "backend": self.name,
                             "chunk_index": chunk_index,
                             "chunk_steps": pending_steps,
+                            "total_steps_so_far": total_steps,
                             "is_final": True,
+                            "missing_eos": total_steps >= self.max_new_tokens,
                         },
                     )
 

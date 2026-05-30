@@ -603,7 +603,16 @@ def default_bundle_path() -> Path:
     Returns:
         Path: The absolute path to Celune's default voice bundle.
     """
-    return Path(__file__).resolve().parent / "voices" / "default.cevoice"
+    return Path(__file__).resolve().parent.parent / "voices" / "default.cevoice"
+
+
+def bundled_voices_dir() -> Path:
+    """Return the repository-level directory that stores bundled voice packs.
+
+    Returns:
+        Path: The absolute path to the bundled CEVOICE directory.
+    """
+    return Path(__file__).resolve().parent.parent / "voices"
 
 
 def resolve_bundle_path(bundle: Optional[Union[str, Path]] = None) -> Path:
@@ -624,7 +633,7 @@ def resolve_bundle_path(bundle: Optional[Union[str, Path]] = None) -> Path:
 
     if candidate.suffix.lower() != ".cevoice":
         candidate = candidate.with_suffix(".cevoice")
-    return Path(__file__).resolve().parent / "voices" / candidate
+    return bundled_voices_dir() / candidate
 
 
 def select_voice_bundle(bundle: Optional[Union[str, Path]] = None) -> Path:

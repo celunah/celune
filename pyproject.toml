@@ -75,7 +75,10 @@ Issues = "https://github.com/celunah/celune/issues"
 # Why does CodeRabbit think I'm uploading Celune to PyPI?
 # Her package is not standalone.
 [tool.setuptools.package-data]
-celune = ["assets/*.wav", "refs/*.wav", "refs/*.pt", "voices/*.cevoice"]
+celune = ["assets/*.wav", "refs/*.wav", "refs/*.pt"]
+
+[tool.setuptools.data-files]
+voices = ["voices/*.cevoice"]
 
 # "CUDA 13.0 does exist, but I probably should wait a little more." - she says.
 [tool.uv.sources]

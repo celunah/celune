@@ -1005,6 +1005,10 @@ class Celune:
             announced_character = announce_default_bundle(self.log)
             character = self.current_character or announced_character
             self.current_character = character
+
+            # the default pack's SHA256 hash is:
+            # 22ff70762e7f6f3e734cc62c81c286f7482de6155b2394e7a6ddec1a892f63e0
+            # please check it later, or else non-default packs named Celune will show the "default" tag
             if character == "Celune":
                 self.log(f"Current character: {character} (default)")
             else:
@@ -1015,7 +1019,10 @@ class Celune:
         vram_message = validate_vram_preset(self.config)
         if vram_message:
             self.log(vram_message, "warning")
-        self.log(f"Current VRAM preset: {self.config.get('vram', 'unknown')}")
+
+        self.log(
+            f"Current VRAM preset: {str(self.config.get('vram', 'unknown')).title()}"
+        )
 
         self.progress_callback(None, None)
         self.backend.preload_models()
@@ -1343,7 +1350,7 @@ class Celune:
                 len_tokens = token_ids.shape[1]
 
                 self.log(f"Tokens to normalize: {len_tokens}")
-                if len_tokens > 2048:
+                if len_tokens > 512:
                     self.log("Input is too long to normalize.", "warning")
                     return None
 
@@ -1351,7 +1358,7 @@ class Celune:
                     output_ids = llm.generate(  # type: ignore[operator]
                         **inputs,
                         # CeluneNorm will likely return less, unless you use up your whole context allowance
-                        max_new_tokens=2048,
+                        max_new_tokens=512,
                         do_sample=False,
                         pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
                         eos_token_id=tokenizer.eos_token_id,

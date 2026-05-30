@@ -344,6 +344,16 @@ class CEVoiceTests(TestCase):
             ],
         )
 
+    def test_named_bundle_resolution_uses_top_level_voices_directory(self) -> None:
+        """Verify bare bundle names resolve from the repository-level voices directory.
+
+        Raises:
+            AssertionError: Bundle path resolution changes unexpectedly.
+        """
+        expected = cevoice.bundled_voices_dir() / "fixture.cevoice"
+        self.assertEqual(cevoice.resolve_bundle_path("fixture"), expected)
+        self.assertEqual(cevoice.resolve_bundle_path("fixture.cevoice"), expected)
+
     def test_missing_selected_and_default_bundles_use_reference_fallback(self) -> None:
         """Verify loose refs are used only after selected and default bundles fail.
 

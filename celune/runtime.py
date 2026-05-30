@@ -78,6 +78,7 @@ def validate_runtime(
         bool: ``True`` when the runtime environment is supported and usable, otherwise ``False``.
     """
     cuda_version = torch.version.cuda
+    torch_variant = torch.__version__.split("+", maxsplit=1)[1]
 
     if sys.version_info < (3, 12) or sys.version_info >= (3, 14):
         log(
@@ -103,6 +104,12 @@ def validate_runtime(
 
     if cuda_version is None:
         log("Celune could not find a CUDA runtime.", "error")
+
+        if torch_variant == "cpu":
+            log("You currently have a CPU build of PyTorch.", "error")
+        else:
+            log("You currently have an unsupported build of PyTorch", "error")
+
         set_state("error")
         error("No CUDA runtime found")
         return False

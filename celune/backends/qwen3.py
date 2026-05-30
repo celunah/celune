@@ -23,7 +23,7 @@ class Qwen3(CeluneBackend):
 
     uses_voice_bundles: bool = True
     chunk_rate: Final[float] = 12.5
-    max_new_tokens: Final[int] = 2048
+    max_new_tokens: Final[int] = 512
 
     # setting this parameter will lock in identity, but expression may be reduced
     x_vector_only: bool = True
@@ -229,7 +229,13 @@ class Qwen3(CeluneBackend):
             )
 
             for chunk in stream:  # pylint: disable=R1737
-                yield chunk
+                audio_chunk, sample_rate, timing = chunk
+                if timing is not None:
+                    timing = dict(timing)
+                    total_steps = timing.get("total_steps_so_far")
+                    if timing.get("is_final") and isinstance(total_steps, int):
+                        timing["missing_eos"] = total_steps >= self.max_new_tokens
+                yield audio_chunk, sample_rate, timing
         finally:
             if stream is not None and hasattr(stream, "close"):
                 with contextlib.suppress(Exception):

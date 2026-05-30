@@ -37,13 +37,17 @@ These scripts are what Celune says in the reference audio. They were modified fr
 
 > Calm:
 > `My name is... Celune... It is so... quiet.`
+>
 > Neutral:
 > `My name is Celune, pronounced Celune. It is a pleasure to meet you.`
+>
 > Energetic:
 > `My name is Celune! Let's do this, we have to get it done!`
+>
 > Upbeat:
 > `Hehehe... Hi, I'm Celune. Look, I have something to tell... might as well make it fun. Shall we?`
-> This sample includes leading laughter.
+>
+> ℹ️ This sample includes leading laughter.
 
 ## Reference prompts
 
@@ -51,10 +55,13 @@ These prompts were used to steer direction of the voice during auditioning.
 
 > Calm:
 > `A female voice with a soft, velvety, and hushed texture. A slow, sophisticated blend with focused vocal control.`
+>
 > Neutral:
 > `A female voice with a warm, steady, and slightly resonant texture. Calm and articulate with clear, grounded presence.`
+>
 > Energetic:
 > `A female voice with a rich, resonant, and decisive texture. Confident, professional, and clear with a rhythmic drive.`
+>
 > Upbeat:
 > `A female voice with a bright, warm, and expressive texture. Upbeat, witty, and clear with a conversational flow and playful cadence.`
 
