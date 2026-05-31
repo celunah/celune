@@ -4,13 +4,14 @@
 import tempfile
 from pathlib import Path
 from collections.abc import Iterator, Mapping
-from typing import Any, Callable, Optional, Final, Protocol, cast
+from typing import Callable, Optional, Final, Protocol, cast
 
 import yaml
 import torch
 import numpy as np
 import numpy.typing as npt
 from pocket_tts import TTSModel
+from huggingface_hub import snapshot_download
 
 from .base import CeluneBackend, cached_hf_snapshot_path, BackendModel
 from ..cevoice import default_loader
@@ -71,13 +72,22 @@ class Mini(CeluneBackend):
     def __init__(self, log: Callable[[str, str], None]) -> None:
         super().__init__(log=log)
         self._validate_refs()
-        self._voice_states: dict[str, Any] = {}
+        self._voice_states: dict[str, MiniPromptState] = {}
         self._generated_config_path: Optional[Path] = None
 
     @staticmethod
-    def _resolve_language_name() -> str:
+    def _resolve_language_name(lang: str = "en") -> str:
         """Return the Pocket TTS language variant expected for this backend."""
-        return "english"
+        code_to_model: Final[Mapping[str, str]] = {
+            "en": "english",
+            "fr": "french",
+            "de": "german",
+            "it": "italian",
+            "pt": "portuguese",
+            "es": "spanish",
+        }
+
+        return code_to_model[lang]
 
     def _resolve_snapshot_language_dir(self, snapshot_path: str) -> Path:
         """Return the model language directory from a local Pocket TTS snapshot."""
@@ -135,7 +145,7 @@ class Mini(CeluneBackend):
             return loader.materialize(voice, "wav")
         return self._reference_wave_path(voice)
 
-    def _get_voice_state(self, model: MiniModel, voice: str) -> Any:
+    def _get_voice_state(self, model: MiniModel, voice: str) -> MiniPromptState:
         """Return a cached Pocket TTS voice state for the selected voice."""
         if voice in self._voice_states:
             return self._voice_states[voice]
@@ -179,11 +189,8 @@ class Mini(CeluneBackend):
         Returns:
             Optional[BackendModel]: A Celune-compatible Pocket TTS model object.
         """
-        del kwargs
         available, snapshot_path = self.model_is_available_locally(model_id)
         if not available or snapshot_path is None:
-            from huggingface_hub import snapshot_download
-
             self.log("Downloading TTS model...", "info")
             snapshot_path = snapshot_download(repo_id=model_id)
 
