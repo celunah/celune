@@ -226,7 +226,7 @@ class Mini(CeluneBackend):
         self._apply_seed()
         mini_model = cast(MiniModel, model)
         voice_state = self._get_voice_state(mini_model, voice)
-        chunks_per_batch = max(1, round(chunk_size / (1 / self.chunk_rate)))
+        chunks_per_batch = max(1, round(chunk_size * self.chunk_rate))
 
         batch: list[npt.NDArray[np.float32]] = []
         pending_audio: Optional[npt.NDArray[np.float32]] = None
@@ -235,7 +235,7 @@ class Mini(CeluneBackend):
         total_steps = 0
 
         for chunk in mini_model.generate_audio_stream(voice_state, text):
-            chunk_array = chunk.detach().cpu().float().numpy().astype(np.float32)
+            chunk_array = chunk.detach().cpu().float().numpy()
             batch.append(chunk_array)
 
             if len(batch) < chunks_per_batch:
