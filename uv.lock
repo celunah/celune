@@ -397,7 +397,7 @@ requires-dist = [
     { name = "numpy" },
     { name = "openrgb-python" },
     { name = "pedalboard" },
-    { name = "pocket-tts" },
+    { name = "pocket-tts", specifier = ">=2.1.0" },
     { name = "psutil" },
     { name = "pydantic", marker = "extra == 'api'" },
     { name = "pyrubberband" },

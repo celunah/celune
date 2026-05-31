@@ -18,7 +18,7 @@ faster-qwen3-tts>=0.2.4
 voxcpm>=2.0.0,<2.1.0
 # Pocket TTS is a new backend added in version 4.0.0, that allows Celune to sound the part and use up very little
 # memory, just under 200 MB!
-pocket-tts
+pocket-tts>=2.1.0
 # If not installed, Hugging Face falls back to the older Git LFS way of downloading models.
 hf-xet
 # Qwen3 does not support newer versions of Hugging Face libraries at this time.
