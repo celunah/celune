@@ -81,11 +81,43 @@ class RuntimeTests(TestCase):
                     False,
                     lambda exc, dev: str(exc),
                     False,
+                    "qwen3",
                 ),
                 False,
             )
         self.assertEqual(errors, ["No supported backend found"])
         self.assertEqual(states, ["error"])
+
+    def test_validate_runtime_allows_cpu_for_mini_backend(self) -> None:
+        """Verify CPU-only environments remain usable with the mini backend."""
+        logs: list[tuple[str, str]] = []
+        errors: list[str] = []
+        states: list[str] = []
+
+        def log(msg: str, severity: str) -> None:
+            logs.append((msg, severity))
+
+        with (
+            mock.patch("celune.runtime.sys.version_info", (3, 12, 0)),
+            mock.patch(
+                "celune.runtime.check_supported_backends", return_value=("CPU", False)
+            ),
+        ):
+            self.assertEqual(
+                runtime.validate_runtime(
+                    log,
+                    errors.append,
+                    states.append,
+                    False,
+                    lambda exc, dev: str(exc),
+                    False,
+                    "mini",
+                ),
+                True,
+            )
+
+        self.assertEqual(errors, [])
+        self.assertEqual(states, [])
 
 
 class UICommandTests(TestCase):

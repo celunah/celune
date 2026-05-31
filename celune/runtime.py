@@ -63,6 +63,7 @@ def validate_runtime(
     glow_connect_failed: bool,
     format_error: Callable[[Exception, bool], str],
     dev: bool,
+    backend_name: str = "qwen3",
 ) -> bool:
     """Validate Celune's Python, CUDA, and GPU environment.
 
@@ -73,6 +74,7 @@ def validate_runtime(
         glow_connect_failed: Whether the OpenRGB glow backend failed to connect.
         format_error: Error formatter used for exception messages.
         dev: Whether developer mode is enabled.
+        backend_name: The active Celune backend name selected for this session.
 
     Returns:
         bool: ``True`` when the runtime environment is supported and usable, otherwise ``False``.
@@ -96,11 +98,24 @@ def validate_runtime(
     backend, usable = check_supported_backends()
     log(f"Current system supports {backend} execution.", "info")
 
+    allow_cpu_mini = backend == "CPU" and backend_name.strip().lower() == "mini"
+    if allow_cpu_mini:
+        log("Proceeding with startup, Celune Mini is selected.", "info")
+        usable = True
+
     if not usable:
         log(f"Celune does not currently support {backend} execution.", "error")
         set_state("error")
         error("No supported backend found")
         return False
+
+    if allow_cpu_mini:
+        if glow_connect_failed:
+            log(
+                "Cannot connect to OpenRGB. Presence features will be disabled.",
+                "warning",
+            )
+        return True
 
     if cuda_version is None:
         log("Celune could not find a CUDA runtime.", "error")

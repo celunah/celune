@@ -824,6 +824,12 @@ class CeluneUI(App):
         if not text:
             return False
 
+        if self.celune.cur_state == "waking":
+            self._cancel_sleep_timer()
+            self.safe_status("Waking up")
+            self.change_input_state(locked=True)
+            return True
+
         if self.celune.sleeping:
             self._cancel_sleep_timer()
             self.safe_status("Waking up")

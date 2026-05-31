@@ -22,9 +22,11 @@ dependencies = [
     # If it did, Celune would have a problem operating.
     "faster-qwen3-tts>=0.2.4",
     # If you want Celune to use the alternative VoxCPM2-based backend, install this package.
-    # Note: This will fall back to voice cloning. If you want to use native Celune voices, use the Qwen3 backend.
     # This backend may not be available on some VRAM presets. Refer to Celune's default configuration for details.
     "voxcpm>=2.0.2",
+    # Pocket TTS is a new backend added in version 4.0.0, that allows Celune to sound the part and use up very little
+    # memory, just under 200 MB!
+    "pocket-tts",
     # If not installed, Hugging Face falls back to the older Git LFS way of downloading models.
     "hf-xet",
     "accelerate",

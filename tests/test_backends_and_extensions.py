@@ -56,6 +56,25 @@ class BackendTests(TestCase):
         with self.assertRaisesRegex(TypeError, "backend_name"):
             resolve_backend(123)  # type: ignore[arg-type]
 
+    def test_resolve_backend_accepts_mini_backend_name(self) -> None:
+        """Verify the Pocket TTS backend resolves through the backend registry."""
+
+        class StubTTSModel:
+            """Import-time stand-in for the Pocket TTS package class."""
+
+        with mock.patch.dict(
+            sys.modules,
+            {"pocket_tts": SimpleNamespace(TTSModel=StubTTSModel)},
+        ):
+            mini = importlib.import_module("celune.backends.mini")
+            mini_cls = mini.Mini
+
+            with mock.patch.object(mini_cls, "_validate_refs"):
+                backend = resolve_backend("mini")
+
+        self.assertIsInstance(backend, mini_cls)
+        self.assertEqual(backend.name, "mini")
+
     def test_voxcpm2_uses_pack_cfg_scale_when_present(self) -> None:
         """Verify CEVOICE can override VoxCPM2's per-voice CFG scale."""
 
