@@ -104,7 +104,7 @@ def resolve_vram_preset(
     if tier == "low":
         return VramPreset(
             tier="low",
-            default_backend="qwen3",
+            default_backend="mini",
             allow_voxcpm2=False,
             qwen3_clone_model_id=QWEN3_0_6B_MODEL,
             persona_enabled=False,
@@ -165,7 +165,7 @@ def resolve_backend_name(
     normalized = requested_backend.strip().lower()
     if normalized == "voxcpm2" and not preset.allow_voxcpm2:
         return preset.default_backend
-    if normalized in {"qwen3", "voxcpm2"}:
+    if normalized in {"qwen3", "voxcpm2", "mini"}:
         return normalized
     return preset.default_backend
 
@@ -190,6 +190,8 @@ def backend_allowed(
         return True
     if normalized == "voxcpm2":
         return preset.allow_voxcpm2
+    if normalized == "mini":
+        return True
     if normalized == "fake":  # NOTE: only for testing!
         return True
     return False

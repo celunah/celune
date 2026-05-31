@@ -19,11 +19,11 @@ import soundfile as sf
 from celune.celune import Celune
 from celune.utils import discard
 from celune import pipeline
-from celune.persona.memory import PersonaMemoryStore
 from celune.persona.prompts import PersonaPromptBuilder
 from celune.constants import JSON, JSONSerializable, PipelineStates
 from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
 from tests.support import FakeStream, make_pipeline_engine
+from tests.test_persona_memory import StubEmbeddingMemoryStore
 
 
 class PipelineTests(TestCase):
@@ -375,7 +375,10 @@ class PipelineTests(TestCase):
             }
             engine.current_character = "Fixture"
             engine.current_voice = "balanced"
-            PersonaMemoryStore(storage_dir=temp_dir).remember(
+            store = StubEmbeddingMemoryStore(storage_dir=temp_dir)
+            store.return_none = True
+            engine.persona_memory_store = store
+            store.remember(
                 "Fixture",
                 "my test word is moonlight",
                 explicit=True,
@@ -654,6 +657,9 @@ class PipelineTests(TestCase):
             engine.current_voice = "balanced"
             engine.vision = FakeVision()
             engine.dev = False
+            store = StubEmbeddingMemoryStore(storage_dir=temp_dir)
+            store.return_none = True
+            engine.persona_memory_store = store
 
             with mock.patch(
                 "celune.pipeline.detect_language",
@@ -672,7 +678,6 @@ class PipelineTests(TestCase):
                     True,
                 )
 
-            store = PersonaMemoryStore(storage_dir=temp_dir)
             retrieved = store.retrieve("Celune", "what is my test word?")
             payload = cast(JSON, engine.vision.payload)
             system_prompt = cast(str, payload["system"])

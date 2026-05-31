@@ -95,7 +95,8 @@ class PersonaMemoryTests(TestCase):
     def test_memory_retrieval_is_character_specific(self) -> None:
         """Verify one character cannot read another character's memories."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            store = PersonaMemoryStore(storage_dir=temp_dir)
+            store = StubEmbeddingMemoryStore(storage_dir=temp_dir)
+            store.return_none = True
             store.remember("Celune", "my test word is moonlight", explicit=True)
             store.remember("Mirelle", "my test word is starlight", explicit=True)
 
@@ -123,7 +124,8 @@ class PersonaMemoryTests(TestCase):
     def test_retrieval_updates_last_used_timestamp(self) -> None:
         """Verify successful retrieval refreshes long-term memory usage time."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            store = PersonaMemoryStore(storage_dir=temp_dir)
+            store = StubEmbeddingMemoryStore(storage_dir=temp_dir)
+            store.return_none = True
             first = store.remember("Celune", "my project is the lighthouse refactor")
             assert first is not None
 

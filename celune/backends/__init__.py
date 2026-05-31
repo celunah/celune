@@ -10,6 +10,7 @@ from .base import BackendModel, CeluneBackend
 __all__ = ["BackendModel", "CeluneBackend", "get_version", "resolve_backend"]
 
 BACKENDS = {
+    "mini": ("celune.backends.mini", "Mini"),
     "qwen3": ("celune.backends.qwen3", "Qwen3"),
     "voxcpm2": ("celune.backends.voxcpm2", "VoxCPM2"),
 }

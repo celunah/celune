@@ -4,6 +4,7 @@
 #
 # qwen3 = faster, less expressive
 # voxcpm2 = slower, high quality
+# mini = much faster, and just as good
 backend: null
 
 # Qwen3 TTS settings
@@ -42,9 +43,10 @@ theme: dark
 use_normalizer: false
 
 # VRAM target settings
-# we recommend medium as a safe baseline for low VRAM users
+# we recommend choosing medium as a safe baseline for low VRAM users
+# the sane choice for users wanting to use Persona is the high preset
 #
-# low (6GB) - Qwen3 0.6B + normalizer CPU (caution: may generate bad outputs more often)
+# low (CPU/6GB) - Celune Mini (Pocket TTS) / Qwen3 0.6B+ normalizer CPU (caution: choosing Qwen may harm outputs)
 # medium (8GB) - Qwen3 1.7B + normalizer CPU
 # high (12GB) - Qwen3 1.7B / VoxCPM2 + Persona 4-bit + normalizer CPU
 # xhigh (16GB+) - everything allowed + Persona 8-bit + normalizer GPU

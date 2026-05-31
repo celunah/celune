@@ -58,11 +58,8 @@ class CeluneCoreTests(TestCase):
             self.addCleanup(self._close_celune, celune)
 
         resolve.assert_called_once()
-        self.assertEqual(resolve.call_args.args[0], "qwen3")
-        self.assertEqual(
-            resolve.call_args.kwargs["clone_model_id"],
-            "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-        )
+        self.assertEqual(resolve.call_args.args[0], "mini")
+        self.assertNotIn("clone_model_id", resolve.call_args.kwargs)
         celune.close()
 
         celune = self._make_celune({})
@@ -249,8 +246,8 @@ class CeluneCoreTests(TestCase):
             self.assertEqual(persona_quantization({"vram": "high"}), "4bit")
             self.assertEqual(persona_quantization({"vram": "xhigh"}), "8bit")
 
-    def test_low_vram_restricts_backend_to_qwen3(self) -> None:
-        """Verify low VRAM falls back to the supported Qwen3 preset."""
+    def test_low_vram_restricts_heavy_backends_to_mini(self) -> None:
+        """Verify low VRAM falls back to the supported mini preset."""
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
@@ -266,7 +263,7 @@ class CeluneCoreTests(TestCase):
             )
             self.addCleanup(self._close_celune, celune)
 
-        self.assertEqual(resolve.call_args.args[0], "qwen3")
+        self.assertEqual(resolve.call_args.args[0], "mini")
 
     def test_voice_prompt_support_tracks_qwen3_0_6b_capability(self) -> None:
         """Verify voice prompts are disabled for the low-tier Qwen3 clone model."""
@@ -296,6 +293,25 @@ class CeluneCoreTests(TestCase):
             self.assertRaisesRegex(BackendError, "not available for VRAM tier 'low'"),
         ):
             Celune(config={"vram": "low"}, tts_backend=HeavyBackend)
+
+    def test_low_vram_rejects_qwen3_instances_with_invalid_model_size(self) -> None:
+        """Verify prebuilt Qwen3 instances cannot bypass the low-tier 0.6B lock."""
+        with mock.patch.object(Qwen3, "_validate_refs"):
+            backend = Qwen3(
+                log=lambda _msg, _severity="info": None,
+                clone_model_id=Qwen3.clone_model,
+            )
+
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+            self.assertRaisesRegex(
+                BackendError,
+                "backend 'qwen3' is not available with model",
+            ),
+        ):
+            Celune(config={"vram": "low"}, tts_backend=backend)
 
     def test_think_reconnects_to_persona_before_speech_fallback(self) -> None:
         """Verify stale Celune instances reconnect to Persona on the next think call.
@@ -581,6 +597,60 @@ class CeluneCoreTests(TestCase):
         with mock.patch("celune.celune.resolve_backend", return_value=failing_backend):
             self.assertEqual(celune.wake_from_sleep(), False)
         self.assertEqual(getattr(celune.glow, "fatal_called"), True)
+
+    def test_concurrent_wake_requests_only_recreate_backend_once(self) -> None:
+        """Verify repeated wake requests cannot duplicate backend recreation."""
+        celune = self._make_celune(
+            {
+                "vram": "high",
+                "sleep": {
+                    "enabled": True,
+                    "timeout": 1,
+                    "unload": {"persona": False, "normalizer": False, "tts": True},
+                },
+            }
+        )
+        celune.sleeping = True
+        celune.loaded = False
+        celune.cur_state = "sleeping"
+        celune.current_voice = "balanced"
+        celune.voices = ("balanced",)
+        celune.model = None
+        celune._warmup = mock.Mock(return_value=True)
+
+        load_started = threading.Event()
+        release_load = threading.Event()
+        recreated_backend = FakeBackend(log=lambda _msg, _severity="info": None)
+
+        def blocking_load_model(model_id: str) -> dict[str, object]:
+            load_started.set()
+            self.assertEqual(release_load.wait(timeout=1), True)
+            return {"model_id": model_id, "kwargs": {}}
+
+        recreated_backend.load_model = mock.Mock(side_effect=blocking_load_model)
+
+        with mock.patch(
+            "celune.celune.resolve_backend", return_value=recreated_backend
+        ) as resolve_backend:
+            results: list[bool] = []
+
+            def wake() -> None:
+                results.append(celune.wake_from_sleep())
+
+            first = threading.Thread(target=wake)
+            second = threading.Thread(target=wake)
+            first.start()
+            self.assertEqual(load_started.wait(timeout=1), True)
+            second.start()
+            release_load.set()
+            first.join(timeout=1)
+            second.join(timeout=1)
+
+        self.assertEqual(results, [True, True])
+        self.assertEqual(resolve_backend.call_count, 1)
+        recreated_backend.load_model.assert_called_once_with("fake/balanced")
+        self.assertEqual(celune.sleeping, False)
+        self.assertEqual(celune.cur_state, "idle")
 
     def test_raise_warmup_error_preserves_original_cause(self) -> None:
         """Verify WarmupError keeps the underlying warmup failure as its cause."""

@@ -34,6 +34,7 @@ from .constants import JSONSerializable, NORMALIZER_MODEL_ID, PipelineStates
 from .utils import format_number, format_error, discard, is_port_usable, custom_assert
 from .vram import (
     QWEN3_0_6B_MODEL,
+    VramPreset,
     backend_allowed,
     resolve_backend_name,
     resolve_vram_preset,
@@ -310,6 +311,7 @@ class Celune:
                 log=self.log_callback,
                 **backend_kwargs,
             )
+            self._validate_backend_against_preset(self.backend, preset)
             self.tts_backend = self.backend.name
         except ValueError as e:
             raise BackendError(str(e)) from e
@@ -393,6 +395,7 @@ class Celune:
         self._playback_done = threading.Event()
         self._playback_done.set()
         self._say_lock = threading.Lock()
+        self._wake_lock = threading.Lock()
         self._model_lock = threading.RLock()
 
         self.cur_state = "init"
@@ -441,6 +444,21 @@ class Celune:
     @staticmethod
     def _noop_progress(progress: Optional[float], total: Optional[float]) -> None:
         """Discard a progress callback."""
+
+    @staticmethod
+    def _validate_backend_against_preset(
+        backend: CeluneBackend,
+        preset: VramPreset,
+    ) -> None:
+        """Reject backend instances that bypass preset-specific runtime limits."""
+        if (
+            isinstance(backend, Qwen3)
+            and backend.clone_model_id != preset.qwen3_clone_model_id
+        ):
+            raise BackendError(
+                f"backend '{backend.name}' is not available with model "
+                f"'{backend.clone_model_id}' for VRAM tier '{preset.tier}'"
+            )
 
     @staticmethod
     def _clear_queue(q: queue.Queue) -> None:
@@ -633,72 +651,73 @@ class Celune:
             NotAvailableError: Celune has no valid model ID to reload after waking up.
             WarmupError: Celune cannot warm up after waking up.
         """
-        if not self.sleeping:
-            return True
+        with self._wake_lock:
+            if not self.sleeping:
+                return True
 
-        _, _, unload = self._sleep_config()
-        self.model_ready.clear()
-        self.status_callback("Waking up")
-        self.progress_callback(None, None)
-        self.cur_state = "waking"
+            _, _, unload = self._sleep_config()
+            self.model_ready.clear()
+            self.status_callback("Waking up")
+            self.progress_callback(None, None)
+            self.cur_state = "waking"
 
-        try:
-            with self._model_lock:
-                active_voice = self.current_voice or (
-                    self.voices[0] if self.voices else None
-                )
-                if active_voice is None:
-                    raise NotAvailableError("cannot wake without an active voice")
+            try:
+                with self._model_lock:
+                    active_voice = self.current_voice or (
+                        self.voices[0] if self.voices else None
+                    )
+                    if active_voice is None:
+                        raise NotAvailableError("cannot wake without an active voice")
 
-                if unload["tts"] or self.model is None:
-                    if unload["tts"] and self._recreate_tts_backend():
-                        self.log_dev("[SLEEP] Recreated TTS backend")
-                    model_id = self.backend.model_id_for_voice(active_voice)
-                    self.log_dev(f"[SLEEP] Loading model: {model_id}")
-                    self.model = self.backend.load_model(model_id)
-                    self.model_name = model_id
-                    if not self._warmup():
-                        self._raise_warmup_error("warmup failed after sleep")
+                    if unload["tts"] or self.model is None:
+                        if unload["tts"] and self._recreate_tts_backend():
+                            self.log_dev("[SLEEP] Recreated TTS backend")
+                        model_id = self.backend.model_id_for_voice(active_voice)
+                        self.log_dev(f"[SLEEP] Loading model: {model_id}")
+                        self.model = self.backend.load_model(model_id)
+                        self.model_name = model_id
+                        if not self._warmup():
+                            self._raise_warmup_error("warmup failed after sleep")
 
-                if unload["normalizer"] and self.use_normalization:
-                    self.load_normalizer()
+                    if unload["normalizer"] and self.use_normalization:
+                        self.load_normalizer()
 
-                if unload["persona"] and persona_enabled(self.config):
-                    self.vision = self._persona_conn()
-                    if self.vision is not None:
-                        try:
-                            self.vision.load(
-                                persona_model_id(self.config),
-                                persona_quantization(self.config),
-                            )
-                        except Exception as e:
-                            self.log("Persona not initialized.", "warning")
-                            self.log("Continuing in speech-only mode.", "warning")
-                            self.log(format_error(e, self.dev), "warning")
-                            self.vision.close()
-                            self.vision = None
+                    if unload["persona"] and persona_enabled(self.config):
+                        self.vision = self._persona_conn()
+                        if self.vision is not None:
+                            try:
+                                self.vision.load(
+                                    persona_model_id(self.config),
+                                    persona_quantization(self.config),
+                                )
+                            except Exception as e:
+                                self.log("Persona not initialized.", "warning")
+                                self.log("Continuing in speech-only mode.", "warning")
+                                self.log(format_error(e, self.dev), "warning")
+                                self.vision.close()
+                                self.vision = None
 
-                self.loaded = True
-                self.sleeping = False
-                self.cur_state = "idle"
-                self.glow.wake()
+                    self.loaded = True
+                    self.sleeping = False
+                    self.cur_state = "idle"
+                    self.glow.wake()
 
-            self.progress_callback(1, 1)
-            self.status_callback("Idle")
-            self.change_input_state_callback(locked=False)
-            self.change_voice_lock_state_callback(locked=len(self.voices) < 2)
-            return True
-        except Exception as e:
-            self.loaded = False
-            self.log(f"[WAKE ERROR] {format_error(e, self.dev)}", "error")
-            self.glow.fatal()
-            self.cur_state = "error"
-            self.status_callback("Celune could not wake", "error")
-            self.progress_callback(0, 1)
-            self.error_callback("Celune could not wake")
-            return False
-        finally:
-            self.model_ready.set()
+                self.progress_callback(1, 1)
+                self.status_callback("Idle")
+                self.change_input_state_callback(locked=False)
+                self.change_voice_lock_state_callback(locked=len(self.voices) < 2)
+                return True
+            except Exception as e:
+                self.loaded = False
+                self.log(f"[WAKE ERROR] {format_error(e, self.dev)}", "error")
+                self.glow.fatal()
+                self.cur_state = "error"
+                self.status_callback("Celune could not wake", "error")
+                self.progress_callback(0, 1)
+                self.error_callback("Celune could not wake")
+                return False
+            finally:
+                self.model_ready.set()
 
     def set_voices(self, voices: tuple[str, ...]) -> None:
         """Configure Celune's voice information.
@@ -1074,6 +1093,7 @@ class Celune:
             glow_connect_failed=self.glow.connect_failed,
             format_error=format_error,
             dev=self.dev,
+            backend_name=self.backend.name,
         ):
             self.glow.fatal()
             return False
