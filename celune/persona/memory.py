@@ -13,6 +13,9 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Optional, Union, cast
 
+import torch
+import torch.nn.functional as f
+from transformers import AutoModel, AutoTokenizer
 import numpy as np
 import numpy.typing as npt
 
@@ -55,7 +58,7 @@ _STOPWORDS = {
     "you",
 }
 type EmbeddingVector = npt.NDArray[np.float32]
-type _EmbeddingBackend = tuple["PreTrainedTokenizerBase", "PreTrainedModel"]
+type _EmbeddingBackend = tuple[PreTrainedTokenizerBase, PreTrainedModel]
 
 _EMBEDDING_BACKENDS: dict[str, _EmbeddingBackend] = {}
 _FAILED_EMBEDDING_MODELS: set[str] = set()
@@ -118,14 +121,11 @@ def _load_transformer_text_embedder(model_name: str) -> Optional[_EmbeddingBacke
         return _EMBEDDING_BACKENDS[model_name]
 
     try:
-        import torch
-        from transformers import AutoModel, AutoTokenizer
-
         tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
         model = AutoModel.from_pretrained(model_name, local_files_only=True)
         model.eval()
         model.to(torch.device("cpu"))
-    except Exception:
+    except (RuntimeError, AssertionError, ValueError):
         _FAILED_EMBEDDING_MODELS.add(model_name)
         return None
 
@@ -145,9 +145,6 @@ def _compute_text_embeddings(
 
     tokenizer, model = backend
     try:
-        import torch
-        from torch.nn import functional
-
         encoded = tokenizer(
             list(texts),
             padding=True,
@@ -160,10 +157,10 @@ def _compute_text_embeddings(
         attention_mask = cast(torch.Tensor, encoded["attention_mask"])
         attention = attention_mask.unsqueeze(-1).to(hidden.dtype)
         pooled = (hidden * attention).sum(dim=1) / attention.sum(dim=1).clamp(min=1)
-        normalized = functional.normalize(pooled, p=2, dim=1)
+        normalized = f.normalize(pooled, p=2, dim=1)
         array = normalized.cpu().numpy().astype(np.float32)
         return [cast(EmbeddingVector, row) for row in array]
-    except Exception:
+    except (RuntimeError, AssertionError, ValueError):
         _FAILED_EMBEDDING_MODELS.add(model_name)
         _EMBEDDING_BACKENDS.pop(model_name, None)
         return None
@@ -205,7 +202,7 @@ class MemoryRecord:
     last_used_at: str
 
     @staticmethod
-    def create(content: str, importance: int, explicit: bool) -> "MemoryRecord":
+    def create(content: str, importance: int, explicit: bool) -> MemoryRecord:
         """Construct one new memory record.
 
         Args:

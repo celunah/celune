@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Color utility helpers."""
 
-from __future__ import annotations
-
 import random
 import colorsys
 from typing import Final, Optional, cast

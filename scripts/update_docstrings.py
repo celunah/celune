@@ -1,4 +1,5 @@
-from __future__ import annotations
+# SPDX-License-Identifier: MIT
+"""Recursively populate and convert docstrings to a unified format."""
 
 import re
 import ast

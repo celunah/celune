@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Shared Persona runtime helpers for Celune-managed generation."""
 
-from __future__ import annotations
-
 import os
 import gc
 import threading

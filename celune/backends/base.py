@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Unified backend abstractions for Celune."""
 
-from __future__ import annotations
-
 import os
 import gc
 import glob

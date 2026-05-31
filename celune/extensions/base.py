@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Celune's extension annotations and classes."""
 
-from __future__ import annotations
-
 from abc import ABC
 from dataclasses import dataclass, field
 from typing import Protocol, Optional, runtime_checkable

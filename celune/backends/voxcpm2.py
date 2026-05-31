@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 """VoxCPM2 backend implementation for Celune."""
 
-from __future__ import annotations
-
 import os
 import contextlib
 from collections.abc import Iterator

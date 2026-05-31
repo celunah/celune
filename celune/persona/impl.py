@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Celune-managed Persona runtime helpers."""
 
-from __future__ import annotations
-
 import io
 import contextlib
 from collections.abc import Mapping, Iterator

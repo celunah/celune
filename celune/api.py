@@ -13,7 +13,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from hmac import compare_digest
 from collections import defaultdict, deque
-from typing import TYPE_CHECKING, Callable, Iterator, Optional, Union
+from typing import Callable, Iterator, Optional, Union
 
 import uvicorn
 import numpy as np
@@ -32,12 +32,10 @@ from fastapi.responses import (
 
 from .constants import BASE_SR
 from . import __version__
+from .celune import Celune
 from .utils import format_error
 from .dsp import _resample_audio
 from .pipeline import SpeechStreamQueue
-
-if TYPE_CHECKING:
-    from .celune import Celune
 
 api = FastAPI(title="CeluneAPI")
 bound_celune: Optional["Celune"] = None
@@ -220,7 +218,7 @@ async def api_security(
     return await call_next(request)
 
 
-def bind_celune(celune: "Celune") -> None:
+def bind_celune(celune: Celune) -> None:
     """Bind the running Celune instance to API routes.
 
     Args:
@@ -230,7 +228,7 @@ def bind_celune(celune: "Celune") -> None:
     bound_celune = celune
 
 
-def require_celune() -> "Celune":
+def require_celune() -> Celune:
     """Return the bound Celune instance or fail the request.
 
     Returns:
@@ -791,7 +789,7 @@ def run_api(
 
 
 def start_api(
-    celune: "Celune",
+    celune: Celune,
     host: Optional[str] = None,
     port: int = 2060,
     token: Optional[str] = None,
