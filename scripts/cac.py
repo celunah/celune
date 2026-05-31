@@ -1,6 +1,5 @@
-"""Create a CEVOICE pack for use in Celune."""
-
-from __future__ import annotations
+# SPDX-License-Identifier: MIT
+"""Create a character pack for use in Celune."""
 
 import sys
 from pathlib import Path
@@ -402,7 +401,7 @@ def wizard() -> None:
         print(f"Error: {error}")
         raise SystemExit(1) from error
 
-    print(f"Saved CEVOICE pack to {output_path}")
+    print(f"Saved voice pack to {output_path}")
 
 
 if __name__ == "__main__":

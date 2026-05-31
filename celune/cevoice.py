@@ -47,7 +47,7 @@ class CEVoice:
     payload_offset: int
 
     @classmethod
-    def open(cls, path: Union[str, Path]) -> "CEVoice":
+    def open(cls, path: Union[str, Path]) -> CEVoice:
         """Parse and validate a CEVOICE package.
 
         Args:

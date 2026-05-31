@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 """VRAM preset resolution helpers for Celune."""
 
-from __future__ import annotations
-
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass

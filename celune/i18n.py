@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Celune internationalization stubs."""
 
-from __future__ import annotations
-
 import os
 import ctypes
 import contextlib

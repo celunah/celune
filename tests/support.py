@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Lightweight test fakes for Celune's unit test suite."""
 
+from __future__ import annotations
+
 import queue
 import threading
 from unittest import mock

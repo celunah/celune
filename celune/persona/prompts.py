@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Structured prompt building for the Persona system."""
 
-from __future__ import annotations
-
 import textwrap
 from dataclasses import dataclass, field
 

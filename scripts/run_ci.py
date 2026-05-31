@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Run CI automatically."""
 
 import sys

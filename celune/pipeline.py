@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Speech pipeline helpers for Celune."""
 
+from __future__ import annotations
+
 import os
 import re
 import json
@@ -168,7 +170,7 @@ def _is_json_value(value: JSONSerializable) -> bool:
 
 
 def _celune_metadata_payload(
-    engine: "Celune",
+    engine: Celune,
     *,
     text: str,
     display_text: str,
@@ -349,7 +351,7 @@ def _write_flac_metadata(path: str, tags: JSON) -> None:
 
 
 def _write_celune_flac(
-    engine: "Celune",
+    engine: Celune,
     path: str,
     audio: npt.NDArray[np.float32],
     sample_rate: int,
@@ -408,7 +410,7 @@ def clear_queue(q: queue.Queue) -> None:
         pass
 
 
-def log_first_playback(engine: "Celune", timing: Optional[SpeechTiming]) -> None:
+def log_first_playback(engine: Celune, timing: Optional[SpeechTiming]) -> None:
     """Log time to first playback for a queued speech timing object.
 
     Args:
@@ -436,7 +438,7 @@ def log_first_playback(engine: "Celune", timing: Optional[SpeechTiming]) -> None
     engine.log(f"TTFP: {format_number(elapsed, 2)} seconds")
 
 
-def close_stream(engine: "Celune", abort: bool = False) -> None:
+def close_stream(engine: Celune, abort: bool = False) -> None:
     """Close the current audio stream if one exists.
 
     Args:
@@ -459,7 +461,7 @@ def close_stream(engine: "Celune", abort: bool = False) -> None:
     engine._current_sr = None
 
 
-def force_stop_speech(engine: "Celune") -> bool:
+def force_stop_speech(engine: Celune) -> bool:
     """Forcefully stop Celune from speaking.
 
     Args:
@@ -487,7 +489,7 @@ def force_stop_speech(engine: "Celune") -> bool:
     return True
 
 
-def acquire_pipeline(engine: "Celune", action: str) -> bool:
+def acquire_pipeline(engine: Celune, action: str) -> bool:
     """Atomically claim Celune's shared playback pipeline.
 
     Args:
@@ -512,7 +514,7 @@ def acquire_pipeline(engine: "Celune", action: str) -> bool:
         return True
 
 
-def release_pipeline(engine: "Celune") -> None:
+def release_pipeline(engine: Celune) -> None:
     """Release Celune's shared playback pipeline.
 
     Args:
@@ -525,7 +527,7 @@ def release_pipeline(engine: "Celune") -> None:
         engine.log_dev("[LOCK] released")
 
 
-def _config_text(engine: "Celune", key: str, default: str) -> str:
+def _config_text(engine: Celune, key: str, default: str) -> str:
     """Read a string configuration value with a fallback."""
     value = engine.config.get(key)
     if isinstance(value, str) and value.strip():
@@ -534,7 +536,7 @@ def _config_text(engine: "Celune", key: str, default: str) -> str:
     return default
 
 
-def _config_lines(engine: "Celune", key: str) -> tuple[str, ...]:
+def _config_lines(engine: Celune, key: str) -> tuple[str, ...]:
     """Read a text or text-list configuration value as non-empty lines."""
     value = engine.config.get(key)
     if isinstance(value, str):
@@ -548,7 +550,7 @@ def _config_lines(engine: "Celune", key: str) -> tuple[str, ...]:
     return ()
 
 
-def _persona_short_term_history_limit(engine: "Celune") -> int:
+def _persona_short_term_history_limit(engine: Celune) -> int:
     """Return the configured short-term memory length for Persona."""
     memory = persona_config(engine.config).get("memory")
     if isinstance(memory, dict):
@@ -567,7 +569,7 @@ def _persona_short_term_history_limit(engine: "Celune") -> int:
     return PERSONA_HISTORY_MESSAGES
 
 
-def _persona_style_traits(engine: "Celune") -> dict[str, str]:
+def _persona_style_traits(engine: Celune) -> dict[str, str]:
     """Return the configured speaking-style traits for a Persona request."""
     traits = {
         "warmth": "mid",
@@ -596,44 +598,44 @@ def _persona_style_traits(engine: "Celune") -> dict[str, str]:
     return traits
 
 
-def _default_persona_persona(_engine: "Celune") -> str:
+def _default_persona_persona() -> str:
     """Return the default persona instructions for the active character."""
     return DEFAULT_PERSONA_DESCRIPTION
 
 
-def _uses_default_celune_identity(engine: "Celune") -> bool:
+def _uses_default_celune_identity(engine: Celune) -> bool:
     """Return whether Persona defaults should use Celune's canonical identity."""
     if not bool(getattr(engine, "voice_bundle_is_default", False)):
         return False
     return _persona_active_character_name(engine).strip().lower() == "celune"
 
 
-def _default_persona_age(engine: "Celune") -> str:
+def _default_persona_age(engine: Celune) -> str:
     """Return the default age for the active character source."""
     if _uses_default_celune_identity(engine):
         return "28"
     return "unknown"
 
 
-def _default_persona_gender(_engine: "Celune") -> str:
+def _default_persona_gender(engine: Celune) -> str:
     """Return a conservative gender default for the active character source."""
-    if _uses_default_celune_identity(_engine):
+    if _uses_default_celune_identity(engine):
         return "female"
     return "unknown"
 
 
-def _default_persona_context(_engine: "Celune") -> str:
+def _default_persona_context() -> str:
     """Return the default interaction context for the active character source."""
     return DEFAULT_PERSONA_CONTEXT
 
 
-def _pack_persona(engine: "Celune") -> Optional[CEVoicePersona]:
+def _pack_persona(engine: Celune) -> Optional[CEVoicePersona]:
     """Return typed CEVOICE persona metadata attached to the current engine."""
     persona = getattr(engine, "current_character_persona", None)
     return persona if isinstance(persona, CEVoicePersona) else None
 
 
-def _pack_identity_text(engine: "Celune", field_name: str) -> str:
+def _pack_identity_text(engine: Celune, field_name: str) -> str:
     """Read one CEVOICE persona identity field when present."""
     persona = _pack_persona(engine)
     if persona is None:
@@ -643,7 +645,7 @@ def _pack_identity_text(engine: "Celune", field_name: str) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else ""
 
 
-def _persona_active_character_name(engine: "Celune") -> str:
+def _persona_active_character_name(engine: Celune) -> str:
     """Return the active character name used for Persona memory isolation."""
     current_character = getattr(engine, "current_character", None)
     if isinstance(current_character, str) and current_character.strip():
@@ -656,7 +658,7 @@ def _persona_active_character_name(engine: "Celune") -> str:
     return _config_text(engine, "persona_character_name", "Unknown")
 
 
-def _pack_persona_text(engine: "Celune", field_name: str) -> str:
+def _pack_persona_text(engine: Celune, field_name: str) -> str:
     """Read one top-level CEVOICE persona text field when present."""
     persona = _pack_persona(engine)
     if persona is None:
@@ -665,7 +667,7 @@ def _pack_persona_text(engine: "Celune", field_name: str) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else ""
 
 
-def _pack_persona_lines(engine: "Celune", field_name: str) -> tuple[str, ...]:
+def _pack_persona_lines(engine: Celune, field_name: str) -> tuple[str, ...]:
     """Read one CEVOICE persona text-list field when present."""
     persona = _pack_persona(engine)
     if persona is None:
@@ -677,7 +679,7 @@ def _pack_persona_lines(engine: "Celune", field_name: str) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def build_persona_character_card(engine: "Celune") -> str:
+def build_persona_character_card(engine: Celune) -> str:
     """Build the compact character and persona summary sent with requests.
 
     Args:
@@ -695,7 +697,7 @@ def _persona_history_limit() -> int:
     return PERSONA_HISTORY_MESSAGES
 
 
-def _persona_history_messages(engine: "Celune") -> list[JSON]:
+def _persona_history_messages(engine: Celune) -> list[JSON]:
     """Return prior Persona chat messages in OpenAI chat format."""
     history = getattr(engine, "persona_history", [])
     if not isinstance(history, list):
@@ -720,7 +722,7 @@ def _persona_history_messages(engine: "Celune") -> list[JSON]:
     return messages
 
 
-def _persona_pending_attachments(engine: "Celune") -> list[JSON]:
+def _persona_pending_attachments(engine: Celune) -> list[JSON]:
     """Return pending Persona attachments in Qwen chat content format."""
     attachments = getattr(engine, "persona_attachments", [])
     if not isinstance(attachments, list):
@@ -749,7 +751,7 @@ def _persona_attachment_source(path: str) -> str:
     return source
 
 
-def _build_visual_context(engine: "Celune") -> VisualContext:
+def _build_visual_context(engine: Celune) -> VisualContext:
     """Return the optional visual context summary for the current request."""
     remembered = _recent_visual_context_items(engine)
     attachments = getattr(engine, "persona_attachments", [])
@@ -777,7 +779,7 @@ def _build_visual_context(engine: "Celune") -> VisualContext:
     return VisualContext(items=tuple(items))
 
 
-def _recent_visual_context_items(engine: "Celune") -> tuple[str, ...]:
+def _recent_visual_context_items(engine: Celune) -> tuple[str, ...]:
     """Return textual carry-over context from the most recent visual request."""
     items = getattr(engine, "persona_recent_visual_context", ())
     if isinstance(items, str):
@@ -792,7 +794,7 @@ def _recent_visual_context_items(engine: "Celune") -> tuple[str, ...]:
 
 def _remember_visual_context(
     attachments: list[JSONSerializable],
-    engine: "Celune",
+    engine: Celune,
     request: str,
 ) -> None:
     """Store a text summary for the most recent one-shot visual request."""
@@ -832,7 +834,7 @@ def _remember_visual_context(
     setattr(engine, "persona_recent_visual_context", tuple(remembered))
 
 
-def _build_short_term_history(engine: "Celune") -> ShortTermHistory:
+def _build_short_term_history(engine: Celune) -> ShortTermHistory:
     """Return the current-run chat history for the Persona prompt."""
     messages = _persona_history_messages(engine)
     turns = [
@@ -849,7 +851,7 @@ def _build_short_term_history(engine: "Celune") -> ShortTermHistory:
     return ShortTermHistory(turns=tuple(turns), session_summary=session_summary)
 
 
-def _persona_memory_store(engine: "Celune") -> Optional[PersonaMemoryStore]:
+def _persona_memory_store(engine: Celune) -> Optional[PersonaMemoryStore]:
     """Return the configured Persona memory store for this engine."""
     existing = getattr(engine, "persona_memory_store", None)
     if isinstance(existing, PersonaMemoryStore):
@@ -901,7 +903,7 @@ def _persona_memory_store(engine: "Celune") -> Optional[PersonaMemoryStore]:
     return store
 
 
-def _store_persona_memories(engine: "Celune", request: str) -> None:
+def _store_persona_memories(engine: Celune, request: str) -> None:
     """Persist long-term memory candidates extracted from the user request."""
     store = _persona_memory_store(engine)
     if store is None:
@@ -915,7 +917,7 @@ def _store_persona_memories(engine: "Celune", request: str) -> None:
 
 
 def _build_retrieved_memory_bundle(
-    engine: "Celune", request: str
+    engine: Celune, request: str
 ) -> RetrievedMemoryBundle:
     """Return retrieved long-term memory for the current request."""
     direct_memories = getattr(engine, "retrieved_long_term_memory", None)
@@ -943,7 +945,7 @@ def _build_retrieved_memory_bundle(
     )
 
 
-def build_persona_context(engine: "Celune", request: str) -> PersonaContext:
+def build_persona_context(engine: Celune, request: str) -> PersonaContext:
     """Build structured Persona context for one user request.
 
     Args:
@@ -977,7 +979,7 @@ def build_persona_context(engine: "Celune", request: str) -> PersonaContext:
         persona=_config_text(
             engine,
             "persona_persona",
-            _default_persona_persona(engine),
+            _default_persona_persona(),
         ),
         warmth=traits["warmth"],
         directness=traits["directness"],
@@ -988,7 +990,7 @@ def build_persona_context(engine: "Celune", request: str) -> PersonaContext:
         context=_config_text(
             engine,
             "persona_context",
-            _default_persona_context(engine),
+            _default_persona_context(),
         ),
         voice=voice_notes,
         speaking_style=_pack_persona_text(engine, "speaking_style"),
@@ -1011,7 +1013,7 @@ def build_persona_context(engine: "Celune", request: str) -> PersonaContext:
     )
 
 
-def _effective_voice_prompt(engine: "Celune") -> Optional[str]:
+def _effective_voice_prompt(engine: Celune) -> Optional[str]:
     """Return the active voice prompt only when the engine supports it."""
     supported = getattr(engine, "voice_prompt_supported", None)
     if callable(supported) and not supported():
@@ -1023,7 +1025,7 @@ def _effective_voice_prompt(engine: "Celune") -> Optional[str]:
     return voice_prompt if isinstance(voice_prompt, str) else None
 
 
-def build_persona_messages(engine: "Celune", request: str) -> list[JSON]:
+def build_persona_messages(engine: Celune, request: str) -> list[JSON]:
     """Build OpenAI-style messages for the Persona model.
 
     Args:
@@ -1048,7 +1050,7 @@ def build_persona_messages(engine: "Celune", request: str) -> list[JSON]:
     ]
 
 
-def build_persona_request(engine: "Celune", request: str) -> JSON:
+def build_persona_request(engine: Celune, request: str) -> JSON:
     """Build the JSON payload sent to the Persona model.
 
     Args:
@@ -1110,7 +1112,7 @@ def _extract_persona_text(payload: JSONSerializable) -> str:
     return ""
 
 
-def think(engine: "Celune", request: str) -> bool:
+def think(engine: Celune, request: str) -> bool:
     """Let Celune think about the input given, and speak back.
 
     Args:
@@ -1167,7 +1169,7 @@ def think(engine: "Celune", request: str) -> bool:
 
 
 def say(
-    engine: "Celune",
+    engine: Celune,
     text: str,
     save: bool = True,
     display_text: Optional[str] = None,
@@ -1192,7 +1194,7 @@ def say(
 
 
 def queue_speech(
-    engine: "Celune",
+    engine: Celune,
     text: str,
     save: bool = True,
     stream_queue: Optional[SpeechStreamQueue] = None,
@@ -1291,7 +1293,7 @@ def queue_speech(
 
 
 def queue_sfx_audio(
-    engine: "Celune",
+    engine: Celune,
     audio: npt.NDArray[np.float32],
     sample_rate: int,
     label: str,
@@ -1339,7 +1341,7 @@ def queue_sfx_audio(
         raise
 
 
-def play(engine: "Celune", sound_path: str, keep: bool = False) -> bool:
+def play(engine: Celune, sound_path: str, keep: bool = False) -> bool:
     """Play a sound via Celune's pipeline.
 
     Args:
@@ -1363,7 +1365,7 @@ def play(engine: "Celune", sound_path: str, keep: bool = False) -> bool:
     )
 
 
-def close(engine: "Celune") -> None:
+def close(engine: Celune) -> None:
     """Shut off Celune and exit.
 
     Args:
@@ -1390,7 +1392,7 @@ def close(engine: "Celune") -> None:
     engine.glow.finished.wait(timeout=5)
 
 
-def split_text(engine: "Celune", text: str) -> list[str]:
+def split_text(engine: Celune, text: str) -> list[str]:
     """Adaptively split text into chunks. Short text is unaffected, while long text is chunked effectively.
 
     Args:
@@ -1522,7 +1524,7 @@ def split_text(engine: "Celune", text: str) -> list[str]:
     return chunks
 
 
-def play_readiness_signal(engine: "Celune") -> bool:
+def play_readiness_signal(engine: Celune) -> bool:
     """Queue a readiness signal to be played.
 
     Args:
@@ -1539,7 +1541,7 @@ def play_readiness_signal(engine: "Celune") -> bool:
     return False
 
 
-def generation_worker(engine: "Celune") -> None:
+def generation_worker(engine: Celune) -> None:
     """Generate audio tokens and send them to the audio pipeline.
 
     Args:
@@ -1919,7 +1921,7 @@ def generation_worker(engine: "Celune") -> None:
                 break
 
 
-def playback_worker(engine: "Celune") -> None:
+def playback_worker(engine: Celune) -> None:
     """Receive audio chunks and play them.
 
     Args:

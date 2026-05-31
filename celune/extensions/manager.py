@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Celune's extension manager methods and classes."""
 
-from __future__ import annotations
-
 import sys
 import inspect
 import importlib.util

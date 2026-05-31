@@ -1,4 +1,5 @@
-from __future__ import annotations
+# SPDX-License-Identifier: MIT
+"""Recursively order imports by package name and line length automatically."""
 
 import ast
 import sys

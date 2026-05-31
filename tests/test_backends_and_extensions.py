@@ -20,7 +20,7 @@ from celune.backends import resolve_backend
 from celune.extensions.manager import CeluneExtensionManager
 from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.exceptions import ExtensionAlreadyRegisteredError, InvalidExtensionError
-from tests.support import FakeBackend
+from .support import FakeBackend
 
 
 class BackendTests(TestCase):
