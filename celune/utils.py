@@ -14,12 +14,13 @@ import subprocess
 import multiprocessing
 from pathlib import Path
 from collections.abc import Iterator
-from typing import Union, Callable, Optional, Literal, TypedDict, overload
+from typing import Union, Callable, Optional, Literal, TypedDict, Any, overload
 
 import psutil
 import langdetect
 
 from .constants import REFERENCE_NEW_MOON
+from .paths import traceback_path
 from .terminal import supports_ansi as terminal_supports_ansi
 
 
@@ -291,7 +292,7 @@ def format_error(e: Exception, dev: bool) -> str:
     """
     if dev:
         trace = traceback.format_exc()
-        with open("celune_traceback.txt", "w", encoding="utf-8") as f:
+        with open(traceback_path(create_parent=True), "w", encoding="utf-8") as f:
             f.write(trace)
 
     details = str(e) or "no error description"
@@ -679,8 +680,12 @@ def rng_replace(
     return pattern.sub(repl, text)
 
 
+# the below functions are the only functions in Celune that use the 'Any' type
+# 'Any' is okay for the type annotation of celune.utils.discard()
+
+
 @overload
-def discard(val) -> None:
+def discard(val: Any) -> None:
     """Overload #1 for the implementation of celune.utils.discard().
 
     Args:
@@ -689,7 +694,7 @@ def discard(val) -> None:
 
 
 @overload
-def discard(val, attr: str) -> None:
+def discard(val: Any, attr: str) -> None:
     """Overload #2 for the implementation of celune.utils.discard().
 
     Args:
@@ -698,7 +703,7 @@ def discard(val, attr: str) -> None:
     """
 
 
-def discard(val, attr: Optional[str] = None) -> None:
+def discard(val: Any, attr: Optional[str] = None) -> None:
     """Discard a value or clear an explicitly named attribute.
 
     Args:

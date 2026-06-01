@@ -121,12 +121,14 @@ class Qwen3(CeluneBackend):
         """
         return self.max_new_tokens
 
-    @staticmethod
-    def model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
+    def model_is_available_locally(
+        self, model: str, lang: Optional[str] = None
+    ) -> tuple[bool, Optional[str]]:
         """Check if a model is already available in the Hugging Face cache.
 
         Args:
             model: The Hugging Face repository ID to inspect.
+            lang: The language identifier for differentiating models by language.
 
         Returns:
             tuple[bool, Optional[str]]: A cache availability flag and the resolved snapshot path when present.

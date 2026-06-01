@@ -9,6 +9,7 @@ import logging
 import itertools
 import threading
 import contextlib
+import datetime
 from collections.abc import Iterator
 from typing import cast, Optional, Callable, Union
 
@@ -34,6 +35,7 @@ from ..persona.impl import (
     persona_talkback_enabled,
     persona_enabled,
 )
+from ..paths import config_path, main_window_log_path
 from ..utils import (
     format_error,
     indent,
@@ -111,6 +113,8 @@ class CeluneUI(App):
         self._input_locked = True
         self._persona_available = False
         self._persona_probe_running = False
+        self._log_file_path = main_window_log_path(create_parent=True)
+        self._log_file_initialized = False
 
         CeluneUI._instance = self
 
@@ -187,6 +191,19 @@ class CeluneUI(App):
             immediate=True,
             force=True,
         )
+
+    def _persist_log_entry(self, msg: str, severity: str) -> None:
+        """Append one UI log entry to the persisted main-window log file."""
+        try:
+            if not self._log_file_initialized:
+                self._log_file_path.write_text("", encoding="utf-8")
+                self._log_file_initialized = True
+
+            timestamp = datetime.datetime.now().isoformat(timespec="seconds")
+            with self._log_file_path.open("a", encoding="utf-8") as handle:
+                handle.write(f"[{timestamp}] [{severity.upper()}] {msg}\n")
+        except OSError:
+            pass
 
     def compose(self) -> ComposeResult:
         """Define the UI.
@@ -720,6 +737,7 @@ class CeluneUI(App):
             severity = "info"
 
         self.log_history.append((msg, severity))
+        self._persist_log_entry(msg, severity)
         if self.logs is None:
             return
 
@@ -1030,7 +1048,7 @@ class CeluneUI(App):
                 self.celune.config["theme"] = (
                     "dark" if self.theme == self.themes[0] else "light"
                 )
-                with open("config.yaml", "w", encoding="utf-8") as f:
+                with open(config_path(create_parent=True), "w", encoding="utf-8") as f:
                     yaml.dump(self.celune.config, f)
                 self.update_resources()
 

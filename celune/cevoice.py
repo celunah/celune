@@ -15,6 +15,7 @@ from typing import BinaryIO, Callable, Final, Mapping, Optional, Union, cast
 
 from .exceptions import CEVoiceError
 from .constants import JSONSerializable
+from .paths import temp_data_dir
 
 MAGIC: Final[bytes] = b"CECHAR\0\0"
 VERSION: Final[int] = 2
@@ -202,7 +203,12 @@ class CEVoiceLoader:
 
     def __init__(self, bundle: CEVoice) -> None:
         self.bundle = bundle
-        self._directory = Path(tempfile.mkdtemp(prefix="celune-cevoice-"))
+        self._directory = Path(
+            tempfile.mkdtemp(
+                prefix="celune-cevoice-",
+                dir=str(temp_data_dir(create=True)),
+            )
+        )
         self._paths: dict[tuple[str, str], Path] = {}
         atexit.register(self.close)
 

@@ -42,6 +42,33 @@ class BackendTests(TestCase):
         self.assertEqual(backend.generation_progress_steps({"chunk_steps": 3}), 3)
         self.assertEqual(backend.generation_progress_steps({"chunk_steps": 0}), 1)
 
+    def test_base_backend_materializes_bundle_pt_refs_when_available(self) -> None:
+        """Verify CEVOICE bundles eagerly extract .pt refs alongside .wav files."""
+        materialize = mock.Mock(side_effect=lambda voice, kind: Path(f"{voice}.{kind}"))
+        loader = SimpleNamespace(
+            bundle=SimpleNamespace(
+                voice_order=("balanced", "bold"),
+                voices={
+                    "balanced": {"assets": {"wav": {}, "pt": {}}},
+                    "bold": {"assets": {"wav": {}}},
+                },
+            ),
+            materialize=materialize,
+        )
+
+        with mock.patch("celune.backends.base.default_loader", return_value=loader):
+            backend = FakeBackend(log=lambda _msg, _severity="info": None)
+            backend._validate_refs()
+
+        self.assertEqual(
+            materialize.call_args_list,
+            [
+                mock.call("balanced", "wav"),
+                mock.call("balanced", "pt"),
+                mock.call("bold", "wav"),
+            ],
+        )
+
     def test_resolve_backend_accepts_instance_type_and_rejects_unknown(self) -> None:
         """Verify supported backend specifications and invalid input failures.
 

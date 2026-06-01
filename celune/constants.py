@@ -7,10 +7,14 @@ from enum import auto
 from enum import IntEnum, Enum
 from typing import Union
 
+# main app name
+# why would you rename her? she doesn't approve of it
+APP_NAME = "Celune"
+
 # CeluneNorm v2.0 inherits v1.3's feature set but at an extended context length
 # so Celune can process your normalized text more efficiently at either
 # 1024 or 2048 tokens of available max context length
-
+#
 # uncomment the normalizer you wish to use here
 # NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v2.0-ctx1024"
 NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v2.0-ctx2048"
