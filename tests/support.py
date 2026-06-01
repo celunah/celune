@@ -37,16 +37,19 @@ class FakeBackend(CeluneBackend):
     voice_models = {"balanced": "fake/balanced", "bold": "fake/bold"}
     default_voice = "balanced"
 
-    @staticmethod
-    def model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
+    def model_is_available_locally(
+        self, model: str, lang: Optional[str] = None
+    ) -> tuple[bool, Optional[str]]:
         """Pretend that a model is available locally.
 
         Args:
             model: The model identifier requested by the caller.
+            lang: The language identifier for differentiating models by language.
 
         Returns:
             tuple[bool, Optional[str]]: Availability and the fake local path.
         """
+        discard(lang)
         return True, model
 
     def preload_models(self) -> None:

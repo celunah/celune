@@ -13,7 +13,6 @@ import os
 import sys
 import time
 import random
-import shutil
 import datetime
 import warnings
 import contextlib
@@ -47,6 +46,11 @@ try:
         config_value,
         env_bool,
         merge_missing_defaults,
+    )
+    from celune.paths import (
+        config_path,
+        default_config_path,
+        ensure_config_path,
     )
     from celune.utils import detected_ide, supports_ansi, indent, title_case
     from celune.constants import ExitCodes
@@ -105,13 +109,17 @@ def main() -> None:
             print()
             time.sleep(5)
 
-        if not os.path.exists("config.yaml"):
-            shutil.copy("default_config.yaml", "config.yaml")
+        bundled_default_config_path = default_config_path()
+        active_config_path, created_config = ensure_config_path(
+            active_path=config_path(create_parent=True),
+            default_path=bundled_default_config_path,
+        )
+        if created_config:
             print("Celune configuration has been created.")
 
-        with open("config.yaml", encoding="utf-8") as cfg:
+        with open(active_config_path, encoding="utf-8") as cfg:
             config = yaml.safe_load(cfg)
-        with open("default_config.yaml", encoding="utf-8") as cfg:
+        with open(bundled_default_config_path, encoding="utf-8") as cfg:
             default_config = yaml.safe_load(cfg)
 
         if not isinstance(default_config, dict):
@@ -121,7 +129,7 @@ def main() -> None:
 
         config, config_updated = merge_missing_defaults(config, default_config)
         if config_updated:
-            with open("config.yaml", "w", encoding="utf-8") as cfg:
+            with open(active_config_path, "w", encoding="utf-8") as cfg:
                 yaml.safe_dump(config, cfg, sort_keys=False)
             print("Celune configuration has been updated with new defaults.")
 

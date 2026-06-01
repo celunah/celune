@@ -1,20 +1,23 @@
 # SPDX-License-Identifier: MIT
 """Pocket TTS backend implementation for Celune."""
 
+import contextlib
 import tempfile
 from pathlib import Path
 from collections.abc import Iterator, Mapping
-from typing import Any, Callable, Optional, Final, Protocol, cast
+from typing import Callable, Optional, Final, Protocol, cast
 
 import yaml
 import torch
 import numpy as np
 import numpy.typing as npt
 from pocket_tts import TTSModel
+from huggingface_hub import snapshot_download
 
 from .base import CeluneBackend, cached_hf_snapshot_path, BackendModel
 from ..cevoice import default_loader
 from ..exceptions import BackendError
+from ..paths import temp_data_dir
 
 type MiniPromptState = dict[str, dict[str, torch.Tensor]]
 
@@ -71,13 +74,22 @@ class Mini(CeluneBackend):
     def __init__(self, log: Callable[[str, str], None]) -> None:
         super().__init__(log=log)
         self._validate_refs()
-        self._voice_states: dict[str, Any] = {}
+        self._voice_states: dict[str, MiniPromptState] = {}
         self._generated_config_path: Optional[Path] = None
 
     @staticmethod
-    def _resolve_language_name() -> str:
+    def _resolve_language_name(lang: str = "en") -> str:
         """Return the Pocket TTS language variant expected for this backend."""
-        return "english"
+        code_to_model: Final[Mapping[str, str]] = {
+            "en": "english",
+            "fr": "french",
+            "de": "german",
+            "it": "italian",
+            "pt": "portuguese",
+            "es": "spanish",
+        }
+
+        return code_to_model[lang]
 
     def _resolve_snapshot_language_dir(self, snapshot_path: str) -> Path:
         """Return the model language directory from a local Pocket TTS snapshot."""
@@ -120,8 +132,12 @@ class Mini(CeluneBackend):
         config["weights_path_without_voice_cloning"] = str(model_path)
         config["flow_lm"]["lookup_table"]["tokenizer_path"] = str(tokenizer_path)
 
-        temp_dir = Path(tempfile.gettempdir()) / "celune-pocket-tts"
-        temp_dir.mkdir(parents=True, exist_ok=True)
+        temp_dir = Path(
+            tempfile.mkdtemp(
+                prefix="celune-pocket-tts-",
+                dir=str(temp_data_dir(create=True)),
+            )
+        )
         generated_path = temp_dir / f"{language_name}-{Path(snapshot_path).name}.yaml"
         with open(generated_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(config, f, sort_keys=False)
@@ -135,7 +151,7 @@ class Mini(CeluneBackend):
             return loader.materialize(voice, "wav")
         return self._reference_wave_path(voice)
 
-    def _get_voice_state(self, model: MiniModel, voice: str) -> Any:
+    def _get_voice_state(self, model: MiniModel, voice: str) -> MiniPromptState:
         """Return a cached Pocket TTS voice state for the selected voice."""
         if voice in self._voice_states:
             return self._voice_states[voice]
@@ -151,21 +167,25 @@ class Mini(CeluneBackend):
         self._voice_states[voice] = voice_state
         return voice_state
 
-    @staticmethod
-    def model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
+    def model_is_available_locally(
+        self, model: str, lang: str = "en"
+    ) -> tuple[bool, Optional[str]]:
         """Check if a Pocket TTS model snapshot is already available locally.
 
         Args:
             model: The model ID to validate.
+            lang: The language identifier for differentiating models by language.
 
         Returns:
             tuple[bool, Optional[str]]: Whether a model by this ID is available, and any applicable path.
         """
+        model_name = self._resolve_language_name(lang)
+
         return cached_hf_snapshot_path(
             model,
             [
-                "languages/english/model.safetensors",
-                "languages/english/tokenizer.model",
+                f"languages/{model_name}/model.safetensors",
+                f"languages/{model_name}/tokenizer.model",
             ],
         )
 
@@ -179,11 +199,8 @@ class Mini(CeluneBackend):
         Returns:
             Optional[BackendModel]: A Celune-compatible Pocket TTS model object.
         """
-        del kwargs
         available, snapshot_path = self.model_is_available_locally(model_id)
         if not available or snapshot_path is None:
-            from huggingface_hub import snapshot_download
-
             self.log("Downloading TTS model...", "info")
             snapshot_path = snapshot_download(repo_id=model_id)
 
@@ -195,8 +212,13 @@ class Mini(CeluneBackend):
 
     def unload_model(self) -> None:
         """Release the loaded model and cached voice states."""
+        generated_config_path = self._generated_config_path
         self._voice_states.clear()
         self._generated_config_path = None
+        if generated_config_path is not None:
+            with contextlib.suppress(OSError):
+                generated_config_path.unlink(missing_ok=True)
+                generated_config_path.parent.rmdir()
         super().unload_model()
 
     def generate_stream(

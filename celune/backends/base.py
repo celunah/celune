@@ -103,6 +103,14 @@ class CeluneBackend(ABC):
         if loader is not None:
             for name in loader.bundle.voice_order:
                 loader.materialize(name, "wav")
+                voice_entry = loader.bundle.voices.get(name, {})
+                assets = (
+                    voice_entry.get("assets", {})
+                    if isinstance(voice_entry, dict)
+                    else {}
+                )
+                if isinstance(assets, dict) and "pt" in assets:
+                    loader.materialize(name, "pt")
             return
 
         if not self.voice_models:
@@ -147,13 +155,15 @@ class CeluneBackend(ABC):
         torch.cuda.manual_seed_all(self.current_seed)
         torch.manual_seed(self.current_seed)
 
-    @staticmethod
     @abstractmethod
-    def model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
+    def model_is_available_locally(
+        self, model: str, lang: Optional[str] = None
+    ) -> tuple[bool, Optional[str]]:
         """Determine if the given model is available and return its path if found.
 
         Args:
             model: The model name to check availability of.
+            lang: The language identifier for differentiating models by language.
 
         Returns:
             tuple[bool, Optional[str]]: Whether the given model is available and relevant path.

@@ -4,7 +4,6 @@
 import pathlib
 import warnings
 import contextlib
-from io import BytesIO
 from collections.abc import Mapping
 from typing import Optional, Protocol, TypedDict, Union, cast
 
@@ -332,10 +331,10 @@ def _load_reference_embedding(voice: str) -> npt.NDArray[np.float32]:
     loader = default_loader()
     if loader is not None:
         try:
-            data = loader.bundle.read_asset(voice, "pt")
+            ref_path = loader.materialize(voice, "pt")
         except KeyError as error:
             raise FileNotFoundError(f"{voice}.pt not found") from error
-        return _embedding_tensor_to_numpy(torch.load(BytesIO(data), map_location="cpu"))
+        return _embedding_tensor_to_numpy(torch.load(ref_path, map_location="cpu"))
 
     ref_path = pathlib.Path(__file__).resolve().parent / "refs" / f"{voice}.pt"
     if not ref_path.exists():

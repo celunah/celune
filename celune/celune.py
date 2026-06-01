@@ -100,7 +100,7 @@ class _SupportsClose(Protocol):
         """Fake return value of close().
 
         Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
+            NotImplementedError: The protocol was called directly.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -110,7 +110,7 @@ class _SupportsUnload(Protocol):
         """Fake return value of unload().
 
         Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
+            NotImplementedError: The protocol was called directly.
         """
         raise NotImplementedError("protocol not defined")
 

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Tests for pure analysis helpers and RGB glow math."""
 
+from pathlib import Path
 from unittest import mock, TestCase
 
 import numpy as np
@@ -99,6 +100,28 @@ class AnalysisTests(TestCase):
 
         self.assertEqual(embedding.shape, (2048,))
         torch_load.assert_called_once()
+
+    @mock.patch("celune.analysis.torch.load")
+    def test_bundle_reference_embedding_is_materialized_when_available(
+        self,
+        torch_load: mock.Mock,
+    ) -> None:
+        """Verify bundle-provided .pt references are loaded from a materialized file path.
+
+        Args:
+            torch_load: The mocked value of torch.load().
+        """
+        torch_load.return_value = np.ones(2048, dtype=np.float32)
+        fake_loader = mock.Mock()
+        materialized = Path("C:/Users/user/AppData/Local/Celune/temp/fake/balanced.pt")
+        fake_loader.materialize.return_value = materialized
+
+        with mock.patch("celune.analysis.default_loader", return_value=fake_loader):
+            embedding = analysis._load_reference_embedding("balanced")
+
+        self.assertEqual(embedding.shape, (2048,))
+        fake_loader.materialize.assert_called_once_with("balanced", "pt")
+        torch_load.assert_called_once_with(materialized, map_location="cpu")
 
 
 class ChromaTests(TestCase):

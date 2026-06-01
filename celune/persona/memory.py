@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import json
 import uuid
@@ -20,6 +19,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ..constants import JSONSerializable, PERSONA_MEMORY_EMBEDDING_MODEL
+from ..paths import memory_data_dir
 
 if TYPE_CHECKING:
     from transformers.modeling_utils import PreTrainedModel
@@ -178,15 +178,7 @@ def default_memory_dir() -> Path:
     Returns:
         Path: The current location of where Celune's Persona memories are stored.
     """
-    local_appdata = os.getenv("LOCALAPPDATA")
-    if local_appdata:
-        return Path(local_appdata) / "Celune" / "persona_memory"
-
-    xdg_data_home = os.getenv("XDG_DATA_HOME")
-    if xdg_data_home:
-        return Path(xdg_data_home) / "celune" / "persona_memory"
-
-    return Path.home() / ".celune" / "persona_memory"
+    return memory_data_dir()
 
 
 @dataclass(slots=True, frozen=True)

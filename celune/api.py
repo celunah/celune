@@ -291,7 +291,7 @@ def audio_bytes(chunks: SpeechStreamQueue) -> Iterator[bytes]:
         Iterator[bytes]: The audio chunk from the queue as raw bytes.
 
     Raises:
-        item: If `item` needs to be raised.
+        item: An exception class was raised, causing the stream to be interrupted.
         Exception: The stream was interrupted by Celune.
     """
     audio_chunks: list[npt.NDArray[np.float32]] = []

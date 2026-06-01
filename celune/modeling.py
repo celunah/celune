@@ -48,7 +48,12 @@ def load_normalizer_components(
     Returns:
         tuple[PreTrainedTokenizerBase, PreTrainedModel]: The loaded tokenizer and causal language model.
     """
-    available, path = backend.model_is_available_locally(NORMALIZER_MODEL_ID)
+    if callable(backend):
+        backend_obj = backend(log=log)
+    else:
+        backend_obj = backend
+
+    available, path = backend_obj.model_is_available_locally(NORMALIZER_MODEL_ID)
     model_ref = path if available and path is not None else NORMALIZER_MODEL_ID
 
     if available:
