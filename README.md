@@ -122,18 +122,21 @@ If Rubber Band is not installed or fails to run, Celune will speak at normal spe
 Celune has several VRAM presets available. Here are their baseline requirements:
 
 > Low (6GB VRAM recommended)
+>
 > This preset supports:
 >
 > - Qwen3-TTS 0.6B / Celune Mini
 > - Normalization on CPU
 >
 > Medium (8GB VRAM required)
+>
 > This preset supports:
 >
 > - All of the above, and:
 > - Qwen3-TTS 1.7B
 >
 > High (12GB VRAM required)
+>
 > This preset supports:
 >
 > - All of the above, and:
@@ -141,6 +144,7 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 > - Persona (4-bit)
 >
 > Extra High (16GB+ VRAM recommended)
+>
 > This preset supports:
 >
 > - All of the above, and:
