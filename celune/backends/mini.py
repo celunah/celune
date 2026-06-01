@@ -61,7 +61,8 @@ class Mini(CeluneBackend):
     name: Final[str] = "mini"
     uses_voice_bundles: Final[bool] = True
     chunk_rate: Final[float] = 12.5
-    supported_languages: Final[tuple[str, ...]] = ("en", "fr", "de", "it", "pt", "es")
+    supported_languages: Final[tuple[str, ...]] = ("en",)
+    # supported_languages: Final[tuple[str, ...]] = ("en", "fr", "de", "it", "pt", "es")
 
     voice_models: Final[Mapping[str, str]] = {
         "balanced": "lunahr/pocket-tts-ungated",
