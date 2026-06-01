@@ -36,16 +36,28 @@ Refer to https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base and https://huggin
 These scripts are what Celune says in the reference audio. They were modified from an original script to reduce the hallucination risk.
 
 > Calm:
-> `My name is... Celune... It is so... quiet.`
+>
+> ```text
+> My name is... Celune... It is so... quiet.
+> ```
 >
 > Neutral:
-> `My name is Celune, pronounced Celune. It is a pleasure to meet you.`
+>
+> ```text
+> My name is Celune, pronounced Celune. It is a pleasure to meet you.
+> ```
 >
 > Energetic:
-> `My name is Celune! Let's do this, we have to get it done!`
+>
+> ```text
+> My name is Celune! Let's do this, we have to get it done!
+> ```
 >
 > Upbeat:
-> `Hehehe... Hi, I'm Celune. Look, I have something to tell... might as well make it fun. Shall we?`
+>
+> ```text
+> Hehehe... Hi, I'm Celune. Look, I have something to tell... might as well make it fun. Shall we?
+> ```
 >
 > ℹ️ This sample includes leading laughter.
 

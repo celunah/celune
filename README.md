@@ -85,7 +85,9 @@ Celune also depends on external system dependencies that are not available in `p
 - **Symbolic link support** - recommended on Windows for optimal operation
 - **C/C++ compiler** - to compile required dependencies for VoxCPM2
 
-Celune requires an RTX 30 series GPU or newer. CPU-only execution is not supported.
+Celune requires an RTX 30 series GPU or newer to use most features.
+
+CPU-only execution is only supported with Celune Mini.
 
 Usage of Celune's UI requires an ANSI-capable terminal. Non-compliant terminals can only use the headless (CEF) mode.
 
@@ -95,17 +97,38 @@ Terminals not supporting True Color may look incorrect, as Textual will fall bac
 
 If Rubber Band is not installed or fails to run, Celune will speak at normal speed, and speed controls will be unavailable.
 
-## GPU requirements
+## VRAM presets & requirements
 
-**GPU (CUDA):**
+Celune has several VRAM presets available. Here are their baseline requirements:
 
-- Minimum: 6 GB VRAM (e.g. RTX 3050, not optimal)
+> Low (6GB VRAM recommended)
+> This preset supports:
+>
+> - Qwen3-TTS 0.6B / Celune Mini
+> - Normalization on CPU
+>
+> Medium (8GB VRAM required)
+> This preset supports:
+>
+> - All of the above, and:
+> - Qwen3-TTS 1.7B
+>
+> High (12GB VRAM required)
+> This preset supports:
+>
+> - All of the above, and:
+> - VoxCPM2
+> - Persona (4-bit)
+>
+> Extra High (16GB+ VRAM recommended)
+> This preset supports:
+>
+> - All of the above, and:
+> - Persona (8-bit)
+> - Normalization on GPU
+> - Upcoming advanced features
 
-Only the Qwen backend without normalization will work.
-
-- Recommended: 8 GB+ VRAM (e.g. RTX 3060 or better)
-
-8 GB is recommended to use normalization, 12 GB is recommended to use the VoxCPM2 backend.
+The desired preset may be set in Celune's configuration file. Refer to `default_config.yaml` for details.
 
 ---
 Performance may be reduced when running GPU intensive applications along with Celune.
@@ -252,12 +275,12 @@ Without this, Celune may require elevated permissions or fall back to slower beh
 
 ## REST API
 
-See [API.md](./API.md) for REST API configuration, authentication, endpoints, and curl examples.
-The API now exposes both literal speech routes and a `POST /v1/think` route for Persona-driven replies.
+See [API.md](./API.md) for REST API configuration, authentication, endpoints, and cURL examples.
+The API allows programmatic usage of all Celune features. It can be used both as a public and local interface.
 
 ## Screenshots
 
-These screenshots show Celune's user interface.
+The below images showcase Celune's user interface.
 
 ### Before init
 
