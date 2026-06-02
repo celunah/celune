@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: MIT
 """Tests for pure analysis helpers and RGB glow math."""
 
+from pathlib import Path
 from unittest import mock, TestCase
 
 import numpy as np
 
 from celune import analysis
-from celune.chroma import AudioRGBGlow
 from celune.constants import N_A_NUMERIC
+from celune.chroma import AudioRGBGlow
 
 
 class AnalysisTests(TestCase):
@@ -15,9 +16,6 @@ class AnalysisTests(TestCase):
 
     def test_embedding_similarity_and_drift_helpers_validate_inputs(self) -> None:
         """Validate embedding conversion, similarity, and drift helper paths.
-
-        Returns:
-            None: Assertions verify expected helper behavior.
 
         Raises:
             AssertionError: An analysis helper returns an unexpected result.
@@ -45,9 +43,6 @@ class AnalysisTests(TestCase):
 
     def test_traits_and_assessment_cover_speech_and_empty_audio_paths(self) -> None:
         """Check trait and assessment output for empty voice extraction data.
-
-        Returns:
-            None: Assertions verify fallback assessment behavior.
 
         Raises:
             AssertionError: Trait or assessment output changes unexpectedly.
@@ -82,9 +77,6 @@ class AnalysisTests(TestCase):
 
         Args:
             _default_loader: A mock default loader.
-
-        Returns:
-            None: This function tests the loader to see if embeddings can be found without a CEVOICE bundle.
         """
         self.assertEqual(
             analysis._available_reference_voices(),
@@ -101,9 +93,6 @@ class AnalysisTests(TestCase):
         Args:
             torch_load: A mock implementation of torch.load().
             _default_loader: A mock default loader.
-
-        Returns:
-            None: This function tests the loader if embeddings can be loaded correctly without a CEVOICE bundle.
         """
         torch_load.return_value = np.ones(2048, dtype=np.float32)
 
@@ -112,15 +101,34 @@ class AnalysisTests(TestCase):
         self.assertEqual(embedding.shape, (2048,))
         torch_load.assert_called_once()
 
+    @mock.patch("celune.analysis.torch.load")
+    def test_bundle_reference_embedding_is_materialized_when_available(
+        self,
+        torch_load: mock.Mock,
+    ) -> None:
+        """Verify bundle-provided .pt references are loaded from a materialized file path.
+
+        Args:
+            torch_load: The mocked value of torch.load().
+        """
+        torch_load.return_value = np.ones(2048, dtype=np.float32)
+        fake_loader = mock.Mock()
+        materialized = Path("C:/Users/user/AppData/Local/Celune/temp/fake/balanced.pt")
+        fake_loader.materialize.return_value = materialized
+
+        with mock.patch("celune.analysis.default_loader", return_value=fake_loader):
+            embedding = analysis._load_reference_embedding("balanced")
+
+        self.assertEqual(embedding.shape, (2048,))
+        fake_loader.materialize.assert_called_once_with("balanced", "pt")
+        torch_load.assert_called_once_with(materialized, map_location="cpu")
+
 
 class ChromaTests(TestCase):
     """Tests for pure RGB glow helper behavior."""
 
     def test_pure_glow_helpers_process_audio_without_devices(self) -> None:
         """Exercise glow math without connecting to RGB devices.
-
-        Returns:
-            None: Assertions verify pure helper outputs.
 
         Raises:
             AssertionError: A glow helper returns an unexpected value.
@@ -133,8 +141,25 @@ class ChromaTests(TestCase):
         self.assertEqual(len(fixed), 3)
         self.assertLessEqual(max(fixed), 255)
 
-        glow = object.__new__(AudioRGBGlow)
-        glow.input_gain = 4.0
-        glow.gamma = 1.4
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
         self.assertEqual(glow._speech_level(np.zeros((0, 2), dtype=np.float32)), 0.0)
         self.assertGreater(glow._speech_level(stereo), 0.0)
+
+    def test_sleep_and_wake_preserve_prior_brightness_target(self) -> None:
+        """Verify sleep dimming stores and restores the earlier brightness target."""
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
+        glow.start = mock.Mock(return_value=True)
+        glow._current_brightness = 0.42
+        glow._target_brightness = 0.6
+        glow._state = "normal"
+
+        glow.sleep()
+
+        self.assertEqual(glow._state, "sleeping")
+        self.assertAlmostEqual(glow._sleep_restore_brightness, 0.6)
+        self.assertAlmostEqual(glow._target_brightness, glow.idle_brightness * 0.25)
+
+        glow.wake()
+
+        self.assertEqual(glow._state, "waking")
+        self.assertAlmostEqual(glow._target_brightness, 0.6)

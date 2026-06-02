@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Celune automatic update helpers."""
 
-from __future__ import annotations
-
 import os
 import re
 import subprocess
@@ -39,10 +37,12 @@ class VersionKey:
 
 
 def _repo_root() -> Path:
+    """Return where the Git repository root is located."""
     return Path(__file__).resolve().parent.parent
 
 
 def _run_git(args: list[str], timeout: int = 15) -> str:
+    """Run a Git command on the repository."""
     result = subprocess.run(
         ["git", *args],
         cwd=_repo_root(),
@@ -56,6 +56,7 @@ def _run_git(args: list[str], timeout: int = 15) -> str:
 
 
 def _format_git_error(exc: subprocess.CalledProcessError) -> str:
+    """Format an error from Git."""
     details = "\n".join(
         part.strip()
         for part in (exc.stderr, exc.stdout)
@@ -69,6 +70,7 @@ def _format_git_error(exc: subprocess.CalledProcessError) -> str:
 
 
 def _git_succeeds(args: list[str], timeout: int = 15) -> bool:
+    """Check if Git succeeded this command."""
     try:
         _run_git(args, timeout=timeout)
         return True
@@ -77,18 +79,22 @@ def _git_succeeds(args: list[str], timeout: int = 15) -> bool:
 
 
 def _short_revision(revision: str) -> str:
+    """Return current commit revision."""
     return revision[:SHORT_HASH_LENGTH] if revision else "unknown"
 
 
 def _base_version(version: str) -> str:
+    """Return current Celune version info from local repository."""
     return version.split("+", 1)[0]
 
 
 def _normalize_tag(tag: str) -> str:
+    """Convert a tag identifier to a usable format."""
     return tag.removeprefix("refs/tags/").removeprefix("v")
 
 
 def _version_key(tag: str) -> VersionKey:
+    """Return a Celune version for the given tag."""
     normalized = _normalize_tag(tag)
     rmatch = re.match(r"^(\d+(?:\.\d+)*)(.*)$", normalized)
     if not rmatch:
@@ -100,6 +106,7 @@ def _version_key(tag: str) -> VersionKey:
 
 
 def _is_newer_version_tag(candidate: str, current: str) -> bool:
+    """Is this revision a newer Celune version?"""
     candidate_key = _version_key(candidate)
     current_key = _version_key(current)
     if candidate_key.numbers != current_key.numbers:
@@ -109,6 +116,7 @@ def _is_newer_version_tag(candidate: str, current: str) -> bool:
 
 
 def _latest_remote_tag() -> tuple[str, str]:
+    """Return the latest revision from the remote repository."""
     output = _run_git(["ls-remote", "--tags", "--refs", REMOTE_URL], timeout=20)
     tags: list[tuple[str, str]] = []
     for line in output.splitlines():
@@ -130,6 +138,7 @@ def _latest_remote_tag() -> tuple[str, str]:
 
 
 def _remote_revision(ref: str) -> str:
+    """Get current remote revision."""
     output = _run_git(["ls-remote", REMOTE_URL, ref], timeout=20)
     if not output:
         return ""
@@ -137,18 +146,22 @@ def _remote_revision(ref: str) -> str:
 
 
 def _remote_head_revision() -> str:
+    """Get current remote revision from HEAD."""
     return _remote_revision("HEAD")
 
 
 def _remote_branch_revision(branch: str) -> str:
+    """Return current remote branch revision."""
     return _remote_revision(f"refs/heads/{branch}")
 
 
 def _current_branch() -> str:
+    """Get current branch."""
     return _run_git(["branch", "--show-current"])
 
 
 def _local_tag() -> str:
+    """Get current local tag."""
     try:
         return _normalize_tag(_run_git(["describe", "--tags", "--exact-match", "HEAD"]))
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -156,14 +169,17 @@ def _local_tag() -> str:
 
 
 def _local_revision() -> str:
+    """Get current local revision."""
     return _run_git(["rev-parse", "HEAD"])
 
 
 def _has_local_changes() -> bool:
+    """Does the local repository have any changes pending for commit?"""
     return bool(_run_git(["status", "--porcelain"]))
 
 
 def _is_git_checkout() -> bool:
+    """Can the repository be checked out?"""
     try:
         return _run_git(["rev-parse", "--is-inside-work-tree"]) == "true"
     except (
@@ -178,8 +194,8 @@ def check_for_update() -> Optional[UpdateInfo]:
     """Check GitHub for a newer Celune revision or tag.
 
     Returns:
-        Optional[UpdateInfo]: Information about the update, or ``None`` when Celune
-            appears current or update metadata cannot be read.
+        Optional[UpdateInfo]: Information about the update, or ``None`` when Celune appears current or update metadata
+        cannot be read.
     """
     if os.getenv("CELUNE_SKIP_UPDATE") in {"1", "true", "on", "yes", "enabled"}:
         return None

@@ -22,13 +22,13 @@ REVISION = _get_revision()
 if REVISION:
     _local = REVISION.rstrip("*")
     _dirty = ".dirty" if REVISION.endswith("*") else ""
-    __version__ = f"3.5.1+{_local}{_dirty}"
+    __version__ = f"4.0.0+{_local}{_dirty}"
 else:
-    __version__ = "3.5.1"
+    __version__ = "4.0.0"
 
 __tagline__ = "\u201cYour voice, your way.\u201d"
-__codename__ = "Guidance"
-__comment__ = "My vocal prowess can be easily harnessed by beginners."
+__codename__ = "Personality"
+__comment__ = "I can finally talk with you."
 
 if hasattr(_sys, "ps1"):
     print("Caution: You are running the Celune backend interactively.")
@@ -60,9 +60,5 @@ except ModuleNotFoundError as package:
 
 
 def __dir__() -> list[str]:
-    """Return Celune's intentionally public package surface for REPL users.
-
-    Returns:
-        list[str]: Celune's public package surface.
-    """
+    """Return Celune's intentionally public package surface for REPL users."""
     return sorted(__all__)

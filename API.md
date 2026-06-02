@@ -28,11 +28,45 @@ X-Celune-Token: YOUR_TOKEN
 |--------|------|-------------|
 | `GET` | `/v1` | Return Celune's current status. |
 | `GET` | `/v1/version` | Return the running Celune version. |
+| `POST` | `/v1/think` | Ask Celune to think through Persona and reply asynchronously through her normal speech pipeline. |
 | `POST` | `/v1/speak` | Queue speech and keep the HTTP request open until `audio/flac` is ready. |
 | `POST` | `/v1/speak/async` | Queue speech and return `202 Accepted` immediately with a job ID. |
 | `GET` | `/v1/speak/jobs/{job_id}` | Poll an async speech job; returns `202` while pending and `audio/flac` when complete. |
 | `POST` | `/v1/voice` | Change the active voice. |
 | `POST` | `/v1/sfx` | Upload and play a sound effect. |
+
+## Think
+
+Use `/v1/think` when the client wants Celune to respond through Persona instead of speaking the provided text literally.
+The endpoint returns as soon as Celune accepts the request. The spoken reply is produced later through Celune's normal playback pipeline.
+
+Linux, macOS, or Git Bash:
+
+```bash
+curl -i -X POST http://127.0.0.1:2060/v1/think \
+  -H "Content-Type: application/json" \
+  -d '{"content":"What changed since the last build?"}'
+```
+
+PowerShell:
+
+```powershell
+curl.exe -i -X POST http://127.0.0.1:2060/v1/think -H "Content-Type: application/json" -d '{"content":"What changed since the last build?"}'
+```
+
+Command Prompt:
+
+```bat
+curl.exe -i -X POST http://127.0.0.1:2060/v1/think ^
+  -H "Content-Type: application/json" ^
+  -d "{\"content\":\"What changed since the last build?\"}"
+```
+
+Response:
+
+- `202 application/json` with `{"status":"accepted"}` when Celune starts processing the Persona request.
+- `409 application/json` when Celune is busy.
+- `503 application/json` when Celune is unavailable.
 
 ## Speak (Synchronous)
 

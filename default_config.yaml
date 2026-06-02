@@ -1,34 +1,110 @@
+# TTS backend
+# you will be asked to choose, but VRAM presets may limit availibility
+# of certain backends
+#
 # qwen3 = faster, less expressive
 # voxcpm2 = slower, high quality
-# if null, Celune will ask you to choose a backend before starting
+# mini = much faster, and just as good
 backend: null
-# clone = clone from CEVOICE bundles
-# native = deprecated compatibility mode using Celune native models
-qwen3_mode: clone
-# if enabled, Qwen3 clone mode keeps speaker identity more tightly at the cost of some expression
+
+# Qwen3 TTS settings
+#
+# x-vectors make Celune adhere to the reference more strongly
 qwen3_x_vector_only: true
-# either a built-in bundle name under celune/voices or an explicit .cevoice path
+
+# CEVOICE voice selection
+#
+# default voices are in the "default" pack and are usable for most
 voice_bundle: default
-# if enabled, detailed tracebacks will be displayed, verbose logging messages will appear,
-# and Celune will self-analyze her own voice
+
+# developer mode
+#
+# this will enable verbose logging, detailed tracebacks,
+# and auto-voice analysis upon end of utterance
 dev: false
-# if enabled, the UI is disabled and only extensions or API callers can send inputs
+
+# headless mode / Celune embedded framework
+#
+# this will disable the UI and only API and extensions can make
+# Celune perform any actions
 headless: false
-# if enabled, headless mode will not use ANSI colors
+# don't use ANSI colors in headless interface (defaulting to white)
 headless_nocolor: false
-# you can use the light or dark theme derived from the current CEVOICE pack
+
+# theme palette
+#
+# CEVOICE packs can define how the app theme looks like
+# the default uses #CEBAFF accent and #1D1826 background colors
 theme: dark
-# if enabled, CeluneNorm will be loaded to normalize incoming text
+
+# CeluneNorm settings
+#
+# CeluneNorm is Celune's normalizer that cleans up your text to be more TTS friendly
 use_normalizer: false
-# if enabled, Celune will start her REST API in the background, allowing you to remotely control her
-api:
+
+# VRAM target settings
+# we recommend choosing medium as a safe baseline for low VRAM users
+# the sane choice for users wanting to use Persona is the high preset
+#
+# low (CPU/6GB) - Celune Mini (Pocket TTS) / Qwen3 0.6B+ normalizer CPU (caution: choosing Qwen may harm outputs)
+# medium (8GB) - Qwen3 1.7B + normalizer CPU
+# high (12GB) - Qwen3 1.7B / VoxCPM2 + Persona 4-bit + normalizer CPU
+# xhigh (16GB+) - everything allowed + Persona 8-bit + normalizer GPU
+vram: medium
+
+# sleep mode behavior
+#
+# Celune can automatically enter sleep mode to save your resources while idle
+sleep:
+  # should Celune sleep?
   enabled: true
-  # host is selected automatically: token -> 0.0.0.0, no token -> 127.0.0.1
-  host: 0.0.0.0
-  # the port has to be available, Celune will check availability automatically
+  # how long to idle for in minutes before going to sleep
+  timeout: 10
+  # what to unload when entering sleep mode?
+  unload:
+    persona: true
+    normalizer: true
+    tts: false
+
+# Celune API settings
+#
+# Celune API allows users to interact with Celune over the network,
+# and also lets IoT devices use her abilities
+api:
+  # enabled?
+  enabled: true
+  # where to bind
+  host: 127.0.0.1
+  # what port to bind
   port: 2060
-  # token can also be set with CELUNE_API_TOKEN.
-  # without a token, Celune binds the API to localhost only.
+  # what authentication token users must use
+  # the token can also be set with CELUNE_API_TOKEN
   token: null
-  # it is advised to set this for public Celune APIs
+  # how many generations are allowed every minute
+  # strongly recommended for public APIs
   rate_limit_per_minute: 60
+
+# Persona settings
+#
+# Persona is Celune's thinking system using RAG (Retrieval Augmented Generation) to let characters
+# keep a conversational context and remember you as you speak with said characters
+# it uses Qwen/Qwen2.5-VL-3B-Instruct to ensure it can run on consumer hardware
+persona:
+  # enabled?
+  enabled: true
+  # which Qwen model to use? (in case you want to use an FT)
+  model_id: Qwen/Qwen2.5-VL-3B-Instruct
+  # memory settings
+  memory:
+    # how much do you want Celune to remember
+    max_short_term_messages: 20
+    # where semantic long-term memory retrieval should persist data
+    storage_dir: null
+    # minimum cosine similarity for semantic long-term memory retrieval
+    semantic_similarity_threshold: 0.62
+    # token overlap required by the safe fallback matcher when embeddings are unavailable
+    fallback_token_overlap_threshold: 1
+    # transformer model used for semantic long-term memory retrieval when available locally
+    semantic_embedding_model: sentence-transformers/all-MiniLM-L6-v2
+  # use persona or speak directly?
+  talkback: true

@@ -10,8 +10,8 @@ import sys
 import shutil
 import tomllib
 import platform
-import subprocess
 import contextlib
+import subprocess
 from pathlib import Path
 from typing import Optional
 

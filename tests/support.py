@@ -1,17 +1,31 @@
 # SPDX-License-Identifier: MIT
 """Lightweight test fakes for Celune's unit test suite."""
 
+from __future__ import annotations
+
 import queue
 import threading
 from unittest import mock
-from typing import Any, Optional
+from collections.abc import Iterator
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, Optional, TypedDict
 
 import numpy as np
 import numpy.typing as npt
 
 from celune.utils import discard
 from celune.backends.base import CeluneBackend
+from celune.constants import JSONSerializable, PipelineStates
+
+if TYPE_CHECKING:
+    from celune.celune import Celune
+
+
+class FakeModel(TypedDict):
+    """Metadata returned by the fake test backend."""
+
+    model_id: str
+    kwargs: dict[str, JSONSerializable]
 
 
 class FakeBackend(CeluneBackend):
@@ -23,47 +37,48 @@ class FakeBackend(CeluneBackend):
     voice_models = {"balanced": "fake/balanced", "bold": "fake/bold"}
     default_voice = "balanced"
 
-    @staticmethod
-    def model_is_available_locally(model: str) -> tuple[bool, Optional[str]]:
+    def model_is_available_locally(
+        self, model: str, lang: Optional[str] = None
+    ) -> tuple[bool, Optional[str]]:
         """Pretend that a model is available locally.
 
         Args:
             model: The model identifier requested by the caller.
+            lang: The language identifier for differentiating models by language.
 
         Returns:
             tuple[bool, Optional[str]]: Availability and the fake local path.
         """
+        discard(lang)
         return True, model
 
     def preload_models(self) -> None:
-        """Pretend to preload models without performing work.
-
-        Returns:
-            None: This fake intentionally performs no work.
-        """
+        """Pretend to preload models without performing work."""
         return None
 
-    def load_model(self, model_id: str, **kwargs) -> Any:
+    def load_model(self, model_id: str, **kwargs: JSONSerializable) -> FakeModel:
         """Return lightweight model metadata for one fake model.
 
         Args:
             model_id: The requested fake model identifier.
-            **kwargs: Backend-specific load arguments preserved for assertions.
+            kwargs: Backend-specific load arguments preserved for assertions.
 
         Returns:
-            Any: A dictionary describing the requested fake model.
+            FakeModel: A dictionary describing the requested fake model.
         """
         return {"model_id": model_id, "kwargs": kwargs}
 
-    def generate_stream(self, model: Any, **kwargs) -> Any:
+    def generate_stream(
+        self, model: FakeModel, **kwargs: JSONSerializable
+    ) -> Iterator[tuple[npt.NDArray[np.float32], int, dict[str, int]]]:
         """Yield one deterministic fake audio chunk.
 
         Args:
-            model: The fake model object passed by the caller.
-            **kwargs: Generation arguments accepted for interface compatibility.
+            model: The fake model passed by the caller.
+            kwargs: Generation arguments accepted for interface compatibility.
 
         Returns:
-            Any: An iterator yielding one fake audio chunk.
+            Iterator[tuple[npt.NDArray[np.float32], int, dict[str, int]]]: An iterator yielding one fake audio chunk.
         """
         del model, kwargs
         yield np.zeros((8, 2), dtype=np.float32), 48000, {"chunk_steps": 2}
@@ -72,19 +87,24 @@ class FakeBackend(CeluneBackend):
 class FakeGlow:
     """Minimal RGB glow fake that records lifecycle calls."""
 
-    def __init__(self, color: str) -> None:
-        """Initialize fake glow state.
-
-        Args:
-            color: The configured glow color.
-
-        Returns:
-            None: Constructors initialize state in place.
-        """
+    def __init__(
+        self,
+        color: str,
+        celune: Optional["Celune"] = None,
+        host: str = "127.0.0.1",
+        port: int = 6742,
+    ) -> None:
+        """Initialize fake glow state."""
         self.color = color
+        self.celune = celune
+        self.host = host
+        self.port = port
         self.connect_failed = False
         self.started = False
         self.entered = False
+        self.fatal_called = False
+        self.sleep_called = False
+        self.wake_called = False
         self.finished = threading.Event()
         self.finished.set()
         self.scheduled: list[npt.NDArray[np.float32]] = []
@@ -99,19 +119,23 @@ class FakeGlow:
         return True
 
     def enter(self) -> None:
-        """Record that Celune entered the ready state.
-
-        Returns:
-            None: This helper mutates fake state in place.
-        """
+        """Record that Celune entered the ready state."""
         self.entered = True
 
     def leave(self) -> None:
-        """Accept a leave request without performing hardware work.
+        """Accept a leave request without performing hardware work."""
 
-        Returns:
-            None: This fake intentionally performs no work.
-        """
+    def fatal(self) -> None:
+        """Record that Celune entered a fatal glow state."""
+        self.fatal_called = True
+
+    def sleep(self) -> None:
+        """Record that Celune requested sleep dimming."""
+        self.sleep_called = True
+
+    def wake(self) -> None:
+        """Record that Celune requested brightness restoration."""
+        self.wake_called = True
 
     @staticmethod
     def stop(reset: bool = True, wait: bool = False) -> None:
@@ -120,9 +144,6 @@ class FakeGlow:
         Args:
             reset: Whether real devices would be reset.
             wait: Whether a real worker would be joined.
-
-        Returns:
-            None: This fake intentionally performs no work.
         """
         discard(reset)
         discard(wait)
@@ -132,9 +153,6 @@ class FakeGlow:
 
         Args:
             audio: The audio chunk scheduled by the caller.
-
-        Returns:
-            None: This helper appends to fake state.
         """
         self.scheduled.append(audio)
 
@@ -143,38 +161,22 @@ class FakeStream:
     """Minimal output-stream fake that records lifecycle operations."""
 
     def __init__(self) -> None:
-        """Initialize fake stream state.
-
-        Returns:
-            None: Constructors initialize state in place.
-        """
+        """Initialize fake stream state."""
         self.stopped = False
         self.aborted = False
         self.closed = False
         self.written: list[npt.NDArray[np.float32]] = []
 
     def stop(self) -> None:
-        """Record a graceful stream stop.
-
-        Returns:
-            None: This helper mutates fake state in place.
-        """
+        """Record a graceful stream stop."""
         self.stopped = True
 
     def abort(self) -> None:
-        """Record an immediate stream abort.
-
-        Returns:
-            None: This helper mutates fake state in place.
-        """
+        """Record an immediate stream abort."""
         self.aborted = True
 
     def close(self) -> None:
-        """Record stream closure.
-
-        Returns:
-            None: This helper mutates fake state in place.
-        """
+        """Record stream closure."""
         self.closed = True
 
     def write(self, audio: npt.NDArray[np.float32]) -> None:
@@ -182,9 +184,6 @@ class FakeStream:
 
         Args:
             audio: The audio chunk written by the caller.
-
-        Returns:
-            None: This helper appends to fake state.
         """
         self.written.append(audio)
 
@@ -201,6 +200,8 @@ def make_pipeline_engine() -> SimpleNamespace:
     progress: list[tuple[Optional[float], Optional[float]]] = []
     engine = SimpleNamespace()
     engine.backend = SimpleNamespace(supported_languages=("en",))
+    engine.persona_attachments = []
+    engine.persona_recent_visual_context = ()
     engine.use_normalization = False
     engine.normalize = mock.Mock(return_value=None)
     engine.is_in_tutorial = False
@@ -217,7 +218,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.playback_done.set()
     engine.utterance_force_stop = threading.Event()
     engine.kept_sfx_audio = None
-    engine.force_stop_marker = object()
+    engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
     engine.log = lambda msg, severity="info": messages.append((msg, severity))
     engine.log_dev = lambda msg, severity="info": messages.append((msg, severity))
     engine.error_callback = errors.append

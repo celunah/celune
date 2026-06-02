@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Celune 3.5.1 - "I'm not just a TTS. I'm someone special."
+Celune 4.0.0 - "I'm not just a TTS. I'm someone special."
 Refer to https://github.com/celunah/celune for information about Celune.
 Celune models are available on https://huggingface.co/collections/lunahr/celune.
 
@@ -13,9 +13,8 @@ import os
 import sys
 import time
 import random
-import shutil
-import warnings
 import datetime
+import warnings
 import contextlib
 
 # setting this environment variable will run Celune in dev mode and provide full tracebacks
@@ -47,6 +46,11 @@ try:
         config_value,
         env_bool,
         merge_missing_defaults,
+    )
+    from celune.paths import (
+        config_path,
+        default_config_path,
+        ensure_config_path,
     )
     from celune.utils import detected_ide, supports_ansi, indent, title_case
     from celune.constants import ExitCodes
@@ -85,9 +89,6 @@ except ModuleNotFoundError as package:
 def main() -> None:
     """Instantiate and start Celune.
 
-    Returns:
-        None: This function runs the application or exits the process on failure.
-
     Raises:
         No: Celune refuses to run on a blocked name day.
         Exception: Re-raised in development mode for unexpected startup errors.
@@ -108,13 +109,17 @@ def main() -> None:
             print()
             time.sleep(5)
 
-        if not os.path.exists("config.yaml"):
-            shutil.copy("default_config.yaml", "config.yaml")
+        bundled_default_config_path = default_config_path()
+        active_config_path, created_config = ensure_config_path(
+            active_path=config_path(create_parent=True),
+            default_path=bundled_default_config_path,
+        )
+        if created_config:
             print("Celune configuration has been created.")
 
-        with open("config.yaml", encoding="utf-8") as cfg:
+        with open(active_config_path, encoding="utf-8") as cfg:
             config = yaml.safe_load(cfg)
-        with open("default_config.yaml", encoding="utf-8") as cfg:
+        with open(bundled_default_config_path, encoding="utf-8") as cfg:
             default_config = yaml.safe_load(cfg)
 
         if not isinstance(default_config, dict):
@@ -124,13 +129,14 @@ def main() -> None:
 
         config, config_updated = merge_missing_defaults(config, default_config)
         if config_updated:
-            with open("config.yaml", "w", encoding="utf-8") as cfg:
+            with open(active_config_path, "w", encoding="utf-8") as cfg:
                 yaml.safe_dump(config, cfg, sort_keys=False)
             print("Celune configuration has been updated with new defaults.")
 
         dev = config_bool(config, "CELUNE_DEV", "dev")
         headless = config_bool(config, "CELUNE_HEADLESS", "headless")
-        backend = INITIAL_BACKEND or config_value(config, "backend")
+        configured_backend = INITIAL_BACKEND or config_value(config, "backend")
+        backend = configured_backend if isinstance(configured_backend, str) else None
 
         # try to update if not up to date
         if not headless and supports_ansi():
@@ -187,38 +193,6 @@ def main() -> None:
                 print("Celune updated successfully. Restart Celune to apply changes.")
                 time.sleep(5)
                 sys.exit(ExitCodes.EXIT_PENDING_UPDATE.value)
-
-        # ask for default backend if not set yet
-        # Celune will save this preference
-        if not backend and supports_ansi():
-            backend = SelectMenu(
-                ["Qwen3 - Fast", "VoxCPM2 - High quality"],
-                ["qwen3", "voxcpm2"],
-                "Which backend should Celune use?",
-            ).start()
-
-            if backend == "qwen3":
-                print("Qwen3 uses CEVOICE-backed voice cloning by default.")
-                print(
-                    "Native mode remains available as a deprecated compatibility option."
-                )
-            elif backend == "voxcpm2":
-                print(
-                    "Note: VoxCPM2 only supports voice cloning, and it is significantly slower."
-                )
-                print(
-                    "By selecting this backend, you accept any tradeoffs that may occur later on."
-                )
-
-            config["backend"] = backend
-            with open("config.yaml", "w", encoding="utf-8") as cfg:
-                yaml.dump(config, cfg)
-        elif not backend and not supports_ansi():
-            print("This terminal does not support ANSI.")
-            print("Please select a backend manually.")
-            print("Refer to Celune's configuration for details.")
-            time.sleep(5)
-            sys.exit(ExitCodes.EXIT_NO_ANSI.value)
 
         if not env_bool("CELUNE_LAUNCHER"):
             launcher_exe = "celune.exe" if os.name == "nt" else "celune.appimage"
@@ -314,10 +288,12 @@ def main() -> None:
             print("For full traceback:")
             if os.name == "nt":
                 print("set CELUNE_DEV=1")
-                print(indent("python {os.path.basename(__file__)}", spaces=4))
+                print(indent(f"python {os.path.basename(__file__)}", spaces=4))
             else:
                 print(
-                    indent("CELUNE_DEV=1 python {os.path.basename(__file__)}", spaces=4)
+                    indent(
+                        f"CELUNE_DEV=1 python {os.path.basename(__file__)}", spaces=4
+                    )
                 )
             print()
             print("additional debugging:")

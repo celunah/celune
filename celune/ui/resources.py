@@ -45,7 +45,7 @@ def gpu_usage() -> Optional[int]:
     Returns:
         Optional[int]: The GPU utilization, or ``None`` if unavailable.
     """
-    global _NVIDIA_SMI_PROC, _NVIDIA_SMI_USAGE  # pylint: disable=global-statement
+    global _NVIDIA_SMI_PROC, _NVIDIA_SMI_USAGE
 
     if not _NVIDIA_SMI:
         return None
@@ -75,7 +75,7 @@ def gpu_usage() -> Optional[int]:
         return _NVIDIA_SMI_USAGE
 
     try:
-        _NVIDIA_SMI_PROC = subprocess.Popen(  # pylint: disable=consider-using-with
+        _NVIDIA_SMI_PROC = subprocess.Popen(  # pylint: disable=R1732
             [
                 _NVIDIA_SMI,
                 "--query-gpu=utilization.gpu",
@@ -104,11 +104,7 @@ def format_usage() -> str:
 
 
 def prime_usage() -> None:
-    """Prime psutil CPU sampling for later footer updates.
-
-    Returns:
-        None: This method primes psutil so Celune can update the footer later.
-    """
+    """Prime psutil CPU sampling for later footer updates."""
     psutil.cpu_percent(interval=None)
 
 
@@ -160,11 +156,11 @@ def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[st
             active_theme = "celune_light" if configured_theme == "light" else "celune"
 
         if active_theme == "celune_april_fools":
-            pages.append(f"CTRL+C/CTRL+Q exit • CTRL+ENTER {enter_action}")
+            pages.append(f"CTRL+Q exit • CTRL+ENTER {enter_action}")
         else:
             other_theme = "light" if active_theme == "celune" else "dark"
             pages.append(
-                f"CTRL+C/CTRL+Q exit • CTRL+T {other_theme} • CTRL+ENTER {enter_action}"
+                f"CTRL+Q exit • CTRL+T {other_theme} • CTRL+ENTER {enter_action}"
             )
 
     return tuple(pages)

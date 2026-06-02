@@ -1,29 +1,38 @@
 # SPDX-License-Identifier: MIT
-"""CEVOICE bundle writer, parser, and lazy file loader."""
+"""CEVOICE/CECHAR bundle writer, parser, and lazy file loader."""
 
 from __future__ import annotations
 
 import json
+import atexit
 import shutil
 import struct
-import atexit
 import hashlib
 import tempfile
 from pathlib import Path
-from dataclasses import dataclass
-from typing import Any, BinaryIO, Callable, Mapping, Optional, Union
+from dataclasses import dataclass, field
+from typing import BinaryIO, Callable, Final, Mapping, Optional, Union, cast
 
 from .exceptions import CEVoiceError
+from .constants import JSONSerializable
+from .paths import temp_data_dir
 
-MAGIC = b"CEVOICE\0"
-VERSION = 1
+MAGIC: Final[bytes] = b"CECHAR\0\0"
+VERSION: Final[int] = 2
+LEGACY_MAGIC: Final[bytes] = b"CEVOICE\0"
+LEGACY_VERSION: Final[int] = 1
+FORMAT_NAME: Final[str] = "CECHAR"
+LEGACY_FORMAT_NAME: Final[str] = "CEVOICE"
 HEADER = struct.Struct("<8sHI")
 ALLOWED_ASSET_KINDS = {"wav", "pt"}
+type ManifestValue = Union[JSONSerializable, "Manifest"]
+type Manifest = dict[str, ManifestValue]
+type VoiceManifest = dict[str, Manifest]
 
 
 @dataclass(frozen=True)
 class CEVoiceAsset:
-    """One binary asset stored inside a CEVOICE bundle."""
+    """One binary asset stored inside a CEVOICE package."""
 
     offset: int
     length: int
@@ -32,31 +41,34 @@ class CEVoiceAsset:
 
 @dataclass(frozen=True)
 class CEVoice:
-    """Parsed CEVOICE bundle metadata and payload access."""
+    """Parsed CEVOICE package metadata and payload access."""
 
     path: Path
-    metadata: dict[str, Any]
+    metadata: Manifest
     payload_offset: int
 
     @classmethod
-    def open(cls, path: Union[str, Path]) -> "CEVoice":
-        """Parse and validate a CEVOICE bundle.
+    def open(cls, path: Union[str, Path]) -> CEVoice:
+        """Parse and validate a CEVOICE package.
 
         Args:
-            path: The CEVOICE bundle to load.
+            path: The CEVOICE package to load.
 
         Returns:
             CEVoice: The CEVoice object.
 
         Raises:
-            CEVoiceError: The CEVOICE bundle is malformed and could not be loaded.
+            CEVoiceError: The CEVOICE package is malformed and could not be loaded.
         """
         bundle_path = Path(path)
         with bundle_path.open("rb") as stream:
             magic, version, metadata_length = _read_header(stream)
-            if magic != MAGIC:
+            if magic not in {MAGIC, LEGACY_MAGIC}:
                 raise CEVoiceError("invalid CEVOICE magic")
-            if version != VERSION:
+            if (magic, version) not in {
+                (MAGIC, VERSION),
+                (LEGACY_MAGIC, LEGACY_VERSION),
+            }:
                 raise CEVoiceError(f"unsupported CEVOICE version {version}")
 
             metadata_bytes = stream.read(metadata_length)
@@ -74,19 +86,19 @@ class CEVoice:
         return cls(bundle_path, metadata, payload_offset)
 
     @property
-    def voices(self) -> dict[str, dict[str, Any]]:
+    def voices(self) -> VoiceManifest:
         """Return the voice manifest.
 
         Returns:
-            dict[str, dict[str, Any]]: The voice manifest of this CEVOICE bundle.
+            VoiceManifest: The voice manifest of this CEVOICE package.
 
         Raises:
-            CEVoiceError: The CEVOICE bundle does not contain a valid voice manifest.
+            CEVoiceError: The CEVOICE package does not contain a valid voice manifest.
         """
         voices = self.metadata.get("voices")
         if not isinstance(voices, dict):
             raise CEVoiceError("metadata voices must be an object")
-        return voices
+        return cast(VoiceManifest, voices)
 
     @property
     def voice_order(self) -> tuple[str, ...]:
@@ -97,7 +109,7 @@ class CEVoice:
         """
         order = self.metadata.get("voice_order")
         if isinstance(order, list) and all(isinstance(voice, str) for voice in order):
-            return tuple(order)
+            return tuple(cast(list[str], order))
         return tuple(self.voices)
 
     def asset(self, voice: str, kind: str) -> CEVoiceAsset:
@@ -114,14 +126,15 @@ class CEVoice:
             KeyError: The specified voice name does not have this kind of asset.
         """
         try:
-            raw_asset = self.voices[voice]["assets"][kind]
+            assets = cast(dict[str, Manifest], self.voices[voice]["assets"])
+            raw_asset = assets[kind]
         except KeyError as error:
             raise KeyError(f"asset '{kind}' for voice '{voice}' not found") from error
 
         return CEVoiceAsset(
-            offset=raw_asset["offset"],
-            length=raw_asset["length"],
-            sha256=raw_asset["sha256"],
+            offset=cast(int, raw_asset["offset"]),
+            length=cast(int, raw_asset["length"]),
+            sha256=cast(str, raw_asset["sha256"]),
         )
 
     def read_asset(self, voice: str, kind: str) -> bytes:
@@ -151,12 +164,51 @@ class CEVoice:
         return data
 
 
+@dataclass(frozen=True, slots=True)
+class PersonaIdentity:
+    """Identity details supplied by a CEVOICE pack."""
+
+    name: str = ""
+    age: str = ""
+    gender: str = ""
+    profile: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PersonaStyleValues:
+    """Baseline speaking-style values supplied by a CEVOICE pack."""
+
+    warmth: str = ""
+    directness: str = ""
+    humor: str = ""
+    detail: str = ""
+    formality: str = ""
+    enthusiasm: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CEVoicePersona:
+    """Persona metadata supplied by a CEVOICE pack."""
+
+    identity: PersonaIdentity = field(default_factory=PersonaIdentity)
+    speaking_style: str = ""
+    boundaries: tuple[str, ...] = ()
+    prompt_rules: tuple[str, ...] = ()
+    example_dialogue: tuple[str, ...] = ()
+    style: PersonaStyleValues = field(default_factory=PersonaStyleValues)
+
+
 class CEVoiceLoader:
     """Lazily materialize CEVOICE assets as real files for path-only consumers."""
 
     def __init__(self, bundle: CEVoice) -> None:
         self.bundle = bundle
-        self._directory = Path(tempfile.mkdtemp(prefix="celune-cevoice-"))
+        self._directory = Path(
+            tempfile.mkdtemp(
+                prefix="celune-cevoice-",
+                dir=str(temp_data_dir(create=True)),
+            )
+        )
         self._paths: dict[tuple[str, str], Path] = {}
         atexit.register(self.close)
 
@@ -170,6 +222,9 @@ class CEVoiceLoader:
 
         Returns:
             Path: The path to the extracted voice asset.
+
+        Raises:
+            CEVoiceError: The CEVOICE package contains path delimiters.
         """
         key = (voice, kind)
         if key not in self._paths:
@@ -185,32 +240,32 @@ class CEVoiceLoader:
         return self._paths[key]
 
     def close(self) -> None:
-        """Remove extracted temporary files.
-
-        Returns:
-            None: This function cleans up temporary voice assets."""
+        """Remove extracted temporary files."""
         shutil.rmtree(self._directory, ignore_errors=True)
 
 
 def write_cevoice(
     path: Union[str, Path],
     voices: Mapping[str, Mapping[str, Union[bytes, str, Path]]],
-    metadata: Optional[Mapping[str, Any]] = None,
-    voice_metadata: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    metadata: Optional[Mapping[str, ManifestValue]] = None,
+    voice_metadata: Optional[Mapping[str, Mapping[str, ManifestValue]]] = None,
 ) -> Path:
-    """Write a CEVOICE bundle from per-voice binary assets.
+    """Write a CEVOICE package from per-voice binary assets.
 
     Args:
-        path: The CEVOICE bundle to save as.
-        voices: The voice files to bundle into this CEVOICE bundle.
-        metadata: The metadata to bundle into this CEVOICE bundle.
+        path: The CEVOICE package to save as.
+        voices: The voice files to bundle into this CEVOICE package.
+        metadata: The metadata to bundle into this CEVOICE package.
         voice_metadata: Extra metadata stored beside each voice's assets.
 
     Returns:
-        Path: The path to the created CEVOICE bundle.
+        Path: The path to the created CEVOICE package.
+
+    Raises:
+        CEVoiceError: The CEVOICE package contains path delimiters.
     """
     payload = bytearray()
-    manifest_voices: dict[str, dict[str, Any]] = {}
+    manifest_voices: VoiceManifest = {}
     unknown_voice_metadata = set(voice_metadata or {}) - set(voices)
     if unknown_voice_metadata:
         unknown = sorted(unknown_voice_metadata)[0]
@@ -219,7 +274,7 @@ def write_cevoice(
     for voice, assets in voices.items():
         if "/" in voice or "\\" in voice or voice in {"", ".", ".."}:
             raise CEVoiceError(f"invalid voice name '{voice}'")
-        manifest_assets: dict[str, dict[str, Any]] = {}
+        manifest_assets: dict[str, Manifest] = {}
         for kind, source in assets.items():
             if "/" in kind or "\\" in kind or kind in {"", ".", ".."}:
                 raise CEVoiceError(f"invalid asset kind for voice '{voice}'")
@@ -235,13 +290,13 @@ def write_cevoice(
             }
             payload.extend(data)
         voice_entry = dict((voice_metadata or {}).get(voice, {}))
-        voice_entry["assets"] = manifest_assets
+        voice_entry["assets"] = cast(ManifestValue, manifest_assets)
         manifest_voices[voice] = voice_entry
 
     manifest = dict(metadata or {})
-    manifest["format"] = "CEVOICE"
+    manifest["format"] = FORMAT_NAME
     manifest["version"] = VERSION
-    manifest["voices"] = manifest_voices
+    manifest["voices"] = cast(ManifestValue, manifest_voices)
     metadata_bytes = json.dumps(
         manifest,
         ensure_ascii=True,
@@ -271,10 +326,17 @@ def _read_source(source: Union[bytes, str, Path]) -> bytes:
     return Path(source).read_bytes()
 
 
-def _validate_metadata(path: Path, metadata: Any, payload_offset: int) -> None:
+def _validate_metadata(
+    path: Path, metadata: ManifestValue, payload_offset: int
+) -> None:
     if not isinstance(metadata, dict):
         raise CEVoiceError("metadata root must be an object")
-    if metadata.get("format") != "CEVOICE" or metadata.get("version") != VERSION:
+    format_name = metadata.get("format")
+    manifest_version = metadata.get("version")
+    if (format_name, manifest_version) not in {
+        (FORMAT_NAME, VERSION),
+        (LEGACY_FORMAT_NAME, LEGACY_VERSION),
+    }:
         raise CEVoiceError("metadata format/version mismatch")
 
     voices = metadata.get("voices")
@@ -301,12 +363,21 @@ def _validate_metadata(path: Path, metadata: Any, payload_offset: int) -> None:
     if theme is not None:
         if not isinstance(theme, dict):
             raise CEVoiceError("metadata theme must be an object")
-        for key in ("background", "accent", "glow_color"):
+        if (
+            theme.get("faded_accent") is None
+            and theme.get("sleeping_color") is not None
+        ):
+            theme["faded_accent"] = str(theme.get("sleeping_color", "#9c88ce"))
+        for key in ("background", "accent", "glow_color", "faded_accent"):
             value = theme.get(key)
-            if key == "glow_color" and value is None:
+            if key in {"glow_color", "faded_accent"} and value is None:
                 continue
             if not _is_hex_color(value):
                 raise CEVoiceError(f"metadata theme '{key}' must be a hex color")
+
+    persona = metadata.get("persona")
+    if persona is not None:
+        _validate_persona_metadata(persona)
 
     payload_length = path.stat().st_size - payload_offset
     for voice, voice_data in voices.items():
@@ -361,13 +432,166 @@ def _validate_metadata(path: Path, metadata: Any, payload_offset: int) -> None:
                 )
 
 
-def _is_hex_color(value: Any) -> bool:
+def _is_hex_color(value: ManifestValue) -> bool:
     return (
         isinstance(value, str)
         and len(value) == 7
         and value.startswith("#")
         and all(character in "0123456789abcdefABCDEF" for character in value[1:])
     )
+
+
+def _validate_optional_string(
+    value: ManifestValue,
+    field_name: str,
+) -> None:
+    """Validate one optional metadata field that must be a string."""
+    if value is not None and not isinstance(value, str):
+        raise CEVoiceError(f"{field_name} must be a string")
+
+
+def _validate_string_list_or_text(
+    value: ManifestValue,
+    field_name: str,
+) -> None:
+    """Validate one optional metadata field that may be text or text lines."""
+    if value is None or isinstance(value, str):
+        return
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return
+    raise CEVoiceError(f"{field_name} must be a string or list of strings")
+
+
+def _validate_persona_metadata(persona: ManifestValue) -> None:
+    """Validate the optional CEVOICE persona metadata block."""
+    if not isinstance(persona, dict):
+        raise CEVoiceError("metadata persona must be an object")
+
+    identity = persona.get("identity")
+    if identity is not None:
+        if not isinstance(identity, dict):
+            raise CEVoiceError("metadata persona identity must be an object")
+        for key in ("name", "age", "gender", "profile"):
+            _validate_optional_string(
+                cast(Manifest, identity).get(key),
+                f"metadata persona identity '{key}'",
+            )
+
+    _validate_optional_string(persona.get("profile"), "metadata persona 'profile'")
+    _validate_optional_string(
+        persona.get("speaking_style"),
+        "metadata persona 'speaking_style'",
+    )
+    _validate_string_list_or_text(
+        persona.get("boundaries"),
+        "metadata persona 'boundaries'",
+    )
+    _validate_string_list_or_text(
+        persona.get("prompt_rules"),
+        "metadata persona 'prompt_rules'",
+    )
+    _validate_string_list_or_text(
+        persona.get("example_dialogue"),
+        "metadata persona 'example_dialogue'",
+    )
+
+    style = persona.get("style")
+    if style is not None:
+        if not isinstance(style, dict):
+            raise CEVoiceError("metadata persona style must be an object")
+        for key in (
+            "warmth",
+            "directness",
+            "humor",
+            "detail",
+            "formality",
+            "enthusiasm",
+        ):
+            _validate_optional_string(
+                cast(Manifest, style).get(key),
+                f"metadata persona style '{key}'",
+            )
+
+
+def _text_tuple(value: ManifestValue) -> tuple[str, ...]:
+    """Normalize one text or text-list manifest value into a tuple."""
+    if isinstance(value, str):
+        stripped = value.strip()
+        return (stripped,) if stripped else ()
+    if isinstance(value, list):
+        lines = [
+            item.strip() for item in value if isinstance(item, str) and item.strip()
+        ]
+        return tuple(lines)
+    return ()
+
+
+def persona_metadata_from_manifest(
+    metadata: Mapping[str, ManifestValue],
+) -> Optional[CEVoicePersona]:
+    """Return typed persona metadata from a CEVOICE manifest when present.
+
+    Args:
+        metadata: The CEVOICE package manifest.
+
+    Returns:
+        Optional[CEVoicePersona]: The Persona metadata from the current CEVOICE package.
+    """
+    raw_persona = metadata.get("persona")
+    if not isinstance(raw_persona, dict):
+        return None
+
+    raw_identity = raw_persona.get("identity")
+    identity = cast(Manifest, raw_identity) if isinstance(raw_identity, dict) else {}
+    raw_style = raw_persona.get("style")
+    style = cast(Manifest, raw_style) if isinstance(raw_style, dict) else {}
+
+    profile = raw_persona.get("profile")
+    identity_profile = identity.get("profile")
+    return CEVoicePersona(
+        identity=PersonaIdentity(
+            name=_manifest_text(identity.get("name")),
+            age=_manifest_text(identity.get("age")),
+            gender=_manifest_text(identity.get("gender")),
+            profile=_manifest_text(identity_profile or profile),
+        ),
+        speaking_style=_manifest_text(raw_persona.get("speaking_style")),
+        boundaries=_text_tuple(raw_persona.get("boundaries")),
+        prompt_rules=_text_tuple(raw_persona.get("prompt_rules")),
+        example_dialogue=_text_tuple(raw_persona.get("example_dialogue")),
+        style=PersonaStyleValues(
+            warmth=_manifest_text(style.get("warmth")),
+            directness=_manifest_text(style.get("directness")),
+            humor=_manifest_text(style.get("humor")),
+            detail=_manifest_text(style.get("detail")),
+            formality=_manifest_text(style.get("formality")),
+            enthusiasm=_manifest_text(style.get("enthusiasm")),
+        ),
+    )
+
+
+def bundle_character_name(bundle: CEVoice) -> Optional[str]:
+    """Return the active character name implied by one CEVOICE package.
+
+    Args:
+        bundle: The CEVOICE package to use.
+
+    Returns:
+        Optional[str]: The character name from the current CEVOICE package.
+    """
+    persona = persona_metadata_from_manifest(bundle.metadata)
+    if persona is not None and persona.identity.name.strip():
+        return persona.identity.name.strip()
+
+    name = bundle.metadata.get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return None
+
+
+def _manifest_text(value: ManifestValue) -> str:
+    """Return a manifest value only when it is meaningful text."""
+    return value.strip() if isinstance(value, str) and value.strip() else ""
 
 
 _DEFAULT_LOADER: Optional[CEVoiceLoader] = None
@@ -385,18 +609,26 @@ def default_bundle_path() -> Path:
     Returns:
         Path: The absolute path to Celune's default voice bundle.
     """
-    return Path(__file__).resolve().parent / "voices" / "default.cevoice"
+    return Path(__file__).resolve().parent.parent / "voices" / "default.cevoice"
+
+
+def bundled_voices_dir() -> Path:
+    """Return the repository-level directory that stores bundled voice packs.
+
+    Returns:
+        Path: The absolute path to the bundled CEVOICE directory.
+    """
+    return Path(__file__).resolve().parent.parent / "voices"
 
 
 def resolve_bundle_path(bundle: Optional[Union[str, Path]] = None) -> Path:
-    """Resolve a configured CEVOICE bundle name or path.
+    """Resolve a configured CEVOICE package name or path.
 
     Args:
-        bundle: Either a built-in bundle name, an explicit bundle path, or
-            ``None`` to select Celune's default bundle.
+        bundle: Either a built-in bundle name, an explicit bundle path, or ``None`` to select Celune's default bundle.
 
     Returns:
-        Path: The resolved CEVOICE bundle path.
+        Path: The resolved CEVOICE package path.
     """
     if bundle is None:
         return default_bundle_path()
@@ -407,18 +639,17 @@ def resolve_bundle_path(bundle: Optional[Union[str, Path]] = None) -> Path:
 
     if candidate.suffix.lower() != ".cevoice":
         candidate = candidate.with_suffix(".cevoice")
-    return Path(__file__).resolve().parent / "voices" / candidate
+    return bundled_voices_dir() / candidate
 
 
 def select_voice_bundle(bundle: Optional[Union[str, Path]] = None) -> Path:
-    """Select the CEVOICE bundle used by Celune's shared loader.
+    """Select the CEVOICE package used by Celune's shared loader.
 
     Args:
-        bundle: Either a built-in bundle name, an explicit bundle path, or
-            ``None`` to restore Celune's default bundle.
+        bundle: Either a built-in bundle name, an explicit bundle path, or ``None`` to restore Celune's default bundle.
 
     Returns:
-        Path: The selected CEVOICE bundle path.
+        Path: The selected CEVOICE package path.
     """
     global _DEFAULT_LOADER, _DEFAULT_LOADER_INITIALIZED
     global _DEFAULT_LOADER_ANNOUNCED, _DEFAULT_LOADER_FAILED, _SELECTED_BUNDLE
@@ -448,7 +679,7 @@ def select_voice_bundle(bundle: Optional[Union[str, Path]] = None) -> Path:
 
 
 def active_bundle_path() -> Path:
-    """Return the currently selected CEVOICE bundle path.
+    """Return the currently selected CEVOICE package path.
 
     Returns:
         Path: The selected bundle path, or Celune's default bundle path.
@@ -457,10 +688,10 @@ def active_bundle_path() -> Path:
 
 
 def default_loader() -> Optional[CEVoiceLoader]:
-    """Check if a default CEVOICE bundle can be loaded and return the loader.
+    """Check if a default CEVOICE package can be loaded and return the loader.
 
     Returns:
-        Optional[CEVoiceLoader]: The default CEVOICE bundle loader.
+        Optional[CEVoiceLoader]: The default CEVOICE package loader.
     """
     global _DEFAULT_LOADER, _DEFAULT_LOADER_INITIALIZED, _DEFAULT_LOADER_FAILED
     global _DEFAULT_LOADER_FELL_BACK_FROM
@@ -495,8 +726,8 @@ def announce_default_bundle(log: Callable[[str, str], None]) -> Optional[str]:
         log: The logging callback to the bound user interface.
 
     Returns:
-        Optional[str]: The selected bundle's character name, ``None`` if loading failed, ``"Celune"`` if
-            a fallback reference was loaded.
+        Optional[str]: The selected bundle's character name, ``None`` if loading failed, ``"Celune"`` if a fallback
+        reference was loaded.
     """
     global _DEFAULT_LOADER_ANNOUNCED
     loader = default_loader()
@@ -512,6 +743,8 @@ def announce_default_bundle(log: Callable[[str, str], None]) -> Optional[str]:
                 "warning",
             )
         name = loader.bundle.metadata.get("name", active_bundle_path().stem)
+        if not isinstance(name, str):
+            name = active_bundle_path().stem
         log(f"Loading voice pack: {name}", "info")
         _DEFAULT_LOADER_ANNOUNCED = True
         return name

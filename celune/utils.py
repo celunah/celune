@@ -1,25 +1,27 @@
 # SPDX-License-Identifier: MIT
 """Celune common utility functions."""
 
-import re
 import os
-import sys
+import re
 import math
 import time
 import random
 import inspect
 import datetime
+import textwrap
 import traceback
 import subprocess
 import multiprocessing
 from pathlib import Path
 from collections.abc import Iterator
-from typing import Union, Callable, Optional, Literal, TypedDict, overload
+from typing import Union, Callable, Optional, Literal, TypedDict, Any, overload
 
 import psutil
 import langdetect
 
 from .constants import REFERENCE_NEW_MOON
+from .paths import traceback_path
+from .terminal import supports_ansi as terminal_supports_ansi
 
 
 class CallerInfo(TypedDict):
@@ -43,8 +45,8 @@ def get_revision() -> str:
     """Get the current Git repository revision.
 
     Returns:
-        str: The short commit hash, suffixed with ``*`` when the worktree is dirty,
-            or an empty string when Git metadata is unavailable.
+        str: The short commit hash, suffixed with ``*`` when the worktree is dirty, or an empty string when Git metadata
+        is unavailable.
     """
     try:
         rev = (
@@ -96,8 +98,7 @@ def to_rgb(color: str) -> tuple[int, int, int]:
     """Convert a hexadecimal color code to an RGB tuple.
 
     Args:
-        color: A 3-digit or 6-digit hexadecimal color string, optionally prefixed
-            with ``#`` or ``0x``.
+        color: A 3-digit or 6-digit hexadecimal color string, optionally prefixed with ``#`` or ``0x``.
 
     Returns:
         tuple[int, ...]: The parsed ``(red, green, blue)`` color components.
@@ -148,6 +149,7 @@ def lunar_phase(phase: float) -> str:
 
     Args:
         phase: The floating point phase.
+
     Returns:
         str: The corresponding phase name.
     """
@@ -174,6 +176,7 @@ def celune_day_status(now: datetime.datetime) -> str:
 
     Args:
         now: The current date and time.
+
     Returns:
         str: The formatted Celune Day status message.
     """
@@ -221,8 +224,7 @@ def cuda_architecture(capability: tuple[int, int]) -> str:
         str: The architecture name.
 
     Raises:
-        NotImplementedError: The CUDA capability is below Celune's supported
-            minimum.
+        NotImplementedError: The CUDA capability is below Celune's supported minimum.
         ValueError: The CUDA capability is not recognized.
     """
 
@@ -247,14 +249,13 @@ def cuda_architecture(capability: tuple[int, int]) -> str:
 def run_async(
     func: Callable, *args, daemon: bool = True, **kwargs
 ) -> multiprocessing.Process:
-    """Run a function asynchronously.
-    The function must not return a value or affect Celune directly, because it will run
-        detached from Celune.
+    """Run a function asynchronously. The function must not return a value or affect Celune directly, because it will
+    run detached from Celune.
 
     Args:
         func: The function to call.
-        args: The arguments to pass to the function.
         daemon: Whether to use a daemon process. Defaults to ``True``.
+        args: The arguments to pass to the function.
         kwargs: Keyword arguments to pass to the function.
 
     Returns:
@@ -276,44 +277,7 @@ def supports_ansi() -> bool:
     Returns:
         bool: Whether the terminal supports ANSI color codes.
     """
-    is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
-    if not is_tty:  # non-interactive terminals don't support ANSI
-        return False
-
-    if (
-        sys.platform != "win32"
-    ):  # interactive terminals on Linux systems should already be ANSI capable
-        return True
-
-    try:
-        import ctypes
-    except ModuleNotFoundError:
-        return False
-
-    # get stdout handle
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    stdout_handle = kernel32.GetStdHandle(-11)
-    invalid_handle = ctypes.c_void_p(-1).value
-    # no handle found
-    if stdout_handle in (0, invalid_handle):
-        return False
-
-    # check stdout handle, bail out if none found
-    mode = ctypes.c_uint32(0)
-    if not kernel32.GetConsoleMode(stdout_handle, ctypes.byref(mode)):  # invalid handle
-        return False
-
-    enable_virtual_terminal_processing = 0x0004
-    if (
-        mode.value & enable_virtual_terminal_processing
-    ):  # try to enable ANSI mode, bail out if not set
-        return True  # ANSI mode was enabled
-
-    return bool(  # try to enable ANSI mode using alternative call syntax, bail out if not set
-        kernel32.SetConsoleMode(
-            stdout_handle, mode.value | enable_virtual_terminal_processing
-        )
-    )
+    return terminal_supports_ansi()
 
 
 def format_error(e: Exception, dev: bool) -> str:
@@ -328,7 +292,7 @@ def format_error(e: Exception, dev: bool) -> str:
     """
     if dev:
         trace = traceback.format_exc()
-        with open("celune_traceback.txt", "w", encoding="utf-8") as f:
+        with open(traceback_path(create_parent=True), "w", encoding="utf-8") as f:
             f.write(trace)
 
     details = str(e) or "no error description"
@@ -403,8 +367,7 @@ def detected_ide() -> Optional[str]:
     """Return a known IDE name from common environment markers.
 
     Returns:
-        Optional[str]: The recognized IDE name, or ``None`` when no supported
-            marker is present.
+        Optional[str]: The recognized IDE name, or ``None`` when no supported marker is present.
     """
     if os.environ.get("PYCHARM_HOSTED"):
         return "PyCharm"
@@ -427,15 +390,13 @@ def title_case(text: str) -> str:
 
 
 def ipa_to_english(ipa: str) -> tuple[str, int]:
-    """Return an English approximation of the input IPA.
-        The output may be inaccurate with non-English IPA inputs.
+    """Return an English approximation of the input IPA. The output may be inaccurate with non-English IPA inputs.
 
     Args:
         ipa: The IPA to approximate.
 
     Returns:
-        tuple[str, int]: The English approximation of the input IPA,
-            and the amount of unmatched IPA characters.
+        tuple[str, int]: The English approximation of the input IPA, and the amount of unmatched IPA characters.
     """
 
     ipa_map = {
@@ -531,12 +492,11 @@ def replace_ipa(text: str, strict: bool = True) -> tuple[str, int]:
 
     Args:
         text: The IPA to approximate.
-        strict: Whether the input text must be delimited by IPA brackets (slashes or square brackets)
-            to be treated as IPA or not.
+        strict: Whether the input text must be delimited by IPA brackets (slashes or square brackets) to be treated as
+            IPA or not.
 
     Returns:
-        tuple[str, int]: The English approximation of the input IPA,
-            and the amount of unmatched IPA characters.
+        tuple[str, int]: The English approximation of the input IPA, and the amount of unmatched IPA characters.
     """
     total_unmatched = 0
 
@@ -567,13 +527,11 @@ def custom_assert(condition: bool, exception: Optional[Exception]) -> None:
         condition: The condition to assert against.
         exception: The exception to raise if the condition was not met.
 
-    Returns:
-        None: This function raises an exception upon a failed assertion.
-
     Raises:
-        Exception: A specified exception class was raised because assertion failed.
-        TypeError: An object was specified to be raised that was not an instance of Exception.
+        exception: An exception object was raised directly.
         AssertionError: An exception class was not specified, while assertion failed.
+        TypeError: An object was specified to be raised that was not an instance of Exception.
+        Exception: A specified exception class was raised because assertion failed.
     """
     if not condition:
         if isinstance(exception, Exception):
@@ -624,8 +582,7 @@ def typing_animation(text: str) -> Iterator[str]:
 
 
 def detect_language(text: str, supported: list[str]) -> LanguageResult:
-    """Detect possible languages in input text and report if it is in the supported
-        language list.
+    """Detect possible languages in input text and report if it is in the supported language list.
 
     Args:
         text: The text to detect language of.
@@ -673,7 +630,7 @@ def is_april_fools() -> bool:
 
 
 def is_celune_day() -> bool:
-    """Is today Celune Day? (June 2nd)
+    """Is today Celune Day? (June 2nd).
 
     Returns:
         bool: Whether today is Celune Day.
@@ -706,6 +663,8 @@ def rng_replace(
         source = rmatch.group(0)
 
         if random.random() >= rate:
+            if isinstance(source, bytes):
+                return source.decode("utf-8")
             return source
 
         target = random.choice(replacements)
@@ -721,26 +680,35 @@ def rng_replace(
     return pattern.sub(repl, text)
 
 
-@overload
-def discard(val: object) -> None:
-    """Overload #1 for the implementation of celune.utils.discard()."""
+# the below functions are the only functions in Celune that use the 'Any' type
+# 'Any' is okay for the type annotation of celune.utils.discard()
 
 
 @overload
-def discard(val: object, attr: str) -> None:
-    """Overload #2 for the implementation of celune.utils.discard()."""
+def discard(val: Any) -> None:
+    """Overload #1 for the implementation of celune.utils.discard().
+
+    Args:
+        val: A discardable value.
+    """
 
 
-def discard(val: object, attr: Optional[str] = None) -> None:
+@overload
+def discard(val: Any, attr: str) -> None:
+    """Overload #2 for the implementation of celune.utils.discard().
+
+    Args:
+        val: A discardable value.
+        attr: A discardable attribute on an object.
+    """
+
+
+def discard(val: Any, attr: Optional[str] = None) -> None:
     """Discard a value or clear an explicitly named attribute.
 
     Args:
-        val: Any value, or the object that owns ``attr``.
+        val: Value to discard, or the attribute owner.
         attr: Optional attribute name to clear on ``val``.
-
-    Returns:
-        None: One-argument calls only consume the value. Two-argument calls set
-            the named attribute to ``None``.
     """
     if attr is not None:
         setattr(val, attr, None)
@@ -769,3 +737,93 @@ def is_port_usable(port: int) -> bool:
         return True
     except (psutil.Error, OSError):
         return False
+
+
+def make_persona_card(
+    name: str,
+    age: str,
+    gender: str,
+    persona: str,
+    traits: dict[str, str],
+    context: str,
+    voice: str,
+) -> str:
+    """Return a persona card for the current character.
+
+    Args:
+        name: The character name.
+        age: The character's age.
+        gender: The character's gender or LGBT type.
+        persona: The character's personality description.
+        traits: The character's trait values.
+        context: Additional context information for the character.
+        voice: The character's selected voice type.
+
+    Returns:
+        str: The formatted persona card.
+
+    Raises:
+        ValueError: The Persona card has missing or invalid traits.
+    """
+    required_traits = ("warmth", "directness", "humor", "detail")
+    missing_traits = [trait for trait in required_traits if trait not in traits]
+    if missing_traits:
+        raise ValueError(f"persona card is missing traits: {', '.join(missing_traits)}")
+
+    unknown_traits = [trait for trait in traits if trait not in required_traits]
+    if unknown_traits:
+        raise ValueError(
+            f"undefined trait for persona card: {', '.join(unknown_traits)}"
+        )
+
+    base_card = """
+    # Speaker Profile
+
+    Name: {name}
+    Age: {age}
+    Gender: {gender}
+
+    ## Personality
+    {persona}
+
+    ## Response Style
+    - Warmth: {warmth}
+    - Directness: {directness}
+    - Humor: {humor}
+    - Detail: {detail}
+
+    ## Context
+    {context}
+
+    ## Voice
+    {voice}
+    """
+
+    custom_assert(bool(name.strip()), ValueError("persona card name cannot be empty"))
+
+    return (
+        textwrap.dedent(base_card)
+        .strip()
+        .format(
+            name=name,
+            age=age,
+            gender=gender,
+            persona=persona,
+            warmth=traits["warmth"],
+            directness=traits["directness"],
+            humor=traits["humor"],
+            detail=traits["detail"],
+            context=context,
+            voice=voice,
+        )
+    )
+
+
+def raise_test() -> None:
+    """Raise a testing exception. This is used only in development.
+
+    Raises:
+        RuntimeError: A testing exception.
+    """
+
+    raise RuntimeError("testing exception")

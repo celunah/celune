@@ -18,16 +18,7 @@ from .exceptions import AudioMismatchError, BadAudioError
 def _resample_audio(
     audio: npt.NDArray[np.float32], source_sr: int, target_sr: int = BASE_SR
 ) -> npt.NDArray[np.float32]:
-    """Resample the given audio to the given sample rate.
-
-    Args:
-        audio: The input audio array.
-        source_sr: The sample rate of the input audio.
-        target_sr: The desired output sample rate.
-
-    Returns:
-        npt.NDArray[np.float32]: The resampled stereo audio array.
-    """
+    """Resample the given audio to the given sample rate."""
     if source_sr == 0:
         raise BadAudioError("cannot resample from zero sample rate")
     if target_sr == 0:
@@ -52,14 +43,7 @@ def _resample_audio(
 
 
 def _make_stereo(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
-    """Convert mono input to stereo input.
-
-    Args:
-        audio: The input mono or stereo audio array.
-
-    Returns:
-        npt.NDArray[np.float32]: A contiguous stereo audio array.
-    """
+    """Convert mono input to stereo input."""
     audio = np.asarray(audio, dtype=np.float32)
 
     if audio.ndim == 1:
@@ -80,15 +64,7 @@ def _make_stereo(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
 def _to_48khz(
     audio: npt.NDArray[np.float32], source_sr: int
 ) -> npt.NDArray[np.float32]:
-    """Cast a speech chunk to 48 kHz stereo format.
-
-    Args:
-        audio: The input audio array.
-        source_sr: The input sample rate.
-
-    Returns:
-        npt.NDArray[np.float32]: The audio resampled to 48 kHz stereo.
-    """
+    """Cast a speech chunk to 48 kHz stereo format."""
     return _resample_audio(audio, source_sr, BASE_SR)
 
 
@@ -117,18 +93,7 @@ def _soften(
     start_gain: float = 0.5,
     end: bool = False,
 ) -> npt.NDArray[np.float32]:
-    """Soften the leading or trailing audio.
-
-    Args:
-        audio: The stereo audio array to modify in place.
-        sr: The sample rate of the audio.
-        duration: The fade-in duration in seconds.
-        start_gain: The gain applied at the first sample before ramping to full
-            volume.
-
-    Returns:
-        npt.NDArray[np.float32]: The softened audio array.
-    """
+    """Soften the leading or trailing audio."""
     samples = int(sr * duration)
     samples = min(samples, len(audio))
 
@@ -147,16 +112,7 @@ def _soften(
 def _split(
     audio: npt.NDArray[np.float32], sr: int, chunk_size: float
 ) -> Iterable[npt.NDArray[np.float32]]:
-    """Chop up input audio into chunks.
-
-    Args:
-        audio: The stereo audio array to split.
-        sr: The sample rate of the audio.
-        chunk_size: Celune's chunk size multiplier used to derive frame counts.
-
-    Returns:
-        Iterable[npt.NDArray[np.float32]]: An iterator of smaller audio chunks.
-    """
+    """Chop up input audio into chunks."""
     duration = chunk_size * 0.08
     frames = max(1, int(sr * duration))
 
@@ -203,12 +159,7 @@ class StreamingPedalboardReverb:
         self.board = Pedalboard([self.reverb])
 
     def _update_params(self):
-        """Update reverb strength.
-
-        Returns:
-            None: This method applies the current strength to the pedalboard
-                parameters.
-        """
+        """Update reverb strength."""
         s = np.clip(self.strength, 0.0, 1.0)
 
         wet = 0.16 * (s**2)
@@ -229,8 +180,7 @@ class StreamingPedalboardReverb:
             npt.NDArray[np.float32]: The processed stereo audio chunk.
 
         Raises:
-            AudioMismatchError: ``audio`` is not stereo audio shaped
-                ``(samples, 2)``.
+            AudioMismatchError: ``audio`` is not stereo audio shaped ``(samples, 2)``.
         """
         if audio.ndim != 2 or audio.shape[1] != 2:
             raise AudioMismatchError(
@@ -239,7 +189,7 @@ class StreamingPedalboardReverb:
 
         self._update_params()
 
-        chunk = audio.T.astype(np.float32, copy=False)
+        chunk = audio.transpose().astype(np.float32, copy=False)
 
         out = self.board.process(
             chunk,
@@ -248,7 +198,7 @@ class StreamingPedalboardReverb:
         )
 
         self._first_chunk = False
-        return np.ascontiguousarray(out.T.astype(np.float32, copy=False))
+        return np.ascontiguousarray(out.transpose().astype(np.float32, copy=False))
 
     def flush(
         self, sr: int = BASE_SR, threshold: float = 1e-4, max_secs: float = 3.0
@@ -285,9 +235,5 @@ class StreamingPedalboardReverb:
         return np.zeros((0, 2), dtype=np.float32)
 
     def reset(self) -> None:
-        """Reset reverb state.
-
-        Returns:
-            None: This method marks the next processed chunk as a fresh stream.
-        """
+        """Reset reverb state."""
         self._first_chunk = True
