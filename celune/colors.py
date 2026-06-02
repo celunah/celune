@@ -202,7 +202,7 @@ def configure_theme(
     accent: str = DEFAULT_ACCENT,
     faded_accent: Optional[str] = None,
 ) -> None:
-    """Rebuild Celune's theme family from two bundle-provided seed colors.
+    """Rebuild Celune's theme family from three bundle-provided seed colors.
 
     Args:
         background: The background color provided by a CEVOICE pack.
@@ -215,7 +215,7 @@ def configure_theme(
     truecolor_light_palette = _derive_light_palette(background, accent)
     dark_palette = truecolor_dark_palette
     light_palette = truecolor_light_palette
-    light_sleeping = _darken(dark_sleeping, 0.51)
+    light_sleeping = _ensure_contrast(dark_sleeping, truecolor_light_palette["background"], 4.5)
 
     THEME = _theme("celune", dark_palette, dark=True)
     THEME_LIGHT = _theme("celune_light", light_palette, dark=False)
@@ -236,7 +236,7 @@ def configure_theme(
             "info": random_hex(),
             "warning": random_hex(),
             "error": random_hex(),
-            "sleeping": dark_sleeping,
+            "sleeping": random_hex(),
         },
     }
 
