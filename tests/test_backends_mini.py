@@ -11,6 +11,17 @@ from celune.backends.mini import Mini
 class MiniBackendTests(TestCase):
     """Verify Mini backend lifecycle cleanup stays tidy."""
 
+    def test_language_mapping_normalizes_aliases_and_falls_back_to_english(
+        self,
+    ) -> None:
+        """Verify Pocket TTS language selection uses supported variants only."""
+        backend = Mini(log=lambda *_args, **_kwargs: None)
+        self.assertEqual(backend.resolve_generation_language("fr"), "fr")
+        self.assertEqual(backend.resolve_generation_language("pt-BR"), "pt")
+        self.assertEqual(backend.resolve_generation_language("english"), "en")
+        self.assertEqual(backend.resolve_generation_language("pl"), "en")
+        self.assertEqual(backend._resolve_language_name("pl"), "english")
+
     def test_unload_model_removes_generated_config_file(self) -> None:
         """Verify Pocket TTS generated configs are deleted on unload."""
         backend = Mini(log=lambda *_args, **_kwargs: None)
