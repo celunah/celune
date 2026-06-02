@@ -5,29 +5,37 @@ import os
 import io
 import time
 import uuid
-import queue
+import socket
 import datetime
+import textwrap
 import threading
+from pathlib import Path
 from dataclasses import dataclass
 from hmac import compare_digest
 from collections import defaultdict, deque
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, Union
+from typing import Callable, Iterator, Optional, Union
 
 import uvicorn
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
-from fastapi.responses import JSONResponse, Response, StreamingResponse
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
+from starlette.middleware.base import RequestResponseEndpoint
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import (
+    JSONResponse,
+    Response,
+    StreamingResponse,
+    HTMLResponse,
+    FileResponse,
+)
 
-from . import __version__
 from .constants import BASE_SR
+from . import __version__
+from .celune import Celune
 from .utils import format_error
 from .dsp import _resample_audio
-
-if TYPE_CHECKING:
-    from .celune import Celune
+from .pipeline import SpeechStreamQueue
 
 api = FastAPI(title="CeluneAPI")
 bound_celune: Optional["Celune"] = None
@@ -62,14 +70,11 @@ class StartedServer(uvicorn.Server):
         super().__init__(config)
         self.on_started = on_started
 
-    async def startup(self, sockets: Optional[list[Any]] = None) -> None:
+    async def startup(self, sockets: Optional[list[socket.socket]] = None) -> None:
         """Run Uvicorn startup and report only after the server is listening.
 
         Args:
             sockets: A list of sockets to bind the server to.
-
-        Returns:
-            None: This method starts the server and announces a startup event.
         """
         await super().startup(sockets=sockets)
         if self.started and self.on_started is not None:
@@ -98,9 +103,6 @@ def configure_api_security(
     Args:
         token: A required token to send requests.
         requests_per_minute: The max amount of requests per minute the user is allowed to send.
-
-    Returns:
-        None: This method configures API security configuration.
     """
     global auth_token, rate_limit_per_minute
 
@@ -174,7 +176,10 @@ def _rate_limited(request: Request) -> bool:
 
 
 @api.middleware("http")
-async def api_security(request: Request, call_next: Any) -> Any:
+async def api_security(
+    request: Request,
+    call_next: RequestResponseEndpoint,
+) -> Response:
     """Apply token authentication and a simple per-client rate limit.
 
     Args:
@@ -182,7 +187,7 @@ async def api_security(request: Request, call_next: Any) -> Any:
         call_next: What to run if security checks have passed.
 
     Returns:
-        Any: The return value of the specified function.
+        Response: The response returned by the protected route or security layer.
     """
     if not _authenticated(request):
         return JSONResponse(
@@ -213,20 +218,17 @@ async def api_security(request: Request, call_next: Any) -> Any:
     return await call_next(request)
 
 
-def bind_celune(celune: "Celune") -> None:
+def bind_celune(celune: Celune) -> None:
     """Bind the running Celune instance to API routes.
 
     Args:
         celune: The instance of Celune to bind.
-
-    Returns:
-        None: This method binds Celune to an API route.
     """
     global bound_celune
     bound_celune = celune
 
 
-def require_celune() -> "Celune":
+def require_celune() -> Celune:
     """Return the bound Celune instance or fail the request.
 
     Returns:
@@ -250,9 +252,6 @@ def api_log(action: str, content: str, suffix: str = "") -> None:
         action: The request made by the user.
         content: The request body sent by the user.
         suffix: The suffix to append to the log line.
-
-    Returns:
-        None: This method prints the log line to any configured logger or terminal.
     """
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     preview = content.replace("\n", "\\n").replace("\r", "\\r")[:64]
@@ -265,7 +264,7 @@ def _normalized_audio(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]
     """Return stereo audio in frame-major form for file encoding."""
     normalized = np.asarray(audio, dtype=np.float32)
     if normalized.ndim == 2 and normalized.shape[0] == 2 and normalized.shape[1] != 2:
-        return normalized.T
+        return normalized.transpose()
     return normalized
 
 
@@ -282,7 +281,7 @@ def _flac_bytes(audio: npt.NDArray[np.float32]) -> bytes:
     return buffer.getvalue()
 
 
-def audio_bytes(chunks: queue.Queue) -> Iterator[bytes]:
+def audio_bytes(chunks: SpeechStreamQueue) -> Iterator[bytes]:
     """Yield one FLAC payload from queued 48 kHz stereo float32 chunks.
 
     Args:
@@ -292,6 +291,7 @@ def audio_bytes(chunks: queue.Queue) -> Iterator[bytes]:
         Iterator[bytes]: The audio chunk from the queue as raw bytes.
 
     Raises:
+        item: An exception class was raised, causing the stream to be interrupted.
         Exception: The stream was interrupted by Celune.
     """
     audio_chunks: list[npt.NDArray[np.float32]] = []
@@ -373,7 +373,7 @@ def _speech_job_snapshot(job_id: str) -> Optional[SpeechJob]:
         )
 
 
-def _collect_speech_job(job_id: str, chunks: queue.Queue) -> None:
+def _collect_speech_job(job_id: str, chunks: SpeechStreamQueue) -> None:
     """Consume a speech stream queue and store its final FLAC payload."""
     _update_speech_job(job_id, status="running")
     try:
@@ -404,6 +404,12 @@ class SpeakRequest(BaseModel):
     save: bool = True
 
 
+class ThinkRequest(BaseModel):
+    """Request body for asking Celune to think and reply."""
+
+    content: str = Field(min_length=1)
+
+
 class VoiceRequest(BaseModel):
     """Request body for changing Celune's voice."""
 
@@ -416,8 +422,81 @@ class ActionResponse(BaseModel):
     status: str
 
 
+@api.get("/favicon.ico", include_in_schema=False)
+def favicon() -> FileResponse:
+    """Celune's favicon.ico file page.
+
+    Returns:
+        FileResponse: Celune's favicon.ico file.
+    """
+
+    return FileResponse(
+        # this is a symbolic link to the in Celune.AppDir/
+        Path(__file__).parents[1] / "resources" / "branding" / "celune.png",
+        media_type="image/png",
+    )
+
+
+@api.get("/")
+def root() -> HTMLResponse:
+    """Celune's root page.
+
+    Returns:
+        HTMLResponse: Celune's root page as HTML.
+    """
+
+    return HTMLResponse(
+        textwrap.dedent("""
+            <!DOCTYPE html>
+            <html lang="en">
+                <head>
+                    <title>Celune</title>
+                    <meta name="color-scheme" content="dark">
+                    <style>
+                        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap');
+
+                        h1, p {
+                            margin: 0.5em;
+                        }
+
+                        p {
+                            color: #baa4ff;
+                        }
+
+                        .container {
+                            display: flex;
+                            flex-direction: column;
+                            align-items: center;
+                            justify-content: center;
+                            width: 100vw;
+                            height: 100dvh;
+                        }
+
+                        body {
+                            background: #1d1826;
+                            color: #cebaff;
+                            font-family: "Outfit", sans-serif;
+                            margin: 0;
+                        }
+
+                        html {
+                            color-scheme: dark;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <h1>Nothing Usable</h1>
+                        <p>The API is functioning correctly. Please return to the app to talk to me.</p>
+                    </div>
+                </body>
+            </html>
+        """)
+    )
+
+
 @api.get("/v1", response_model=RootResponse)
-def root() -> RootResponse:
+def api_root() -> RootResponse:
     """Celune API root endpoint.
 
     Returns:
@@ -448,8 +527,8 @@ def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
         body: A speech request body.
 
     Returns:
-        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload if
-            generation failed.
+        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload if generation
+        failed.
     """
     celune = require_celune()
     api_log("SPEAK(SYNC)", body.content)
@@ -509,6 +588,31 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
     )
 
 
+@api.post("/v1/think", response_model=None)
+def think(body: ThinkRequest) -> JSONResponse:
+    """Ask Celune to think about an input and reply through Persona.
+
+    Args:
+        body: A think request body.
+
+    Returns:
+        JSONResponse: An accepted response when Persona processing starts, or a JSON error payload if Celune cannot
+        think right now.
+    """
+    celune = require_celune()
+    api_log("THINK", body.content if celune.dev else "[content protected]")
+    if not celune.think(body.content):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "not_ready",
+                "message": "I'm currently busy. Try again later.",
+            },
+        )
+
+    return JSONResponse(status_code=202, content={"status": "accepted"})
+
+
 @api.get("/v1/speak/jobs/{job_id}", response_model=None)
 def speak_job(job_id: str) -> Union[Response, JSONResponse]:
     """Return speech job status or the completed FLAC audio payload.
@@ -551,8 +655,8 @@ def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
         body: A voice change request body.
 
     Returns:
-        Union[ActionResponse, JSONResponse]: The voice change response, or a JSON error payload if
-            the voice change failed.
+        Union[ActionResponse, JSONResponse]: The voice change response, or a JSON error payload if the voice change
+        failed.
     """
     celune = require_celune()
     api_log("VOICE", body.voice_name)
@@ -590,8 +694,8 @@ async def sfx(
         keep: Whether Celune should hold this sound effect until the next utterance.
 
     Returns:
-        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload if
-            playback failed.
+        Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload if playback
+        failed.
     """
     celune = require_celune()
     filename = file.filename or f"sfx_{uuid.uuid4()}"
@@ -655,9 +759,6 @@ def run_api(
         token: Token required for API requests.
         requests_per_minute: Maximum requests allowed per client each minute.
         on_started: Callback called after the server socket is listening.
-
-    Returns:
-        None: This function starts the API in the background.
     """
     if celune is not None:
         bind_celune(celune)
@@ -688,7 +789,7 @@ def run_api(
 
 
 def start_api(
-    celune: "Celune",
+    celune: Celune,
     host: Optional[str] = None,
     port: int = 2060,
     token: Optional[str] = None,
@@ -713,13 +814,11 @@ def start_api(
     failed = threading.Event()
 
     def _started(bind_host: str, bind_port: int) -> None:
-        """Log that Uvicorn has successfully started listening."""
         http = "http"
         celune.log(f"Celune API has started on {http}://{bind_host}:{bind_port}")
         started.set()
 
     def _runner() -> None:
-        """Run the API server without taking Celune down on failure."""
         bind_host = resolve_api_host(token=token, host=host)
         try:
             run_api(

@@ -4,23 +4,23 @@
 import sys
 import tempfile
 import textwrap
-import threading
 import importlib
+import threading
 from pathlib import Path
-from typing import Optional
-from types import SimpleNamespace
-from unittest import mock, TestCase
 from collections.abc import Iterator
+from typing import Optional
+from unittest import mock, TestCase
+from types import SimpleNamespace
 
 import numpy as np
 import numpy.typing as npt
+
 from celune.utils import discard
 from celune.backends import resolve_backend
 from celune.extensions.manager import CeluneExtensionManager
 from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.exceptions import ExtensionAlreadyRegisteredError, InvalidExtensionError
-
-from tests.support import FakeBackend
+from .support import FakeBackend
 
 
 class BackendTests(TestCase):
@@ -28,9 +28,6 @@ class BackendTests(TestCase):
 
     def test_base_backend_reports_models_and_progress(self) -> None:
         """Verify model metadata and progress helpers on a fake backend.
-
-        Returns:
-            None: Assertions verify backend helper output.
 
         Raises:
             AssertionError: A backend helper returns an unexpected value.
@@ -45,11 +42,35 @@ class BackendTests(TestCase):
         self.assertEqual(backend.generation_progress_steps({"chunk_steps": 3}), 3)
         self.assertEqual(backend.generation_progress_steps({"chunk_steps": 0}), 1)
 
+    def test_base_backend_materializes_bundle_pt_refs_when_available(self) -> None:
+        """Verify CEVOICE bundles eagerly extract .pt refs alongside .wav files."""
+        materialize = mock.Mock(side_effect=lambda voice, kind: Path(f"{voice}.{kind}"))
+        loader = SimpleNamespace(
+            bundle=SimpleNamespace(
+                voice_order=("balanced", "bold"),
+                voices={
+                    "balanced": {"assets": {"wav": {}, "pt": {}}},
+                    "bold": {"assets": {"wav": {}}},
+                },
+            ),
+            materialize=materialize,
+        )
+
+        with mock.patch("celune.backends.base.default_loader", return_value=loader):
+            backend = FakeBackend(log=lambda _msg, _severity="info": None)
+            backend._validate_refs()
+
+        self.assertEqual(
+            materialize.call_args_list,
+            [
+                mock.call("balanced", "wav"),
+                mock.call("balanced", "pt"),
+                mock.call("bold", "wav"),
+            ],
+        )
+
     def test_resolve_backend_accepts_instance_type_and_rejects_unknown(self) -> None:
         """Verify supported backend specifications and invalid input failures.
-
-        Returns:
-            None: Assertions verify backend resolution behavior.
 
         Raises:
             AssertionError: Backend resolution behavior changes unexpectedly.
@@ -62,9 +83,35 @@ class BackendTests(TestCase):
         with self.assertRaisesRegex(TypeError, "backend_name"):
             resolve_backend(123)  # type: ignore[arg-type]
 
+    def test_resolve_backend_accepts_mini_backend_name(self) -> None:
+        """Verify the Pocket TTS backend resolves through the backend registry."""
+
+        class StubTTSModel:
+            """Import-time stand-in for the Pocket TTS package class."""
+
+        with mock.patch.dict(
+            sys.modules,
+            {"pocket_tts": SimpleNamespace(TTSModel=StubTTSModel)},
+        ):
+            mini = importlib.import_module("celune.backends.mini")
+            mini_cls = mini.Mini
+
+            with mock.patch.object(mini_cls, "_validate_refs"):
+                backend = resolve_backend("mini")
+
+        self.assertIsInstance(backend, mini_cls)
+        self.assertEqual(backend.name, "mini")
+
     def test_voxcpm2_uses_pack_cfg_scale_when_present(self) -> None:
         """Verify CEVOICE can override VoxCPM2's per-voice CFG scale."""
-        with mock.patch.dict(sys.modules, {"voxcpm": SimpleNamespace(VoxCPM=object)}):
+
+        class StubVoxCPM:
+            """Import-time stand-in for the VoxCPM package class."""
+
+        with mock.patch.dict(
+            sys.modules,
+            {"voxcpm": SimpleNamespace(VoxCPM=StubVoxCPM)},
+        ):
             voxcpm2 = importlib.import_module("celune.backends.voxcpm2")
             voxcpm2_cls = voxcpm2.VoxCPM2
 
@@ -77,14 +124,11 @@ class BackendTests(TestCase):
                 def generate_streaming(
                     self, *args, **kwargs
                 ) -> Iterator[npt.NDArray[np.float32]]:
-                    """Generate a fake stream of VoxCPM2 audio chunks.
+                    """Generate fake VoxCPM2 chunks.
 
                     Args:
-                        args: Not used.
-                        kwargs: Only used for a fake CFG scale value.
-
-                    Returns:
-                        npt.NDArray[np.float32]: Fake VoxCPM2 audio chunks.
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
                     """
                     discard(args)
                     self.cfg_value = kwargs["cfg_value"]
@@ -115,11 +159,15 @@ class BackendTests(TestCase):
 
     def test_qwen3_uses_pack_reference_text_when_present(self) -> None:
         """Verify CEVOICE can override Qwen3's per-voice reference text."""
+
+        class StubQwen3TTS:
+            """Import-time stand-in for the FasterQwen3TTS package class."""
+
         with mock.patch.dict(
             sys.modules,
             {
                 "faster_qwen3_tts": SimpleNamespace(
-                    FasterQwen3TTS=object,
+                    FasterQwen3TTS=StubQwen3TTS,
                     __version__="0.2.5",
                 )
             },
@@ -136,14 +184,11 @@ class BackendTests(TestCase):
                 def generate_voice_clone_streaming(
                     self, *args, **kwargs
                 ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
-                    """Generate a fake stream of Qwen3 audio chunks.
+                    """Generate fake Qwen3 chunks.
 
                     Args:
-                        args: Not used.
-                        kwargs: Not used.
-
-                    Returns:
-                        npt.NDArray[np.float32]: Fake Qwen3 audio chunks.
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
                     """
                     discard(args)
                     self.ref_text = kwargs["ref_text"]
@@ -165,6 +210,202 @@ class BackendTests(TestCase):
 
             self.assertEqual(model.ref_text, "Pack reference.")
 
+    def test_qwen3_manually_pumps_and_closes_backend_stream(self) -> None:
+        """Verify Qwen3 iterates and closes its backend stream explicitly."""
+
+        class StubQwen3TTS:
+            """Import-time stand-in for the FasterQwen3TTS package class."""
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "faster_qwen3_tts": SimpleNamespace(
+                    FasterQwen3TTS=StubQwen3TTS,
+                    __version__="0.2.5",
+                )
+            },
+        ):
+            qwen3 = importlib.import_module("celune.backends.qwen3")
+            qwen3_cls = qwen3.Qwen3
+
+            class FakeStream:
+                """Minimal iterator exposing a close hook for one backend test."""
+
+                def __init__(self) -> None:
+                    self._chunks = [
+                        (np.zeros((1,), dtype=np.float32), 24000, {"chunk_steps": 1}),
+                        (np.ones((1,), dtype=np.float32), 24000, {"chunk_steps": 1}),
+                    ]
+                    self.closed = False
+
+                def __iter__(self) -> "FakeStream":
+                    return self
+
+                def __next__(
+                    self,
+                ) -> tuple[npt.NDArray[np.float32], int, Optional[dict]]:
+                    if not self._chunks:
+                        raise StopIteration
+                    return self._chunks.pop(0)
+
+                def close(self) -> None:
+                    """Close the stream."""
+                    self.closed = True
+
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                def __init__(self) -> None:
+                    self.stream = FakeStream()
+
+                def generate_voice_clone_streaming(self, *args, **kwargs) -> FakeStream:
+                    """Generate fake Qwen3 chunks.
+
+                    Args:
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
+
+                    Returns:
+                        FakeStream: A fake stream of Qwen3 chunks.
+                    """
+                    discard(args)
+                    discard(kwargs)
+                    return self.stream
+
+            loader = SimpleNamespace(
+                bundle=SimpleNamespace(
+                    voices={"calm": {"reference_text": "Pack reference."}}
+                ),
+                materialize=lambda voice, kind: Path(f"{voice}.{kind}"),
+            )
+            with (
+                mock.patch.object(qwen3_cls, "_validate_refs"),
+                mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
+            ):
+                backend = qwen3_cls(log=lambda _msg, _severity="info": None)
+                model = FakeModel()
+                chunks = list(
+                    backend.generate_stream(model, text="hello", voice="calm")
+                )
+
+            self.assertEqual(len(chunks), 2)
+            self.assertEqual(chunks[0][1], 24000)
+            self.assertEqual(chunks[1][0].tolist(), [1.0])
+            self.assertEqual(model.stream.closed, True)
+
+    def test_qwen3_marks_final_chunk_when_eos_was_not_observed(self) -> None:
+        """Verify Qwen3 marks exhausted generations that never surfaced EOS."""
+
+        class StubQwen3TTS:
+            """Import-time stand-in for the FasterQwen3TTS package class."""
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "faster_qwen3_tts": SimpleNamespace(
+                    FasterQwen3TTS=StubQwen3TTS,
+                    __version__="0.2.5",
+                )
+            },
+        ):
+            qwen3 = importlib.import_module("celune.backends.qwen3")
+            qwen3_cls = qwen3.Qwen3
+
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                @staticmethod
+                def generate_voice_clone_streaming(
+                    *args, **kwargs
+                ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+                    """Generate fake Qwen3 chunks.
+
+                    Args:
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
+                    """
+                    discard(args)
+                    discard(kwargs)
+                    yield (
+                        np.zeros((1,), dtype=np.float32),
+                        24000,
+                        {
+                            "chunk_steps": 512,
+                            "total_steps_so_far": 512,
+                            "is_final": True,
+                        },
+                    )
+
+            loader = SimpleNamespace(
+                bundle=SimpleNamespace(
+                    voices={"calm": {"reference_text": "Pack reference."}}
+                ),
+                materialize=lambda voice, kind: Path(f"{voice}.{kind}"),
+            )
+            with (
+                mock.patch.object(qwen3_cls, "_validate_refs"),
+                mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
+            ):
+                backend = qwen3_cls(log=lambda _msg, _severity="info": None)
+                chunk = next(
+                    backend.generate_stream(FakeModel(), text="hello", voice="calm")
+                )
+
+            self.assertEqual(chunk[2]["missing_eos"], True)
+
+    def test_voxcpm2_marks_final_chunk_when_stop_token_was_not_observed(self) -> None:
+        """Verify VoxCPM2 marks exhausted generations that never surfaced a stop."""
+
+        class StubVoxCPM:
+            """Import-time stand-in for the VoxCPM package class."""
+
+        with mock.patch.dict(
+            sys.modules,
+            {"voxcpm": SimpleNamespace(VoxCPM=StubVoxCPM)},
+        ):
+            voxcpm2 = importlib.import_module("celune.backends.voxcpm2")
+            voxcpm2_cls = voxcpm2.VoxCPM2
+
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                @staticmethod
+                def generate_streaming(
+                    *args, **kwargs
+                ) -> Iterator[npt.NDArray[np.float32]]:
+                    """Generate fake VoxCPM2 chunks.
+
+                    Args:
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
+                    """
+                    discard(args)
+                    discard(kwargs)
+                    for _ in range(512):
+                        yield np.ones((1,), dtype=np.float32)
+
+            loader = SimpleNamespace(
+                bundle=SimpleNamespace(voices={"calm": {"cfg_scale": 4.2}}),
+                materialize=lambda voice, kind: Path(f"{voice}.{kind}"),
+            )
+            with (
+                mock.patch.object(voxcpm2_cls, "_validate_refs"),
+                mock.patch(
+                    "celune.backends.voxcpm2.default_loader", return_value=loader
+                ),
+            ):
+                backend = voxcpm2_cls(log=lambda _msg, _severity="info": None)
+                chunks = list(
+                    backend.generate_stream(
+                        FakeModel(),
+                        text="hello",
+                        voice="calm",
+                        chunk_size=1,
+                    )
+                )
+
+            self.assertEqual(chunks[-1][2]["missing_eos"], True)
+
 
 class ExtensionTests(TestCase):
     """Tests for extension context and manager behavior."""
@@ -177,6 +418,7 @@ class ExtensionTests(TestCase):
             log=lambda msg, severity="info": self.logs.append((msg, severity)),
             log_dev=lambda msg, severity="info": self.dev_logs.append((msg, severity)),
             say=lambda text, save=True, display_text=None: True,
+            think=lambda text: True,
             play=lambda sound_path, keep=False: True,
             status=lambda msg, severity="info": None,
             set_voice=lambda name: True,
@@ -186,9 +428,6 @@ class ExtensionTests(TestCase):
 
     def test_context_and_extension_helpers_delegate_calls(self) -> None:
         """Verify extension helper methods delegate through their context.
-
-        Returns:
-            None: Assertions verify delegated extension behavior.
 
         Raises:
             AssertionError: Extension delegation behavior changes unexpectedly.
@@ -200,14 +439,12 @@ class ExtensionTests(TestCase):
         extension.log("hello")
         self.assertEqual(self.logs[-1], ("[Demo] hello", "info"))
         self.assertEqual(extension.say("hello"), True)
+        self.assertEqual(extension.think("hello"), True)
         self.assertEqual(extension.play("tone.wav"), True)
         self.assertEqual(extension.set_voice("bold"), True)
 
     def test_manager_registers_invokes_and_autoloads_extensions(self) -> None:
         """Verify registration, duplicate handling, and directory autoloading.
-
-        Returns:
-            None: Assertions verify extension registration behavior.
 
         Raises:
             AssertionError: Extension manager behavior changes unexpectedly.
@@ -218,7 +455,7 @@ class ExtensionTests(TestCase):
         with self.assertRaises(ExtensionAlreadyRegisteredError):
             manager.register(DemoExtension)
         with self.assertRaises(InvalidExtensionError):
-            manager.register(object)  # type: ignore[arg-type]
+            manager.register(int)  # type: ignore[arg-type]
 
         with tempfile.TemporaryDirectory() as temp_dir:
             extension_file = Path(temp_dir) / "fixture.py"
@@ -241,9 +478,6 @@ class ExtensionTests(TestCase):
 
     def test_manager_invoke_and_autostart_run_in_threads(self) -> None:
         """Verify threaded extension invocation and autostart behavior.
-
-        Returns:
-            None: Assertions verify asynchronous extension execution.
 
         Raises:
             AssertionError: Threaded extension behavior changes unexpectedly.

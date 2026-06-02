@@ -1,6 +1,8 @@
 # CEVOICE
 
-`CEVOICE` is Celune's voice-pack container format. A `.cevoice` file stores:
+`CEVOICE` is Celune's voice-pack container format. Current bundles are written with
+the `CECHAR` v2 schema, while legacy `CEVOICE` v1 bundles remain readable. A
+`.cevoice` file stores:
 
 - a small fixed-size binary header
 - UTF-8 JSON metadata
@@ -23,13 +25,20 @@ Each bundle is written as:
 | Metadata | variable | UTF-8 JSON |
 | Payload | variable | concatenated asset bytes |
 
-The header fields are:
+The header fields for newly written bundles are:
+
+| Field | Type | Value |
+| --- | --- | --- |
+| `magic` | `8s` | `b"CECHAR\0\0"` |
+| `version` | `H` | `2` |
+| `metadata_length` | `I` | byte length of the JSON metadata |
+
+Celune also accepts legacy bundles with:
 
 | Field | Type | Value |
 | --- | --- | --- |
 | `magic` | `8s` | `b"CEVOICE\0"` |
 | `version` | `H` | `1` |
-| `metadata_length` | `I` | byte length of the JSON metadata |
 
 Asset offsets are relative to the start of the payload, not the start of the file.
 
@@ -39,8 +48,35 @@ Asset offsets are relative to the start of the payload, not the start of the fil
 
 ```json
 {
-  "format": "CEVOICE",
-  "version": 1,
+  "format": "CECHAR",
+  "version": 2,
+  "name": "My Pack",
+  "default_voice": "balanced",
+  "voice_order": ["balanced"],
+  "theme": {
+    "background": "#1d1826",
+    "accent": "#cebaff",
+    "glow_color": "#cebaff",
+    "faded_accent": "#9c88ce"
+  },
+  "persona": {
+    "identity": {
+      "name": "Celune",
+      "profile": "A measured contralto presence."
+    },
+    "speaking_style": "Calm, clipped, and observant.",
+    "boundaries": ["Do not break character."],
+    "prompt_rules": ["Prefer concise answers."],
+    "example_dialogue": ["User: hi", "Celune: Hello."],
+    "style": {
+      "warmth": "mid",
+      "directness": "high",
+      "humor": "low",
+      "detail": "mid",
+      "formality": "mid",
+      "enthusiasm": "low"
+    }
+  },
   "voices": {
     "balanced": {
       "cfg_scale": 2.4,
@@ -70,7 +106,8 @@ Supported optional metadata fields are:
 | `description` | Free-form descriptive text |
 | `default_voice` | Initial voice to select when present |
 | `voice_order` | Preferred UI order for voices |
-| `theme` | Optional UI colors: `background`, `accent`, and optional `glow_color` |
+| `theme` | Optional UI colors: `background`, `accent`, and optional `glow_color` / `faded_accent` |
+| `persona` | Optional character metadata used for naming and Persona-facing behavior |
 
 Each voice entry may also include:
 
@@ -79,14 +116,35 @@ Each voice entry may also include:
 | `cfg_scale` | Optional positive VoxCPM2 classifier-free guidance scale for that voice |
 | `reference_text` | Optional non-empty transcript for the voice's reference audio |
 
+Supported `persona` fields are:
+
+| Field | Meaning |
+| --- | --- |
+| `persona.identity.name` | Character name; takes precedence over top-level `name` for character naming |
+| `persona.identity.age` | Optional age text |
+| `persona.identity.gender` | Optional gender text |
+| `persona.identity.profile` | Optional profile text |
+| `persona.profile` | Optional profile text fallback |
+| `persona.speaking_style` | Optional one-string speaking style summary |
+| `persona.boundaries` | Optional string or list of strings describing constraints |
+| `persona.prompt_rules` | Optional string or list of strings with behavioral rules |
+| `persona.example_dialogue` | Optional string or list of strings with example dialogue |
+| `persona.style.*` | Optional style values for `warmth`, `directness`, `humor`, `detail`, `formality`, `enthusiasm` |
+
 Validation rules enforced by Celune:
 
-- `format` must be `"CEVOICE"` and `version` must be `1`
+- `format`/`version` must be either `"CECHAR"` / `2` or legacy `"CEVOICE"` / `1`
 - `voices` must be an object
 - `default_voice`, when present, must name a defined voice
 - `voice_order`, when present, must be a duplicate-free list of defined voice names
 - if `voice_order` omits valid voices, Celune appends the missing ones when loading
-- `theme.background`, `theme.accent`, and `theme.glow_color` must be `#RRGGBB` hex colors when present
+- `theme` must be an object when present
+- `theme.background` and `theme.accent` must be `#RRGGBB` hex colors
+- `theme.glow_color` and `theme.faded_accent` must be `#RRGGBB` hex colors when present
+- legacy `theme.sleeping_color` is still accepted and is normalized into `theme.faded_accent`
+- `persona` must be an object when present
+- `persona.identity` and `persona.style` must be objects when present
+- Persona text fields must be strings, and list-capable Persona fields must be either a string or a list of strings
 - `voices.<name>.cfg_scale`, when present, must be a positive number
 - `voices.<name>.reference_text`, when present, must be a non-empty string
 - voice names and asset kinds may not contain path separators and may not be `""`, `"."`, or `".."`
@@ -98,8 +156,8 @@ Validation rules enforced by Celune:
 
 At startup, Celune resolves `voice_bundle` from config:
 
-- `default` becomes `celune/voices/default.cevoice`
-- a bare name such as `my_pack` becomes `celune/voices/my_pack.cevoice`
+- `default` becomes `voices/default.cevoice`
+- a bare name such as `my_pack` becomes `voices/my_pack.cevoice`
 - an explicit path is used as-is
 
 The loader parses and validates the bundle, then lazily materializes assets into a temporary directory only when a backend needs a filesystem path.
@@ -110,6 +168,7 @@ The loader parses and validates the bundle, then lazily materializes assets into
 - `default_voice` controls the initial selected voice.
 - `voice_order` controls the user-facing order.
 - `theme.accent` or `theme.glow_color` can affect Celune's UI glow color.
+- `persona.identity.name`, when present, becomes the bundle's character name ahead of top-level `name`.
 
 If the configured bundle is missing, Celune simply has no bundle to load. If a configured bundle exists but is malformed, Celune falls back to the legacy loose reference files when possible.
 
@@ -146,6 +205,32 @@ write_cevoice(
             "background": "#1d1826",
             "accent": "#cebaff",
             "glow_color": "#cebaff",
+            "faded_accent": "#9c88ce",
+        },
+        "persona": {
+            "identity": {
+                "name": "My Character",
+                "profile": "A direct but kind archivist.",
+            },
+            "speaking_style": "Measured, observant, and brief.",
+            "boundaries": [
+                "Do not break character.",
+            ],
+            "prompt_rules": [
+                "Prefer concrete observations.",
+            ],
+            "example_dialogue": [
+                "User: is it fixed?",
+                "My Character: The noisy part is gone. Let's verify the rest.",
+            ],
+            "style": {
+                "warmth": "mid",
+                "directness": "high",
+                "humor": "low",
+                "detail": "mid",
+                "formality": "mid",
+                "enthusiasm": "low",
+            },
         },
     },
     {
@@ -181,7 +266,7 @@ For the smallest practical bundle:
 2. Give the voice a safe name such as `balanced`, `calm`, or `my_voice`.
 3. Call `write_cevoice()` with one `wav` asset.
 4. Optionally set `name`, `default_voice`, `voice_order`, and `theme`.
-5. Point `voice_bundle` in config to the file path or place the file under `celune/voices/`.
+5. Point `voice_bundle` in config to the file path or place the file under `voices/`.
 
 Example:
 
@@ -213,8 +298,8 @@ The writer algorithm is simple:
 3. Build the metadata object with `format`, `version`, `voices`, and any optional fields.
 4. Serialize metadata as compact JSON using UTF-8.
 5. Write:
-   - `b"CEVOICE\0"`
-   - little-endian `uint16(1)`
+   - `b"CECHAR\0\0"`
+   - little-endian `uint16(2)`
    - little-endian `uint32(len(metadata_bytes))`
    - `metadata_bytes`
    - `payload_bytes`
@@ -255,6 +340,8 @@ Celune's bundled `default.cevoice` uses:
 - `name`: `Celune`
 - `default_voice`: `balanced`
 - `voice_order`: `balanced`, `calm`, `bold`, `upbeat`
+- `theme`: `background`, `accent`, `glow_color`, and `faded_accent`
+- `persona`: identity and speaking-style metadata for the bundled character
 - `cfg_scale`: `2.4` for `balanced`, `bold`, and `upbeat`; `3.0` for `calm`
 - `reference_text`: the transcript matching each bundled reference `wav`
 - both `wav` and `pt` assets for each voice

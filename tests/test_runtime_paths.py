@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: MIT
+"""Tests for Celune runtime path handling."""
+
+import tempfile
+from pathlib import Path
+from typing import cast
+from unittest import TestCase, mock
+
+import yaml
+from textual.widgets import RichLog
+
+from celune.paths import ensure_config_path
+from celune.persona.memory import default_memory_dir
+from celune.ui.app import CeluneUI
+from celune.utils import format_error
+
+
+class RuntimePathTests(TestCase):
+    """Verify runtime files are written into the user data directory."""
+
+    def tearDown(self) -> None:
+        """Reset singleton UI guards after each test."""
+        CeluneUI._instance = None
+
+    def test_default_memory_dir_uses_runtime_memory_directory(self) -> None:
+        """Verify Persona memory now defaults to the shared runtime memory path."""
+        expected = Path("C:/runtime-data/memory")
+
+        with mock.patch("celune.persona.memory.memory_data_dir", return_value=expected):
+            self.assertEqual(default_memory_dir(), expected)
+
+    def test_format_error_writes_traceback_to_runtime_directory(self) -> None:
+        """Verify developer tracebacks are saved via the runtime path helper.
+
+        Raises:
+            RuntimeError: An exception was raised for testing purposes and caught afterward.
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trace_path = Path(temp_dir) / "celune_traceback.txt"
+
+            try:
+                raise RuntimeError("boom")
+            except RuntimeError as exc:
+                with mock.patch("celune.utils.traceback_path", return_value=trace_path):
+                    output = format_error(exc, dev=True)
+
+                self.assertIn("RuntimeError: boom", output)
+                self.assertTrue(trace_path.exists())
+                self.assertIn(
+                    "RuntimeError: boom", trace_path.read_text(encoding="utf-8")
+                )
+
+    def test_safe_log_persists_main_window_copy(self) -> None:
+        """Verify UI log messages are mirrored into the runtime log file."""
+        ui = CeluneUI()
+        ui.logs = cast(RichLog, None)
+        ui._log_file_initialized = False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ui._log_file_path = Path(temp_dir) / "celune.log"
+
+            ui.safe_log("Hello from Celune")
+            ui.safe_log("Something odd happened", "warning")
+
+            persisted = ui._log_file_path.read_text(encoding="utf-8")
+
+        self.assertIn("[INFO] Hello from Celune", persisted)
+        self.assertIn("[WARNING] Something odd happened", persisted)
+
+    def test_ensure_config_path_prefers_legacy_repo_config(self) -> None:
+        """Verify first-run config creation prefers the historical repo-root config."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            runtime_config = temp_root / "user-data" / "config.yaml"
+            legacy_config = temp_root / "config.yaml"
+            bundled_default = temp_root / "default_config.yaml"
+
+            legacy_payload = {"headless": True, "theme": "light", "dev": False}
+            bundled_payload = {"headless": False, "theme": "dark", "dev": False}
+            legacy_config.write_text(yaml.safe_dump(legacy_payload), encoding="utf-8")
+            bundled_default.write_text(
+                yaml.safe_dump(bundled_payload),
+                encoding="utf-8",
+            )
+
+            created_path, was_created = ensure_config_path(
+                active_path=runtime_config,
+                default_path=bundled_default,
+                legacy_path=legacy_config,
+            )
+
+            saved = yaml.safe_load(created_path.read_text(encoding="utf-8"))
+            self.assertTrue(was_created)
+            self.assertEqual(saved["theme"], "light")
+            self.assertEqual(saved["headless"], True)

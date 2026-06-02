@@ -17,9 +17,6 @@ def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> No
     Args:
         log: Logging callback that receives the generated banner lines.
         backend_name: Optional backend name shown in the runtime banner.
-
-    Returns:
-        None: This function emits startup information through the log callback.
     """
     cuda_version = torch.version.cuda
 
@@ -66,6 +63,7 @@ def validate_runtime(
     glow_connect_failed: bool,
     format_error: Callable[[Exception, bool], str],
     dev: bool,
+    backend_name: str = "qwen3",
 ) -> bool:
     """Validate Celune's Python, CUDA, and GPU environment.
 
@@ -76,12 +74,13 @@ def validate_runtime(
         glow_connect_failed: Whether the OpenRGB glow backend failed to connect.
         format_error: Error formatter used for exception messages.
         dev: Whether developer mode is enabled.
+        backend_name: The active Celune backend name selected for this session.
 
     Returns:
-        bool: ``True`` when the runtime environment is supported and usable,
-            otherwise ``False``.
+        bool: ``True`` when the runtime environment is supported and usable, otherwise ``False``.
     """
     cuda_version = torch.version.cuda
+    _, separator, torch_variant = torch.__version__.partition("+")
 
     if sys.version_info < (3, 12) or sys.version_info >= (3, 14):
         log(
@@ -99,14 +98,33 @@ def validate_runtime(
     backend, usable = check_supported_backends()
     log(f"Current system supports {backend} execution.", "info")
 
+    allow_cpu_mini = backend == "CPU" and backend_name.strip().lower() == "mini"
+    if allow_cpu_mini:
+        log("Proceeding with startup, Celune Mini is selected.", "info")
+        usable = True
+
     if not usable:
         log(f"Celune does not currently support {backend} execution.", "error")
         set_state("error")
         error("No supported backend found")
         return False
 
+    if allow_cpu_mini:
+        if glow_connect_failed:
+            log(
+                "Cannot connect to OpenRGB. Presence features will be disabled.",
+                "warning",
+            )
+        return True
+
     if cuda_version is None:
         log("Celune could not find a CUDA runtime.", "error")
+
+        if separator and torch_variant == "cpu":
+            log("You currently have a CPU build of PyTorch.", "error")
+        else:
+            log("You currently have an unsupported build of PyTorch.", "error")
+
         set_state("error")
         error("No CUDA runtime found")
         return False
@@ -181,7 +199,7 @@ def validate_runtime(
 
     if has_flash_attn:
         log(
-            "Flash Attention was found, but it is not usable at this time.",
+            "Flash Attention is not compatible.",
             "warning",
         )
 

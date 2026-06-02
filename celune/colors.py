@@ -1,11 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Color utility helpers."""
 
-from __future__ import annotations
-
 import random
 import colorsys
-from typing import Final, cast
+from typing import Final, Optional, cast
 
 from textual.theme import Theme
 
@@ -13,6 +11,7 @@ from .utils import to_rgb
 
 DEFAULT_BACKGROUND: Final[str] = "#1d1826"
 DEFAULT_ACCENT: Final[str] = "#cebaff"
+FADED_ACCENT: Final[str] = "#9c88ce"
 RGB = tuple[int, int, int]
 
 
@@ -50,6 +49,10 @@ def _blend(color: str, destination: str, amount: float) -> str:
     )
 
 
+def _darken(color: str, amount: float) -> str:
+    return _blend(color, "#000000", amount)
+
+
 def _hls_color(hue: float, lightness: float, saturation: float) -> str:
     red, green, blue = colorsys.hls_to_rgb(hue, lightness, saturation)
     return _hex(
@@ -81,16 +84,7 @@ def _contrast_ratio(first: str, second: str) -> float:
 
 
 def _ensure_contrast(color: str, background: str, minimum: float) -> str:
-    """Keep blending towards white or black until the specified accent and background color is readable against the UI.
-
-    Args:
-        color: The accent color to blend.
-        background: The background color to blend.
-        minimum: The minimum contrast threshold that has to be met.
-
-    Returns:
-        str: The color meeting the contrast threshold requirements.
-    """
+    """Keep blending towards white or black until the specified accent/background color is readable against the UI."""
     if _contrast_ratio(color, background) >= minimum:
         return color
 
@@ -206,20 +200,25 @@ def _theme(name: str, palette: dict[str, str], *, dark: bool) -> Theme:
 def configure_theme(
     background: str = DEFAULT_BACKGROUND,
     accent: str = DEFAULT_ACCENT,
+    faded_accent: Optional[str] = None,
 ) -> None:
-    """Rebuild Celune's theme family from two bundle-provided seed colors.
+    """Rebuild Celune's theme family from three bundle-provided seed colors.
 
     Args:
         background: The background color provided by a CEVOICE pack.
         accent: The accent color provided by a CEVOICE pack.
-
-    Returns:
-        None: This function builds Celune's theme colors automatically.
+        faded_accent: The sleep-state accent color provided by a CEVOICE pack.
     """
     global THEME, THEME_LIGHT, SEVERITY_COLORS
+    dark_sleeping = FADED_ACCENT if faded_accent is None else faded_accent
+    truecolor_dark_palette = _derive_dark_palette(background, accent)
+    truecolor_light_palette = _derive_light_palette(background, accent)
+    dark_palette = truecolor_dark_palette
+    light_palette = truecolor_light_palette
+    light_sleeping = _ensure_contrast(
+        dark_sleeping, truecolor_light_palette["background"], 4.5
+    )
 
-    dark_palette = _derive_dark_palette(background, accent)
-    light_palette = _derive_light_palette(background, accent)
     THEME = _theme("celune", dark_palette, dark=True)
     THEME_LIGHT = _theme("celune_light", light_palette, dark=False)
     SEVERITY_COLORS = {
@@ -227,16 +226,19 @@ def configure_theme(
             "info": dark_palette["primary"],
             "warning": dark_palette["warning"],
             "error": dark_palette["error"],
+            "sleeping": dark_sleeping,
         },
         "celune_light": {
             "info": light_palette["primary"],
             "warning": light_palette["warning"],
             "error": light_palette["error"],
+            "sleeping": light_sleeping,
         },
         "celune_april_fools": {
             "info": random_hex(),
             "warning": random_hex(),
             "error": random_hex(),
+            "sleeping": random_hex(),
         },
     }
 

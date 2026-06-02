@@ -11,28 +11,59 @@ It was proudly made in 🇵🇱 for your listening pleasure.
 
 ## Features
 
-- Real-time speech generation pipeline
-- Distinct voice styles (Calm, Balanced, Bold, Upbeat)
-- Multiple operation modes
-- Stable long-form narration without drift
-- Native audio controls & effects (no post-processing)
-- Optimized GPU inference
-- Configurable voices via CEVOICE voice packs
+- Real-time buffered speech generation pipeline
+- Distinct default voice styles: calm, balanced, bold, upbeat
+- Multiple operation modes: frontend, API and extensions
+- Stable long-form narration with low risk of drifting
+- Native audio controls & effects via built-in DSP
+- Optimized GPU inference where possible
+- Configurable character voices via CEVOICE voice packs
+- Characters can respond back to you
+
+## Note on development
+
+Celune is against the stance of "vibe coding" used in development.
+
+None of the 15,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
+
+All decisions and implementations were reviewed, validated, and approved by human developers.
+
+Celune never was, and will never become an "AI slop" project.
 
 ## Voices & samples
 
 Each voice is demonstrated using a short introduction and a longer narration sample to showcase consistency, pacing, and expressiveness.
 
-| Voice        | Intro (Qwen) | Narration (Qwen) | Intro (VoxCPM2) | Narration (VoxCPM2) |
-|--------------|--------------|------------------|-----------------|---------------------|
-| Balanced     | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc_voxcpm2.wav) |
-| Calm         | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_voxcpm2.wav) |
-| Bold         | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_voxcpm2.wav) |
-| Upbeat       | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_voxcpm2.wav) |
+### Qwen
+
+| Voice | Intro | Narration |
+|---|---|---|
+| Balanced | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc_qwen.wav) |
+| Calm | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_qwen.wav) |
+| Bold | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_qwen.wav) |
+| Upbeat | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_qwen.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_qwen.wav) |
+
+### VoxCPM2
+
+| Voice | Intro | Narration |
+|---|---|---|
+| Balanced | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc_voxcpm2.wav) |
+| Calm | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_voxcpm2.wav) |
+| Bold | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_voxcpm2.wav) |
+| Upbeat | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_voxcpm2.wav) |
+
+### Celune Mini
+
+| Voice | Intro | Narration |
+|---|---|---|
+| Balanced | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc_mini.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc_mini.wav) |
+| Calm | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_mini.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_mini.wav) |
+| Bold | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_mini.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_mini.wav) |
+| Upbeat | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_mini.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_mini.wav) |
 
 The demonstration lines try to showcase Celune's best, but they may include minor mistakes. This is an inherent limitation with TTS models, and Celune should not be blamed for it.
 
-These examples were recorded with the default voice pack, which contains canonical Celune voices. Other voice packs may be installed by the end user, allowing for other characters to speak through Celune.
+These examples were recorded with the default voice pack, which contains canonical Celune voices. Other voice packs may be created and installed by the end user, allowing for other characters to speak through Celune.
 
 Browse the `demos` directory for demonstration content from the current version of Celune, as well as any past releases.
 
@@ -57,7 +88,7 @@ Browse the `demos` directory for demonstration content from the current version 
 > This is a sentence, 中文, 日本語, 한국어.
 > ```
 
-Samples were captured from Celune's output directory. No extra post-processing was applied.
+Samples were captured directly from Celune's output directory. No extra post-processing was applied.
 
 For details on voice production, check the VOICES.md file.
 
@@ -65,7 +96,7 @@ For details on voice production, check the VOICES.md file.
 
 Celune requires [Python](https://python.org) 3.12 or 3.13.
 
-Celune also depends on external system tools and libraries that are not available in `pip`:
+Celune also depends on external system dependencies that are not available in `pip`:
 
 - **CUDA Toolkit 12.8** - only if not using pre-built PyTorch wheels
 - **SoX (Sound eXchange)** - required for audio processing
@@ -74,25 +105,54 @@ Celune also depends on external system tools and libraries that are not availabl
 - **Symbolic link support** - recommended on Windows for optimal operation
 - **C/C++ compiler** - to compile required dependencies for VoxCPM2
 
-Celune requires an RTX 30 series GPU or newer. CPU-only execution is not supported.
+Celune requires an RTX 30 series GPU or newer to use most features.
+
+CPU-only execution is only supported with Celune Mini.
 
 Usage of Celune's UI requires an ANSI-capable terminal. Non-compliant terminals can only use the headless (CEF) mode.
 
 The terminal should support True Color, especially when using voice packs that declare new app themes.
 
-If Rubber Band is not installed, Celune will speak at normal speed, and speed controls will be unavailable.
+Terminals not supporting True Color may look incorrect, as Textual will fall back to a lower color mode.
 
-## GPU requirements
+If Rubber Band is not installed or fails to run, Celune will speak at normal speed, and speed controls will be unavailable.
 
-**GPU (CUDA):**
+## VRAM presets & requirements
 
-- Minimum: 6 GB VRAM (e.g. RTX 3050, not optimal)
+Celune has several VRAM presets available. Here are their baseline requirements:
 
-Only the Qwen backend without normalization will work.
+> Low (6GB VRAM recommended)
+>
+> This preset supports:
+>
+> - Qwen3-TTS 0.6B / Celune Mini
+> - Normalization on CPU
+>
+> Medium (8GB VRAM required)
+>
+> This preset supports:
+>
+> - All of the above, and:
+> - Qwen3-TTS 1.7B
+>
+> High (12GB VRAM required)
+>
+> This preset supports:
+>
+> - All of the above, and:
+> - VoxCPM2
+> - Persona (4-bit)
+>
+> Extra High (16GB+ VRAM recommended)
+>
+> This preset supports:
+>
+> - All of the above, and:
+> - Persona (8-bit)
+> - Normalization on GPU
+> - Upcoming advanced features
 
-- Recommended: 8 GB+ VRAM (e.g. RTX 3060 or better)
-
-8 GB is recommended to use normalization, 12 GB is recommended to use the VoxCPM2 backend.
+The desired preset may be set in Celune's configuration file. Refer to `default_config.yaml` for details.
 
 ---
 Performance may be reduced when running GPU intensive applications along with Celune.
@@ -239,11 +299,12 @@ Without this, Celune may require elevated permissions or fall back to slower beh
 
 ## REST API
 
-See [API.md](./API.md) for REST API configuration, authentication, endpoints, and curl examples.
+See [API.md](./API.md) for REST API configuration, authentication, endpoints, and cURL examples.
+The API allows programmatic usage of all Celune features. It can be used both as a public and local interface.
 
 ## Screenshots
 
-These screenshots show Celune's user interface.
+The below images showcase Celune's user interface.
 
 ### Before init
 

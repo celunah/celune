@@ -4,8 +4,8 @@
 import pathlib
 import warnings
 import contextlib
-from io import BytesIO
-from typing import Any, Optional, cast
+from collections.abc import Mapping
+from typing import Optional, Protocol, TypedDict, Union, cast
 
 import torch
 import librosa
@@ -13,12 +13,12 @@ import matplotlib
 import numpy as np
 import numpy.typing as npt
 from matplotlib import rcParams
+from matplotlib.projections import PolarAxes
 from matplotlib import pyplot as plt
 from matplotlib import colors as mcolors
-from matplotlib.projections import PolarAxes
 from transformers import AutoModel, AutoProcessor
 
-from .cevoice import default_loader
+from .cevoice import ManifestValue, default_loader
 from .constants import VOICE_EMBEDDING_MODEL, N_A_NUMERIC
 
 matplotlib.use("Agg")
@@ -30,10 +30,72 @@ rcParams["font.family"] = "Outfit Thin"
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-TextConfig = dict[str, Any]
+type TextConfigValue = Union[str, dict[str, "TextConfigValue"]]
+type TextConfig = dict[str, TextConfigValue]
+type EmbeddingPayload = Union[
+    torch.Tensor,
+    npt.NDArray[np.float32],
+    list[float],
+    Mapping[str, "EmbeddingPayload"],
+]
 
-_EMBEDDING_MODEL: Any = None
-_EMBEDDING_PROCESSOR: Any = None
+
+class EmbeddingOutput(Protocol):
+    """Speaker embedding model output used by Celune analysis."""
+
+    last_hidden_state: EmbeddingPayload
+
+
+class EmbeddingProcessor(Protocol):
+    """Processor callable returned by the embedding model package."""
+
+    def __call__(
+        self,
+        y: npt.NDArray[np.float32],
+        *,
+        sampling_rate: int,
+    ) -> Mapping[str, torch.Tensor]:
+        """Prepare model inputs from a waveform."""
+        raise NotImplementedError("protocol not defined")
+
+
+class EmbeddingModel(Protocol):
+    """Embedding model behavior used by Celune analysis."""
+
+    def eval(self) -> None:
+        """Switch the model into evaluation mode.
+
+        Raises:
+            NotImplementedError: The protocol was called directly.
+        """
+        raise NotImplementedError("protocol not defined")
+
+    def to(self, device: torch.device) -> torch.nn.Module:
+        """Move the model to a device.
+
+        Args:
+            device: A device to dispatch to.
+
+        Raises:
+            NotImplementedError: The protocol was called directly.
+        """
+        raise NotImplementedError("protocol not defined")
+
+    def __call__(self, **inputs: torch.Tensor) -> EmbeddingOutput:
+        """Run embedding inference."""
+        raise NotImplementedError("protocol not defined")
+
+
+class VoiceMatch(TypedDict):
+    """Similarity score for one reference voice."""
+
+    voice: str
+    cosine: float
+    percent: float
+
+
+_EMBEDDING_MODEL: Optional[EmbeddingModel] = None
+_EMBEDDING_PROCESSOR: Optional[EmbeddingProcessor] = None
 
 TEXT_CONFIG: TextConfig = {
     "trait_labels": {
@@ -137,41 +199,22 @@ TEXT_CONFIG: TextConfig = {
 
 
 def _text(*keys: str) -> str:
-    """Fetch a configurable text value from ``TEXT_CONFIG``.
-
-    Args:
-        *keys: Nested keys used to traverse ``TEXT_CONFIG``.
-
-    Returns:
-        str: The configured text value.
-    """
-    value = TEXT_CONFIG
+    """Fetch a configurable text value from ``TEXT_CONFIG``."""
+    value: TextConfigValue = TEXT_CONFIG
     for key in keys:
+        if not isinstance(value, dict):
+            raise KeyError(key)
         value = value[key]
     return cast(str, value)
 
 
 def _trait_label(trait_name: str) -> str:
-    """Return the display label for a trait.
-
-    Args:
-        trait_name: The internal trait name.
-
-    Returns:
-        str: The localized display label.
-    """
+    """Return the display label for a trait."""
     return _text("trait_labels", trait_name)
 
 
 def _join_trait_names(trait_names: list[str]) -> str:
-    """Join display trait names in a readable way.
-
-    Args:
-        trait_names: Internal trait names to format.
-
-    Returns:
-        str: A human-readable joined trait list.
-    """
+    """Join display trait names in a readable way."""
     display_names = [_trait_label(name) for name in trait_names]
     if len(display_names) == 1:
         return display_names[0]
@@ -260,18 +303,8 @@ def compute_raw_metrics(y: npt.NDArray[np.float32], sr: int) -> dict:
     return metrics
 
 
-def _embedding_tensor_to_numpy(value: Any) -> npt.NDArray[np.float32]:
-    """Convert a supported embedding object to a normalized 1D NumPy array.
-
-    Args:
-        value: The embedding object to convert.
-
-    Returns:
-        npt.NDArray[np.float32]: The NumPy array representation of this embedding.
-
-    Raises:
-        ValueError: The embedding has an invalid or unexpected shape.
-    """
+def _embedding_tensor_to_numpy(value: EmbeddingPayload) -> npt.NDArray[np.float32]:
+    """Convert a supported embedding object to a normalized 1D NumPy array."""
     if isinstance(value, dict):
         if "speaker_embedding" in value:
             value = value["speaker_embedding"]
@@ -294,24 +327,14 @@ def _embedding_tensor_to_numpy(value: Any) -> npt.NDArray[np.float32]:
 
 
 def _load_reference_embedding(voice: str) -> npt.NDArray[np.float32]:
-    """Load a packaged Qwen3 reference embedding for a Celune voice.
-
-    Args:
-        voice: The target Celune voice to load an embedding for.
-
-    Returns:
-        npt.NDArray[np.float32]: The NumPy array of the embedding.
-
-    Raises:
-        FileNotFoundError: No Celune voice was found by this name, or it has no embeddings.
-    """
+    """Load a packaged Qwen3 reference embedding for a Celune voice."""
     loader = default_loader()
     if loader is not None:
         try:
-            data = loader.bundle.read_asset(voice, "pt")
+            ref_path = loader.materialize(voice, "pt")
         except KeyError as error:
             raise FileNotFoundError(f"{voice}.pt not found") from error
-        return _embedding_tensor_to_numpy(torch.load(BytesIO(data), map_location="cpu"))
+        return _embedding_tensor_to_numpy(torch.load(ref_path, map_location="cpu"))
 
     ref_path = pathlib.Path(__file__).resolve().parent / "refs" / f"{voice}.pt"
     if not ref_path.exists():
@@ -321,39 +344,41 @@ def _load_reference_embedding(voice: str) -> npt.NDArray[np.float32]:
 
 
 def _available_reference_voices() -> list[str]:
-    """Return available packaged reference embedding names.
-
-    Returns:
-        list[str]: The list of available embedding names.
-    """
+    """Return available packaged reference embedding names."""
     loader = default_loader()
     if loader is not None:
         return sorted(
             voice
             for voice in loader.bundle.voices
-            if "pt" in loader.bundle.voices[voice].get("assets", {})
+            if "pt"
+            in cast(
+                dict[str, ManifestValue],
+                loader.bundle.voices[voice].get("assets", {}),
+            )
         )
 
     refs_dir = pathlib.Path(__file__).resolve().parent / "refs"
     return sorted(path.stem for path in refs_dir.glob("*.pt"))
 
 
-def _load_embedding_model() -> tuple[Any, Any]:
-    """Load and cache the Qwen3 speaker embedding processor/model.
-
-    Returns:
-        tuple[Any, Any]: The loaded models and processor objects.
-    """
+def _load_embedding_model() -> tuple[EmbeddingProcessor, EmbeddingModel]:
+    """Load and cache the Qwen3 speaker embedding processor/model."""
     global _EMBEDDING_MODEL, _EMBEDDING_PROCESSOR
 
     if _EMBEDDING_MODEL is None or _EMBEDDING_PROCESSOR is None:
-        _EMBEDDING_PROCESSOR = AutoProcessor.from_pretrained(
-            VOICE_EMBEDDING_MODEL,
-            trust_remote_code=True,
+        _EMBEDDING_PROCESSOR = cast(
+            EmbeddingProcessor,
+            AutoProcessor.from_pretrained(
+                VOICE_EMBEDDING_MODEL,
+                trust_remote_code=True,
+            ),
         )
-        _EMBEDDING_MODEL = AutoModel.from_pretrained(
-            VOICE_EMBEDDING_MODEL,
-            trust_remote_code=True,
+        _EMBEDDING_MODEL = cast(
+            EmbeddingModel,
+            AutoModel.from_pretrained(
+                VOICE_EMBEDDING_MODEL,
+                trust_remote_code=True,
+            ),
         )
         _EMBEDDING_MODEL.eval()
         with contextlib.suppress(AttributeError):
@@ -366,15 +391,7 @@ def _compute_qwen3_embedding(
     y: npt.NDArray[np.float32],
     sr: int,
 ) -> npt.NDArray[np.float32]:
-    """Compute a Qwen3 ECAPA-TDNN speaker embedding for a mono waveform.
-
-    Args:
-        y: The NumPy array of the voice waveform.
-        sr: The sample rate of the voice waveform.
-
-    Returns:
-        npt.NDArray[np.float32]: The computed embedding of the voice waveform.
-    """
+    """Compute a Qwen3 ECAPA-TDNN speaker embedding for a mono waveform."""
     processor, model = _load_embedding_model()
     inputs = processor(y, sampling_rate=sr)
     inputs = {
@@ -392,18 +409,7 @@ def _cosine_similarity_percent(
     embedding: npt.NDArray[np.float32],
     reference: npt.NDArray[np.float32],
 ) -> tuple[float, float]:
-    """Return cosine similarity and a clipped percentage-style score.
-
-    Args:
-        embedding: The embedding to check.
-        reference: The target embedding to compare against.
-
-    Returns:
-        tuple[float, float]: The cosine and percentage similarity.
-
-    Raises:
-        ValueError: The embedding norm was zero.
-    """
+    """Return cosine similarity and a clipped percentage-style score."""
     denom = float(np.linalg.norm(embedding) * np.linalg.norm(reference))
     if denom <= 1e-9:
         raise ValueError("embedding norm is zero")
@@ -415,14 +421,7 @@ def _cosine_similarity_percent(
 
 
 def _voice_drift_level(drift_percent: float) -> str:
-    """Return a readable drift level for a reference similarity gap.
-
-    Args:
-        drift_percent: The drift percentage value.
-
-    Returns:
-        str: The human-readable drift tier.
-    """
+    """Return a readable drift level for a reference similarity gap."""
     if drift_percent <= 3.0:
         return "stable"
     if drift_percent <= 6.0:
@@ -445,9 +444,6 @@ def add_reference_similarity_metrics(
         y: The NumPy array of the voice.
         sr: The sample rete of the voice.
         reference_voice: The reference voice to check against.
-
-    Returns:
-        None: This function adds the metrics to the graph.
     """
     if not reference_voice:
         return
@@ -460,7 +456,7 @@ def add_reference_similarity_metrics(
             generated_embedding,
             reference_embedding,
         )
-        matches: list[dict[str, Any]] = []
+        matches: list[VoiceMatch] = []
         for voice in _available_reference_voices():
             ref_embedding = _load_reference_embedding(voice)
             ref_cosine, ref_percent = _cosine_similarity_percent(
@@ -506,31 +502,12 @@ def add_reference_similarity_metrics(
 
 
 def _clip_norm(value: float, low: float, high: float) -> float:
-    """Map ``value`` from ``[low, high]`` to ``[0.0, 1.0]`` and clip.
-
-    Args:
-        value: The value to normalize.
-        low: The input value that maps to ``0.0``.
-        high: The input value that maps to ``1.0``.
-
-    Returns:
-        float: The clipped normalized value.
-    """
+    """Map ``value`` from ``[low, high]`` to ``[0.0, 1.0]`` and clip."""
     return float(np.clip((value - low) / (high - low + 1e-9), 0.0, 1.0))
 
 
 def _blend_colors(color_a: str, color_b: str, mix: float) -> str:
-    """Blend two colors and return the result as a hex string.
-
-    Args:
-        color_a: The starting color.
-        color_b: The ending color.
-        mix: Blend amount where ``0.0`` is ``color_a`` and ``1.0`` is
-            ``color_b``.
-
-    Returns:
-        str: The blended color as a hex string.
-    """
+    """Blend two colors and return the result as a hex string."""
     color_a_rgb = np.array(mcolors.to_rgb(color_a))
     color_b_rgb = np.array(mcolors.to_rgb(color_b))
     blended = (1.0 - mix) * color_a_rgb + mix * color_b_rgb
@@ -539,14 +516,7 @@ def _blend_colors(color_a: str, color_b: str, mix: float) -> str:
 
 
 def _summarize_trait_status(traits: dict) -> tuple[str, str]:
-    """Return a short bottom status message and its associated color.
-
-    Args:
-        traits: Derived trait scores keyed by trait name.
-
-    Returns:
-        tuple[str, str]: The status text and hex color.
-    """
+    """Return a short bottom status message and its associated color."""
     base_color = "#CEBAFF"
     warn_color = "#F0E68C"
     high_color = "#F07178"
@@ -712,14 +682,6 @@ def generate_assessment(m: dict, traits: dict) -> list[str]:
         lines.append(_text("assessment", "pitch_unknown"))
 
     def level(trait_score: float) -> str:
-        """Convert a numeric trait score to a display level.
-
-        Args:
-            trait_score: Trait score in the ``0.0`` to ``1.0`` range.
-
-        Returns:
-            str: Localized level label for the score.
-        """
         if trait_score < 0.25:
             return _text("assessment", "level_low")
         if trait_score < 0.50:
@@ -790,9 +752,6 @@ def plot_radar(
         title: Subtitle to include in the chart.
         output_path: Path where the PNG chart should be written.
         metrics: Optional raw metrics used to add contextual graph annotations.
-
-    Returns:
-        None: This function writes the chart to disk.
     """
     base_color = "#CEBAFF"
     warn_color = "#F0E68C"
@@ -913,9 +872,6 @@ def write_report(
         assessment: Human-readable assessment lines.
         voice: Path to the analyzed voice sample.
         output_path: Path where the text report should be written.
-
-    Returns:
-        None: This function writes the report to disk.
     """
     sep = "=" * 60
 
@@ -1052,20 +1008,7 @@ def _analyze_voice_data(
     stem: str,
     reference_voice: Optional[str] = None,
 ) -> None:
-    """Analyze voice audio and write report artifacts.
-
-    Args:
-        y: Mono waveform to analyze.
-        sr: Waveform sample rate.
-        voice: Display path for the analyzed voice sample.
-        out_dir: Directory where report artifacts should be written.
-        stem: File stem to use for report artifacts.
-        reference_voice: Optional Celune voice whose reference embedding should
-            be compared with the analyzed audio.
-
-    Returns:
-        None: This function writes report artifacts to ``out_dir``.
-    """
+    """Analyze voice audio and write report artifacts."""
     radar_path = out_dir / f"{stem}_radar.png"
     report_path = out_dir / f"{stem}_report.txt"
 
@@ -1093,11 +1036,7 @@ def analyze_voice_audio(
         display_name: File name to show in generated reports.
         out_dir: Directory where report artifacts should be written.
         stem: File stem to use for report artifacts.
-        reference_voice: Optional Celune voice whose reference embedding should
-            be compared with the analyzed audio.
-
-    Returns:
-        None: This function writes report artifacts to ``out_dir``.
+        reference_voice: Optional Celune voice whose reference embedding should be compared with the analyzed audio.
     """
     y = np.asarray(audio, dtype=np.float32)
     if y.ndim == 2:
@@ -1114,18 +1053,12 @@ def analyze_voice_audio(
 
 
 def _reference_embedding_names() -> set[str]:
+    """Return available voice embedding names."""
     return set(_available_reference_voices())
 
 
 def _has_reference_embedding(voice: str) -> bool:
-    """Does this voice have an embeddding?
-
-    Args:
-        voice: The voice to check from the CEVOICE bundle.
-
-    Returns:
-        bool: Whether this voice has an embedding included.
-    """
+    """Does this voice have an embeddding?"""
     return voice in _reference_embedding_names()
 
 
@@ -1134,9 +1067,6 @@ def analyze_voice(voice: pathlib.Path) -> None:
 
     Args:
         voice: Path to the WAV file to analyze.
-
-    Returns:
-        None: This function writes report artifacts next to the input file.
     """
     if not voice.exists():
         return

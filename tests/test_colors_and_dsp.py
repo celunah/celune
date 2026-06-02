@@ -20,9 +20,6 @@ class ColorTests(TestCase):
     def test_default_and_custom_theme_palettes_are_configured(self) -> None:
         """Verify default palettes and contrast-adjusted custom palettes.
 
-        Returns:
-            None: Assertions verify theme generation behavior.
-
         Raises:
             AssertionError: Theme behavior changes unexpectedly.
         """
@@ -43,6 +40,12 @@ class ColorTests(TestCase):
             colors.SEVERITY_COLORS["celune"]["info"],
             colors.THEME.primary,
         )
+        self.assertEqual(colors.SEVERITY_COLORS["celune"]["sleeping"], "#9c88ce")
+        self.assertEqual(colors.SEVERITY_COLORS["celune_light"]["sleeping"], "#6d5f90")
+
+        colors.configure_theme("#101010", "#222222", "#8866cc")
+        self.assertEqual(colors.SEVERITY_COLORS["celune"]["sleeping"], "#8866cc")
+        self.assertEqual(colors.SEVERITY_COLORS["celune_light"]["sleeping"], "#7558af")
 
 
 class DspTests(TestCase):
@@ -50,9 +53,6 @@ class DspTests(TestCase):
 
     def test_make_stereo_and_resampling_validate_audio(self) -> None:
         """Verify stereo conversion and sample-rate validation paths.
-
-        Returns:
-            None: Assertions verify DSP helper behavior.
 
         Raises:
             AssertionError: DSP behavior changes unexpectedly.
@@ -70,9 +70,6 @@ class DspTests(TestCase):
 
     def test_soften_split_and_silence_detection(self) -> None:
         """Verify softening, chunk splitting, and loudness tiers.
-
-        Returns:
-            None: Assertions verify DSP output.
 
         Raises:
             AssertionError: DSP output changes unexpectedly.

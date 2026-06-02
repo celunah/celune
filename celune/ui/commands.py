@@ -3,18 +3,58 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
+from urllib.parse import urlparse
+from typing import Optional, TYPE_CHECKING
 
 import soundfile as sf
 
-from ..utils import format_error
 from ..backends.qwen3 import Qwen3
+from ..utils import format_error
 from ..exceptions import InvalidExtensionError
 
 if TYPE_CHECKING:
     from .app import CeluneUI
+
+IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
+VIDEO_EXTENSIONS = {".mp4", ".webm"}
+
+
+def _attachment_source(path: Path) -> str:
+    """Return a Persona-friendly attachment source string for one local file."""
+    resolved = path.resolve()
+    if os.name == "nt":
+        return resolved.as_posix()
+    return resolved.as_uri()
+
+
+def attachment_source(path: Path) -> str:
+    """Public interface for _attachment_source().
+
+    Args:
+        path: The path of the attachment.
+
+    Returns:
+        str: The return value of _attachment_source(), containing a Persona-friendly attachment source string.
+    """
+
+    return _attachment_source(path)
+
+
+def _remote_attachment_kind(source: str) -> Optional[str]:
+    """Return the attachment kind for one supported remote URL."""
+    parsed = urlparse(source)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+
+    suffix = Path(parsed.path).suffix.lower()
+    if suffix in IMAGE_EXTENSIONS:
+        return "image"
+    if suffix in VIDEO_EXTENSIONS:
+        return "video"
+    return None
 
 
 def tutorial(ui: CeluneUI) -> None:
@@ -22,9 +62,6 @@ def tutorial(ui: CeluneUI) -> None:
 
     Args:
         ui: The instance of CeluneUI that the tutorial will interact with.
-
-    Returns:
-        None: This function sends Celune tutorial commands automatically.
     """
     assets = Path(__file__).resolve().parents[1] / "assets"
     if not assets.exists():
@@ -45,10 +82,7 @@ def tutorial(ui: CeluneUI) -> None:
     tutorial_token = ui.tutorial_token
 
     def prepare_and_schedule() -> None:
-        """Prepare tutorial clip timings without blocking Textual."""
-
         def wav_duration(pth: Path) -> float:
-            """Return the duration of a WAV file in seconds."""
             if not pth.exists():
                 raise FileNotFoundError(f"tutorial clip not found: {pth}")
 
@@ -56,10 +90,7 @@ def tutorial(ui: CeluneUI) -> None:
             return info.frames / info.samplerate
 
         def play_tutorial_clip(pth: Path) -> None:
-            """Play a tutorial clip without blocking the Textual message loop."""
-
             def worker() -> None:
-                """Queue tutorial audio on a background thread."""
                 try:
                     ui.celune.play(str(pth))
                 except Exception as exc:
@@ -84,7 +115,6 @@ def tutorial(ui: CeluneUI) -> None:
             return
 
         def schedule() -> None:
-            """Schedule prepared tutorial actions on the UI thread."""
             if tutorial_token != ui.tutorial_token or not ui.tutorial_active:
                 return
 
@@ -113,14 +143,11 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui: The instance of the CeluneUI to use here.
         command: The slash-command name without the leading slash.
         args: The parsed command arguments.
-
-    Returns:
-        None: This method mutates UI or engine state based on the command.
     """
 
     ui.input_box.load_text("")
     if command == "help":
-        ui.safe_log("Celune help topics")
+        ui.safe_log("--- Celune help topics ---")
         ui.safe_log("Available commands:")
         ui.safe_log(
             "Arguments marked in <> are required, those marked in [] are optional."
@@ -147,6 +174,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log("/xvectoronly <true/false> - Toggle Qwen3 identity-only cloning.")
         ui.safe_log(
             "/play <file> - Play a sound effect by path. Only WAV files are supported."
+        )
+        ui.safe_log(
+            "/attach <file> [file...] - Attach images or videos to the next persona reply."
         )
         ui.safe_log(
             "/seed [seed|random] - Set or clear the seed for speech outputs, affecting pronunciation and/or prosody."
@@ -204,6 +234,15 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.safe_log("Extensions: " + ", ".join(names))
         return
     if command == "voiceprompt":
+        voice_prompt_supported = getattr(ui.celune, "voice_prompt_supported", None)
+        if callable(voice_prompt_supported) and not voice_prompt_supported():
+            ui.celune.voice_prompt = None
+            ui.safe_log(
+                "Voice prompts are unavailable with the currently loaded model.",
+                "warning",
+            )
+            return
+
         if not args:
             ui.safe_log("Usage: /voiceprompt <prompt>", "warning")
             return
@@ -302,6 +341,68 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             )
             return
         return
+    if command == "attach":
+        if not args:
+            ui.safe_log("Usage: /attach <file> [file...]", "warning")
+            return
+
+        if len(args) == 1 and args[0].lower() in {"clear", "reset", "none"}:
+            ui.celune.persona_attachments.clear()
+            ui.safe_log("Attachments cleared.")
+            return
+
+        vision = getattr(ui.celune, "vision", "available")
+        if vision is None:
+            ui.safe_log(
+                "Cannot add attachments while Celune is running in speech-only mode.",
+                "warning",
+            )
+            return
+
+        added: list[str] = []
+        for raw_path in args:
+            remote_kind = _remote_attachment_kind(raw_path)
+            if remote_kind is not None:
+                parsed = urlparse(raw_path)
+                name = Path(parsed.path).name or raw_path
+                ui.celune.persona_attachments.append(
+                    {"type": remote_kind, "path": raw_path, "name": name}
+                )
+                added.append(name)
+                continue
+
+            path = Path(raw_path).expanduser()
+            if not path.exists() or not path.is_file():
+                ui.safe_log(f"Attachment not found: {raw_path}", "warning")
+                continue
+
+            suffix = path.suffix.lower()
+            if suffix in IMAGE_EXTENSIONS:
+                kind = "image"
+            elif suffix in VIDEO_EXTENSIONS:
+                kind = "video"
+            else:
+                ui.safe_log(f"Unsupported attachment type: {raw_path}", "warning")
+                continue
+
+            resolved = path.resolve()
+            ui.celune.persona_attachments.append(
+                {
+                    "type": kind,
+                    "path": _attachment_source(resolved),
+                    "name": resolved.name,
+                }
+            )
+            added.append(resolved.name)
+
+        if not added:
+            return
+
+        count = len(ui.celune.persona_attachments)
+        ui.safe_log(
+            f"Attached {', '.join(added)}. {count} attachments will be sent in the next pass."
+        )
+        return
     if command == "seed":
         if not args:
             ui.celune.backend.current_seed = None
@@ -322,7 +423,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             return
 
         if not 0 <= value < 2**32:
-            ui.safe_log("Seed must be between 0 and 4294967295.", "warning")
+            ui.safe_log(f"Seed must be between 0 and {2**32 - 1}.", "warning")
             return
 
         ui.celune.backend.current_seed = value
@@ -330,6 +431,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(f"Seed set to {value}.")
         return
     if command == "tutorial":
+        ui.safe_log(
+            "Tutorial activated. Listen to what's said to learn how to use Celune."
+        )
         tutorial(ui)
         return
     if command == "stop":

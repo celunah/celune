@@ -14,9 +14,6 @@ class NameDayTests(TestCase):
     def test_lookup_helpers_cover_supported_inputs(self) -> None:
         """Verify date lookup helpers and invalid input handling.
 
-        Returns:
-            None: Assertions verify lookup behavior.
-
         Raises:
             AssertionError: Name-day lookup behavior changes unexpectedly.
         """
@@ -44,9 +41,6 @@ class I18nTests(TestCase):
     def test_string_falls_back_and_formats_values(self) -> None:
         """Verify fallback strings and interpolation.
 
-        Returns:
-            None: Assertions verify localization behavior.
-
         Raises:
             AssertionError: Localization behavior changes unexpectedly.
         """
@@ -68,23 +62,17 @@ class UpdaterTests(TestCase):
     def test_version_helpers_order_tags(self) -> None:
         """Verify version normalization and ordering helpers.
 
-        Returns:
-            None: Assertions verify version helper behavior.
-
         Raises:
             AssertionError: Version helper behavior changes unexpectedly.
         """
-        self.assertEqual(updater._normalize_tag("refs/tags/v3.5.1"), "3.5.1")
+        self.assertEqual(updater._normalize_tag("refs/tags/v4.0.0"), "4.0.0")
         self.assertEqual(updater._short_revision("abcdef123"), "abcdef1")
         self.assertEqual(updater._short_revision(""), "unknown")
-        self.assertEqual(updater._is_newer_version_tag("9.9.9", "3.5.1"), True)
-        self.assertEqual(updater._is_newer_version_tag("3.5.1", "3.5.1"), False)
+        self.assertEqual(updater._is_newer_version_tag("9.9.9", "4.0.0"), True)
+        self.assertEqual(updater._is_newer_version_tag("4.0.0", "4.0.0"), False)
 
     def test_check_for_update_returns_none_for_dirty_worktree(self) -> None:
         """Verify dirty repositories suppress update prompts.
-
-        Returns:
-            None: Assertions verify update suppression behavior.
 
         Raises:
             AssertionError: Update suppression behavior changes unexpectedly.
@@ -98,9 +86,6 @@ class UpdaterTests(TestCase):
 
     def test_check_for_update_builds_update_info(self) -> None:
         """Verify update metadata assembly for a newer revision.
-
-        Returns:
-            None: Assertions verify update metadata behavior.
 
         Raises:
             AssertionError: Update metadata behavior changes unexpectedly.
@@ -118,7 +103,7 @@ class UpdaterTests(TestCase):
             ),
             mock.patch(
                 "celune.updater._latest_remote_tag",
-                return_value=("3.5.1", "c" * 40),
+                return_value=("4.0.0", "c" * 40),
             ),
         ):
             update = updater.check_for_update()
@@ -126,13 +111,10 @@ class UpdaterTests(TestCase):
         if update is not None:
             self.assertEqual(update.local_revision, "aaaaaaa")
             self.assertEqual(update.latest_revision, "bbbbbbb")
-            self.assertEqual(update.latest_version, "3.5.1")
+            self.assertEqual(update.latest_version, "4.0.0")
 
     def test_update_to_latest_rejects_unsafe_states(self) -> None:
         """Verify unsafe repository states reject automatic updates.
-
-        Returns:
-            None: Assertions verify update safety behavior.
 
         Raises:
             AssertionError: Update safety behavior changes unexpectedly.

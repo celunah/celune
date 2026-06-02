@@ -1,16 +1,15 @@
 # SPDX-License-Identifier: MIT
 """Celune's extension manager methods and classes."""
 
-from __future__ import annotations
-
 import sys
 import inspect
-import traceback
-import threading
 import importlib.util
+import threading
+import traceback
 from pathlib import Path
-from typing import Any, Type
+from typing import Type
 
+from ..utils import format_error
 from .base import CeluneContext, CeluneExtension
 from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
 
@@ -34,8 +33,7 @@ class CeluneExtensionManager:
 
         Raises:
             InvalidExtensionError: The object is not a CeluneExtension subclass.
-            ExtensionAlreadyRegisteredError: An extension with the same name is
-                already registered.
+            ExtensionAlreadyRegisteredError: An extension with the same name is already registered.
         """
         if not inspect.isclass(extension_cls) or not issubclass(
             extension_cls, CeluneExtension
@@ -58,11 +56,7 @@ class CeluneExtensionManager:
         return instance
 
     def autostart_all(self) -> None:
-        """Autostart all available Celune extensions.
-
-        Returns:
-            None: Matching extensions are started on background threads.
-        """
+        """Autostart all available Celune extensions."""
         if self.auto_started:
             self.context.log(
                 "[Core] Cannot autostart Celune extensions more than one time.",
@@ -76,15 +70,6 @@ class CeluneExtensionManager:
                 self.context.log_dev(f"[Core] Auto-starting: {name}")
 
                 def runner(e=ext, n=name):
-                    """Run one extension autostart hook.
-
-                    Args:
-                        e: Extension instance to start.
-                        n: Extension display name for logging.
-
-                    Returns:
-                        None: This worker logs autostart failures.
-                    """
                     try:
                         e.autostart()
                     except Exception as ex:
@@ -101,17 +86,13 @@ class CeluneExtensionManager:
         else:
             self.auto_started = True
 
-    def invoke(self, name: str, *args: Any, **kwargs: Any) -> Any:
+    def invoke(self, name: str, *args, **kwargs) -> None:
         """Manually invoke a Celune extension.
 
         Args:
             name: The registered extension name to invoke.
-            *args: Positional arguments forwarded to the extension.
-            **kwargs: Keyword arguments forwarded to the extension.
-
-        Returns:
-            Any: The invocation thread is started asynchronously, so this returns
-                ``None``.
+            args: Positional arguments forwarded to the extension.
+            kwargs: Keyword arguments forwarded to the extension.
 
         Raises:
             InvalidExtensionError: The requested extension is not registered.
@@ -120,9 +101,17 @@ class CeluneExtensionManager:
         if ext is None:
             raise InvalidExtensionError(f"extension '{name}' is not registered")
 
-        threading.Thread(
-            target=ext.invoke, daemon=True, args=args, kwargs=kwargs
-        ).start()
+        def runner() -> None:
+            try:
+                ext.invoke(*args, **kwargs)
+            except Exception as ex:
+                self.context.log(
+                    f"[Core] Failed to invoke '{name}': "
+                    f"{format_error(ex, self.context.dev)}",
+                    "warning",
+                )
+
+        threading.Thread(target=runner, daemon=True).start()
 
     def list_extensions(self) -> list[str]:
         """List all installed Celune extensions.
@@ -137,9 +126,6 @@ class CeluneExtensionManager:
 
         Args:
             folder: The directory containing extension Python modules.
-
-        Returns:
-            None: This method imports and registers any valid extensions it finds.
         """
         extensions_dir = Path(folder)
 

@@ -6,12 +6,12 @@ import time
 import signal
 import warnings
 from types import FrameType
-from typing import Any, Optional, cast
+from typing import Optional, cast
 
 from ..celune import Celune
-from ..config import config_bool
-from ..utils import supports_ansi, discard
+from ..utils import discard
 from ..constants import ExitCodes, SIGTSTP
+from ..config import Config, config_bool
 
 
 class CeluneHeadlessUI:
@@ -19,7 +19,7 @@ class CeluneHeadlessUI:
 
     _instance: Optional["CeluneHeadlessUI"] = None
 
-    def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
+    def __init__(self, config: Optional[Config] = None) -> None:
         if CeluneHeadlessUI._instance is not None:
             raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
 
@@ -36,9 +36,8 @@ class CeluneHeadlessUI:
         self.celune = cast(Celune, None)
 
         # for Celune terminals not supporting colored text
-        self.no_color = (
-            config_bool(config, "CELUNE_HEADLESS_NOCOLOR", "headless_nocolor")
-            or not supports_ansi()
+        self.no_color = config_bool(
+            config, "CELUNE_HEADLESS_NOCOLOR", "headless_nocolor"
         )
         self.reset = "\x1b[0m" if not self.no_color else ""
 
@@ -63,7 +62,10 @@ class CeluneHeadlessUI:
             return self.colors["yellow"]
         if severity == "error":
             return self.colors["red"]
-        return self.colors["white"]
+        if severity == "sleeping":
+            return self.colors["blue"]
+        # sleeping severity does not have a match in the VGA palette
+        return self.colors["magenta"]
 
     def headless_log(self, msg: str, severity: str = "info") -> None:
         """Log to the headless interface.
@@ -71,9 +73,6 @@ class CeluneHeadlessUI:
         Args:
             msg: The log message to print.
             severity: The log severity level.
-
-        Returns:
-            None: This method prints a formatted line to stdout.
         """
         prefix = ""
         if severity == "warning":
@@ -87,19 +86,11 @@ class CeluneHeadlessUI:
 
         Args:
             error: The error message to print.
-
-        Returns:
-            None: This method forwards the message as an error log.
         """
         self.headless_log(error, "error")
 
     def run(self) -> None:
-        """Start the headless interface.
-
-        Returns:
-            None: This method installs the signal handler and keeps the process
-                alive.
-        """
+        """Start the headless interface."""
         if not self._has_celune():
             warnings.warn(
                 f"{self.__class__.__name__} has no attached Celune instance: this will do nothing",
@@ -113,11 +104,7 @@ class CeluneHeadlessUI:
             time.sleep(1)
 
     def close(self) -> None:
-        """Exit from Celune's headless interface.
-
-        Returns:
-            None: This method closes the interface and exits from Celune.
-        """
+        """Exit from Celune's headless interface."""
 
         if self.celune is not None:
             self.celune.close()
@@ -130,9 +117,6 @@ class CeluneHeadlessUI:
         Args:
             sig: The received signal number.
             frame: The current stack frame from the signal handler.
-
-        Returns:
-            None: This handler closes Celune and exits the process.
         """
         if SIGTSTP is not None and sig == SIGTSTP:
             return
