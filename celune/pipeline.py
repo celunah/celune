@@ -82,6 +82,7 @@ class SpeechRequest:
 
     text: str
     display_text: str
+    language: str = "Auto"
     save: bool = True
     stream_queue: Optional["SpeechStreamQueue"] = None
     normalize: bool = False
@@ -1239,6 +1240,14 @@ def queue_speech(
         return False
 
     language_meta = detect_language(text, list(engine.backend.supported_languages))
+    requested_language = engine.language
+    if (
+        not isinstance(requested_language, str)
+        or not requested_language.strip()
+        or requested_language.strip().lower() == "auto"
+    ):
+        requested_language = language_meta["language"]
+
     if not language_meta["supported"]:
         # "zh-cn" has to be clipped to just "zh" to be a valid language code
         try:
@@ -1279,6 +1288,7 @@ def queue_speech(
             SpeechRequest(
                 text,
                 display_text=display_text if display_text is not None else text,
+                language=requested_language,
                 save=save,
                 stream_queue=stream_queue,
                 normalize=engine.use_normalization,
@@ -1561,6 +1571,7 @@ def generation_worker(engine: Celune) -> None:
         item = cast(SpeechRequest, item)
         text = item.text
         display_text = item.display_text
+        request_language = item.language
         save_output = item.save
         stream_queue = item.stream_queue
         kept_sfx_audio = engine.kept_sfx_audio
@@ -1651,6 +1662,45 @@ def generation_worker(engine: Celune) -> None:
                                 "cannot generate without a model reference"
                             )
 
+                        resolve_generation_language = getattr(
+                            engine.backend,
+                            "resolve_generation_language",
+                            None,
+                        )
+                        if callable(resolve_generation_language):
+                            target_language = resolve_generation_language(
+                                request_language
+                            )
+                        else:
+                            target_language = request_language
+
+                        should_reload_for_language = getattr(
+                            engine.backend,
+                            "should_reload_for_language",
+                            None,
+                        )
+                        if callable(should_reload_for_language) and (
+                            should_reload_for_language(target_language)
+                        ):
+                            active_voice = (
+                                engine.current_voice or engine.backend.default_voice
+                            )
+                            if active_voice is None:
+                                raise NotAvailableError(
+                                    "cannot switch language without an active voice"
+                                )
+
+                            model_id = engine.backend.model_id_for_voice(active_voice)
+                            engine.log_dev(
+                                f"[RELOAD] Loading {model_id} for language: {target_language}"
+                            )
+                            engine.backend.unload_model()
+                            engine.model = engine.backend.load_model(
+                                model_id,
+                                lang=target_language,
+                            )
+                            engine.model_name = model_id
+
                         for (
                             audio_chunk,
                             sr,  # 24 kHz if Qwen3, 48 kHz if VoxCPM2
@@ -1658,7 +1708,7 @@ def generation_worker(engine: Celune) -> None:
                         ) in engine.backend.generate_stream(  # some args will be discarded as needed
                             engine.model,
                             text=chunk_text,
-                            language=engine.language,
+                            language=target_language,
                             chunk_size=engine.chunk_size,
                             instruct=_effective_voice_prompt(engine),
                             voice=engine.current_voice,

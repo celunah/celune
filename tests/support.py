@@ -200,6 +200,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     progress: list[tuple[Optional[float], Optional[float]]] = []
     engine = SimpleNamespace()
     engine.backend = SimpleNamespace(supported_languages=("en",))
+    engine.language = "Auto"
     engine.persona_attachments = []
     engine.persona_recent_visual_context = ()
     engine.use_normalization = False

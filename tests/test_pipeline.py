@@ -29,6 +29,96 @@ from tests.test_persona_memory import StubEmbeddingMemoryStore
 class PipelineTests(TestCase):
     """Tests for lightweight pipeline behavior."""
 
+    class _LanguageAwareBackend:
+        """Tiny backend fake that reloads when the requested language changes."""
+
+        default_voice = "balanced"
+
+        def __init__(self) -> None:
+            self.current_language = "en"
+            self.unload_model = mock.Mock(side_effect=self._clear_model)
+            self.load_model = mock.Mock(side_effect=self._load_model)
+
+        def _clear_model(self) -> None:
+            """Pretend to unload the active model."""
+
+        def _load_model(self, model_id: str, **kwargs: JSONSerializable) -> mock.Mock:
+            """Return a fake model and remember the requested language."""
+            self.current_language = cast(str, kwargs.get("lang", "en"))
+            return mock.Mock(model_id=model_id, kwargs=kwargs)
+
+        @staticmethod
+        def resolve_generation_language(lang: Optional[str]) -> str:
+            """Normalize empty or unsupported language requests to English.
+
+            Args:
+                The language identifier for differentiating models by language.
+
+            Returns:
+                str: A fake language model identifier.
+            """
+            if not lang or lang == "Auto":
+                return "en"
+            return lang
+
+        def should_reload_for_language(self, lang: Optional[str]) -> bool:
+            """Reload when the requested language differs from the active one.
+
+            Args:
+                lang: The language identifier for differentiating models by language.
+
+            Returns:
+                str: Whether a model reload would occur for this request.
+            """
+            return self.resolve_generation_language(lang) != self.current_language
+
+        @staticmethod
+        def generation_progress_total(_text: str) -> None:
+            """Return no fixed generation budget for the fake backend.
+
+            Args:
+                _text: Unused text value.
+            """
+            return None
+
+        @staticmethod
+        def generation_progress_steps(_timing: Optional[dict]) -> int:
+            """Return one fake generation step per chunk.
+
+            Args:
+                _timing: Unused timing value.
+
+            Returns:
+                int: The amount of steps that would be processed so far.
+            """
+            return 1
+
+        @staticmethod
+        def model_id_for_voice(_voice: str) -> str:
+            """Resolve the fake voice to one model identifier.
+
+            Args:
+                _voice: Unused voice value.
+
+            Returns:
+               str: The fake model identifier.
+            """
+            return "fake/balanced"
+
+        @staticmethod
+        def generate_stream(
+            model: mock.Mock, **kwargs: JSONSerializable
+        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+            """Yield one deterministic chunk and preserve kwargs for assertions.
+
+            Args:
+                model: The fake model object.
+                kwargs: The keyword arguments that would be used with generation.
+            """
+            discard(model)
+            discard(kwargs)
+            yield np.zeros((8, 2), dtype=np.float32), 48000, None
+
     def test_queue_helpers_and_force_stop_cover_busy_and_idle_paths(self) -> None:
         """Verify queue draining, lock handling, and force-stop behavior.
 
@@ -82,6 +172,7 @@ class PipelineTests(TestCase):
         request = engine.text_queue.get_nowait()
         self.assertEqual(request.text, "hello")
         self.assertEqual(request.display_text, "shown")
+        self.assertEqual(request.language, "en")
         self.assertEqual(engine.statuses[-1], ("Generating", "info"))
 
         engine = make_pipeline_engine()
@@ -100,7 +191,23 @@ class PipelineTests(TestCase):
         engine.normalize.assert_not_called()
         request = engine.text_queue.get_nowait()
         self.assertEqual(request.text, "raw")
+        self.assertEqual(request.language, "en")
         self.assertEqual(request.normalize, True)
+
+        engine = make_pipeline_engine()
+        engine.language = "fr"
+        with mock.patch(
+            "celune.pipeline.detect_language",
+            return_value={
+                "language": "en",
+                "languages": ["en"],
+                "supported": True,
+                "probabilities": {"en": 1.0},
+            },
+        ):
+            self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), True)
+        request = engine.text_queue.get_nowait()
+        self.assertEqual(request.language, "fr")
 
         engine = make_pipeline_engine()
         engine.is_in_tutorial = True
@@ -1002,6 +1109,55 @@ class PipelineTests(TestCase):
                 "generate:normalized second",
             ],
         )
+
+    def test_generation_worker_reloads_language_specific_model_when_needed(
+        self,
+    ) -> None:
+        """Verify request-scoped language can trigger a backend model reload."""
+        engine = make_pipeline_engine()
+        backend = self._LanguageAwareBackend()
+        engine.backend = backend
+        engine.model_lock = threading.Lock()
+        engine.model = mock.Mock()
+        engine.language = "Auto"
+        engine.chunk_size = 8
+        engine.voice_prompt = None
+        engine.current_voice = "balanced"
+        engine.speed = 1.0
+        engine.can_use_rubberband = False
+        engine.reverb = SimpleNamespace(
+            strength=0.0,
+            reset=mock.Mock(),
+            flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
+        )
+        engine.queue_avail_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.exit_requested = False
+        engine.dev = False
+        engine.recently_saved = None
+
+        engine.text_queue.put(
+            pipeline.SpeechRequest(
+                "bonjour",
+                "bonjour",
+                language="fr",
+                save=True,
+            )
+        )
+        engine.text_queue.put(engine.sentinel)
+
+        with (
+            mock.patch("celune.pipeline.split_text", return_value=["bonjour"]),
+            mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
+            mock.patch("celune.pipeline.os.path.exists", return_value=True),
+            mock.patch("celune.pipeline._write_celune_flac"),
+        ):
+            pipeline.generation_worker(cast(Celune, engine))
+
+        backend.unload_model.assert_called_once_with()
+        backend.load_model.assert_called_once_with("fake/balanced", lang="fr")
+        self.assertEqual(backend.current_language, "fr")
+        self.assertEqual(engine.model.kwargs["lang"], "fr")
 
     def test_split_text_breaks_long_unpunctuated_lines(self) -> None:
         """Verify long prose without punctuation still splits into chunks.

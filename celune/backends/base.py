@@ -235,6 +235,29 @@ class CeluneBackend(ABC):
 
         raise ValueError(f"{self.name} cannot resolve a model for voice '{voice}'")
 
+    def resolve_generation_language(self, lang: Optional[str]) -> Optional[str]:
+        """Normalize a requested generation language for this backend.
+
+        Args:
+            lang: The requested language identifier, if any.
+
+        Returns:
+            Optional[str]: The backend-specific normalized language identifier.
+        """
+        return lang
+
+    def should_reload_for_language(self, lang: Optional[str]) -> bool:
+        """Return whether generation should reload the backend model for ``lang``.
+
+        Args:
+            lang: The normalized language identifier for the upcoming generation.
+
+        Returns:
+            bool: ``True`` when the backend requires a model reload before generation.
+        """
+        discard(lang)
+        return False
+
     def generation_progress_total(self, text: Optional[str] = None) -> Optional[int]:
         """Return the backend's maximum streaming generation steps, if known.
 

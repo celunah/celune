@@ -183,7 +183,7 @@ def celune_day_status(now: datetime.datetime) -> str:
     celune_day_this_year = datetime.datetime(now.year, 6, 2)
 
     if now.date() == celune_day_this_year.date():
-        return f"today is Celune Day {now.year}"
+        return f"Today is Celune Day {now.year}"
 
     if now > celune_day_this_year:
         next_celune_day = datetime.datetime(now.year + 1, 6, 2)

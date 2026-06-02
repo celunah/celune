@@ -61,8 +61,7 @@ class Mini(CeluneBackend):
     name: Final[str] = "mini"
     uses_voice_bundles: Final[bool] = True
     chunk_rate: Final[float] = 12.5
-    supported_languages: Final[tuple[str, ...]] = ("en",)
-    # supported_languages: Final[tuple[str, ...]] = ("en", "fr", "de", "it", "pt", "es")
+    supported_languages: Final[tuple[str, ...]] = ("en", "fr", "de", "it", "pt", "es")
 
     voice_models: Final[Mapping[str, str]] = {
         "balanced": "lunahr/pocket-tts-ungated",
@@ -77,9 +76,48 @@ class Mini(CeluneBackend):
         self._validate_refs()
         self._voice_states: dict[str, MiniPromptState] = {}
         self._generated_config_path: Optional[Path] = None
+        self._loaded_language = "en"
 
-    @staticmethod
-    def _resolve_language_name(lang: str = "en") -> str:
+    def resolve_generation_language(self, lang: Optional[str]) -> str:
+        """Normalize a requested language to one of Pocket TTS's supported variants.
+
+        Args:
+            lang: The language identifier for differentiating models by language.
+
+        Returns:
+            A language-specific model identifier or "en" if no match was found.
+        """
+        alias_to_code: Final[Mapping[str, str]] = {
+            "english": "en",
+            "french": "fr",
+            "german": "de",
+            "italian": "it",
+            "portuguese": "pt",
+            "spanish": "es",
+        }
+        fallback = "en"
+
+        if not lang:
+            return fallback
+
+        normalized = lang.strip().lower().replace("_", "-")
+        if not normalized or normalized == "auto":
+            return fallback
+
+        if normalized in alias_to_code:
+            return alias_to_code[normalized]
+
+        if normalized in self.supported_languages:
+            return normalized
+
+        if "-" in normalized:
+            base = normalized.split("-", 1)[0]
+            if base in self.supported_languages:
+                return base
+
+        return fallback
+
+    def _resolve_language_name(self, lang: str = "en") -> str:
         """Return the Pocket TTS language variant expected for this backend."""
         code_to_model: Final[Mapping[str, str]] = {
             "en": "english",
@@ -90,11 +128,13 @@ class Mini(CeluneBackend):
             "es": "spanish",
         }
 
-        return code_to_model[lang]
+        return code_to_model[self.resolve_generation_language(lang)]
 
-    def _resolve_snapshot_language_dir(self, snapshot_path: str) -> Path:
+    def _resolve_snapshot_language_dir(
+        self, snapshot_path: str, lang: str = "en"
+    ) -> Path:
         """Return the model language directory from a local Pocket TTS snapshot."""
-        language_name = self._resolve_language_name()
+        language_name = self._resolve_language_name(lang)
         language_dir = Path(snapshot_path) / "languages" / language_name
         if not language_dir.is_dir():
             raise BackendError(
@@ -102,18 +142,20 @@ class Mini(CeluneBackend):
             )
         return language_dir
 
-    def _build_generated_config_path(self, snapshot_path: str) -> Path:
+    def _build_generated_config_path(
+        self, snapshot_path: str, lang: str = "en"
+    ) -> Path:
         """Create a temporary Pocket TTS YAML config targeting the snapshot files."""
         from pocket_tts.utils.config import CONFIGS_DIR
 
-        language_name = self._resolve_language_name()
+        language_name = self._resolve_language_name(lang)
         template_path = CONFIGS_DIR / f"{language_name}.yaml"
         if not template_path.is_file():
             raise BackendError(
                 f"invalid Pocket TTS snapshot: template config {template_path.name} not found"
             )
 
-        language_dir = self._resolve_snapshot_language_dir(snapshot_path)
+        language_dir = self._resolve_snapshot_language_dir(snapshot_path, lang)
         model_path = language_dir / "model.safetensors"
         tokenizer_path = language_dir / "tokenizer.model"
 
@@ -190,6 +232,17 @@ class Mini(CeluneBackend):
             ],
         )
 
+    def should_reload_for_language(self, lang: Optional[str]) -> bool:
+        """Return whether the loaded Pocket TTS language differs from ``lang``.
+
+        Args:
+            lang: The language identifier for differentiating models by language.
+
+        Returns:
+            Whether Celune should reload a new Pocket TTS language model.
+        """
+        return self.resolve_generation_language(lang) != self._loaded_language
+
     def load_model(self, model_id: str, **kwargs) -> Optional[BackendModel]:
         """Load the configured Pocket TTS model snapshot.
 
@@ -200,14 +253,22 @@ class Mini(CeluneBackend):
         Returns:
             Optional[BackendModel]: A Celune-compatible Pocket TTS model object.
         """
-        available, snapshot_path = self.model_is_available_locally(model_id)
+        requested_language = self.resolve_generation_language(
+            cast(Optional[str], kwargs.pop("lang", kwargs.pop("language", None)))
+        )
+        available, snapshot_path = self.model_is_available_locally(
+            model_id, requested_language
+        )
         if not available or snapshot_path is None:
             self.log("Downloading TTS model...", "info")
             snapshot_path = snapshot_download(repo_id=model_id)
 
-        generated_config_path = self._build_generated_config_path(snapshot_path)
+        generated_config_path = self._build_generated_config_path(
+            snapshot_path, requested_language
+        )
         self._generated_config_path = generated_config_path
         self.model = TTSModel.load_model(config=generated_config_path)
+        self._loaded_language = requested_language
         self._voice_states.clear()
         return self.model
 
