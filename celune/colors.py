@@ -215,7 +215,9 @@ def configure_theme(
     truecolor_light_palette = _derive_light_palette(background, accent)
     dark_palette = truecolor_dark_palette
     light_palette = truecolor_light_palette
-    light_sleeping = _ensure_contrast(dark_sleeping, truecolor_light_palette["background"], 4.5)
+    light_sleeping = _ensure_contrast(
+        dark_sleeping, truecolor_light_palette["background"], 4.5
+    )
 
     THEME = _theme("celune", dark_palette, dark=True)
     THEME_LIGHT = _theme("celune_light", light_palette, dark=False)
