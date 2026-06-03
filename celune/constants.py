@@ -122,6 +122,7 @@ class UtteranceLoudnessTier(IntEnum):
 # N/A values
 N_A_NUMERIC = float("nan")
 N_A = None
+N_A_STR = "<unknown>"
 
 # base values
 BASE_SR = 48000

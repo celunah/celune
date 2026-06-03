@@ -176,6 +176,12 @@ class UILogHandler(logging.Handler):
         if not message:
             return
 
+        if (
+            "triton not found; flop counting will not work for triton kernels"
+            in message
+        ):
+            message = "triton not found; flop counting will not work for triton kernels"
+
         if record.levelno >= logging.ERROR:
             severity = "error"
             prefix = "Internal runtime error:"

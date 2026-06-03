@@ -130,6 +130,7 @@ class UICommandTests(TestCase):
         self.ui.safe_log = lambda msg, severity="info": self.logs.append(
             (msg, severity)
         )
+        self.ui.safe_log_dev = self.ui.safe_log
         self.ui.celune = SimpleNamespace(
             backend=SimpleNamespace(),
             voice_prompt=None,
@@ -137,6 +138,8 @@ class UICommandTests(TestCase):
             can_use_rubberband=True,
             speed=1.0,
             reverb=SimpleNamespace(strength=0.0),
+            say=mock.Mock(return_value=True),
+            vision=SimpleNamespace(enabled=True, talkback=True),
         )
 
     def _process_command(self, command: str, args: list[str]) -> None:
@@ -234,6 +237,39 @@ class UICommandTests(TestCase):
         self.assertEqual(attachment["path"], url)
         self.assertEqual(attachment["name"], "reference.png")
         self.assertEqual(self.logs[-1][1], "info")
+
+    def test_say_command_bypasses_persona_and_queues_direct_speech(self) -> None:
+        """Verify /say sends literal speech through Celune.say()."""
+        self._process_command("say", ["Hello", "there"])
+
+        self.ui.celune.say.assert_called_once_with(
+            "Hello there",
+            display_text="Hello there",
+        )
+
+    def test_say_command_warns_when_text_is_missing(self) -> None:
+        """Verify /say validates that direct speech text is present."""
+        self._process_command("say", [])
+
+        self.ui.celune.say.assert_not_called()
+        self.assertEqual(self.logs[-1], ("Usage: /say <text>", "warning"))
+
+    def test_say_command_reports_unmatched_ipa_characters(self) -> None:
+        """Verify /say keeps the usual unmatched-IPA warning path."""
+        with mock.patch(
+            "celune.ui.commands.replace_ipa",
+            return_value=("hello", 2),
+        ):
+            self._process_command("say", ["həˈloʊ"])
+
+        self.ui.celune.say.assert_called_once_with("hello", display_text="həˈloʊ")
+        self.assertEqual(
+            self.logs[-1],
+            (
+                "Found 2 unmatched IPA characters, output may be inaccurate.",
+                "warning",
+            ),
+        )
 
     def test_windows_command_split_keeps_literal_backslashes(self) -> None:
         """Verify Windows slash commands keep single-backslash file paths intact."""
@@ -446,6 +482,37 @@ class UIStartupTests(TestCase):
 
         logger.warning(
             "triton not found; flop counting will not work for triton kernels"
+        )
+
+        self.assertEqual(
+            captured,
+            [
+                (
+                    "Internal runtime warning: triton not found; flop counting "
+                    "will not work for triton kernels",
+                    "warning",
+                )
+            ],
+        )
+
+    def test_runtime_warning_capture_routes_py_warnings_triton_message(self) -> None:
+        """Verify Python warnings formatting is normalized for Triton warnings."""
+        ui = CeluneUI()
+        captured: list[tuple[str, str]] = []
+        ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
+
+        logger = logging.getLogger("py.warnings")
+        original_handlers = list(logger.handlers)
+        original_propagate = logger.propagate
+        self.addCleanup(setattr, logger, "handlers", original_handlers)
+        self.addCleanup(setattr, logger, "propagate", original_propagate)
+
+        ui._install_runtime_log_redirects()
+        self.addCleanup(ui._remove_runtime_log_redirects)
+
+        logger.warning(
+            "C:\\path\\flop_counter.py:29: UserWarning: triton not found; flop "
+            "counting will not work for triton kernels"
         )
 
         self.assertEqual(

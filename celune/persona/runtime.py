@@ -15,11 +15,12 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
     AutoProcessor,
     AutoTokenizer,
+    AutoConfig,
     BitsAndBytesConfig,
 )
 
 from ..vram import resolve_vram_preset
-from ..constants import JSONSerializable, PERSONA_MODEL_ID
+from ..constants import JSONSerializable, PERSONA_MODEL_ID, N_A_STR
 
 Role = Literal["system", "user", "assistant"]
 type VideoMetadataScalar = Optional[Union[bool, int, float, str]]
@@ -273,6 +274,17 @@ class PersonaBackend:
             return
 
         self.unload()
+
+        config = AutoConfig.from_pretrained(
+            model_id,
+            trust_remote_code=True,
+        )
+        model_type = getattr(config, "model_type", N_A_STR)
+
+        if model_type != "qwen2_5_vl":
+            raise ValueError(
+                f"unsupported model type {config.model_type}, expected qwen2_5_vl"
+            )
 
         normalized = quantization.casefold()
         if normalized in {"4bit", "nf4", "bnb4", "bitsandbytes-4bit"}:

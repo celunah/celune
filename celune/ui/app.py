@@ -94,10 +94,13 @@ class CeluneUI(App):
         self._log_stdout = cast(LogRedirect, None)
         self._log_stderr = cast(LogRedirect, None)
         self._runtime_log_capture_enabled = False
-        self._torch_flop_logger = cast(logging.Logger, None)
-        self._torch_flop_log_handler = cast(UILogHandler, None)
-        self._torch_flop_log_handlers = cast(list[logging.Handler], None)
-        self._torch_flop_log_propagate = True
+        self._runtime_redirect_loggers = cast(dict[str, logging.Logger], None)
+        self._runtime_redirect_handlers = cast(dict[str, UILogHandler], None)
+        self._runtime_redirect_original_handlers = cast(
+            dict[str, list[logging.Handler]], None
+        )
+        self._runtime_redirect_original_propagate = cast(dict[str, bool], None)
+        self._warnings_capture_enabled = False
 
         self.cur_state = "active"
 
@@ -294,6 +297,7 @@ class CeluneUI(App):
         self._refresh_status()
         self._refresh_theme_text()
         self._refresh_logs()
+        self._install_runtime_log_redirects()
         ui_resources.prime_usage()
         self.set_interval(2.06, self.advance_resources)
 
@@ -340,27 +344,56 @@ class CeluneUI(App):
 
     def _install_runtime_log_redirects(self) -> None:
         """Route known runtime logger output into Celune's UI log widget."""
-        logger = logging.getLogger("torch.utils.flop_counter")
-        handler = UILogHandler(self.safe_log)
-        self._torch_flop_logger = logger
-        self._torch_flop_log_handler = handler
-        self._torch_flop_log_handlers = list(logger.handlers)
-        self._torch_flop_log_propagate = logger.propagate
-        logger.handlers = [handler]
-        logger.propagate = False
+        if self._runtime_redirect_loggers is not None:
+            return
+
+        self._runtime_redirect_loggers = {}
+        self._runtime_redirect_handlers = {}
+        self._runtime_redirect_original_handlers = {}
+        self._runtime_redirect_original_propagate = {}
+
+        for logger_name in ("torch.utils.flop_counter", "py.warnings"):
+            logger = logging.getLogger(logger_name)
+            handler = UILogHandler(self.safe_log)
+            self._runtime_redirect_loggers[logger_name] = logger
+            self._runtime_redirect_handlers[logger_name] = handler
+            self._runtime_redirect_original_handlers[logger_name] = list(
+                logger.handlers
+            )
+            self._runtime_redirect_original_propagate[logger_name] = logger.propagate
+            logger.handlers = [handler]
+            logger.propagate = False
+
+        logging.captureWarnings(True)
+        self._warnings_capture_enabled = True
 
     def _remove_runtime_log_redirects(self) -> None:
         """Restore Python logger output handlers replaced by the UI."""
-        logger = self._torch_flop_logger
-        handler = self._torch_flop_log_handler
-        handlers = self._torch_flop_log_handlers
-        if logger is not None and handler is not None and handlers is not None:
-            logger.handlers = handlers
-            logger.propagate = self._torch_flop_log_propagate
-            handler.close()
-        self._torch_flop_logger = cast(logging.Logger, None)
-        self._torch_flop_log_handler = cast(UILogHandler, None)
-        self._torch_flop_log_handlers = cast(list[logging.Handler], None)
+        loggers = self._runtime_redirect_loggers
+        handlers = self._runtime_redirect_handlers
+        original_handlers = self._runtime_redirect_original_handlers
+        original_propagate = self._runtime_redirect_original_propagate
+        if (
+            loggers is not None
+            and handlers is not None
+            and original_handlers is not None
+            and original_propagate is not None
+        ):
+            for logger_name, logger in loggers.items():
+                logger.handlers = original_handlers[logger_name]
+                logger.propagate = original_propagate[logger_name]
+                handlers[logger_name].close()
+
+        if self._warnings_capture_enabled:
+            logging.captureWarnings(False)
+            self._warnings_capture_enabled = False
+
+        self._runtime_redirect_loggers = cast(dict[str, logging.Logger], None)
+        self._runtime_redirect_handlers = cast(dict[str, UILogHandler], None)
+        self._runtime_redirect_original_handlers = cast(
+            dict[str, list[logging.Handler]], None
+        )
+        self._runtime_redirect_original_propagate = cast(dict[str, bool], None)
 
     def _disable_runtime_log_capture(self) -> None:
         """Restore global stdio once the UI is shutting down."""
