@@ -14,6 +14,7 @@ import soundfile as sf
 from ..backends.qwen3 import Qwen3
 from ..utils import format_error
 from ..exceptions import InvalidExtensionError
+from ..utils import replace_ipa
 
 if TYPE_CHECKING:
     from .app import CeluneUI
@@ -177,6 +178,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         )
         ui.safe_log(
             "/attach <file> [file...] - Attach images or videos to the next persona reply."
+        )
+        ui.safe_log(
+            "/say <text> - Speak text directly and bypass Persona for this one message."
         )
         ui.safe_log(
             "/seed [seed|random] - Set or clear the seed for speech outputs, affecting pronunciation and/or prosody."
@@ -402,6 +406,37 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(
             f"Attached {', '.join(added)}. {count} attachments will be sent in the next pass."
         )
+        return
+    if command == "say":
+        if not args:
+            ui.safe_log("Usage: /say <text>", "warning")
+            return
+
+        raw_text = " ".join(args).strip()
+        if not raw_text:
+            ui.safe_log("Usage: /say <text>", "warning")
+            return
+
+        if not ui.celune.vision:
+            ui.safe_log("This command is redundant in the current operation mode.")
+            ui.safe_log("Submit inputs normally instead.")
+            return
+
+        ipa_decoded, unmatched = replace_ipa(raw_text, strict=True)
+        if unmatched > 0:
+            safe_log_dev = getattr(ui, "safe_log_dev", None)
+            if callable(safe_log_dev):
+                safe_log_dev(
+                    f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
+                    "warning",
+                )
+            else:
+                ui.safe_log(
+                    f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
+                    "warning",
+                )
+
+        ui.celune.say(ipa_decoded, display_text=raw_text)
         return
     if command == "seed":
         if not args:
