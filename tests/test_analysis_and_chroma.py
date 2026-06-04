@@ -51,6 +51,9 @@ class AnalysisTests(TestCase):
             "duration_s": 1.0,
             "pitch_extraction_ok": False,
             "pitch_mean_hz": N_A_NUMERIC,
+            "pitch_median_hz": N_A_NUMERIC,
+            "pitch_std_hz": N_A_NUMERIC,
+            "pitch_peak_hz": N_A_NUMERIC,
             "pitch_variance": N_A_NUMERIC,
             "voice_extraction_ok": False,
             "dynamic_range_db": 0.0,
@@ -68,6 +71,63 @@ class AnalysisTests(TestCase):
         self.assertIn("No voicings found.", assessment[1])
         self.assertIn("Mean pitch could not be determined", assessment[3])
         self.assertIn("high pause ratio", assessment[-1].lower())
+
+    @mock.patch("celune.analysis.librosa.stft", return_value=np.ones((4, 2)))
+    @mock.patch(
+        "celune.analysis.librosa.feature.zero_crossing_rate",
+        return_value=np.array([[0.1, 0.2]], dtype=np.float32),
+    )
+    @mock.patch(
+        "celune.analysis.librosa.feature.spectral_centroid",
+        return_value=np.array([[1000.0, 1200.0]], dtype=np.float32),
+    )
+    @mock.patch(
+        "celune.analysis.librosa.pyin",
+        return_value=(
+            np.array([100.0, 200.0, np.nan, 300.0], dtype=np.float32),
+            np.array([True, True, False, True]),
+            None,
+        ),
+    )
+    @mock.patch(
+        "celune.analysis.librosa.feature.rms",
+        return_value=np.array([[0.5, 0.25]], dtype=np.float32),
+    )
+    @mock.patch("celune.analysis.librosa.get_duration", return_value=2.0)
+    @mock.patch(
+        "celune.analysis.librosa.fft_frequencies",
+        return_value=np.array([0.0, 2000.0, 4000.0, 6000.0], dtype=np.float32),
+    )
+    def test_compute_raw_metrics_adds_extended_pitch_statistics(
+        self,
+        _fft_frequencies: mock.Mock,
+        _duration: mock.Mock,
+        _rms: mock.Mock,
+        _pyin: mock.Mock,
+        _centroid: mock.Mock,
+        _zcr: mock.Mock,
+        _stft: mock.Mock,
+    ) -> None:
+        """Verify pitch metrics include median, standard deviation, and voiced peak."""
+        metrics = analysis.compute_raw_metrics(
+            np.ones(4096, dtype=np.float32),
+            16000,
+        )
+        expected_voiced_f0 = np.array([100.0, 200.0, 300.0], dtype=np.float32)
+
+        self.assertEqual(metrics["pitch_mean_hz"], 200.0)
+        self.assertEqual(metrics["pitch_median_hz"], 200.0)
+        self.assertAlmostEqual(
+            metrics["pitch_std_hz"],
+            float(np.std(expected_voiced_f0)),
+            places=6,
+        )
+        self.assertEqual(metrics["pitch_peak_hz"], 300.0)
+        self.assertAlmostEqual(
+            metrics["pitch_variance"],
+            float(np.var(expected_voiced_f0)),
+            places=6,
+        )
 
     @mock.patch("celune.analysis.default_loader", return_value=None)
     def test_loose_reference_embeddings_are_discovered_without_bundle(

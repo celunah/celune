@@ -131,6 +131,9 @@ TEXT_CONFIG: TextConfig = {
         "rms_std_label": "RMS std",
         "dynamic_range_label": "Dynamic range (dB)",
         "mean_pitch_label": "Mean pitch / F0 (Hz)",
+        "median_pitch_label": "Median pitch / F0 (Hz)",
+        "pitch_std_label": "Pitch std (Hz)",
+        "peak_pitch_label": "Peak pitch / F0 (Hz)",
         "pitch_variance_label": "Pitch variance (Hz^2)",
         "pitch_na": "N/A",
         "voiced_ratio_label": "Voiced ratio",
@@ -270,10 +273,16 @@ def compute_raw_metrics(y: npt.NDArray[np.float32], sr: int) -> dict:
 
     if len(voiced_f0) > 0:
         metrics["pitch_mean_hz"] = float(np.nanmean(voiced_f0))
+        metrics["pitch_median_hz"] = float(np.nanmedian(voiced_f0))
+        metrics["pitch_std_hz"] = float(np.nanstd(voiced_f0))
+        metrics["pitch_peak_hz"] = float(np.nanmax(voiced_f0))
         metrics["pitch_variance"] = float(np.nanvar(voiced_f0))
         metrics["pitch_extraction_ok"] = True
     else:
         metrics["pitch_mean_hz"] = N_A_NUMERIC
+        metrics["pitch_median_hz"] = N_A_NUMERIC
+        metrics["pitch_std_hz"] = N_A_NUMERIC
+        metrics["pitch_peak_hz"] = N_A_NUMERIC
         metrics["pitch_variance"] = N_A_NUMERIC
         metrics["pitch_extraction_ok"] = False
 
@@ -903,12 +912,24 @@ def write_report(
                 f"  {_text('report', 'mean_pitch_label'):<22}: {m['pitch_mean_hz']:.2f}\n"
             )
             file_handle.write(
+                f"  {_text('report', 'median_pitch_label'):<22}: {m['pitch_median_hz']:.2f}\n"
+            )
+            file_handle.write(
+                f"  {_text('report', 'pitch_std_label'):<22}: {m['pitch_std_hz']:.2f}\n"
+            )
+            file_handle.write(
+                f"  {_text('report', 'peak_pitch_label'):<22}: {m['pitch_peak_hz']:.2f}\n"
+            )
+            file_handle.write(
                 f"  {_text('report', 'pitch_variance_label'):<22}: {m['pitch_variance']:.2f}\n"
             )
         else:
             file_handle.write(
                 f"  {_text('report', 'mean_pitch_label'):<22}: {_text('report', 'pitch_na')}\n"
             )
+            file_handle.write(f"  {_text('report', 'median_pitch_label'):<22}: N/A\n")
+            file_handle.write(f"  {_text('report', 'pitch_std_label'):<22}: N/A\n")
+            file_handle.write(f"  {_text('report', 'peak_pitch_label'):<22}: N/A\n")
             file_handle.write(f"  {_text('report', 'pitch_variance_label'):<22}: N/A\n")
 
         file_handle.write(
