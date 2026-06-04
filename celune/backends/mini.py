@@ -135,26 +135,55 @@ class Mini(CeluneBackend):
     ) -> Path:
         """Return the model language directory from a local Pocket TTS snapshot."""
         language_name = self._resolve_language_name(lang)
-        language_dir = Path(snapshot_path) / "languages" / language_name
-        if not language_dir.is_dir():
+        languages_dir = Path(snapshot_path) / "languages"
+        candidates = [languages_dir / language_name]
+        candidates.extend(sorted(languages_dir.glob(f"{language_name}_*")))
+        for language_dir in candidates:
+            if language_dir.is_dir():
+                return language_dir
+
+        if not languages_dir.is_dir():
             raise BackendError(
-                f"invalid Pocket TTS snapshot: languages/{language_name} not found"
+                "invalid Pocket TTS snapshot: languages directory not found"
             )
-        return language_dir
+        available = ", ".join(sorted(path.name for path in languages_dir.iterdir()))
+        raise BackendError(
+            f"invalid Pocket TTS snapshot: languages/{language_name} not found"
+            + (f" (available: {available})" if available else "")
+        )
+
+    def _resolve_template_config_path(self, lang: str = "en") -> Path:
+        """Return the best matching Pocket TTS template config for one language."""
+        from pocket_tts.utils.config import CONFIGS_DIR
+
+        language_code = self.resolve_generation_language(lang)
+        language_name = self._resolve_language_name(lang)
+        candidates = (
+            CONFIGS_DIR / f"{language_name}.yaml",
+            CONFIGS_DIR / f"{language_code}.yaml",
+        )
+        for template_path in candidates:
+            if template_path.is_file():
+                return template_path
+
+        prefixed_matches = sorted(CONFIGS_DIR.glob(f"{language_name}_*.yaml"))
+        if prefixed_matches:
+            return prefixed_matches[0]
+
+        code_matches = sorted(CONFIGS_DIR.glob(f"{language_code}_*.yaml"))
+        if code_matches:
+            return code_matches[0]
+
+        raise BackendError(
+            f"invalid Pocket TTS snapshot: template config for {language_name} not found"
+        )
 
     def _build_generated_config_path(
         self, snapshot_path: str, lang: str = "en"
     ) -> Path:
         """Create a temporary Pocket TTS YAML config targeting the snapshot files."""
-        from pocket_tts.utils.config import CONFIGS_DIR
-
         language_name = self._resolve_language_name(lang)
-        template_path = CONFIGS_DIR / f"{language_name}.yaml"
-        if not template_path.is_file():
-            raise BackendError(
-                f"invalid Pocket TTS snapshot: template config {template_path.name} not found"
-            )
-
+        template_path = self._resolve_template_config_path(lang)
         language_dir = self._resolve_snapshot_language_dir(snapshot_path, lang)
         model_path = language_dir / "model.safetensors"
         tokenizer_path = language_dir / "tokenizer.model"
