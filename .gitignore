@@ -216,6 +216,10 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Hugging Face
+#   Hugging Face libraries store dynamic cache for models loaded with `trust_remote_code=True`.
+.tmp_hf_modules/
+
 # Celune
 #   Celune has an output directory that is not meant to be part of Git.
 #   To prevent unnecessary speech samples from being included, it has been gitignored.
