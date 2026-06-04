@@ -2,8 +2,9 @@
 """Tests for the Pocket TTS backend cleanup behavior."""
 
 import tempfile
+from types import SimpleNamespace
 from pathlib import Path
-from unittest import TestCase
+from unittest import mock, TestCase
 
 from celune.backends.mini import Mini
 
@@ -38,3 +39,34 @@ class MiniBackendTests(TestCase):
 
             self.assertFalse(generated.exists())
             self.assertFalse(pocket_dir.exists())
+
+    def test_snapshot_language_dir_accepts_variant_suffixes(self) -> None:
+        """Verify Pocket TTS reloads can use suffixed snapshot language folders."""
+        backend = Mini(log=lambda *_args, **_kwargs: None)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            languages_dir = Path(temp_dir) / "languages"
+            (languages_dir / "french_24l").mkdir(parents=True)
+
+            resolved = backend._resolve_snapshot_language_dir(temp_dir, "fr")
+
+        self.assertEqual(resolved.name, "french_24l")
+
+    def test_template_config_accepts_code_and_suffix_variants(self) -> None:
+        """Verify Pocket TTS reloads can use non-plain template config names."""
+        backend = Mini(log=lambda *_args, **_kwargs: None)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_dir = Path(temp_dir)
+            template_path = config_dir / "fr_24l.yaml"
+            template_path.write_text("weights_path: demo\n", encoding="utf-8")
+
+            with mock.patch.dict(
+                "sys.modules",
+                {
+                    "pocket_tts.utils.config": SimpleNamespace(CONFIGS_DIR=config_dir),
+                },
+            ):
+                resolved = backend._resolve_template_config_path("fr")
+
+        self.assertEqual(resolved, template_path)
