@@ -52,7 +52,7 @@ class PipelineTests(TestCase):
             """Normalize empty or unsupported language requests to English.
 
             Args:
-                The language identifier for differentiating models by language.
+                lang: The language identifier for differentiating models by language.
 
             Returns:
                 str: A fake language model identifier.
@@ -101,7 +101,7 @@ class PipelineTests(TestCase):
                 _voice: Unused voice value.
 
             Returns:
-               str: The fake model identifier.
+                str: The fake model identifier.
             """
             return "fake/balanced"
 
