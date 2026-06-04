@@ -3,8 +3,12 @@
 
 from __future__ import annotations
 
+import contextlib
+import importlib
 import queue
+import sys
 import threading
+from pathlib import Path
 from unittest import mock
 from collections.abc import Iterator
 from types import SimpleNamespace
@@ -232,3 +236,49 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.statuses = statuses
     engine.progress = progress
     return engine
+
+
+def make_voice_loader(
+    voice: str,
+    metadata: dict[str, object],
+) -> SimpleNamespace:
+    """Return a simple CEVOICE loader stub for one named voice."""
+    return SimpleNamespace(
+        bundle=SimpleNamespace(voices={voice: metadata}),
+        materialize=lambda ref_voice, kind: Path(f"{ref_voice}.{kind}"),
+    )
+
+
+@contextlib.contextmanager
+def mock_qwen3_backend():
+    """Import the Qwen3 backend with a stub faster-qwen3-tts package."""
+
+    class StubQwen3TTS:
+        """Import-time stand-in for the FasterQwen3TTS package class."""
+
+    with mock.patch.dict(
+        sys.modules,
+        {
+            "faster_qwen3_tts": SimpleNamespace(
+                FasterQwen3TTS=StubQwen3TTS,
+                __version__="0.2.5",
+            )
+        },
+    ):
+        qwen3 = importlib.import_module("celune.backends.qwen3")
+        yield qwen3.Qwen3
+
+
+@contextlib.contextmanager
+def mock_voxcpm_backend():
+    """Import the VoxCPM2 backend with a stub voxcpm package."""
+
+    class StubVoxCPM:
+        """Import-time stand-in for the VoxCPM package class."""
+
+    with mock.patch.dict(
+        sys.modules,
+        {"voxcpm": SimpleNamespace(VoxCPM=StubVoxCPM)},
+    ):
+        voxcpm2 = importlib.import_module("celune.backends.voxcpm2")
+        yield voxcpm2.VoxCPM2

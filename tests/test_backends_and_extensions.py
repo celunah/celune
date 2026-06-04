@@ -20,7 +20,12 @@ from celune.backends import resolve_backend
 from celune.extensions.manager import CeluneExtensionManager
 from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.exceptions import ExtensionAlreadyRegisteredError, InvalidExtensionError
-from .support import FakeBackend
+from .support import (
+    FakeBackend,
+    make_voice_loader,
+    mock_qwen3_backend,
+    mock_voxcpm_backend,
+)
 
 
 class BackendTests(TestCase):
@@ -105,15 +110,7 @@ class BackendTests(TestCase):
     def test_voxcpm2_uses_pack_cfg_scale_when_present(self) -> None:
         """Verify CEVOICE can override VoxCPM2's per-voice CFG scale."""
 
-        class StubVoxCPM:
-            """Import-time stand-in for the VoxCPM package class."""
-
-        with mock.patch.dict(
-            sys.modules,
-            {"voxcpm": SimpleNamespace(VoxCPM=StubVoxCPM)},
-        ):
-            voxcpm2 = importlib.import_module("celune.backends.voxcpm2")
-            voxcpm2_cls = voxcpm2.VoxCPM2
+        with mock_voxcpm_backend() as voxcpm2_cls:
 
             class FakeModel:
                 """Fake model class for use in this test suite."""
@@ -134,10 +131,7 @@ class BackendTests(TestCase):
                     self.cfg_value = kwargs["cfg_value"]
                     yield np.zeros((1,), dtype=np.float32)
 
-            loader = SimpleNamespace(
-                bundle=SimpleNamespace(voices={"calm": {"cfg_scale": 4.2}}),
-                materialize=lambda voice, kind: Path(f"{voice}.{kind}"),
-            )
+            loader = make_voice_loader("calm", {"cfg_scale": 4.2})
             with (
                 mock.patch.object(voxcpm2_cls, "_validate_refs"),
                 mock.patch(
@@ -160,20 +154,7 @@ class BackendTests(TestCase):
     def test_qwen3_uses_pack_reference_text_when_present(self) -> None:
         """Verify CEVOICE can override Qwen3's per-voice reference text."""
 
-        class StubQwen3TTS:
-            """Import-time stand-in for the FasterQwen3TTS package class."""
-
-        with mock.patch.dict(
-            sys.modules,
-            {
-                "faster_qwen3_tts": SimpleNamespace(
-                    FasterQwen3TTS=StubQwen3TTS,
-                    __version__="0.2.5",
-                )
-            },
-        ):
-            qwen3 = importlib.import_module("celune.backends.qwen3")
-            qwen3_cls = qwen3.Qwen3
+        with mock_qwen3_backend() as qwen3_cls:
 
             class FakeModel:
                 """Fake model class for use in this test suite."""
@@ -194,12 +175,7 @@ class BackendTests(TestCase):
                     self.ref_text = kwargs["ref_text"]
                     yield np.zeros((1,), dtype=np.float32), 24000, None
 
-            loader = SimpleNamespace(
-                bundle=SimpleNamespace(
-                    voices={"calm": {"reference_text": "Pack reference."}}
-                ),
-                materialize=lambda voice, kind: Path(f"{voice}.{kind}"),
-            )
+            loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
             with (
                 mock.patch.object(qwen3_cls, "_validate_refs"),
                 mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
@@ -213,20 +189,7 @@ class BackendTests(TestCase):
     def test_qwen3_manually_pumps_and_closes_backend_stream(self) -> None:
         """Verify Qwen3 iterates and closes its backend stream explicitly."""
 
-        class StubQwen3TTS:
-            """Import-time stand-in for the FasterQwen3TTS package class."""
-
-        with mock.patch.dict(
-            sys.modules,
-            {
-                "faster_qwen3_tts": SimpleNamespace(
-                    FasterQwen3TTS=StubQwen3TTS,
-                    __version__="0.2.5",
-                )
-            },
-        ):
-            qwen3 = importlib.import_module("celune.backends.qwen3")
-            qwen3_cls = qwen3.Qwen3
+        with mock_qwen3_backend() as qwen3_cls:
 
             class FakeStream:
                 """Minimal iterator exposing a close hook for one backend test."""
@@ -272,12 +235,7 @@ class BackendTests(TestCase):
                     discard(kwargs)
                     return self.stream
 
-            loader = SimpleNamespace(
-                bundle=SimpleNamespace(
-                    voices={"calm": {"reference_text": "Pack reference."}}
-                ),
-                materialize=lambda voice, kind: Path(f"{voice}.{kind}"),
-            )
+            loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
             with (
                 mock.patch.object(qwen3_cls, "_validate_refs"),
                 mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
@@ -296,20 +254,7 @@ class BackendTests(TestCase):
     def test_qwen3_marks_final_chunk_when_eos_was_not_observed(self) -> None:
         """Verify Qwen3 marks exhausted generations that never surfaced EOS."""
 
-        class StubQwen3TTS:
-            """Import-time stand-in for the FasterQwen3TTS package class."""
-
-        with mock.patch.dict(
-            sys.modules,
-            {
-                "faster_qwen3_tts": SimpleNamespace(
-                    FasterQwen3TTS=StubQwen3TTS,
-                    __version__="0.2.5",
-                )
-            },
-        ):
-            qwen3 = importlib.import_module("celune.backends.qwen3")
-            qwen3_cls = qwen3.Qwen3
+        with mock_qwen3_backend() as qwen3_cls:
 
             class FakeModel:
                 """Fake model class for use in this test suite."""
@@ -336,12 +281,7 @@ class BackendTests(TestCase):
                         },
                     )
 
-            loader = SimpleNamespace(
-                bundle=SimpleNamespace(
-                    voices={"calm": {"reference_text": "Pack reference."}}
-                ),
-                materialize=lambda voice, kind: Path(f"{voice}.{kind}"),
-            )
+            loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
             with (
                 mock.patch.object(qwen3_cls, "_validate_refs"),
                 mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
@@ -356,15 +296,7 @@ class BackendTests(TestCase):
     def test_voxcpm2_marks_final_chunk_when_stop_token_was_not_observed(self) -> None:
         """Verify VoxCPM2 marks exhausted generations that never surfaced a stop."""
 
-        class StubVoxCPM:
-            """Import-time stand-in for the VoxCPM package class."""
-
-        with mock.patch.dict(
-            sys.modules,
-            {"voxcpm": SimpleNamespace(VoxCPM=StubVoxCPM)},
-        ):
-            voxcpm2 = importlib.import_module("celune.backends.voxcpm2")
-            voxcpm2_cls = voxcpm2.VoxCPM2
+        with mock_voxcpm_backend() as voxcpm2_cls:
 
             class FakeModel:
                 """Fake model class for use in this test suite."""
@@ -384,10 +316,7 @@ class BackendTests(TestCase):
                     for _ in range(512):
                         yield np.ones((1,), dtype=np.float32)
 
-            loader = SimpleNamespace(
-                bundle=SimpleNamespace(voices={"calm": {"cfg_scale": 4.2}}),
-                materialize=lambda voice, kind: Path(f"{voice}.{kind}"),
-            )
+            loader = make_voice_loader("calm", {"cfg_scale": 4.2})
             with (
                 mock.patch.object(voxcpm2_cls, "_validate_refs"),
                 mock.patch(

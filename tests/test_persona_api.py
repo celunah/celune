@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Tests for the shared Persona runtime helpers."""
 
+import contextlib
 from unittest import TestCase, mock
 from types import SimpleNamespace
 from typing import Optional, Union, cast
@@ -153,6 +154,12 @@ class _FakeMultimodalProcessor:
         return _FakeEncoded()
 
 
+class _FakeQwenVlConfig:
+    """Minimal config fake exposing the expected Qwen VL model type."""
+
+    model_type = "qwen2_5_vl"
+
+
 class PersonaApiTests(TestCase):
     """Tests for shared Persona runtime behavior."""
 
@@ -168,6 +175,49 @@ class PersonaApiTests(TestCase):
     ) -> runtime.ChatMessagePayload:
         """Build one typed multimodal Persona message payload."""
         return runtime.ChatMessagePayload(role=role, content=content)
+
+    @contextlib.contextmanager
+    def _mock_qwen_vl_load(
+        self,
+        *,
+        processor: object,
+        model: object,
+        tokenizer: Optional[object] = None,
+        processor_side_effect: Optional[Exception] = None,
+    ):
+        """Patch the shared Qwen VL loader entrypoints for one test."""
+        with contextlib.ExitStack() as stack:
+            config_loader = stack.enter_context(
+                mock.patch(
+                    "celune.persona.runtime.AutoConfig.from_pretrained",
+                    return_value=_FakeQwenVlConfig(),
+                )
+            )
+            processor_loader = stack.enter_context(
+                mock.patch(
+                    "celune.persona.runtime.AutoProcessor.from_pretrained",
+                    return_value=processor,
+                    side_effect=processor_side_effect,
+                )
+            )
+            model_loader = stack.enter_context(
+                mock.patch(
+                    "celune.persona.runtime.Qwen2_5_VLForConditionalGeneration.from_pretrained",
+                    return_value=model,
+                )
+            )
+            tokenizer_loader = stack.enter_context(
+                mock.patch(
+                    "celune.persona.runtime.AutoTokenizer.from_pretrained",
+                    return_value=tokenizer,
+                )
+            )
+            yield {
+                "config_loader": config_loader,
+                "processor_loader": processor_loader,
+                "model_loader": model_loader,
+                "tokenizer_loader": tokenizer_loader,
+            }
 
     def test_runtime_clamps_quantization_and_rejects_disabled_persona(self) -> None:
         """Verify VRAM presets constrain direct Persona runtime usage."""
@@ -267,40 +317,31 @@ class PersonaApiTests(TestCase):
         fake_tokenizer = _FakeTokenizer()
         fake_processor = _FakeProcessor(tokenizer=fake_tokenizer)
 
-        with (
-            mock.patch(
-                "celune.persona.runtime.AutoProcessor.from_pretrained",
-                return_value=fake_processor,
-            ) as processor_loader,
-            mock.patch(
-                "celune.persona.runtime.Qwen2_5_VLForConditionalGeneration.from_pretrained",
-                return_value=fake_model,
-            ) as model_loader,
-            mock.patch(
-                "celune.persona.runtime.AutoTokenizer.from_pretrained",
-                return_value=fake_tokenizer,
-            ) as tokenizer_loader,
-        ):
+        with self._mock_qwen_vl_load(
+            processor=fake_processor,
+            model=fake_model,
+            tokenizer=fake_tokenizer,
+        ) as loaders:
             backend.load("Qwen/Qwen2.5-VL-3B-Instruct", "none")
 
-        processor_loader.assert_called_once_with(
+        loaders["processor_loader"].assert_called_once_with(
             "Qwen/Qwen2.5-VL-3B-Instruct",
             trust_remote_code=True,
         )
-        model_loader.assert_called_once()
+        loaders["model_loader"].assert_called_once()
         self.assertEqual(
-            model_loader.call_args.args,
+            loaders["model_loader"].call_args.args,
             ("Qwen/Qwen2.5-VL-3B-Instruct",),
         )
         self.assertEqual(
-            model_loader.call_args.kwargs,
+            loaders["model_loader"].call_args.kwargs,
             {
                 "trust_remote_code": True,
                 "device_map": "auto",
                 "torch_dtype": runtime.torch.bfloat16,
             },
         )
-        tokenizer_loader.assert_not_called()
+        loaders["tokenizer_loader"].assert_not_called()
         fake_model.eval.assert_called_once_with()
         self.assertIs(backend.processor, fake_processor)
         self.assertIs(backend.tokenizer, fake_tokenizer)
@@ -314,23 +355,14 @@ class PersonaApiTests(TestCase):
         fake_tokenizer = _FakeTokenizer()
         fake_processor = _FakeMultimodalProcessor(tokenizer=fake_tokenizer)
 
-        with (
-            mock.patch(
-                "celune.persona.runtime.AutoProcessor.from_pretrained",
-                return_value=fake_processor,
-            ),
-            mock.patch(
-                "celune.persona.runtime.Qwen2_5_VLForConditionalGeneration.from_pretrained",
-                return_value=fake_model,
-            ),
-            mock.patch(
-                "celune.persona.runtime.AutoTokenizer.from_pretrained",
-                return_value=fake_tokenizer,
-            ) as tokenizer_loader,
-        ):
+        with self._mock_qwen_vl_load(
+            processor=fake_processor,
+            model=fake_model,
+            tokenizer=fake_tokenizer,
+        ) as loaders:
             backend.load("Qwen/Qwen2.5-VL-3B-Instruct", "none")
 
-        tokenizer_loader.assert_not_called()
+        loaders["tokenizer_loader"].assert_not_called()
         self.assertIs(backend.processor, fake_processor)
         self.assertTrue(backend.supports_vision)
 
@@ -341,13 +373,11 @@ class PersonaApiTests(TestCase):
         fake_model.eval.return_value = None
 
         with (
-            mock.patch(
-                "celune.persona.runtime.Qwen2_5_VLForConditionalGeneration.from_pretrained",
-                return_value=fake_model,
-            ),
-            mock.patch(
-                "celune.persona.runtime.AutoProcessor.from_pretrained",
-                side_effect=RuntimeError("processor boom"),
+            self._mock_qwen_vl_load(
+                processor=None,
+                model=fake_model,
+                tokenizer=None,
+                processor_side_effect=RuntimeError("processor boom"),
             ),
             self.assertRaisesRegex(
                 ValueError,
