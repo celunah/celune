@@ -242,7 +242,15 @@ def make_voice_loader(
     voice: str,
     metadata: dict[str, object],
 ) -> SimpleNamespace:
-    """Return a simple CEVOICE loader stub for one named voice."""
+    """Return a simple CEVOICE loader stub for one named voice.
+
+    Args:
+        voice: The voice identifier to use.
+        metadata: The voice metadata.
+
+    Returns:
+        A CEVOICE loader stub for the given voice.
+    """
     return SimpleNamespace(
         bundle=SimpleNamespace(voices={voice: metadata}),
         materialize=lambda ref_voice, kind: Path(f"{ref_voice}.{kind}"),
