@@ -108,12 +108,10 @@ The following are the original sample names. Voice display names may differ from
 
 These edits were applied to make sure the new references match the initial reference.
 
-- Upbeat pitch: `-1.5 sem` (higher than usual pitch compared to other voices is normal here)
+- Upbeat pitch: `-2.5 sem` (1.5 may have been too high, let's see if an additional semitone makes her better)
 - Bold & Balanced pitch: `-1 sem`
 - Calm pitch: `-0.5 sem`
-
-- Bold: slowed down the `lune` in `Celune` by 33% (via high quality paulstretching) to correct the pronunciation of her name
-- Balanced: added a short 75ms pause between `pronounced` and `Celune` for natural pacing
+- Many voices: Added natural pacing pauses
 
 ## Effects
 
@@ -122,32 +120,30 @@ These effects and their settings give Celune's voice its identity.
 ### Reverb
 
 - room size = 50%
-- pre-delay = 100ms
-- reverberance = 60%
+- pre-delay = 20ms
+- reverberance = 40%
 - damping = 75%
 - tone low = 0%
 - tone high = 50%
-- wet gain = -16 dB (-12 dB for Calm)
+- wet gain = -16 dB
 - dry gain = 0 dB
 - stereo width = 85%
 - wet only = no
-
-The Upbeat voice has an increased amount of default reverb, the TTS model will replicate it during speech.
 
 An additional amount of reverb can be applied within Celune.
 
 Refer to the `/reverb` command for details.
 
-### High-pass
+## Compressor
 
-- frequency = 200 Hz
-- roll-off (dB per octave) = 12 dB
+- threshold = -15 dB
+- make-up gain = 0 dB
+- knee width = 5 dB
+- ratio = 10
 
-### Layering
-
-- Two tracks: wet and dry
-- Max volume w/o clipping on both
-- -5dB relative to dry on wet track
+- smoothing lookahead - 1.0 ms
+- smoothing attack = 30 ms
+- smoothing release = 150 ms
 
 ## Output format
 
