@@ -152,6 +152,10 @@ class ShortTermHistory:
                 ),
                 None,
             )
+
+            # HACK: don't repeat this
+            # the characters loved to repeat themselves for no apparent reason
+            # thanks Qwen for me having to prompt engineer around this issue with both ChatGPT and Claude
             if last_assistant:
                 lines.append(f'[Do not reuse or rephrase: "{last_assistant[:120]}"]')
 
