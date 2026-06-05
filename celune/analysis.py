@@ -338,36 +338,31 @@ def _embedding_tensor_to_numpy(value: EmbeddingPayload) -> npt.NDArray[np.float3
 def _load_reference_embedding(voice: str) -> npt.NDArray[np.float32]:
     """Load a packaged Qwen3 reference embedding for a Celune voice."""
     loader = default_loader()
-    if loader is not None:
-        try:
-            ref_path = loader.materialize(voice, "pt")
-        except KeyError as error:
-            raise FileNotFoundError(f"{voice}.pt not found") from error
-        return _embedding_tensor_to_numpy(torch.load(ref_path, map_location="cpu"))
-
-    ref_path = pathlib.Path(__file__).resolve().parent / "refs" / f"{voice}.pt"
-    if not ref_path.exists():
-        raise FileNotFoundError(f"{ref_path.name} not found")
-
+    if loader is None:
+        raise FileNotFoundError(
+            "no compatible CEVOICE/CECHAR package with reference embeddings is loaded"
+        )
+    try:
+        ref_path = loader.materialize(voice, "pt")
+    except KeyError as error:
+        raise FileNotFoundError(f"{voice}.pt not found") from error
     return _embedding_tensor_to_numpy(torch.load(ref_path, map_location="cpu"))
 
 
 def _available_reference_voices() -> list[str]:
     """Return available packaged reference embedding names."""
     loader = default_loader()
-    if loader is not None:
-        return sorted(
-            voice
-            for voice in loader.bundle.voices
-            if "pt"
-            in cast(
-                dict[str, ManifestValue],
-                loader.bundle.voices[voice].get("assets", {}),
-            )
+    if loader is None:
+        return []
+    return sorted(
+        voice
+        for voice in loader.bundle.voices
+        if "pt"
+        in cast(
+            dict[str, ManifestValue],
+            loader.bundle.voices[voice].get("assets", {}),
         )
-
-    refs_dir = pathlib.Path(__file__).resolve().parent / "refs"
-    return sorted(path.stem for path in refs_dir.glob("*.pt"))
+    )
 
 
 def _load_embedding_model() -> tuple[EmbeddingProcessor, EmbeddingModel]:

@@ -156,29 +156,29 @@ def function_kind(parents: list[tuple[str, str]], name: str) -> str:
     return "public"
 
 
-def iter_direct_raises(node: ast.AST) -> Iterable[str]:
+def iter_direct_raises(root: ast.AST) -> Iterable[str]:
     class RaiseCollector(ast.NodeVisitor):
         def __init__(self) -> None:
             self.names: list[str] = []
 
-        def visit_FunctionDef(self, inner: ast.FunctionDef) -> None:
-            if inner is not node:
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if node is not root:
                 return
-            self.generic_visit(inner)
+            self.generic_visit(node)
 
-        def visit_AsyncFunctionDef(self, inner: ast.AsyncFunctionDef) -> None:
-            if inner is not node:
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            if node is not root:
                 return
-            self.generic_visit(inner)
+            self.generic_visit(node)
 
-        def visit_Lambda(self, inner: ast.Lambda) -> None:
+        def visit_Lambda(self, node: ast.Lambda) -> None:
             return
 
-        def visit_ClassDef(self, inner: ast.ClassDef) -> None:
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
             return
 
-        def visit_Raise(self, inner: ast.Raise) -> None:
-            exc = inner.exc
+        def visit_Raise(self, node: ast.Raise) -> None:
+            exc = node.exc
             if exc is None:
                 self.names.append("Exception")
             elif isinstance(exc, ast.Call):
@@ -187,40 +187,40 @@ def iter_direct_raises(node: ast.AST) -> Iterable[str]:
                 self.names.append(expr_name(exc))
 
     collector = RaiseCollector()
-    collector.visit(node)
+    collector.visit(root)
     return collector.names
 
 
-def has_non_none_return(node: ast.AST) -> bool:
+def has_non_none_return(root: ast.AST) -> bool:
     class ReturnCollector(ast.NodeVisitor):
         def __init__(self) -> None:
             self.found = False
 
-        def visit_FunctionDef(self, inner: ast.FunctionDef) -> None:
-            if inner is not node:
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if node is not root:
                 return
-            self.generic_visit(inner)
+            self.generic_visit(node)
 
-        def visit_AsyncFunctionDef(self, inner: ast.AsyncFunctionDef) -> None:
-            if inner is not node:
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            if node is not root:
                 return
-            self.generic_visit(inner)
+            self.generic_visit(node)
 
-        def visit_Lambda(self, inner: ast.Lambda) -> None:
+        def visit_Lambda(self, node: ast.Lambda) -> None:
             return
 
-        def visit_ClassDef(self, inner: ast.ClassDef) -> None:
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
             return
 
-        def visit_Return(self, inner: ast.Return) -> None:
-            if inner.value is not None:
+        def visit_Return(self, node: ast.Return) -> None:
+            if node.value is not None:
                 if not (
-                    isinstance(inner.value, ast.Constant) and inner.value.value is None
+                    isinstance(node.value, ast.Constant) and node.value.value is None
                 ):
                     self.found = True
 
     collector = ReturnCollector()
-    collector.visit(node)
+    collector.visit(root)
     return collector.found
 
 

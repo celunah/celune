@@ -400,6 +400,10 @@ def _validate_metadata(
         assets = voice_data.get("assets")
         if not isinstance(assets, dict):
             raise CEVoiceError(f"voice '{voice}' assets must be an object")
+        if "wav" in assets and reference_text is None:
+            raise CEVoiceError(
+                f"voice '{voice}' reference_text is required when a wav asset is present"
+            )
         for kind, asset in assets.items():
             if not isinstance(kind, str) or not isinstance(asset, dict):
                 raise CEVoiceError(f"invalid asset entry for voice '{voice}'")
@@ -726,8 +730,7 @@ def announce_default_bundle(log: Callable[[str, str], None]) -> Optional[str]:
         log: The logging callback to the bound user interface.
 
     Returns:
-        Optional[str]: The selected bundle's character name, ``None`` if loading failed, ``"Celune"`` if a fallback
-        reference was loaded.
+        Optional[str]: The selected bundle's character name, or ``None`` if loading failed.
     """
     global _DEFAULT_LOADER_ANNOUNCED
     loader = default_loader()
@@ -751,14 +754,10 @@ def announce_default_bundle(log: Callable[[str, str], None]) -> Optional[str]:
 
     if _DEFAULT_LOADER_FAILED:
         log(
-            "No voice packs were found, or voice loading has failed. "
-            "Loading a default character from loose references instead.",
+            "No compatible voice pack could be loaded.",
             "warning",
         )
         _DEFAULT_LOADER_ANNOUNCED = True
-
-        # this is a fallback, and only Celune is available as old format voice data
-        # it only triggers if no CEVOICE is loadable, but the old format refs still exist
-        return "Celune"
+        return None
 
     return None

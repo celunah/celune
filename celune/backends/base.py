@@ -1,17 +1,16 @@
 # SPDX-License-Identifier: MIT
 """Unified backend abstractions for Celune."""
 
-import os
 import gc
+import os
 import glob
 import random
-import hashlib
 import secrets
 import contextlib
 from pathlib import Path
 from collections.abc import Iterator
 from abc import ABC, abstractmethod
-from typing import Callable, Optional, Protocol
+from typing import Callable, Optional, Protocol, Mapping, TypeVar, Generic
 
 import torch
 import numpy as np
@@ -27,6 +26,9 @@ from ..cevoice import default_loader
 
 class BackendModel(Protocol):
     """Opaque backend model protocol for backend-independent storage."""
+
+
+ModelT = TypeVar("ModelT", bound=BackendModel)
 
 
 def cached_hf_snapshot_path(
@@ -63,15 +65,16 @@ def cached_hf_snapshot_path(
     return False, None
 
 
-class CeluneBackend(ABC):
+class CeluneBackend(ABC, Generic[ModelT]):
     """Base class for Celune speech backends."""
 
     name: str = "unknown"
     chunk_rate: float = N_A_NUMERIC
     supported_languages: tuple = ()
-    voice_models: Optional[dict[str, str]] = None
+    voice_models: Optional[Mapping[str, str]] = None
     default_voice: Optional[str] = None
     uses_voice_bundles: bool = False
+    max_new_tokens: int = 512
 
     def __init__(
         self, log: Callable[[str, str], None], model_name: Optional[str] = None
@@ -84,63 +87,34 @@ class CeluneBackend(ABC):
         else:
             self.model_name = None
 
-        self.model: Optional[BackendModel] = None
+        self.model: Optional[ModelT] = None
         self.log = log
         self.current_seed: Optional[int] = None
         self.random_seed = True
 
     @staticmethod
     def _reference_wave_path(name: str) -> Path:
-        """Return a path for a reference WAV file."""
+        """Return a materialized path for a reference WAV from the active CEVOICE pack."""
         loader = default_loader()
-        if loader is not None:
-            return loader.materialize(name, "wav")
-        return Path(__file__).resolve().parents[1] / "refs" / f"{name}.wav"
+        if loader is None:
+            raise BackendError(
+                "a compatible CEVOICE/CECHAR package must be loaded before resolving reference audio"
+            )
+        return loader.materialize(name, "wav")
 
     def _validate_refs(self) -> None:
         """Validate reference audio files found in the current CEVOICE pack."""
         loader = default_loader()
-        if loader is not None:
-            for name in loader.bundle.voice_order:
-                loader.materialize(name, "wav")
-                voice_entry = loader.bundle.voices.get(name, {})
-                assets = (
-                    voice_entry.get("assets", {})
-                    if isinstance(voice_entry, dict)
-                    else {}
-                )
-                if isinstance(assets, dict) and "pt" in assets:
-                    loader.materialize(name, "pt")
+        if loader is None:
             return
-
-        if not self.voice_models:
-            return
-
-        for name in self.voice_models:
-            full_path = self._reference_wave_path(name)
-            try:
-                with open(full_path, "rb") as f:
-                    checksum = hashlib.file_digest(f, "sha256").hexdigest()
-            except FileNotFoundError as e:
-                raise BackendError(f"reference audio for '{name}' not found") from e
-            except PermissionError as e:
-                raise BackendError(f"cannot access reference audio for '{name}'") from e
-
-            checksum_path = f"{os.path.splitext(full_path)[0]}.sha256"
-            if os.path.exists(checksum_path):
-                with open(checksum_path, "r", encoding="utf-8") as f:
-                    expected = f.read().strip()
-
-                if checksum != expected:
-                    self.log(
-                        f"Checksum mismatch for '{name}', output may be affected.",
-                        "warning",
-                    )
-            else:
-                self.log(
-                    f"Checksum not found for '{name}', skipping checksum verification.",
-                    "warning",
-                )
+        for name in loader.bundle.voice_order:
+            loader.materialize(name, "wav")
+            voice_entry = loader.bundle.voices.get(name, {})
+            assets = (
+                voice_entry.get("assets", {}) if isinstance(voice_entry, dict) else {}
+            )
+            if isinstance(assets, dict) and "pt" in assets:
+                loader.materialize(name, "pt")
 
     def _apply_seed(self) -> None:
         """Seed all generation RNGs for the next backend operation."""
@@ -290,11 +264,11 @@ class CeluneBackend(ABC):
 
         return 1
 
-    def load_default_model(self) -> BackendModel:
+    def load_default_model(self) -> ModelT:
         """Load the configured default model for this backend.
 
         Returns:
-            BackendModel: The loaded backend model instance.
+            ModelT: The loaded backend model instance.
 
         Raises:
             ValueError: The backend does not have a configured model to load.
@@ -338,7 +312,7 @@ class CeluneBackend(ABC):
                 self.log(f"{model_id} is already available.", "info")
 
     @abstractmethod
-    def load_model(self, model_id: str, **kwargs) -> BackendModel:
+    def load_model(self, model_id: str, **kwargs) -> ModelT:
         """Load a model by backend-specific identifier.
 
         Args:
@@ -346,12 +320,12 @@ class CeluneBackend(ABC):
             kwargs: Backend-specific load options (e.g., VoxCPM2's `load_denoiser` or `optimize`).
 
         Returns:
-            BackendModel: The loaded backend model instance.
+            ModelT: The loaded backend model instance.
         """
 
     @abstractmethod
     def generate_stream(
-        self, model: BackendModel, **kwargs
+        self, model: ModelT, **kwargs
     ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Yield audio chunks from a loaded backend model.
 

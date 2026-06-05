@@ -78,7 +78,7 @@ Issues = "https://github.com/celunah/celune/issues"
 # Why does CodeRabbit think I'm uploading Celune to PyPI?
 # Her package is not standalone.
 [tool.setuptools.package-data]
-celune = ["assets/*.wav", "refs/*.wav", "refs/*.pt"]
+celune = ["assets/*.wav"]
 
 [tool.setuptools.data-files]
 voices = ["voices/*.cevoice"]
@@ -115,7 +115,13 @@ api = [
 ]
 
 [tool.pyright]
-typeCheckingMode = "basic"
 # These checks may cause type checker errors in external libraries not managed by Celune.
 reportMissingImports = false
 reportPrivateImportUsage = false
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
+]

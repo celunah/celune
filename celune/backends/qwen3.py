@@ -4,28 +4,30 @@
 import os
 import contextlib
 from collections.abc import Iterator
-from typing import Callable, Optional, Final, Mapping
+from typing import Callable, Optional
 
 import numpy as np
 import numpy.typing as npt
 from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
 
-from ..cevoice import default_loader
-from .base import CeluneBackend, cached_hf_snapshot_path, BackendModel
+from ..cevoice import default_loader, CEVoiceLoader
+from ..exceptions import BackendError
+from ..utils import custom_assert
+from .base import CeluneBackend, cached_hf_snapshot_path
 
 
-class Qwen3(CeluneBackend):
+class Qwen3(CeluneBackend[FasterQwen3TTS]):
     """Celune Qwen3-TTS backend."""
 
-    name: Final[str] = "qwen3"
+    name: str = "qwen3"
 
     uses_voice_bundles: bool = True
-    chunk_rate: Final[float] = 12.5
-    max_new_tokens: Final[int] = 512
+    chunk_rate: float = 12.5
+    max_new_tokens: int = 512
 
     # setting this parameter will lock in identity, but expression may be reduced
     x_vector_only: bool = True
-    supported_languages: Final[tuple[str, ...]] = (
+    supported_languages: tuple[str, ...] = (
         "zh-cn",
         "en",
         "ja",
@@ -37,20 +39,12 @@ class Qwen3(CeluneBackend):
         "es",
         "it",
     )
-    clone_model: Final[str] = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
 
-    reference_texts: Final[Mapping[str, str]] = {
-        "balanced": (
-            "My name is Celune, pronounced Celune. It is a pleasure to meet you."
-        ),
-        "calm": "My name is... Celune... It is so... quiet.",
-        "bold": "My name is Celune! Let's do this, we have to get it done!",
-        "upbeat": (
-            "Hehehe... Hi, I'm Celune. Look, I have something to tell... "
-            "might as well make it fun. Shall we?"
-        ),
-    }
-    default_voice: Final[str] = "balanced"
+    # this may be reassigned to a different size model as needed
+    # low VRAM presets use 0.6B model
+    # medium and above VRAM presets use 1.7B model
+    clone_model: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+    default_voice: Optional[str] = "balanced"
 
     def __init__(
         self,
@@ -63,6 +57,47 @@ class Qwen3(CeluneBackend):
         self.model_name = clone_model_id or self.clone_model
         self._validate_refs()
         self.clone_model_id = clone_model_id or self.clone_model
+
+    @staticmethod
+    def _require_compatible_bundle() -> tuple[CEVoiceLoader, tuple[str, ...]]:
+        """Return the active CEVOICE/CECHAR loader and its usable voice names."""
+        loader = default_loader()
+        custom_assert(
+            loader is not None,
+            BackendError(
+                "backend 'qwen3' requires a compatible CEVOICE/CECHAR package "
+                "with at least one valid voice identifier"
+            ),
+        )
+        assert loader is not None
+
+        voice_names = tuple(
+            voice
+            for voice in loader.bundle.voice_order
+            if (
+                isinstance(voice, str)
+                and voice.strip()
+                and voice in loader.bundle.voices
+                and isinstance(loader.bundle.voices[voice].get("reference_text"), str)
+                and bool(str(loader.bundle.voices[voice]["reference_text"]).strip())
+            )
+        )
+        custom_assert(
+            bool(voice_names),
+            BackendError(
+                "backend 'qwen3' requires a compatible CEVOICE/CECHAR package "
+                "with at least one valid voice identifier"
+            ),
+        )
+        assert bool(voice_names)
+
+        return loader, voice_names
+
+    def _validate_refs(self) -> None:
+        """Validate Qwen3 reference audio files from the active CEVOICE/CECHAR pack."""
+        loader, voice_names = self._require_compatible_bundle()
+        for name in voice_names:
+            loader.materialize(name, "wav")
 
     @property
     def default_model_id(self) -> str:
@@ -84,30 +119,30 @@ class Qwen3(CeluneBackend):
 
     @property
     def voices(self) -> list[str]:
-        """Return the built-in Qwen3 voice names.
+        """Return the voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:
-            list[str]: Voice names supported by Celune's Qwen3 references.
+            list[str]: The list of available voices to use from current CEVOICE/CECHAR pack.
         """
-        return list(self.reference_texts)
+        _, voice_names = self._require_compatible_bundle()
+        return list(voice_names)
 
     def model_id_for_voice(self, voice: str) -> str:
-        """Resolve a Celune voice to the shared Qwen3 clone model.
+        """Resolve a voice from the active pack to the shared Qwen3 clone model.
 
         Args:
-            voice: The Celune voice name to resolve.
+            voice: The voice name to resolve.
 
         Returns:
-            str: The model identifier for the requested voice.
-
-        Raises:
-            ValueError: The requested voice is unknown.
+            str: A resolved model name for this voice.
         """
-        loader = default_loader()
-        if loader is not None:
-            return self.clone_model_id
-        if voice not in self.reference_texts:
-            raise ValueError(f"{self.name} cannot resolve a model for voice '{voice}'")
+        _, voice_names = self._require_compatible_bundle()
+        custom_assert(
+            voice in voice_names,
+            ValueError(f"{self.name} cannot resolve a model for voice '{voice}'"),
+        )
+        assert voice in voice_names
+
         return self.clone_model_id
 
     def generation_progress_total(self, text: Optional[str] = None) -> int:
@@ -143,7 +178,7 @@ class Qwen3(CeluneBackend):
             ],
         )
 
-    def load_model(self, model_id: str, **kwargs) -> Optional[BackendModel]:
+    def load_model(self, model_id: str, **kwargs) -> FasterQwen3TTS:
         """Load the given voice model.
 
         Args:
@@ -199,19 +234,11 @@ class Qwen3(CeluneBackend):
         voice = kwargs.pop("voice", self.default_voice)
 
         try:
-            loader = default_loader()
-            if loader is not None:
-                ref_wav = loader.materialize(voice, "wav")
-                configured_ref_text = loader.bundle.voices[voice].get("reference_text")
-            else:
-                ref_wav = self._reference_wave_path(voice)
-                configured_ref_text = None
+            loader, _ = self._require_compatible_bundle()
+            ref_wav = loader.materialize(voice, "wav")
+            configured_ref_text = loader.bundle.voices[voice].get("reference_text")
             ref_text = (
-                configured_ref_text
-                if isinstance(configured_ref_text, str)
-                else self.reference_texts.get(
-                    voice, self.reference_texts[self.default_voice]
-                )
+                configured_ref_text if isinstance(configured_ref_text, str) else ""
             )
         except KeyError as e:
             raise ValueError(

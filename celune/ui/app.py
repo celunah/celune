@@ -329,12 +329,14 @@ class CeluneUI(App):
             default_severity="info",
             stdout=self._old_stdout,
             stderr=self._old_stderr,
+            filter_messages={"`torch_dtype` is deprecated! Use `dtype` instead!"},
         )
         self._log_stderr = LogRedirect(
             write_callback=self.safe_log,
             default_severity="warning",
             stdout=self._old_stdout,
             stderr=self._old_stderr,
+            filter_messages={"`torch_dtype` is deprecated! Use `dtype` instead!"},
         )
 
         sys.stdout = self._log_stdout

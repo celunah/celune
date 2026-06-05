@@ -5,7 +5,7 @@ import contextlib
 import tempfile
 from pathlib import Path
 from collections.abc import Iterator, Mapping
-from typing import Callable, Optional, Final, Protocol, cast
+from typing import Callable, Optional, Protocol, cast
 
 import yaml
 import torch
@@ -14,10 +14,11 @@ import numpy.typing as npt
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
-from .base import CeluneBackend, cached_hf_snapshot_path, BackendModel
-from ..cevoice import default_loader
+from .base import CeluneBackend, cached_hf_snapshot_path
+from ..cevoice import default_loader, CEVoiceLoader
 from ..exceptions import BackendError
 from ..paths import temp_data_dir
+from ..utils import custom_assert
 
 type MiniPromptState = dict[str, dict[str, torch.Tensor]]
 
@@ -55,21 +56,21 @@ class MiniModel(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
-class Mini(CeluneBackend):
+class Mini(CeluneBackend[TTSModel]):
     """Celune Mini (Pocket TTS) backend."""
 
-    name: Final[str] = "mini"
-    uses_voice_bundles: Final[bool] = True
-    chunk_rate: Final[float] = 12.5
-    supported_languages: Final[tuple[str, ...]] = ("en", "fr", "de", "it", "pt", "es")
+    name: str = "mini"
+    uses_voice_bundles: bool = True
+    chunk_rate: float = 12.5
+    supported_languages: tuple[str, ...] = ("en", "fr", "de", "it", "pt", "es")
 
-    voice_models: Final[Mapping[str, str]] = {
+    voice_models: Optional[Mapping[str, str]] = {
         "balanced": "lunahr/pocket-tts-ungated",
         "calm": "lunahr/pocket-tts-ungated",
         "bold": "lunahr/pocket-tts-ungated",
         "upbeat": "lunahr/pocket-tts-ungated",
     }
-    default_voice: Final[str] = "balanced"
+    default_voice: Optional[str] = "balanced"
 
     def __init__(self, log: Callable[[str, str], None]) -> None:
         super().__init__(log=log)
@@ -77,6 +78,74 @@ class Mini(CeluneBackend):
         self._voice_states: dict[str, MiniPromptState] = {}
         self._generated_config_path: Optional[Path] = None
         self._loaded_language = "en"
+
+    @staticmethod
+    def _require_compatible_bundle() -> tuple[CEVoiceLoader, tuple[str, ...]]:
+        """Return the active CEVOICE/CECHAR loader and its usable voice names."""
+        loader = default_loader()
+        custom_assert(
+            loader is not None,
+            BackendError(
+                "backend 'mini' requires a compatible CEVOICE/CECHAR package "
+                "with at least one valid voice identifier"
+            ),
+        )
+        assert loader is not None
+
+        voice_names = tuple(
+            voice
+            for voice in loader.bundle.voice_order
+            if (
+                isinstance(voice, str)
+                and voice.strip()
+                and voice in loader.bundle.voices
+                and isinstance(loader.bundle.voices[voice].get("reference_text"), str)
+                and bool(str(loader.bundle.voices[voice]["reference_text"]).strip())
+            )
+        )
+        custom_assert(
+            bool(voice_names),
+            BackendError(
+                "backend 'mini' requires a compatible CEVOICE/CECHAR package "
+                "with at least one valid voice identifier"
+            ),
+        )
+        assert bool(voice_names)
+
+        return loader, voice_names
+
+    def _validate_refs(self) -> None:
+        """Validate Mini reference audio files from the active CEVOICE/CECHAR pack."""
+        loader, voice_names = self._require_compatible_bundle()
+        for name in voice_names:
+            loader.materialize(name, "wav")
+
+    @property
+    def voices(self) -> list[str]:
+        """Return the voice names exposed by the active CEVOICE/CECHAR pack.
+
+        Returns:
+            list[str]: The list of available voices to use from current CEVOICE/CECHAR pack.
+        """
+        _, voice_names = self._require_compatible_bundle()
+        return list(voice_names)
+
+    def model_id_for_voice(self, voice: str) -> str:
+        """Resolve a voice from the active pack to the shared Mini model.
+
+        Args:
+            voice: The voice name to resolve.
+
+        Returns:
+            str: A resolved model name for this voice.
+        """
+        _, voice_names = self._require_compatible_bundle()
+        custom_assert(
+            voice in voice_names,
+            ValueError(f"{self.name} cannot resolve a model for voice '{voice}'"),
+        )
+        assert voice in voice_names
+        return self.default_model_id
 
     def resolve_generation_language(self, lang: Optional[str]) -> str:
         """Normalize a requested language to one of Pocket TTS's supported variants.
@@ -87,7 +156,7 @@ class Mini(CeluneBackend):
         Returns:
             A language-specific model identifier or "en" if no match was found.
         """
-        alias_to_code: Final[Mapping[str, str]] = {
+        alias_to_code: Mapping[str, str] = {
             "english": "en",
             "french": "fr",
             "german": "de",
@@ -117,9 +186,9 @@ class Mini(CeluneBackend):
 
         return fallback
 
-    def _resolve_language_name(self, lang: str = "en") -> str:
+    def _resolve_language_name(self, lang: Optional[str] = "en") -> str:
         """Return the Pocket TTS language variant expected for this backend."""
-        code_to_model: Final[Mapping[str, str]] = {
+        code_to_model: Mapping[str, str] = {
             "en": "english",
             "fr": "french",
             "de": "german",
@@ -218,10 +287,8 @@ class Mini(CeluneBackend):
 
     def _reference_voice_path(self, voice: str) -> Path:
         """Return the active reference WAV path for a Celune voice."""
-        loader = default_loader()
-        if loader is not None:
-            return loader.materialize(voice, "wav")
-        return self._reference_wave_path(voice)
+        loader, _ = self._require_compatible_bundle()
+        return loader.materialize(voice, "wav")
 
     def _get_voice_state(self, model: MiniModel, voice: str) -> MiniPromptState:
         """Return a cached Pocket TTS voice state for the selected voice."""
@@ -240,7 +307,7 @@ class Mini(CeluneBackend):
         return voice_state
 
     def model_is_available_locally(
-        self, model: str, lang: str = "en"
+        self, model: str, lang: Optional[str] = "en"
     ) -> tuple[bool, Optional[str]]:
         """Check if a Pocket TTS model snapshot is already available locally.
 
@@ -272,7 +339,7 @@ class Mini(CeluneBackend):
         """
         return self.resolve_generation_language(lang) != self._loaded_language
 
-    def load_model(self, model_id: str, **kwargs) -> Optional[BackendModel]:
+    def load_model(self, model_id: str, **kwargs) -> TTSModel:
         """Load the configured Pocket TTS model snapshot.
 
         Args:
@@ -280,7 +347,7 @@ class Mini(CeluneBackend):
             kwargs: Additional keyword arguments to use while loading the model.
 
         Returns:
-            Optional[BackendModel]: A Celune-compatible Pocket TTS model object.
+            Optional[TTSModel]: A Celune-compatible Pocket TTS model object.
         """
         requested_language = self.resolve_generation_language(
             cast(Optional[str], kwargs.pop("lang", kwargs.pop("language", None)))
@@ -313,7 +380,7 @@ class Mini(CeluneBackend):
         super().unload_model()
 
     def generate_stream(
-        self, model: BackendModel, **kwargs
+        self, model: TTSModel, **kwargs
     ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
         """Generate Celune-compatible audio chunks from Pocket TTS.
 

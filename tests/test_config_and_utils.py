@@ -178,12 +178,19 @@ class UtilsTests(TestCase):
             AssertionError: Utility behavior changes unexpectedly.
         """
         utils.custom_assert(True, RuntimeError("unused"))
+        assert True
+
         with self.assertRaisesRegex(RuntimeError, "failed"):
             utils.custom_assert(False, RuntimeError("failed"))
+            assert False
+
         with self.assertRaises(AssertionError):
             utils.custom_assert(False, None)
+            assert False
+
         with self.assertRaises(TypeError):
             utils.custom_assert(False, "invalid")  # type: ignore[arg-type]
+            assert False
 
         with (
             mock.patch("celune.utils.langdetect.detect", return_value="en"),

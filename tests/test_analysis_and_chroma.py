@@ -108,7 +108,17 @@ class AnalysisTests(TestCase):
         _zcr: mock.Mock,
         _stft: mock.Mock,
     ) -> None:
-        """Verify pitch metrics include median, standard deviation, and voiced peak."""
+        """Verify pitch metrics include median, standard deviation, and voiced peak.
+
+        Args:
+            _fft_frequencies: Mocked FFT frequencies.
+            _duration: Mocked duration value.
+            _rms: Mocked RMS value.
+            _pyin: Mocked pyin value.
+            _centroid: Mocked centroid value.
+            _zcr: Mocked ZCR value.
+            _stft: Mocked STFT value.
+        """
         metrics = analysis.compute_raw_metrics(
             np.ones(4096, dtype=np.float32),
             16000,
@@ -130,36 +140,27 @@ class AnalysisTests(TestCase):
         )
 
     @mock.patch("celune.analysis.default_loader", return_value=None)
-    def test_loose_reference_embeddings_are_discovered_without_bundle(
+    def test_reference_embeddings_are_unavailable_without_bundle(
         self, _default_loader: mock.Mock
     ) -> None:
-        """Verify loose packaged embeddings remain available without CEVOICE.
+        """Verify reference embeddings require an active CEVOICE bundle.
 
         Args:
             _default_loader: A mock default loader.
         """
-        self.assertEqual(
-            analysis._available_reference_voices(),
-            ["balanced", "bold", "calm", "upbeat"],
-        )
+        self.assertEqual(analysis._available_reference_voices(), [])
 
     @mock.patch("celune.analysis.default_loader", return_value=None)
-    @mock.patch("celune.analysis.torch.load")
-    def test_loose_reference_embedding_loads_without_bundle(
-        self, torch_load: mock.Mock, _default_loader: mock.Mock
+    def test_reference_embedding_load_requires_bundle(
+        self, _default_loader: mock.Mock
     ) -> None:
-        """Verify loose packaged embeddings still load by derived voice path.
+        """Verify reference embedding loading fails without a CEVOICE bundle.
 
         Args:
-            torch_load: A mock implementation of torch.load().
             _default_loader: A mock default loader.
         """
-        torch_load.return_value = np.ones(2048, dtype=np.float32)
-
-        embedding = analysis._load_reference_embedding("balanced")
-
-        self.assertEqual(embedding.shape, (2048,))
-        torch_load.assert_called_once()
+        with self.assertRaisesRegex(FileNotFoundError, "no compatible CEVOICE/CECHAR"):
+            analysis._load_reference_embedding("balanced")
 
     @mock.patch("celune.analysis.torch.load")
     def test_bundle_reference_embedding_is_materialized_when_available(
