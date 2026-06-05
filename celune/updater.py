@@ -178,6 +178,17 @@ def _has_local_changes() -> bool:
     return bool(_run_git(["status", "--porcelain"]))
 
 
+def _has_new_remote_revision(local_revision: str, remote_revision: str) -> bool:
+    """Return whether the remote revision is a fast-forward update for HEAD."""
+    if not remote_revision or local_revision == remote_revision:
+        return False
+
+    if _git_succeeds(["merge-base", "--is-ancestor", remote_revision, "HEAD"]):
+        return False
+
+    return _git_succeeds(["merge-base", "--is-ancestor", "HEAD", remote_revision])
+
+
 def _is_git_checkout() -> bool:
     """Can the repository be checked out?"""
     try:
@@ -217,6 +228,7 @@ def check_for_update() -> Optional[UpdateInfo]:
             _remote_branch_revision(branch) if branch else _remote_head_revision()
         )
         latest_tag, latest_tag_revision = _latest_remote_tag()
+        has_new_revision = _has_new_remote_revision(local_revision, remote_revision)
     except (
         subprocess.CalledProcessError,
         subprocess.TimeoutExpired,
@@ -226,7 +238,6 @@ def check_for_update() -> Optional[UpdateInfo]:
         return None
 
     local_version = _base_version(__version__)
-    has_new_revision = bool(remote_revision and local_revision != remote_revision)
     has_new_tag = bool(
         latest_tag and _is_newer_version_tag(latest_tag, local_tag or local_version)
     )

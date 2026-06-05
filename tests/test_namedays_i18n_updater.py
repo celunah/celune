@@ -105,6 +105,10 @@ class UpdaterTests(TestCase):
                 "celune.updater._latest_remote_tag",
                 return_value=("4.0.0", "c" * 40),
             ),
+            mock.patch(
+                "celune.updater._git_succeeds",
+                side_effect=[False, True],
+            ),
         ):
             update = updater.check_for_update()
         self.assertIsNotNone(update)
@@ -112,6 +116,58 @@ class UpdaterTests(TestCase):
             self.assertEqual(update.local_revision, "aaaaaaa")
             self.assertEqual(update.latest_revision, "bbbbbbb")
             self.assertEqual(update.latest_version, "4.0.0")
+
+    def test_check_for_update_ignores_local_commits_ahead_of_remote(self) -> None:
+        """Verify unpushed local commits do not show as available updates.
+
+        Raises:
+            AssertionError: Ahead-of-remote repositories should not prompt updates.
+        """
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch("celune.updater._is_git_checkout", return_value=True),
+            mock.patch("celune.updater._current_branch", return_value="main"),
+            mock.patch("celune.updater._has_local_changes", return_value=False),
+            mock.patch("celune.updater._local_revision", return_value="a" * 40),
+            mock.patch("celune.updater._local_tag", return_value="3.5.0"),
+            mock.patch(
+                "celune.updater._remote_branch_revision",
+                return_value="b" * 40,
+            ),
+            mock.patch(
+                "celune.updater._latest_remote_tag",
+                return_value=("3.5.0", "b" * 40),
+            ),
+            mock.patch(
+                "celune.updater._git_succeeds",
+                side_effect=[True],
+            ),
+        ):
+            self.assertIsNone(updater.check_for_update())
+
+    def test_has_new_remote_revision_only_for_fast_forward_updates(self) -> None:
+        """Verify revision comparison distinguishes ahead vs behind states.
+
+        Raises:
+            AssertionError: Fast-forward detection behavior changes unexpectedly.
+        """
+        with mock.patch(
+            "celune.updater._git_succeeds",
+            side_effect=[True],
+        ):
+            self.assertFalse(updater._has_new_remote_revision("a" * 40, "b" * 40))
+
+        with mock.patch(
+            "celune.updater._git_succeeds",
+            side_effect=[False, True],
+        ):
+            self.assertTrue(updater._has_new_remote_revision("a" * 40, "b" * 40))
+
+        with mock.patch(
+            "celune.updater._git_succeeds",
+            side_effect=[False, False],
+        ):
+            self.assertFalse(updater._has_new_remote_revision("a" * 40, "b" * 40))
 
     def test_update_to_latest_rejects_unsafe_states(self) -> None:
         """Verify unsafe repository states reject automatic updates.
