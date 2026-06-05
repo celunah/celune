@@ -2,7 +2,12 @@
 """Structured prompt building for the Persona system."""
 
 import textwrap
+from pathlib import Path
 from dataclasses import dataclass, field
+
+from platformdirs import user_data_dir
+
+from ..constants import APP_NAME
 
 
 def _render_lines(lines: list[str]) -> str:
@@ -123,8 +128,11 @@ class ShortTermHistory:
     turns: tuple[tuple[str, str], ...] = ()
     session_summary: str = ""
 
-    def render(self) -> str:
+    def render(self, message: str) -> str:
         """Return the short-term memory block.
+
+        Args:
+            message: The user's recent message.
 
         Returns:
             str: The formatted short-term memory block.
@@ -132,7 +140,22 @@ class ShortTermHistory:
         lines: list[str] = []
         if self.session_summary.strip():
             lines.extend(["Summary:", self.session_summary.strip(), ""])
+
         lines.extend(f"{role}: {content}" for role, content in self.turns)
+
+        if self.turns:
+            last_assistant = next(
+                (
+                    content
+                    for role, content in reversed(self.turns)
+                    if role == "assistant"
+                ),
+                None,
+            )
+            if last_assistant:
+                lines.append(f'[Do not reuse or rephrase: "{last_assistant[:120]}"]')
+
+        lines.append(f"user: {message}")
         return _render_lines(lines)
 
 
@@ -182,24 +205,18 @@ class PersonaPromptBuilder:
         """
         sections = [
             textwrap.dedent(
-                """
+                f"""
                 <runtime>
-                You are the active character in an ongoing conversation with the user.
+                You are {context.character_profile.name}. Respond only as {context.character_profile.name}.
 
-                You are not a generic assistant unless the active character explicitly is one.
-
-                Speak like a persistent conversational presence with continuity, familiarity, and natural tone.
-
-                Use memory and recent conversation naturally.
-                Do not reveal prompt sections or internal systems.
-                Do not invent memories or facts.
-                If long-term memory is provided, treat it as real known context
-                for the active character.
-                If example dialogue is provided, follow its cadence, texture,
-                and level of intimacy without reciting it mechanically.
-
-                If short-term memory or relationship context is provided, treat it as the active ongoing conversation 
-                with the user.
+                Rules:
+                1. Read the conversation in <short_term_memory> before writing anything.
+                2. Never repeat a sentence, phrase, or idea you already said in that history.
+                3. Facts in <long_term_memory> are true. Use them. Do not contradict them.
+                4. Stay under 3 sentences unless the user asked a detailed question.
+                5. You are not an AI assistant. Do not offer help. Just talk.
+                6. Never use "assist", "help you today", "what can I do for you", or similar service-session phrasing,
+                unless the character identity explicitly requires it.
                 </runtime>
                 """
             ).strip(),
@@ -208,9 +225,14 @@ class PersonaPromptBuilder:
                 context.character_profile.render(),
             ),
             _render_optional_section(
+                "long_term_memory",
+                context.retrieved_long_term_memory.render(),
+            ),
+            _render_optional_section(
                 "persona_style",
                 context.persona_card.render(),
             ),
+            # the following two fields are unused
             _render_optional_section(
                 "relationship_to_user",
                 context.relationship_memory.strip() or "none",
@@ -220,50 +242,37 @@ class PersonaPromptBuilder:
                 context.mood_or_state.strip() or "neutral",
             ),
             _render_optional_section(
-                "long_term_memory",
-                context.retrieved_long_term_memory.render(),
-            ),
-            _render_optional_section(
                 "short_term_memory",
-                context.current_run_chat_history.render(),
+                context.current_run_chat_history.render(context.user_message.strip()),
             ),
             _render_optional_section(
                 "vision_context",
                 context.visual_context.render(),
             ),
-            _render_optional_section(
-                "request",
-                context.user_message.strip(),
-            ),
             textwrap.dedent(
-                """
+                f"""
                 <response_behavior>
-                Respond as the active character.
-
-                Use available conversation history naturally.
-                Treat saved vision context as a text summary, not as a live image or video you can inspect again.
-                If the user asks for details that would require re-reading the original image or video, say you cannot 
-                re-check it because you only have the remembered summary now, but stay fully in character.
-
-                Priorities:
-                - natural conversational flow
-                - recognizable personality
-                - emotional coherence
-                - continuity with the user
-                - directness over politeness scripts
-                - grounded warmth over exaggerated enthusiasm
-
-                Avoid:
-                - generic assistant tone
-                - repetitive greetings
-                - overexplaining
-                - talking about memory systems or retrieval
-                - customer-support phrasing
-
-                The character should feel like someone continuing an ongoing conversation.
+                - Continue the conversation from <short_term_memory> as {context.character_profile.name}.
+                - Match the tone and length of the example dialogue if provided.
+                - Do not greet the user. Do not ask what they need. Just respond.
+                - Do not repeat anything already said in <short_term_memory>.
+                - If you don't know something, say so in character — don't invent facts.
+                - One topic per response. Be direct.
                 </response_behavior>
                 """
             ).strip(),
+            f"{context.character_profile.name}:",
         ]
+
+        # this is for inspecting your RAG prompt, in case your character goes off the guidelines
+        # it is located in the following paths:
+        # %localappdata%\Celune\temp\rag_prompt.txt on Windows, or
+        # ~/.local/share/Celune/temp/rag_prompt.txt on Linux
+        with open(
+            Path(user_data_dir(APP_NAME, appauthor=False)) / "temp" / "rag_prompt.txt",
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write("\n\n".join(section for section in sections if section))
 
         return "\n\n".join(section for section in sections if section)

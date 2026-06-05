@@ -334,9 +334,13 @@ class PipelineTests(TestCase):
         self.assertIn("<character_identity>", system_prompt)
         self.assertIn("<persona_style>", system_prompt)
         self.assertIn("<short_term_memory>", system_prompt)
-        self.assertIn("<request>", system_prompt)
+        self.assertIn("Read the conversation in <short_term_memory>", system_prompt)
         self.assertIn("Earlier reply.", system_prompt)
+        self.assertIn("user: What now?", system_prompt)
+        self.assertIn('[Do not reuse or rephrase: "Earlier reply."]', system_prompt)
+        self.assertIn("Celune:", system_prompt)
         self.assertNotIn("<vision_context>", system_prompt)
+        self.assertNotIn("<request>", system_prompt)
         self.assertEqual(messages[0], {"role": "system", "content": system_prompt})
         self.assertEqual(messages[-1], {"role": "user", "content": "What now?"})
         self.assertEqual(len(messages), 2)
@@ -456,22 +460,20 @@ class PipelineTests(TestCase):
         self.assertIn("The user prefers concise answers.", prompt)
         self.assertIn("<short_term_memory>", prompt)
         self.assertIn("assistant: Yes, we catalogued the letters.", prompt)
+        self.assertIn("user: What do you notice?", prompt)
+        self.assertIn(
+            '[Do not reuse or rephrase: "Yes, we catalogued the letters."]',
+            prompt,
+        )
         self.assertIn("<vision_context>", prompt)
         self.assertIn("image: archive.png", prompt)
-        self.assertIn("<request>", prompt)
+        self.assertIn(
+            "Do not greet the user. Do not ask what they need. Just respond.",
+            prompt,
+        )
+        self.assertIn("Fixture:", prompt)
         self.assertIn("What do you notice?", prompt)
-        self.assertIn(
-            "Treat saved vision context as a text summary, not as a live image or video you can inspect again.",
-            prompt,
-        )
-        self.assertIn(
-            "say you cannot",
-            prompt,
-        )
-        self.assertIn(
-            "re-check it because you only have the remembered summary now",
-            prompt,
-        )
+        self.assertNotIn("<request>", prompt)
 
     def test_persona_context_retrieves_persisted_long_term_memory(self) -> None:
         """Verify Persona prompts pull relevant persisted memory for the character."""
@@ -990,7 +992,7 @@ class PipelineTests(TestCase):
         self.assertIn("User request about that media: What is this?", second_system)
         self.assertNotIn("Character response about that media:", second_system)
         self.assertIn(
-            "Treat saved vision context as a text summary, not as a live image or video you can inspect again.",
+            "If you don't know something, say so in character",
             second_system,
         )
         self.assertEqual(second_messages[-1], {"role": "user", "content": "And now?"})
