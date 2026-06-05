@@ -4,7 +4,7 @@
 import os
 import contextlib
 from collections.abc import Iterator
-from typing import Callable, Optional, Final, Mapping
+from typing import Callable, Optional, Mapping
 
 import torch
 import numpy as np
@@ -13,18 +13,20 @@ from voxcpm import VoxCPM
 
 from ..constants import BASE_SR
 from . import get_version
-from ..cevoice import default_loader
-from .base import CeluneBackend, cached_hf_snapshot_path, BackendModel
+from ..cevoice import default_loader, CEVoiceLoader
+from ..exceptions import BackendError
+from ..utils import custom_assert
+from .base import CeluneBackend, cached_hf_snapshot_path
 
 
-class VoxCPM2(CeluneBackend):
+class VoxCPM2(CeluneBackend[VoxCPM]):
     """Celune VoxCPM2 backend."""
 
-    name: Final[str] = "voxcpm2"
-    uses_voice_bundles: Final[bool] = True
-    chunk_rate: Final[float] = 6.25
-    max_new_tokens: Final[int] = 512
-    supported_languages: Final[tuple[str, ...]] = (
+    name: str = "voxcpm2"
+    uses_voice_bundles: bool = True
+    chunk_rate: float = 6.25
+    max_new_tokens: int = 512
+    supported_languages: tuple[str, ...] = (
         "ar",
         "my",
         "zh-cn",
@@ -57,28 +59,96 @@ class VoxCPM2(CeluneBackend):
         "vi",
     )
 
-    voice_models: Final[Mapping[str, str]] = {
+    voice_models: Optional[Mapping[str, str]] = {
         "balanced": "openbmb/VoxCPM2",
         "calm": "openbmb/VoxCPM2",
         "bold": "openbmb/VoxCPM2",
         "upbeat": "openbmb/VoxCPM2",
     }
 
-    # legacy fallback for loose refs, CEVOICE packs created before cfg_scale
-    # became pack-configurable
-    voice_cfg: Final[Mapping[str, float]] = {
+    # fallback values for packs that omit cfg_scale
+    voice_cfg: Mapping[str, float] = {
         "balanced": 2.4,
         "calm": 3.0,
         "bold": 2.4,
         "upbeat": 2.4,
     }
-    default_voice: Final[str] = "balanced"
+    default_voice: Optional[str] = "balanced"
 
     def __init__(self, log: Callable[[str, str], None]) -> None:
         super().__init__(log=log)
         self.log = log
         self.optimize_enabled = False
         self._validate_refs()
+
+    @staticmethod
+    def _require_compatible_bundle() -> tuple[CEVoiceLoader, tuple[str, ...]]:
+        """Return the active CEVOICE/CECHAR loader and its usable voice names."""
+        loader = default_loader()
+        custom_assert(
+            loader is not None,
+            BackendError(
+                "backend 'voxcpm2' requires a compatible CEVOICE/CECHAR package "
+                "with at least one valid voice identifier"
+            ),
+        )
+        assert loader is not None
+
+        voice_names = tuple(
+            voice
+            for voice in loader.bundle.voice_order
+            if (
+                isinstance(voice, str)
+                and voice.strip()
+                and voice in loader.bundle.voices
+                and isinstance(loader.bundle.voices[voice].get("reference_text"), str)
+                and bool(str(loader.bundle.voices[voice]["reference_text"]).strip())
+            )
+        )
+        custom_assert(
+            bool(voice_names),
+            BackendError(
+                "backend 'voxcpm2' requires a compatible CEVOICE/CECHAR package "
+                "with at least one valid voice identifier"
+            ),
+        )
+        assert bool(voice_names)
+
+        return loader, voice_names
+
+    def _validate_refs(self) -> None:
+        """Validate VoxCPM2 reference audio files from the active CEVOICE/CECHAR pack."""
+        loader, voice_names = self._require_compatible_bundle()
+        for name in voice_names:
+            loader.materialize(name, "wav")
+
+    @property
+    def voices(self) -> list[str]:
+        """Return the voice names exposed by the active CEVOICE/CECHAR pack.
+
+        Returns:
+            list[str]: The list of available voices to use from current CEVOICE/CECHAR pack.
+        """
+        _, voice_names = self._require_compatible_bundle()
+        return list(voice_names)
+
+    def model_id_for_voice(self, voice: str) -> str:
+        """Resolve a voice from the active pack to the shared VoxCPM2 model.
+
+        Args:
+            voice: The voice name to resolve.
+
+        Returns:
+            str: A resolved model name for this voice.
+        """
+        _, voice_names = self._require_compatible_bundle()
+        custom_assert(
+            voice in voice_names,
+            ValueError(f"{self.name} cannot resolve a model for voice '{voice}'"),
+        )
+        assert voice in voice_names
+
+        return self.default_model_id
 
     @staticmethod
     @contextlib.contextmanager
@@ -111,7 +181,7 @@ class VoxCPM2(CeluneBackend):
             ],
         )
 
-    def load_model(self, model_id: str, **kwargs) -> Optional[BackendModel]:
+    def load_model(self, model_id: str, **kwargs) -> VoxCPM:
         """Load the given voice model.
 
         Args:
@@ -177,19 +247,17 @@ class VoxCPM2(CeluneBackend):
         chunk_size = kwargs.pop("chunk_size", 1)
 
         try:
-            loader = default_loader()
-            if loader is not None:
-                ref_wav = loader.materialize(voice, "wav")
-                configured_cfg = loader.bundle.voices[voice].get("cfg_scale")
-                cfg = (
-                    float(configured_cfg)
-                    if isinstance(configured_cfg, (int, float))
-                    and not isinstance(configured_cfg, bool)
-                    else self.voice_cfg[voice]
+            loader, _ = self._require_compatible_bundle()
+            ref_wav = loader.materialize(voice, "wav")
+            configured_cfg = loader.bundle.voices[voice].get("cfg_scale")
+            cfg = (
+                float(configured_cfg)
+                if isinstance(configured_cfg, (int, float))
+                and not isinstance(configured_cfg, bool)
+                else self.voice_cfg.get(
+                    voice, self.voice_cfg[self.default_voice or "balanced"]
                 )
-            else:
-                ref_wav = self._reference_wave_path(voice)
-                cfg = self.voice_cfg[voice]
+            )
         except KeyError as e:
             raise ValueError(
                 f"unknown voice '{voice}' for backend '{self.name}'"

@@ -162,7 +162,7 @@ At startup, Celune resolves `voice_bundle` from config:
 
 The loader parses and validates the bundle, then lazily materializes assets into a temporary directory only when a backend needs a filesystem path.
 
-- Qwen3 clone mode reads `wav` assets as reference audio and uses per-voice `reference_text` when present.
+- Qwen3 clone mode reads `wav` assets as reference audio and requires per-voice `reference_text`.
 - VoxCPM2 reads `wav` assets as reference audio and uses per-voice `cfg_scale` when present.
 - Analysis helpers read optional `pt` assets directly from the bundle.
 - `default_voice` controls the initial selected voice.
@@ -170,7 +170,7 @@ The loader parses and validates the bundle, then lazily materializes assets into
 - `theme.accent` or `theme.glow_color` can affect Celune's UI glow color.
 - `persona.identity.name`, when present, becomes the bundle's character name ahead of top-level `name`.
 
-If the configured bundle is missing, Celune simply has no bundle to load. If a configured bundle exists but is malformed, Celune falls back to the legacy loose reference files when possible.
+If the configured bundle is missing or malformed, Celune simply has no compatible voice pack to load.
 
 ## Recommended way to make one
 
@@ -185,15 +185,15 @@ write_cevoice(
     "my_pack.cevoice",
     {
         "balanced": {
-            "wav": Path("refs/balanced.wav"),
-            "pt": Path("refs/balanced.pt"),
+            "wav": Path("source-assets/balanced.wav"),
+            "pt": Path("source-assets/balanced.pt"),
         },
         "calm": {
-            "wav": Path("refs/calm.wav"),
-            "pt": Path("refs/calm.pt"),
+            "wav": Path("source-assets/calm.wav"),
+            "pt": Path("source-assets/calm.pt"),
         },
         "bold": {
-            "wav": Path("refs/bold.wav"),
+            "wav": Path("source-assets/bold.wav"),
         },
     },
     {

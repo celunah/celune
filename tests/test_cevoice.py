@@ -250,6 +250,14 @@ class CEVoiceTests(TestCase):
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
         voices = cast(cevoice.VoiceManifest, metadata["voices"])
+        del voices["balanced"]["reference_text"]
+        self._rewrite_metadata(metadata)
+        with self.assertRaisesRegex(CEVoiceError, "reference_text is required"):
+            cevoice.CEVoice.open(self.path)
+
+        bundle = self._write_bundle()
+        metadata = copy.deepcopy(bundle.metadata)
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])
         assets = cast(cevoice.Manifest, voices["balanced"]["assets"])
         assets["json"] = {
             "offset": 0,
@@ -272,6 +280,11 @@ class CEVoiceTests(TestCase):
                     "background": "#101010",
                     "accent": "#abcdef",
                     "sleeping_color": "#8866cc",
+                },
+            },
+            {
+                "balanced": {
+                    "reference_text": "Balanced reference.",
                 },
             },
         )
@@ -304,7 +317,7 @@ class CEVoiceTests(TestCase):
         invalid_path.write_bytes(b"bad")
         cevoice.select_voice_bundle(invalid_path)
         self.assertIsNone(cevoice.default_loader())
-        self.assertEqual(cevoice.announce_default_bundle(log), "Celune")
+        self.assertIsNone(cevoice.announce_default_bundle(log))
         self.assertEqual(logs[-1][1], "warning")
 
     def test_missing_named_bundle_falls_back_to_default_bundle(self) -> None:
@@ -354,8 +367,10 @@ class CEVoiceTests(TestCase):
         self.assertEqual(cevoice.resolve_bundle_path("fixture"), expected)
         self.assertEqual(cevoice.resolve_bundle_path("fixture.cevoice"), expected)
 
-    def test_missing_selected_and_default_bundles_use_reference_fallback(self) -> None:
-        """Verify loose refs are used only after selected and default bundles fail.
+    def test_missing_selected_and_default_bundles_report_no_compatible_pack(
+        self,
+    ) -> None:
+        """Verify missing selected and default bundles report no compatible pack.
 
         Raises:
             AssertionError: Bundle fallback behavior changes unexpectedly.
@@ -369,11 +384,10 @@ class CEVoiceTests(TestCase):
             return_value=missing_default,
         ):
             self.assertIsNone(cevoice.default_loader())
-            self.assertEqual(
+            self.assertIsNone(
                 cevoice.announce_default_bundle(
                     lambda msg, severity: logs.append((msg, severity))
-                ),
-                "Celune",
+                )
             )
 
         self.assertEqual(logs[-1][1], "warning")

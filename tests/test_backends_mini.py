@@ -5,6 +5,9 @@ import tempfile
 from types import SimpleNamespace
 from pathlib import Path
 from unittest import mock, TestCase
+from typing import cast
+
+from pocket_tts import TTSModel
 
 from celune.backends.mini import Mini
 
@@ -33,7 +36,7 @@ class MiniBackendTests(TestCase):
             generated = pocket_dir / "english-fixture.yaml"
             generated.write_text("weights_path: demo\n", encoding="utf-8")
             backend._generated_config_path = generated
-            backend.model = object()
+            backend.model = cast(TTSModel, SimpleNamespace())
 
             backend.unload_model()
 

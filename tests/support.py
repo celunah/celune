@@ -252,7 +252,7 @@ def make_voice_loader(
         A CEVOICE loader stub for the given voice.
     """
     return SimpleNamespace(
-        bundle=SimpleNamespace(voices={voice: metadata}),
+        bundle=SimpleNamespace(voices={voice: metadata}, voice_order=(voice,)),
         materialize=lambda ref_voice, kind: Path(f"{ref_voice}.{kind}"),
     )
 
@@ -290,3 +290,18 @@ def mock_voxcpm_backend():
     ):
         voxcpm2 = importlib.import_module("celune.backends.voxcpm2")
         yield voxcpm2.VoxCPM2
+
+
+@contextlib.contextmanager
+def mock_mini_backend():
+    """Import the Mini backend with a stub pocket-tts package."""
+
+    class StubTTSModel:
+        """Import-time stand-in for the Pocket TTS package class."""
+
+    with mock.patch.dict(
+        sys.modules,
+        {"pocket_tts": SimpleNamespace(TTSModel=StubTTSModel)},
+    ):
+        mini = importlib.import_module("celune.backends.mini")
+        yield mini.Mini

@@ -4,6 +4,7 @@
 import sys
 import re
 import logging
+from collections.abc import Collection
 from typing import Callable, Optional
 
 import readchar
@@ -82,7 +83,7 @@ class LogRedirect:
         stderr,
         write_callback: Callable[[str, str], None],
         default_severity: str = "info",
-        filter_messages: Optional[list[str]] = None,
+        filter_messages: Optional[Collection[str]] = None,
     ) -> None:
         self.write_callback = write_callback
         self.default_severity = default_severity

@@ -1352,10 +1352,13 @@ class Celune:
                 custom_assert(
                     norm_token_id is not None, ValueError("not a CeluneNorm normalizer")
                 )
+                assert norm_token_id is not None
+
                 custom_assert(
                     norm_token_id != tokenizer.unk_token_id,
                     ValueError("not a CeluneNorm normalizer"),
                 )
+                assert norm_token_id != tokenizer.unk_token_id
 
                 prompt = f"{bad_text}{norm_token}"
 

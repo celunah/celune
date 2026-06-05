@@ -800,6 +800,7 @@ def make_persona_card(
     """
 
     custom_assert(bool(name.strip()), ValueError("persona card name cannot be empty"))
+    assert bool(name.strip())
 
     return (
         textwrap.dedent(base_card)
