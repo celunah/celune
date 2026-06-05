@@ -97,7 +97,7 @@ persona:
   # memory settings
   memory:
     # how much do you want Celune to remember
-    max_short_term_messages: 20
+    max_short_term_messages: 5
     # where semantic long-term memory retrieval should persist data
     storage_dir: null
     # minimum cosine similarity for semantic long-term memory retrieval
