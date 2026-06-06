@@ -441,9 +441,9 @@ def _doctor_checks() -> list[DoctorCheck]:
 
     python_ok = (3, 12) <= sys.version_info < (3, 14)
     python_detail = (
-        f"{platform.python_version()} (supported: 3.12/3.13)"
+        f"{platform.python_version()} (supported: 3.12 or 3.13)"
         if python_ok
-        else f"{platform.python_version()} (unsupported: expected 3.12/3.13)"
+        else f"{platform.python_version()} (unsupported: expected 3.12 or 3.13)"
     )
     _doctor_add(
         checks,
@@ -496,7 +496,7 @@ def _doctor_checks() -> list[DoctorCheck]:
             "Python environment",
             False,
             f"project virtual environment not found; running {current_python}",
-            hint="Run `celune doctor --fix` to create or repair the virtual environment.",
+            hint="Run `uv sync` to create or repair a compatible environment.",
         )
 
     _doctor_add(
@@ -504,7 +504,7 @@ def _doctor_checks() -> list[DoctorCheck]:
         "Launcher Python",
         venv_python.exists(),
         str(venv_python),
-        hint="Run `celune doctor --fix` to create or repair the virtual environment.",
+        hint="Run `uv sync` to create or repair a compatible environment.",
     )
 
     uv_path = shutil.which("uv")  # noqa: "before Python 3.12", but Celune expects 3.12/3.13.
@@ -529,7 +529,7 @@ def _doctor_checks() -> list[DoctorCheck]:
         (
             "readchar",
             "readchar",
-            f"{APP_NAME}'s terminal input layer depends on readchar.",
+            f"{APP_NAME}'s selection menus depend on readchar.",
         ),
         (
             "langdetect",
@@ -542,13 +542,12 @@ def _doctor_checks() -> list[DoctorCheck]:
             "torchaudio",
             f"{APP_NAME}'s audio pipeline requires torchaudio.",
         ),
-        ("sounddevice", "sounddevice", f"{APP_NAME} playback requires sounddevice."),
-        ("soundfile", "soundfile", f"{APP_NAME} audio I/O requires soundfile."),
         (
-            "pyrubberband",
-            "pyrubberband",
-            f"{APP_NAME}'s time-stretching path requires pyrubberband.",
+            "sounddevice",
+            "sounddevice",
+            f"{APP_NAME} DSP playback requires sounddevice.",
         ),
+        ("soundfile", "soundfile", f"{APP_NAME}'s audio writer requires soundfile."),
         (
             "faster_qwen3_tts",
             "faster-qwen3-tts",
@@ -561,6 +560,8 @@ def _doctor_checks() -> list[DoctorCheck]:
         ("voxcpm", "voxcpm", "The VoxCPM2 backend needs voxcpm."),
         ("openrgb", "openrgb-python", "Presence lighting needs openrgb-python."),
         ("matplotlib", "matplotlib", "Developer visualizations use matplotlib."),
+        ("pedalboard", "pedalboard", "Reverb effects require pedalboard."),
+        ("pyrubberband", "pyrubberband", "Voice speed controls require pyrubberband."),
     ]
 
     for module_name, package_name, hint in required_imports:
@@ -640,7 +641,7 @@ def _doctor_checks() -> list[DoctorCheck]:
             hint=(
                 f"{APP_NAME} will create this file on first successful startup."
                 if parent_exists
-                else "The runtime data directory has not been created yet."
+                else f"The runtime data directory has not been created yet. Run {APP_NAME} at least once to create it."
             ),
         )
 
@@ -696,18 +697,24 @@ def run_doctor(argv: list[str]) -> int:
     )
     print()
 
-    if failures == 0:
+    if failures == 0 and warnings_count == 0:
         print(f"Your system is ready to run {APP_NAME}.")
     elif failures == 0 and warnings_count > 0:
         print(f"{APP_NAME}'s performance may be impacted.")
-        print("Rerun with --fix to attempt to fix these problems.")
+        print("Rerun with --fix to attempt to fix some of these problems.")
+        print(
+            "Please note that this will not fix a Python version incompatibility or lack of a CUDA runtime."
+        )
     else:
         print(f"{APP_NAME} will not work.")
-        print("Rerun with --fix to attempt to fix these problems.")
+        print("Rerun with --fix to attempt to fix some of these problems.")
+        print(
+            "Please note that this will not fix a Python version incompatibility or lack of a CUDA runtime."
+        )
 
     if fix:
         print()
-        print(f"Running {SETUP_PATH.name} from {PROJECT_ROOT}...")
+        print("Attempting to fix fixable problems...")
         try:
             result = subprocess.run(
                 [sys.executable, str(SETUP_PATH)],
@@ -715,7 +722,7 @@ def run_doctor(argv: list[str]) -> int:
                 check=False,
             )
         except OSError as exc:
-            print(f"Failed to fix {APP_NAME}: {exc}")
+            print(f"Failed to fix fixable problems: {exc}")
             return EXIT_CODES.EXIT_FAILURE.value
         return int(result.returncode)
 
@@ -733,19 +740,43 @@ def handle_config(command_args: list[str], prog_name: str) -> None:
 
     if len(command_args) == 1:
         if command_args[0] == "view":
+            if not runtime.config_path().exists():
+                print(f"{APP_NAME} configuration has not been created yet.")
+                print(f"Run {APP_NAME} at least once to create it.")
+                sys.exit(EXIT_CODES.EXIT_FAILURE.value)
+
             print(f"Current {APP_NAME} configuration:")
             print()
 
-            with open(runtime.config_path(), encoding="utf-8") as cfg:
-                print(cfg.read().strip())
+            try:
+                with open(runtime.config_path(), encoding="utf-8") as cfg:
+                    print(cfg.read().strip())
+            except PermissionError:
+                print(f"{APP_NAME} configuration could not be read.")
+                sys.exit(EXIT_CODES.EXIT_FAILURE.value)
         elif command_args[0] == "edit":
-            runtime.webbrowser.open(runtime.config_path())
+            if not runtime.config_path().exists():
+                print(f"{APP_NAME} configuration has not been created yet.")
+                print(f"Run {APP_NAME} at least once to create it.")
+                sys.exit(EXIT_CODES.EXIT_FAILURE.value)
+
+            try:
+                runtime.webbrowser.open(runtime.config_path())
+            except PermissionError:
+                print(f"{APP_NAME} configuration could not be read.")
+                sys.exit(EXIT_CODES.EXIT_FAILURE.value)
         else:
             print("Invalid argument.")
             print()
             print(f"Usage: {prog_name} config [view/edit]")
             print(f"View or edit {APP_NAME}'s configuration.")
             sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+    elif len(command_args) > 1:
+        print("Too many arguments.")
+        print()
+        print(f"Usage: {prog_name} config [view/edit]")
+        print(f"View or edit {APP_NAME}'s configuration.")
+        sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
     else:
         print("No argument given.")
         print()
@@ -996,8 +1027,10 @@ def main(argv: Optional[list[str]] = None) -> None:
         start()
     elif args[0] in {"start", "run"}:
         if args[1] not in {"--verbose", "-v"}:
-            print(f"Unexpected argument: {args[1]}")
-            print(f"Run `{resolved_argv[0]} help` to view correct usage.")
+            print("Invalid argument.")
+            print()
+            print(f"Usage: {resolved_argv[0]} {args[0]}")
+            print(f"Start {APP_NAME}.")
             sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
         verbose = any(arg in {"--verbose", "-v"} for arg in args[1:])
         start(verbose=verbose)
@@ -1006,14 +1039,18 @@ def main(argv: Optional[list[str]] = None) -> None:
     elif args[0] == "doctor":
         if len(args) > 1:
             if args[1] != "--fix":
-                print(f"Unexpected argument: {args[1]}")
-                print(f"Run `{resolved_argv[0]} help` to view correct usage.")
+                print("Invalid argument.")
+                print()
+                print(f"Usage: {resolved_argv[0]} doctor")
+                print(f"Inspect the environment without starting {APP_NAME}.")
                 sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
         sys.exit(run_doctor(resolved_argv))
     elif args[0] in {"help", "--help", "-h"}:
         if len(args) > 1:
-            print(f"Unexpected extra argument: {args[1]}")
-            print(f"Run `{resolved_argv[0]} help` to view correct usage.")
+            print("Too many arguments.")
+            print()
+            print(f"Usage: {resolved_argv[0]} help")
+            print("Display this help message.")
             sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
 
         # HACK: tabs are a quick and dirty alignment trick
@@ -1037,10 +1074,10 @@ def main(argv: Optional[list[str]] = None) -> None:
         print(f"Providing no arguments implicitly defaults to starting {APP_NAME}.")
     elif args[0] in {"version", "--version", "-v"}:
         if len(args) > 1:
-            print(f"Unexpected extra argument: {args[1]}")
-            print(
-                f"Run `{resolved_argv[0]} help` without arguments to view correct usage."
-            )
+            print("Too many arguments.")
+            print()
+            print(f"Usage: {resolved_argv[0]} version")
+            print(f"Display running {APP_NAME} version.")
             sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
 
         version, revision = _display_version()
