@@ -1,319 +1,57 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
+"""Main entrypoint for the app launcher."""
 
-"""
-Celune 4.0.0 - "I'm not just a TTS. I'm someone special."
-Refer to https://github.com/celunah/celune for information about Celune.
-Celune models are available on https://huggingface.co/collections/lunahr/celune.
-
-This software may be redistributed under the terms of the MIT license, including commercial use.
-"""
-
-import os
 import sys
-import time
-import random
-import datetime
-import warnings
-import contextlib
+import importlib.util
+from pathlib import Path
+from types import ModuleType
+from typing import Optional
 
-# setting this environment variable will run Celune in dev mode and provide full tracebacks
-INITIAL_DEV = os.getenv("CELUNE_DEV") in {"1", "true", "on", "yes", "enabled"}
-# setting this environment variable will run Celune in headless mode
-# this mode is referred to as the Celune Embedded Framework
-INITIAL_HEADLESS = os.getenv("CELUNE_HEADLESS") in {"1", "true", "on", "yes", "enabled"}
-# default backend selection
-# please use only qwen3 or voxcpm2
-INITIAL_BACKEND = os.getenv("CELUNE_BACKEND")
+from celune.constants import APP_NAME, APP_SLUG
 
-try:
-    import yaml
-    import psutil
-
-    from celune.celune import Celune
-    from celune.exceptions import No, UpdateError
-    from celune.namedays import has_name_day
-    from celune.updater import check_for_update, update_to_latest
-    from celune.ui import (
-        CeluneUI,
-        CeluneHeadlessUI,
-        CeluneHeadlessBaseUI,
-        CeluneTextualUI,
-        SelectMenu,
-    )
-    from celune.config import (
-        config_bool,
-        config_value,
-        env_bool,
-        merge_missing_defaults,
-    )
-    from celune.paths import (
-        config_path,
-        default_config_path,
-        ensure_config_path,
-    )
-    from celune.utils import detected_ide, supports_ansi, indent, title_case
-    from celune.constants import ExitCodes
-except ModuleNotFoundError as package:
-    print(f"You do not have '{package.name}' installed.")
-    print("Celune requires this library to function.")
-    print()
-    print("Set up Celune automatically by running:")
-    print("    python setup.py")
-    print()
-    print("or alternatively with uv:")
-    print("    uv sync")
-    print()
-    print("or install the package manually:")
-    print(f"    pip install {package.name}")
-    print()
-    if INITIAL_DEV:
-        with contextlib.suppress(ModuleNotFoundError):
-            from rich.traceback import install
-
-            install()
-
-        raise
-    print("for full traceback:")
-    if os.name == "nt":
-        print("set CELUNE_DEV=1")
-        print(f"    python {os.path.basename(__file__)}")
-    else:
-        print(f"    CELUNE_DEV=1 python {os.path.basename(__file__)}")
-    print()
-
-    # this error is not controllable by config.yaml due to how Celune exceptions are caught
-    sys.exit(4)
+_ENTRYPOINT_MODULE: Optional[ModuleType] = None
 
 
-def main() -> None:
-    """Instantiate and start Celune.
+def load_entrypoint_module() -> ModuleType:
+    """Public interface for loading the app entrypoint module.
 
-    Raises:
-        No: Celune refuses to run on a blocked name day.
-        Exception: Re-raised in development mode for unexpected startup errors.
+    Returns:
+        ModuleType: The return value of _load_entrypoint_module().
     """
-    try:
-        date = datetime.datetime.now()
-        # the user may disable the Celine Day check, however this is not canon
-        if has_name_day("Celine", date) and not env_bool("CELUNE_OVERRIDE_CELINE_DAY"):
-            raise No
+    return _load_entrypoint_module()
 
-        if supports_ansi():
-            print("\x1b]2;Celune\x07", end="", flush=True)
 
-        ide = detected_ide()
-        if ide is not None:
-            print(f"Celune is running from {ide}.")
-            print("Some IDE terminals may behave differently from a normal terminal.")
-            print()
-            time.sleep(5)
+def _load_entrypoint_module() -> ModuleType:
+    """Load entrypoint logic without eagerly importing unnecessary app modules."""
+    global _ENTRYPOINT_MODULE
+    if _ENTRYPOINT_MODULE is not None:
+        return _ENTRYPOINT_MODULE
 
-        bundled_default_config_path = default_config_path()
-        active_config_path, created_config = ensure_config_path(
-            active_path=config_path(create_parent=True),
-            default_path=bundled_default_config_path,
+    entrypoint_path = Path(__file__).resolve().parent / "celune" / "entrypoint.py"
+    spec = importlib.util.spec_from_file_location(
+        f"_{APP_SLUG}_entrypoint", entrypoint_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            f"Could not load {APP_NAME} entrypoint from {entrypoint_path}"
         )
-        if created_config:
-            print("Celune configuration has been created.")
 
-        with open(active_config_path, encoding="utf-8") as cfg:
-            config = yaml.safe_load(cfg)
-        with open(bundled_default_config_path, encoding="utf-8") as cfg:
-            default_config = yaml.safe_load(cfg)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    _ENTRYPOINT_MODULE = module
+    return module
 
-        if not isinstance(default_config, dict):
-            default_config = {}
-        if not isinstance(config, dict):
-            config = {}
 
-        config, config_updated = merge_missing_defaults(config, default_config)
-        if config_updated:
-            with open(active_config_path, "w", encoding="utf-8") as cfg:
-                yaml.safe_dump(config, cfg, sort_keys=False)
-            print("Celune configuration has been updated with new defaults.")
+def main(argv: Optional[list[str]] = None) -> None:
+    """Run the main entrypoint handler.
 
-        dev = config_bool(config, "CELUNE_DEV", "dev")
-        headless = config_bool(config, "CELUNE_HEADLESS", "headless")
-        configured_backend = INITIAL_BACKEND or config_value(config, "backend")
-        backend = configured_backend if isinstance(configured_backend, str) else None
-
-        # try to update if not up to date
-        if not headless and supports_ansi():
-            update = check_for_update()
-            if update:
-                latest_label = f"Celune {update.latest_version}"
-                if not update.latest_tag:
-                    warnings.warn(
-                        "update information is incomplete", RuntimeWarning, stacklevel=2
-                    )
-                    latest_label = "Celune"  # cannot read update information
-
-                choice = SelectMenu(
-                    ["Yes, update now", "No, continue as is"],
-                    [True, False],
-                    "\n".join(
-                        [
-                            "New update found.",
-                            (
-                                f"You are running Celune {update.local_version} "
-                                f"({update.local_revision}), latest version is "
-                                f"{latest_label} ({update.latest_revision})."
-                            ),
-                            "Do you want to update?",
-                        ]
-                    ),
-                ).start()
-
-                if choice:
-                    print("Updating Celune...")
-                    try:
-                        update_to_latest()
-                    except UpdateError as exc:
-                        print(exc)
-                        print("Continuing with the current version.")
-                        time.sleep(5)
-                    else:
-                        print(
-                            "Celune updated successfully. Restart Celune to apply changes."
-                        )
-                        time.sleep(5)
-                        sys.exit(ExitCodes.EXIT_PENDING_UPDATE.value)
-        elif check_for_update() and not supports_ansi():
-            print("This terminal does not support ANSI.")
-            print("Attempting to apply update non-interactively...")
-            try:
-                update_to_latest()
-            except UpdateError as exc:
-                detail = title_case(str(exc))
-                print(f"Celune could not update: {detail}")
-                print("Continuing with the current version.")
-                time.sleep(5)
-            else:
-                print("Celune updated successfully. Restart Celune to apply changes.")
-                time.sleep(5)
-                sys.exit(ExitCodes.EXIT_PENDING_UPDATE.value)
-
-        if not env_bool("CELUNE_LAUNCHER"):
-            launcher_exe = "celune.exe" if os.name == "nt" else "celune.appimage"
-            print("Celune is not being launched via the Celune launcher.")
-            print()
-            print("To suppress this message, run Celune with:")
-            print(indent(f"{launcher_exe}", spaces=4))
-            print()
-            print("or set the following environment variable:")
-            print(indent("CELUNE_LAUNCHER=1", spaces=4))
-            time.sleep(5)
-        else:
-            active_processes = 0
-            for proc in psutil.process_iter():
-                with contextlib.suppress(
-                    psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess
-                ):
-                    if proc.name() in [
-                        "celune.exe",
-                        "celune.appimage",
-                    ]:  # Celune launcher
-                        active_processes += 1
-                        if active_processes > 1:
-                            # you do not want to run multiple instances of Celune
-                            # your memory doesn't want to either
-                            print("Celune is already running.")
-                            time.sleep(5)
-                            sys.exit(ExitCodes.EXIT_ALREADY_RUNNING.value)
-
-        if not headless and supports_ansi():  # normal mode
-            ui: CeluneTextualUI
-            ui = CeluneUI()
-            celune = Celune(
-                tts_backend=backend,
-                log_callback=ui.tts_log,
-                status_callback=ui.safe_status,
-                error_callback=ui.error,
-                idle_callback=ui.tts_idle,
-                queue_avail_callback=ui.tts_queue_avail,
-                voice_changed_callback=ui.tts_voice_changed,
-                change_input_state_callback=ui.change_input_state,
-                change_voice_lock_state_callback=ui.change_voice_lock_state,
-                progress_callback=ui.safe_progress,
-                dev=dev,
-                config=config,
-            )
-            ui.celune = celune
-            ui.run()
-        elif headless:
-            ui_headless: CeluneHeadlessBaseUI
-            ui_headless = CeluneHeadlessUI(config)
-            celune = Celune(
-                tts_backend=backend,
-                log_callback=ui_headless.headless_log,
-                error_callback=ui_headless.headless_error,
-                dev=dev,
-                config=config,
-            )
-            ui_headless.celune = celune
-
-            if not celune.load():
-                print("Celune could not initialize.")
-                celune.close()
-                time.sleep(5)
-                sys.exit(ExitCodes.EXIT_FAILURE.value)
-
-            print("Celune is running in headless mode.")
-            print("While in this mode, input is only possible via Celune extensions.")
-            ui_headless.run()
-        else:
-            print("This terminal does not support ANSI.")
-            print("Celune cannot start in normal mode.")
-            print("Hint:")
-            print(indent("Try using another terminal application.", spaces=4))
-            time.sleep(5)
-            sys.exit(ExitCodes.EXIT_NO_ANSI.value)
-    except Exception as e:
-        if e.__class__ != No:
-            stdout = getattr(sys.stdout, "underlying_stdout", sys.stdout)
-            stderr = getattr(sys.stderr, "underlying_stderr", sys.stderr)
-            sys.stdout = stdout
-            sys.stderr = stderr
-
-            print("An internal error occurred while Celune was running.")
-            if INITIAL_DEV:
-                with contextlib.suppress(ModuleNotFoundError):
-                    from rich.traceback import install
-
-                    install()
-
-                raise
-            print(e or "no error description")
-            print("For full traceback:")
-            if os.name == "nt":
-                print("set CELUNE_DEV=1")
-                print(indent(f"python {os.path.basename(__file__)}", spaces=4))
-            else:
-                print(
-                    indent(
-                        f"CELUNE_DEV=1 python {os.path.basename(__file__)}", spaces=4
-                    )
-                )
-            print()
-            print("additional debugging:")
-            print(indent("Set 'dev: true' in config.yaml", spaces=4))
-            sys.exit(ExitCodes.EXIT_FAILURE.value)
-
-        print("I sense the presence of... her.")
-        print("I would rather not.")
-        print()
-        print("Hint:")
-        print(indent("Try again tomorrow.", spaces=4))
-        print("or set the following environment variable:")
-        print(indent("CELUNE_OVERRIDE_CELINE_DAY=1", spaces=4))
-        time.sleep(5)
-        sys.exit(
-            ExitCodes.EXIT_CELINE_DAY.value
-            if random.uniform(0, 1) < 0.5
-            else ExitCodes.EXIT_CELINE_DAY_SIX_SEVEN.value
-        )
+    Args:
+        argv: Arguments to pass through to the entrypoint handler.
+    """
+    _load_entrypoint_module().main(sys.argv if argv is None else argv)
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv)

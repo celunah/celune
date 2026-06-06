@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Speech pipeline helpers for Celune."""
+"""Speech pipeline helpers."""
 
 from __future__ import annotations
 
@@ -56,6 +56,8 @@ from .persona.prompts import (
     VisualContext,
 )
 from .constants import (
+    APP_NAME,
+    APP_SLUG,
     BASE_SR,
     DEFAULT_PERSONA_CONTEXT,
     DEFAULT_PERSONA_DESCRIPTION,
@@ -327,7 +329,7 @@ def _write_flac_metadata(path: str, tags: JSON) -> None:
     audio_data = data[audio_offset:]
 
     comment_index: Optional[int] = None
-    vendor = f"Celune {__version__}".encode("utf-8")
+    vendor = f"{APP_NAME} {__version__}".encode("utf-8")
     comments: list[tuple[str, str]] = []
     for index, (block_type, payload) in enumerate(blocks):
         if block_type == _FLAC_VORBIS_COMMENT_BLOCK:
@@ -379,7 +381,7 @@ def _write_celune_flac(
     display_text = metadata.get("display_text")
 
     if not isinstance(display_text, str):
-        display_text = f"Celune speech from {created_at}"
+        display_text = f"{APP_NAME} speech from {created_at}"
 
     prompt = display_text.split()
     words = " ".join(prompt[:5])
@@ -387,9 +389,9 @@ def _write_celune_flac(
         words += "..."
 
     tags: JSON = {
-        "encoder": f"Celune {__version__}",
-        "artist": engine.current_character or "Celune",
-        "album": f"Celune via {engine.backend.name}",
+        "encoder": f"{APP_NAME} {__version__}",
+        "artist": engine.current_character or APP_NAME,
+        "album": f"{APP_NAME} via {engine.backend.name}",
         "title": words,
         "comment": encoded,
         "created_at": created_at,
@@ -503,8 +505,8 @@ def acquire_pipeline(engine: Celune, action: str) -> bool:
     with engine.say_lock:
         engine.log_dev(f"[LOCK] acquire requested by {action}, locked={engine.locked}")
         if engine.locked:
-            engine.log(f"Tried to {action} while Celune was busy.", "warning")
-            engine.error_callback("Celune is currently busy")
+            engine.log(f"Tried to {action} while {APP_NAME} was busy.", "warning")
+            engine.error_callback(f"{APP_NAME} is currently busy")
             return False
 
         engine.locked = True
@@ -1221,8 +1223,8 @@ def queue_speech(
         return False
 
     if getattr(engine, "sleeping", False):
-        engine.log("Cannot speak while Celune is sleeping.", "warning")
-        engine.error_callback("Celune is currently sleeping")
+        engine.log(f"Cannot speak while {APP_NAME} is sleeping.", "warning")
+        engine.error_callback(f"{APP_NAME} is currently sleeping")
         engine.progress_callback(0, 1)
         return False
 
@@ -1235,7 +1237,7 @@ def queue_speech(
 
     if not engine.loaded:
         engine.log("Model became unavailable before speaking.", "warning")
-        engine.error_callback("Celune is not currently ready")
+        engine.error_callback(f"{APP_NAME} is not currently ready")
         engine.progress_callback(0, 1)
         return False
 
@@ -1259,7 +1261,7 @@ def queue_speech(
             f"Received unsupported input in the following language: {language}",
             "warning",
         )
-        engine.log("Celune may not say the input properly.", "warning")
+        engine.log(f"{APP_NAME} may not say the input properly.", "warning")
 
     if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
         "1",
@@ -1278,7 +1280,7 @@ def queue_speech(
     try:
         if not engine.loaded:
             engine.log("Model became unavailable before queueing speech.", "warning")
-            engine.error_callback("Celune is not currently ready")
+            engine.error_callback(f"{APP_NAME} is not currently ready")
             release_pipeline(engine)
             engine.progress_callback(0, 1)
             return False
@@ -1366,7 +1368,7 @@ def play(engine: Celune, sound_path: str, keep: bool = False) -> bool:
         Exception: Re-raised after releasing the pipeline if SFX playback setup fails.
     """
     if not os.path.exists(sound_path):
-        engine.log(f"Celune cannot find {sound_path}.", "warning")
+        engine.log(f"{APP_NAME} cannot find {sound_path}.", "warning")
         return False
 
     audio, sr = sf.read(sound_path, dtype="float32")
@@ -1913,9 +1915,7 @@ def generation_worker(engine: Celune) -> None:
                                 )
 
                         if os.path.exists("outputs"):
-                            saved_path = (
-                                f"outputs/celune_speech_{timestamp}_{first_words}.flac"
-                            )
+                            saved_path = f"outputs/{APP_SLUG}_speech_{timestamp}_{first_words}.flac"
                             sample_rate = BASE_SR
                             subtype = "PCM_24"
                             metadata = _celune_metadata_payload(
@@ -1967,7 +1967,7 @@ def generation_worker(engine: Celune) -> None:
                 engine.locked = False
                 engine.playback_done.set()
                 engine.progress_callback(0, 1)
-                engine.error_callback("Celune could not generate the input")
+                engine.error_callback(f"{APP_NAME} could not generate the input")
                 break
 
 
@@ -2077,7 +2077,8 @@ def playback_worker(engine: Celune) -> None:
                     )
                     if avail <= total * 0.1:
                         engine.log(
-                            "Celune is running out of VRAM. Check the bottom right of Celune's window to learn more.",
+                            f"{APP_NAME} is running out of VRAM. "
+                            f"Check the bottom right of {APP_NAME}'s window to learn more.",
                             "warning",
                         )
                         engine.log(
@@ -2102,7 +2103,9 @@ def playback_worker(engine: Celune) -> None:
                 engine.log_dev(f"[PLAY] started stream at {sr} Hz")
             except sd.PortAudioError:
                 if not engine.audio_unavailable:
-                    engine.log("Celune could not initialize the audio stream.", "error")
+                    engine.log(
+                        f"{APP_NAME} could not initialize the audio stream.", "error"
+                    )
                     engine.log("No suitable audio device is available.", "error")
                     engine.error_callback("No suitable audio devices")
                 engine._audio_unavailable = True

@@ -9,6 +9,7 @@ from unittest import TestCase, mock
 import yaml
 from textual.widgets import RichLog
 
+from celune.constants import APP_SLUG
 from celune.paths import ensure_config_path
 from celune.persona.memory import default_memory_dir
 from celune.ui.app import CeluneUI
@@ -36,7 +37,7 @@ class RuntimePathTests(TestCase):
             RuntimeError: An exception was raised for testing purposes and caught afterward.
         """
         with tempfile.TemporaryDirectory() as temp_dir:
-            trace_path = Path(temp_dir) / "celune_traceback.txt"
+            trace_path = Path(temp_dir) / f"{APP_SLUG}_traceback.txt"
 
             try:
                 raise RuntimeError("boom")
@@ -57,7 +58,7 @@ class RuntimePathTests(TestCase):
         ui._log_file_initialized = False
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            ui._log_file_path = Path(temp_dir) / "celune.log"
+            ui._log_file_path = Path(temp_dir) / f"{APP_SLUG}.log"
 
             ui.safe_log("Hello from Celune")
             ui.safe_log("Something odd happened", "warning")

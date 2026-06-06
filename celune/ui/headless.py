@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Headless Celune UI."""
+"""Headless UI."""
 
 import sys
 import time
@@ -10,12 +10,12 @@ from typing import Optional, cast
 
 from ..celune import Celune
 from ..utils import discard
-from ..constants import ExitCodes, SIGTSTP
+from ..constants import APP_NAME, ExitCodes, SIGTSTP
 from ..config import Config, config_bool
 
 
 class CeluneHeadlessUI:
-    """Celune headless interface methods."""
+    """Headless interface methods."""
 
     _instance: Optional["CeluneHeadlessUI"] = None
 
@@ -35,7 +35,7 @@ class CeluneHeadlessUI:
         }
         self.celune = cast(Celune, None)
 
-        # for Celune terminals not supporting colored text
+        # for app terminals not supporting colored text
         self.no_color = config_bool(
             config, "CELUNE_HEADLESS_NOCOLOR", "headless_nocolor"
         )
@@ -44,7 +44,7 @@ class CeluneHeadlessUI:
         CeluneHeadlessUI._instance = self
 
     def _has_celune(self) -> bool:
-        """Is Celune attached to this UI instance?"""
+        """Is the app attached to this UI instance?"""
         return self.celune is not None
 
     def severity_color(self, severity: str) -> str:
@@ -93,7 +93,7 @@ class CeluneHeadlessUI:
         """Start the headless interface."""
         if not self._has_celune():
             warnings.warn(
-                f"{self.__class__.__name__} has no attached Celune instance: this will do nothing",
+                f"{self.__class__.__name__} has no attached {APP_NAME} instance: this will do nothing",
                 RuntimeWarning,
             )
 
@@ -112,7 +112,7 @@ class CeluneHeadlessUI:
         CeluneHeadlessUI._instance = None
 
     def signal_handler(self, sig: int, frame: Optional[FrameType]) -> None:
-        """Exit Celune in headless mode on CTRL+C and handle CTRL+Z.
+        """Exit in headless mode on CTRL+C and handle CTRL+Z.
 
         Args:
             sig: The received signal number.

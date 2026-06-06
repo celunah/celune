@@ -1,0 +1,1061 @@
+# SPDX-License-Identifier: MIT
+"""CLI entrypoint helpers."""
+
+import os
+import sys
+import time
+import shutil
+import random
+import platform
+import datetime
+import warnings
+import subprocess
+import contextlib
+import importlib
+import importlib.util
+from pathlib import Path
+from typing import Optional
+from dataclasses import dataclass
+from types import SimpleNamespace
+
+from celune import __version__, REVISION, __tagline__
+from celune.constants import APP_NAME, APP_SLUG, ExitCodes
+
+
+def _env_flag(name: str) -> bool:
+    """Interpret common truthy environment variable values."""
+    return os.getenv(name, "").strip().lower() in {"1", "true", "on", "yes", "enabled"}
+
+
+# refer to the app configuration for details on these parameters
+INITIAL_DEV = _env_flag("CELUNE_DEV")
+INITIAL_HEADLESS = _env_flag("CELUNE_HEADLESS")
+INITIAL_BACKEND = os.getenv("CELUNE_BACKEND")
+
+# these parameters are used by the app CLI and its commands, e.g. 'celune doctor'
+LAUNCHED_VIA_LAUNCHER = _env_flag("CELUNE_LAUNCHER")
+SCRIPT_PATH = Path(__file__).resolve()
+PROJECT_ROOT = SCRIPT_PATH.parent.parent
+SETUP_PATH = PROJECT_ROOT / "setup.py"
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "default_config.yaml"
+SCRIPT_NAME = "main.py"
+EXIT_CODES = ExitCodes
+_RUNTIME: Optional[SimpleNamespace] = None
+
+
+def normalize_argv0(argv: Optional[list[str]] = None) -> list[str]:
+    """Return argv with the launcher-facing program name normalized when applicable.
+
+    Args:
+        argv: The arguments to normalize.
+
+    Returns:
+        list[str]: Normalized argument list.
+    """
+    resolved = list(sys.argv if argv is None else argv)
+    if resolved and LAUNCHED_VIA_LAUNCHER:
+        resolved[0] = "celune"
+    return resolved
+
+
+def _display_version() -> tuple[str, str]:
+    """Return the user-facing version string together with the raw revision marker."""
+    return __version__, REVISION
+
+
+def _print_dependency_setup_help(package_name: str) -> None:
+    """Print the shared missing-dependency guidance used by startup paths."""
+    print(f"You do not have '{package_name}' installed.")
+    print(f"{APP_NAME} requires this library to function.")
+    print()
+    print(f"Set up {APP_NAME} automatically by running:")
+    print("    python setup.py")
+    print()
+    print("or alternatively with uv:")
+    print("    uv sync")
+    print()
+    print("or install the package manually:")
+    print(f"    pip install {package_name}")
+    print()
+
+    print("for full traceback:")
+    if os.name == "nt":
+        print("set CELUNE_DEV=1")
+        print(f"    python {SCRIPT_NAME}")
+    else:
+        print(f"    CELUNE_DEV=1 python {SCRIPT_NAME}")
+    print()
+
+
+def _load_runtime() -> SimpleNamespace:
+    """Import runtime-heavy modules only when a startup path needs them."""
+    global _RUNTIME
+    if _RUNTIME is not None:
+        return _RUNTIME
+
+    try:
+        import yaml
+        import psutil
+        import webbrowser
+
+        from celune.celune import Celune
+        from celune.exceptions import No, UpdateError
+        from celune.namedays import has_name_day
+        from celune.updater import check_for_update, update_to_latest
+        from celune.ui import (
+            CeluneUI,
+            CeluneHeadlessUI,
+            CeluneHeadlessBaseUI,
+            CeluneTextualUI,
+            SelectMenu,
+        )
+        from celune.config import (
+            config_bool,
+            config_value,
+            env_bool,
+            merge_missing_defaults,
+        )
+        from celune.paths import (
+            config_path,
+            default_config_path,
+            ensure_config_path,
+        )
+        from celune.utils import detected_ide, supports_ansi, indent, title_case
+    except ModuleNotFoundError as package:
+        if package.name is not None:
+            _print_dependency_setup_help(package.name)
+
+        if INITIAL_DEV:
+            with contextlib.suppress(ModuleNotFoundError):
+                from rich.traceback import install
+
+                install()
+
+            raise
+
+        sys.exit(EXIT_CODES.EXIT_MISSING_DEPENDENCIES.value)
+
+    _RUNTIME = SimpleNamespace(
+        yaml=yaml,
+        psutil=psutil,
+        webbrowser=webbrowser,
+        __version__=__version__,
+        REVISION=REVISION,
+        __tagline__=__tagline__,
+        Celune=Celune,
+        No=No,
+        UpdateError=UpdateError,
+        has_name_day=has_name_day,
+        check_for_update=check_for_update,
+        update_to_latest=update_to_latest,
+        CeluneUI=CeluneUI,
+        CeluneHeadlessUI=CeluneHeadlessUI,
+        CeluneHeadlessBaseUI=CeluneHeadlessBaseUI,
+        CeluneTextualUI=CeluneTextualUI,
+        SelectMenu=SelectMenu,
+        config_bool=config_bool,
+        config_value=config_value,
+        env_bool=env_bool,
+        merge_missing_defaults=merge_missing_defaults,
+        config_path=config_path,
+        default_config_path=default_config_path,
+        ensure_config_path=ensure_config_path,
+        detected_ide=detected_ide,
+        supports_ansi=supports_ansi,
+        indent=indent,
+        title_case=title_case,
+        ExitCodes=ExitCodes,
+    )
+    return _RUNTIME
+
+
+@dataclass
+class DoctorCheck:
+    """One environment check reported by `celune doctor`."""
+
+    label: str
+    ok: bool
+    detail: str
+    severity: str = "error"
+    hint: Optional[str] = None
+
+
+def _doctor_status(check: DoctorCheck) -> str:
+    """Return a compact status label for one doctor check."""
+    if check.ok:
+        return "OK"
+    if check.severity == "warning":
+        return "WARN"
+    return "FAIL"
+
+
+def _doctor_add(
+    checks: list[DoctorCheck],
+    label: str,
+    ok: bool,
+    detail: str,
+    severity: str = "error",
+    hint: Optional[str] = None,
+) -> None:
+    """Append one doctor check result to the active report."""
+    checks.append(
+        DoctorCheck(label=label, ok=ok, detail=detail, severity=severity, hint=hint)
+    )
+
+
+def _doctor_import(module_name: str) -> bool:
+    """Return whether a module can be resolved without importing the full app."""
+    return importlib.util.find_spec(module_name) is not None
+
+
+def _doctor_distro_name(system_name: str) -> str:
+    """Return a human-readable distribution or OS label for the current system."""
+    if system_name != "Linux":
+        return system_name
+
+    try:
+        return platform.freedesktop_os_release().get("NAME", "Linux")
+    except OSError:
+        return "Linux"
+
+
+def _doctor_openrgb_path() -> Optional[Path]:
+    """Resolve OpenRGB even when it was not added to PATH."""
+    for binary_name in ("openrgb", "OpenRGB"):
+        binary_path = shutil.which(binary_name)  # noqa: "before Python 3.12", but Celune expects 3.12/3.13.
+        if binary_path:
+            return Path(binary_path)
+
+    if platform.system() == "Windows":
+        candidates: list[Path] = []
+        for env_name in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+            base = os.environ.get(env_name)
+            if base:
+                candidates.extend(
+                    [
+                        Path(base) / "OpenRGB" / "OpenRGB.exe",
+                        Path(base) / "OpenRGB" / "openrgb.exe",
+                    ]
+                )
+
+        scoop = os.environ.get("SCOOP") or str(Path.home() / "scoop")
+        candidates.extend(
+            [
+                Path(scoop) / "apps" / "openrgb" / "current" / "OpenRGB.exe",
+                Path(scoop) / "apps" / "openrgb" / "current" / "openrgb.exe",
+            ]
+        )
+    else:
+        candidates = [
+            Path("/usr/bin/openrgb"),
+            Path("/usr/local/bin/openrgb"),
+            Path("/opt/OpenRGB/openrgb"),
+            Path("/opt/OpenRGB/OpenRGB"),
+        ]
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _doctor_binary_path(binary_name: str) -> Optional[Path]:
+    """Resolve one external runtime binary used by the app."""
+    if binary_name == "openrgb":
+        return _doctor_openrgb_path()
+
+    binary_path = shutil.which(binary_name)  # noqa: "before Python 3.12", but Celune expects 3.12/3.13.
+    return Path(binary_path) if binary_path else None
+
+
+def _doctor_venv_python() -> Path:
+    """Return the interpreter path that the native launcher expects to find."""
+    if os.name == "nt":
+        return PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
+    return PROJECT_ROOT / ".venv" / "bin" / "python"
+
+
+def _doctor_running_python() -> Path:
+    """Return the interpreter path currently running the doctor command."""
+    return Path(sys.executable).resolve()
+
+
+def _doctor_same_path(left: Path, right: Path) -> bool:
+    """Return whether two paths refer to the same normalized location."""
+    return os.path.normcase(str(left.resolve())) == os.path.normcase(
+        str(right.resolve())
+    )
+
+
+def _doctor_config_path() -> Optional[Path]:
+    """Resolve the runtime config path when `platformdirs` is available."""
+    try:
+        from platformdirs import user_data_dir
+    except ModuleNotFoundError:
+        return None
+
+    return Path(user_data_dir(APP_SLUG, appauthor=False)) / "config.yaml"
+
+
+def _doctor_torch_details() -> list[DoctorCheck]:
+    """Collect non-startup PyTorch and accelerator diagnostics."""
+    checks: list[DoctorCheck] = []
+
+    if not _doctor_import("torch"):
+        _doctor_add(
+            checks,
+            "PyTorch",
+            False,
+            "Module 'torch' is not installed.",
+            hint="Run `python setup.py` or `uv sync`.",
+        )
+        return checks
+
+    try:
+        torch = importlib.import_module("torch")
+    except Exception as exc:
+        _doctor_add(
+            checks,
+            "PyTorch",
+            False,
+            f"Import failed: {exc}",
+            hint="Repair the environment with `celune doctor --fix`.",
+        )
+        return checks
+
+    cuda_version = getattr(torch.version, "cuda", None)
+    build_variant = getattr(torch, "__version__", "<unknown>")
+    _doctor_add(
+        checks,
+        "PyTorch",
+        True,
+        f"{build_variant} (CUDA build: {cuda_version or 'none'})",
+    )
+
+    try:
+        cuda_available = bool(torch.cuda.is_available())
+    except Exception as exc:
+        _doctor_add(
+            checks,
+            "CUDA availability",
+            False,
+            f"Probe failed: {exc}",
+            hint="Check your GPU drivers and PyTorch install.",
+        )
+        return checks
+
+    if cuda_available:
+        expected = "12.8"
+        _doctor_add(
+            checks,
+            "CUDA runtime",
+            cuda_version == expected,
+            f"Detected CUDA {cuda_version or 'unknown'}",
+            hint=f"{APP_NAME} expects CUDA 12.8 for the main GPU backends.",
+        )
+
+        try:
+            device_count = int(torch.cuda.device_count())
+        except Exception as exc:
+            _doctor_add(
+                checks,
+                "CUDA devices",
+                False,
+                f"Enumeration failed: {exc}",
+                hint="Check whether the current user can access the GPU runtime.",
+            )
+            return checks
+
+        _doctor_add(
+            checks,
+            "CUDA devices",
+            device_count > 0,
+            f"{device_count} detected",
+            hint="Install or expose a CUDA-capable GPU for Qwen3 or VoxCPM2.",
+        )
+
+        for index in range(device_count):
+            try:
+                gpu_name = str(torch.cuda.get_device_name(index))
+                major, minor = torch.cuda.get_device_capability(index)
+                supported = major >= 8
+                detail = f"{gpu_name} (compute capability {major}.{minor})"
+                hint = (
+                    f"{APP_NAME} requires Ampere or newer for the CUDA-only backends."
+                    if not supported
+                    else None
+                )
+                _doctor_add(
+                    checks,
+                    f"GPU {index}",
+                    supported,
+                    detail,
+                    hint=hint,
+                )
+            except Exception as exc:
+                _doctor_add(
+                    checks,
+                    f"GPU {index}",
+                    False,
+                    f"Probe failed: {exc}",
+                    hint="Check driver and CUDA runtime health.",
+                )
+    else:
+        has_mps = bool(
+            hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+        )
+        if has_mps:
+            _doctor_add(
+                checks,
+                "Accelerator backend",
+                False,
+                f"MPS detected. {APP_NAME} does not support MPS execution.",
+                hint="Use a CUDA-capable environment or the mini backend on CPU.",
+            )
+        else:
+            _doctor_add(
+                checks,
+                "Accelerator backend",
+                False,
+                "No CUDA-capable backend detected.",
+                severity="warning",
+                hint=f"{APP_NAME} Mini can run on CPU, but the default backend needs CUDA.",
+            )
+
+    return checks
+
+
+def _doctor_checks() -> list[DoctorCheck]:
+    """Collect a lightweight environment report without starting the app."""
+    checks: list[DoctorCheck] = []
+    system_name = platform.system()
+    distro_name = _doctor_distro_name(system_name)
+
+    _doctor_add(
+        checks,
+        "Operating system",
+        system_name in {"Windows", "Linux"},
+        f"{distro_name} ({platform.machine()})",
+        hint=f"{APP_NAME} currently supports Windows and Linux only.",
+    )
+
+    python_ok = (3, 12) <= sys.version_info < (3, 14)
+    python_detail = (
+        f"{platform.python_version()} (supported: 3.12/3.13)"
+        if python_ok
+        else f"{platform.python_version()} (unsupported: expected 3.12/3.13)"
+    )
+    _doctor_add(
+        checks,
+        "Python",
+        python_ok,
+        python_detail,
+        hint=f"{APP_NAME} currently supports Python 3.12 and 3.13.",
+    )
+
+    for label, path, hint in (
+        (
+            "Repository root",
+            PROJECT_ROOT,
+            "Run the launcher from the cloned repository.",
+        ),
+        ("setup.py", SETUP_PATH, "Repair uses the repo-local `setup.py` bootstrapper."),
+        (
+            "default_config.yaml",
+            DEFAULT_CONFIG_PATH,
+            f"This file ships {APP_NAME}'s bundled defaults.",
+        ),
+    ):
+        _doctor_add(checks, label, path.exists(), str(path), hint=hint)
+
+    version, revision = _display_version()
+    version_detail = version if not revision else f"{version} ({revision})"
+    _doctor_add(checks, "Version metadata", True, version_detail)
+
+    venv_python = _doctor_venv_python()
+    current_python = _doctor_running_python()
+    if _doctor_same_path(current_python, venv_python):
+        _doctor_add(
+            checks,
+            "Python environment",
+            True,
+            f"virtual environment ({current_python})",
+        )
+    elif venv_python.exists():
+        _doctor_add(
+            checks,
+            "Python environment",
+            False,
+            f"system interpreter ({current_python})",
+            severity="warning",
+            hint=f"Prefer the project virtual environment at {venv_python}.",
+        )
+    else:
+        _doctor_add(
+            checks,
+            "Python environment",
+            False,
+            f"project virtual environment not found; running {current_python}",
+            hint="Run `celune doctor --fix` to create or repair the virtual environment.",
+        )
+
+    _doctor_add(
+        checks,
+        "Launcher Python",
+        venv_python.exists(),
+        str(venv_python),
+        hint="Run `celune doctor --fix` to create or repair the virtual environment.",
+    )
+
+    uv_path = shutil.which("uv")  # noqa: "before Python 3.12", but Celune expects 3.12/3.13.
+    _doctor_add(
+        checks,
+        "uv",
+        uv_path is not None,
+        uv_path or "not found",
+        hint=f"{APP_NAME} setup uses uv to sync Python dependencies.",
+    )
+
+    required_imports = [
+        ("yaml", "PyYAML", f"{APP_NAME} needs YAML support for config loading."),
+        ("psutil", "psutil", f"{APP_NAME} uses psutil for process checks."),
+        (
+            "platformdirs",
+            "platformdirs",
+            f"{APP_NAME} stores runtime data in a user data directory.",
+        ),
+        ("textual", "textual", f"{APP_NAME}'s interactive UI depends on Textual."),
+        ("rich", "rich", f"{APP_NAME}'s terminal rendering depends on Rich."),
+        (
+            "readchar",
+            "readchar",
+            f"{APP_NAME}'s terminal input layer depends on readchar.",
+        ),
+        (
+            "langdetect",
+            "langdetect",
+            f"{APP_NAME} uses langdetect to infer utterance language.",
+        ),
+        ("torch", "PyTorch", f"{APP_NAME}'s speech backends require PyTorch."),
+        (
+            "torchaudio",
+            "torchaudio",
+            f"{APP_NAME}'s audio pipeline requires torchaudio.",
+        ),
+        ("sounddevice", "sounddevice", f"{APP_NAME} playback requires sounddevice."),
+        ("soundfile", "soundfile", f"{APP_NAME} audio I/O requires soundfile."),
+        (
+            "pyrubberband",
+            "pyrubberband",
+            f"{APP_NAME}'s time-stretching path requires pyrubberband.",
+        ),
+        (
+            "faster_qwen3_tts",
+            "faster-qwen3-tts",
+            f"{APP_NAME}'s default backend requires faster-qwen3-tts.",
+        ),
+    ]
+    optional_imports = [
+        ("torchvision", "torchvision", "Persona vision support uses torchvision."),
+        ("pocket_tts", "pocket-tts", f"{APP_NAME} Mini needs pocket-tts."),
+        ("voxcpm", "voxcpm", "The VoxCPM2 backend needs voxcpm."),
+        ("openrgb", "openrgb-python", "Presence lighting needs openrgb-python."),
+        ("matplotlib", "matplotlib", "Developer visualizations use matplotlib."),
+    ]
+
+    for module_name, package_name, hint in required_imports:
+        available = _doctor_import(module_name)
+        _doctor_add(
+            checks,
+            f"Python package: {package_name}",
+            available,
+            "installed" if available else "missing",
+            hint=hint,
+        )
+
+    for module_name, package_name, hint in optional_imports:
+        available = _doctor_import(module_name)
+        _doctor_add(
+            checks,
+            f"Python package: {package_name}",
+            available,
+            "installed" if available else "missing",
+            severity="warning",
+            hint=hint,
+        )
+
+    required_binaries = [("sox", "SoX audio processing is required.")]
+    if system_name == "Windows":
+        required_binaries.extend(
+            [
+                ("rubberband", "Rubber Band CLI is required for time stretching."),
+                ("openrgb", f"OpenRGB powers {APP_NAME}'s presence lighting features."),
+            ]
+        )
+    elif distro_name in {"Ubuntu", "Debian"}:
+        required_binaries.append(
+            ("rubberband", "Rubber Band CLI is required for time stretching.")
+        )
+    elif distro_name == "Arch Linux":
+        required_binaries.extend(
+            [
+                ("rubberband", "Rubber Band CLI is required for time stretching."),
+                ("openrgb", f"OpenRGB powers {APP_NAME}'s presence lighting features."),
+            ]
+        )
+
+    for binary_name, hint in required_binaries:
+        binary_path = _doctor_binary_path(binary_name)
+        _doctor_add(
+            checks,
+            f"Binary: {binary_name}",
+            binary_path is not None,
+            str(binary_path) if binary_path else "not found",
+            hint=hint,
+        )
+
+    config_path = _doctor_config_path()
+    if config_path is None:
+        _doctor_add(
+            checks,
+            "Runtime config path",
+            False,
+            "platformdirs is not installed, so the runtime config location is unavailable.",
+            hint="Install platformdirs to restore runtime path handling.",
+        )
+    else:
+        parent_exists = config_path.parent.exists()
+        _doctor_add(
+            checks,
+            "Runtime config path",
+            True,
+            str(config_path),
+        )
+        _doctor_add(
+            checks,
+            "Runtime config file",
+            config_path.exists(),
+            "present" if config_path.exists() else "not created yet",
+            severity="warning",
+            hint=(
+                f"{APP_NAME} will create this file on first successful startup."
+                if parent_exists
+                else "The runtime data directory has not been created yet."
+            ),
+        )
+
+    checks.extend(_doctor_torch_details())
+    return checks
+
+
+def run_doctor(argv: list[str]) -> int:
+    """Run `celune doctor` and optionally repair the environment.
+
+    Args:
+        argv: Arguments passed to `celune doctor`.
+
+    Returns:
+        int: The exit code for `celune doctor` to exit with.
+    """
+    doctor_args = argv[2:]
+    fix = False
+    if doctor_args:
+        if doctor_args == ["--fix"]:
+            fix = True
+        else:
+            print(f"Usage: {argv[0]} doctor [--fix]")
+            print(f"Inspect {APP_NAME}'s runtime environment without starting the app.")
+            print("Use --fix to run setup.py from the repository root.")
+            return EXIT_CODES.EXIT_UNKNOWN_ARGS.value
+
+    print(f"Checking your environment for compatibility with {APP_NAME}...")
+    print()
+
+    checks = _doctor_checks()
+    failures = 0
+    warnings_count = 0
+    passes = 0
+
+    for check in checks:
+        status = _doctor_status(check)
+        print(f"[{status}] {check.label}: {check.detail}")
+        if check.hint and not check.ok:
+            print(f"       hint: {check.hint}")
+
+        if check.ok:
+            passes += 1
+        elif check.severity == "warning":
+            warnings_count += 1
+        else:
+            failures += 1
+
+    print()
+    print(
+        f"Summary: {passes} passed, {warnings_count} warning"
+        f"{'' if warnings_count == 1 else 's'}, {failures} failed"
+    )
+    print()
+
+    if failures == 0:
+        print(f"Your system is ready to run {APP_NAME}.")
+    elif failures == 0 and warnings_count > 0:
+        print(f"{APP_NAME}'s performance may be impacted.")
+        print("Rerun with --fix to attempt to fix these problems.")
+    else:
+        print(f"{APP_NAME} will not work.")
+        print("Rerun with --fix to attempt to fix these problems.")
+
+    if fix:
+        print()
+        print(f"Running {SETUP_PATH.name} from {PROJECT_ROOT}...")
+        try:
+            result = subprocess.run(
+                [sys.executable, str(SETUP_PATH)],
+                cwd=PROJECT_ROOT,
+                check=False,
+            )
+        except OSError as exc:
+            print(f"Failed to fix {APP_NAME}: {exc}")
+            return EXIT_CODES.EXIT_FAILURE.value
+        return int(result.returncode)
+
+    return EXIT_CODES.EXIT_FAILURE.value if failures else 0
+
+
+def handle_config(command_args: list[str], prog_name: str) -> None:
+    """Handle `celune config` commands lazily.
+
+    Args:
+        command_args: Current command's arguments.
+        prog_name: The name of the program.
+    """
+    runtime = _load_runtime()
+
+    if len(command_args) == 1:
+        if command_args[0] == "view":
+            print(f"Current {APP_NAME} configuration:")
+            print()
+
+            with open(runtime.config_path(), encoding="utf-8") as cfg:
+                print(cfg.read().strip())
+        elif command_args[0] == "edit":
+            runtime.webbrowser.open(runtime.config_path())
+        else:
+            print("Invalid argument.")
+            print()
+            print(f"Usage: {prog_name} config [view/edit]")
+            print(f"View or edit {APP_NAME}'s configuration.")
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+    else:
+        print("No argument given.")
+        print()
+        print(f"Usage: {prog_name} config [view/edit]")
+        print(f"View or edit {APP_NAME}'s configuration.")
+        sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+
+
+def start(verbose: bool = False) -> None:
+    """Instantiate and start the app.
+
+    Args:
+        verbose: Whether the app should be started in verbose (developer) mode.
+
+    Raises:
+        No: If `No` needs to be raised.
+        Exception: If `Exception` needs to be raised.
+    """
+    runtime = _load_runtime()
+    try:
+        date = datetime.datetime.now()
+        if runtime.has_name_day("Celine", date) and not runtime.env_bool(
+            "CELUNE_OVERRIDE_CELINE_DAY"
+        ):
+            raise runtime.No
+
+        if runtime.supports_ansi():
+            print(f"\x1b]2;{APP_NAME}\x07", end="", flush=True)
+
+        ide = runtime.detected_ide()
+        if ide is not None:
+            print(f"{APP_NAME} is running from {ide}.")
+            print("Some IDE terminals may behave differently from a normal terminal.")
+            print()
+            time.sleep(5)
+
+        bundled_default_config_path = runtime.default_config_path()
+        active_config_path, created_config = runtime.ensure_config_path(
+            active_path=runtime.config_path(create_parent=True),
+            default_path=bundled_default_config_path,
+        )
+        if created_config:
+            print(f"{APP_NAME} configuration has been created.")
+
+        with open(active_config_path, encoding="utf-8") as cfg:
+            config = runtime.yaml.safe_load(cfg)
+        with open(bundled_default_config_path, encoding="utf-8") as cfg:
+            default_config = runtime.yaml.safe_load(cfg)
+
+        if not isinstance(default_config, dict):
+            default_config = {}
+        if not isinstance(config, dict):
+            config = {}
+
+        config, config_updated = runtime.merge_missing_defaults(config, default_config)
+        if config_updated:
+            with open(active_config_path, "w", encoding="utf-8") as cfg:
+                runtime.yaml.safe_dump(config, cfg, sort_keys=False)
+            print(f"{APP_NAME} configuration has been updated with new defaults.")
+
+        dev = verbose or runtime.config_bool(config, "CELUNE_DEV", "dev")
+        headless = runtime.config_bool(config, "CELUNE_HEADLESS", "headless")
+        configured_backend = INITIAL_BACKEND or runtime.config_value(config, "backend")
+        backend = configured_backend if isinstance(configured_backend, str) else None
+
+        if not headless and runtime.supports_ansi():
+            update = runtime.check_for_update()
+            if update:
+                latest_label = f"{APP_NAME} {update.latest_version}"
+                if not update.latest_tag:
+                    warnings.warn(
+                        "update information is incomplete", RuntimeWarning, stacklevel=2
+                    )
+                    latest_label = APP_NAME
+
+                choice = runtime.SelectMenu(
+                    ["Yes, update now", "No, continue as is"],
+                    [True, False],
+                    "\n".join(
+                        [
+                            "New update found.",
+                            (
+                                f"You are running {APP_NAME} {update.local_version} "
+                                f"({update.local_revision}), latest version is "
+                                f"{latest_label} ({update.latest_revision})."
+                            ),
+                            "Do you want to update?",
+                        ]
+                    ),
+                ).start()
+
+                if choice:
+                    print(f"Updating {APP_NAME}...")
+                    try:
+                        runtime.update_to_latest()
+                    except runtime.UpdateError as exc:
+                        detail = runtime.title_case(str(exc))
+                        print(f"{APP_NAME} could not update: {detail}")
+                        print("Continuing with the current version.")
+                        time.sleep(5)
+                    else:
+                        print(
+                            f"{APP_NAME} updated successfully. Restart {APP_NAME} to apply changes."
+                        )
+                        time.sleep(5)
+                        sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
+        elif runtime.check_for_update() and not runtime.supports_ansi():
+            print("This terminal does not support ANSI.")
+            print("Attempting to apply update non-interactively...")
+            try:
+                runtime.update_to_latest()
+            except runtime.UpdateError as exc:
+                detail = runtime.title_case(str(exc))
+                print(f"{APP_NAME} could not update: {detail}")
+                print("Continuing with the current version.")
+                time.sleep(5)
+            else:
+                print(
+                    f"{APP_NAME} updated successfully. Restart {APP_NAME} to apply changes."
+                )
+                time.sleep(5)
+                sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
+
+        if not runtime.env_bool("CELUNE_LAUNCHER"):
+            launcher_exe = "celune.exe" if os.name == "nt" else "celune.appimage"
+            print(f"{APP_NAME} is not being launched via the {APP_NAME} launcher.")
+            print()
+            print(f"To suppress this message, run {APP_NAME} with:")
+            print(runtime.indent(f"{launcher_exe}", spaces=4))
+            print()
+            print("or set the following environment variable:")
+            print(runtime.indent("CELUNE_LAUNCHER=1", spaces=4))
+            time.sleep(5)
+        else:
+            active_processes = 0
+            for proc in runtime.psutil.process_iter():
+                with contextlib.suppress(
+                    runtime.psutil.AccessDenied,
+                    runtime.psutil.NoSuchProcess,
+                    runtime.psutil.ZombieProcess,
+                ):
+                    if proc.name() in ["celune.exe", "celune.appimage"]:
+                        active_processes += 1
+                        if active_processes > 1:
+                            print(f"{APP_NAME} is already running.")
+                            time.sleep(5)
+                            sys.exit(runtime.ExitCodes.EXIT_ALREADY_RUNNING.value)
+
+        if not headless and runtime.supports_ansi():
+            ui = runtime.CeluneUI()
+            celune = runtime.Celune(
+                tts_backend=backend,
+                log_callback=ui.tts_log,
+                status_callback=ui.safe_status,
+                error_callback=ui.error,
+                idle_callback=ui.tts_idle,
+                queue_avail_callback=ui.tts_queue_avail,
+                voice_changed_callback=ui.tts_voice_changed,
+                change_input_state_callback=ui.change_input_state,
+                change_voice_lock_state_callback=ui.change_voice_lock_state,
+                progress_callback=ui.safe_progress,
+                dev=dev,
+                config=config,
+            )
+            ui.celune = celune
+            ui.run()
+        elif headless:
+            ui_headless = runtime.CeluneHeadlessUI(config)
+            celune = runtime.Celune(
+                tts_backend=backend,
+                log_callback=ui_headless.headless_log,
+                error_callback=ui_headless.headless_error,
+                dev=dev,
+                config=config,
+            )
+            ui_headless.celune = celune
+
+            if not celune.load():
+                print(f"{APP_NAME} could not initialize.")
+                celune.close()
+                time.sleep(5)
+                sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
+
+            print(f"{APP_NAME} is running in headless mode.")
+            print(
+                f"While in this mode, input is only possible via {APP_NAME} extensions."
+            )
+            ui_headless.run()
+        else:
+            print("This terminal does not support ANSI.")
+            print(f"{APP_NAME} cannot start in normal mode.")
+            print("Hint:")
+            print(runtime.indent("Try using another terminal application.", spaces=4))
+            time.sleep(5)
+            sys.exit(runtime.ExitCodes.EXIT_NO_ANSI.value)
+    except Exception as exc:
+        if exc.__class__ != runtime.No:
+            stdout = getattr(sys.stdout, "underlying_stdout", sys.stdout)
+            stderr = getattr(sys.stderr, "underlying_stderr", sys.stderr)
+            sys.stdout = stdout
+            sys.stderr = stderr
+
+            print(f"An internal error occurred while {APP_NAME} was running.")
+            if INITIAL_DEV:
+                with contextlib.suppress(ModuleNotFoundError):
+                    from rich.traceback import install
+
+                    install()
+
+                raise
+            print(exc or "no error description")
+            print("For full traceback:")
+            if os.name == "nt":
+                print("set CELUNE_DEV=1")
+                print(runtime.indent(f"python {SCRIPT_NAME}", spaces=4))
+            else:
+                print(runtime.indent(f"CELUNE_DEV=1 python {SCRIPT_NAME}", spaces=4))
+            print()
+            print("additional debugging:")
+            print(runtime.indent("Set 'dev: true' in config.yaml", spaces=4))
+            sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
+
+        print("I sense the presence of... her.")
+        print("I would rather not.")
+        print()
+        print("Hint:")
+        print(runtime.indent("Try again tomorrow.", spaces=4))
+        print("or set the following environment variable:")
+        print(runtime.indent("CELUNE_OVERRIDE_CELINE_DAY=1", spaces=4))
+        time.sleep(5)
+        sys.exit(
+            runtime.ExitCodes.EXIT_CELINE_DAY.value
+            if random.uniform(0, 1) < 0.5
+            else runtime.ExitCodes.EXIT_CELINE_DAY_SIX_SEVEN.value
+        )
+
+
+def main(argv: Optional[list[str]] = None) -> None:
+    """Process arguments and perform an appropriate action.
+
+    Args:
+        argv: Arguments to be processed.
+    """
+    resolved_argv = normalize_argv0(argv)
+    args = resolved_argv[1:]
+
+    if not args:
+        start()
+    elif args[0] in {"start", "run"}:
+        if args[1] not in {"--verbose", "-v"}:
+            print(f"Unexpected argument: {args[1]}")
+            print(f"Run `{resolved_argv[0]} help` to view correct usage.")
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+        verbose = any(arg in {"--verbose", "-v"} for arg in args[1:])
+        start(verbose=verbose)
+    elif args[0] == "config":
+        handle_config(args[1:], resolved_argv[0])
+    elif args[0] == "doctor":
+        if len(args) > 1:
+            if args[1] != "--fix":
+                print(f"Unexpected argument: {args[1]}")
+                print(f"Run `{resolved_argv[0]} help` to view correct usage.")
+                sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+        sys.exit(run_doctor(resolved_argv))
+    elif args[0] in {"help", "--help", "-h"}:
+        if len(args) > 1:
+            print(f"Unexpected extra argument: {args[1]}")
+            print(f"Run `{resolved_argv[0]} help` to view correct usage.")
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+
+        # HACK: tabs are a quick and dirty alignment trick
+        # they are not guaranteed to work in all terminals equally well
+        print(f"Usage: {resolved_argv[0]} [command]")
+        print()
+        print("Available commands:")
+        print(f"start/run [-v]\t\t\tStart {APP_NAME}.")
+        print(f"config [view/edit]\t\tView or edit {APP_NAME}'s configuration.")
+        print(
+            f"doctor [--fix]\t\t\tInspect the environment without starting {APP_NAME}."
+        )
+        print("help\t\t\t\tDisplay this help message.")
+        print(f"version\t\t\t\tDisplay running {APP_NAME} version.")
+        print()
+        print(
+            f"Some commands may be used with a parameter (e.g. {resolved_argv[0]} --argument),"
+        )
+        print(f"or with a subcommand (e.g. {resolved_argv[0]} argument).")
+        print()
+        print(f"Providing no arguments implicitly defaults to starting {APP_NAME}.")
+    elif args[0] in {"version", "--version", "-v"}:
+        if len(args) > 1:
+            print(f"Unexpected extra argument: {args[1]}")
+            print(
+                f"Run `{resolved_argv[0]} help` without arguments to view correct usage."
+            )
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+
+        version, revision = _display_version()
+        if revision:
+            print(
+                f"{APP_NAME} {version.split('+', maxsplit=1)[0]} ({revision.rstrip('*')})"
+            )
+        else:
+            print(f"{APP_NAME} {version}")
+        print(__tagline__)
+
+        if "dirty" in revision:
+            print()
+            print(f"Note: This is a modified version of {APP_NAME}.")
+    else:
+        print("Unknown command or argument.")
+        print(f"Run `{resolved_argv[0]} help` to list available commands.")
+        sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)

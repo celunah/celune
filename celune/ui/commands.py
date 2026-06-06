@@ -12,6 +12,7 @@ from typing import Optional, TYPE_CHECKING
 import soundfile as sf
 
 from ..backends.qwen3 import Qwen3
+from ..constants import APP_NAME
 from ..utils import format_error
 from ..exceptions import InvalidExtensionError
 from ..utils import replace_ipa
@@ -59,7 +60,7 @@ def _remote_attachment_kind(source: str) -> Optional[str]:
 
 
 def tutorial(ui: CeluneUI) -> None:
-    """Run actions related to Celune's tutorial.
+    """Run actions related to the tutorial.
 
     Args:
         ui: The instance of CeluneUI that the tutorial will interact with.
@@ -138,7 +139,7 @@ def tutorial(ui: CeluneUI) -> None:
 
 
 def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
-    """Process Celune control commands.
+    """Process slash commands.
 
     Args:
         ui: The instance of the CeluneUI to use here.
@@ -148,22 +149,22 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
     ui.input_box.load_text("")
     if command == "help":
-        ui.safe_log("--- Celune help topics ---")
+        ui.safe_log(f"--- {APP_NAME} help topics ---")
         ui.safe_log("Available commands:")
         ui.safe_log(
             "Arguments marked in <> are required, those marked in [] are optional."
         )
         ui.safe_log(
-            "/consumebuffer <true/false> - Make Celune consume text from the live buffer without "
+            f"/consumebuffer <true/false> - Make {APP_NAME} consume text from the live buffer without "
             "pressing CTRL+ENTER."
         )
         ui.safe_log("Caution: This feature may interfere with typing '...'.", "warning")
         ui.safe_log(
-            "/invoke <extension> [args] - Invoke a Celune extension by its name."
+            f"/invoke <extension> [args] - Invoke a {APP_NAME} extension by its name."
         )
-        ui.safe_log("/extensions - List currently available Celune extensions.")
+        ui.safe_log(f"/extensions - List currently available {APP_NAME} extensions.")
         ui.safe_log(
-            "/voiceprompt <prompt> - Change Celune's voice prompt. This will allow you to steer her voice."
+            f"/voiceprompt <prompt> - Change {APP_NAME}'s voice prompt. This will allow you to steer her voice."
         )
         ui.safe_log(
             "Caution: Some prompts may cause adverse effects. Choose prompts that enhance personality, "
@@ -185,9 +186,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(
             "/seed [seed|random] - Set or clear the seed for speech outputs, affecting pronunciation and/or prosody."
         )
-        ui.safe_log("/tutorial - Run Celune's tutorial.")
+        ui.safe_log(f"/tutorial - Run {APP_NAME}'s tutorial.")
         ui.safe_log("/stop - Terminate ongoing speech.")
-        ui.safe_log("/exit - Exit Celune.")
+        ui.safe_log(f"/exit - Exit {APP_NAME}.")
         ui.safe_log("/help - Display this help message.")
         return
     if command == "consumebuffer":
@@ -263,7 +264,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         return
     if command == "speed":
         if not ui.celune.can_use_rubberband:
-            ui.safe_log("Celune cannot currently use Rubber Band.", "warning")
+            ui.safe_log(f"{APP_NAME} cannot currently use Rubber Band.", "warning")
             return
 
         if not args:
@@ -358,7 +359,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         vision = getattr(ui.celune, "vision", "available")
         if vision is None:
             ui.safe_log(
-                "Cannot add attachments while Celune is running in speech-only mode.",
+                f"Cannot add attachments while {APP_NAME} is running in speech-only mode.",
                 "warning",
             )
             return
@@ -467,7 +468,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         return
     if command == "tutorial":
         ui.safe_log(
-            "Tutorial activated. Listen to what's said to learn how to use Celune."
+            f"Tutorial activated. Listen to what's said to learn how to use {APP_NAME}."
         )
         tutorial(ui)
         return

@@ -10,6 +10,7 @@ from typing import Union
 # main app name
 # why would you rename her? she doesn't approve of it
 APP_NAME = "Celune"
+APP_SLUG = "".join(char if char.isalnum() else "_" for char in APP_NAME.lower())
 
 # CeluneNorm v2.0 inherits v1.3's feature set but at an extended context length
 # so Celune can process your normalized text more efficiently at either
@@ -86,6 +87,7 @@ class ExitCodes(Enum):
     EXIT_NO_ANSI = 2  # Celune did not find an ANSI capable terminal.
     EXIT_ALREADY_RUNNING = 3  # Celune is already running.
     EXIT_MISSING_DEPENDENCIES = 4  # Celune is missing required dependencies.
+    EXIT_UNKNOWN_ARGS = 5  # Celune CLI command is unknown.
 
     # the following exit codes may be disabled by the end user
     EXIT_CELINE_DAY_SIX_SEVEN = 67  # Celune refuses to run on Celine Day.

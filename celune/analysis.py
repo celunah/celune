@@ -108,17 +108,17 @@ TEXT_CONFIG: TextConfig = {
         "Playfulness": "Playfulness",
     },
     "graph": {
-        "title": "Celune's Voice Report",
-        "status_ok": "Celune is performing normally.",
-        "status_na": "Celune did not say anything.",
-        "status_underperforming_single": "Celune's {traits} is underperforming.",
-        "status_watch_single": "Celune's {traits} is driving her tone.",
-        "status_watch_multi": "Celune's {traits} are driving her tone.",
-        "status_high_single": "Celune's {traits} is overpowering.",
-        "status_high_multi": "Celune's {traits} are overpowering.",
+        "title": "Your Character's Voice Report",
+        "status_ok": "Your character is performing normally.",
+        "status_na": "Your character did not say anything.",
+        "status_underperforming_single": "Your character's {traits} is underperforming.",
+        "status_watch_single": "Your character's {traits} is driving their tone.",
+        "status_watch_multi": "Your character's {traits} are driving their tone.",
+        "status_high_single": "Your character's {traits} is overpowering.",
+        "status_high_multi": "Your character's {traits} are overpowering.",
     },
     "report": {
-        "title": "CELUNE VOICE REPORT",
+        "title": "CHARACTER VOICE REPORT",
         "file_label": "File",
         "raw_metrics_header": "[ RAW METRICS ]",
         "traits_header": "[ DERIVED TRAIT SCORES  (0.0 = min, 1.0 = max) ]",
@@ -161,21 +161,21 @@ TEXT_CONFIG: TextConfig = {
     "assessment": {
         "warning_short_audio": (
             "This report may not be comprehensive enough to determine how "
-            "Celune is actually performing. Please provide a longer clip."
+            "your character is actually performing. Please provide a longer clip."
         ),
         "warning_pitch_failed": (
-            "No voicings found. Are you sure Celune said anything? "
+            "No voicings found. Are you sure your character said anything? "
             "Will use default values, this may be incorrect."
         ),
         "duration": "Audio duration is {duration:.2f} seconds.",
         "pitch_mean": "Mean pitch is {hz:.1f} Hz, it {description}.",
         "pitch_unknown": "Mean pitch could not be determined from this sample.",
-        "pitch_desc_very_deep": "is too low",
-        "pitch_desc_low_male": "may be too low",
-        "pitch_desc_mid_male_low_female": "is in range",
-        "pitch_desc_mid_female": "may be too high. If measuring Celune's upbeat tone, this is safe to ignore",
-        "pitch_desc_high_female": "may be too high. If measuring Celune's upbeat tone, this is safe to ignore",
-        "pitch_desc_very_high": "is too high",
+        "pitch_desc_very_deep": "is a very low voice",
+        "pitch_desc_low_male": "is a low male voice",
+        "pitch_desc_mid_male_low_female": "is a low female or mid male voice",
+        "pitch_desc_mid_female": "is a mid female voice",
+        "pitch_desc_high_female": "is a high female voice",
+        "pitch_desc_very_high": "is a very high voice",
         "trait_level": "{trait} is {level} ({score:.2f}).",
         "level_low": "low",
         "level_moderate_low": "moderate-low",
@@ -336,7 +336,7 @@ def _embedding_tensor_to_numpy(value: EmbeddingPayload) -> npt.NDArray[np.float3
 
 
 def _load_reference_embedding(voice: str) -> npt.NDArray[np.float32]:
-    """Load a packaged Qwen3 reference embedding for a Celune voice."""
+    """Load a packaged Qwen3 reference embedding for your character's voice."""
     loader = default_loader()
     if loader is None:
         raise FileNotFoundError(
@@ -487,13 +487,13 @@ def add_reference_similarity_metrics(
     metrics["voice_drift_level"] = _voice_drift_level(metrics["voice_drift_percent"])
     metrics["voice_similarity_matches"] = matches
 
-    # incorrect Celune voice
+    # predicted voice match from CEVOICE doesn't match currently selected voice
     metrics["voice_similarity_status"] = "MISMATCH"
     if matches:
         best_match = matches[0]
         metrics["voice_similarity_best_match"] = best_match
         if best_match.get("voice") == reference_voice:
-            # correct Celune voice
+            # predicted voice match from CEVOICE matches currently selected voice
             metrics["voice_similarity_status"] = "OK"
 
     if len(matches) > 1:
@@ -1052,7 +1052,7 @@ def analyze_voice_audio(
         display_name: File name to show in generated reports.
         out_dir: Directory where report artifacts should be written.
         stem: File stem to use for report artifacts.
-        reference_voice: Optional Celune voice whose reference embedding should be compared with the analyzed audio.
+        reference_voice: Optional voice whose reference embedding should be compared with the analyzed audio.
     """
     y = np.asarray(audio, dtype=np.float32)
     if y.ndim == 2:
@@ -1074,7 +1074,7 @@ def _reference_embedding_names() -> set[str]:
 
 
 def _has_reference_embedding(voice: str) -> bool:
-    """Does this voice have an embeddding?"""
+    """Does this voice have an embedding?"""
     return voice in _reference_embedding_names()
 
 

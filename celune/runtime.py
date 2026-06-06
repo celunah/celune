@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Runtime and environment validation helpers for Celune."""
+"""Runtime and environment validation helpers."""
 
 import sys
 import platform
@@ -9,6 +9,7 @@ import torch
 
 from .utils import cuda_architecture
 from . import __codename__, __comment__, __version__
+from .constants import APP_NAME
 
 
 def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> None:
@@ -23,7 +24,7 @@ def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> No
     cuda_line = f", CUDA {cuda_version}" if cuda_version else ""
 
     log(
-        f"Celune {__version__} "
+        f"{APP_NAME} {__version__} "
         f"on backend {backend_name}, "
         f"Python {platform.python_version()}, "
         f"PyTorch {torch.__version__}"
@@ -39,10 +40,10 @@ def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> No
 
 
 def check_supported_backends() -> tuple[str, bool]:
-    """Check any supported backends and report if Celune can use them.
+    """Check supported backends and report whether the app can use them.
 
     Returns:
-        tuple[str, bool]: A backend name and whether Celune can use the backend.
+        tuple[str, bool]: A backend name and whether the app can use the backend.
     """
 
     if torch.cuda.is_available():
@@ -65,16 +66,16 @@ def validate_runtime(
     dev: bool,
     backend_name: str = "qwen3",
 ) -> bool:
-    """Validate Celune's Python, CUDA, and GPU environment.
+    """Validate the app's Python, CUDA, and GPU environment.
 
     Args:
         log: Logging callback for informational and error messages.
         error: Error callback for surfaced user-facing failures.
-        set_state: Callback used to update Celune's runtime state.
+        set_state: Callback used to update the app runtime state.
         glow_connect_failed: Whether the OpenRGB glow backend failed to connect.
         format_error: Error formatter used for exception messages.
         dev: Whether developer mode is enabled.
-        backend_name: The active Celune backend name selected for this session.
+        backend_name: The active app backend name selected for this session.
 
     Returns:
         bool: ``True`` when the runtime environment is supported and usable, otherwise ``False``.
@@ -84,11 +85,11 @@ def validate_runtime(
 
     if sys.version_info < (3, 12) or sys.version_info >= (3, 14):
         log(
-            f"Celune does not currently support Python {platform.python_version()}.",
+            f"{APP_NAME} does not currently support Python {platform.python_version()}.",
             "error",
         )
         log(
-            "Run `uv sync` in Celune's directory to set up the environment, then restart Celune.",
+            f"Run `uv sync` in {APP_NAME}'s directory to set up the environment, then restart {APP_NAME}.",
             "error",
         )
         set_state("error")
@@ -100,11 +101,11 @@ def validate_runtime(
 
     allow_cpu_mini = backend == "CPU" and backend_name.strip().lower() == "mini"
     if allow_cpu_mini:
-        log("Proceeding with startup, Celune Mini is selected.", "info")
+        log(f"Proceeding with startup, {APP_NAME} Mini is selected.", "info")
         usable = True
 
     if not usable:
-        log(f"Celune does not currently support {backend} execution.", "error")
+        log(f"{APP_NAME} does not currently support {backend} execution.", "error")
         set_state("error")
         error("No supported backend found")
         return False
@@ -118,7 +119,7 @@ def validate_runtime(
         return True
 
     if cuda_version is None:
-        log("Celune could not find a CUDA runtime.", "error")
+        log(f"{APP_NAME} could not find a CUDA runtime.", "error")
 
         if separator and torch_variant == "cpu":
             log("You currently have a CPU build of PyTorch.", "error")
@@ -132,7 +133,7 @@ def validate_runtime(
     cuda_version_tuple = tuple(map(int, cuda_version.split(".")))
     if cuda_version_tuple != (12, 8):
         log(
-            f"Celune only supports CUDA 12.8, found version {torch.version.cuda}.",
+            f"{APP_NAME} only supports CUDA 12.8, found version {torch.version.cuda}.",
             "error",
         )
         set_state("error")
@@ -163,8 +164,8 @@ def validate_runtime(
                     f"GPU {i}: {gpu} (not supported) - CUDA capability: {major}.{minor}",
                     "info",
                 )
-                log("Celune does not support this GPU.", "error")
-                log("Celune requires Ampere or newer.", "error")
+                log(f"{APP_NAME} does not support this GPU.", "error")
+                log(f"{APP_NAME} requires Ampere or newer.", "error")
                 log(
                     "If you have another supported GPU, set CUDA_VISIBLE_DEVICES appropriately.",
                     "error",
