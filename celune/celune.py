@@ -30,7 +30,7 @@ from .runtime import log_runtime_banner, validate_runtime
 from .backends import BackendModel, CeluneBackend, resolve_backend
 from .exceptions import NotAvailableError, WarmupError, BackendError
 from .modeling import normalizer_device, load_normalizer_components
-from .constants import JSONSerializable, NORMALIZER_MODEL_ID, PipelineStates
+from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID, PipelineStates
 from .utils import format_number, format_error, discard, is_port_usable, custom_assert
 from .vram import (
     QWEN3_0_6B_MODEL,
@@ -712,9 +712,9 @@ class Celune:
                 self.log(f"[WAKE ERROR] {format_error(e, self.dev)}", "error")
                 self.glow.fatal()
                 self.cur_state = "error"
-                self.status_callback("Celune could not wake", "error")
+                self.status_callback(f"{APP_NAME} could not wake", "error")
                 self.progress_callback(0, 1)
-                self.error_callback("Celune could not wake")
+                self.error_callback(f"{APP_NAME} could not wake")
                 return False
             finally:
                 self.model_ready.set()
@@ -885,7 +885,7 @@ class Celune:
             set_voice=self.set_voice,
             get_state=lambda: self.cur_state,
             wait_until_ready=self._wait_until_idle,
-            name="Celune",
+            name=APP_NAME,
             version=__version__,
             dev=self.dev,
             log_dev=self.log_dev,
@@ -947,7 +947,7 @@ class Celune:
             WarmupError: The newly loaded voice fails warmup.
         """
 
-        self.log("Celune is reloading, please stand by...")
+        self.log(f"{APP_NAME} is reloading, please stand by...")
         self._ready_announced = False
         self.status_callback("Reloading")
         self.progress_callback(None, None)
@@ -986,9 +986,9 @@ class Celune:
             self.loaded = False
             self.log(f"[RELOAD ERROR] {format_error(e, self.dev)}", "error")
             self.glow.fatal()
-            self.status_callback("Celune could not reload", "error")
+            self.status_callback(f"{APP_NAME} could not reload", "error")
             self.progress_callback(0, 1)
-            self.error_callback("Celune could not reload")
+            self.error_callback(f"{APP_NAME} could not reload")
         finally:
             self._model_ready.set()
             self.change_input_state_callback(locked=False)
@@ -1052,7 +1052,7 @@ class Celune:
             active_voice = self.current_voice or self.voices[0]
             self.model_name = self.backend.model_id_for_voice(active_voice)
         except Exception as e:
-            self.log("Celune could not load the default model.", "error")
+            self.log(f"{APP_NAME} could not load the default model.", "error")
             self.log(format_error(e, self.dev), "error")
             self.glow.fatal()
             self.progress_callback(0, 1)
@@ -1118,7 +1118,7 @@ class Celune:
 
         if persona_enabled(self.config) and not persona_is_available():
             self.log(
-                "Personas are unavailable. Celune is operating in speech-only mode.",
+                f"Personas are unavailable. {APP_NAME} is operating in speech-only mode.",
                 "warning",
             )
 
@@ -1147,7 +1147,7 @@ class Celune:
         token = str(token_value).strip() if token_value is not None else None
         if not token:
             self.log(
-                "No API token set. Celune API will bind only to the local network.",
+                f"No API token set. {APP_NAME} API will bind only to the local network.",
                 "warning",
             )
             token = None
@@ -1157,14 +1157,14 @@ class Celune:
         except (TypeError, ValueError):
             invalid_port = api_config.get("port", 2060)
             self.log(
-                f"Celune API port ({invalid_port}) is invalid, will use 2060 instead.",
+                f"{APP_NAME} API port ({invalid_port}) is invalid, will use 2060 instead.",
                 "warning",
             )
             port = 2060
 
         if not 1 <= port <= 65535:
             self.log(
-                f"Celune API port ({port}) is out of range, will use 2060 instead.",
+                f"{APP_NAME} API port ({port}) is out of range, will use 2060 instead.",
                 "warning",
             )
             port = 2060
@@ -1177,7 +1177,7 @@ class Celune:
         except (TypeError, ValueError):
             invalid_ratelimit = api_config.get("rate_limit_per_minute", 60)
             self.log(
-                f"Celune API rate limit ({invalid_ratelimit}) is invalid, using 60/min.",
+                f"{APP_NAME} API rate limit ({invalid_ratelimit}) is invalid, using 60/min.",
                 "warning",
             )
             requests_per_minute = 60
@@ -1192,7 +1192,7 @@ class Celune:
 
         if not is_port_usable(port):
             self.log(f"Port {port} is unavailable.", "warning")
-            self.log("Celune API will not be available.", "warning")
+            self.log(f"{APP_NAME} API will not be available.", "warning")
             return
 
         try:
@@ -1202,11 +1202,11 @@ class Celune:
                 f"A required package ({package.name}) isn't installed.",
                 "warning",
             )
-            self.log("Celune API will not be available.", "warning")
+            self.log(f"{APP_NAME} API will not be available.", "warning")
             return
         except Exception as e:
             self.log(f"Package import failed: {format_error(e, self.dev)}", "warning")
-            self.log("Celune API will not be available.", "warning")
+            self.log(f"{APP_NAME} API will not be available.", "warning")
             return
 
         try:
@@ -1221,7 +1221,7 @@ class Celune:
             self.log(
                 f"An internal error occurred: {format_error(e, self.dev)}", "warning"
             )
-            self.log("Celune API will not be available.", "warning")
+            self.log(f"{APP_NAME} API will not be available.", "warning")
             return
 
     def load_normalizer(self) -> None:
@@ -1314,7 +1314,7 @@ class Celune:
             self.cur_state = "error"
             self.glow.fatal()
             self.progress_callback(0, 1)
-            self.error_callback("Celune could not warm up")
+            self.error_callback(f"{APP_NAME} could not warm up")
             return False
 
     # as of CeluneNorm 2.0, normalization ACTUALLY works with long inputs
@@ -1451,14 +1451,14 @@ class Celune:
             return False
 
         if self.sleeping:
-            self.log("Cannot think while Celune is sleeping.", "warning")
-            self.error_callback("Celune is currently sleeping")
+            self.log(f"Cannot think while {APP_NAME} is sleeping.", "warning")
+            self.error_callback(f"{APP_NAME} is currently sleeping")
             return False
 
         with self.say_lock:
             if self.locked or self.cur_state in {"generating", "speaking"}:
-                self.log("Tried to think while Celune was busy.", "warning")
-                self.error_callback("Celune is currently busy")
+                self.log(f"Tried to think while {APP_NAME} was busy.", "warning")
+                self.error_callback(f"{APP_NAME} is currently busy")
                 return False
 
         self.status_callback("Thinking")

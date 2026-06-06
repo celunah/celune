@@ -15,10 +15,10 @@ from textual.widgets import Button, Label, RichLog, TextArea
 from celune.backends.qwen3 import Qwen3
 from celune.celune import Celune
 from celune.config import Config
+from celune.constants import APP_NAME, JSONSerializable
 from celune import runtime
 from celune.ui.app import CeluneUI
 from celune.ui.headless import CeluneHeadlessUI
-from celune.constants import JSONSerializable
 from celune.ui import resources as ui_resources
 from celune.ui.commands import attachment_source, process_command
 
@@ -297,7 +297,7 @@ class UIStartupTests(TestCase):
         ui = CeluneUI()
         with self.assertRaisesRegex(
             RuntimeError,
-            "CeluneUI requires an instance of Celune to be set",
+            f"CeluneUI requires an instance of {APP_NAME} to be set",
         ):
             ui.on_mount()
 
@@ -381,7 +381,7 @@ class UIStartupTests(TestCase):
         self.assertEqual(len(caught), 1)
         self.assertTrue(issubclass(caught[0].category, RuntimeWarning))
         self.assertIn(
-            "CeluneHeadlessUI has no attached Celune instance",
+            f"CeluneHeadlessUI has no attached {APP_NAME} instance",
             str(caught[0].message),
         )
 

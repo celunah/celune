@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Celune automatic setup utility.
+"""Automatic setup utility.
 
-No, this is not a setuptools remnant, this is Celune's bootstrapper.
+No, this is not a setuptools remnant, this is the app bootstrapper.
 """
 
 import os
@@ -14,6 +14,8 @@ import contextlib
 import subprocess
 from pathlib import Path
 from typing import Optional
+
+from celune.constants import APP_NAME
 
 with contextlib.suppress(IndexError):
     arg = sys.argv[1]
@@ -32,10 +34,10 @@ with contextlib.suppress(IndexError):
 
 
 def get_version() -> str:
-    """Get current Celune version without importing Celune, using Celune's project metadata.
+    """Get the current app version without importing the package, using project metadata.
 
     Returns:
-        str: The current Celune version.
+        str: The current app version.
     """
     with Path("pyproject.toml").open("rb") as file:
         data = tomllib.load(file)
@@ -241,7 +243,7 @@ if system not in {"Windows", "Linux"}:
     sys.exit(1)
 
 
-print(f"Setting up Celune {get_version()} on {distro} ({arch})")
+print(f"Setting up {APP_NAME} {get_version()} on {distro} ({arch})")
 
 required_packages = {
     "ubuntu": ["sox", "rubberband-cli"],

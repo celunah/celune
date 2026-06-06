@@ -7,7 +7,7 @@ from typing import Optional
 
 from platformdirs import user_data_dir
 
-from .constants import APP_NAME
+from .constants import APP_SLUG
 
 
 def app_data_dir(create: bool = False) -> Path:
@@ -19,7 +19,7 @@ def app_data_dir(create: bool = False) -> Path:
     Returns:
         Celune's user data directory.
     """
-    path = Path(user_data_dir(APP_NAME, appauthor=False))
+    path = Path(user_data_dir(APP_SLUG, appauthor=False))
     if create:
         path.mkdir(parents=True, exist_ok=True)
     return path
@@ -79,7 +79,7 @@ def traceback_path(create_parent: bool = False) -> Path:
     Returns:
         Celune's traceback capture file path.
     """
-    path = app_data_dir(create=create_parent) / "celune_traceback.txt"
+    path = app_data_dir(create=create_parent) / f"{APP_SLUG}_traceback.txt"
     if create_parent:
         path.parent.mkdir(parents=True, exist_ok=True)
     return path
@@ -94,7 +94,7 @@ def main_window_log_path(create_parent: bool = False) -> Path:
     Returns:
         Celune's main window log file path.
     """
-    path = app_data_dir(create=create_parent) / "celune.log"
+    path = app_data_dir(create=create_parent) / f"{APP_SLUG}.log"
     if create_parent:
         path.parent.mkdir(parents=True, exist_ok=True)
     return path

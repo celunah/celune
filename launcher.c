@@ -52,8 +52,71 @@ int get_exe_dir(char *out, size_t size) {
 }
 #endif
 
+#ifdef _WIN32
+static int append_text(char *dest, size_t size, size_t *offset, const char *text) {
+    size_t len = strlen(text);
+
+    if (*offset + len >= size) {
+        return 0;
+    }
+
+    memcpy(dest + *offset, text, len);
+    *offset += len;
+    dest[*offset] = '\0';
+    return 1;
+}
+
+static int append_windows_arg(char *dest, size_t size, size_t *offset, const char *arg) {
+    if (!append_text(dest, size, offset, "\"")) {
+        return 0;
+    }
+
+    size_t backslashes = 0;
+    for (const char *ch = arg; *ch != '\0'; ch++) {
+        if (*ch == '\\') {
+            backslashes++;
+            continue;
+        }
+
+        if (*ch == '"') {
+            for (size_t i = 0; i < backslashes * 2 + 1; i++) {
+                if (!append_text(dest, size, offset, "\\")) {
+                    return 0;
+                }
+            }
+            if (!append_text(dest, size, offset, "\"")) {
+                return 0;
+            }
+            backslashes = 0;
+            continue;
+        }
+
+        while (backslashes > 0) {
+            if (!append_text(dest, size, offset, "\\")) {
+                return 0;
+            }
+            backslashes--;
+        }
+
+        char next[2] = {*ch, '\0'};
+        if (!append_text(dest, size, offset, next)) {
+            return 0;
+        }
+    }
+
+    while (backslashes > 0) {
+        if (!append_text(dest, size, offset, "\\\\")) {
+            return 0;
+        }
+        backslashes--;
+    }
+
+    return append_text(dest, size, offset, "\"");
+}
+#endif
+
 #ifdef __linux__
-int run_unix(void) {
+int run_unix(int argc, char **argv) {
     char base[1024];
     char python[1024];
     char main_py[1024];
@@ -145,7 +208,19 @@ int run_unix(void) {
     }
 
     if (pid == 0) {
-        char *args[] = {python, main_py, NULL};
+        char **args = malloc(((size_t)argc + 2U) * sizeof(char *));
+        if (args == NULL) {
+            perror("malloc failed");
+            _exit(1);
+        }
+
+        args[0] = python;
+        args[1] = main_py;
+        for (int i = 1; i < argc; i++) {
+            args[i + 1] = argv[i];
+        }
+        args[argc + 1] = NULL;
+
         if (chdir(base) != 0) {
             perror("chdir failed");
             _exit(1);
@@ -172,7 +247,7 @@ int run_unix(void) {
     return 1;
 }
 #elif defined(_WIN32)
-int run_windows(void) {
+int run_windows(int argc, char **argv) {
     char base[1024];
     char python[1024];
     char main_py[1024];
@@ -273,10 +348,22 @@ int run_windows(void) {
     si.wShowWindow = SW_SHOW;
 
     char cmd[2200];
-    int written = snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\"", python, main_py);
-    if (written < 0 || (size_t)written >= sizeof(cmd)) {
+    size_t offset = 0;
+    cmd[0] = '\0';
+
+    if (!append_windows_arg(cmd, sizeof(cmd), &offset, python) ||
+        !append_text(cmd, sizeof(cmd), &offset, " ") ||
+        !append_windows_arg(cmd, sizeof(cmd), &offset, main_py)) {
         printfe("Celune cannot start in this location, the command line is too long.\n");
         return 1;
+    }
+
+    for (int i = 1; i < argc; i++) {
+        if (!append_text(cmd, sizeof(cmd), &offset, " ") ||
+            !append_windows_arg(cmd, sizeof(cmd), &offset, argv[i])) {
+            printfe("Celune cannot start in this location, the command line is too long.\n");
+            return 1;
+        }
     }
 
     BOOL ok = CreateProcessA(
@@ -309,9 +396,9 @@ int run_windows(void) {
 }
 #endif
 
-int main(void) {
+int main(int argc, char **argv) {
 #ifdef __linux__
-    int return_code = run_unix();
+    int return_code = run_unix(argc, argv);
 
     if ( return_code != 0 ) {
         struct termios oldt, newt;
@@ -326,7 +413,7 @@ int main(void) {
 
     return return_code;
 #elif defined(_WIN32)
-    int return_code = run_windows();
+    int return_code = run_windows(argc, argv);
 
     if ( return_code != 0 ) {
         _getch();

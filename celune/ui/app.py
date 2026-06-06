@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Celune's frontend layer."""
+"""Frontend layer."""
 
 import os
 import sys
@@ -35,6 +35,7 @@ from ..persona.impl import (
     persona_talkback_enabled,
     persona_enabled,
 )
+from ..constants import APP_NAME
 from ..paths import config_path, main_window_log_path
 from ..utils import (
     format_error,
@@ -47,7 +48,7 @@ from ..utils import (
 
 
 class CeluneUI(App):
-    """Celune's user interface."""
+    """User interface."""
 
     ENABLE_COMMAND_PALETTE = False
     CSS = CELUNE_CSS
@@ -141,7 +142,7 @@ class CeluneUI(App):
         self._refresh_logs()
 
     def _has_celune(self) -> bool:
-        """Is Celune attached to this UI instance?"""
+        """Is the app attached to this UI instance?"""
         return self.celune is not None
 
     def _clear_border_pulses(self) -> None:
@@ -212,12 +213,12 @@ class CeluneUI(App):
         """Define the UI.
 
         Returns:
-            ComposeResult: The root widget tree for the Celune interface.
+            ComposeResult: The root widget tree for the interface.
         """
         with Vertical(id="container"):
             with Horizontal(id="header-container"):
                 yield Label("", classes="line")
-                yield Label("Celune", id="header")
+                yield Label(APP_NAME, id="header")
                 yield Label("", classes="line")
             yield RichLog(id="logs", wrap=True, markup=False)
             yield ProgressBar(
@@ -231,14 +232,14 @@ class CeluneUI(App):
                 yield Label("", id="resources")
 
     def on_mount(self) -> None:
-        """Prepare Celune.
+        """Prepare the UI runtime.
 
         Raises:
             RuntimeError: ``CeluneUI`` was run without an instance of ``Celune``.
         """
         if not self._has_celune():
             raise RuntimeError(
-                f"{self.__class__.__name__} requires an instance of Celune to be set"
+                f"{self.__class__.__name__} requires an instance of {APP_NAME} to be set"
             )
 
         colors.configure_theme()
@@ -453,14 +454,14 @@ class CeluneUI(App):
         )
 
     def _enter_sleep_mode(self) -> None:
-        """Put Celune to sleep from the UI idle timer."""
+        """Put the app to sleep from the UI idle timer."""
         self._sleep_timer = None
         if self.cur_state == "exiting" or self.celune is None:
             return
 
         if self.celune.enter_sleep_mode():
             self.safe_log(
-                "Celune is currently sleeping. Type anything to wake up.",
+                f"{APP_NAME} is currently sleeping. Type anything to wake up.",
                 "sleeping",
             )
             self.safe_status("Sleeping", "sleeping")
@@ -468,7 +469,7 @@ class CeluneUI(App):
 
     @work(thread=True, exclusive=True)
     def wake_from_sleep(self) -> None:
-        """Wake Celune after the user types into the sleeping UI."""
+        """Wake the app after the user types into the sleeping UI."""
         try:
             if self.celune.wake_from_sleep():
                 self._schedule_sleep_timer()
@@ -477,12 +478,12 @@ class CeluneUI(App):
                 self.safe_status("Sleeping", "sleeping")
 
     def start_background_init(self) -> None:
-        """Run Celune's initialization function."""
+        """Run the initialization function."""
         self.load_tts()
 
     @work(thread=True, exclusive=True)
     def load_tts(self) -> None:
-        """Load Celune."""
+        """Load the app runtime."""
         try:
             if self.celune.load():
                 self.celune_styles = self.celune.voices
@@ -503,13 +504,15 @@ class CeluneUI(App):
                 self.change_input_state(locked=False)
                 self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
                 self.call_from_thread(self._enable_runtime_log_capture)
-                self.safe_log("New to Celune? Type /tutorial to begin the tutorial.")
+                self.safe_log(
+                    f"New to {APP_NAME}? Type /tutorial to begin the tutorial."
+                )
                 self._schedule_sleep_timer()
 
         except Exception as e:
             self.safe_log(f"[INIT ERROR] {format_error(e, self.celune.dev)}", "error")
             self.celune.glow.fatal()
-            self.error("Celune could not start")
+            self.error(f"{APP_NAME} could not start")
             self.cur_state = "error"
 
     def safe_progress(

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from platformdirs import user_data_dir
 
-from ..constants import APP_NAME
+from ..constants import APP_SLUG
 
 
 def _render_lines(lines: list[str]) -> str:
@@ -270,10 +270,10 @@ class PersonaPromptBuilder:
 
         # this is for inspecting your RAG prompt, in case your character goes off the guidelines
         # it is located in the following paths:
-        # %localappdata%\Celune\temp\rag_prompt.txt on Windows, or
-        # ~/.local/share/Celune/temp/rag_prompt.txt on Linux
+        # %localappdata%\celune\temp\rag_prompt.txt on Windows, or
+        # ~/.local/share/celune/temp/rag_prompt.txt on Linux
         with open(
-            Path(user_data_dir(APP_NAME, appauthor=False)) / "temp" / "rag_prompt.txt",
+            Path(user_data_dir(APP_SLUG, appauthor=False)) / "temp" / "rag_prompt.txt",
             "w",
             encoding="utf-8",
         ) as f:

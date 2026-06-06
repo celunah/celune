@@ -15,48 +15,100 @@ instances can exhaust GPU resources and is not a supported usage pattern.
 """
 
 import sys as _sys
+import inspect as _inspect
+import subprocess as _subprocess
+from typing import Any, TYPE_CHECKING
 
-from .utils import get_revision as _get_revision, caller_is_repl as _caller_is_repl
+from .constants import APP_NAME
+
+if TYPE_CHECKING:
+    from .celune import Celune
+    from .extensions.base import CeluneContext, CeluneExtension
+
+
+def _get_revision() -> str:
+    """Return the current Git revision."""
+    try:
+        rev = _subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=_subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        status = _subprocess.check_output(
+            ["git", "status", "--porcelain"],
+            stderr=_subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        return f"{rev}{'*' if status else ''}"
+    except (_subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
+
+def _caller_is_repl() -> bool:
+    """Return whether Celune appears to be imported from the interactive Python REPL."""
+    for frame in _inspect.stack():
+        filename = frame.filename
+        if "importlib" in filename or filename.startswith("<frozen"):
+            continue
+        if (
+            __name__.replace(".", "\\") in filename
+            or __name__.replace(".", "/") in filename
+        ):
+            continue
+        return filename.startswith("<python-input-")
+    return False
+
 
 REVISION = _get_revision()
 if REVISION:
     _local = REVISION.rstrip("*")
     _dirty = ".dirty" if REVISION.endswith("*") else ""
-    __version__ = f"4.0.0+{_local}{_dirty}"
+    __version__ = f"4.0.1+{_local}{_dirty}"
 else:
-    __version__ = "4.0.0"
+    __version__ = "4.0.1+unknown"
 
-__tagline__ = "\u201cYour voice, your way.\u201d"
+__tagline__ = '"Your voice, your way."'
 __codename__ = "Personality"
 __comment__ = "I can finally talk with you."
 
 if hasattr(_sys, "ps1"):
-    print("Caution: You are running the Celune backend interactively.")
+    print(f"Caution: You are running the {APP_NAME} backend interactively.")
     print("This is not an intended mode of operation, usage may differ.")
     print()
     print(
         "\"If you're just exploring, please... be careful. I don't usually speak here.\""
     )
 
-try:
-    # due to how Celune imports __version__ we cannot put these imports according to PEP8
-    from .celune import Celune
-    from .extensions.base import CeluneContext, CeluneExtension
 
-    __all__ = [
-        "Celune",
-        "CeluneContext",
-        "CeluneExtension",
-        "REVISION",
-        "__version__",
-        "__tagline__",
-        "__codename__",
-        "__comment__",
-    ]
-except ModuleNotFoundError as package:
-    if _caller_is_repl():
-        print(f"Missing dependency: {package.name}")
-        print("Some functionality may be unavailable.")
+def __getattr__(name: str) -> Any:
+    if name == "Celune":
+        from .celune import Celune
+
+        return Celune
+
+    if name == "CeluneContext":
+        from .extensions.base import CeluneContext
+
+        return CeluneContext
+
+    if name == "CeluneExtension":
+        from .extensions.base import CeluneExtension
+
+        return CeluneExtension
+
+    raise AttributeError(f"module '{__name__!r}' has no attribute '{name!r}'")
+
+
+__all__ = [
+    "Celune",
+    "CeluneContext",
+    "CeluneExtension",
+    "REVISION",
+    "__version__",
+    "__tagline__",
+    "__codename__",
+    "__comment__",
+]
 
 
 def __dir__() -> list[str]:

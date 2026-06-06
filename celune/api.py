@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Celune's API layer."""
+"""API layer."""
 
 import os
 import io
@@ -30,14 +30,15 @@ from fastapi.responses import (
     FileResponse,
 )
 
-from .constants import BASE_SR
+
 from . import __version__
 from .celune import Celune
 from .utils import format_error
 from .dsp import _resample_audio
 from .pipeline import SpeechStreamQueue
+from .constants import BASE_SR, APP_NAME
 
-api = FastAPI(title="CeluneAPI")
+api = FastAPI(title=f"{APP_NAME}API")
 bound_celune: Optional["Celune"] = None
 auth_token: Optional[str] = None
 rate_limit_per_minute = 60
@@ -90,7 +91,7 @@ def _clean_token(token: Optional[str]) -> Optional[str]:
 
 
 def _env_auth_token() -> Optional[str]:
-    """Return the Celune API token from the environment, if configured."""
+    """Return the API token from the environment, if configured."""
     return _clean_token(os.getenv("CELUNE_API_TOKEN"))
 
 
@@ -131,7 +132,7 @@ def resolve_api_host(token: Optional[str] = None, host: Optional[str] = None) ->
 
 
 def _request_token(request: Request) -> Optional[str]:
-    """Extract the bearer or Celune token from a request."""
+    """Extract the bearer or app token from a request."""
     auth_header = request.headers.get("authorization", "")
     scheme, _, value = auth_header.partition(" ")
     if scheme.lower() == "bearer" and value:
@@ -398,20 +399,20 @@ class VersionResponse(BaseModel):
 
 
 class SpeakRequest(BaseModel):
-    """Request body for asking Celune to speak."""
+    """Request body for asking the app to speak."""
 
     content: str = Field(min_length=1)
     save: bool = True
 
 
 class ThinkRequest(BaseModel):
-    """Request body for asking Celune to think and reply."""
+    """Request body for asking the app to think and reply."""
 
     content: str = Field(min_length=1)
 
 
 class VoiceRequest(BaseModel):
-    """Request body for changing Celune's voice."""
+    """Request body for changing the active voice."""
 
     voice_name: str = Field(min_length=1)
 
@@ -424,10 +425,10 @@ class ActionResponse(BaseModel):
 
 @api.get("/favicon.ico", include_in_schema=False)
 def favicon() -> FileResponse:
-    """Celune's favicon.ico file page.
+    """Favicon endpoint.
 
     Returns:
-        FileResponse: Celune's favicon.ico file.
+        FileResponse: The app favicon file.
     """
 
     return FileResponse(
@@ -439,49 +440,50 @@ def favicon() -> FileResponse:
 
 @api.get("/")
 def root() -> HTMLResponse:
-    """Celune's root page.
+    """Root page.
 
     Returns:
-        HTMLResponse: Celune's root page as HTML.
+        HTMLResponse: The app root page as HTML.
     """
 
     return HTMLResponse(
-        textwrap.dedent("""
+        textwrap.dedent(
+            f"""
             <!DOCTYPE html>
             <html lang="en">
                 <head>
-                    <title>Celune</title>
+                    <title>{APP_NAME}</title>
                     <meta name="color-scheme" content="dark">
                     <style>
                         @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap');
 
-                        h1, p {
+                        h1, p {{
                             margin: 0.5em;
-                        }
+                        }}
 
-                        p {
+                        p {{
                             color: #baa4ff;
-                        }
+                        }}
 
-                        .container {
+                        .container {{
                             display: flex;
                             flex-direction: column;
                             align-items: center;
                             justify-content: center;
                             width: 100vw;
                             height: 100dvh;
-                        }
+                        }}
 
-                        body {
+                        body {{
                             background: #1d1826;
                             color: #cebaff;
                             font-family: "Outfit", sans-serif;
                             margin: 0;
-                        }
+                        }}
 
-                        html {
+                        html {{
                             color-scheme: dark;
-                        }
+                        }}
                     </style>
                 </head>
                 <body>
@@ -491,13 +493,14 @@ def root() -> HTMLResponse:
                     </div>
                 </body>
             </html>
-        """)
+        """
+        )
     )
 
 
 @api.get("/v1", response_model=RootResponse)
 def api_root() -> RootResponse:
-    """Celune API root endpoint.
+    """API root endpoint.
 
     Returns:
         RootResponse: The response with Celune's underlying state.
@@ -511,12 +514,12 @@ def api_root() -> RootResponse:
 
 @api.get("/v1/version", response_model=VersionResponse)
 def version() -> VersionResponse:
-    """Celune API version endpoint.
+    """API version endpoint.
 
     Returns:
-        VersionResponse: The underlying Celune version the API is connected to.
+        VersionResponse: The underlying app version the API is connected to.
     """
-    return VersionResponse(version=f"Celune {__version__}")
+    return VersionResponse(version=f"{APP_NAME} {__version__}")
 
 
 @api.post("/v1/speak", response_model=None)
@@ -578,7 +581,7 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
         target=_collect_speech_job,
         args=(job_id, chunks),
         daemon=True,
-        name=f"CeluneSpeechJob-{job_id[:8]}",
+        name=f"{APP_NAME}SpeechJob-{job_id[:8]}",
     ).start()
 
     return JSONResponse(
@@ -590,13 +593,13 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
 
 @api.post("/v1/think", response_model=None)
 def think(body: ThinkRequest) -> JSONResponse:
-    """Ask Celune to think about an input and reply through Persona.
+    """Ask the app to think about an input and reply through Persona.
 
     Args:
         body: A think request body.
 
     Returns:
-        JSONResponse: An accepted response when Persona processing starts, or a JSON error payload if Celune cannot
+        JSONResponse: An accepted response when Persona processing starts, or a JSON error payload if the app cannot
         think right now.
     """
     celune = require_celune()
@@ -649,7 +652,7 @@ def speak_job(job_id: str) -> Union[Response, JSONResponse]:
 
 @api.post("/v1/voice", response_model=ActionResponse)
 def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
-    """Change Celune's active voice.
+    """Change the active voice.
 
     Args:
         body: A voice change request body.
@@ -691,7 +694,7 @@ async def sfx(
 
     Args:
         file: The sound effect file to use with the request.
-        keep: Whether Celune should hold this sound effect until the next utterance.
+        keep: Whether the app should hold this sound effect until the next utterance.
 
     Returns:
         Union[StreamingResponse, JSONResponse]: The corresponding audio stream, or a JSON error payload if playback
@@ -750,10 +753,10 @@ def run_api(
     requests_per_minute: int = 60,
     on_started: Optional[Callable[[str, int], None]] = None,
 ) -> None:
-    """Start the Celune API.
+    """Start the API.
 
     Args:
-        celune: Running Celune instance to expose through the API.
+        celune: Running app instance to expose through the API.
         host: The IP address to bind to.
         port: The port to bind to.
         token: Token required for API requests.
@@ -768,7 +771,7 @@ def run_api(
 
     def _default_started(bhost: str, bport: int) -> None:
         http = "http"
-        message = f"Celune API has started on {http}://{bhost}:{bport}"
+        message = f"{APP_NAME} API has started on {http}://{bhost}:{bport}"
         if celune is not None:
             celune.log(message)
         else:
@@ -796,10 +799,10 @@ def start_api(
     requests_per_minute: int = 60,
     startup_timeout: float = 5.0,
 ) -> threading.Thread:
-    """Start the Celune API in a background thread.
+    """Start the API in a background thread.
 
     Args:
-        celune: Running Celune instance to expose through the API.
+        celune: Running app instance to expose through the API.
         host: The IP address to bind to.
         port: The port to bind to.
         token: Token required for API requests.
@@ -815,7 +818,7 @@ def start_api(
 
     def _started(bind_host: str, bind_port: int) -> None:
         http = "http"
-        celune.log(f"Celune API has started on {http}://{bind_host}:{bind_port}")
+        celune.log(f"{APP_NAME} API has started on {http}://{bind_host}:{bind_port}")
         started.set()
 
     def _runner() -> None:
@@ -839,7 +842,7 @@ def start_api(
                 f"Could not start the API: {format_error(e, celune.dev)}", "warning"
             )
 
-    thread = threading.Thread(target=_runner, daemon=True, name="CeluneAPI")
+    thread = threading.Thread(target=_runner, daemon=True, name=f"{APP_NAME}API")
     thread.start()
     deadline = time.monotonic() + max(0.0, startup_timeout)
     while not started.is_set() and not failed.is_set() and time.monotonic() < deadline:
