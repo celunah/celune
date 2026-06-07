@@ -375,6 +375,7 @@ api = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "docstr-coverage" },
     { name = "pylint" },
     { name = "pyrefly" },
     { name = "pytest" },
@@ -425,6 +426,7 @@ provides-extras = ["api"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "docstr-coverage" },
     { name = "pylint" },
     { name = "pyrefly" },
     { name = "pytest" },
@@ -756,6 +758,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/17/4d/ac7ffa80c69ea1df30a8aa11b3578692a5118e7cd1aa157e3ef73b092d15/dill-0.3.8.tar.gz", hash = "sha256:3ebe3c479ad625c4553aca177444d89b486b1d84982eeacded644afc0cf797ca", size = 184847, upload-time = "2024-01-27T23:42:16.145Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c9/7a/cef76fd8438a42f96db64ddaa85280485a9c395e7df3db8158cfec1eee34/dill-0.3.8-py3-none-any.whl", hash = "sha256:c36ca9ffb54365bdd2f8eb3eff7d2a21237f8452b57ace88b1ac615b7e815bd7", size = 116252, upload-time = "2024-01-27T23:42:14.239Z" },
+]
+
+[[package]]
+name = "docstr-coverage"
+version = "2.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "pyyaml" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/75/86/d3f02e5baf426eac0f039849272204649137449f050d3fe0eb104c6f399c/docstr-coverage-2.3.2.tar.gz", hash = "sha256:e99a28c502ed21ae8a310cb9e14e8de2d7cff44d365b46fa6dca6de05bf156a0", size = 26750, upload-time = "2024-05-07T16:54:33.514Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/db/f7/7923d915a80aa2e04939260f7a000e1a353b25c7ffcf7771cd777559c27a/docstr_coverage-2.3.2-py3-none-any.whl", hash = "sha256:37a885d6560ad87e289b23bf0e54527885bacbf6b17cf55278d514dd0fef8ff5", size = 25816, upload-time = "2024-05-07T16:54:31.636Z" },
 ]
 
 [[package]]
