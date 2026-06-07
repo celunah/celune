@@ -1,6 +1,7 @@
 project-includes = [
     "celune",
     "tests",
+    "scripts",
     "main.py",
     "setup.py",
 ]
