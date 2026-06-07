@@ -3,6 +3,7 @@
 
 import os
 import sys
+import ctypes
 from collections.abc import Mapping
 from typing import IO, Final, Literal, Optional, cast
 
@@ -92,12 +93,11 @@ def supports_ansi(stream: Optional[IO[str]] = None) -> bool:
     if sys.platform != "win32":
         return True
 
-    try:
-        import ctypes
-    except ModuleNotFoundError:
+    windll = getattr(ctypes, "WinDLL", None)
+    if windll is None:
         return False
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32 = windll("kernel32", use_last_error=True)
     handle_id = -12 if output is sys.stderr else -11
     stdout_handle = kernel32.GetStdHandle(handle_id)
     invalid_handle = ctypes.c_void_p(-1).value
