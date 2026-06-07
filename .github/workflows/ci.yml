@@ -44,9 +44,9 @@ jobs:
 
       - name: Type check
         run: |
-          uv run pyright celune
-          uv run pyright tests
-          uv run pyright main.py
+          uv run pyrefly check celune
+          uv run pyrefly check tests
+          uv run pyrefly check main.py
 
       - name: Run unit tests
         run: uv run pytest -v tests
