@@ -38,15 +38,17 @@ jobs:
 
       - name: Run lint
         run: |
-          uv run pylint celune
-          uv run pylint tests
-          uv run pylint main.py
+          uv run pylint celune tests main.py
 
       - name: Type check
         run: |
-          uv run pyrefly check celune
-          uv run pyrefly check tests
-          uv run pyrefly check main.py
+          uv run pyrefly check celune tests main.py
+
+      - name: Check docstring coverage
+        run: |
+          uv run docstr-coverage -i -P --fail-under 90 celune tests main.py || {
+            echo "::warning::Docstring coverage is below 90%. Check the above report for details."
+          }
 
       - name: Run unit tests
         run: uv run pytest -v tests
