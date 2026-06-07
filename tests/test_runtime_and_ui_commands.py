@@ -43,6 +43,10 @@ class RuntimeTests(TestCase):
         with (
             mock.patch("celune.runtime.torch.cuda.is_available", return_value=True),
             mock.patch.object(runtime.torch.version, "hip", None),
+            mock.patch(
+                "celune.runtime.torch.cuda.get_device_name",
+                return_value="NVIDIA GeForce RTX 4090",
+            ),
         ):
             self.assertEqual(runtime.check_supported_backends(), ("CUDA", True))
 
@@ -51,6 +55,24 @@ class RuntimeTests(TestCase):
             mock.patch.object(runtime.torch.version, "hip", "6.0"),
         ):
             self.assertEqual(runtime.check_supported_backends(), ("ROCm", False))
+
+    def test_check_supported_backends_treats_missing_driver_as_unusable_cuda(
+        self,
+    ) -> None:
+        """Verify missing-driver CUDA init failures do not crash backend detection."""
+        with (
+            mock.patch("celune.runtime.torch.cuda.is_available", return_value=True),
+            mock.patch.object(runtime.torch.version, "hip", None),
+            mock.patch(
+                "celune.runtime.torch.cuda.get_device_name",
+                side_effect=RuntimeError(
+                    "Found no NVIDIA driver on your system. Please check that you "
+                    "have an NVIDIA GPU and installed a driver from "
+                    "http://www.nvidia.com/Download/index.aspx"
+                ),
+            ),
+        ):
+            self.assertEqual(runtime.check_supported_backends(), ("CUDA", False))
 
     def test_validate_runtime_rejects_unsupported_backends_without_cuda_work(
         self,
