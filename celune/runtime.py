@@ -3,11 +3,11 @@
 
 import sys
 import platform
-from typing import Callable
+from typing import Callable, Union
 
 import torch
 
-from .utils import cuda_architecture
+from .utils import cuda_architecture, format_number
 from . import __codename__, __comment__, __version__
 from .constants import APP_NAME
 
@@ -49,12 +49,65 @@ def check_supported_backends() -> tuple[str, bool]:
     if torch.cuda.is_available():
         if getattr(torch.version, "hip", None) is not None:
             return "ROCm", False
-        return "CUDA", True
+
+        nvidia_keywords = (
+            "nvidia",
+            "geforce",
+            "rtx",
+            "gtx",
+            "quadro",
+            "tesla",
+            "rtx pro",
+            "a1",
+            "a3",
+            "a4",
+            "h1",
+            "h2",
+            "b1",
+            "b2",
+            "l4",
+            "blackwell",
+            "ada",
+            "hopper",
+            "ampere",
+            "turing",
+            "pascal",
+            "volta",
+            "maxwell",
+        )
+
+        if any(
+            keyword in torch.cuda.get_device_name(0).lower()
+            for keyword in nvidia_keywords
+        ):
+            return "CUDA", True
+        return "ZLUDA", True
 
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return "MPS", False
 
     return "CPU", False
+
+
+def _run_compute_test(device: Union[torch.device, str]) -> torch.Tensor:
+    """Run a small stress test on the selected device to determine whether CUDA is usable."""
+    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+
+    x = torch.randn(2048, 2048, device=device, dtype=dtype)
+    y = torch.randn(2048, 2048, device=device, dtype=dtype)
+
+    torch.cuda.synchronize()
+    z = x @ y
+
+    torch.cuda.synchronize()
+    for _ in range(1000):
+        z = x @ y
+        z = torch.relu(z)
+
+    torch.cuda.synchronize()
+    chk = z.mean().detach()
+
+    return chk
 
 
 def validate_runtime(
@@ -97,7 +150,10 @@ def validate_runtime(
         return False
 
     backend, usable = check_supported_backends()
-    log(f"Current system supports {backend} execution.", "info")
+    if backend == "ZLUDA":
+        log("Current system supports CUDA compatibility mode execution.", "info")
+    else:
+        log(f"Current system supports {backend} execution.", "info")
 
     allow_cpu_mini = backend == "CPU" and backend_name.strip().lower() == "mini"
     if allow_cpu_mini:
@@ -119,7 +175,7 @@ def validate_runtime(
         return True
 
     if cuda_version is None:
-        log(f"{APP_NAME} could not find a CUDA runtime.", "error")
+        log(f"{APP_NAME} could not find a CUDA-compatible runtime.", "error")
 
         if separator and torch_variant == "cpu":
             log("You currently have a CPU build of PyTorch.", "error")
@@ -129,6 +185,13 @@ def validate_runtime(
         set_state("error")
         error("No CUDA runtime found")
         return False
+
+    if backend == "ZLUDA":
+        log(
+            "Detected a non-NVIDIA card running in CUDA compatibility mode, likely with ZLUDA or similar.",
+            "warning",
+        )
+        log(f"{APP_NAME}'s performance may be impacted.", "warning")
 
     cuda_version_tuple = tuple(map(int, cuda_version.split(".")))
     if cuda_version_tuple != (12, 8):
@@ -143,6 +206,7 @@ def validate_runtime(
     cuda_avail = torch.cuda.is_available()
     log(f"CUDA available: {cuda_avail}", "info")
 
+    # devices to test
     devices = torch.cuda.device_count()
     if devices == 0:
         log("No GPUs found.", "error")
@@ -150,43 +214,57 @@ def validate_runtime(
         error("CUDA is not available")
         return False
 
-    try:
-        for i in range(devices):
-            gpu = torch.cuda.get_device_name(i)
-            major, minor = torch.cuda.get_device_capability(i)
-            try:
+    for i in range(devices):
+        gpu = torch.cuda.get_device_name(i)
+        major, minor = torch.cuda.get_device_capability(i)
+        try:
+            log(
+                f"GPU {i}: {gpu} ({cuda_architecture((major, minor))}) - CUDA capability: {major}.{minor}",
+                "info",
+            )
+        except (ValueError, NotImplementedError):
+            log(
+                f"GPU {i}: {gpu} (not supported) - CUDA capability: {major}.{minor}",
+                "info",
+            )
+            log(f"{APP_NAME} does not support this GPU.", "error")
+            log(f"{APP_NAME} requires Ampere or newer.", "error")
+            log(
+                "If you have another supported GPU, set CUDA_VISIBLE_DEVICES appropriately.",
+                "error",
+            )
+            set_state("error")
+            error("Unsupported GPU")
+            return False
+
+        try:
+            log(f"Testing GPU {i}...", "info")
+            vtensor = _run_compute_test(f"cuda:{i}")
+            if dev:
                 log(
-                    f"GPU {i}: {gpu} ({cuda_architecture((major, minor))}) - CUDA capability: {major}.{minor}",
+                    f"Compute test for GPU {i} succeeded, result: {format_number(float(vtensor.item()))}",
                     "info",
                 )
-            except (ValueError, NotImplementedError):
-                log(
-                    f"GPU {i}: {gpu} (not supported) - CUDA capability: {major}.{minor}",
-                    "info",
-                )
-                log(f"{APP_NAME} does not support this GPU.", "error")
-                log(f"{APP_NAME} requires Ampere or newer.", "error")
-                log(
-                    "If you have another supported GPU, set CUDA_VISIBLE_DEVICES appropriately.",
-                    "error",
-                )
-                set_state("error")
-                error("Unsupported GPU")
-                return False
+            else:
+                log(f"Compute test for GPU {i} succeeded", "info")
+        except Exception as e:
+            log(f"Compute test for GPU {i} failed: {format_error(e, dev)}", "warning")
 
-            if devices > 1:
-                unused_devices = devices - 1
-                log(f"{unused_devices} GPUs will not be used.", "warning")
+            # decrement device count if tests fail
+            devices -= 1
 
-        log("Compute test...", "info")
-        x = torch.rand(256, 256, device="cuda")
-        y = x @ x
-        log(f"Compute test succeeded on {y.device}", "info")
-    except Exception as e:
-        log(f"Compute test failed: {format_error(e, dev)}", "error")
-        set_state("error")
-        error("CUDA device is not usable")
-        return False
+        # usable devices
+        if devices == 0:
+            log(
+                "GPU tests reported that all GPUs have failed their runtime checks.",
+                "error",
+            )
+            return False
+
+    # found several usable devices
+    if devices > 1:
+        unused_devices = devices - 1
+        log(f"{unused_devices} working GPUs will not be used.", "warning")
 
     if glow_connect_failed:
         log("Cannot connect to OpenRGB. Presence features will be disabled.", "warning")

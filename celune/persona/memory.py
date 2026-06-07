@@ -209,8 +209,8 @@ class MemoryRecord:
         return MemoryRecord(
             id=uuid.uuid4().hex,
             content=_normalize_text(content),
-            importance=max(1, min(3, int(importance))),
-            explicit=bool(explicit),
+            importance=max(1, min(3, importance)),
+            explicit=explicit,
             created_at=now,
             updated_at=now,
             last_used_at=now,
@@ -362,7 +362,7 @@ class PersonaMemoryStore:
             updated = MemoryRecord(
                 id=record.id,
                 content=record.content,
-                importance=max(record.importance, 1, min(3, int(importance))),
+                importance=max(record.importance, 1, min(3, importance)),
                 explicit=record.explicit or explicit,
                 created_at=record.created_at,
                 updated_at=now,
@@ -374,7 +374,7 @@ class PersonaMemoryStore:
 
         created = MemoryRecord.create(
             normalized,
-            importance=max(1, min(3, int(importance))),
+            importance=max(1, min(3, importance)),
             explicit=explicit,
         )
         records.append(created)

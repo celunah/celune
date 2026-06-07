@@ -9,7 +9,7 @@ from tqdm.contrib import tzip
 CI_COMMANDS = (
     ("ruff", "format", "--check"),
     ("pylint",),
-    ("pyright",),
+    ("pyrefly", "check"),
     ("pytest", "-v"),
 )
 

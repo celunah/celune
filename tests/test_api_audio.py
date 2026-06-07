@@ -5,7 +5,7 @@ import io
 import json
 import time
 import queue
-from typing import cast
+from typing import cast, Optional
 from unittest import TestCase
 from types import SimpleNamespace
 
@@ -15,6 +15,7 @@ from starlette.responses import Response
 
 from celune import api
 from celune.pipeline import SpeechStreamQueue
+from celune.celune import Celune
 
 
 class ApiAudioTests(TestCase):
@@ -52,8 +53,8 @@ class ApiAudioTests(TestCase):
         previous_celune = api.bound_celune
 
         try:
-            api.bound_celune = SimpleNamespace(
-                say_stream=lambda content, save=True: chunks
+            api.bound_celune = cast(
+                Celune, SimpleNamespace(say_stream=lambda content, save=True: chunks)
             )
             response = api.speak_async(api.SpeakRequest(content="hello"))
             payload = json.loads(bytes(response.body))
@@ -62,13 +63,14 @@ class ApiAudioTests(TestCase):
             self.assertEqual(payload["status"], "accepted")
             self.assertEqual(response.headers["location"], payload["location"])
 
-            result: Response
+            result: Optional[Response]
             for _ in range(20):
                 result = api.speak_job(payload["job_id"])
                 if result.status_code == 200:
                     break
                 time.sleep(0.01)
             else:
+                result = None
                 self.fail("async speech job did not complete")
 
             result = cast(Response, result)

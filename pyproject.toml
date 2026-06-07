@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "4.0.0"
+version = "4.0.1"
 description = "Real-time AI TTS character engine with expressive voices and high-quality playback"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -98,11 +98,13 @@ explicit = true
 # Install to run CI workflows.
 dev = [
     "pytest",
-    "pyright",
+    "pyrefly",
     "pylint",
     "ruff",
     # If not installed, type checkers may complain.
     "types-pyyaml",
+    "types-psutil",
+    "types-tqdm"
 ]
 
 [project.optional-dependencies]
@@ -113,11 +115,6 @@ api = [
     "python-multipart",
     "pydantic",
 ]
-
-[tool.pyright]
-# These checks may cause type checker errors in external libraries not managed by Celune.
-reportMissingImports = false
-reportPrivateImportUsage = false
 
 [tool.pytest.ini_options]
 filterwarnings = [

@@ -13,7 +13,7 @@ import pathlib
 import datetime
 import contextlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Union, cast
+from typing import TYPE_CHECKING, Optional, Mapping, Union, cast
 
 import torch
 import numpy as np
@@ -177,7 +177,7 @@ def _celune_metadata_payload(
     *,
     text: str,
     display_text: str,
-    generation_params: JSON,
+    generation_params: Mapping[str, JSONSerializable],
     sample_rate: int,
     subtype: str,
     included_kept_sfx: bool,
@@ -205,7 +205,7 @@ def _celune_metadata_payload(
         "sample_rate": sample_rate,
         "subtype": subtype,
         "included_kept_sfx": included_kept_sfx,
-        "generation": generation_params,
+        "generation": dict(generation_params),
     }
 
 
@@ -770,8 +770,8 @@ def _build_visual_context(engine: Celune) -> VisualContext:
         path = attachment.get("path")
         if not isinstance(kind, str) or not kind.strip():
             continue
-        label = str(name).strip() if isinstance(name, str) and name.strip() else ""
-        source = str(path).strip() if isinstance(path, str) and path.strip() else ""
+        label = name.strip() if isinstance(name, str) and name.strip() else ""
+        source = path.strip() if isinstance(path, str) and path.strip() else ""
         if label and source:
             items.append(f"{kind.strip()}: {label} ({source})")
         elif label:
@@ -814,8 +814,8 @@ def _remember_visual_context(
         path = attachment.get("path")
         if not isinstance(kind, str) or not kind.strip():
             continue
-        label = str(name).strip() if isinstance(name, str) and name.strip() else ""
-        source = str(path).strip() if isinstance(path, str) and path.strip() else ""
+        label = name.strip() if isinstance(name, str) and name.strip() else ""
+        source = path.strip() if isinstance(path, str) and path.strip() else ""
         if label and source:
             media_items.append(f"{kind.strip()}: {label} ({source})")
         elif label:
@@ -841,7 +841,7 @@ def _build_short_term_history(engine: Celune) -> ShortTermHistory:
     """Return the current-run chat history for the Persona prompt."""
     messages = _persona_history_messages(engine)
     turns = [
-        (str(message["role"]).strip(), str(message["content"]).strip())
+        (message["role"].strip(), message["content"].strip())
         for message in messages
         if isinstance(message, dict)
         and isinstance(message.get("role"), str)
@@ -1609,7 +1609,7 @@ def generation_worker(engine: Celune) -> None:
                 pushed_audio = False
 
                 # these generation parameters are fixed and do not change
-                generation_params = {
+                generation_params: Mapping[str, JSONSerializable] = {
                     "temperature": 0.15,
                     "top_k": 20,
                     "top_p": 0.7,
@@ -2087,7 +2087,7 @@ def playback_worker(engine: Celune) -> None:
                         )
             continue
 
-        audio_chunk, sr, timing = cast(AudioChunk, item)
+        audio_chunk, sr, timing = item
 
         if engine.stream is None:
             try:
@@ -2098,6 +2098,9 @@ def playback_worker(engine: Celune) -> None:
                     dtype="float32",
                     blocksize=0,
                 )
+                if engine.stream is None:
+                    raise RuntimeError("audio stream is not initialized")
+
                 engine.stream.start()
                 started = True
                 engine.log_dev(f"[PLAY] started stream at {sr} Hz")

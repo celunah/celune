@@ -16,7 +16,7 @@ import importlib.util
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
-from types import SimpleNamespace
+from types import SimpleNamespace, ModuleType
 
 from celune import __version__, REVISION, __tagline__
 from celune.constants import APP_NAME, APP_SLUG, ExitCodes
@@ -297,6 +297,98 @@ def _doctor_config_path() -> Optional[Path]:
     return Path(user_data_dir(APP_SLUG, appauthor=False)) / "config.yaml"
 
 
+def _doctor_detect_backend(torch_module: ModuleType) -> tuple[str, bool]:
+    """Mirror the app's backend detection without importing the full runtime."""
+    if torch_module.cuda.is_available():
+        if getattr(torch_module.version, "hip", None) is not None:
+            return "ROCm", False
+
+        nvidia_keywords = (
+            "nvidia",
+            "geforce",
+            "rtx",
+            "gtx",
+            "quadro",
+            "tesla",
+            "rtx pro",
+            "a1",
+            "a3",
+            "a4",
+            "h1",
+            "h2",
+            "b1",
+            "b2",
+            "l4",
+            "blackwell",
+            "ada",
+            "hopper",
+            "ampere",
+            "turing",
+            "pascal",
+            "volta",
+            "maxwell",
+        )
+
+        if any(
+            keyword in str(torch_module.cuda.get_device_name(0)).lower()
+            for keyword in nvidia_keywords
+        ):
+            return "CUDA", True
+        return "ZLUDA", True
+
+    if (
+        hasattr(torch_module.backends, "mps")
+        and torch_module.backends.mps.is_available()
+    ):
+        return "MPS", False
+
+    return "CPU", False
+
+
+def _doctor_cuda_architecture(capability: tuple[int, int]) -> str:
+    """Mirror Celune's CUDA architecture support mapping for doctor output."""
+    major, minor = capability
+
+    if major in [10, 11, 12] and minor == 0:
+        return "Blackwell"
+    if major == 9 and minor == 0:
+        return "Hopper"
+    if major == 8 and minor == 9:
+        return "Ada Lovelace"
+    if major == 8 and minor in [0, 6, 7]:
+        return "Ampere"
+    if major < 8:
+        raise NotImplementedError("capability not supported")
+
+    raise ValueError("invalid capability")
+
+
+def _doctor_run_compute_test(torch_module: ModuleType, device: str = "cuda") -> str:
+    """Mirror the app's CUDA compute smoke test and return the device used."""
+    dtype = (
+        torch_module.bfloat16
+        if torch_module.cuda.is_bf16_supported()
+        else torch_module.float16
+    )
+
+    x = torch_module.randn(2048, 2048, device=device, dtype=dtype)
+    y = torch_module.randn(2048, 2048, device=device, dtype=dtype)
+
+    torch_module.cuda.synchronize()
+    z = x @ y
+
+    torch_module.cuda.synchronize()
+    for _ in range(25):
+        z = x @ y
+        z = torch_module.relu(z)
+
+    torch_module.cuda.synchronize()
+    check_tensor = z.mean().detach()
+    result_device = str(check_tensor.device)
+
+    return result_device
+
+
 def _doctor_torch_details() -> list[DoctorCheck]:
     """Collect non-startup PyTorch and accelerator diagnostics."""
     checks: list[DoctorCheck] = []
@@ -333,6 +425,58 @@ def _doctor_torch_details() -> list[DoctorCheck]:
     )
 
     try:
+        backend, usable = _doctor_detect_backend(torch)
+    except Exception as exc:
+        _doctor_add(
+            checks,
+            "Accelerator backend",
+            False,
+            f"Probe failed: {exc}",
+            hint="Check your GPU drivers, PyTorch, and any compatibility layers.",
+        )
+        return checks
+
+    if backend == "CUDA":
+        _doctor_add(checks, "Accelerator backend", True, "CUDA detected")
+    elif backend == "ZLUDA":
+        _doctor_add(
+            checks,
+            "Accelerator backend",
+            False,
+            "Detected non-NVIDIA CUDA compatibility mode (likely ZLUDA or similar).",
+            severity="warning",
+            hint=f"{APP_NAME}'s performance may be impacted.",
+        )
+    elif backend == "ROCm":
+        _doctor_add(
+            checks,
+            "Accelerator backend",
+            usable,
+            "ROCm detected. CUDA compatibility is required for the main backends.",
+            hint="Use a CUDA-compatible environment or the Mini backend for CPU-only usage.",
+        )
+        return checks
+    elif backend == "MPS":
+        _doctor_add(
+            checks,
+            "Accelerator backend",
+            usable,
+            "MPS detected. Celune does not support MPS execution.",
+            hint="Use a CUDA-compatible environment or the Mini backend for CPU-only usage.",
+        )
+        return checks
+    else:
+        _doctor_add(
+            checks,
+            "Accelerator backend",
+            usable,
+            "No CUDA-capable backend detected.",
+            severity="warning",
+            hint=f"{APP_NAME} Mini can run on CPU, but other backends need a CUDA-compatible runtime.",
+        )
+        return checks
+
+    try:
         cuda_available = bool(torch.cuda.is_available())
     except Exception as exc:
         _doctor_add(
@@ -340,7 +484,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
             "CUDA availability",
             False,
             f"Probe failed: {exc}",
-            hint="Check your GPU drivers and PyTorch install.",
+            hint="Check your GPU drivers, PyTorch, and any compatibility layers.",
         )
         return checks
 
@@ -351,7 +495,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
             "CUDA runtime",
             cuda_version == expected,
             f"Detected CUDA {cuda_version or 'unknown'}",
-            hint=f"{APP_NAME} expects CUDA 12.8 for the main GPU backends.",
+            hint=f"{APP_NAME} expects a CUDA 12.8-compatible runtime for the main GPU backends.",
         )
 
         try:
@@ -371,17 +515,24 @@ def _doctor_torch_details() -> list[DoctorCheck]:
             "CUDA devices",
             device_count > 0,
             f"{device_count} detected",
-            hint="Install or expose a CUDA-capable GPU for Qwen3 or VoxCPM2.",
+            hint="Install or expose a CUDA-compatible GPU for GPU-based backends."
+            "Ensure any compatibility layers work correctly.",
         )
 
         for index in range(device_count):
             try:
                 gpu_name = str(torch.cuda.get_device_name(index))
                 major, minor = torch.cuda.get_device_capability(index)
-                supported = major >= 8
-                detail = f"{gpu_name} (compute capability {major}.{minor})"
+                try:
+                    architecture = _doctor_cuda_architecture((major, minor))
+                    supported = True
+                    detail = f"{gpu_name} ({architecture}, compute capability {major}.{minor})"
+                except (ValueError, NotImplementedError):
+                    supported = False
+                    detail = f"{gpu_name} (compute capability {major}.{minor})"
                 hint = (
                     f"{APP_NAME} requires Ampere or newer for the CUDA-only backends."
+                    f"If not using NVIDIA, try installing ZLUDA or another compatibility layer."
                     if not supported
                     else None
                 )
@@ -400,27 +551,32 @@ def _doctor_torch_details() -> list[DoctorCheck]:
                     f"Probe failed: {exc}",
                     hint="Check driver and CUDA runtime health.",
                 )
+
+        if device_count > 0:
+            try:
+                compute_device = _doctor_run_compute_test(torch)
+                _doctor_add(
+                    checks,
+                    "CUDA compute test",
+                    True,
+                    f"Succeeded on {compute_device}",
+                )
+            except Exception as exc:
+                _doctor_add(
+                    checks,
+                    "CUDA compute test",
+                    False,
+                    f"Failed: {exc}",
+                    hint="The CUDA runtime was detected, but the selected device is not usable.",
+                )
     else:
-        has_mps = bool(
-            hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+        _doctor_add(
+            checks,
+            "CUDA runtime",
+            False,
+            "PyTorch did not report CUDA availability after backend detection succeeded.",
+            hint="Check your GPU drivers, PyTorch, and any compatibility layers.",
         )
-        if has_mps:
-            _doctor_add(
-                checks,
-                "Accelerator backend",
-                False,
-                f"MPS detected. {APP_NAME} does not support MPS execution.",
-                hint="Use a CUDA-capable environment or the mini backend on CPU.",
-            )
-        else:
-            _doctor_add(
-                checks,
-                "Accelerator backend",
-                False,
-                "No CUDA-capable backend detected.",
-                severity="warning",
-                hint=f"{APP_NAME} Mini can run on CPU, but the default backend needs CUDA.",
-            )
 
     return checks
 
@@ -696,7 +852,7 @@ def run_doctor(argv: list[str]) -> int:
     )
     print()
 
-    if failures == 0:
+    if failures == 0 and warnings_count == 0:
         print(f"Your system is ready to run {APP_NAME}.")
     elif failures == 0 and warnings_count > 0:
         print(f"{APP_NAME}'s performance may be impacted.")
@@ -717,7 +873,7 @@ def run_doctor(argv: list[str]) -> int:
         except OSError as exc:
             print(f"Failed to fix {APP_NAME}: {exc}")
             return EXIT_CODES.EXIT_FAILURE.value
-        return int(result.returncode)
+        return result.returncode
 
     return EXIT_CODES.EXIT_FAILURE.value if failures else 0
 

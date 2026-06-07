@@ -3,8 +3,8 @@
 
 import io
 import contextlib
-from collections.abc import Mapping, Iterator
-from typing import Callable, Optional
+from collections.abc import Mapping
+from typing import Callable, Optional, Generator
 
 from ..config import Config
 from ..vram import resolve_vram_preset
@@ -46,7 +46,7 @@ class PersonaClient:
         self.log_dev = log_dev
 
     @contextlib.contextmanager
-    def _capture_backend_output(self) -> Iterator[None]:
+    def _capture_backend_output(self) -> Generator[None, None, None]:
         """Route Persona backend stdout/stderr into Celune developer logs."""
         if self.log_dev is None:
             yield

@@ -4,10 +4,12 @@
 import json
 from unittest import TestCase
 from types import SimpleNamespace
+from typing import cast
 
 from fastapi import HTTPException
 
 from celune import api
+from celune.celune import Celune
 
 
 class ApiThinkTests(TestCase):
@@ -18,8 +20,9 @@ class ApiThinkTests(TestCase):
         previous_celune = api.bound_celune
 
         try:
-            api.bound_celune = SimpleNamespace(
-                think=lambda content: content == "hello", dev=False
+            api.bound_celune = cast(
+                Celune,
+                SimpleNamespace(think=lambda content: content == "hello", dev=False),
             )
             response = api.think(api.ThinkRequest(content="hello"))
             payload = json.loads(bytes(response.body))
@@ -34,7 +37,9 @@ class ApiThinkTests(TestCase):
         previous_celune = api.bound_celune
 
         try:
-            api.bound_celune = SimpleNamespace(think=lambda _content: False, dev=False)
+            api.bound_celune = cast(
+                Celune, SimpleNamespace(think=lambda _content: False, dev=False)
+            )
             response = api.think(api.ThinkRequest(content="hello"))
             payload = json.loads(bytes(response.body))
 

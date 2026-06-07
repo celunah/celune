@@ -7,7 +7,8 @@ import queue
 import threading
 import contextlib
 from pathlib import Path
-from typing import Optional, Callable, Protocol, Union, cast
+from collections.abc import Iterator
+from typing import Optional, Callable, Protocol, Union, Any, cast
 
 import torch
 import numpy as np
@@ -108,6 +109,32 @@ class _SupportsClose(Protocol):
 class _SupportsUnload(Protocol):
     def unload(self) -> None:
         """Fake return value of unload().
+
+        Raises:
+            NotImplementedError: The protocol was called directly.
+        """
+        raise NotImplementedError("protocol not defined")
+
+
+class _Generative(Protocol):
+    def generate(self, **kwargs: Any) -> torch.Tensor:
+        """Fake return value of generate().
+
+        Raises:
+            NotImplementedError: The protocol was called directly.
+        """
+        raise NotImplementedError("protocol not defined")
+
+    def device(self) -> Union[torch.device, str]:
+        """Fake return value of device().
+
+        Raises:
+            NotImplementedError: The protocol was called directly.
+        """
+        raise NotImplementedError("protocol not defined")
+
+    def parameters(self) -> Iterator[torch.nn.Parameter]:
+        """Fake return value of device().
 
         Raises:
             NotImplementedError: The protocol was called directly.
@@ -266,7 +293,7 @@ class Celune:
         if tts_backend is None:
             tts_backend = preset.default_backend
 
-        backend_kwargs = {}
+        backend_kwargs: dict[str, Optional[Union[bool, str]]] = {}
         if isinstance(tts_backend, CeluneBackend):
             if not backend_allowed(config, tts_backend.name):
                 raise BackendError(
@@ -1338,7 +1365,7 @@ class Celune:
         if self.llm is None or self.tokenizer is None:
             return None
 
-        llm: PreTrainedModel = self.llm
+        llm = cast(_Generative, self.llm)
         tokenizer = cast(NormalizerTokenizer, self.tokenizer)
 
         def _run_inference() -> Optional[str]:
@@ -1368,7 +1395,8 @@ class Celune:
                     add_special_tokens=False,
                 )
 
-                inputs = tokens.to(llm.device)
+                device = next(llm.parameters()).device
+                inputs = tokens.to(device)
                 token_ids = cast(torch.Tensor, tokens["input_ids"])
                 len_tokens = token_ids.shape[1]
 
@@ -1378,7 +1406,7 @@ class Celune:
                     return None
 
                 with torch.inference_mode():
-                    output_ids = llm.generate(  # type: ignore[operator]
+                    output_ids = llm.generate(
                         **inputs,
                         # CeluneNorm will likely return less, unless you use up your whole context allowance
                         max_new_tokens=512,

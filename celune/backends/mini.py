@@ -425,7 +425,7 @@ class Mini(CeluneBackend[TTSModel]):
                 total_steps += pending_steps
                 yield (
                     pending_audio,
-                    int(mini_model.sample_rate),
+                    mini_model.sample_rate,
                     {
                         "backend": self.name,
                         "chunk_index": chunk_index,
@@ -445,7 +445,7 @@ class Mini(CeluneBackend[TTSModel]):
                 total_steps += pending_steps
                 yield (
                     pending_audio,
-                    int(mini_model.sample_rate),
+                    mini_model.sample_rate,
                     {
                         "backend": self.name,
                         "chunk_index": chunk_index,
@@ -459,7 +459,7 @@ class Mini(CeluneBackend[TTSModel]):
             total_steps += len(batch)
             yield (
                 np.concatenate(batch),
-                int(mini_model.sample_rate),
+                mini_model.sample_rate,
                 {
                     "backend": self.name,
                     "chunk_index": chunk_index,
@@ -472,7 +472,7 @@ class Mini(CeluneBackend[TTSModel]):
             total_steps += pending_steps
             yield (
                 pending_audio,
-                int(mini_model.sample_rate),
+                mini_model.sample_rate,
                 {
                     "backend": self.name,
                     "chunk_index": chunk_index,

@@ -292,7 +292,7 @@ def compute_raw_metrics(y: npt.NDArray[np.float32], sr: int) -> dict:
     hop_duration_s = 512 / sr
     num_voiced_frames = int(np.sum(voiced_flag))
     metrics["voice_extraction_ok"] = num_voiced_frames > 0
-    metrics["speaking_pace_proxy"] = float(
+    metrics["speaking_pace_proxy"] = (
         num_voiced_frames * hop_duration_s / max(metrics["duration_s"], 1e-6)
     )
 
@@ -500,9 +500,9 @@ def add_reference_similarity_metrics(
         best_match = matches[0]
         next_match = matches[1]
         metrics["voice_similarity_next_closest"] = next_match
-        metrics["voice_similarity_margin"] = float(
-            best_match.get("percent", 0.0)
-        ) - float(next_match.get("percent", 0.0))
+        metrics["voice_similarity_margin"] = best_match.get(
+            "percent", 0.0
+        ) - next_match.get("percent", 0.0)
 
 
 def _clip_norm(value: float, low: float, high: float) -> float:

@@ -19,6 +19,7 @@ from transformers import (
     BitsAndBytesConfig,
 )
 
+from ..utils import discard
 from ..vram import resolve_vram_preset
 from ..constants import JSONSerializable, PERSONA_MODEL_ID, N_A_STR
 
@@ -78,10 +79,10 @@ class ChatTemplateRenderer(Protocol):
         self,
         conversation: Sequence[ChatMessagePayload],
         *,
-        tokenize: bool = ...,
-        add_generation_prompt: bool = ...,
-        return_dict: bool = ...,
-        return_tensors: str = ...,
+        tokenize: bool = False,
+        add_generation_prompt: bool = True,
+        return_dict: bool = True,
+        return_tensors: str = "pt",
     ) -> Union[str, BatchEncoding]:
         """Render or tokenize a chat conversation.
 
@@ -129,9 +130,9 @@ class PersonaProcessor(ChatTemplateRenderer, Protocol):
         self,
         *,
         text: str,
-        images: Optional[Sequence[VisionInput]] = ...,
-        videos: Optional[Sequence[VisionInput]] = ...,
-        video_metadata: Optional[Sequence[VideoMetadata]] = ...,
+        images: Optional[Sequence[VisionInput]] = None,
+        videos: Optional[Sequence[VisionInput]] = None,
+        video_metadata: Optional[Sequence[VideoMetadata]] = None,
         return_tensors: str,
         **kwargs: ProcessorKwargValue,
     ) -> BatchEncoding:
@@ -410,7 +411,8 @@ class PersonaBackend:
         try:
             inputs = self._build_inputs(message_dicts)
             model_inputs = {
-                key: cast(torch.Tensor, value) for key, value in dict(inputs).items()
+                str(key): cast(torch.Tensor, value)
+                for key, value in dict(inputs).items()
             }
             generation_kwargs: dict[str, int] = {}
             pad_token_id = tokenizer.eos_token_id
@@ -440,10 +442,10 @@ class PersonaBackend:
         finally:
             # Vision requests can allocate substantial transient GPU memory for
             # decoded image/video inputs; drop those tensors as soon as the turn ends.
-            del new_ids
-            del output_ids
-            del model_inputs
-            del inputs
+            discard(new_ids)
+            discard(output_ids)
+            discard(model_inputs)
+            discard(inputs)
             if used_vision:
                 gc.collect()
                 if torch.cuda.is_available():
