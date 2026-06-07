@@ -5,7 +5,7 @@ import os
 import sys
 import ctypes
 from collections.abc import Mapping
-from typing import IO, Final, Literal, Optional, cast
+from typing import IO, Final, Literal, Optional, Callable, Any, cast
 
 from .config import config_value
 from .constants import JSONSerializable
@@ -94,8 +94,10 @@ def supports_ansi(stream: Optional[IO[str]] = None) -> bool:
         return True
 
     windll = getattr(ctypes, "WinDLL", None)
-    if windll is None:
+    if not callable(windll):
         return False
+
+    windll = cast(Callable[..., Any], windll)
 
     kernel32 = windll("kernel32", use_last_error=True)
     handle_id = -12 if output is sys.stderr else -11
