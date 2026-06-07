@@ -3,10 +3,11 @@
 
 import math
 import datetime
-from typing import Literal, cast
+from typing import Literal, Optional, Mapping, cast
 from unittest import mock, TestCase
 
 from celune import config, utils
+from celune.constants import JSONSerializable
 
 
 class ConfigTests(TestCase):
@@ -57,7 +58,7 @@ class ConfigTests(TestCase):
         Raises:
             AssertionError: Config merging behavior changes unexpectedly.
         """
-        current = {
+        current: Optional[Mapping[str, JSONSerializable]] = {
             "backend": "qwen3",
             "api": {"enabled": False, "port": 9999},
             "theme": "light",

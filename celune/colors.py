@@ -3,7 +3,7 @@
 
 import random
 import colorsys
-from typing import Final, Optional, cast
+from typing import Final, Optional
 
 from textual.theme import Theme
 
@@ -29,7 +29,7 @@ def random_hex() -> str:
 
 
 def _rgb(color: str) -> RGB:
-    return cast(RGB, to_rgb(color))
+    return to_rgb(color)
 
 
 def _hex(rgb: RGB) -> str:

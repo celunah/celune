@@ -108,7 +108,7 @@ def configure_api_security(
     global auth_token, rate_limit_per_minute
 
     auth_token = _clean_token(token) or _env_auth_token()
-    rate_limit_per_minute = max(0, int(requests_per_minute))
+    rate_limit_per_minute = max(0, requests_per_minute)
     with rate_limit_lock:
         rate_limit_hits.clear()
 

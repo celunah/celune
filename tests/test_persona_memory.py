@@ -200,7 +200,7 @@ class PersonaMemoryTests(TestCase):
         ):
             memory = "The user prefers tabs for indentation"
             request = "Should I keep that formatting habit?"
-            embedding_map = {
+            embedding_map: dict[str, tuple[float, ...]] = {
                 request: (1.0, 0.0, 0.0),
                 memory: (0.65, np.sqrt(1 - (0.65**2)), 0.0),
             }

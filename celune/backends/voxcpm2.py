@@ -4,7 +4,7 @@
 import os
 import contextlib
 from collections.abc import Iterator
-from typing import Callable, Optional, Mapping
+from typing import Callable, Optional, Mapping, Generator
 
 import torch
 import numpy as np
@@ -152,7 +152,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
 
     @staticmethod
     @contextlib.contextmanager
-    def _suppress_backend_output() -> Iterator:
+    def _suppress_backend_output() -> Generator[None, None, None]:
         """Suppress unnecessary backend output."""
         with open(os.devnull, "w", encoding="utf-8") as devnull:
             with contextlib.redirect_stdout(devnull):

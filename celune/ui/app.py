@@ -95,13 +95,13 @@ class CeluneUI(App):
         self._log_stdout = cast(LogRedirect, None)
         self._log_stderr = cast(LogRedirect, None)
         self._runtime_log_capture_enabled = False
-        self._runtime_redirect_loggers = cast(dict[str, logging.Logger], None)
-        self._runtime_redirect_handlers = cast(dict[str, UILogHandler], None)
-        self._runtime_redirect_original_handlers = cast(
-            dict[str, list[logging.Handler]], None
-        )
-        self._runtime_redirect_original_propagate = cast(dict[str, bool], None)
-        self._warnings_capture_enabled = False
+        self._runtime_redirect_loggers: Optional[dict[str, logging.Logger]] = None
+        self._runtime_redirect_handlers: Optional[dict[str, UILogHandler]] = None
+        self._runtime_redirect_original_handlers: Optional[
+            dict[str, list[logging.Handler]]
+        ] = None
+        self._runtime_redirect_original_propagate: Optional[dict[str, bool]] = None
+        self._warnings_capture_enabled: bool = False
 
         self.cur_state = "active"
 
@@ -391,12 +391,10 @@ class CeluneUI(App):
             logging.captureWarnings(False)
             self._warnings_capture_enabled = False
 
-        self._runtime_redirect_loggers = cast(dict[str, logging.Logger], None)
-        self._runtime_redirect_handlers = cast(dict[str, UILogHandler], None)
-        self._runtime_redirect_original_handlers = cast(
-            dict[str, list[logging.Handler]], None
-        )
-        self._runtime_redirect_original_propagate = cast(dict[str, bool], None)
+        self._runtime_redirect_loggers = None
+        self._runtime_redirect_handlers = None
+        self._runtime_redirect_original_handlers = None
+        self._runtime_redirect_original_propagate = None
 
     def _disable_runtime_log_capture(self) -> None:
         """Restore global stdio once the UI is shutting down."""

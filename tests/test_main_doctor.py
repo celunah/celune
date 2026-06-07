@@ -72,6 +72,28 @@ class DoctorCommandTests(TestCase):
         self.assertIn("[FAIL] uv: not found", output)
         self.assertIn("Summary:", output)
 
+    def test_run_doctor_reports_warning_only_state(self) -> None:
+        """Verify warning-only doctor results do not masquerade as a clean pass."""
+        checks = [
+            entrypoint.DoctorCheck(
+                "Accelerator backend",
+                False,
+                "Detected non-NVIDIA CUDA compatibility mode.",
+                severity="warning",
+            )
+        ]
+
+        with (
+            mock.patch.object(entrypoint, "_doctor_checks", return_value=checks),
+            contextlib.redirect_stdout(io.StringIO()) as stdout,
+        ):
+            exit_code = entrypoint.run_doctor(["celune", "doctor"])
+
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn("[WARN] Accelerator backend", output)
+        self.assertIn("performance may be impacted", output)
+
     def test_doctor_checks_warn_when_running_outside_project_venv(self) -> None:
         """Verify doctor prefers the project virtual environment over system Python."""
         with (
@@ -114,3 +136,32 @@ class DoctorCommandTests(TestCase):
         self.assertFalse(python_env.ok)
         self.assertEqual(python_env.severity, "warning")
         self.assertIn("system interpreter", python_env.detail)
+
+    def test_doctor_torch_details_detects_zluda_and_runs_compute_test(self) -> None:
+        """Verify doctor mirrors the app's ZLUDA warning and CUDA compute smoke test."""
+        fake_torch = mock.Mock()
+        fake_torch.__version__ = "2.7.0+cu128"
+        fake_torch.version = mock.Mock(cuda="12.8", hip=None)
+        fake_torch.cuda.is_available.return_value = True
+        fake_torch.cuda.device_count.return_value = 1
+        fake_torch.cuda.get_device_name.return_value = "AMD Radeon RX 7800 XT"
+        fake_torch.cuda.get_device_capability.return_value = (8, 9)
+        fake_torch.backends = mock.Mock()
+        fake_torch.backends.mps.is_available.return_value = False
+
+        with (
+            mock.patch.object(entrypoint, "_doctor_import", return_value=True),
+            mock.patch.object(
+                entrypoint.importlib, "import_module", return_value=fake_torch
+            ),
+            mock.patch.object(
+                entrypoint, "_doctor_run_compute_test", return_value="cuda:0"
+            ),
+        ):
+            checks = entrypoint._doctor_torch_details()
+
+        by_label = {check.label: check for check in checks}
+        self.assertEqual(by_label["Accelerator backend"].severity, "warning")
+        self.assertIn("ZLUDA", by_label["Accelerator backend"].detail)
+        self.assertTrue(by_label["CUDA compute test"].ok)
+        self.assertEqual(by_label["CUDA compute test"].detail, "Succeeded on cuda:0")
