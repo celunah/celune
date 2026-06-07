@@ -76,10 +76,13 @@ def check_supported_backends() -> tuple[str, bool]:
             "maxwell",
         )
 
-        if any(
-            keyword in torch.cuda.get_device_name(0).lower()
-            for keyword in nvidia_keywords
-        ):
+        try:
+            device_name = torch.cuda.get_device_name(0).lower()
+        except (RuntimeError, AssertionError):
+            # sometimes CUDA can be available but not yet usable, bail out here
+            return "CUDA", False
+
+        if any(keyword in device_name for keyword in nvidia_keywords):
             return "CUDA", True
         return "ZLUDA", True
 

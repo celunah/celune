@@ -426,7 +426,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
 
     try:
         backend, usable = _doctor_detect_backend(torch)
-    except Exception as exc:
+    except (RuntimeError, AssertionError) as exc:
         _doctor_add(
             checks,
             "Accelerator backend",
@@ -478,7 +478,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
 
     try:
         cuda_available = bool(torch.cuda.is_available())
-    except Exception as exc:
+    except (RuntimeError, AssertionError) as exc:
         _doctor_add(
             checks,
             "CUDA availability",
@@ -500,7 +500,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
 
         try:
             device_count = int(torch.cuda.device_count())
-        except Exception as exc:
+        except (RuntimeError, AssertionError) as exc:
             _doctor_add(
                 checks,
                 "CUDA devices",
@@ -543,7 +543,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
                     detail,
                     hint=hint,
                 )
-            except Exception as exc:
+            except (RuntimeError, AssertionError) as exc:
                 _doctor_add(
                     checks,
                     f"GPU {index}",
@@ -561,7 +561,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
                     True,
                     f"Succeeded on {compute_device}",
                 )
-            except Exception as exc:
+            except (RuntimeError, AssertionError) as exc:
                 _doctor_add(
                     checks,
                     "CUDA compute test",
