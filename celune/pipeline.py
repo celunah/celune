@@ -25,11 +25,26 @@ from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
 from . import __version__
-from .cevoice import CEVoicePersona
 from .exceptions import NotAvailableError
 from .persona.memory import PersonaMemoryStore
 from .analysis import analyze_voice_audio
-from .persona.impl import persona_config, persona_model_id, persona_quantization
+from .persona.impl import (
+    default_persona_age,
+    default_persona_context,
+    default_persona_gender,
+    default_persona_persona,
+    pack_identity_text,
+    pack_persona_lines,
+    pack_persona_text,
+    persona_active_character_name,
+    persona_config,
+    persona_history_messages,
+    persona_model_id,
+    persona_pending_attachments,
+    persona_quantization,
+    persona_short_term_history_limit,
+    persona_style_traits,
+)
 from .dsp import (
     _resample_audio,
     _soften,
@@ -59,14 +74,11 @@ from .constants import (
     APP_NAME,
     APP_SLUG,
     BASE_SR,
-    DEFAULT_PERSONA_CONTEXT,
-    DEFAULT_PERSONA_DESCRIPTION,
     JSON,
     JSONSerializable,
     N_A_NUMERIC,
     PERSONA_MEMORY_EMBEDDING_MODEL,
     PipelineStates,
-    PERSONA_HISTORY_MESSAGES,
 )
 
 if TYPE_CHECKING:
@@ -553,135 +565,6 @@ def _config_lines(engine: Celune, key: str) -> tuple[str, ...]:
     return ()
 
 
-def _persona_short_term_history_limit(engine: Celune) -> int:
-    """Return the configured short-term memory length for Persona."""
-    memory = persona_config(engine.config).get("memory")
-    if isinstance(memory, dict):
-        configured = memory.get("max_short_term_messages")
-        if isinstance(configured, bool):
-            return PERSONA_HISTORY_MESSAGES
-        if isinstance(configured, (int, float)):
-            return max(0, int(configured))
-        if isinstance(configured, str):
-            stripped = configured.strip()
-            if stripped:
-                try:
-                    return max(0, int(stripped))
-                except ValueError:
-                    return PERSONA_HISTORY_MESSAGES
-    return PERSONA_HISTORY_MESSAGES
-
-
-def _persona_style_traits(engine: Celune) -> dict[str, str]:
-    """Return the configured speaking-style traits for a Persona request."""
-    traits = {
-        "warmth": "mid",
-        "directness": "mid",
-        "humor": "low",
-        "detail": "mid",
-        "formality": "mid",
-        "enthusiasm": "mid",
-    }
-    persona = _pack_persona(engine)
-    if persona is None:
-        return traits
-
-    style = persona.style
-    configured = {
-        "warmth": style.warmth,
-        "directness": style.directness,
-        "humor": style.humor,
-        "detail": style.detail,
-        "formality": style.formality,
-        "enthusiasm": style.enthusiasm,
-    }
-    for key, value in configured.items():
-        if value.strip():
-            traits[key] = value.strip()
-    return traits
-
-
-def _default_persona_persona() -> str:
-    """Return the default persona instructions for the active character."""
-    return DEFAULT_PERSONA_DESCRIPTION
-
-
-def _uses_default_celune_identity(engine: Celune) -> bool:
-    """Return whether Persona defaults should use Celune's canonical identity."""
-    if not bool(getattr(engine, "voice_bundle_is_default", False)):
-        return False
-    return _persona_active_character_name(engine).strip().lower() == "celune"
-
-
-def _default_persona_age(engine: Celune) -> str:
-    """Return the default age for the active character source."""
-    if _uses_default_celune_identity(engine):
-        return "28"
-    return "unknown"
-
-
-def _default_persona_gender(engine: Celune) -> str:
-    """Return a conservative gender default for the active character source."""
-    if _uses_default_celune_identity(engine):
-        return "female"
-    return "unknown"
-
-
-def _default_persona_context() -> str:
-    """Return the default interaction context for the active character source."""
-    return DEFAULT_PERSONA_CONTEXT
-
-
-def _pack_persona(engine: Celune) -> Optional[CEVoicePersona]:
-    """Return typed CEVOICE persona metadata attached to the current engine."""
-    persona = getattr(engine, "current_character_persona", None)
-    return persona if isinstance(persona, CEVoicePersona) else None
-
-
-def _pack_identity_text(engine: Celune, field_name: str) -> str:
-    """Read one CEVOICE persona identity field when present."""
-    persona = _pack_persona(engine)
-    if persona is None:
-        return ""
-    identity = persona.identity
-    value = getattr(identity, field_name, "")
-    return value.strip() if isinstance(value, str) and value.strip() else ""
-
-
-def _persona_active_character_name(engine: Celune) -> str:
-    """Return the active character name used for Persona memory isolation."""
-    current_character = getattr(engine, "current_character", None)
-    if isinstance(current_character, str) and current_character.strip():
-        return current_character.strip()
-
-    pack_identity_name = _pack_identity_text(engine, "name")
-    if pack_identity_name:
-        return pack_identity_name
-
-    return _config_text(engine, "persona_character_name", "Unknown")
-
-
-def _pack_persona_text(engine: Celune, field_name: str) -> str:
-    """Read one top-level CEVOICE persona text field when present."""
-    persona = _pack_persona(engine)
-    if persona is None:
-        return ""
-    value = getattr(persona, field_name, "")
-    return value.strip() if isinstance(value, str) and value.strip() else ""
-
-
-def _pack_persona_lines(engine: Celune, field_name: str) -> tuple[str, ...]:
-    """Read one CEVOICE persona text-list field when present."""
-    persona = _pack_persona(engine)
-    if persona is None:
-        return ()
-    raw = getattr(persona, field_name, ())
-    if not isinstance(raw, tuple):
-        return ()
-    lines = [item.strip() for item in raw if isinstance(item, str) and item.strip()]
-    return tuple(lines)
-
-
 def build_persona_character_card(engine: Celune) -> str:
     """Build the compact character and persona summary sent with requests.
 
@@ -693,65 +576,6 @@ def build_persona_character_card(engine: Celune) -> str:
     """
     context = build_persona_context(engine, "")
     return f"{context.character_profile.render()}\n\n{context.persona_card.render()}"
-
-
-def _persona_history_limit() -> int:
-    """Return the default short-term memory length for Persona."""
-    return PERSONA_HISTORY_MESSAGES
-
-
-def _persona_history_messages(engine: Celune) -> list[JSON]:
-    """Return prior Persona chat messages in OpenAI chat format."""
-    history = getattr(engine, "persona_history", [])
-    if not isinstance(history, list):
-        return []
-
-    messages: list[JSON] = []
-    limit = _persona_short_term_history_limit(engine)
-    window = history if limit <= 0 else history[-limit:]
-    for item in window:
-        if not isinstance(item, dict):
-            continue
-
-        role = item.get("role")
-        content = item.get("content")
-        if (
-            role in {"user", "assistant"}
-            and isinstance(content, str)
-            and content.strip()
-        ):
-            messages.append({"role": role, "content": content.strip()})
-
-    return messages
-
-
-def _persona_pending_attachments(engine: Celune) -> list[JSON]:
-    """Return pending Persona attachments in Qwen chat content format."""
-    attachments = getattr(engine, "persona_attachments", [])
-    if not isinstance(attachments, list):
-        return []
-
-    content: list[JSON] = []
-    for attachment in attachments:
-        if not isinstance(attachment, dict):
-            continue
-
-        kind = attachment.get("type")
-        path = attachment.get("path")
-        if kind in {"image", "video"} and isinstance(path, str) and path.strip():
-            content.append({"type": kind, kind: _persona_attachment_source(path)})
-
-    return content
-
-
-def _persona_attachment_source(path: str) -> str:
-    """Return a qwen-vl-utils-safe attachment path or URI."""
-    source = path.strip()
-    if os.name == "nt" and source.startswith("file:///"):
-        without_scheme = source.removeprefix("file:///")
-        if len(without_scheme) >= 2 and without_scheme[1] == ":":
-            return without_scheme
-    return source
 
 
 def _build_visual_context(engine: Celune) -> VisualContext:
@@ -839,7 +663,7 @@ def _remember_visual_context(
 
 def _build_short_term_history(engine: Celune) -> ShortTermHistory:
     """Return the current-run chat history for the Persona prompt."""
-    messages = _persona_history_messages(engine)
+    messages = persona_history_messages(engine)
     turns = [
         (message["role"].strip(), message["content"].strip())
         for message in messages
@@ -912,7 +736,7 @@ def _store_persona_memories(engine: Celune, request: str) -> None:
     if store is None:
         return
 
-    character_name = _persona_active_character_name(engine)
+    character_name = persona_active_character_name(engine)
     if not character_name.strip():
         return
 
@@ -934,7 +758,7 @@ def _build_retrieved_memory_bundle(
 
     store = _persona_memory_store(engine)
     if store is not None:
-        character_name = _persona_active_character_name(engine)
+        character_name = persona_active_character_name(engine)
         memories = tuple(
             record.content
             for record in store.retrieve(character_name, request.strip())
@@ -958,10 +782,10 @@ def build_persona_context(engine: Celune, request: str) -> PersonaContext:
     Returns:
         PersonaContext: The built RAG context for Persona.
     """
-    name = _persona_active_character_name(engine)
+    name = persona_active_character_name(engine)
     voice = getattr(engine, "current_voice", None) or "balanced"
     voice_prompt = _effective_voice_prompt(engine)
-    traits = _persona_style_traits(engine)
+    traits = persona_style_traits(engine)
 
     voice_notes = f"Selected voice: {voice}."
     if isinstance(voice_prompt, str) and voice_prompt.strip():
@@ -969,20 +793,20 @@ def build_persona_context(engine: Celune, request: str) -> PersonaContext:
 
     character_profile = CharacterProfile(
         name=name,
-        age=_pack_identity_text(engine, "age")
-        or _config_text(engine, "persona_character_age", _default_persona_age(engine)),
-        gender=_pack_identity_text(engine, "gender")
+        age=pack_identity_text(engine, "age")
+        or _config_text(engine, "persona_character_age", default_persona_age(engine)),
+        gender=pack_identity_text(engine, "gender")
         or _config_text(
-            engine, "persona_character_gender", _default_persona_gender(engine)
+            engine, "persona_character_gender", default_persona_gender(engine)
         ),
-        profile=_pack_identity_text(engine, "profile")
+        profile=pack_identity_text(engine, "profile")
         or _config_text(engine, "persona_character_profile", ""),
     )
     persona_card = PersonaCard(
         persona=_config_text(
             engine,
             "persona_persona",
-            _default_persona_persona(),
+            default_persona_persona(),
         ),
         warmth=traits["warmth"],
         directness=traits["directness"],
@@ -993,13 +817,13 @@ def build_persona_context(engine: Celune, request: str) -> PersonaContext:
         context=_config_text(
             engine,
             "persona_context",
-            _default_persona_context(),
+            default_persona_context(),
         ),
         voice=voice_notes,
-        speaking_style=_pack_persona_text(engine, "speaking_style"),
-        boundaries=_pack_persona_lines(engine, "boundaries"),
-        prompt_rules=_pack_persona_lines(engine, "prompt_rules"),
-        example_dialogue=_pack_persona_lines(engine, "example_dialogue"),
+        speaking_style=pack_persona_text(engine, "speaking_style"),
+        boundaries=pack_persona_lines(engine, "boundaries"),
+        prompt_rules=pack_persona_lines(engine, "prompt_rules"),
+        example_dialogue=pack_persona_lines(engine, "example_dialogue"),
     )
     relationship_memory = _config_text(engine, "persona_relationship_memory", "")
     mood_or_state = _config_text(engine, "persona_state", "Neutral.")
@@ -1039,7 +863,7 @@ def build_persona_messages(engine: Celune, request: str) -> list[JSON]:
         list[JSON]: A list of JSON objects containing current message history.
     """
     context = build_persona_context(engine, request)
-    attachments = _persona_pending_attachments(engine)
+    attachments = persona_pending_attachments(engine)
     user_content: JSONSerializable = request.strip()
     if attachments:
         user_content = [
@@ -1162,7 +986,7 @@ def think(engine: Celune, request: str) -> bool:
                 {"role": "assistant", "content": spoken_text},
             ]
         )
-        limit = _persona_short_term_history_limit(engine)
+        limit = persona_short_term_history_limit(engine)
         if limit == 0:
             history.clear()
         elif len(history) > limit:

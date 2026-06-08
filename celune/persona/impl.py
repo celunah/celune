@@ -1,14 +1,23 @@
 # SPDX-License-Identifier: MIT
 """Celune-managed Persona runtime helpers."""
 
+import os
 import io
 import contextlib
 from collections.abc import Mapping
-from typing import Callable, Optional, Generator
+from typing import Callable, Optional, Generator, Any
 
 from ..config import Config
+from ..cevoice import CEVoicePersona
 from ..vram import resolve_vram_preset
-from ..constants import JSONSerializable, PERSONA_MODEL_ID
+from ..constants import (
+    DEFAULT_PERSONA_CONTEXT,
+    DEFAULT_PERSONA_DESCRIPTION,
+    JSON,
+    JSONSerializable,
+    PERSONA_HISTORY_MESSAGES,
+    PERSONA_MODEL_ID,
+)
 from .runtime import PersonaRuntime, request_from_json, response_to_json
 
 PERSONA_QUANTIZATION = "4bit"
@@ -112,6 +121,213 @@ def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
         raw = {}
 
     return dict(raw)
+
+
+def _config_text(
+    engine: Any,
+    key: str,
+    default: str = "",
+) -> str:
+    """Return one text configuration value from an engine-like object."""
+    config = getattr(engine, "config", {})
+    if not isinstance(config, Mapping):
+        return default
+
+    value = config.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return default
+
+
+def pack_persona(engine: Any) -> Optional[CEVoicePersona]:
+    """Return typed CEVOICE persona metadata attached to the current engine."""
+    persona = getattr(engine, "current_character_persona", None)
+    return persona if isinstance(persona, CEVoicePersona) else None
+
+
+def pack_identity_text(engine: Any, field_name: str) -> str:
+    """Read one CEVOICE persona identity field when present."""
+    persona = pack_persona(engine)
+    if persona is None:
+        return ""
+    identity = persona.identity
+    value = getattr(identity, field_name, "")
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def pack_persona_text(engine: Any, field_name: str) -> str:
+    """Read one top-level CEVOICE persona text field when present."""
+    persona = pack_persona(engine)
+    if persona is None:
+        return ""
+    value = getattr(persona, field_name, "")
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def pack_persona_lines(engine: Any, field_name: str) -> tuple[str, ...]:
+    """Read one CEVOICE persona text-list field when present."""
+    persona = pack_persona(engine)
+    if persona is None:
+        return ()
+    raw = getattr(persona, field_name, ())
+    if not isinstance(raw, tuple):
+        return ()
+    lines = [item.strip() for item in raw if isinstance(item, str) and item.strip()]
+    return tuple(lines)
+
+
+def persona_active_character_name(engine: Any) -> str:
+    """Return the active character name used for Persona memory isolation."""
+    current_character = getattr(engine, "current_character", None)
+    if isinstance(current_character, str) and current_character.strip():
+        return current_character.strip()
+
+    pack_identity_name = pack_identity_text(engine, "name")
+    if pack_identity_name:
+        return pack_identity_name
+
+    return _config_text(engine, "persona_character_name", "Unknown")
+
+
+def uses_default_celune_identity(engine: Any) -> bool:
+    """Return whether Persona defaults should use Celune's canonical identity."""
+    if not bool(getattr(engine, "voice_bundle_is_default", False)):
+        return False
+    return persona_active_character_name(engine).strip().lower() == "celune"
+
+
+def default_persona_persona() -> str:
+    """Return the default persona instructions for the active character."""
+    return DEFAULT_PERSONA_DESCRIPTION
+
+
+def default_persona_age(engine: Any) -> str:
+    """Return the default age for the active character source."""
+    if uses_default_celune_identity(engine):
+        return "28"
+    return "unknown"
+
+
+def default_persona_gender(engine: Any) -> str:
+    """Return a conservative gender default for the active character source."""
+    if uses_default_celune_identity(engine):
+        return "female"
+    return "unknown"
+
+
+def default_persona_context() -> str:
+    """Return the default interaction context for the active character source."""
+    return DEFAULT_PERSONA_CONTEXT
+
+
+def persona_style_traits(engine: Any) -> dict[str, str]:
+    """Return the configured speaking-style traits for a Persona request."""
+    traits = {
+        "warmth": "mid",
+        "directness": "mid",
+        "humor": "low",
+        "detail": "mid",
+        "formality": "mid",
+        "enthusiasm": "mid",
+    }
+    persona = pack_persona(engine)
+    if persona is None:
+        return traits
+
+    style = persona.style
+    configured = {
+        "warmth": style.warmth,
+        "directness": style.directness,
+        "humor": style.humor,
+        "detail": style.detail,
+        "formality": style.formality,
+        "enthusiasm": style.enthusiasm,
+    }
+    for key, value in configured.items():
+        if value.strip():
+            traits[key] = value.strip()
+    return traits
+
+
+def persona_short_term_history_limit(engine: Any) -> int:
+    """Return the configured short-term memory length for Persona."""
+    config = getattr(engine, "config", {})
+    memory = (
+        persona_config(config).get("memory") if isinstance(config, Mapping) else None
+    )
+    if isinstance(memory, dict):
+        configured = memory.get("max_short_term_messages")
+        if isinstance(configured, bool):
+            return PERSONA_HISTORY_MESSAGES
+        if isinstance(configured, (int, float)):
+            return max(0, int(configured))
+        if isinstance(configured, str):
+            stripped = configured.strip()
+            if stripped:
+                try:
+                    return max(0, int(stripped))
+                except ValueError:
+                    return PERSONA_HISTORY_MESSAGES
+    return PERSONA_HISTORY_MESSAGES
+
+
+def persona_history_limit() -> int:
+    """Return the default short-term memory length for Persona."""
+    return PERSONA_HISTORY_MESSAGES
+
+
+def persona_history_messages(engine: Any) -> list[JSON]:
+    """Return prior Persona chat messages in OpenAI chat format."""
+    history = getattr(engine, "persona_history", [])
+    if not isinstance(history, list):
+        return []
+
+    messages: list[JSON] = []
+    limit = persona_short_term_history_limit(engine)
+    window = history if limit <= 0 else history[-limit:]
+    for item in window:
+        if not isinstance(item, dict):
+            continue
+
+        role = item.get("role")
+        content = item.get("content")
+        if (
+            role in {"user", "assistant"}
+            and isinstance(content, str)
+            and content.strip()
+        ):
+            messages.append({"role": role, "content": content.strip()})
+
+    return messages
+
+
+def persona_attachment_source(path: str) -> str:
+    """Return a qwen-vl-utils-safe attachment path or URI."""
+    source = path.strip()
+    if os.name == "nt" and source.startswith("file:///"):
+        without_scheme = source.removeprefix("file:///")
+        if len(without_scheme) >= 2 and without_scheme[1] == ":":
+            return without_scheme
+    return source
+
+
+def persona_pending_attachments(engine: Any) -> list[JSON]:
+    """Return pending Persona attachments in Qwen chat content format."""
+    attachments = getattr(engine, "persona_attachments", [])
+    if not isinstance(attachments, list):
+        return []
+
+    content: list[JSON] = []
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+
+        kind = attachment.get("type")
+        path = attachment.get("path")
+        if kind in {"image", "video"} and isinstance(path, str) and path.strip():
+            content.append({"type": kind, kind: persona_attachment_source(path)})
+
+    return content
 
 
 def persona_enabled(config: Mapping[str, JSONSerializable]) -> bool:
