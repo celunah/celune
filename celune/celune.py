@@ -399,6 +399,9 @@ class Celune:
         self._persona_thread: Optional[threading.Thread] = None
         self._queue_lock = threading.Lock()
         self._utterance_force_stop = threading.Event()
+        self._next_playback_source_id = 0
+        self._playback_source_statuses: dict[int, str] = {}
+        self._playback_source_meta: dict[int, dict[str, Union[str, float]]] = {}
         self.regenerate = False
 
         self._stream: Optional[sd.OutputStream] = None
@@ -833,7 +836,7 @@ class Celune:
             bool: ``True`` when the reload thread was started, otherwise ``False``.
         """
         if name not in self.voices:
-            # this voice was not found in the current CEVOICE pack
+            # this voice was not found in the current CEVOICE/CECHAR pack
             self.log(f"Unknown voice: {name}", "warning")
             return False
 
@@ -1549,17 +1552,18 @@ class Celune:
             return None
         return stream_queue
 
-    def play(self, sound_path: str, keep: bool = False) -> bool:
+    def play(self, sound_path: str, keep: bool = False, volume: float = 1.0) -> bool:
         """Play a sound via Celune's pipeline.
 
         Args:
             sound_path: The path to the audio file to play.
             keep: Whether to prepend this SFX to the next saved utterance.
+            volume: How loud should the SFX be played at.
 
         Returns:
             bool: ``True`` when playback was queued successfully, otherwise ``False``.
         """
-        return play_pipeline(self, sound_path, keep=keep)
+        return play_pipeline(self, sound_path, keep=keep, volume=volume)
 
     def play_audio(
         self,

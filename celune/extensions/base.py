@@ -57,7 +57,12 @@ class ThinkCallable(Protocol):
 class PlayCallable(Protocol):
     """Extension callable play request annotation."""
 
-    def __call__(self, sound_path: str, keep: bool = False) -> bool:
+    def __call__(
+        self,
+        sound_path: str,
+        keep: bool = False,
+        volume: float = 1.0,
+    ) -> bool:
         """Queue an audio file for playback."""
         raise IncompleteExtensionError("protocol not defined")
 
@@ -232,12 +237,18 @@ class CeluneExtension(ABC):
 
         return self.ctx.think(text)
 
-    def play(self, sound_path: str, keep: bool = False) -> bool:
+    def play(
+        self,
+        sound_path: str,
+        keep: bool = False,
+        volume: float = 1.0,
+    ) -> bool:
         """Play arbitrary sound through Celune.
 
         Args:
             sound_path: The path to the audio file to play.
             keep: Whether to prepend this SFX to the next saved utterance.
+            volume: How loud should the SFX be played at.
 
         Returns:
             bool: ``True`` when playback was queued, otherwise ``False``.
@@ -245,7 +256,7 @@ class CeluneExtension(ABC):
         if not self.ctx.wait_until_ready():
             return False
 
-        return self.ctx.play(sound_path, keep=keep)
+        return self.ctx.play(sound_path, keep=keep, volume=volume)
 
     def status(self, msg: str, severity: str = "info") -> None:
         """Update status display.

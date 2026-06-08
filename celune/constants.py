@@ -9,6 +9,7 @@ from typing import Union
 
 # main app name
 # why would you rename her? she doesn't approve of it
+# don't blame her when you fork Celune and rename her to something else
 APP_NAME = "Celune"
 APP_SLUG = "".join(char if char.isalnum() else "_" for char in APP_NAME.lower())
 
@@ -21,7 +22,7 @@ APP_SLUG = "".join(char if char.isalnum() else "_" for char in APP_NAME.lower())
 NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v2.0-ctx2048"
 
 # this embedding model is used to extract a voice embedding vector out of the target utterance,
-# and analyze the voice automatically based on any given embeddings from your CEVOICE pack
+# and analyze the voice automatically based on any given embeddings from your CEVOICE/CECHAR pack
 VOICE_EMBEDDING_MODEL = "marksverdhei/Qwen3-Voice-Embedding-12Hz-1.7B"
 # this embedding model is used to retrieve long-term Persona memories semantically when available
 PERSONA_MEMORY_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
@@ -88,6 +89,7 @@ class ExitCodes(Enum):
     EXIT_ALREADY_RUNNING = 3  # Celune is already running.
     EXIT_MISSING_DEPENDENCIES = 4  # Celune is missing required dependencies.
     EXIT_UNKNOWN_ARGS = 5  # Celune CLI command is unknown.
+    EXIT_BAD_PYTHON = 6  # Celune is trying to run on an unsupported Python interpreter.
 
     # the following exit codes may be disabled by the end user
     EXIT_CELINE_DAY_SIX_SEVEN = 67  # Celune refuses to run on Celine Day.

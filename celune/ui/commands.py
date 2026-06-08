@@ -341,13 +341,24 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         return
     if command == "play":
         if not args:
-            ui.safe_log("Usage: /play <path>", "warning")
+            ui.safe_log("Usage: /play <path> [volume]", "warning")
             return
 
         try:
-            if not ui.celune.play(args[0]):
+            volume = 1.0
+            if len(args) >= 2:
+                try:
+                    volume = float(args[1])
+                except ValueError:
+                    ui.safe_log(
+                        f"Invalid volume for '{command}', must be numeric.",
+                        "warning",
+                    )
+                    return
+
+            if not ui.celune.play(args[0], volume=volume):
                 return
-            ui.safe_log(f"Playing {args[0]}")
+            ui.safe_log(f"Playing {args[0]} at volume {volume:g}")
         except Exception as e:
             ui.safe_log(
                 f"Cannot play this file: {format_error(e, ui.celune.dev)}",

@@ -161,6 +161,7 @@ class UICommandTests(TestCase):
             speed=1.0,
             reverb=SimpleNamespace(strength=0.0),
             say=mock.Mock(return_value=True),
+            play=mock.Mock(return_value=True),
             vision=SimpleNamespace(enabled=True, talkback=True),
         )
 
@@ -275,6 +276,25 @@ class UICommandTests(TestCase):
 
         self.ui.celune.say.assert_not_called()
         self.assertEqual(self.logs[-1], ("Usage: /say <text>", "warning"))
+
+    def test_play_command_passes_optional_volume(self) -> None:
+        """Verify /play forwards the optional volume argument to Celune."""
+        self.ui.celune.play.return_value = True
+
+        self._process_command("play", ["tone.wav", "0.4"])
+
+        self.ui.celune.play.assert_called_once_with("tone.wav", volume=0.4)
+        self.assertEqual(self.logs[-1], ("Playing tone.wav at volume 0.4", "info"))
+
+    def test_play_command_rejects_invalid_volume(self) -> None:
+        """Verify /play validates a numeric optional volume argument."""
+        self._process_command("play", ["tone.wav", "loud"])
+
+        self.ui.celune.play.assert_not_called()
+        self.assertEqual(
+            self.logs[-1],
+            ("Invalid volume for 'play', must be numeric.", "warning"),
+        )
 
     def test_say_command_reports_unmatched_ipa_characters(self) -> None:
         """Verify /say keeps the usual unmatched-IPA warning path."""

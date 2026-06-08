@@ -219,6 +219,277 @@ class PipelineTests(TestCase):
         self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), False)
         self.assertEqual(engine.errors, ["Celune is not currently ready"])
 
+    def test_queue_sfx_audio_allows_overlay_while_speech_pipeline_is_locked(
+        self,
+    ) -> None:
+        """Verify SFX sources can be queued while speech already owns the pipeline."""
+        engine = make_pipeline_engine()
+        engine.locked = True
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.current_voice = "balanced"
+        engine.idle_callback = mock.Mock()
+        engine.glow = SimpleNamespace(schedule=mock.Mock())
+        audio = np.ones((4800, 2), dtype=np.float32) * 0.25
+
+        ok = pipeline.queue_sfx_audio(
+            cast(Celune, engine),
+            audio,
+            48000,
+            "fixture",
+        )
+
+        self.assertEqual(ok, True)
+        self.assertEqual(engine.playback_done.is_set(), False)
+        queued = list(engine.audio_queue.queue)
+        self.assertTrue(
+            any(isinstance(item, pipeline.PlaybackChunk) for item in queued)
+        )
+        self.assertTrue(
+            any(isinstance(item, pipeline.PlaybackSourceDone) for item in queued)
+        )
+
+    def test_playback_worker_mixes_sources_and_glow_receives_mixed_audio(self) -> None:
+        """Verify the DSP mixer sums overlapping sources before playback/probing."""
+        engine = make_pipeline_engine()
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.current_voice = "balanced"
+        engine.idle_callback = mock.Mock()
+        glow_calls: list[npt.NDArray[np.float32]] = []
+        engine.glow = SimpleNamespace(
+            schedule=lambda audio: glow_calls.append(np.asarray(audio))
+        )
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+        fake_stream = FakeStream()
+
+        pipeline._queue_playback_chunk(
+            cast(Celune, engine),
+            1,
+            np.full((2400, 2), 0.2, dtype=np.float32),
+            48000,
+        )
+        pipeline._queue_playback_chunk(
+            cast(Celune, engine),
+            2,
+            np.full((2400, 2), 0.3, dtype=np.float32),
+            48000,
+        )
+        pipeline._queue_playback_done(cast(Celune, engine), 1)
+        pipeline._queue_playback_done(cast(Celune, engine), 2)
+        engine.audio_queue.put(engine.sentinel)
+
+        with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
+            pipeline.playback_worker(cast(Celune, engine))
+
+        self.assertEqual(fake_stream.started, True)
+        self.assertGreater(len(fake_stream.written), 1)
+        mixed_audio = np.concatenate(fake_stream.written)
+        np.testing.assert_allclose(mixed_audio, 0.5, atol=1e-6)
+        self.assertEqual(len(glow_calls), len(fake_stream.written))
+        np.testing.assert_allclose(np.concatenate(glow_calls), 0.5, atol=1e-6)
+        self.assertEqual(engine.playback_done.is_set(), True)
+
+    def test_playback_worker_admits_speech_after_sfx_has_already_started(self) -> None:
+        """Verify late-arriving speech reaches the DSP while SFX is still active."""
+        engine = make_pipeline_engine()
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.current_voice = "balanced"
+        engine.idle_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+
+        class InjectingStream(FakeStream):
+            """A fake injecting stream."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.injected = False
+
+            def write(self, audio: npt.NDArray[np.float32]) -> None:
+                super().write(audio)
+                if not self.injected:
+                    self.injected = True
+                    pipeline._queue_playback_chunk(
+                        cast(Celune, engine),
+                        2,
+                        np.full((2400, 2), 0.4, dtype=np.float32),
+                        48000,
+                    )
+                    pipeline._queue_playback_done(
+                        cast(Celune, engine),
+                        2,
+                        release_pipeline_when_finished=True,
+                    )
+                    engine.audio_queue.put(engine.sentinel)
+
+        fake_stream = InjectingStream()
+        pipeline._queue_playback_chunk(
+            cast(Celune, engine),
+            1,
+            np.full((9600, 2), 0.1, dtype=np.float32),
+            48000,
+        )
+        pipeline._queue_playback_done(cast(Celune, engine), 1)
+
+        with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
+            pipeline.playback_worker(cast(Celune, engine))
+
+        blocks = fake_stream.written
+        self.assertGreaterEqual(len(blocks), 3)
+        self.assertTrue(any(np.max(block) > 0.45 for block in blocks[1:]))
+        self.assertEqual(engine.playback_done.is_set(), True)
+
+    def test_playback_status_restores_prior_sfx_label_after_speech_finishes(
+        self,
+    ) -> None:
+        """Verify mixed playback restores the prior SFX status after speech ends."""
+        engine = make_pipeline_engine()
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.current_voice = "balanced"
+        engine.idle_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+
+        class InjectingStream(FakeStream):
+            """A fake injecting stream."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.injected = False
+
+            def write(self, audio: npt.NDArray[np.float32]) -> None:
+                super().write(audio)
+                if not self.injected:
+                    self.injected = True
+                    pipeline._set_playback_source_status(
+                        cast(Celune, engine), 2, "Speaking"
+                    )
+                    pipeline._queue_playback_chunk(
+                        cast(Celune, engine),
+                        2,
+                        np.full((2400, 2), 0.4, dtype=np.float32),
+                        48000,
+                    )
+                    pipeline._queue_playback_done(
+                        cast(Celune, engine),
+                        2,
+                        release_pipeline_when_finished=True,
+                    )
+                    engine.audio_queue.put(engine.sentinel)
+
+        fake_stream = InjectingStream()
+        self.assertEqual(
+            pipeline.queue_sfx_audio(
+                cast(Celune, engine),
+                np.full((9600, 2), 0.1, dtype=np.float32),
+                48000,
+                "loop.wav",
+            ),
+            True,
+        )
+
+        with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
+            pipeline.playback_worker(cast(Celune, engine))
+
+        statuses = [msg for msg, _ in engine.statuses]
+        self.assertIn("Playing loop.wav", statuses)
+        self.assertIn("Speaking", statuses)
+        speaking_index = statuses.index("Speaking")
+        self.assertIn("Playing loop.wav", statuses[speaking_index + 1 :])
+
+    def test_playback_worker_ducks_sfx_to_quarter_and_restores_with_fades(self) -> None:
+        """Verify speech ducks SFX to 25 percent, then fades it back up."""
+        engine = make_pipeline_engine()
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.current_voice = "balanced"
+        engine.idle_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+
+        class InjectingStream(FakeStream):
+            """A fake stream that injects speech after SFX has started."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.injected = False
+
+            def write(self, audio: npt.NDArray[np.float32]) -> None:
+                super().write(audio)
+                if not self.injected:
+                    self.injected = True
+                    pipeline._register_playback_source(
+                        cast(Celune, engine), 2, kind="speech"
+                    )
+                    pipeline._set_playback_source_status(
+                        cast(Celune, engine), 2, "Speaking"
+                    )
+                    for _ in range(3):
+                        pipeline._queue_playback_chunk(
+                            cast(Celune, engine),
+                            2,
+                            np.zeros((2400, 2), dtype=np.float32),
+                            48000,
+                        )
+                    pipeline._queue_playback_done(
+                        cast(Celune, engine),
+                        2,
+                        release_pipeline_when_finished=True,
+                    )
+                    engine.audio_queue.put(engine.sentinel)
+
+        fake_stream = InjectingStream()
+        self.assertEqual(
+            pipeline.queue_sfx_audio(
+                cast(Celune, engine),
+                np.ones((2400 * 12, 2), dtype=np.float32),
+                48000,
+                "duck.wav",
+                volume=0.8,
+            ),
+            True,
+        )
+
+        with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
+            pipeline.playback_worker(cast(Celune, engine))
+
+        means = [float(np.mean(block)) for block in fake_stream.written]
+        self.assertGreaterEqual(len(means), 6)
+        self.assertGreater(means[0], 0.79)
+        self.assertLess(min(means), 0.45)
+        min_index = means.index(min(means))
+        self.assertGreater(min_index, 0)
+        self.assertLess(means[min_index], means[0])
+        self.assertGreater(means[-1], means[min_index] + 0.25)
+        self.assertGreater(means[-1], 0.7)
+
     def test_think_builds_persona_payload_and_queues_response(self) -> None:
         """Verify Persona request formatting without loading a Persona model.
 
@@ -387,7 +658,7 @@ class PipelineTests(TestCase):
     def test_persona_card_uses_baseline_persona_for_non_default_voice_pack(
         self,
     ) -> None:
-        """Verify custom CEVOICE packs do not inherit Celune-specific defaults.
+        """Verify custom CEVOICE/CECHAR packs do not inherit Celune-specific defaults.
 
         Raises:
             AssertionError: Persona card fallback behavior changes unexpectedly.

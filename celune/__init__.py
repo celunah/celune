@@ -63,9 +63,9 @@ REVISION = _get_revision()
 if REVISION:
     _local = REVISION.rstrip("*")
     _dirty = ".dirty" if REVISION.endswith("*") else ""
-    __version__ = f"4.0.1+{_local}{_dirty}"
+    __version__ = f"4.1.0+{_local}{_dirty}"
 else:
-    __version__ = "4.0.1+unknown"
+    __version__ = "4.1.0+unknown"
 
 __tagline__ = '"Your voice, your way."'
 __codename__ = "Personality"

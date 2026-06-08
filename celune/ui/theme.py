@@ -3,7 +3,7 @@
 
 from ..colors import SEVERITY_COLORS
 
-# this CSS draws its palette from the currently loaded CEVOICE pack
+# this CSS draws its palette from the currently loaded CEVOICE/CECHAR pack
 CELUNE_CSS = """
     Screen {
         layout: vertical;
