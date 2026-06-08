@@ -145,6 +145,24 @@ class RuntimeTests(TestCase):
 class UICommandTests(TestCase):
     """Tests for lightweight slash command behavior."""
 
+    @staticmethod
+    def _thread_runs_immediately(*args, **kwargs):
+        """Return a thread-like object whose start runs the target immediately."""
+        target = kwargs.get("target")
+        if target is None and args:
+            target = args[0]
+
+        class _ImmediateThread:
+            """An immediate thread harness object."""
+
+            @staticmethod
+            def start() -> None:
+                """Start the thread."""
+                if target is not None:
+                    target()
+
+        return _ImmediateThread()
+
     def setUp(self) -> None:
         self.logs: list[tuple[str, str]] = []
         self.ui = SimpleNamespace()
@@ -281,7 +299,11 @@ class UICommandTests(TestCase):
         """Verify /play forwards the optional volume argument to Celune."""
         self.ui.celune.play.return_value = True
 
-        self._process_command("play", ["tone.wav", "0.4"])
+        with mock.patch(
+            "celune.ui.commands.threading.Thread",
+            side_effect=self._thread_runs_immediately,
+        ):
+            self._process_command("play", ["tone.wav", "0.4"])
 
         self.ui.celune.play.assert_called_once_with("tone.wav", volume=0.4)
         self.assertEqual(self.logs[-1], ("Playing tone.wav at volume 0.4", "info"))

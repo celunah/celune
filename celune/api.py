@@ -484,13 +484,21 @@ def root() -> HTMLResponse:
                         html {{
                             color-scheme: dark;
                         }}
+
+                        .footer {{
+                            text-align: center;
+                            bottom: 1em;
+                            width: 100vw;
+                            position: absolute;
+                        }}
                     </style>
                 </head>
                 <body>
                     <div class="container">
                         <h1>Nothing Usable</h1>
-                        <p>The API is functioning correctly. Please return to the app to talk to me.</p>
+                        <p>The API is functioning correctly. Please return to the app to talk with your character.</p>
                     </div>
+                    <p class="footer">This API is currently running from {APP_NAME} {__version__}.</p>
                 </body>
             </html>
         """

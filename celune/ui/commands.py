@@ -356,9 +356,18 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     )
                     return
 
-            if not ui.celune.play(args[0], volume=volume):
-                return
-            ui.safe_log(f"Playing {args[0]} at volume {volume:g}")
+            def worker() -> None:
+                try:
+                    if not ui.celune.play(args[0], volume=volume):
+                        return
+                    ui.safe_log(f"Playing {args[0]} at volume {volume:g}")
+                except Exception as e:
+                    ui.safe_log(
+                        f"Cannot play this file: {format_error(e, ui.celune.dev)}",
+                        "error",
+                    )
+
+            threading.Thread(target=worker, daemon=True).start()
         except Exception as e:
             ui.safe_log(
                 f"Cannot play this file: {format_error(e, ui.celune.dev)}",

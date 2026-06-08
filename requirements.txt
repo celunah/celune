@@ -57,6 +57,7 @@ httpx>=0.27.0,<0.29.0
 # Used to detect language of input.
 langdetect>=1.0.0,<2.0.0
 iso639-lang>=2.0.0,<3.0.0
+yt-dlp
 
 # API
 uvicorn

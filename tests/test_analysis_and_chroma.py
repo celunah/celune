@@ -266,3 +266,22 @@ class ChromaTests(TestCase):
 
         self.assertGreaterEqual(len(writes), 1)
         self.assertGreater(glow._current_brightness, glow.idle_brightness)
+
+    def test_reset_audio_reactivity_clears_pending_audio_and_restores_idle(
+        self,
+    ) -> None:
+        """Verify abrupt playback resets the audio-reactive envelope to idle."""
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
+        glow._worker = mock.Mock()
+        glow._worker.is_alive.return_value = True
+        glow._state = "normal"
+        glow._smoothed_level = 0.8
+        glow._target_brightness = min(glow.max_brightness, glow.idle_brightness + 0.4)
+        glow._scheduled_chunks.append((0.0, np.ones((32, 2), dtype=np.float32)))
+
+        glow.reset_audio_reactivity()
+
+        self.assertEqual(len(glow._scheduled_chunks), 0)
+        self.assertEqual(glow._smoothed_level, 0.0)
+        self.assertEqual(glow._state, "normal")
+        self.assertAlmostEqual(glow._target_brightness, glow.idle_brightness)
