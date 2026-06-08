@@ -1371,6 +1371,13 @@ def play(engine: Celune, sound_path: str, keep: bool = False) -> bool:
         engine.log(f"{APP_NAME} cannot find {sound_path}.", "warning")
         return False
 
+    supported_formats = ("wav", "flac", "ogg", "mp3", "aiff")
+
+    if not any(sound_path.endswith(audio_format) for audio_format in supported_formats):
+        engine.log(f"{APP_NAME} does not support SFX in this format.", "warning")
+        engine.log(f"Supported formats: {', '.join(supported_formats)}", "warning")
+        return False
+
     audio, sr = sf.read(sound_path, dtype="float32")
     return queue_sfx_audio(
         engine, np.asarray(audio, dtype=np.float32), sr, sound_path, keep
@@ -1705,7 +1712,7 @@ def generation_worker(engine: Celune) -> None:
 
                         for (
                             audio_chunk,
-                            sr,  # 24 kHz if Qwen3, 48 kHz if VoxCPM2
+                            sr,  # 24 kHz if Qwen3 or Celune Mini, 48 kHz if VoxCPM2
                             timing,
                         ) in engine.backend.generate_stream(  # some args will be discarded as needed
                             engine.model,
@@ -1853,7 +1860,6 @@ def generation_worker(engine: Celune) -> None:
                     if stream_queue is not None:
                         stream_queue.put(queued_audio.copy())
                     if not pushed_audio:
-                        # noinspection PyUnusedLocal
                         pushed_audio = True
                         engine.status_callback("Speaking")
                         engine.cur_state = "speaking"
@@ -1909,7 +1915,7 @@ def generation_worker(engine: Celune) -> None:
                                 os.mkdir("outputs")
                             except OSError as e:
                                 engine.log(
-                                    "Cannot create outputs directory, not saving WAV file: "
+                                    "Cannot create outputs directory, not saving FLAC output: "
                                     f"{format_error(e, engine.dev)}",
                                     "warning",
                                 )
@@ -2099,7 +2105,7 @@ def playback_worker(engine: Celune) -> None:
                     blocksize=0,
                 )
                 if engine.stream is None:
-                    raise RuntimeError("audio stream is not initialized")
+                    raise NotAvailableError("audio stream is not initialized")
 
                 engine.stream.start()
                 started = True
@@ -2117,12 +2123,11 @@ def playback_worker(engine: Celune) -> None:
             continue
 
         try:
-            stream = engine.stream
-            if stream is None:
-                raise NotAvailableError("audio stream is not available")
+            if engine.stream is None:
+                raise NotAvailableError("audio stream is not initialized")
             log_first_playback(engine, timing)
             engine.glow.schedule(audio_chunk)
-            stream.write(audio_chunk)
+            engine.stream.write(audio_chunk)
         except Exception as e:
             engine.log(f"[PLAY ERROR] {format_error(e, engine.dev)}", "error")
             engine.error_callback("Playback error")

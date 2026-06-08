@@ -163,26 +163,35 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             f"/invoke <extension> [args] - Invoke a {APP_NAME} extension by its name."
         )
         ui.safe_log(f"/extensions - List currently available {APP_NAME} extensions.")
-        ui.safe_log(
-            f"/voiceprompt <prompt> - Change {APP_NAME}'s voice prompt. This will allow you to steer her voice."
-        )
-        ui.safe_log(
-            "Caution: Some prompts may cause adverse effects. Choose prompts that enhance personality, "
-            "rather than replace it.",
-            "warning",
-        )
+
+        if ui.celune.backend.name != "mini":
+            ui.safe_log(
+                f"/voiceprompt <prompt> - Change {APP_NAME}'s voice prompt. This will allow you to steer her voice."
+            )
+            ui.safe_log(
+                "Caution: Some prompts may cause adverse effects. Choose prompts that enhance personality, "
+                "rather than replace it.",
+                "warning",
+            )
+
         ui.safe_log("/speed <speed> - Change speaking speed.")
         ui.safe_log("/reverb <strength> - Change reverb strength.")
-        ui.safe_log("/xvectoronly <true/false> - Toggle Qwen3 identity-only cloning.")
-        ui.safe_log(
-            "/play <file> - Play a sound effect by path. Only WAV files are supported."
-        )
-        ui.safe_log(
-            "/attach <file> [file...] - Attach images or videos to the next persona reply."
-        )
-        ui.safe_log(
-            "/say <text> - Speak text directly and bypass Persona for this one message."
-        )
+
+        if ui.celune.backend.name == "qwen3":
+            ui.safe_log(
+                "/xvectoronly <true/false> - Toggle Qwen3 identity-only cloning."
+            )
+
+        ui.safe_log("/play <file> - Play a sound effect by path.")
+
+        if ui.celune.vision is not None:
+            ui.safe_log(
+                "/attach <file> [file...] - Attach one or more images or videos to the next persona reply."
+            )
+            ui.safe_log(
+                "/say <text> - Speak text directly and bypass Persona for this one message."
+            )
+
         ui.safe_log(
             "/seed [seed|random] - Set or clear the seed for speech outputs, affecting pronunciation and/or prosody."
         )
