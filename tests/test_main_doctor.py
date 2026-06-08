@@ -27,8 +27,8 @@ class DoctorCommandTests(TestCase):
         self.assertEqual(exit_info.exception.code, 6)
         load_entrypoint.assert_not_called()
         output = stdout.getvalue()
-        self.assertIn("does not currently support Python 3.11.9", output)
-        self.assertIn("currently supports Python 3.12 and 3.13", output)
+        self.assertIn("will not run on Python 3.11.9", output)
+        self.assertIn("use at least Python 3.12", output)
         self.assertIn("doctor", output)
 
     def test_main_routes_doctor_without_starting_app(self) -> None:
