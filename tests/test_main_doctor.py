@@ -14,6 +14,23 @@ entrypoint = main.load_entrypoint_module()
 class DoctorCommandTests(TestCase):
     """Verify `celune doctor` works without booting the full app."""
 
+    def test_main_reports_unsupported_python_before_loading_entrypoint(self) -> None:
+        """Verify doctor on Python 3.11 exits cleanly before importing 3.12-only modules."""
+        with (
+            mock.patch.object(main.sys, "version_info", (3, 11, 9)),
+            mock.patch.object(main, "_load_entrypoint_module") as load_entrypoint,
+            contextlib.redirect_stdout(io.StringIO()) as stdout,
+            self.assertRaises(SystemExit) as exit_info,
+        ):
+            main.main(["celune", "doctor"])
+
+        self.assertEqual(exit_info.exception.code, 6)
+        load_entrypoint.assert_not_called()
+        output = stdout.getvalue()
+        self.assertIn("does not currently support Python 3.11.9", output)
+        self.assertIn("currently supports Python 3.12 and 3.13", output)
+        self.assertIn("doctor", output)
+
     def test_main_routes_doctor_without_starting_app(self) -> None:
         """Verify the doctor branch exits through `run_doctor` instead of `start()`."""
         with (

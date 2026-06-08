@@ -94,7 +94,7 @@ class CeluneBackend(ABC, Generic[ModelT]):
 
     @staticmethod
     def _reference_wave_path(name: str) -> Path:
-        """Return a materialized path for a reference WAV from the active CEVOICE pack."""
+        """Return a materialized path for a reference WAV from the active CEVOICE/CECHAR pack."""
         loader = default_loader()
         if loader is None:
             raise BackendError(
@@ -103,7 +103,7 @@ class CeluneBackend(ABC, Generic[ModelT]):
         return loader.materialize(name, "wav")
 
     def _validate_refs(self) -> None:
-        """Validate reference audio files found in the current CEVOICE pack."""
+        """Validate reference audio files found in the current CEVOICE/CECHAR pack."""
         loader = default_loader()
         if loader is None:
             return

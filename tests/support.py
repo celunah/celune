@@ -166,10 +166,15 @@ class FakeStream:
 
     def __init__(self) -> None:
         """Initialize fake stream state."""
+        self.started = False
         self.stopped = False
         self.aborted = False
         self.closed = False
         self.written: list[npt.NDArray[np.float32]] = []
+
+    def start(self) -> None:
+        """Record stream startup."""
+        self.started = True
 
     def stop(self) -> None:
         """Record a graceful stream stop."""
@@ -215,6 +220,13 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.loaded = True
     engine.locked = False
     engine.cur_state = "idle"
+    engine.exit_requested = False
+    engine.stream = None
+    engine._stream = None
+    engine.current_sr = None
+    engine._current_sr = None
+    engine.audio_unavailable = False
+    engine._audio_unavailable = False
     engine.text_queue = queue.Queue()
     engine.audio_queue = queue.Queue()
     engine.say_lock = threading.Lock()
@@ -231,6 +243,8 @@ def make_pipeline_engine() -> SimpleNamespace:
         (msg, severity)
     )
     engine.progress_callback = lambda current, total: progress.append((current, total))
+    engine.idle_callback = mock.Mock()
+    engine.glow = SimpleNamespace(schedule=mock.Mock())
     engine.messages = messages
     engine.errors = errors
     engine.statuses = statuses

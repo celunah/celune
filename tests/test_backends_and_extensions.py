@@ -442,12 +442,15 @@ class ExtensionTests(TestCase):
         self.logs: list[tuple[str, str]] = []
         self.dev_logs: list[tuple[str, str]] = []
         self.invocations: list[tuple[str, tuple[str, ...]]] = []
+        self.play_calls: list[tuple[str, bool, float]] = []
         self.context = CeluneContext(
             log=lambda msg, severity="info": self.logs.append((msg, severity)),
             log_dev=lambda msg, severity="info": self.dev_logs.append((msg, severity)),
             say=lambda text, save=True, display_text=None: True,
             think=lambda text: True,
-            play=lambda sound_path, keep=False: True,
+            play=lambda sound_path, keep=False, volume=1.0: (
+                self.play_calls.append((sound_path, keep, volume)) or True
+            ),
             status=lambda msg, severity="info": None,
             set_voice=lambda name: True,
             get_state=lambda: "idle",
@@ -469,6 +472,9 @@ class ExtensionTests(TestCase):
         self.assertEqual(extension.say("hello"), True)
         self.assertEqual(extension.think("hello"), True)
         self.assertEqual(extension.play("tone.wav"), True)
+        self.assertEqual(self.play_calls[-1], ("tone.wav", False, 1.0))
+        self.assertEqual(extension.play("quiet.wav", keep=True, volume=0.25), True)
+        self.assertEqual(self.play_calls[-1], ("quiet.wav", True, 0.25))
         self.assertEqual(extension.set_voice("bold"), True)
 
     def test_manager_registers_invokes_and_autoloads_extensions(self) -> None:

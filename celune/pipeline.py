@@ -12,6 +12,7 @@ import random
 import pathlib
 import datetime
 import contextlib
+from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Mapping, Union, cast
 
@@ -88,6 +89,8 @@ _FLAC_MAGIC = b"fLaC"
 _FLAC_STREAMINFO_BLOCK = 0
 _FLAC_VORBIS_COMMENT_BLOCK = 4
 _MAX_FLAC_METADATA_BLOCK_SIZE = 0xFFFFFF
+_SFX_DUCK_GAIN = 0.25
+_SFX_DUCK_FADE_SECONDS = 0.15
 
 
 @dataclass(frozen=True)
@@ -106,6 +109,26 @@ class SpeechRequest:
 class SpeechDone:
     """Playback completion marker for one generated utterance."""
 
+    saved_path: Optional[str] = None
+    analysis_audio: Optional[npt.NDArray[np.float32]] = None
+
+
+@dataclass(frozen=True)
+class PlaybackChunk:
+    """One playback-source chunk routed through the shared DSP mixer."""
+
+    source_id: int
+    audio: npt.NDArray[np.float32]
+    sample_rate: int
+    timing: Optional["SpeechTiming"] = None
+
+
+@dataclass(frozen=True)
+class PlaybackSourceDone:
+    """Completion marker for one playback source in the shared DSP mixer."""
+
+    source_id: int
+    release_pipeline: bool = False
     saved_path: Optional[str] = None
     analysis_audio: Optional[npt.NDArray[np.float32]] = None
 
@@ -154,8 +177,8 @@ class SpeechTiming:
 type SpeechStreamItem = Optional[Union[npt.NDArray[np.float32], Exception]]
 type SpeechStreamQueue = queue.Queue[SpeechStreamItem]
 type TextQueueItem = Union[SpeechRequest, PipelineStates]
-type AudioChunk = tuple[npt.NDArray[np.float32], int, Optional[SpeechTiming]]
-type AudioQueueItem = Union[AudioChunk, SpeechDone, PipelineStates]
+type AudioChunk = PlaybackChunk
+type AudioQueueItem = Union[PlaybackChunk, PlaybackSourceDone, PipelineStates]
 
 
 def _json_value(value: JSONSerializable) -> JSONSerializable:
@@ -529,17 +552,175 @@ def acquire_pipeline(engine: Celune, action: str) -> bool:
         return True
 
 
-def release_pipeline(engine: Celune) -> None:
+def release_pipeline(engine: Celune, playback_idle: bool = True) -> None:
     """Release Celune's shared playback pipeline.
 
     Args:
         engine: The Celune engine that owns the playback pipeline.
+        playback_idle: Whether playback should be marked fully idle now.
     """
     with engine.say_lock:
         engine.locked = False
-        engine.playback_done.set()
-        engine.cur_state = "idle"
+        if playback_idle:
+            engine.playback_done.set()
+            engine.cur_state = "idle"
         engine.log_dev("[LOCK] released")
+
+
+def _next_playback_source_id(engine: Celune) -> int:
+    """Return the next monotonically increasing playback source id."""
+    source_id = getattr(engine, "_next_playback_source_id", 0) + 1
+    engine._next_playback_source_id = source_id
+    return source_id
+
+
+def _register_overlay_playback(engine: Celune) -> None:
+    """Mark the mixer busy for a newly queued non-speech playback source."""
+    with engine.say_lock:
+        if not engine.locked:
+            engine.cur_state = "speaking"
+        engine.playback_done.clear()
+        engine._ready_announced = False
+
+
+def _playback_source_statuses(engine: Celune) -> dict[int, str]:
+    """Return the mutable per-source playback status map."""
+    statuses = getattr(engine, "_playback_source_statuses", None)
+    if isinstance(statuses, dict):
+        return statuses
+
+    statuses = {}
+    engine._playback_source_statuses = statuses
+    return statuses
+
+
+def _playback_source_meta(
+    engine: Celune,
+) -> dict[int, dict[str, Union[str, float]]]:
+    """Return per-source mixer metadata such as kind and gain state."""
+    meta = getattr(engine, "_playback_source_meta", None)
+    if isinstance(meta, dict):
+        return meta
+
+    meta = {}
+    engine._playback_source_meta = meta
+    return meta
+
+
+def _register_playback_source(
+    engine: Celune,
+    source_id: int,
+    *,
+    kind: str,
+    base_gain: float = 1.0,
+) -> None:
+    """Register one playback source for status and gain management."""
+    clipped = float(np.clip(base_gain, 0.0, 1.0))
+    _playback_source_meta(engine)[source_id] = {
+        "kind": kind,
+        "base_gain": clipped,
+        "current_gain": clipped,
+    }
+
+
+def _set_playback_source_status(engine: Celune, source_id: int, status: str) -> None:
+    """Record and surface the current status for one active playback source."""
+    statuses = _playback_source_statuses(engine)
+    statuses[source_id] = status
+    engine.status_callback(status)
+
+
+def _clear_playback_source_status(engine: Celune, source_id: int) -> None:
+    """Forget one playback-source status and restore the next active status."""
+    statuses = _playback_source_statuses(engine)
+    statuses.pop(source_id, None)
+    if statuses:
+        engine.status_callback(next(reversed(statuses.values())))
+    _playback_source_meta(engine).pop(source_id, None)
+
+
+def _queue_playback_chunk(
+    engine: Celune,
+    source_id: int,
+    audio: npt.NDArray[np.float32],
+    sample_rate: int,
+    timing: Optional[SpeechTiming] = None,
+) -> None:
+    """Queue one chunk for the shared DSP playback mixer."""
+    engine.audio_queue.put(
+        PlaybackChunk(
+            source_id=source_id,
+            audio=np.asarray(audio, dtype=np.float32),
+            sample_rate=sample_rate,
+            timing=timing,
+        )
+    )
+
+
+def _active_speech_source_ids(
+    source_buffers: dict[
+        int, deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]
+    ],
+    engine: Celune,
+) -> set[int]:
+    """Return active speech-source ids that should trigger SFX ducking."""
+    meta = _playback_source_meta(engine)
+    return {
+        source_id
+        for source_id in source_buffers
+        if meta.get(source_id, {}).get("kind") == "speech"
+    }
+
+
+def _apply_source_gain(
+    audio: npt.NDArray[np.float32],
+    source_id: int,
+    *,
+    speech_active: bool,
+    block_seconds: float,
+    engine: Celune,
+) -> npt.NDArray[np.float32]:
+    """Apply ducking and smooth gain ramps for one mixer source block."""
+    meta = _playback_source_meta(engine).get(source_id)
+    if not isinstance(meta, dict):
+        return audio
+
+    kind = str(meta.get("kind", "sfx"))
+    base_gain = float(meta.get("base_gain", 1.0))
+    current_gain = float(meta.get("current_gain", base_gain))
+    if kind == "sfx":
+        target_gain = base_gain * (_SFX_DUCK_GAIN if speech_active else 1.0)
+    else:
+        target_gain = base_gain
+
+    if abs(target_gain - current_gain) < 1e-6:
+        meta["current_gain"] = target_gain
+        return np.asarray(audio * target_gain, dtype=np.float32)
+
+    fade_ratio = min(1.0, block_seconds / _SFX_DUCK_FADE_SECONDS)
+    next_gain = current_gain + (target_gain - current_gain) * fade_ratio
+    ramp = np.linspace(current_gain, next_gain, len(audio), dtype=np.float32)
+    meta["current_gain"] = next_gain
+    return np.asarray(audio * ramp[:, None], dtype=np.float32)
+
+
+def _queue_playback_done(
+    engine: Celune,
+    source_id: int,
+    *,
+    release_pipeline_when_finished: bool = False,
+    saved_path: Optional[str] = None,
+    analysis_audio: Optional[npt.NDArray[np.float32]] = None,
+) -> None:
+    """Queue a completion marker for one playback source."""
+    engine.audio_queue.put(
+        PlaybackSourceDone(
+            source_id=source_id,
+            release_pipeline=release_pipeline_when_finished,
+            saved_path=saved_path,
+            analysis_audio=analysis_audio,
+        )
+    )
 
 
 def _config_text(engine: Celune, key: str, default: str) -> str:
@@ -1134,6 +1315,7 @@ def queue_sfx_audio(
     sample_rate: int,
     label: str,
     keep: bool = False,
+    volume: float = 1.0,
 ) -> bool:
     """Queue decoded SFX audio through Celune's playback pipeline.
 
@@ -1150,9 +1332,6 @@ def queue_sfx_audio(
     Raises:
         Exception: Re-raised after releasing the pipeline if SFX playback setup fails.
     """
-    if not acquire_pipeline(engine, "play"):
-        return False
-
     try:
         audio = np.asarray(audio, dtype=np.float32)
         audio_len = len(audio) / sample_rate
@@ -1164,26 +1343,32 @@ def queue_sfx_audio(
         if keep:
             engine.kept_sfx_audio = audio.copy()
 
+        source_id = _next_playback_source_id(engine)
+        _register_overlay_playback(engine)
+        _register_playback_source(engine, source_id, kind="sfx", base_gain=volume)
         engine.cur_state = "speaking"
         # push the smallest possible chunks for responsive stopping
         for chunk in _split(audio, BASE_SR, 1):
-            engine.audio_queue.put((chunk, BASE_SR, None))
-        engine.audio_queue.put(engine.utterance_done)
+            _queue_playback_chunk(engine, source_id, chunk, BASE_SR)
+        _queue_playback_done(engine, source_id)
 
-        engine.status_callback(f"Playing {label}")
+        _set_playback_source_status(engine, source_id, f"Playing {label}")
         return True
     except Exception:
-        release_pipeline(engine)
+        engine.playback_done.set()
         raise
 
 
-def play(engine: Celune, sound_path: str, keep: bool = False) -> bool:
+def play(
+    engine: Celune, sound_path: str, keep: bool = False, volume: float = 1.0
+) -> bool:
     """Play a sound via Celune's pipeline.
 
     Args:
         engine: The Celune engine that should play the sound.
         sound_path: The path to the audio file to play.
         keep: Whether to prepend this SFX to the next saved utterance.
+        volume: How loud should the SFX be played at.
 
     Returns:
         bool: ``True`` when playback was queued successfully, otherwise ``False``.
@@ -1203,8 +1388,14 @@ def play(engine: Celune, sound_path: str, keep: bool = False) -> bool:
         return False
 
     audio, sr = sf.read(sound_path, dtype="float32")
+
     return queue_sfx_audio(
-        engine, np.asarray(audio, dtype=np.float32), sr, sound_path, keep
+        engine,
+        np.asarray(audio, dtype=np.float32),
+        sr,
+        sound_path,
+        keep,
+        volume=volume,
     )
 
 
@@ -1378,8 +1569,14 @@ def play_readiness_signal(engine: Celune) -> bool:
     """
     if acquire_pipeline(engine, "play readiness signal"):
         engine.cur_state = "speaking"
-        engine.audio_queue.put((readiness_signal(), BASE_SR, None))
-        engine.audio_queue.put(engine.utterance_done)
+        source_id = _next_playback_source_id(engine)
+        _register_playback_source(engine, source_id, kind="sfx")
+        _queue_playback_chunk(engine, source_id, readiness_signal(), BASE_SR)
+        _queue_playback_done(
+            engine,
+            source_id,
+            release_pipeline_when_finished=True,
+        )
         return True
     return False
 
@@ -1460,6 +1657,8 @@ def generation_worker(engine: Celune) -> None:
                 buffer: list[npt.NDArray[np.float32]] = []
                 full_audio: list[npt.NDArray[np.float32]] = []
                 generated_text_parts: list[str] = []
+                source_id = _next_playback_source_id(engine)
+                _register_playback_source(engine, source_id, kind="speech")
 
                 for chunk_index, chunk_text in enumerate(chunks):
                     if engine.exit_requested:
@@ -1614,12 +1813,12 @@ def generation_worker(engine: Celune) -> None:
                             # buffering helps Celune speak smoothly when performance is bad
                             if buffered_speech_len >= 10.0:
                                 queued_audio = np.concatenate(buffer)
-                                engine.audio_queue.put(
-                                    (
-                                        queued_audio,
-                                        BASE_SR,
-                                        speech_timing if not pushed_audio else None,
-                                    )
+                                _queue_playback_chunk(
+                                    engine,
+                                    source_id,
+                                    queued_audio,
+                                    BASE_SR,
+                                    speech_timing if not pushed_audio else None,
                                 )
                                 if stream_queue is not None:
                                     stream_queue.put(queued_audio.copy())
@@ -1628,7 +1827,9 @@ def generation_worker(engine: Celune) -> None:
 
                                 if not pushed_audio:
                                     pushed_audio = True
-                                    engine.status_callback("Speaking")
+                                    _set_playback_source_status(
+                                        engine, source_id, "Speaking"
+                                    )
                                     engine.cur_state = "speaking"
                                     engine.queue_avail_callback()
 
@@ -1674,18 +1875,18 @@ def generation_worker(engine: Celune) -> None:
 
                 if buffer:
                     queued_audio = np.concatenate(buffer)
-                    engine.audio_queue.put(
-                        (
-                            queued_audio,
-                            BASE_SR,
-                            speech_timing if not pushed_audio else None,
-                        )
+                    _queue_playback_chunk(
+                        engine,
+                        source_id,
+                        queued_audio,
+                        BASE_SR,
+                        speech_timing if not pushed_audio else None,
                     )
                     if stream_queue is not None:
                         stream_queue.put(queued_audio.copy())
                     if not pushed_audio:
                         pushed_audio = True
-                        engine.status_callback("Speaking")
+                        _set_playback_source_status(engine, source_id, "Speaking")
                         engine.cur_state = "speaking"
                         engine.queue_avail_callback()
 
@@ -1697,7 +1898,7 @@ def generation_worker(engine: Celune) -> None:
                     if engine.reverb.strength > 0.0:
                         tail = engine.reverb.flush()
                         if len(tail) > 0:
-                            engine.audio_queue.put((tail, BASE_SR, None))
+                            _queue_playback_chunk(engine, source_id, tail, BASE_SR)
                             if stream_queue is not None:
                                 stream_queue.put(tail.copy())
                             buffer.append(tail)
@@ -1775,11 +1976,12 @@ def generation_worker(engine: Celune) -> None:
                                 saved_path = None
 
                     engine.recently_saved = saved_path
-                    engine.audio_queue.put(
-                        SpeechDone(
-                            saved_path=saved_path,
-                            analysis_audio=analysis_audio,
-                        )
+                    _queue_playback_done(
+                        engine,
+                        source_id,
+                        release_pipeline_when_finished=True,
+                        saved_path=saved_path,
+                        analysis_audio=analysis_audio,
                     )
                     if stream_queue is not None:
                         stream_queue.put(None)
@@ -1801,16 +2003,148 @@ def generation_worker(engine: Celune) -> None:
                 break
 
 
+def _playback_blocks(
+    chunk: PlaybackChunk,
+    block_seconds: float = 0.05,
+) -> deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]:
+    """Split one queued source chunk into short blocks for the mixer."""
+    blocks = deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]()
+    pieces = _split(chunk.audio, chunk.sample_rate, block_seconds)
+    if not pieces:
+        pieces = [np.asarray(chunk.audio, dtype=np.float32)]
+    for index, piece in enumerate(pieces):
+        blocks.append(
+            (np.asarray(piece, dtype=np.float32), chunk.timing if index == 0 else None)
+        )
+    return blocks
+
+
+def _ensure_playback_stream(engine: Celune, sample_rate: int) -> bool:
+    """Ensure the shared playback stream exists for the requested sample rate."""
+    if engine.stream is not None and getattr(engine, "current_sr", None) == sample_rate:
+        return True
+
+    if engine.stream is not None and getattr(engine, "current_sr", None) != sample_rate:
+        close_stream(engine, abort=True)
+
+    try:
+        engine.current_sr = sample_rate
+        engine.stream = sd.OutputStream(
+            samplerate=sample_rate,
+            channels=2,
+            dtype="float32",
+            blocksize=0,
+        )
+        if engine.stream is None:
+            raise NotAvailableError("audio stream is not available")
+        engine.stream.start()
+        engine.log_dev(f"[PLAY] started stream at {sample_rate} Hz")
+        return True
+    except sd.PortAudioError:
+        if not getattr(engine, "audio_unavailable", False):
+            engine.log(f"{APP_NAME} could not initialize the audio stream.", "error")
+            engine.log("No suitable audio device is available.", "error")
+            engine.error_callback("No suitable audio devices")
+        engine._audio_unavailable = True
+        return False
+
+
+def _finalize_playback_idle(
+    engine: Celune,
+    saved_path: Optional[str] = None,
+    analysis_audio: Optional[npt.NDArray[np.float32]] = None,
+) -> None:
+    """Handle post-playback reactions when the mixer becomes fully idle."""
+    engine.playback_done.set()
+    if not getattr(engine, "locked", False):
+        engine.cur_state = "idle"
+    engine.idle_callback()
+
+    if random.random() < 0.01:
+        flavor_texts = [
+            "I will speak.",
+            "I'll answer.",
+            "I'm always listening.",
+            "I'm all ears.",
+            "You shall hear.",
+        ]
+
+        choice = random.choice(flavor_texts)
+        if choice == getattr(engine, "_last_flavor", None):
+            choice = random.choice(flavor_texts)
+        engine._last_flavor = choice
+        engine.log(f"Just type. {choice}")
+    else:
+        if engine.dev and saved_path is not None and analysis_audio is not None:
+            engine.log_dev("Analyzing...")
+            saved = pathlib.Path(saved_path)
+            run_async(
+                analyze_voice_audio,
+                analysis_audio,
+                BASE_SR,
+                saved.name,
+                saved.parent,
+                saved.stem,
+                engine.current_voice,
+            )
+
+        if not getattr(engine, "_ready_announced", False):
+            engine.log("Ready to speak.")
+            engine._ready_announced = True
+
+    if torch.cuda.is_available():
+        avail, total = tuple(v / 1024**3 for v in torch.cuda.mem_get_info(0))
+        if avail <= total * 0.1:
+            engine.log(
+                f"{APP_NAME} is running out of VRAM. Check the bottom right of {APP_NAME}'s window to learn more.",
+                "warning",
+            )
+            engine.log(
+                "Please close any memory-resident applications to improve performance.",
+                "warning",
+            )
+
+
 def playback_worker(engine: Celune) -> None:
-    """Receive audio chunks and play them.
+    """Receive audio chunks from multiple sources, mix them, and play them."""
+    source_buffers: dict[
+        int, deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]
+    ] = {}
+    source_done: dict[int, PlaybackSourceDone] = {}
+    stop_requested = False
 
-    Args:
-        engine: The Celune engine whose audio queue should be played back.
+    def drain_pending_items() -> bool:
+        """Pull newly queued playback items into the active mixer state."""
+        nonlocal stop_requested
 
-    Raises:
-        NotAvailableError: The audio stream is unavailable during playback.
-    """
-    started = False
+        while True:
+            try:
+                pending = engine.audio_queue.get_nowait()
+            except queue.Empty:
+                return True
+
+            if pending is engine.sentinel:
+                stop_requested = True
+                return True
+
+            if pending is engine.force_stop_marker:
+                source_buffers.clear()
+                source_done.clear()
+                _playback_source_statuses(engine).clear()
+                _playback_source_meta(engine).clear()
+                engine.utterance_force_stop.clear()
+                close_stream(engine, abort=True)
+                engine.playback_done.set()
+                release_pipeline(engine)
+                engine.idle_callback()
+                return False
+
+            if isinstance(pending, PlaybackChunk):
+                source_buffers.setdefault(pending.source_id, deque()).extend(
+                    _playback_blocks(pending)
+                )
+            elif isinstance(pending, PlaybackSourceDone):
+                source_done[pending.source_id] = pending
 
     while True:
         if engine.exit_requested:
@@ -1822,140 +2156,173 @@ def playback_worker(engine: Celune) -> None:
             engine.idle_callback()
             return
 
-        if not started:
-            if engine.exit_requested:
-                continue
-
-        item = engine.audio_queue.get()
+        try:
+            timeout = 0.01 if source_buffers else None
+            item = engine.audio_queue.get(timeout=timeout)
+        except queue.Empty:
+            item = None
 
         if item is engine.sentinel:
             break
 
         if item is engine.force_stop_marker:
+            source_buffers.clear()
+            source_done.clear()
+            _playback_source_statuses(engine).clear()
+            _playback_source_meta(engine).clear()
             engine.utterance_force_stop.clear()
             close_stream(engine, abort=True)
             engine.playback_done.set()
             release_pipeline(engine)
             engine.idle_callback()
-            started = False
+            continue
+
+        if isinstance(item, PlaybackChunk):
+            source_buffers.setdefault(item.source_id, deque()).extend(
+                _playback_blocks(item)
+            )
+        elif isinstance(item, PlaybackSourceDone):
+            source_done[item.source_id] = item
+
+        if not drain_pending_items():
             continue
 
         if engine.exit_requested:
             continue
 
-        if isinstance(item, SpeechDone) or item is engine.utterance_done:
-            saved_path = item.saved_path if isinstance(item, SpeechDone) else None
-            analysis_audio = (
-                item.analysis_audio if isinstance(item, SpeechDone) else None
+        while source_buffers:
+            if not drain_pending_items():
+                break
+
+            if not _ensure_playback_stream(engine, BASE_SR):
+                source_buffers.clear()
+                source_done.clear()
+                _playback_source_statuses(engine).clear()
+                _playback_source_meta(engine).clear()
+                break
+
+            ready_ids = [
+                source_id for source_id, blocks in source_buffers.items() if blocks
+            ]
+            if not ready_ids:
+                break
+
+            speech_active = bool(_active_speech_source_ids(source_buffers, engine))
+            block_len = min(
+                len(source_buffers[source_id][0][0]) for source_id in ready_ids
             )
-            engine.playback_done.set()
+            mixed = np.zeros((block_len, 2), dtype=np.float32)
+            timing_to_log: Optional[SpeechTiming] = None
+            completed_now: list[int] = []
 
-            more_pending = (not engine.audio_queue.empty()) or (
-                not engine.text_queue.empty()
-            )
-
-            if more_pending:
-                silence = np.zeros((BASE_SR, 2), dtype=np.float32)
-                if engine.stream is not None and not engine.exit_requested:
-                    engine.stream.write(silence)
-            else:
-                release_pipeline(engine)
-                engine.idle_callback()
-
-                if random.random() < 0.01:
-                    flavor_texts = [
-                        "I will speak.",
-                        "I'll answer.",
-                        "I'm always listening.",
-                        "I'm all ears.",
-                        "You shall hear.",
-                    ]
-
-                    choice = random.choice(flavor_texts)
-
-                    if choice == getattr(engine, "_last_flavor", None):
-                        choice = random.choice(flavor_texts)
-
-                    engine._last_flavor = choice
-                    engine.log(f"Just type. {choice}")
-                else:
-                    # queueing new speech during analysis may net you a reduced performance
-                    if (
-                        engine.dev
-                        and saved_path is not None
-                        and analysis_audio is not None
-                    ):
-                        engine.log_dev("Analyzing...")
-                        saved = pathlib.Path(saved_path)
-                        run_async(
-                            analyze_voice_audio,
-                            analysis_audio,
-                            BASE_SR,
-                            saved.name,
-                            saved.parent,
-                            saved.stem,
-                            engine.current_voice,
-                        )
-
-                    if not getattr(engine, "_ready_announced", False):
-                        engine.log("Ready to speak.")
-                        engine._ready_announced = True
-
-                if torch.cuda.is_available():
-                    avail, total = tuple(
-                        v / 1024**3 for v in torch.cuda.mem_get_info(0)
-                    )
-                    if avail <= total * 0.1:
-                        engine.log(
-                            f"{APP_NAME} is running out of VRAM. "
-                            f"Check the bottom right of {APP_NAME}'s window to learn more.",
-                            "warning",
-                        )
-                        engine.log(
-                            "Please close any memory-resident applications to improve performance.",
-                            "warning",
-                        )
-            continue
-
-        audio_chunk, sr, timing = item
-
-        if engine.stream is None:
-            try:
-                engine.current_sr = sr
-                engine.stream = sd.OutputStream(
-                    samplerate=sr,
-                    channels=2,
-                    dtype="float32",
-                    blocksize=0,
+            for source_id in ready_ids:
+                block, timing = source_buffers[source_id][0]
+                block_audio = _apply_source_gain(
+                    np.asarray(block[:block_len], dtype=np.float32),
+                    source_id,
+                    speech_active=speech_active,
+                    block_seconds=block_len / BASE_SR,
+                    engine=engine,
                 )
-                if engine.stream is None:
-                    raise NotAvailableError("audio stream is not initialized")
+                mixed += block_audio
+                if timing_to_log is None and timing is not None:
+                    timing_to_log = timing
 
-                engine.stream.start()
-                started = True
-                engine.log_dev(f"[PLAY] started stream at {sr} Hz")
-            except sd.PortAudioError:
-                if not engine.audio_unavailable:
-                    engine.log(
-                        f"{APP_NAME} could not initialize the audio stream.", "error"
+                if len(block) == block_len:
+                    source_buffers[source_id].popleft()
+                else:
+                    source_buffers[source_id][0] = (
+                        np.asarray(block[block_len:], dtype=np.float32),
+                        None,
                     )
-                    engine.log("No suitable audio device is available.", "error")
-                    engine.error_callback("No suitable audio devices")
-                engine._audio_unavailable = True
 
-        if engine.exit_requested:
-            continue
+                if not source_buffers[source_id]:
+                    if source_id in source_done:
+                        completed_now.append(source_id)
+                    del source_buffers[source_id]
 
-        try:
-            if engine.stream is None:
-                raise NotAvailableError("audio stream is not initialized")
-            log_first_playback(engine, timing)
-            engine.glow.schedule(audio_chunk)
-            engine.stream.write(audio_chunk)
-        except Exception as e:
-            engine.log(f"[PLAY ERROR] {format_error(e, engine.dev)}", "error")
-            engine.error_callback("Playback error")
-            close_stream(engine, abort=True)
-            engine._stream = None
-            engine._current_sr = None
-            continue
+            mixed = np.clip(mixed, -1.0, 1.0)
+
+            try:
+                stream = engine.stream
+                if stream is None:
+                    raise NotAvailableError("audio stream is not available")
+                log_first_playback(engine, timing_to_log)
+                engine.glow.schedule(mixed)
+                stream.write(mixed)
+            except Exception as e:
+                engine.log(f"[PLAY ERROR] {format_error(e, engine.dev)}", "error")
+                engine.error_callback("Playback error")
+                close_stream(engine, abort=True)
+                engine._stream = None
+                engine._current_sr = None
+                source_buffers.clear()
+                source_done.clear()
+                _playback_source_statuses(engine).clear()
+                _playback_source_meta(engine).clear()
+                break
+
+            while True:
+                newly_complete = [
+                    source_id
+                    for source_id, marker in source_done.items()
+                    if source_id not in source_buffers
+                ]
+                if not newly_complete:
+                    break
+
+                for source_id in newly_complete:
+                    marker = source_done.pop(source_id)
+                    engine.recently_saved = marker.saved_path
+                    _clear_playback_source_status(engine, source_id)
+                    if marker.release_pipeline:
+                        release_pipeline(
+                            engine,
+                            playback_idle=not source_buffers
+                            and engine.audio_queue.empty()
+                            and engine.text_queue.empty(),
+                        )
+                    if (
+                        not source_buffers
+                        and engine.audio_queue.empty()
+                        and engine.text_queue.empty()
+                    ):
+                        _finalize_playback_idle(
+                            engine,
+                            saved_path=marker.saved_path,
+                            analysis_audio=marker.analysis_audio,
+                        )
+
+        while True:
+            orphaned = [
+                source_id
+                for source_id, marker in source_done.items()
+                if source_id not in source_buffers
+            ]
+            if not orphaned:
+                break
+
+            for source_id in orphaned:
+                marker = source_done.pop(source_id)
+                engine.recently_saved = marker.saved_path
+                _clear_playback_source_status(engine, source_id)
+                if marker.release_pipeline:
+                    release_pipeline(
+                        engine,
+                        playback_idle=not source_buffers
+                        and engine.audio_queue.empty()
+                        and engine.text_queue.empty(),
+                    )
+                if (
+                    not source_buffers
+                    and engine.audio_queue.empty()
+                    and engine.text_queue.empty()
+                ):
+                    _finalize_playback_idle(
+                        engine,
+                        saved_path=marker.saved_path,
+                        analysis_audio=marker.analysis_audio,
+                    )
+
+        if stop_requested and not source_buffers and not source_done:
+            break
