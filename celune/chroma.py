@@ -248,6 +248,18 @@ class AudioRGBGlow:
 
         self._process_glow_chunk(audio, time.monotonic())
 
+    def reset_audio_reactivity(self) -> None:
+        """Clear queued audio and fade the glow back to its idle brightness."""
+        if self._worker is None or not self._worker.is_alive():
+            return
+
+        with self._lock:
+            self._scheduled_chunks.clear()
+            self._smoothed_level = 0.0
+            if self._state not in {"fatal", "sleeping", "waking", "leaving", "none"}:
+                self._state = "normal"
+                self._target_brightness = self.idle_brightness
+
     def _process_glow_chunk(self, audio: npt.NDArray[np.float32], now: float) -> None:
         """Process one audio chunk and update audio-reactive brightness."""
         del now

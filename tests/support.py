@@ -112,6 +112,7 @@ class FakeGlow:
         self.finished = threading.Event()
         self.finished.set()
         self.scheduled: list[npt.NDArray[np.float32]] = []
+        self.reset_audio_reactivity_called = False
 
     def start(self) -> bool:
         """Mark the fake glow as started.
@@ -159,6 +160,10 @@ class FakeGlow:
             audio: The audio chunk scheduled by the caller.
         """
         self.scheduled.append(audio)
+
+    def reset_audio_reactivity(self) -> None:
+        """Record that live audio-reactive glow state was cleared."""
+        self.reset_audio_reactivity_called = True
 
 
 class FakeStream:
@@ -244,7 +249,10 @@ def make_pipeline_engine() -> SimpleNamespace:
     )
     engine.progress_callback = lambda current, total: progress.append((current, total))
     engine.idle_callback = mock.Mock()
-    engine.glow = SimpleNamespace(schedule=mock.Mock())
+    engine.glow = SimpleNamespace(
+        schedule=mock.Mock(),
+        reset_audio_reactivity=mock.Mock(),
+    )
     engine.messages = messages
     engine.errors = errors
     engine.statuses = statuses

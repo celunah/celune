@@ -219,6 +219,69 @@ class PipelineTests(TestCase):
         self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), False)
         self.assertEqual(engine.errors, ["Celune is not currently ready"])
 
+    def test_download_youtube_sfx_writes_expected_temp_wav(self) -> None:
+        """Verify yt-dlp downloads to Celune's fixed temporary WAV path."""
+        engine = make_pipeline_engine()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            expected = temp_root / "temporary_audio.wav"
+
+            def fake_run(*args, **kwargs):
+                discard(args)
+                discard(kwargs)
+                expected.write_bytes(b"RIFFdemoWAVE")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with (
+                mock.patch("celune.pipeline.app_data_dir", return_value=temp_root),
+                mock.patch("celune.pipeline.shutil.which", return_value="yt-dlp"),
+                mock.patch(
+                    "celune.pipeline.subprocess.run", side_effect=fake_run
+                ) as run,
+            ):
+                resolved = pipeline._download_youtube_sfx(
+                    cast(Celune, engine),
+                    "https://youtu.be/demo",
+                )
+
+        self.assertEqual(resolved, expected)
+        command = run.call_args.args[0]
+        self.assertIn("yt-dlp", command[0])
+        self.assertIn(str(temp_root / "temporary_audio.%(ext)s"), command)
+
+    def test_play_accepts_youtube_url_via_downloaded_wav(self) -> None:
+        """Verify YouTube URLs are resolved to a WAV and played as SFX."""
+        engine = make_pipeline_engine()
+        downloaded = Path("C:/Users/user/AppData/Local/Celune/temporary_audio.wav")
+        audio = np.ones((8, 2), dtype=np.float32)
+
+        with (
+            mock.patch(
+                "celune.pipeline._download_youtube_sfx", return_value=downloaded
+            ) as download,
+            mock.patch("celune.pipeline.os.path.exists", return_value=True),
+            mock.patch("celune.pipeline.sf.read", return_value=(audio, 48000)) as read,
+            mock.patch(
+                "celune.pipeline.queue_sfx_audio", return_value=True
+            ) as queue_audio,
+        ):
+            ok = pipeline.play(
+                cast(Celune, engine),
+                "https://www.youtube.com/watch?v=demo",
+                keep=True,
+                volume=0.4,
+            )
+
+        self.assertEqual(ok, True)
+        download.assert_called_once()
+        read.assert_called_once_with(str(downloaded), dtype="float32")
+        queued_args = queue_audio.call_args.args
+        queued_kwargs = queue_audio.call_args.kwargs
+        self.assertEqual(queued_args[0], cast(Celune, engine))
+        np.testing.assert_allclose(queued_args[1], np.asarray(audio, dtype=np.float32))
+        self.assertEqual(queued_args[2:], (48000, str(downloaded), True))
+        self.assertEqual(queued_kwargs, {"volume": 0.4})
+
     def test_queue_sfx_audio_allows_overlay_while_speech_pipeline_is_locked(
         self,
     ) -> None:
@@ -489,6 +552,38 @@ class PipelineTests(TestCase):
         self.assertLess(means[min_index], means[0])
         self.assertGreater(means[-1], means[min_index] + 0.25)
         self.assertGreater(means[-1], 0.7)
+
+    def test_force_stop_resets_glow_audio_reactivity(self) -> None:
+        """Verify forced playback stop clears the glow's audio-reactive state."""
+        engine = make_pipeline_engine()
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.current_voice = "balanced"
+        engine.idle_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+        fake_stream = FakeStream()
+
+        pipeline._queue_playback_chunk(
+            cast(Celune, engine),
+            1,
+            np.full((2400, 2), 0.3, dtype=np.float32),
+            48000,
+        )
+        engine.audio_queue.put(engine.force_stop_marker)
+        engine.audio_queue.put(engine.sentinel)
+
+        with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
+            pipeline.playback_worker(cast(Celune, engine))
+
+        engine.glow.reset_audio_reactivity.assert_called_once_with()
+        self.assertEqual(engine.playback_done.is_set(), True)
+        engine.idle_callback.assert_called_once_with()
 
     def test_think_builds_persona_payload_and_queues_response(self) -> None:
         """Verify Persona request formatting without loading a Persona model.

@@ -9,12 +9,15 @@ import json
 import time
 import queue
 import random
+import shutil
 import pathlib
 import datetime
 import contextlib
+import subprocess
 from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Mapping, Union, cast
+from urllib.parse import urlparse
 
 import torch
 import numpy as np
@@ -29,6 +32,7 @@ from . import __version__
 from .exceptions import NotAvailableError
 from .persona.memory import PersonaMemoryStore
 from .analysis import analyze_voice_audio
+from .paths import app_data_dir
 from .persona.impl import (
     default_persona_age,
     default_persona_context,
@@ -499,6 +503,13 @@ def close_stream(engine: Celune, abort: bool = False) -> None:
     engine._current_sr = None
 
 
+def _reset_glow_audio_reactivity(engine: Celune) -> None:
+    """Clear any pending audio-reactive glow state after abrupt playback stops."""
+    reset_audio_reactivity = getattr(engine.glow, "reset_audio_reactivity", None)
+    if callable(reset_audio_reactivity):
+        reset_audio_reactivity()
+
+
 def force_stop_speech(engine: Celune) -> bool:
     """Forcefully stop Celune from speaking.
 
@@ -721,6 +732,70 @@ def _queue_playback_done(
             analysis_audio=analysis_audio,
         )
     )
+
+
+def _youtube_sfx_temp_path() -> pathlib.Path:
+    """Return the fixed temporary WAV path used for URL-backed SFX playback."""
+    return app_data_dir(create=True) / "temporary_audio.wav"
+
+
+def _is_youtube_sfx_url(value: str) -> bool:
+    """Return whether ``value`` looks like a supported YouTube URL."""
+    parsed = urlparse(value.strip())
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.netloc or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host in {"youtube.com", "youtu.be", "music.youtube.com"}
+
+
+def _download_youtube_sfx(engine: Celune, url: str) -> Optional[pathlib.Path]:
+    """Download one YouTube URL as a temporary WAV file for SFX playback."""
+    yt_dlp_path = shutil.which("yt-dlp")
+    if yt_dlp_path is None:
+        engine.log("yt-dlp is not installed, cannot play YouTube audio.", "warning")
+        engine.error_callback("yt-dlp is required for YouTube playback")
+        return None
+
+    output_path = _youtube_sfx_temp_path()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(OSError):
+        output_path.unlink(missing_ok=True)
+
+    outtmpl = str(output_path.with_suffix(".%(ext)s"))
+    engine.status_callback("Downloading audio")
+    engine.log(f"[SFX] Downloading audio from {url}")
+    completed = subprocess.run(
+        [
+            yt_dlp_path,
+            "--extract-audio",
+            "--audio-format",
+            "wav",
+            "--audio-quality",
+            "0",
+            "--no-playlist",
+            "--force-overwrites",
+            "--output",
+            outtmpl,
+            url,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        stderr = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
+        engine.log(f"yt-dlp failed to download audio: {stderr}", "warning")
+        engine.error_callback("Could not download YouTube audio")
+        return None
+
+    if not output_path.exists():
+        engine.log("yt-dlp did not produce the expected WAV output.", "warning")
+        engine.error_callback("Downloaded audio file is missing")
+        return None
+
+    return output_path
 
 
 def _config_text(engine: Celune, key: str, default: str) -> str:
@@ -1376,6 +1451,12 @@ def play(
     Raises:
         Exception: Re-raised after releasing the pipeline if SFX playback setup fails.
     """
+    if _is_youtube_sfx_url(sound_path):
+        downloaded = _download_youtube_sfx(engine, sound_path)
+        if downloaded is None:
+            return False
+        sound_path = str(downloaded)
+
     if not os.path.exists(sound_path):
         engine.log(f"{APP_NAME} cannot find {sound_path}.", "warning")
         return False
@@ -2133,6 +2214,7 @@ def playback_worker(engine: Celune) -> None:
                 _playback_source_statuses(engine).clear()
                 _playback_source_meta(engine).clear()
                 engine.utterance_force_stop.clear()
+                _reset_glow_audio_reactivity(engine)
                 close_stream(engine, abort=True)
                 engine.playback_done.set()
                 release_pipeline(engine)
@@ -2171,6 +2253,7 @@ def playback_worker(engine: Celune) -> None:
             _playback_source_statuses(engine).clear()
             _playback_source_meta(engine).clear()
             engine.utterance_force_stop.clear()
+            _reset_glow_audio_reactivity(engine)
             close_stream(engine, abort=True)
             engine.playback_done.set()
             release_pipeline(engine)
