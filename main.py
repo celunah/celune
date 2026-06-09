@@ -15,21 +15,21 @@ APP_SLUG = "".join(char if char.isalnum() else "_" for char in APP_NAME.lower())
 _ENTRYPOINT_MODULE: Optional[ModuleType] = None
 
 
-def _supported_python() -> bool:
-    """Return whether the current interpreter is within Celune's supported range."""
-    return (3, 12) <= sys.version_info < (3, 14)
+def _too_old_python() -> bool:
+    """Return whether the current interpreter is too old."""
+    return sys.version_info < (3, 12)
 
 
-def _print_unsupported_python_notice(command: Optional[str] = None) -> None:
-    """Print a user-facing unsupported-Python notice without importing app modules."""
+def _print_too_old_python_notice(command: Optional[str] = None) -> None:
+    """Print a user-facing unsupported Python version notice, bypassing app imports."""
     version = ".".join(str(part) for part in sys.version_info[:3])
-    print(f"{APP_NAME} does not currently support Python {version}.")
-    print(f"{APP_NAME} currently supports Python 3.12 and 3.13.")
+    print(f"{APP_NAME} will not run on Python {version}.")
+    print("Please use at least Python 3.12 to use the CLI.")
     print(
         f"Run `uv sync` in {APP_NAME}'s directory to set up the supported environment."
     )
     if command == "doctor":
-        print(f"`{APP_NAME.lower()} doctor` cannot run fully on this interpreter.")
+        print(f"`{APP_NAME.lower()} doctor` can't run on this interpreter.")
 
 
 def load_entrypoint_module() -> ModuleType:
@@ -72,9 +72,9 @@ def main(argv: Optional[list[str]] = None) -> None:
     resolved_argv = sys.argv if argv is None else argv
     command = resolved_argv[1].strip().lower() if len(resolved_argv) >= 2 else None
 
-    if not _supported_python():
-        _print_unsupported_python_notice(command)
-        raise SystemExit(6)
+    if _too_old_python():
+        _print_too_old_python_notice(command)
+        sys.exit(6)
 
     _load_entrypoint_module().main(resolved_argv)
 
