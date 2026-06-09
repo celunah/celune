@@ -13,9 +13,9 @@ import soundfile as sf
 
 from ..backends.qwen3 import Qwen3
 from ..constants import APP_NAME
-from ..utils import format_error
+from ..utils import format_error, replace_ipa, format_number
 from ..exceptions import InvalidExtensionError
-from ..utils import replace_ipa
+from ..paths import project_root
 
 if TYPE_CHECKING:
     from .app import CeluneUI
@@ -65,7 +65,7 @@ def tutorial(ui: CeluneUI) -> None:
     Args:
         ui: The instance of CeluneUI that the tutorial will interact with.
     """
-    assets = Path(__file__).resolve().parents[1] / "assets"
+    assets = project_root() / "celune" / "assets"
     if not assets.exists():
         ui.safe_log("No tutorial assets found.", "warning")
         return
@@ -360,10 +360,17 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 try:
                     if not ui.celune.play(args[0], volume=volume):
                         return
-                    ui.safe_log(f"Playing {args[0]} at volume {volume:g}")
-                except Exception as e:
+                    if args[0].startswith("https://"):
+                        ui.safe_log(
+                            f"Playing YouTube audio at {format_number(volume * 100)}% volume"
+                        )
+                    else:
+                        ui.safe_log(
+                            f"Playing {args[0]} at {format_number(volume * 100)}% volume"
+                        )
+                except Exception as exc:
                     ui.safe_log(
-                        f"Cannot play this file: {format_error(e, ui.celune.dev)}",
+                        f"Cannot play this audio: {format_error(exc, ui.celune.dev)}",
                         "error",
                     )
 

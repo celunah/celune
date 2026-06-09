@@ -33,8 +33,8 @@ from .support import (
 class BackendTests(TestCase):
     """Tests for backend base behavior and backend resolution."""
 
-    def test_base_backend_reports_models_and_progress(self) -> None:
-        """Verify model metadata and progress helpers on a fake backend.
+    def test_base_backend_reports_models(self) -> None:
+        """Verify model metadata helpers on a fake backend.
 
         Raises:
             AssertionError: A backend helper returns an unexpected value.
@@ -44,10 +44,6 @@ class BackendTests(TestCase):
         self.assertEqual(backend.all_model_ids, ["fake/balanced", "fake/bold"])
         self.assertEqual(backend.voices, ["balanced", "bold"])
         self.assertEqual(backend.model_id_for_voice("bold"), "fake/bold")
-        self.assertIsNone(backend.generation_progress_total("text"))
-        self.assertEqual(backend.generation_progress_steps(None), 1)
-        self.assertEqual(backend.generation_progress_steps({"chunk_steps": 3}), 3)
-        self.assertEqual(backend.generation_progress_steps({"chunk_steps": 0}), 1)
 
     def test_base_backend_materializes_bundle_pt_refs_when_available(self) -> None:
         """Verify CEVOICE bundles eagerly extract .pt refs alongside .wav files."""

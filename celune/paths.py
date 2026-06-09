@@ -2,12 +2,19 @@
 """Runtime filesystem paths for Celune user data."""
 
 import shutil
+import sys
 from pathlib import Path
 from typing import Optional
 
 from platformdirs import user_data_dir
 
 from .constants import APP_SLUG
+
+
+def running_compiled() -> bool:
+    """Return whether Celune is running from a compiled entrypoint."""
+    main_module = sys.modules.get("__main__")
+    return bool(getattr(main_module, "__compiled__", False))
 
 
 def app_data_dir(create: bool = False) -> Path:
@@ -106,6 +113,9 @@ def project_root() -> Path:
     Returns:
         Celune's repository root directory.
     """
+    if running_compiled():
+        return Path(sys.argv[0]).resolve().parent
+
     return Path(__file__).resolve().parent.parent
 
 

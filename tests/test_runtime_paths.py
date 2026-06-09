@@ -2,6 +2,7 @@
 """Tests for Celune runtime path handling."""
 
 import tempfile
+import sys
 from pathlib import Path
 from typing import cast
 from unittest import TestCase, mock
@@ -10,8 +11,9 @@ import yaml
 from textual.widgets import RichLog
 
 from celune.constants import APP_SLUG
-from celune.paths import ensure_config_path
+from celune.paths import ensure_config_path, project_root, running_compiled
 from celune.persona.memory import default_memory_dir
+from celune.cevoice import bundled_voices_dir, default_bundle_path
 from celune.ui.app import CeluneUI
 from celune.utils import format_error
 
@@ -94,3 +96,34 @@ class RuntimePathTests(TestCase):
             self.assertTrue(was_created)
             self.assertEqual(saved["theme"], "light")
             self.assertEqual(saved["headless"], True)
+
+    def test_running_compiled_detects_compiled_main_module(self) -> None:
+        """Verify compiled-mode detection checks the active main module."""
+        main_module = sys.modules["__main__"]
+        original = getattr(main_module, "__compiled__", None)
+        had_attr = hasattr(main_module, "__compiled__")
+
+        # the type errors are suppressed because they are Nuitka specific
+        try:
+            main_module.__compiled__ = True  # type: ignore[missing-attribute]
+            self.assertTrue(running_compiled())
+        finally:
+            if had_attr:
+                main_module.__compiled__ = original  # type: ignore[missing-attribute]
+            else:
+                delattr(main_module, "__compiled__")
+
+    def test_compiled_project_root_and_bundled_paths_follow_executable(self) -> None:
+        """Verify bundled files resolve beside the compiled executable."""
+        fake_main = type("CompiledMain", (), {"__compiled__": True})()
+
+        with (
+            mock.patch.dict(sys.modules, {"__main__": fake_main}),
+            mock.patch.object(sys, "argv", ["C:/Apps/Celune/celune.exe"]),
+        ):
+            self.assertEqual(project_root(), Path("C:/Apps/Celune"))
+            self.assertEqual(
+                default_bundle_path(),
+                Path("C:/Apps/Celune/voices/default.cevoice"),
+            )
+            self.assertEqual(bundled_voices_dir(), Path("C:/Apps/Celune/voices"))

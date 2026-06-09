@@ -145,17 +145,6 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
 
         return self.clone_model_id
 
-    def generation_progress_total(self, text: Optional[str] = None) -> int:
-        """Return the Qwen3 streaming generation context length.
-
-        Args:
-            text: The text to check context usage of with this value.
-
-        Returns:
-            int: The max context length.
-        """
-        return self.max_new_tokens
-
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
     ) -> tuple[bool, Optional[str]]:

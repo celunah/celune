@@ -6,18 +6,20 @@ from __future__ import annotations
 import os
 import re
 import json
+import sys
 import time
 import queue
 import random
-import shutil
 import pathlib
 import datetime
 import contextlib
 import subprocess
+from importlib import util as importlib_util
 from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Mapping, Union, cast
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlencode
+from urllib.request import urlopen
 
 import torch
 import numpy as np
@@ -608,7 +610,7 @@ def _playback_source_statuses(engine: Celune) -> dict[int, str]:
 def _playback_source_meta(
     engine: Celune,
 ) -> dict[int, dict[str, Union[str, float]]]:
-    """Return per-source mixer metadata such as kind and gain state."""
+    """Return per-source mixer metadata such as kind, gain state, and progress."""
     meta = getattr(engine, "_playback_source_meta", None)
     if isinstance(meta, dict):
         return meta
@@ -631,6 +633,8 @@ def _register_playback_source(
         "kind": kind,
         "base_gain": clipped,
         "current_gain": clipped,
+        "total_frames": 0.0,
+        "played_frames": 0.0,
     }
 
 
@@ -658,6 +662,10 @@ def _queue_playback_chunk(
     timing: Optional[SpeechTiming] = None,
 ) -> None:
     """Queue one chunk for the shared DSP playback mixer."""
+    meta = _playback_source_meta(engine).get(source_id)
+    if isinstance(meta, dict):
+        meta["total_frames"] = float(meta.get("total_frames", 0.0)) + float(len(audio))
+
     engine.audio_queue.put(
         PlaybackChunk(
             source_id=source_id,
@@ -666,6 +674,43 @@ def _queue_playback_chunk(
             timing=timing,
         )
     )
+
+
+def _update_playback_progress(
+    engine: Celune,
+    source_buffers: dict[
+        int, deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]
+    ],
+) -> None:
+    """Reflect the active playback source position in the shared progress bar."""
+    if not source_buffers:
+        return
+
+    meta = _playback_source_meta(engine)
+    active_ids = [source_id for source_id in source_buffers if source_id in meta]
+    if not active_ids:
+        return
+
+    source_id = max(active_ids)
+    source_meta = meta.get(source_id)
+    if not isinstance(source_meta, dict):
+        return
+
+    total_frames = float(source_meta.get("total_frames", 0.0))
+    played_frames = float(source_meta.get("played_frames", 0.0))
+    if total_frames <= 0.0:
+        return
+
+    now = time.monotonic()
+    last_emit_at = float(getattr(engine, "_playback_progress_last_emit_at", 0.0))
+    last_source_id = getattr(engine, "_playback_progress_last_source_id", None)
+    emit_interval = 0.08
+    if last_source_id == source_id and (now - last_emit_at) < emit_interval:
+        return
+
+    engine._playback_progress_last_emit_at = now
+    engine._playback_progress_last_source_id = source_id
+    engine.progress_callback(min(played_frames, total_frames), total_frames)
 
 
 def _active_speech_source_ids(
@@ -736,7 +781,7 @@ def _queue_playback_done(
 
 def _youtube_sfx_temp_path() -> pathlib.Path:
     """Return the fixed temporary WAV path used for URL-backed SFX playback."""
-    return app_data_dir(create=True) / "temporary_audio.wav"
+    return app_data_dir(create=True) / "temp" / "temporary_audio.wav"
 
 
 def _is_youtube_sfx_url(value: str) -> bool:
@@ -750,10 +795,28 @@ def _is_youtube_sfx_url(value: str) -> bool:
     return host in {"youtube.com", "youtu.be", "music.youtube.com"}
 
 
-def _download_youtube_sfx(engine: Celune, url: str) -> Optional[pathlib.Path]:
+def _youtube_sfx_title(url: str) -> str:
+    """Return a friendly title for one YouTube URL when available."""
+    query = urlencode({"url": url, "format": "json"})
+    endpoint = f"https://www.youtube.com/oembed?{query}"
+    try:
+        with urlopen(endpoint, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return "YouTube audio"
+
+    title = payload.get("title")
+    if isinstance(title, str) and title.strip():
+        return title.strip()
+    return "YouTube audio"
+
+
+def _download_youtube_sfx(
+    engine: Celune, url: str
+) -> Optional[tuple[pathlib.Path, str]]:
     """Download one YouTube URL as a temporary WAV file for SFX playback."""
-    yt_dlp_path = shutil.which("yt-dlp")
-    if yt_dlp_path is None:
+    yt_dlp_module = "yt_dlp"
+    if importlib_util.find_spec(yt_dlp_module) is None:
         engine.log("yt-dlp is not installed, cannot play YouTube audio.", "warning")
         engine.error_callback("yt-dlp is required for YouTube playback")
         return None
@@ -763,21 +826,25 @@ def _download_youtube_sfx(engine: Celune, url: str) -> Optional[pathlib.Path]:
     with contextlib.suppress(OSError):
         output_path.unlink(missing_ok=True)
 
-    outtmpl = str(output_path.with_suffix(".%(ext)s"))
+    title = _youtube_sfx_title(url)
+    out_tmpl = str(output_path.with_suffix(".%(ext)s"))
     engine.status_callback("Downloading audio")
-    engine.log(f"[SFX] Downloading audio from {url}")
+    engine.log(f"[SFX] Downloading audio from {url}...")
     completed = subprocess.run(
         [
-            yt_dlp_path,
+            sys.executable,
+            "-m",
+            yt_dlp_module,
             "--extract-audio",
             "--audio-format",
             "wav",
             "--audio-quality",
             "0",
             "--no-playlist",
+            "--no-progress",
             "--force-overwrites",
             "--output",
-            outtmpl,
+            out_tmpl,
             url,
         ],
         check=False,
@@ -786,16 +853,19 @@ def _download_youtube_sfx(engine: Celune, url: str) -> Optional[pathlib.Path]:
     )
     if completed.returncode != 0:
         stderr = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
-        engine.log(f"yt-dlp failed to download audio: {stderr}", "warning")
+        engine.log("Could not download audio.", "warning")
+        engine.log(stderr, "warning")
         engine.error_callback("Could not download YouTube audio")
         return None
 
     if not output_path.exists():
-        engine.log("yt-dlp did not produce the expected WAV output.", "warning")
-        engine.error_callback("Downloaded audio file is missing")
+        stderr = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
+        engine.log("Downloader returned no file.", "warning")
+        engine.log(stderr, "warning")
+        engine.error_callback("Could not download YouTube audio")
         return None
 
-    return output_path
+    return output_path, title
 
 
 def _config_text(engine: Celune, key: str, default: str) -> str:
@@ -1452,10 +1522,13 @@ def play(
         Exception: Re-raised after releasing the pipeline if SFX playback setup fails.
     """
     if _is_youtube_sfx_url(sound_path):
-        downloaded = _download_youtube_sfx(engine, sound_path)
-        if downloaded is None:
+        downloaded_info = _download_youtube_sfx(engine, sound_path)
+        if downloaded_info is None:
             return False
+        downloaded, playback_label = downloaded_info
         sound_path = str(downloaded)
+    else:
+        playback_label = sound_path
 
     if not os.path.exists(sound_path):
         engine.log(f"{APP_NAME} cannot find {sound_path}.", "warning")
@@ -1474,7 +1547,7 @@ def play(
         engine,
         np.asarray(audio, dtype=np.float32),
         sr,
-        sound_path,
+        playback_label,
         keep,
         volume=volume,
     )
@@ -1762,12 +1835,7 @@ def generation_worker(engine: Celune) -> None:
 
                     generated_text_parts.append(chunk_text)
                     is_first_chunk = chunk_index == 0
-                    progress_total = engine.backend.generation_progress_total(
-                        chunk_text
-                    )
-                    generated_steps = 0
                     last_timing: Optional[dict] = None
-                    engine.progress_callback(0, progress_total or 1)
 
                     with engine.model_lock:
                         if engine.model is None:
@@ -1838,15 +1906,6 @@ def generation_worker(engine: Celune) -> None:
                             if engine.utterance_force_stop.is_set():
                                 break
 
-                            if progress_total is not None:
-                                generated_steps += (
-                                    engine.backend.generation_progress_steps(timing)
-                                )
-                                engine.progress_callback(
-                                    min(generated_steps, progress_total),
-                                    progress_total,
-                                )
-
                             speech_timing.mark_first_chunk()
 
                             if isinstance(audio_chunk, torch.Tensor):
@@ -1913,9 +1972,6 @@ def generation_worker(engine: Celune) -> None:
                                     )
                                     engine.cur_state = "speaking"
                                     engine.queue_avail_callback()
-
-                        if progress_total is None:
-                            engine.progress_callback(1, 1)
 
                         if (
                             not engine.exit_requested
@@ -2136,6 +2192,8 @@ def _finalize_playback_idle(
     analysis_audio: Optional[npt.NDArray[np.float32]] = None,
 ) -> None:
     """Handle post-playback reactions when the mixer becomes fully idle."""
+    _reset_glow_audio_reactivity(engine)
+    engine.progress_callback(1, 1)
     engine.playback_done.set()
     if not getattr(engine, "locked", False):
         engine.cur_state = "idle"
@@ -2319,6 +2377,12 @@ def playback_worker(engine: Celune) -> None:
                         None,
                     )
 
+                source_meta = _playback_source_meta(engine).get(source_id)
+                if isinstance(source_meta, dict):
+                    source_meta["played_frames"] = float(
+                        source_meta.get("played_frames", 0.0)
+                    ) + float(block_len)
+
                 if not source_buffers[source_id]:
                     if source_id in source_done:
                         completed_now.append(source_id)
@@ -2333,6 +2397,7 @@ def playback_worker(engine: Celune) -> None:
                 log_first_playback(engine, timing_to_log)
                 engine.glow.schedule(mixed)
                 stream.write(mixed)
+                _update_playback_progress(engine, source_buffers)
             except Exception as e:
                 engine.log(f"[PLAY ERROR] {format_error(e, engine.dev)}", "error")
                 engine.error_callback("Playback error")
