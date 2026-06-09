@@ -2,10 +2,10 @@
 """Tests for the Pocket TTS backend cleanup behavior."""
 
 import tempfile
-from types import SimpleNamespace
-from pathlib import Path
-from unittest import mock, TestCase
 from typing import cast
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock, TestCase
 
 from pocket_tts import TTSModel
 

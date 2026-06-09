@@ -3,11 +3,10 @@
 
 import sys
 import inspect
-import importlib.util
 import threading
 import traceback
+import importlib.util
 from pathlib import Path
-from typing import Type
 
 from ..utils import format_error
 from .base import CeluneContext, CeluneExtension
@@ -22,7 +21,7 @@ class CeluneExtensionManager:
         self.extensions: dict[str, CeluneExtension] = {}
         self.auto_started = False
 
-    def register(self, extension_cls: Type[CeluneExtension]) -> CeluneExtension:
+    def register(self, extension_cls: type[CeluneExtension]) -> CeluneExtension:
         """Register a Celune extension class.
 
         Args:

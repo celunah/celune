@@ -10,9 +10,9 @@ import numpy as np
 import numpy.typing as npt
 from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
 
-from ..cevoice import default_loader, CEVoiceLoader
-from ..exceptions import BackendError
 from ..utils import custom_assert
+from ..exceptions import BackendError
+from ..cevoice import default_loader, CEVoiceLoader
 from .base import CeluneBackend, cached_hf_snapshot_path
 
 

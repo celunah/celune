@@ -19,8 +19,8 @@ from typing import Union, Callable, Optional, Literal, TypedDict, Any, overload
 import psutil
 import langdetect
 
-from .constants import REFERENCE_NEW_MOON
 from .paths import traceback_path
+from .constants import REFERENCE_NEW_MOON
 from .terminal import supports_ansi as terminal_supports_ansi
 
 

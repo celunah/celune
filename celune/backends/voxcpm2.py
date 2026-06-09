@@ -11,11 +11,11 @@ import numpy as np
 import numpy.typing as npt
 from voxcpm import VoxCPM
 
-from ..constants import BASE_SR
 from . import get_version
-from ..cevoice import default_loader, CEVoiceLoader
-from ..exceptions import BackendError
+from ..constants import BASE_SR
 from ..utils import custom_assert
+from ..exceptions import BackendError
+from ..cevoice import default_loader, CEVoiceLoader
 from .base import CeluneBackend, cached_hf_snapshot_path
 
 

@@ -7,9 +7,9 @@ from typing import Callable, Union
 
 import torch
 
+from .constants import APP_NAME
 from .utils import cuda_architecture, format_number
 from . import __codename__, __comment__, __version__
-from .constants import APP_NAME
 
 
 def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> None:

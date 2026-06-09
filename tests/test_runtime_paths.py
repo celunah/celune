@@ -2,21 +2,21 @@
 """Tests for Celune runtime path handling."""
 
 import os
-import tempfile
 import sys
-from pathlib import Path
+import tempfile
 from typing import cast
+from pathlib import Path
 from unittest import TestCase, mock
 
 import yaml
 from textual.widgets import RichLog
 
-from celune.constants import APP_SLUG
-from celune.paths import ensure_config_path, project_root, running_compiled
-from celune.persona.memory import default_memory_dir
-from celune.cevoice import bundled_voices_dir, default_bundle_path
 from celune.ui.app import CeluneUI
 from celune.utils import format_error
+from celune.constants import APP_SLUG
+from celune.persona.memory import default_memory_dir
+from celune.cevoice import bundled_voices_dir, default_bundle_path
+from celune.paths import ensure_config_path, project_root, running_compiled
 
 
 class RuntimePathTests(TestCase):

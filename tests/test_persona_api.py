@@ -2,8 +2,8 @@
 """Tests for the shared Persona runtime helpers."""
 
 import contextlib
-from unittest import TestCase, mock
 from types import SimpleNamespace
+from unittest import TestCase, mock
 from typing import Optional, Union, cast
 
 from celune.persona import impl
