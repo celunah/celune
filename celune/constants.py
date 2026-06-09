@@ -3,9 +3,8 @@
 
 import signal
 import datetime
-from enum import auto
-from enum import IntEnum, Enum
 from typing import Union
+from enum import auto, IntEnum, Enum
 
 # main app name
 # why would you rename her? she doesn't approve of it

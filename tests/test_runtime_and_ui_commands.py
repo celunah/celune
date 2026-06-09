@@ -7,17 +7,17 @@ import tempfile
 import warnings
 from typing import cast
 from pathlib import Path
-from unittest import mock, TestCase
 from types import SimpleNamespace
+from unittest import mock, TestCase
 
 from textual import events
 from textual.widgets import Button, Label, RichLog, TextArea
 
-from celune.backends.qwen3 import Qwen3
-from celune.celune import Celune
-from celune.config import Config
-from celune.constants import APP_NAME, JSONSerializable
 from celune import runtime
+from celune.config import Config
+from celune.celune import Celune
+from celune.backends.qwen3 import Qwen3
+from celune.constants import APP_NAME, JSONSerializable
 from celune.ui.app import CeluneUI
 from celune.ui.headless import CeluneHeadlessUI
 from celune.ui import resources as ui_resources

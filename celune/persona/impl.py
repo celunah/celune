@@ -10,6 +10,7 @@ from typing import Callable, Optional, Generator, Any
 from ..config import Config
 from ..cevoice import CEVoicePersona
 from ..vram import resolve_vram_preset
+from .runtime import PersonaRuntime, request_from_json, response_to_json
 from ..constants import (
     DEFAULT_PERSONA_CONTEXT,
     DEFAULT_PERSONA_DESCRIPTION,
@@ -18,7 +19,6 @@ from ..constants import (
     PERSONA_HISTORY_MESSAGES,
     PERSONA_MODEL_ID,
 )
-from .runtime import PersonaRuntime, request_from_json, response_to_json
 
 PERSONA_QUANTIZATION = "4bit"
 DevLogCallback = Callable[[str, str], None]

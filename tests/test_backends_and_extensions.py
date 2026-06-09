@@ -7,10 +7,10 @@ import textwrap
 import importlib
 import threading
 from pathlib import Path
-from collections.abc import Iterator
 from typing import Optional
-from unittest import mock, TestCase
 from types import SimpleNamespace
+from unittest import mock, TestCase
+from collections.abc import Iterator
 
 import numpy as np
 import numpy.typing as npt
@@ -19,8 +19,11 @@ from celune.utils import discard
 from celune.backends import resolve_backend
 from celune.extensions.manager import CeluneExtensionManager
 from celune.extensions.base import CeluneContext, CeluneExtension
-from celune.exceptions import BackendError
-from celune.exceptions import ExtensionAlreadyRegisteredError, InvalidExtensionError
+from celune.exceptions import (
+    BackendError,
+    ExtensionAlreadyRegisteredError,
+    InvalidExtensionError,
+)
 from .support import (
     FakeBackend,
     make_voice_loader,

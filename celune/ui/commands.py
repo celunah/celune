@@ -11,11 +11,11 @@ from typing import Optional, TYPE_CHECKING
 
 import soundfile as sf
 
-from ..backends.qwen3 import Qwen3
-from ..constants import APP_NAME
-from ..utils import format_error, replace_ipa, format_number
-from ..exceptions import InvalidExtensionError
 from ..paths import project_root
+from ..constants import APP_NAME
+from ..backends.qwen3 import Qwen3
+from ..exceptions import InvalidExtensionError
+from ..utils import format_error, replace_ipa, format_number
 
 if TYPE_CHECKING:
     from .app import CeluneUI

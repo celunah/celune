@@ -3,15 +3,15 @@
 
 from __future__ import annotations
 
-import contextlib
-import importlib
-import queue
 import sys
+import queue
 import threading
+import importlib
+import contextlib
 from pathlib import Path
 from unittest import mock
-from collections.abc import Iterator
 from types import SimpleNamespace
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Optional, TypedDict
 
 import numpy as np

@@ -14,12 +14,12 @@ from typing import TYPE_CHECKING, Optional, Union, cast
 
 import torch
 import torch.nn.functional as f
-from transformers import AutoModel, AutoTokenizer
 import numpy as np
 import numpy.typing as npt
+from transformers import AutoModel, AutoTokenizer
 
-from ..constants import JSONSerializable, PERSONA_MEMORY_EMBEDDING_MODEL
 from ..paths import memory_data_dir
+from ..constants import JSONSerializable, PERSONA_MEMORY_EMBEDDING_MODEL
 
 if TYPE_CHECKING:
     from transformers.modeling_utils import PreTrainedModel

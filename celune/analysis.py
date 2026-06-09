@@ -4,6 +4,7 @@
 import pathlib
 import warnings
 import contextlib
+from pathlib import Path
 from collections.abc import Mapping
 from typing import Optional, Protocol, TypedDict, Union, cast
 
@@ -12,10 +13,8 @@ import librosa
 import matplotlib
 import numpy as np
 import numpy.typing as npt
-from matplotlib import rcParams
 from matplotlib.projections import PolarAxes
-from matplotlib import pyplot as plt
-from matplotlib import colors as mcolors
+from matplotlib import rcParams, font_manager, pyplot as plt, colors as mcolors
 from transformers import AutoModel, AutoProcessor
 
 from .cevoice import ManifestValue, default_loader
@@ -25,6 +24,12 @@ matplotlib.use("Agg")
 
 # this font is included within Celune
 # check resources/fonts to find the font files
+font_path = Path(__file__).resolve().parent / "resources" / "fonts"
+if font_path.exists():
+    for font in font_path.iterdir():
+        if font.suffix.lower() in {".ttf", ".otf"}:
+            font_manager.fontManager.addfont(font)
+
 rcParams["font.family"] = "Outfit Thin"
 
 warnings.filterwarnings("ignore", category=UserWarning)

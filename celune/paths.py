@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Runtime filesystem paths for Celune user data."""
 
-import shutil
 import sys
+import shutil
 from pathlib import Path
 from typing import Optional
 

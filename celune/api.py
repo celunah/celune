@@ -9,8 +9,8 @@ import socket
 import datetime
 import textwrap
 import threading
-from dataclasses import dataclass
 from hmac import compare_digest
+from dataclasses import dataclass
 from collections import defaultdict, deque
 from typing import Callable, Iterator, Optional, Union
 
@@ -29,14 +29,13 @@ from fastapi.responses import (
     FileResponse,
 )
 
-
 from . import __version__
 from .celune import Celune
 from .utils import format_error
+from .paths import project_root
 from .dsp import _resample_audio
 from .pipeline import SpeechStreamQueue
 from .constants import BASE_SR, APP_NAME
-from .paths import project_root
 
 api = FastAPI(title=f"{APP_NAME}API")
 bound_celune: Optional["Celune"] = None

@@ -8,23 +8,23 @@ import tempfile
 import threading
 import json as _json
 from pathlib import Path
-from collections.abc import Iterator
 from typing import cast, Optional
-from unittest import mock, TestCase
 from types import SimpleNamespace
+from unittest import mock, TestCase
+from collections.abc import Iterator
 
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
 
+from celune import pipeline
 from celune.celune import Celune
 from celune.utils import discard
-from celune import pipeline
 from celune.persona.prompts import PersonaPromptBuilder
 from celune.constants import JSON, JSONSerializable, PipelineStates
 from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
-from tests.support import FakeStream, make_pipeline_engine
-from tests.test_persona_memory import StubEmbeddingMemoryStore
+from .support import FakeStream, make_pipeline_engine
+from .test_persona_memory import StubEmbeddingMemoryStore
 
 
 class PipelineTests(TestCase):

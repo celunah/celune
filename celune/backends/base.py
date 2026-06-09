@@ -8,20 +8,20 @@ import random
 import secrets
 import contextlib
 from pathlib import Path
-from collections.abc import Iterator
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from typing import Callable, Optional, Protocol, Mapping, TypeVar, Generic
 
 import torch
 import numpy as np
 import numpy.typing as npt
-from huggingface_hub.constants import HF_HUB_CACHE
 from huggingface_hub import snapshot_download
+from huggingface_hub.constants import HF_HUB_CACHE
 
 from ..utils import discard
 from ..constants import N_A_NUMERIC
-from ..exceptions import BackendError
 from ..cevoice import default_loader
+from ..exceptions import BackendError
 
 
 class BackendModel(Protocol):

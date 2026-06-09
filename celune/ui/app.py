@@ -6,10 +6,10 @@ import sys
 import time
 import shlex
 import logging
+import datetime
 import itertools
 import threading
 import contextlib
-import datetime
 from collections.abc import Iterator
 from typing import cast, Optional, Callable, Union
 
@@ -17,26 +17,26 @@ import yaml
 from rich.text import Text
 from textual.color import Color
 from textual.timer import Timer
+from textual import work, events
 from textual.widget import Widget
 from textual.css.types import EdgeStyle
-from textual import work, events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 
-from ..celune import Celune
 from .. import colors
+from ..celune import Celune
+from ..constants import APP_NAME
 from ..cevoice import default_loader
-from .terminal import LogRedirect, UILogHandler
 from . import resources as ui_resources
 from .theme import CELUNE_CSS, severity_color
+from .terminal import LogRedirect, UILogHandler
+from ..paths import config_path, main_window_log_path
 from .commands import process_command as process_ui_command
 from ..persona.impl import (
     persona_talkback_enabled,
     persona_enabled,
 )
-from ..constants import APP_NAME
-from ..paths import config_path, main_window_log_path
 from ..utils import (
     format_error,
     indent,

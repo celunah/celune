@@ -8,8 +8,8 @@ import numpy as np
 
 from celune import analysis
 from celune.colors import RGB
-from celune.constants import N_A_NUMERIC
 from celune.chroma import AudioRGBGlow
+from celune.constants import N_A_NUMERIC
 
 
 class AnalysisTests(TestCase):

@@ -2,8 +2,8 @@
 """VRAM preset resolution helpers for Celune."""
 
 import math
-from collections.abc import Mapping
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Literal, Optional, cast
 
 import torch

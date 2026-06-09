@@ -2,9 +2,9 @@
 """Configuration helpers for Celune."""
 
 import os
-from collections.abc import Mapping
 from copy import deepcopy
 from typing import Optional
+from collections.abc import Mapping
 
 from .constants import JSONSerializable
 
