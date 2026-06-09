@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Tests for Celune runtime path handling."""
 
+import os
 import tempfile
 import sys
 from pathlib import Path
@@ -117,13 +118,20 @@ class RuntimePathTests(TestCase):
         """Verify bundled files resolve beside the compiled executable."""
         fake_main = type("CompiledMain", (), {"__compiled__": True})()
 
+        if os.name == "nt":
+            exe_path = "C:/Apps/Celune/celune.exe"
+            expected_root = Path("C:/Apps/Celune")
+        else:
+            exe_path = "/opt/celune/celune"
+            expected_root = Path("/opt/celune")
+
         with (
             mock.patch.dict(sys.modules, {"__main__": fake_main}),
-            mock.patch.object(sys, "argv", ["C:/Apps/Celune/celune.exe"]),
+            mock.patch.object(sys, "argv", [exe_path]),
         ):
-            self.assertEqual(project_root(), Path("C:/Apps/Celune"))
+            self.assertEqual(project_root(), Path(expected_root))
             self.assertEqual(
                 default_bundle_path(),
-                Path("C:/Apps/Celune/voices/default.cevoice"),
+                expected_root / "voices" / "default.cevoice",
             )
-            self.assertEqual(bundled_voices_dir(), Path("C:/Apps/Celune/voices"))
+            self.assertEqual(bundled_voices_dir(), expected_root / "voices")
