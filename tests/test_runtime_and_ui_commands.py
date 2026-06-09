@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock, TestCase
 from types import SimpleNamespace
 
+from textual import events
 from textual.widgets import Button, Label, RichLog, TextArea
 
 from celune.backends.qwen3 import Qwen3
@@ -306,7 +307,7 @@ class UICommandTests(TestCase):
             self._process_command("play", ["tone.wav", "0.4"])
 
         self.ui.celune.play.assert_called_once_with("tone.wav", volume=0.4)
-        self.assertEqual(self.logs[-1], ("Playing tone.wav at volume 0.4", "info"))
+        self.assertEqual(self.logs[-1], ("Playing tone.wav at 40% volume", "info"))
 
     def test_play_command_rejects_invalid_volume(self) -> None:
         """Verify /play validates a numeric optional volume argument."""
@@ -589,3 +590,88 @@ class UIStartupTests(TestCase):
                 )
             ],
         )
+
+    def test_safe_status_marquees_long_text_for_narrow_status_label(self) -> None:
+        """Verify long status text scrolls instead of clipping."""
+
+        class FakeLabel:
+            """Tiny fake status label with a constrained width."""
+
+            def __init__(self, width: int) -> None:
+                self.size = SimpleNamespace(width=width)
+                self.styles = SimpleNamespace(color=None)
+                self.rendered = ""
+
+            def update(self, value: str) -> None:
+                """Update the marquee label text."""
+                self.rendered = value
+
+        ui = CeluneUI()
+        fake_status = FakeLabel(width=14)
+        ui.status = cast(Label, fake_status)
+        ui.resources = cast(Label, None)
+
+        ui.safe_status("Playing C:/Users/user/Music/really_long_filename_demo.wav")
+        first = fake_status.rendered
+        ui._advance_status_marquee()
+        second = fake_status.rendered
+
+        self.assertNotEqual(first, second)
+        self.assertTrue(first.startswith("  "))
+        self.assertTrue(second.startswith("  "))
+
+    def test_safe_status_keeps_short_text_static(self) -> None:
+        """Verify short status text does not marquee."""
+
+        class FakeLabel:
+            """Tiny fake status label with a constrained width."""
+
+            def __init__(self, width: int) -> None:
+                self.size = SimpleNamespace(width=width)
+                self.styles = SimpleNamespace(color=None)
+                self.rendered = ""
+
+            def update(self, value: str) -> None:
+                """Update the marquee label text."""
+                self.rendered = value
+
+        ui = CeluneUI()
+        fake_status = FakeLabel(width=40)
+        ui.status = cast(Label, fake_status)
+        ui.resources = cast(Label, None)
+
+        ui.safe_status("Playing")
+        first = fake_status.rendered
+        ui._advance_status_marquee()
+
+        self.assertEqual(first, fake_status.rendered)
+
+    def test_resize_repaints_status_after_width_change(self) -> None:
+        """Verify widening the status label re-renders the current text immediately."""
+
+        class FakeLabel:
+            """Tiny fake status label with a mutable width."""
+
+            def __init__(self, width: int) -> None:
+                self.size = SimpleNamespace(width=width)
+                self.styles = SimpleNamespace(color=None)
+                self.rendered = ""
+
+            def update(self, value: str) -> None:
+                """Update the marquee label text."""
+                self.rendered = value
+
+        ui = CeluneUI()
+        fake_status = FakeLabel(width=14)
+        ui.status = cast(Label, fake_status)
+        ui.resources = cast(Label, None)
+
+        message = "Playing C:/Users/user/Music/really_long_filename_demo.wav"
+        ui.safe_status(message)
+        narrow = fake_status.rendered
+
+        fake_status.size = SimpleNamespace(width=96)
+        ui.on_resize(cast(events.Resize, SimpleNamespace()))
+
+        self.assertNotEqual(narrow, fake_status.rendered)
+        self.assertEqual(fake_status.rendered, f"  {message}")

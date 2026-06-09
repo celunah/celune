@@ -20,9 +20,9 @@ from transformers.utils import logging as hf_logging
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 from huggingface_hub.utils import disable_progress_bars
 
-from .backends.qwen3 import Qwen3
 from . import __version__
 from .chroma import AudioRGBGlow
+from .backends.qwen3 import Qwen3
 from .extensions.base import CeluneContext
 from .extensions.manager import CeluneExtensionManager
 from .dsp import StreamingPedalboardReverb
@@ -402,6 +402,9 @@ class Celune:
         self._next_playback_source_id = 0
         self._playback_source_statuses: dict[int, str] = {}
         self._playback_source_meta: dict[int, dict[str, Union[str, float]]] = {}
+        self._playback_progress_last_emit_at = 0.0
+        self._playback_progress_last_source_id = 0
+
         self.regenerate = False
 
         self._stream: Optional[sd.OutputStream] = None

@@ -232,38 +232,6 @@ class CeluneBackend(ABC, Generic[ModelT]):
         discard(lang)
         return False
 
-    def generation_progress_total(self, text: Optional[str] = None) -> Optional[int]:
-        """Return the backend's maximum streaming generation steps, if known.
-
-        Args:
-            text: Optional text for backends whose generation budget depends on input token length.
-
-        Returns:
-            Optional[int]: Maximum generated codec/token steps for one text chunk, or ``None`` when the backend does not
-            expose a stable limit.
-        """
-        # this is a base implementation so we don't use the parameters
-        discard(text)
-
-    @staticmethod
-    def generation_progress_steps(timing: Optional[dict]) -> int:
-        """Return how many generation steps a streamed chunk represents.
-
-        Args:
-            timing: Optional backend timing metadata yielded with the audio chunk.
-
-        Returns:
-            int: Number of generated codec/token steps represented by the chunk.
-        """
-        if not timing:
-            return 1
-
-        steps = timing.get("chunk_steps")
-        if isinstance(steps, int) and steps > 0:
-            return steps
-
-        return 1
-
     def load_default_model(self) -> ModelT:
         """Load the configured default model for this backend.
 

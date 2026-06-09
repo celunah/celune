@@ -15,7 +15,7 @@ from typing import BinaryIO, Callable, Final, Mapping, Optional, Union, cast
 
 from .exceptions import CEVoiceError
 from .constants import JSONSerializable
-from .paths import temp_data_dir
+from .paths import project_root, temp_data_dir
 
 # Celune supports both of these specifications
 # CECHAR v2 spec (Celune v4 format)
@@ -618,7 +618,7 @@ def default_bundle_path() -> Path:
     Returns:
         Path: The absolute path to Celune's default voice bundle.
     """
-    return Path(__file__).resolve().parent.parent / "voices" / "default.cevoice"
+    return project_root() / "voices" / "default.cevoice"
 
 
 def bundled_voices_dir() -> Path:
@@ -627,7 +627,7 @@ def bundled_voices_dir() -> Path:
     Returns:
         Path: The absolute path to the bundled CEVOICE directory.
     """
-    return Path(__file__).resolve().parent.parent / "voices"
+    return project_root() / "voices"
 
 
 def resolve_bundle_path(bundle: Optional[Union[str, Path]] = None) -> Path:

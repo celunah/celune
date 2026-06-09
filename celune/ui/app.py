@@ -81,6 +81,10 @@ class CeluneUI(App):
             self.active_theme_name = "celune"
         self.log_history: list[tuple[str, str]] = []
         self.status_severity = "info"
+        self._status_text = ""
+        self._status_marquee_offset = 0
+        self._status_marquee_gap = "   "
+        self._status_marquee_timer: Optional[Timer] = None
 
         self.celune = cast(Celune, None)
         self.celune_ready = False
@@ -170,6 +174,51 @@ class CeluneUI(App):
         if self.status is None:
             return
         self.status.styles.color = self._severity_color(self.status_severity)
+
+    def _status_view_width(self) -> int:
+        """Estimate how many status characters can fit without clipping."""
+        if self.status is None:
+            return 32
+
+        size = getattr(self.status, "size", None)
+        width = getattr(size, "width", 0) if size is not None else 0
+        if isinstance(width, int) and width > 6:
+            return max(8, width - 2)
+        return 32
+
+    def _render_status_text(self) -> str:
+        """Return the current status text, marqueeing when it exceeds the label width."""
+        width = self._status_view_width()
+        if len(self._status_text) <= width:
+            self._status_marquee_offset = 0
+            return indent(self._status_text, spaces=2)
+
+        loop = f"{self._status_text}{self._status_marquee_gap}"
+        offset = self._status_marquee_offset % len(loop)
+        window = (loop * 2)[offset : offset + width]
+        return indent(window, spaces=2)
+
+    def _update_status_label(self) -> None:
+        """Push the current status text into the label."""
+        if self.status is None:
+            return
+        self.status.update(self._render_status_text())
+        self._refresh_status()
+
+    def _advance_status_marquee(self) -> None:
+        """Advance the marquee one character for long status messages."""
+        if self.status is None:
+            return
+        if len(self._status_text) <= self._status_view_width():
+            self._update_status_label()
+            return
+        self._status_marquee_offset += 1
+        self._update_status_label()
+
+    def on_resize(self, _event: events.Resize) -> None:
+        """Re-render width-sensitive widgets after the window size changes."""
+        if self.status is not None:
+            self._update_status_label()
 
     def _refresh_logs(self) -> None:
         """Repaint existing log entries using the active theme colors."""
@@ -301,6 +350,9 @@ class CeluneUI(App):
         self._install_runtime_log_redirects()
         ui_resources.prime_usage()
         self.set_interval(2.06, self.advance_resources)
+        self._status_marquee_timer = self.set_interval(
+            0.18, self._advance_status_marquee
+        )
 
         self.call_after_refresh(self.start_background_init)
         self.safe_status("Initializing")
@@ -753,8 +805,9 @@ class CeluneUI(App):
         self.status_severity = severity
 
         def update() -> None:
-            self.status.update(indent(msg, spaces=2))
-            self._refresh_status()
+            self._status_text = msg
+            self._status_marquee_offset = 0
+            self._update_status_label()
             self.update_resources()
 
         self._run_on_ui_thread(update)

@@ -9,7 +9,6 @@ import socket
 import datetime
 import textwrap
 import threading
-from pathlib import Path
 from dataclasses import dataclass
 from hmac import compare_digest
 from collections import defaultdict, deque
@@ -37,6 +36,7 @@ from .utils import format_error
 from .dsp import _resample_audio
 from .pipeline import SpeechStreamQueue
 from .constants import BASE_SR, APP_NAME
+from .paths import project_root
 
 api = FastAPI(title=f"{APP_NAME}API")
 bound_celune: Optional["Celune"] = None
@@ -433,7 +433,7 @@ def favicon() -> FileResponse:
 
     return FileResponse(
         # this is a symbolic link to the in Celune.AppDir/
-        Path(__file__).parents[1] / "resources" / "branding" / "celune.png",
+        project_root() / "resources" / "branding" / "celune.png",
         media_type="image/png",
     )
 
