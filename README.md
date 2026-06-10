@@ -115,6 +115,12 @@ The terminal should support True Color, especially when using voice packs that d
 
 Terminals not supporting True Color may look incorrect, as Textual will fall back to a lower color mode.
 
+If Celune looks incorrect while your terminal supports True Color, run the following command:
+
+```bash
+export COLORTERM=truecolor
+```
+
 If Rubber Band is not installed or fails to run, Celune will speak at normal speed, and speed controls will be unavailable.
 
 ## VRAM presets & requirements
@@ -190,13 +196,13 @@ uv sync
 
 # Run
 # Command Prompt users
-celune
+bin\celune
 
 # PowerShell users
-.\celune.exe
+.\bin\celune.exe
 
 # Or on Unix systems:
-./celune.AppImage
+./bin/celune.AppImage
 ```
 
 Don't run `celune-bin` manually. The `celune` binary is Celune's main entrypoint.
