@@ -190,6 +190,21 @@ class PipelineTests(TestCase):
         self.assertEqual(request.language, "fr")
 
         engine = make_pipeline_engine()
+        engine.backend = SimpleNamespace(name="qwen3", supported_languages=("en",))
+        with mock.patch(
+            "celune.pipeline.detect_language",
+            return_value={
+                "language": "en",
+                "languages": ["en"],
+                "supported": True,
+                "probabilities": {"en": 1.0},
+            },
+        ):
+            self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), True)
+        request = engine.text_queue.get_nowait()
+        self.assertEqual(request.language, "Auto")
+
+        engine = make_pipeline_engine()
         engine.is_in_tutorial = True
         self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), False)
         self.assertEqual(engine.messages[-1][1], "warning")
@@ -240,6 +255,49 @@ class PipelineTests(TestCase):
         self.assertEqual(command[1:3], ["-m", "yt_dlp"])
         self.assertNotIn("--print", command)
         self.assertIn(str(temp_root / "temp" / "temporary_audio.%(ext)s"), command)
+
+    def test_download_youtube_sfx_uses_repo_venv_python_when_compiled(self) -> None:
+        """Verify compiled launches call yt-dlp through the repo venv Python."""
+        engine = make_pipeline_engine()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            expected = temp_root / "temp" / "temporary_audio.wav"
+
+            def fake_run(*args, **kwargs):
+                discard(args)
+                discard(kwargs)
+                expected.write_bytes(b"RIFFdemoWAVE")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with (
+                mock.patch("celune.pipeline.app_data_dir", return_value=temp_root),
+                mock.patch(
+                    "celune.pipeline.importlib_util.find_spec", return_value=object()
+                ),
+                mock.patch(
+                    "celune.pipeline._youtube_sfx_title",
+                    return_value="Fixture Video Title",
+                ),
+                mock.patch("celune.pipeline.running_compiled", return_value=True),
+                mock.patch("celune.pipeline.project_root", return_value=Path("/repo")),
+                mock.patch(
+                    "celune.pipeline.subprocess.run", side_effect=fake_run
+                ) as run,
+            ):
+                resolved = pipeline._download_youtube_sfx(
+                    cast(Celune, engine),
+                    "https://youtu.be/demo",
+                )
+
+        self.assertEqual(resolved, (expected, "Fixture Video Title"))
+        command = run.call_args.args[0]
+        expected_python = (
+            r"/repo/.venv/bin/python"
+            if os.name != "nt"
+            else r"\repo\.venv\Scripts\python.exe"
+        )
+        self.assertEqual(command[0], expected_python)
+        self.assertEqual(command[1:3], ["-m", "yt_dlp"])
 
     def test_download_youtube_sfx_logs_missing_file_state(self) -> None:
         """Verify missing yt-dlp output uses the current no-file warning messages."""

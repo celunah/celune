@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from . import __version__
 from .exceptions import UpdateError
+from .paths import project_root
 
 REMOTE_URL = "https://github.com/celunah/celune.git"
 SHORT_HASH_LENGTH = 7
@@ -38,7 +39,7 @@ class VersionKey:
 
 def _repo_root() -> Path:
     """Return where the Git repository root is located."""
-    return Path(__file__).resolve().parent.parent
+    return project_root()
 
 
 def _run_git(args: list[str], timeout: int = 15) -> str:

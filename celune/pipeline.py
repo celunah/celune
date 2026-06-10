@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 import json
+import sys
 import time
 import queue
 import random
@@ -14,12 +14,12 @@ import pathlib
 import datetime
 import contextlib
 import subprocess
+from importlib import util as importlib_util
 from collections import deque
 from dataclasses import dataclass
-from importlib import util as importlib_util
-from urllib.request import urlopen
-from urllib.parse import urlparse, urlencode
 from typing import TYPE_CHECKING, Optional, Mapping, Union, cast
+from urllib.parse import urlparse, urlencode
+from urllib.request import urlopen
 
 import torch
 import numpy as np
@@ -31,10 +31,10 @@ from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
 from . import __version__
-from .paths import app_data_dir
-from .analysis import analyze_voice_audio
 from .exceptions import NotAvailableError
 from .persona.memory import PersonaMemoryStore
+from .analysis import analyze_voice_audio
+from .paths import app_data_dir, project_root, running_compiled
 from .persona.impl import (
     default_persona_age,
     default_persona_context,
@@ -830,9 +830,15 @@ def _download_youtube_sfx(
     out_tmpl = str(output_path.with_suffix(".%(ext)s"))
     engine.status_callback("Downloading audio")
     engine.log(f"[SFX] Downloading audio from {url}...")
+    python_executable = sys.executable
+    if running_compiled():
+        if os.name == "nt":
+            python_executable = str(project_root() / ".venv" / "Scripts" / "python.exe")
+        else:
+            python_executable = str(project_root() / ".venv" / "bin" / "python")
     completed = subprocess.run(
         [
-            sys.executable,
+            python_executable,
             "-m",
             yt_dlp_module,
             "--extract-audio",
@@ -1393,12 +1399,17 @@ def queue_speech(
 
     language_meta = detect_language(text, list(engine.backend.supported_languages))
     requested_language = engine.language
+    backend_name = str(getattr(engine.backend, "name", "")).strip().lower()
     if (
         not isinstance(requested_language, str)
         or not requested_language.strip()
         or requested_language.strip().lower() == "auto"
     ):
-        requested_language = language_meta["language"]
+        # Qwen3 handles automatic language selection internally, so keep the
+        # backend-facing value as "Auto" instead of passing a langdetect code.
+        requested_language = (
+            "Auto" if backend_name == "qwen3" else language_meta["language"]
+        )
 
     if not language_meta["supported"]:
         # "zh-cn" has to be clipped to just "zh" to be a valid language code

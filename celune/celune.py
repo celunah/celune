@@ -14,9 +14,9 @@ import torch
 import numpy as np
 import numpy.typing as npt
 import sounddevice as sd
-from transformers.utils import logging as hf_logging
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils.logging import disable_progress_bar
+from transformers.utils import logging as hf_logging
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 from huggingface_hub.utils import disable_progress_bars
 
@@ -24,13 +24,14 @@ from . import __version__
 from .chroma import AudioRGBGlow
 from .backends.qwen3 import Qwen3
 from .extensions.base import CeluneContext
+from .extensions.manager import CeluneExtensionManager
 from .dsp import StreamingPedalboardReverb
 from .config import Config, config_bool, config_value
-from .extensions.manager import CeluneExtensionManager
+from .paths import project_root
 from .runtime import log_runtime_banner, validate_runtime
 from .backends import BackendModel, CeluneBackend, resolve_backend
-from .modeling import normalizer_device, load_normalizer_components
 from .exceptions import NotAvailableError, WarmupError, BackendError
+from .modeling import normalizer_device, load_normalizer_components
 from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID, PipelineStates
 from .utils import format_number, format_error, discard, is_port_usable, custom_assert
 from .vram import (
@@ -924,7 +925,7 @@ class Celune:
             log_dev=self.log_dev,
         )
         self.extension_manager = CeluneExtensionManager(ctx)
-        self.extension_manager.autoload("extensions")
+        self.extension_manager.autoload(str(project_root() / "extensions"))
 
         self.log_dev(
             f"[Core] Loaded extensions: {', '.join(self.extension_manager.list_extensions())}"

@@ -58,7 +58,32 @@ class DoctorCommandTests(TestCase):
 
         self.assertEqual(exit_code, 0)
         run.assert_called_once_with(
-            [entrypoint.sys.executable, str(entrypoint.SETUP_PATH)],
+            [str(entrypoint._doctor_running_python()), str(entrypoint.SETUP_PATH)],
+            cwd=entrypoint.PROJECT_ROOT,
+            check=False,
+        )
+
+    def test_run_doctor_fix_uses_repo_venv_python_when_compiled(self) -> None:
+        """Verify compiled doctor fixups use the repo virtualenv Python."""
+        checks = [entrypoint.DoctorCheck("Python", True, "3.12.0")]
+
+        with (
+            mock.patch.object(entrypoint, "_doctor_checks", return_value=checks),
+            mock.patch.object(entrypoint, "running_compiled", return_value=True),
+            mock.patch.object(
+                entrypoint,
+                "_doctor_venv_python",
+                return_value=Path("C:/repo/.venv/Scripts/python.exe"),
+            ),
+            mock.patch.object(entrypoint.subprocess, "run") as run,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            run.return_value.returncode = 0
+            exit_code = entrypoint.run_doctor(["celune", "doctor", "--fix"])
+
+        self.assertEqual(exit_code, 0)
+        run.assert_called_once_with(
+            [r"C:\repo\.venv\Scripts\python.exe", str(entrypoint.SETUP_PATH)],
             cwd=entrypoint.PROJECT_ROOT,
             check=False,
         )

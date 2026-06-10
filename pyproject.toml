@@ -106,7 +106,8 @@ dev = [
     # If not installed, type checkers may complain.
     "types-pyyaml",
     "types-psutil",
-    "types-tqdm"
+    "types-tqdm",
+    "nuitka>=4.1.2",
 ]
 
 [project.optional-dependencies]

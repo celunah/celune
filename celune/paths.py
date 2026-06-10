@@ -10,11 +10,29 @@ from platformdirs import user_data_dir
 
 from .constants import APP_SLUG
 
+_REPO_MARKERS = ("celune", "default_config.yaml", "pyproject.toml")
+
 
 def running_compiled() -> bool:
     """Return whether Celune is running from a compiled entrypoint."""
     main_module = sys.modules.get("__main__")
     return bool(getattr(main_module, "__compiled__", False))
+
+
+def _looks_like_repo_root(path: Path) -> bool:
+    """Return whether a path looks like the Celune repository root."""
+    return all((path / marker).exists() for marker in _REPO_MARKERS)
+
+
+def _compiled_project_root() -> Path:
+    """Resolve the repository root for compiled launches started from bin/."""
+    executable_dir = Path(sys.argv[0]).resolve().parent
+
+    for candidate in (executable_dir, executable_dir.parent):
+        if _looks_like_repo_root(candidate):
+            return candidate
+
+    return executable_dir
 
 
 def app_data_dir(create: bool = False) -> Path:
@@ -114,7 +132,7 @@ def project_root() -> Path:
         Celune's repository root directory.
     """
     if running_compiled():
-        return Path(sys.argv[0]).resolve().parent
+        return _compiled_project_root()
 
     return Path(__file__).resolve().parent.parent
 

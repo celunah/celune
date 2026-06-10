@@ -20,6 +20,7 @@ from types import SimpleNamespace, ModuleType
 
 from celune import __version__, REVISION, __tagline__
 from celune.constants import APP_NAME, APP_SLUG, ExitCodes
+from celune.paths import project_root, running_compiled
 
 
 def _env_flag(name: str) -> bool:
@@ -35,7 +36,7 @@ INITIAL_BACKEND = os.getenv("CELUNE_BACKEND")
 # these parameters are used by the app CLI and its commands, e.g. 'celune doctor'
 LAUNCHED_VIA_LAUNCHER = _env_flag("CELUNE_LAUNCHER")
 SCRIPT_PATH = Path(__file__).resolve()
-PROJECT_ROOT = SCRIPT_PATH.parent.parent
+PROJECT_ROOT = project_root()
 SETUP_PATH = PROJECT_ROOT / "setup.py"
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "default_config.yaml"
 SCRIPT_NAME = "main.py"
@@ -278,6 +279,14 @@ def _doctor_venv_python() -> Path:
 def _doctor_running_python() -> Path:
     """Return the interpreter path currently running the doctor command."""
     return Path(sys.executable).resolve()
+
+
+def _doctor_subprocess_python() -> Path:
+    """Return the Python executable doctor fixups should invoke."""
+    if running_compiled():
+        return _doctor_venv_python()
+
+    return _doctor_running_python()
 
 
 def _doctor_same_path(left: Path, right: Path) -> bool:
@@ -873,7 +882,7 @@ def run_doctor(argv: list[str]) -> int:
         print("Attempting to fix fixable problems...")
         try:
             result = subprocess.run(
-                [sys.executable, str(SETUP_PATH)],
+                [str(_doctor_subprocess_python()), str(SETUP_PATH)],
                 cwd=PROJECT_ROOT,
                 check=False,
             )

@@ -221,7 +221,9 @@ __marimo__/
 .tmp_hf_modules/
 
 # Celune
-#   Celune has an output directory that is not meant to be part of Git.
+#   Celune has certain paths that are not meant to be included in the repository.
 #   To prevent unnecessary speech samples from being included, it has been gitignored.
 #   Other files that were once here have been moved to a unified data directory.
+#   Executable files are meant to be downloaded separately from Actions artifacts.
 outputs/
+bin/

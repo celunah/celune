@@ -120,7 +120,7 @@ class AudioRGBGlow:
                 with contextlib.suppress(Exception):
                     device.set_custom_mode()
             return True
-        except TimeoutError:
+        except (TimeoutError, OSError):
             self.client = None
             self.connect_failed = True
             self.devices = []

@@ -67,6 +67,8 @@ def tutorial(ui: CeluneUI) -> None:
     """
     assets = project_root() / "celune" / "assets"
     if not assets.exists():
+        assets = project_root() / "assets"
+    if not assets.exists():
         ui.safe_log("No tutorial assets found.", "warning")
         return
 

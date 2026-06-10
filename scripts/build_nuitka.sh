@@ -2,7 +2,10 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-output_dir="$repo_root/build/nuitka"
+output_dir="$repo_root/bin"
+app_dir="$output_dir/Celune.AppDir"
+desktop_src="$repo_root/Celune.AppDir/celune.desktop"
+icon_src="$repo_root/Celune.AppDir/celune.png"
 
 version_line="$(grep -m1 '^version = "' "$repo_root/pyproject.toml")"
 if [[ -z "$version_line" ]]; then
@@ -12,42 +15,92 @@ fi
 
 version="${version_line#version = \"}"
 version="${version%\"}"
-windows_version="${version%%+*}"
-
-if [[ ! "$windows_version" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]]; then
-    echo "The project version '$windows_version' is not a valid version string." >&2
-    exit 1
-fi
 
 if [[ ! -f "$repo_root/nuitka_main.py" ]]; then
     echo "nuitka_main.py was not found." >&2
     exit 1
 fi
 
-if [[ ! -f "$repo_root/resources/celune.res" ]]; then
-    echo "resources/celune.res was not found." >&2
+if [[ ! -f "$repo_root/launcher.c" ]]; then
+    echo "launcher.c was not found." >&2
+    exit 1
+fi
+
+if [[ ! -f "$desktop_src" || ! -f "$icon_src" ]]; then
+    echo "Celune.AppDir metadata files were not found." >&2
+    exit 1
+fi
+
+if ! command -v gcc >/dev/null 2>&1; then
+    echo "gcc is required to build the Linux launcher." >&2
+    exit 1
+fi
+
+if ! command -v appimagetool >/dev/null 2>&1; then
+    echo "appimagetool is required to create the AppImage." >&2
     exit 1
 fi
 
 export UV_CACHE_DIR="$repo_root/.uv-cache"
+if [[ "$repo_root" == /mnt/* ]]; then
+    export UV_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/celune-uv"
+fi
+mkdir -p "$UV_CACHE_DIR"
+
+mkdir -p "$output_dir"
+rm -rf \
+    "$output_dir/default_config.yaml" \
+    "$output_dir/voices" \
+    "$output_dir/resources" \
+    "$output_dir/assets"
 
 uv run python -m nuitka \
     --deployment \
     --follow-import-to=celune \
     --include-package-data=celune \
-    --include-data-files="$repo_root/default_config.yaml=default_config.yaml" \
-    --include-data-dir="$repo_root/voices=voices" \
-    --include-data-dir="$repo_root/resources=resources" \
-    --product-name=Celune \
-    --file-description=Celune \
-    --product-version="$windows_version" \
-    --file-version="$windows_version" \
     --output-dir="$output_dir" \
-    --output-filename=celune \
+    --output-filename=celune-bin \
     "$repo_root/nuitka_main.py"
 
-mkdir -p "$output_dir/celune"
-cp "$repo_root/default_config.yaml" "$output_dir/default_config.yaml"
-cp -R "$repo_root/voices" "$output_dir/voices"
-cp -R "$repo_root/resources" "$output_dir/resources"
-cp -R "$repo_root/celune/assets" "$output_dir/celune/assets"
+gcc -O2 -o "$output_dir/celune" "$repo_root/launcher.c"
+chmod +x "$output_dir/celune" "$output_dir/celune-bin"
+
+rm -rf "$output_dir/nuitka_main.build"
+
+rm -rf "$app_dir"
+mkdir -p "$app_dir"
+cp "$desktop_src" "$app_dir/celune.desktop"
+cp "$icon_src" "$app_dir/celune.png"
+ln -sfn "celune.png" "$app_dir/.DirIcon"
+cat > "$app_dir/AppRun" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+appimage_path="${APPIMAGE:-$0}"
+appimage_dir="$(cd "$(dirname "$(readlink -f "$appimage_path")")" && pwd)"
+launcher="$appimage_dir/celune"
+
+if [[ ! -x "$launcher" ]]; then
+    echo "Celune launcher not found beside AppImage: $launcher" >&2
+    exit 1
+fi
+
+exec "$launcher" "$@"
+EOF
+chmod +x "$app_dir/AppRun"
+
+arch="${ARCH:-$(uname -m)}"
+case "$arch" in
+    x86_64|amd64)
+        appimage_arch="x86_64"
+        ;;
+    aarch64|arm64)
+        appimage_arch="aarch64"
+        ;;
+    *)
+        appimage_arch="$arch"
+        ;;
+esac
+
+ARCH="$appimage_arch" appimagetool "$app_dir" "$output_dir/celune.AppImage"
+rm -rf "$app_dir"
