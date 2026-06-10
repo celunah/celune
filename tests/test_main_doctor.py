@@ -3,8 +3,8 @@
 
 import io
 import contextlib
-from pathlib import Path
 from unittest import TestCase, mock
+from pathlib import Path, PureWindowsPath
 
 import main
 
@@ -82,11 +82,18 @@ class DoctorCommandTests(TestCase):
             exit_code = entrypoint.run_doctor(["celune", "doctor", "--fix"])
 
         self.assertEqual(exit_code, 0)
-        run.assert_called_once_with(
-            [r"C:\repo\.venv\Scripts\python.exe", str(entrypoint.SETUP_PATH)],
-            cwd=entrypoint.PROJECT_ROOT,
-            check=False,
+
+        run.assert_called_once()
+        args, kwargs = run.call_args
+        command = args[0]
+
+        self.assertEqual(
+            PureWindowsPath(command[0]),
+            PureWindowsPath(r"C:\repo\.venv\Scripts\python.exe"),
         )
+        self.assertEqual(command[1], str(entrypoint.SETUP_PATH))
+        self.assertEqual(kwargs["cwd"], entrypoint.PROJECT_ROOT)
+        self.assertFalse(kwargs["check"])
 
     def test_run_doctor_rejects_unknown_args(self) -> None:
         """Verify unsupported doctor flags produce usage output and a CLI error code."""
