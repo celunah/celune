@@ -1,8 +1,12 @@
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$outputDir = Join-Path $repoRoot "build\nuitka"
+$outputDir = Join-Path $repoRoot "bin"
 $templateExe = Join-Path $repoRoot "celune.exe"
+$iconIco = Join-Path $repoRoot "resources\celune.ico"
+$launcherSource = Join-Path $repoRoot "launcher.c"
+$launcherRes = Join-Path $repoRoot "resources\celune.res"
+$vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 $projectVersion = Select-String -Path (Join-Path $repoRoot "pyproject.toml") -Pattern '^version = "([^"]+)"' | Select-Object -First 1
 
 if ($null -eq $projectVersion) {
@@ -25,6 +29,20 @@ if (-not (Test-Path (Join-Path $repoRoot "resources\celune.res"))) {
 
 $env:UV_CACHE_DIR = Join-Path $repoRoot ".uv-cache"
 
+New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+
+$staleBuildArtifacts = @(
+    (Join-Path $outputDir "default_config.yaml"),
+    (Join-Path $outputDir "voices"),
+    (Join-Path $outputDir "resources"),
+    (Join-Path $outputDir "assets")
+)
+foreach ($stalePath in $staleBuildArtifacts) {
+    if (Test-Path $stalePath) {
+        Remove-Item -LiteralPath $stalePath -Recurse -Force
+    }
+}
+
 $arguments = @(
     "run",
     "python",
@@ -34,27 +52,56 @@ $arguments = @(
     "--msvc=latest",
     "--follow-import-to=celune",
     "--include-package-data=celune",
-    "--include-data-files=$repoRoot\default_config.yaml=default_config.yaml",
-    "--include-data-dir=$repoRoot\voices=voices",
-    "--include-data-dir=$repoRoot\resources=resources",
     "--windows-console-mode=force",
     "--product-name=Celune",
     "--file-description=Celune",
     "--product-version=$windowsVersion",
     "--file-version=$windowsVersion",
     "--output-dir=$outputDir",
-    "--output-filename=celune.exe",
+    "--output-filename=celune-bin.exe",
     "$repoRoot\nuitka_main.py"
 )
 
-if (Test-Path $templateExe) {
+if (Test-Path $iconIco) {
+    $arguments += "--windows-icon-from-ico=$iconIco"
+}
+elseif (Test-Path $templateExe) {
     $arguments += "--windows-icon-from-exe=$templateExe"
 }
 
 & uv @arguments
 
-New-Item -ItemType Directory -Force -Path (Join-Path $outputDir "celune") | Out-Null
-Copy-Item -LiteralPath (Join-Path $repoRoot "default_config.yaml") -Destination (Join-Path $outputDir "default_config.yaml") -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "voices") -Destination (Join-Path $outputDir "voices") -Recurse -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "resources") -Destination (Join-Path $outputDir "resources") -Recurse -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "celune\assets") -Destination (Join-Path $outputDir "celune\assets") -Recurse -Force
+if (-not (Test-Path $launcherSource)) {
+    throw "launcher.c was not found."
+}
+
+$launcherExe = Join-Path $outputDir "celune.exe"
+$launcherObj = Join-Path $outputDir "launcher.obj"
+if (-not (Test-Path $vswhere)) {
+    throw "vswhere.exe was not found."
+}
+
+$vsInstall = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+if (-not $vsInstall) {
+    throw "Could not locate a Visual Studio installation with C++ build tools."
+}
+
+$vsDevCmd = Join-Path $vsInstall "Common7\Tools\VsDevCmd.bat"
+if (-not (Test-Path $vsDevCmd)) {
+    throw "VsDevCmd.bat was not found."
+}
+
+$compileCmd = "call `"$vsDevCmd`" -arch=amd64 -host_arch=amd64 >nul && cl /nologo /O2 /DWIN32 /D_CRT_SECURE_NO_WARNINGS /Fe:`"$launcherExe`" /Fo:`"$launcherObj`" `"$launcherSource`" `"$launcherRes`""
+& cmd /c $compileCmd
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to compile the Windows launcher."
+}
+
+$buildDir = Join-Path $outputDir "nuitka_main.build"
+if (Test-Path $buildDir) {
+    Remove-Item -LiteralPath $buildDir -Recurse -Force
+}
+
+if (Test-Path $launcherObj) {
+    Remove-Item -LiteralPath $launcherObj -Force
+}

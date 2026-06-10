@@ -1,22 +1,21 @@
 # SPDX-License-Identifier: MIT
 """Tests for Celune runtime path handling."""
 
-import os
-import sys
 import tempfile
-from typing import cast
+import sys
 from pathlib import Path
+from typing import cast
 from unittest import TestCase, mock
 
 import yaml
 from textual.widgets import RichLog
 
-from celune.ui.app import CeluneUI
-from celune.utils import format_error
 from celune.constants import APP_SLUG
+from celune.paths import ensure_config_path, project_root, running_compiled
 from celune.persona.memory import default_memory_dir
 from celune.cevoice import bundled_voices_dir, default_bundle_path
-from celune.paths import ensure_config_path, project_root, running_compiled
+from celune.ui.app import CeluneUI
+from celune.utils import format_error
 
 
 class RuntimePathTests(TestCase):
@@ -118,20 +117,36 @@ class RuntimePathTests(TestCase):
         """Verify bundled files resolve beside the compiled executable."""
         fake_main = type("CompiledMain", (), {"__compiled__": True})()
 
-        if os.name == "nt":
-            exe_path = "C:/Apps/Celune/celune.exe"
-            expected_root = Path("C:/Apps/Celune")
-        else:
-            exe_path = "/opt/celune/celune"
-            expected_root = Path("/opt/celune")
+        with (
+            mock.patch.dict(sys.modules, {"__main__": fake_main}),
+            mock.patch.object(sys, "argv", ["C:/Apps/Celune/celune.exe"]),
+        ):
+            self.assertEqual(project_root(), Path("C:/Apps/Celune"))
+            self.assertEqual(
+                default_bundle_path(),
+                Path("C:/Apps/Celune/voices/default.cevoice"),
+            )
+            self.assertEqual(bundled_voices_dir(), Path("C:/Apps/Celune/voices"))
+
+    def test_compiled_project_root_uses_repo_parent_when_running_from_bin(self) -> None:
+        """Verify compiled launches from bin/ still resolve the repository root."""
+        fake_main = type("CompiledMain", (), {"__compiled__": True})()
+
+        def fake_exists(path: Path) -> bool:
+            normalized = str(path).replace("\\", "/")
+            return normalized in {
+                "C:/repo/celune",
+                "C:/repo/default_config.yaml",
+                "C:/repo/pyproject.toml",
+            }
 
         with (
             mock.patch.dict(sys.modules, {"__main__": fake_main}),
-            mock.patch.object(sys, "argv", [exe_path]),
+            mock.patch.object(sys, "argv", ["C:/repo/bin/celune.exe"]),
+            mock.patch.object(Path, "exists", fake_exists),
         ):
-            self.assertEqual(project_root(), Path(expected_root))
+            self.assertEqual(project_root(), Path("C:/repo"))
             self.assertEqual(
                 default_bundle_path(),
-                expected_root / "voices" / "default.cevoice",
+                Path("C:/repo/voices/default.cevoice"),
             )
-            self.assertEqual(bundled_voices_dir(), expected_root / "voices")
