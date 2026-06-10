@@ -95,11 +95,8 @@ jobs:
       - name: Upload Linux launcher artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: Celune-Linux-launcher
-          path: |
-            bin/celune
-            bin/celune-bin
-            bin/celune.AppImage
+          name: Celune-linux-x64
+          path: bin/
 
   launcher-build-windows:
     name: Windows Launcher Build
@@ -130,11 +127,8 @@ jobs:
       - name: Upload Windows launcher artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: Celune-Windows-launcher
-          path: |
-            bin/celune.exe
-            bin/celune-bin.exe
-            bin/celune-bin.cmd
+          name: Celune-win-x64
+          path: bin/
 
   notify-failure:
     name: Comment on CI Failure
