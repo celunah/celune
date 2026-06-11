@@ -88,16 +88,17 @@ api:
 #
 # Persona is Celune's thinking system using RAG (Retrieval Augmented Generation) to let characters
 # keep a conversational context and remember you as you speak with said characters
-# it uses Qwen/Qwen2.5-VL-3B-Instruct to ensure it can run on consumer hardware
+# it uses Qwen/Qwen3-VL-4B-Instruct to ensure it can run on consumer hardware
 persona:
   # enabled?
   enabled: true
-  # which Qwen model to use? (in case you want to use an FT)
-  model_id: Qwen/Qwen2.5-VL-3B-Instruct
+  # which Qwen model to use? (in case you want to use an FT or uncensored version)
+  model_id: Qwen/Qwen3-VL-4B-Instruct
+  # model_id: huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated
   # memory settings
   memory:
     # how much do you want Celune to remember
-    max_short_term_messages: 5
+    max_short_term_messages: 20
     # where semantic long-term memory retrieval should persist data
     storage_dir: null
     # minimum cosine similarity for semantic long-term memory retrieval

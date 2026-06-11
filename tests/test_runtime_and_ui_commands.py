@@ -466,6 +466,25 @@ class UIStartupTests(TestCase):
         exit_page = next(page for page in pages if "CTRL+Q exit" in page)
         self.assertNotIn("CTRL+C", exit_page)
 
+    def test_gpu_usage_handles_closed_stdout_pipe(self) -> None:
+        """Verify resource polling ignores closed-pipe nvidia-smi failures."""
+        proc = mock.Mock()
+        proc.poll.return_value = 0
+        proc.communicate.side_effect = ValueError("I/O operation on closed file.")
+
+        with mock.patch("celune.ui.resources._NVIDIA_SMI", "nvidia-smi"):
+            previous_proc = ui_resources._NVIDIA_SMI_PROC
+            previous_usage = ui_resources._NVIDIA_SMI_USAGE
+            ui_resources._NVIDIA_SMI_PROC = proc
+            ui_resources._NVIDIA_SMI_USAGE = 42
+            try:
+                self.assertIsNone(ui_resources.gpu_usage())
+                self.assertIsNone(ui_resources._NVIDIA_SMI_PROC)
+                self.assertIsNone(ui_resources._NVIDIA_SMI_USAGE)
+            finally:
+                ui_resources._NVIDIA_SMI_PROC = previous_proc
+                ui_resources._NVIDIA_SMI_USAGE = previous_usage
+
     def test_textual_input_lock_update_with_persona_on_ui_thread(self) -> None:
         """Verify input state updates update with Persona."""
         ui = CeluneUI()

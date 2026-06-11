@@ -221,6 +221,29 @@ class CeluneCoreTests(TestCase):
         persona_client.close.assert_called_once_with()
         self.assertIsNone(celune.vision)
 
+    def test_change_voice_returns_runtime_state_to_idle(self) -> None:
+        """Verify successful voice reload leaves Celune in the idle state."""
+        celune = self._make_celune({})
+        celune.current_voice = "balanced"
+        celune.voices = ("balanced", "bold")
+        celune.model_name = "shared-model"
+        celune.loaded = True
+        celune.cur_state = "idle"
+        celune.backend.model_id_for_voice = mock.Mock(return_value="shared-model")
+        statuses: list[tuple[str, str]] = []
+        celune.status_callback = lambda msg, severity="info": statuses.append(
+            (msg, severity)
+        )
+        celune.voice_changed_callback = mock.Mock()
+
+        celune.change_voice("bold")
+
+        self.assertEqual(celune.current_voice, "bold")
+        self.assertEqual(celune.loaded, True)
+        self.assertEqual(celune.cur_state, "idle")
+        self.assertEqual(statuses[-1], ("Idle", "info"))
+        celune.voice_changed_callback.assert_called_once_with("bold")
+
     def test_persona_talkback_config_can_disable_persona_input_mode(self) -> None:
         """Verify persona talkback can be disabled without disabling Persona."""
         from celune.persona.impl import persona_enabled, persona_talkback_enabled
