@@ -115,6 +115,12 @@ The terminal should support True Color, especially when using voice packs that d
 
 Terminals not supporting True Color may look incorrect, as Textual will fall back to a lower color mode.
 
+If Celune looks incorrect while your terminal supports True Color, run the following command:
+
+```bash
+export COLORTERM=truecolor
+```
+
 If Rubber Band is not installed or fails to run, Celune will speak at normal speed, and speed controls will be unavailable.
 
 ## VRAM presets & requirements
@@ -161,6 +167,8 @@ Tested on: RTX 5070 (12 GB VRAM)
 
 ## Installation
 
+Download and extract the [latest binary artifact](https://nightly.link/celunah/celune/workflows/ci/main) prior to running the below commands.
+
 ```bash
 # Download Celune
 git clone https://github.com/celunah/celune
@@ -188,16 +196,20 @@ uv sync
 
 # Run
 # Command Prompt users
-celune
+bin\celune
 
 # PowerShell users
-.\celune.exe
+.\bin\celune.exe
 
 # Or on Unix systems:
-./celune.AppImage
+./bin/celune.AppImage
 ```
 
-You can also open Celune from within your desktop by running the aforementioned executables. They are usable as an entry point.
+Don't run `celune-bin` manually. The `celune` binary is Celune's main entrypoint.
+
+Both binaries are required for correct operation, `celune-bin` contains core code, while `celune` is the outer launcher.
+
+Celune can also run from other working directories, provided the main binary is installed correctly.
 
 ### SoX & Rubber Band installation
 
@@ -206,13 +218,13 @@ If SoX & Rubber Band are already installed, you can skip this section.
 #### Windows (Scoop)
 
 ```bat
-# Install Scoop if you don't already have it
+REM Install Scoop if you don't already have it
 powershell -ExecutionPolicy RemoteSigned -c "irm https://get.scoop.sh | iex"
 
-# Install SoX
+REM Install SoX
 scoop install sox
 
-# Install Rubber Band
+REM Install Rubber Band
 scoop install rubberband
 ```
 
@@ -250,7 +262,7 @@ To install OpenRGB, go to <https://openrgb.org/>, download and install a package
 
 Celune's VoxCPM2 backend may require a C/C++ compiler to compile dependencies. To install a suitable compiler, run one of the following commands:
 
-This is not required to use the Qwen backend, but you may need to install dependencies manually.
+This is not required to use other backends, but you may need to install dependencies manually.
 
 ```bash
 # Windows
