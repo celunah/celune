@@ -3,6 +3,8 @@
 
 ---
 
+![Python](https://img.shields.io/badge/Python-3.12%2F3.13-cebaff) ![License](https://img.shields.io/badge/License-MIT-cebaff) ![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff) ![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
+
 Celune is a real-time AI TTS character engine focused on expressive voice delivery with a well-made user experience.
 
 It has been designed to provide fast, high-quality voice generation, even on consumer-grade hardware.
@@ -29,6 +31,10 @@ None of the 15,000+ lines of code in Celune were created solely using AI. AI too
 All decisions and implementations were reviewed, validated, and approved by human developers.
 
 Celune never was, and will never become an "AI slop" project.
+
+## License note
+
+Celune is licensed under the [MIT license](https://opensource.org/license/mit), but the software may download certain models from [Hugging Face](https://huggingface.co) that are of varying licenses, such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.) or [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS). Users of Celune are expected to read and comply with any applicable license terms for the models they intend to use.
 
 ## Voices & samples
 
