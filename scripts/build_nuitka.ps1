@@ -9,6 +9,9 @@ $launcherRes = Join-Path $repoRoot "resources\celune.res"
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 $projectVersion = Select-String -Path (Join-Path $repoRoot "pyproject.toml") -Pattern '^version = "([^"]+)"' | Select-Object -First 1
 
+$env:CL = "/O2 /GL /GS /guard:cf /DNDEBUG"
+$env:_CL_ = "/link /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT"
+
 if ($null -eq $projectVersion) {
     throw "Could not determine the project version from pyproject.toml."
 }
@@ -59,6 +62,7 @@ $arguments = @(
     "--file-version=$windowsVersion",
     "--output-dir=$outputDir",
     "--output-filename=celune-bin.exe",
+    "--lto=yes",
     "$repoRoot\nuitka_main.py"
 )
 
@@ -91,7 +95,7 @@ if (-not (Test-Path $vsDevCmd)) {
     throw "VsDevCmd.bat was not found."
 }
 
-$compileCmd = "call `"$vsDevCmd`" -arch=amd64 -host_arch=amd64 >nul && cl /nologo /O2 /DWIN32 /D_CRT_SECURE_NO_WARNINGS /Fe:`"$launcherExe`" /Fo:`"$launcherObj`" `"$launcherSource`" `"$launcherRes`""
+$compileCmd = "call `"$vsDevCmd`" -arch=amd64 -host_arch=amd64 >nul && cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /Fe:`"$launcherExe`" /Fo:`"$launcherObj`" `"$launcherSource`" `"$launcherRes`" /link /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT"
 & cmd /c $compileCmd
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to compile the Windows launcher."

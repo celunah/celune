@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export CFLAGS="-O2 -DNDEBUG -fstack-protector-strong -D_FORTIFY_SOURCE=3"
+export CXXFLAGS="$CFLAGS"
+export LDFLAGS="-Wl,-z,relro,-z,now"
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="$repo_root/bin"
 app_dir="$output_dir/Celune.AppDir"
@@ -60,9 +64,12 @@ uv run python -m nuitka \
     --include-package-data=celune \
     --output-dir="$output_dir" \
     --output-filename=celune-bin \
+    --lto=yes \
     "$repo_root/nuitka_main.py"
 
-gcc -O2 -o "$output_dir/celune" "$repo_root/launcher.c"
+gcc -O2 -s -Wall -Wextra -Wpedantic \
+	-DNDEBUG -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
+	-flto -Wl,-z,relro,-z,now -o "$output_dir/celune" "$repo_root/launcher.c"
 chmod +x "$output_dir/celune" "$output_dir/celune-bin"
 
 rm -rf "$output_dir/nuitka_main.build"

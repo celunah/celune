@@ -12,7 +12,7 @@ from typing import Literal, Optional, Protocol, TypedDict, Union, cast
 import torch
 from transformers.tokenization_utils_base import BatchEncoding
 from transformers import (
-    Qwen2_5_VLForConditionalGeneration,
+    Qwen3VLForConditionalGeneration,
     AutoProcessor,
     AutoTokenizer,
     AutoConfig,
@@ -281,21 +281,20 @@ class PersonaBackend:
             trust_remote_code=True,
         )
         model_type = getattr(config, "model_type", N_A_STR)
+        wanted_type = "qwen3_vl"
 
-        if model_type != "qwen2_5_vl":
-            raise ValueError(
-                f"unsupported model type {config.model_type}, expected qwen2_5_vl"
+        if model_type != wanted_type:
+            raise TypeError(
+                f"unsupported model type {config.model_type}, expected {wanted_type}"
             )
 
         normalized = quantization.casefold()
         if normalized in {"4bit", "nf4", "bnb4", "bitsandbytes-4bit"}:
             if not torch.cuda.is_available():
-                raise ValueError(
-                    "Persona quantized loading requires a CUDA-enabled Torch build"
-                )
+                raise RuntimeError("CUDA support required to quantize Persona")
             model = cast(
                 PersonaModel,
-                Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
                     device_map="auto",
@@ -309,12 +308,10 @@ class PersonaBackend:
             )
         elif normalized in {"8bit", "bnb8", "bitsandbytes-8bit"}:
             if not torch.cuda.is_available():
-                raise ValueError(
-                    "Persona quantized loading requires a CUDA-enabled Torch build"
-                )
+                raise RuntimeError("CUDA support required to quantize Persona")
             model = cast(
                 PersonaModel,
-                Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
                     device_map="auto",
@@ -324,7 +321,7 @@ class PersonaBackend:
         elif normalized in {"none", "false", "off", "disabled"}:
             model = cast(
                 PersonaModel,
-                Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
                     device_map="auto",

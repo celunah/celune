@@ -157,7 +157,7 @@ class _FakeMultimodalProcessor:
 class _FakeQwenVlConfig:
     """Minimal config fake exposing the expected Qwen VL model type."""
 
-    model_type = "qwen2_5_vl"
+    model_type = "qwen3_vl"
 
 
 class PersonaApiTests(TestCase):
@@ -202,7 +202,7 @@ class PersonaApiTests(TestCase):
             )
             model_loader = stack.enter_context(
                 mock.patch(
-                    "celune.persona.runtime.Qwen2_5_VLForConditionalGeneration.from_pretrained",
+                    "celune.persona.runtime.Qwen3VLForConditionalGeneration.from_pretrained",
                     return_value=model,
                 )
             )

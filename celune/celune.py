@@ -1015,6 +1015,7 @@ class Celune:
             self.voice_changed_callback(voice)
             self.log(f"Voice {voice} loaded.")
             self.progress_callback(1, 1)
+            self.cur_state = "idle"
             self.status_callback("Idle")
         except Exception as e:
             self.loaded = False
