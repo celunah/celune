@@ -22,7 +22,9 @@ The project targets Windows and Linux, supports Python 3.12 and 3.13, and is des
 
 ## Typing Style
 
-Prefer classic typing syntax like `Union[str, int]` or `Optional[str]`, rather than using PEP 604 syntax like `str | int` or `str | None`.
+Prefer classic unions like `Union[str, int]` or `Optional[str]`, rather than using PEP 604 unions like `str | int` or `str | None`.
+
+Other typing features from e.g. PEP 585 or PEP 695 may be used normally.
 
 Avoid using broad types like `Any`, `object` or `T`, unless the function explicitly requires a broad type.
 
@@ -89,6 +91,8 @@ Returns:
 ```
 
 with proper documentation, while preserving the docstring format.
+
+This process may leave some formatting inaccuracies, run `uv run ruff format .` again after completing docstrings.
 
 If CI fails or times out, report the actual failure clearly. Do not claim success.
 
