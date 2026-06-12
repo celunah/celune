@@ -417,7 +417,12 @@ def _check_for_compiled_update() -> Optional[UpdateInfo]:
 
 
 def check_for_update() -> Optional[UpdateInfo]:
-    """Check for a newer Celune revision or packaged launcher bundle."""
+    """Check for a newer Celune revision or packaged launcher bundle.
+
+    Returns:
+        Optional[UpdateInfo]: Metadata describing the available update, or ``None`` when no safe update path is
+        currently available.
+    """
     if os.getenv("CELUNE_SKIP_UPDATE") in {"1", "true", "on", "yes", "enabled"}:
         return None
 
@@ -531,7 +536,14 @@ def _apply_compiled_update(install_dir: Optional[Path] = None) -> None:
 
 
 def update_to_latest(install_dir: Optional[Path] = None) -> None:
-    """Update Celune either from Git or from the latest packaged artifact."""
+    """Update Celune either from Git or from the latest packaged artifact.
+
+    Args:
+        install_dir: Optional compiled-install directory to replace in place.
+
+    Raises:
+        UpdateError: Raised when the repository or packaged install cannot be updated safely.
+    """
     if running_compiled() or install_dir is not None:
         _apply_compiled_update(install_dir=install_dir)
         return
@@ -631,7 +643,16 @@ def apply_update_and_restart(
     launcher_path: Path,
     launcher_args: list[str],
 ) -> int:
-    """Wait for the launcher, apply the update, then restart it."""
+    """Wait for the launcher, apply the update, then restart it.
+
+    Args:
+        parent_pid: Process ID of the launcher that must fully exit first.
+        launcher_path: Path to the outer ``celune`` launcher binary to restart.
+        launcher_args: Original launcher arguments to pass back into the restart.
+
+    Returns:
+        int: Process exit code to return from the updater helper.
+    """
     _wait_for_pid_exit(parent_pid)
     update_to_latest(install_dir=launcher_path.resolve().parent)
     subprocess.Popen([str(launcher_path), *launcher_args], cwd=_repo_root())  # pylint: disable=R1732

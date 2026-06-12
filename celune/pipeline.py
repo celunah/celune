@@ -1481,6 +1481,7 @@ def queue_sfx_audio(
         sample_rate: Source sample rate for the decoded audio.
         label: Human-readable label for logs and status.
         keep: Whether to prepend this SFX to the next saved utterance.
+        volume: Gain multiplier applied before the clip is queued for playback.
 
     Returns:
         bool: ``True`` when playback was queued successfully, otherwise ``False``.
@@ -2256,7 +2257,14 @@ def _finalize_playback_idle(
 
 
 def playback_worker(engine: Celune) -> None:
-    """Receive audio chunks from multiple sources, mix them, and play them."""
+    """Receive audio chunks from multiple sources, mix them, and play them.
+
+    Args:
+        engine: Celune runtime that owns playback queues, DSP state, and logs.
+
+    Raises:
+        NotAvailableError: Raised when no usable audio output backend is available.
+    """
     source_buffers: dict[
         int, deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]
     ] = {}
@@ -2264,7 +2272,6 @@ def playback_worker(engine: Celune) -> None:
     stop_requested = False
 
     def drain_pending_items() -> bool:
-        """Pull newly queued playback items into the active mixer state."""
         nonlocal stop_requested
 
         while True:

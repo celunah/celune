@@ -271,7 +271,7 @@ def make_voice_loader(
         metadata: The voice metadata.
 
     Returns:
-        A CEVOICE loader stub for the given voice.
+        SimpleNamespace: A CEVOICE loader stub for the given voice.
     """
     return SimpleNamespace(
         bundle=SimpleNamespace(voices={voice: metadata}, voice_order=(voice,)),

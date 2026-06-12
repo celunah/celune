@@ -94,9 +94,8 @@ WEBUI_CSS = textwrap.dedent(
     .gradio-container {
         background: var(--celune-background, #1d1826);
         font-family: Outfit, sans-serif !important;
-        min-height: 100dvh;
-        overflow-x: hidden;
-        overflow-y: auto;
+        height: 100dvh;
+        overflow: hidden;
     }
 
     .gradio-container > .main,
@@ -119,7 +118,8 @@ WEBUI_CSS = textwrap.dedent(
         display: flex;
         flex-direction: column;
         gap: 0.75rem;
-        min-height: calc(100dvh - 2rem);
+        height: calc(100dvh - 2rem);
+        min-height: 0;
     }
 
     #celune-header {
@@ -153,8 +153,10 @@ WEBUI_CSS = textwrap.dedent(
         border: 2px solid var(--celune-primary, #cebaff);
         padding: 1em;
         border-radius: 8px;
-        max-height: min(75dvh, calc(100dvh - 13rem));
+        max-height: min(75dvh, calc(100dvh - 20rem));
         overflow: hidden;
+        flex: 1 1 auto;
+        min-height: 0;
     }
 
     #celune-log-panel pre {
@@ -163,6 +165,7 @@ WEBUI_CSS = textwrap.dedent(
         white-space: pre-wrap;
         margin: 0;
         max-height: min(calc(75dvh - 2em), calc(100dvh - 15rem));
+        height: 100%;
         overflow-y: auto;
         padding-right: 0.75em;
         scrollbar-gutter: stable both-edges;
@@ -201,24 +204,24 @@ WEBUI_CSS = textwrap.dedent(
     button#celune-send {
         min-height: 2.75rem;
     }
-    
+
     #celune-input-row, #celune-footer {
         padding: 0 1em;
     }
-    
+
     button#celune-send {
         display: none;
     }
-    
-    @media (max-width: 768px), ((pointer: none) and (pointer: coarse)) {
+
+    @media (max-width: 768px), (any-pointer: coarse), (hover: none) {
         .gradio-container {
-            min-height: 100dvh;
-            overflow-x: hidden;
-            overflow-y: auto;
+            height: 100dvh;
+            overflow: hidden;
         }
 
         #celune-shell {
-            min-height: calc(100dvh - 1rem);
+            height: calc(100dvh - 8rem);
+            min-height: 0;
         }
 
         #celune-input-row {
@@ -237,16 +240,16 @@ WEBUI_CSS = textwrap.dedent(
             flex: 1 1 0 !important;
             min-width: 0 !important;
         }
-        
+
         button#celune-style,
         button#celune-send {
             width: 100%;
         }
-        
+
         button#celune-send {
             display: flex;
         }
-        
+
         #celune-input textarea, #celune-input textarea::placeholder {
             text-align: center;
         }
@@ -258,7 +261,7 @@ WEBUI_CSS = textwrap.dedent(
         #celune-log-panel pre {
             max-height: min(calc(52dvh - 2em), calc(100dvh - 14rem));
         }
-        
+
         button#celune-style {
             border-radius: 4px 0 0 4px;
             border-right: 1px solid color-mix(
@@ -267,7 +270,7 @@ WEBUI_CSS = textwrap.dedent(
                 black
             );
         }
-        
+
         button#celune-send {
             border-radius: 0 4px 4px 0;
             border-left: 1px solid color-mix(
@@ -1372,7 +1375,11 @@ def favicon() -> FileResponse:
 
 @api.get("/", include_in_schema=False)
 def root() -> RedirectResponse:
-    """Redirect the API root to Celune's browser UI."""
+    """Redirect the API root to Celune's browser UI.
+
+    Returns:
+        RedirectResponse: Redirect response pointing at the mounted WebUI.
+    """
     return RedirectResponse(url="/ui")
 
 

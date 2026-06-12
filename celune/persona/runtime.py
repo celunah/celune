@@ -265,6 +265,8 @@ class PersonaBackend:
             quantization: The requested quantization mode to use.
 
         Raises:
+            TypeError: Raised when the loaded processor or model has an unsupported type.
+            RuntimeError: Raised when the requested Persona model cannot be loaded.
             ValueError: Quantization was requested when CUDA wasn't available.
         """
         if (

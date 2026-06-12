@@ -958,8 +958,8 @@ def start(verbose: bool = False) -> None:
         verbose: Whether the app should be started in verbose (developer) mode.
 
     Raises:
-        No: If `No` needs to be raised.
-        Exception: If `Exception` needs to be raised.
+        No: Raised on Celune's name day unless explicitly overridden.
+        Exception: Re-raised after printing a traceback in developer mode.
     """
     runtime = _load_runtime()
     try:
