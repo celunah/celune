@@ -44,7 +44,7 @@ from .ui import resources as ui_resources
 from .ui.app import CeluneUI
 
 api = FastAPI(title=f"{APP_NAME}API")
-bound_celune: Optional["Celune"] = None
+bound_celune: Optional[Celune] = None
 auth_token: Optional[str] = None
 rate_limit_per_minute = 60
 rate_limit_lock = threading.Lock()
@@ -54,20 +54,20 @@ speech_jobs_lock = threading.Lock()
 speech_jobs: dict[str, "SpeechJob"] = {}
 speech_job_ttl_seconds = 15 * 60
 webui_log_lines: deque[tuple[str, str]] = deque(maxlen=240)
-webui_status_text = "Starting up"
+webui_status_text = "Waiting for response"
 webui_status_severity = "info"
 webui_logs_seeded = False
 webui_resource_page = 0
 webui_last_resource_advance = 0.0
 webui_last_probed_state: Optional[str] = None
 webui_input_locked = True
-webui_input_placeholder = "Waiting for Celune to finish loading"
+webui_input_placeholder = "Please wait"
 webui_voice_locked = True
 webui_theme_style = ""
 webui_status_source = "probe"
 webui_status_updated_at = 0.0
-WEBUI_POLL_INTERVAL_SECONDS = 0.25
 WEBUI_RESOURCE_ROTATE_SECONDS = 2.06
+WEBUI_POLL_INTERVAL_SECONDS = WEBUI_RESOURCE_ROTATE_SECONDS / 4
 WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS = 0.9
 WEBUI_HEAD = textwrap.dedent(
     """
@@ -81,19 +81,45 @@ WEBUI_CSS = textwrap.dedent(
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap');
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100..800&display=swap');
 
+    html,
+    body,
+    gradio-app {
+        background: var(--celune-background, #1d1826) !important;
+    }
+
+    .column {
+        place-content: center;
+    }
+
     .gradio-container {
         background: var(--celune-background, #1d1826);
         font-family: Outfit, sans-serif !important;
         min-height: 100dvh;
-        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+
+    .gradio-container > .main,
+    .gradio-container .wrap,
+    .gradio-container .loading-container,
+    .gradio-container .loading-container > div {
+        background: var(--celune-background, #1d1826) !important;
     }
 
     .main {
-        flex-grow: 0 !important;
+        flex: 1 1 auto !important;
+        min-height: 0;
     }
 
     body {
         font-family: Outfit, sans-serif;
+    }
+
+    #celune-shell {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        min-height: calc(100dvh - 2rem);
     }
 
     #celune-header {
@@ -127,7 +153,7 @@ WEBUI_CSS = textwrap.dedent(
         border: 2px solid var(--celune-primary, #cebaff);
         padding: 1em;
         border-radius: 8px;
-        max-height: 75vh;
+        max-height: min(75dvh, calc(100dvh - 13rem));
         overflow: hidden;
     }
 
@@ -136,7 +162,7 @@ WEBUI_CSS = textwrap.dedent(
         color: var(--celune-primary, #cebaff);
         white-space: pre-wrap;
         margin: 0;
-        max-height: calc(75vh - 2em);
+        max-height: min(calc(75dvh - 2em), calc(100dvh - 15rem));
         overflow-y: auto;
         padding-right: 0.75em;
         scrollbar-gutter: stable both-edges;
@@ -187,8 +213,12 @@ WEBUI_CSS = textwrap.dedent(
     @media (max-width: 768px), ((pointer: none) and (pointer: coarse)) {
         .gradio-container {
             min-height: 100dvh;
-            max-height: 100dvh;
-            overflow: hidden;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        #celune-shell {
+            min-height: calc(100dvh - 1rem);
         }
 
         #celune-input-row {
@@ -222,11 +252,11 @@ WEBUI_CSS = textwrap.dedent(
         }
 
         #celune-log-panel {
-            max-height: 52dvh;
+            max-height: min(52dvh, calc(100dvh - 12rem));
         }
 
         #celune-log-panel pre {
-            max-height: calc(52dvh - 2em);
+            max-height: min(calc(52dvh - 2em), calc(100dvh - 14rem));
         }
         
         button#celune-style {
@@ -506,7 +536,7 @@ def bind_celune(celune: Celune) -> None:
         "Currently in tutorial mode"
         if celune.is_in_tutorial
         else "Please wait"
-        if celune.locked
+        if celune and celune.locked
         else "Enter text to speak here"
     )
     webui_voice_locked = len(celune.voices) < 2 or celune.is_in_tutorial
@@ -681,7 +711,7 @@ def _wrap_celune_callbacks(celune: Celune) -> None:
             "Currently in tutorial mode"
             if celune.is_in_tutorial
             else "Please wait"
-            if locked
+            if celune and locked
             else "Enter text to speak here"
         )
         original_input_state(locked)
@@ -881,7 +911,7 @@ def _collect_speech_job(job_id: str, chunks: SpeechStreamQueue) -> None:
 def _webui_logs_html() -> str:
     """Render the mirrored log buffer as terminal-like HTML."""
     if not webui_log_lines:
-        content = _webui_log_line_html("Waiting for Celune to report in...")
+        content = _webui_log_line_html("Waiting for response...")
     else:
         content = "\n".join(
             _webui_log_line_html(line, severity) for line, severity in webui_log_lines
@@ -901,7 +931,7 @@ def _webui_status_html() -> str:
 def _webui_resources_html() -> str:
     """Render the footer resource cell."""
     celune = bound_celune
-    resource = "VRAM: waiting for runtime"
+    resource = ""
     if celune is not None:
         pages = ui_resources.resource_pages(celune, "celune")
         if pages:
@@ -948,11 +978,11 @@ def _input_update(value: object = _WEBUI_UNSET) -> dict[str, object]:
             return gr.update(
                 value=value,
                 interactive=False,
-                placeholder="Waiting for Celune to finish loading",
+                placeholder="Please wait",
             )
         return gr.update(
             interactive=False,
-            placeholder="Waiting for Celune to finish loading",
+            placeholder="Please wait",
         )
     if celune.is_in_tutorial:
         if has_value:
@@ -970,7 +1000,9 @@ def _input_update(value: object = _WEBUI_UNSET) -> dict[str, object]:
         placeholder = webui_input_placeholder
     else:
         interactive = not celune.locked
-        placeholder = "Please wait" if celune.locked else "Enter text to speak here"
+        placeholder = (
+            "Please wait" if celune and celune.locked else "Enter text to speak here"
+        )
     if has_value:
         return gr.update(
             value=value,
@@ -1046,7 +1078,7 @@ def _webui_run_command(text: str) -> bool:
     ui = CeluneUI._instance
     if ui is None:
         _append_webui_log(
-            "Slash commands require the main Celune window to be running.",
+            f"{APP_NAME} must be running to run commands.",
             "warning",
         )
         return False
@@ -1097,7 +1129,9 @@ def _webui_speak(
 
     current_state = (celune.cur_state or "").strip().lower()
     if current_state == "waking":
-        _append_webui_log(f"{APP_NAME} is already waking up. Please wait.", "warning")
+        _append_webui_log(
+            f"{APP_NAME} has not yet returned from sleep mode.", "warning"
+        )
         snapshot = _webui_submit_snapshot(text)
         yield snapshot[0], None, *snapshot[1:]
         return
@@ -1180,31 +1214,32 @@ def _build_webui() -> gr.Blocks:
     with gr.Blocks(
         title=APP_NAME,
         fill_height=True,
-        head=WEBUI_HEAD,
     ) as demo:
         gr.HTML(webui_theme_style)
         with gr.Column(elem_id="celune-shell"):
             gr.HTML(
-                """
-                <div id="celune-header">
-                    <div class="line"></div>
-                    <div class="title">Celune</div>
-                    <div class="line"></div>
-                </div>
-                """
+                textwrap.dedent(
+                    f"""
+                    <div id="celune-header">
+                        <div class="line"></div>
+                        <div class="title">{APP_NAME}</div>
+                        <div class="line"></div>
+                    </div>
+                    """
+                )
             )
             logs = gr.HTML(_webui_logs_html())
-            gr.HTML('<div id="celune-divider"></div>')
             with gr.Row(elem_id="celune-input-row"):
                 input_box = gr.Textbox(
                     value="",
                     lines=1,
                     max_lines=4,
                     show_label=False,
-                    placeholder="Enter text to speak here",
+                    placeholder="Please wait",
                     container=False,
                     elem_id="celune-input",
                     scale=8,
+                    interactive=False,
                 )
                 with gr.Row(elem_id="celune-actions", scale=2):
                     voice_button = gr.Button(
@@ -1212,12 +1247,14 @@ def _build_webui() -> gr.Blocks:
                         elem_id="celune-style",
                         scale=1,
                         min_width=0,
+                        interactive=False,
                     )
                     send_button = gr.Button(
                         value="Send",
                         elem_id="celune-send",
                         scale=1,
                         min_width=0,
+                        interactive=False,
                     )
             with gr.Row(elem_id="celune-footer"):
                 status = gr.HTML(_webui_status_html(), elem_id="celune-status")
@@ -1235,17 +1272,17 @@ def _build_webui() -> gr.Blocks:
                 elem_id="celune-audio",
             )
             timer = gr.Timer(value=WEBUI_POLL_INTERVAL_SECONDS)
-        timer.tick(  # pylint: disable=no-member
+        timer.tick(  # pylint: disable=E1101
             _webui_snapshot,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
             show_progress="hidden",
         )
-        demo.load(  # pylint: disable=no-member
+        demo.load(  # pylint: disable=E1101
             _webui_snapshot,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
             show_progress="hidden",
         )
-        input_box.submit(  # pylint: disable=no-member
+        input_box.submit(  # pylint: disable=E1101
             _webui_speak,
             inputs=[input_box],
             outputs=[
@@ -1259,7 +1296,7 @@ def _build_webui() -> gr.Blocks:
             ],
             show_progress="hidden",
         )
-        send_button.click(  # pylint: disable=no-member
+        send_button.click(  # pylint: disable=E1101
             _webui_speak,
             inputs=[input_box],
             outputs=[
@@ -1273,7 +1310,7 @@ def _build_webui() -> gr.Blocks:
             ],
             show_progress="hidden",
         )
-        voice_button.click(  # pylint: disable=no-member
+        voice_button.click(  # pylint: disable=E1101
             _webui_cycle_voice,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
             show_progress="hidden",
@@ -1594,11 +1631,12 @@ api = gr.mount_gradio_app(
     favicon_path=str(project_root() / "resources" / "celune.ico"),
     show_error=True,
     css=WEBUI_CSS,
+    head=WEBUI_HEAD,
 )
 
 
 def run_api(
-    celune: Optional["Celune"] = None,
+    celune: Optional[Celune] = None,
     host: Optional[str] = None,
     port: int = 2060,
     token: Optional[str] = None,
