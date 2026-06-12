@@ -39,7 +39,7 @@ class ApiWebUITests(TestCase):
         api.webui_last_resource_advance = 0.0
         api.webui_last_probed_state = None
         api.webui_input_locked = True
-        api.webui_input_placeholder = "Waiting for Celune to finish loading"
+        api.webui_input_placeholder = "Please wait"
         api.webui_voice_locked = True
         api.webui_status_source = "probe"
         api.webui_status_updated_at = 0.0
@@ -317,7 +317,7 @@ class ApiWebUITests(TestCase):
             updates = list(api._webui_speak("/help"))
 
         self.assertEqual(len(updates), 1)
-        self.assertIn("Slash commands require the main Celune window", updates[0][2])
+        self.assertIn("must be running to run commands", updates[0][2])
 
     def test_webui_speak_returns_browser_audio_after_generation(self) -> None:
         """Verify the browser submit handler returns one browser audio payload."""

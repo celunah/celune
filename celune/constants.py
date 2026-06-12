@@ -82,7 +82,7 @@ class ExitCodes(Enum):
     # we can't properly docstring enum values, so the comments below serve as docstrings
 
     EXIT_SUCCESS = 0  # Celune exited successfully.
-    EXIT_PENDING_UPDATE = 0  # Celune has a pending update.
+    EXIT_PENDING_UPDATE = 7  # Celune has a pending update.
     EXIT_FAILURE = 1  # Celune experienced a general failure.
     EXIT_NO_ANSI = 2  # Celune did not find an ANSI capable terminal.
     EXIT_ALREADY_RUNNING = 3  # Celune is already running.
