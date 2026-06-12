@@ -2,8 +2,11 @@
 """Tests for lightweight data, localization, and update helpers."""
 
 import datetime
+import json
 import subprocess
+import tempfile
 from unittest import mock, TestCase
+from pathlib import Path
 
 from celune import i18n, namedays, updater
 
@@ -168,6 +171,92 @@ class UpdaterTests(TestCase):
             side_effect=[False, False],
         ):
             self.assertFalse(updater._has_new_remote_revision("a" * 40, "b" * 40))
+
+    def test_check_for_update_compiled_uses_bundle_checksums(self) -> None:
+        """Verify compiled update detection compares bundle checksums against artifact metadata."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle_dir = Path(temp_dir)
+            (bundle_dir / "celune.exe").write_bytes(b"launcher-old")
+            (bundle_dir / "celune-bin.exe").write_bytes(b"runtime-old")
+            manifest = {
+                "version": "4.1.0",
+                "revision": "a" * 40,
+                "artifact": "Celune-win-x64",
+                "files": {
+                    "celune.exe": updater._sha256_file(bundle_dir / "celune.exe"),
+                    "celune-bin.exe": updater._sha256_file(
+                        bundle_dir / "celune-bin.exe"
+                    ),
+                },
+            }
+            (bundle_dir / updater.UPDATE_MANIFEST_NAME).write_text(
+                json.dumps(manifest),
+                encoding="utf-8",
+            )
+            remote = updater.BundleManifest(
+                version="4.2.0",
+                revision="b" * 40,
+                artifact="Celune-win-x64",
+                files={
+                    "celune.exe": "1" * 64,
+                    "celune-bin.exe": "2" * 64,
+                },
+            )
+
+            with (
+                mock.patch("celune.updater.running_compiled", return_value=True),
+                mock.patch("celune.updater._bundle_dir", return_value=bundle_dir),
+                mock.patch(
+                    "celune.updater._read_remote_bundle_manifest", return_value=remote
+                ),
+                mock.patch("celune.updater._is_git_checkout", return_value=False),
+            ):
+                update = updater.check_for_update()
+
+        self.assertIsNotNone(update)
+        if update is not None:
+            self.assertEqual(update.local_revision, "aaaaaaa")
+            self.assertEqual(update.latest_revision, "bbbbbbb")
+            self.assertEqual(update.latest_version, "4.2.0")
+
+    def test_check_for_update_compiled_returns_none_when_bundle_matches_remote(
+        self,
+    ) -> None:
+        """Verify compiled update checks stay quiet when the local bundle already matches."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle_dir = Path(temp_dir)
+            (bundle_dir / "celune.exe").write_bytes(b"launcher")
+            (bundle_dir / "celune-bin.exe").write_bytes(b"runtime")
+            local_files = {
+                "celune.exe": updater._sha256_file(bundle_dir / "celune.exe"),
+                "celune-bin.exe": updater._sha256_file(bundle_dir / "celune-bin.exe"),
+            }
+            manifest = {
+                "version": "4.1.0",
+                "revision": "a" * 40,
+                "artifact": "Celune-win-x64",
+                "files": local_files,
+            }
+            (bundle_dir / updater.UPDATE_MANIFEST_NAME).write_text(
+                json.dumps(manifest),
+                encoding="utf-8",
+            )
+            remote = updater.BundleManifest(
+                version="4.1.0",
+                revision="a" * 40,
+                artifact="Celune-win-x64",
+                files=local_files,
+            )
+
+            with (
+                mock.patch("celune.updater.running_compiled", return_value=True),
+                mock.patch("celune.updater._bundle_dir", return_value=bundle_dir),
+                mock.patch(
+                    "celune.updater._read_remote_bundle_manifest", return_value=remote
+                ),
+                mock.patch("celune.updater._is_git_checkout", return_value=False),
+            ):
+                self.assertIsNone(updater.check_for_update())
 
     def test_update_to_latest_rejects_unsafe_states(self) -> None:
         """Verify unsafe repository states reject automatic updates.

@@ -111,3 +111,33 @@ esac
 
 ARCH="$appimage_arch" appimagetool "$app_dir" "$output_dir/celune.AppImage"
 rm -rf "$app_dir"
+
+revision="$(git -C "$repo_root" rev-parse HEAD)"
+if [[ -z "$revision" ]]; then
+    echo "Could not determine the Git revision for update metadata." >&2
+    exit 1
+fi
+
+CELUNE_OUTPUT_DIR="$output_dir" CELUNE_VERSION="$version" CELUNE_REVISION="$revision" uv run python - <<'EOF'
+import hashlib
+import json
+import os
+from pathlib import Path
+
+output_dir = Path(os.environ["CELUNE_OUTPUT_DIR"])
+manifest = {
+    "version": os.environ["CELUNE_VERSION"],
+    "revision": os.environ["CELUNE_REVISION"],
+    "artifact": "Celune-linux-x64",
+    "files": {},
+}
+for name in ("celune", "celune-bin", "celune.AppImage"):
+    path = output_dir / name
+    if path.is_file():
+        manifest["files"][name] = hashlib.sha256(path.read_bytes()).hexdigest()
+
+(output_dir / "celune-update.json").write_text(
+    json.dumps(manifest, indent=2) + "\n",
+    encoding="utf-8",
+)
+EOF

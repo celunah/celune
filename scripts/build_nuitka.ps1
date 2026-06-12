@@ -101,6 +101,24 @@ if ($LASTEXITCODE -ne 0) {
     throw "Failed to compile the Windows launcher."
 }
 
+$revision = (& git -C $repoRoot rev-parse HEAD).Trim()
+if (-not $revision) {
+    throw "Could not determine the Git revision for update metadata."
+}
+
+$manifest = [ordered]@{
+    version = $windowsVersion
+    revision = $revision
+    artifact = "Celune-win-x64"
+    files = [ordered]@{
+        "celune.exe" = (Get-FileHash -Algorithm SHA256 $launcherExe).Hash.ToLowerInvariant()
+        "celune-bin.exe" = (Get-FileHash -Algorithm SHA256 (Join-Path $outputDir "celune-bin.exe")).Hash.ToLowerInvariant()
+    }
+}
+
+$manifestPath = Join-Path $outputDir "celune-update.json"
+$manifest | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 $manifestPath
+
 $buildDir = Join-Path $outputDir "nuitka_main.build"
 if (Test-Path $buildDir) {
     Remove-Item -LiteralPath $buildDir -Recurse -Force

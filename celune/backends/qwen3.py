@@ -244,7 +244,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
                 **kwargs,
             )
 
-            for chunk in stream:  # pylint: disable=R1737
+            for chunk in stream:
                 audio_chunk, sample_rate, timing = chunk
                 if timing is not None:
                     timing = dict(timing)

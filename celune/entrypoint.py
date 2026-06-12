@@ -21,6 +21,7 @@ from types import SimpleNamespace, ModuleType
 from celune import __version__, REVISION, __tagline__
 from celune.constants import APP_NAME, APP_SLUG, ExitCodes
 from celune.paths import project_root, running_compiled
+from celune.updater import apply_update_and_restart
 
 
 def _env_flag(name: str) -> bool:
@@ -1034,6 +1035,13 @@ def start(verbose: bool = False) -> None:
                 ).start()
 
                 if choice:
+                    if running_compiled():
+                        print(
+                            f"{APP_NAME} will close so the launcher can apply the latest artifact."
+                        )
+                        time.sleep(2)
+                        sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
+
                     print(f"Updating {APP_NAME}...")
                     try:
                         runtime.update_to_latest()
@@ -1050,6 +1058,11 @@ def start(verbose: bool = False) -> None:
                         sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
         elif runtime.check_for_update() and not runtime.supports_ansi():
             print("This terminal does not support ANSI.")
+            if running_compiled():
+                print("Requesting the launcher to refresh the packaged binaries...")
+                time.sleep(2)
+                sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
+
             print("Attempting to apply update non-interactively...")
             try:
                 runtime.update_to_latest()
@@ -1187,6 +1200,24 @@ def main(argv: Optional[list[str]] = None) -> None:
     """
     resolved_argv = normalize_argv0(argv)
     args = resolved_argv[1:]
+
+    if args and args[0] == "__apply_update":
+        if len(args) < 3:
+            print("Usage: celune __apply_update <parent-pid> <launcher-path> [args...]")
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+
+        try:
+            parent_pid = int(args[1])
+        except ValueError:
+            print("Invalid launcher PID.")
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+
+        launcher_path = Path(args[2]).resolve()
+        try:
+            sys.exit(apply_update_and_restart(parent_pid, launcher_path, args[3:]))
+        except Exception as exc:
+            print(f"{APP_NAME} could not apply the launcher update: {exc}")
+            sys.exit(EXIT_CODES.EXIT_FAILURE.value)
 
     if not args:
         start()
