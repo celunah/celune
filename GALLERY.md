@@ -14,7 +14,7 @@ These images show off Celune's user interface.
 
 [![Talking](./demos/speaking.png)](./demos/speaking.png)
 
- Change voice
+## Change voice
 
 [![Change voice](./demos/change_voice.png)](./demos/change_voice.png)
 

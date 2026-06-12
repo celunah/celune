@@ -836,31 +836,40 @@ def _download_youtube_sfx(
             python_executable = str(project_root() / ".venv" / "Scripts" / "python.exe")
         else:
             python_executable = str(project_root() / ".venv" / "bin" / "python")
-    completed = subprocess.run(
-        [
-            python_executable,
-            "-m",
-            yt_dlp_module,
-            "--extract-audio",
-            "--audio-format",
-            "wav",
-            "--audio-quality",
-            "0",
-            "--no-playlist",
-            "--no-progress",
-            "--force-overwrites",
-            "--output",
-            out_tmpl,
-            url,
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
-        stderr = completed.stderr.strip() or completed.stdout.strip() or "unknown error"
-        engine.log("Could not download audio.", "warning")
-        engine.log(stderr, "warning")
+    try:
+        completed = subprocess.run(
+            [
+                python_executable,
+                "-m",
+                yt_dlp_module,
+                "--extract-audio",
+                "--audio-format",
+                "wav",
+                "--audio-quality",
+                "0",
+                "--no-playlist",
+                "--no-progress",
+                "--force-overwrites",
+                "--output",
+                out_tmpl,
+                url,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if completed.returncode != 0:
+            stderr = (
+                completed.stderr.strip() or completed.stdout.strip() or "unknown error"
+            )
+            engine.log("Could not download audio.", "warning")
+            engine.log(stderr, "warning")
+            engine.error_callback("Could not download YouTube audio")
+            return None
+    except subprocess.TimeoutExpired:
+        engine.log("Timed out downloading audio.", "warning")
         engine.error_callback("Could not download YouTube audio")
         return None
 
@@ -2358,6 +2367,8 @@ def playback_worker(engine: Celune) -> None:
                 source_done.clear()
                 _playback_source_statuses(engine).clear()
                 _playback_source_meta(engine).clear()
+                release_pipeline(engine)
+                engine.idle_callback()
                 break
 
             ready_ids = [
