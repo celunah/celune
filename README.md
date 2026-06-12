@@ -1,5 +1,5 @@
 <!-- markdownlint-disable-next-line MD041 -->
-![Celune](./resources/branding/celune_wordmark_transparent.png "Celune wordmark")
+![Celune](./resources/branding/celune_wordmark.png "Celune wordmark")
 
 ---
 

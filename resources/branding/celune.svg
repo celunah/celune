@@ -2,7 +2,7 @@
     <defs>
         <radialGradient id="moon-gradient" cx="40%" cy="50%">
             <stop offset="0%" stop-color="#cebaff" />
-            <stop offset="100%" stop-color="#baa4ff" />
+            <stop offset="100%" stop-color="#a384ff" />
         </radialGradient>
 
         <mask id="crescent-mask" maskUnits="userSpaceOnUse">
