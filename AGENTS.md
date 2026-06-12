@@ -22,27 +22,9 @@ The project targets Windows and Linux, supports Python 3.12 and 3.13, and is des
 
 ## Typing Style
 
-Prefer classic typing syntax used by the project:
+Prefer classic typing syntax like `Union[str, int]` or `Optional[str]`, rather than using PEP 604 syntax like `str | int` or `str | None`.
 
-```python
-Union[str, int]
-Optional[str]
-```
-
-Do not use PEP 604 syntax unless explicitly requested:
-
-```python
-str | int
-str | None
-```
-
-Avoid using these unless explicitly required by the function or external API:
-
-```python
-Any
-object
-T
-```
+Avoid using broad types like `Any`, `object` or `T`, unless the function explicitly requires a broad type.
 
 Prefer concrete, meaningful types.
 
@@ -59,35 +41,54 @@ Only hardcode or redefine values when importing the existing value would create 
 The canonical CI command is:
 
 ```bash
-uv run python scripts/run_ci.py
+python scripts/run_ci.py
 ```
 
 On Windows, the path may appear as:
 
 ```powershell
-uv run python scripts\run_ci.py
+python scripts\run_ci.py
 ```
+
+Prefixing it with `uv run` is not required, as it runs the CI commands with it already.
 
 Always use the CI script for validation unless explicitly instructed otherwise.
 
-Do not replace it with direct calls to:
+Do not use:
 
-```bash
-pytest
-ruff
-pylint
-pyrefly
+```text
+- .\.venv\Scripts\python.exe
+- python -m pytest
+- pytest
+- uv cache overrides
+- UV_CACHE_DIR
+- etc.
 ```
 
-Never set or inject:
-
-```bash
-UV_CACHE_DIR
-```
-
-or similar uv cache/environment overrides unless explicitly requested.
+If for any reason any `uv` command exits with `Access is denied.` or `Permission denied` errors, apply `--no-cache` to `uv`, and try again.
 
 Do not modify the execution environment to work around failures.
+
+Before CI, format the repository with `uv run ruff format .`.
+
+If the CI command appears to have hung, say it outright instead of trying to salvage it.
+
+After each task, run `scripts/update_docstrings.py` and then replace placeholders in docstrings like:
+
+```text
+Describe this function.
+
+Args:
+    value: Value for `value`.
+    
+Raises:
+    RuntimeError: If `RuntimeError` needs to be raised.
+    
+Returns:
+    type: Result of this function.
+```
+
+with proper documentation, while preserving the docstring format.
 
 If CI fails or times out, report the actual failure clearly. Do not claim success.
 
@@ -173,5 +174,5 @@ When unsure, prefer this order:
 2. Preserve current behavior.
 3. Avoid new dependencies.
 4. Keep the TUI, WebUI, API, and runtime consistent.
-5. Run `uv run python scripts/run_ci.py`.
+5. Run `python scripts/run_ci.py`.
 6. Report failures honestly.

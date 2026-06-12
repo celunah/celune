@@ -154,7 +154,7 @@ class Mini(CeluneBackend[TTSModel]):
             lang: The language identifier for differentiating models by language.
 
         Returns:
-            A language-specific model identifier or "en" if no match was found.
+            str: A language-specific model identifier, or ``"en"`` if no match was found.
         """
         alias_to_code: Mapping[str, str] = {
             "english": "en",
@@ -335,7 +335,7 @@ class Mini(CeluneBackend[TTSModel]):
             lang: The language identifier for differentiating models by language.
 
         Returns:
-            Whether Celune should reload a new Pocket TTS language model.
+            bool: Whether Celune should reload a new Pocket TTS language model.
         """
         return self.resolve_generation_language(lang) != self._loaded_language
 

@@ -244,6 +244,17 @@ class ApiWebUITests(TestCase):
         self.assertIn("--celune-primary:", api.webui_theme_style)
         self.assertIn('rel="icon"', api.WEBUI_HEAD)
 
+    def test_webui_css_keeps_log_panel_flexible(self) -> None:
+        """Verify the stylesheet keeps the log panel as the growable shell region."""
+        self.assertIn("#celune-log-panel", api.WEBUI_CSS)
+        self.assertIn("flex: 1 1 auto;", api.WEBUI_CSS)
+        self.assertIn("min-height: 0;", api.WEBUI_CSS)
+        self.assertIn(
+            "@media (max-width: 768px), (any-pointer: coarse), (hover: none)",
+            api.WEBUI_CSS,
+        )
+        self.assertNotIn("margin-top: auto;", api.WEBUI_CSS)
+
     def test_webui_probe_logs_sleep_transition(self) -> None:
         """Verify the browser log mirrors the sleep transition message."""
         api.bound_celune = cast(

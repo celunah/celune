@@ -622,7 +622,11 @@ class UIStartupTests(TestCase):
                 self.rendered = ""
 
             def update(self, value: str) -> None:
-                """Update the marquee label text."""
+                """Update the marquee label text.
+
+                Args:
+                    value: New rendered text captured from the UI update call.
+                """
                 self.rendered = value
 
         ui = CeluneUI()
@@ -651,7 +655,11 @@ class UIStartupTests(TestCase):
                 self.rendered = ""
 
             def update(self, value: str) -> None:
-                """Update the marquee label text."""
+                """Update the marquee label text.
+
+                Args:
+                    value: New rendered text captured from the UI update call.
+                """
                 self.rendered = value
 
         ui = CeluneUI()
@@ -677,7 +685,11 @@ class UIStartupTests(TestCase):
                 self.rendered = ""
 
             def update(self, value: str) -> None:
-                """Update the marquee label text."""
+                """Update the marquee label text.
+
+                Args:
+                    value: New rendered text captured from the UI update call.
+                """
                 self.rendered = value
 
         ui = CeluneUI()

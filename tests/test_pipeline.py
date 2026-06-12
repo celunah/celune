@@ -387,7 +387,11 @@ class PipelineTests(TestCase):
 
             @staticmethod
             def read() -> bytes:
-                """Read a mock video title."""
+                """Read a mock video title.
+
+                Returns:
+                    bytes: Mock JSON payload returned by the fake HTTP response.
+                """
                 return b'{"title":"Fixture Video Title"}'
 
         with mock.patch("celune.pipeline.urlopen", return_value=FakeResponse()):

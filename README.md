@@ -320,34 +320,6 @@ Without this, Celune may require elevated permissions or fall back to slower beh
 See [API.md](./API.md) for REST API configuration, authentication, endpoints, and cURL examples.
 The API allows programmatic usage of all Celune features. It can be used both as a public and local interface.
 
-## Screenshots
-
-The below images showcase Celune's user interface.
-
-### Before init
-
-[![Before init](./demos/init.png)](./demos/init.png)
-
-### Ready
-
-[![Ready](./demos/ready.png)](./demos/ready.png)
-
-### Talking
-
-[![Talking](./demos/speaking.png)](./demos/speaking.png)
-
-### Change voice
-
-[![Change voice](./demos/change_voice.png)](./demos/change_voice.png)
-
-### Commands
-
-[![Commands](./demos/commands.png)](./demos/commands.png)
-
-### Extension invoke
-
-[![Extension invoke](./demos/extensions.png)](./demos/extensions.png)
-
 > *"Your voice, your way."*
 
 ![Celune 88x31 badge](./resources/branding/celune_88x31_206.png "enlightened by Celune")

@@ -18,6 +18,43 @@ CI_PATHS = ((".",), ("celune", "tests"), ("celune", "tests"), ("tests",))
 cmds_failed = 0
 total_errors = []
 
+_CACHE_PERMISSION_MARKERS = (
+    "Access is denied.",
+    "Access is denied",
+    "Permission denied",
+)
+
+
+def _run_uv_command(*cmd: str) -> None:
+    """Run one uv-backed CI command, retrying without cache on permission errors."""
+    base_cmd = ["uv", "run", *cmd]
+    try:
+        subprocess.run(
+            base_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+            text=True,
+            timeout=300,
+        )
+        return
+    except subprocess.CalledProcessError as failed:
+        combined_output = f"{failed.stdout}\n{failed.stderr}"
+        if not any(marker in combined_output for marker in _CACHE_PERMISSION_MARKERS):
+            raise
+    except subprocess.TimeoutExpired:
+        raise
+
+    subprocess.run(
+        ["uv", "--no-cache", "run", *cmd],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+        text=True,
+        timeout=300,
+    )
+
+
 if len(CI_COMMANDS) != len(CI_PATHS):
     raise RuntimeError(
         f"CI configuration mismatch: {len(CI_COMMANDS)} commands for {len(CI_PATHS)} path entries"
@@ -30,14 +67,7 @@ for cmd, paths in tzip(
     bar_format="{l_bar}{bar} | {n_fmt}/{total_fmt}",
 ):
     try:
-        subprocess.run(
-            ["uv", "run", *cmd, *paths],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True,
-            text=True,
-            timeout=300,
-        )
+        _run_uv_command(*cmd, *paths)
     except subprocess.CalledProcessError as failed:
         cmds_failed += 1
         if failed.stdout:
