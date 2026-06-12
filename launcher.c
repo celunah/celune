@@ -16,6 +16,7 @@
 #include <stdlib.h>
 
 #define printfe(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
+#define EXIT_PENDING_UPDATE 7
 
 #ifdef __linux__
 static int file_exists(const char *path) {
@@ -93,6 +94,53 @@ int get_exe_dir(char *out, size_t size) {
     }
 
     return 0;
+}
+
+static int spawn_update_helper_unix(
+    const char *python,
+    const char *main_py,
+    const char *launcher_path,
+    const char *repo_root,
+    int argc,
+    char **argv
+) {
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork failed");
+        return 0;
+    }
+
+    if (pid == 0) {
+        char pid_text[32];
+        snprintf(pid_text, sizeof(pid_text), "%ld", (long)getppid());
+
+        char **args = malloc(((size_t)argc + 5U) * sizeof(char *));
+        if (args == NULL) {
+            perror("malloc failed");
+            _exit(1);
+        }
+
+        args[0] = (char *)python;
+        args[1] = (char *)main_py;
+        args[2] = "__apply_update";
+        args[3] = pid_text;
+        args[4] = (char *)launcher_path;
+        for (int i = 1; i < argc; i++) {
+            args[i + 4] = argv[i];
+        }
+        args[argc + 4] = NULL;
+
+        if (chdir(repo_root) != 0) {
+            perror("chdir failed");
+            _exit(1);
+        }
+
+        execv(args[0], args);
+        perror("execv failed");
+        _exit(1);
+    }
+
+    return 1;
 }
 #elif defined(_WIN32)
 int get_exe_dir(char *out, size_t size) {
@@ -277,12 +325,70 @@ static int append_windows_arg(char *dest, size_t size, size_t *offset, const cha
 
     return append_text(dest, size, offset, "\"");
 }
+
+static int spawn_update_helper_windows(
+    const char *python,
+    const char *main_py,
+    const char *launcher_path,
+    const char *repo_root,
+    int argc,
+    char **argv
+) {
+    STARTUPINFOA si = {0};
+    PROCESS_INFORMATION pi = {0};
+    char cmd[5200];
+    char pid_text[32];
+    size_t offset = 0;
+
+    si.cb = sizeof(si);
+    cmd[0] = '\0';
+    snprintf(pid_text, sizeof(pid_text), "%lu", (unsigned long)GetCurrentProcessId());
+
+    if (!append_windows_arg(cmd, sizeof(cmd), &offset, python) ||
+        !append_text(cmd, sizeof(cmd), &offset, " ") ||
+        !append_windows_arg(cmd, sizeof(cmd), &offset, main_py) ||
+        !append_text(cmd, sizeof(cmd), &offset, " ") ||
+        !append_windows_arg(cmd, sizeof(cmd), &offset, "__apply_update") ||
+        !append_text(cmd, sizeof(cmd), &offset, " ") ||
+        !append_windows_arg(cmd, sizeof(cmd), &offset, pid_text) ||
+        !append_text(cmd, sizeof(cmd), &offset, " ") ||
+        !append_windows_arg(cmd, sizeof(cmd), &offset, launcher_path)) {
+        return 0;
+    }
+
+    for (int i = 1; i < argc; i++) {
+        if (!append_text(cmd, sizeof(cmd), &offset, " ") ||
+            !append_windows_arg(cmd, sizeof(cmd), &offset, argv[i])) {
+            return 0;
+        }
+    }
+
+    if (!CreateProcessA(
+            NULL,
+            cmd,
+            NULL,
+            NULL,
+            FALSE,
+            0,
+            NULL,
+            repo_root,
+            &si,
+            &pi
+        )) {
+        return 0;
+    }
+
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return 1;
+}
 #endif
 
 #ifdef __linux__
 int run_unix(int argc, char **argv) {
     char base[1024];
     char repo_root[1024];
+    char launcher[1024];
     char target[1024];
     char python[1024];
     char main_py[1024];
@@ -300,12 +406,14 @@ int run_unix(int argc, char **argv) {
         return 1;
     }
 
+    int launcher_len = snprintf(launcher, sizeof(launcher), "%s/celune", base);
     int target_len = snprintf(target, sizeof(target), "%s/celune-bin", base);
     int python_len = snprintf(python, sizeof(python), "%s/.venv/bin/python", repo_root);
     int main_py_len = snprintf(main_py, sizeof(main_py), "%s/main.py", repo_root);
     int setup_py_len = snprintf(setup_py, sizeof(setup_py), "%s/setup.py", repo_root);
 
-    if (target_len < 0 || (size_t)target_len >= sizeof(target) ||
+    if (launcher_len < 0 || (size_t)launcher_len >= sizeof(launcher) ||
+        target_len < 0 || (size_t)target_len >= sizeof(target) ||
         python_len < 0 || (size_t)python_len >= sizeof(python) ||
         main_py_len < 0 || (size_t)main_py_len >= sizeof(main_py) ||
         setup_py_len < 0 || (size_t)setup_py_len >= sizeof(setup_py)) {
@@ -346,7 +454,15 @@ int run_unix(int argc, char **argv) {
             waitpid(pid, &status, 0);
 
             if (WIFEXITED(status)) {
-                return WEXITSTATUS(status);
+                int exit_code = WEXITSTATUS(status);
+                if (exit_code == EXIT_PENDING_UPDATE) {
+                    if (!spawn_update_helper_unix(python, main_py, launcher, repo_root, argc, argv)) {
+                        printfe("Celune could not start its update helper.\n");
+                        return 1;
+                    }
+                    return 0;
+                }
+                return exit_code;
             }
             else if (WIFSIGNALED(status)) {
                 int sig = WTERMSIG(status);
@@ -468,6 +584,7 @@ int run_unix(int argc, char **argv) {
 #elif defined(_WIN32)
 int run_windows(int argc, char **argv) {
     char base[1024];
+    char launcher[1024];
     char target[1024];
     char repo_root[1024];
     char pyvenv_cfg[1200];
@@ -475,6 +592,8 @@ int run_windows(int argc, char **argv) {
     char python_dlls[1200];
     char python_lib[1200];
     char venv_root[1200];
+    char venv_python[1400];
+    char main_py[1400];
     char site_packages[1400];
     char setuptools_vendor[1600];
     char nuitka_pythonpath[5200];
@@ -487,8 +606,10 @@ int run_windows(int argc, char **argv) {
         return 1;
     }
 
+    int launcher_len = snprintf(launcher, sizeof(launcher), "%s\\celune.exe", base);
     int target_len = snprintf(target, sizeof(target), "%s\\celune-bin.exe", base);
-    if (target_len < 0 || (size_t)target_len >= sizeof(target)) {
+    if (launcher_len < 0 || (size_t)launcher_len >= sizeof(launcher) ||
+        target_len < 0 || (size_t)target_len >= sizeof(target)) {
         printfe("Celune cannot start in this location, the path is too long.\n");
         return 1;
     }
@@ -506,10 +627,14 @@ int run_windows(int argc, char **argv) {
 
     int pyvenv_cfg_len = snprintf(pyvenv_cfg, sizeof(pyvenv_cfg), "%s\\.venv\\pyvenv.cfg", repo_root);
     int venv_root_len = snprintf(venv_root, sizeof(venv_root), "%s\\.venv", repo_root);
+    int venv_python_len = snprintf(venv_python, sizeof(venv_python), "%s\\Scripts\\python.exe", venv_root);
+    int main_py_len = snprintf(main_py, sizeof(main_py), "%s\\main.py", repo_root);
     int site_packages_len = snprintf(site_packages, sizeof(site_packages), "%s\\Lib\\site-packages", venv_root);
     int setuptools_vendor_len = snprintf(setuptools_vendor, sizeof(setuptools_vendor), "%s\\setuptools\\_vendor", site_packages);
     if (pyvenv_cfg_len < 0 || (size_t)pyvenv_cfg_len >= sizeof(pyvenv_cfg) ||
         venv_root_len < 0 || (size_t)venv_root_len >= sizeof(venv_root) ||
+        venv_python_len < 0 || (size_t)venv_python_len >= sizeof(venv_python) ||
+        main_py_len < 0 || (size_t)main_py_len >= sizeof(main_py) ||
         site_packages_len < 0 || (size_t)site_packages_len >= sizeof(site_packages) ||
         setuptools_vendor_len < 0 || (size_t)setuptools_vendor_len >= sizeof(setuptools_vendor)) {
         printfe("Celune cannot start in this location, the path is too long.\n");
@@ -619,6 +744,18 @@ int run_windows(int argc, char **argv) {
 
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+
+    if ((int)exit_code == EXIT_PENDING_UPDATE) {
+        if (!file_exists(venv_python) || !file_exists(main_py)) {
+            printfe("Celune could not find the Python helper needed to apply updates.\n");
+            return 1;
+        }
+        if (!spawn_update_helper_windows(venv_python, main_py, launcher, repo_root, argc, argv)) {
+            printfe("Celune could not start its update helper.\n");
+            return 1;
+        }
+        return 0;
+    }
 
     return (int)exit_code;
 }
