@@ -40,7 +40,7 @@ Celune is licensed under the [MIT license](https://opensource.org/license/mit), 
 
 Each voice is demonstrated using a short introduction and a longer narration sample to showcase consistency, pacing, and expressiveness.
 
-### Qwen
+### Qwen3-TTS
 
 | Voice | Intro | Narration |
 |---|---|---|
@@ -58,7 +58,7 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 | Bold | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_voxcpm2.wav) |
 | Upbeat | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_voxcpm2.wav) |
 
-### Celune Mini
+### Celune Mini (Pocket TTS)
 
 | Voice | Intro | Narration |
 |---|---|---|
@@ -121,10 +121,10 @@ The terminal should support True Color, especially when using voice packs that d
 
 Terminals not supporting True Color may look incorrect, as Textual will fall back to a lower color mode.
 
-If Celune looks incorrect while your terminal supports True Color, run the following command:
+If Celune looks incorrect while your terminal supports True Color, run Celune with the following command:
 
 ```bash
-export COLORTERM=truecolor
+COLORTERM=truecolor celune
 ```
 
 If Rubber Band is not installed or fails to run, Celune will speak at normal speed, and speed controls will be unavailable.
@@ -319,6 +319,11 @@ Without this, Celune may require elevated permissions or fall back to slower beh
 
 See [API.md](./API.md) for REST API configuration, authentication, endpoints, and cURL examples.
 The API allows programmatic usage of all Celune features. It can be used both as a public and local interface.
+
+## Web UI
+
+Celune exposes a web interface for remote access to Celune. It reuses the Celune API commands to provide an interface for control.
+It can be accessed via `/ui` on Celune's exposed API URL.
 
 > *"Your voice, your way."*
 
