@@ -6,10 +6,9 @@ from copy import deepcopy
 from typing import Optional
 from collections.abc import Mapping
 
-from .constants import JSONSerializable
+from .typing.common import Config, JSONSerializable
 
 ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
-type Config = dict[str, JSONSerializable]
 
 
 def env_bool(name: str, fallback: bool = False) -> bool:

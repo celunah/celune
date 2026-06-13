@@ -288,6 +288,25 @@ class CeluneCoreTests(TestCase):
 
         self.assertEqual(resolve.call_args.args[0], "mini")
 
+    def test_low_vram_restricts_dotstts_to_mini(self) -> None:
+        """Verify low VRAM falls back to mini when dots.tts is requested."""
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+            mock.patch(
+                "celune.celune.resolve_backend",
+                return_value=FakeBackend(log=lambda _msg, _severity="info": None),
+            ) as resolve,
+        ):
+            celune = Celune(
+                config={"vram": "low"},
+                tts_backend="dotstts",
+            )
+            self.addCleanup(self._close_celune, celune)
+
+        self.assertEqual(resolve.call_args.args[0], "mini")
+
     def test_voice_prompt_support_tracks_qwen3_0_6b_capability(self) -> None:
         """Verify voice prompts are disabled for the low-tier Qwen3 clone model."""
         celune = self._make_celune({})

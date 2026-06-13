@@ -71,7 +71,15 @@ Do not modify the execution environment to work around failures.
 
 Before CI, format the repository with `uv run ruff format .`.
 
-If the CI command appears to have hung, say it outright instead of trying to salvage it.
+Expected CI runtime is 3-5 minutes.
+
+If CI runtime exceeds 5 minutes:
+- Assume it may have stalled.
+- Stop it from running any further.
+- Report that the CI has taken too long.
+- Do not try to extend any timeouts.
+- Do not try to work around the problem.
+- Wait for any further guidance.
 
 After each task, run `scripts/update_docstrings.py` and then replace placeholders in docstrings like:
 

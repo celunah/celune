@@ -5,10 +5,9 @@ import tempfile
 import contextlib
 from pathlib import Path
 from collections.abc import Iterator, Mapping
-from typing import Callable, Optional, Protocol, cast
+from typing import Callable, Optional, cast
 
 import yaml
-import torch
 import numpy as np
 import numpy.typing as npt
 from pocket_tts import TTSModel
@@ -18,42 +17,8 @@ from ..paths import temp_data_dir
 from ..utils import custom_assert
 from ..exceptions import BackendError
 from ..cevoice import default_loader, CEVoiceLoader
+from ..typing.backends import MiniModel, MiniPromptState
 from .base import CeluneBackend, cached_hf_snapshot_path
-
-type MiniPromptState = dict[str, dict[str, torch.Tensor]]
-
-
-class MiniModel(Protocol):
-    """Pocket TTS model surface used by Celune's mini backend."""
-
-    sample_rate: int
-
-    def get_state_for_audio_prompt(self, audio_conditioning: str) -> MiniPromptState:
-        """Return a reusable prompt state for one reference audio path.
-
-        Args:
-            audio_conditioning: The audio conditioning string value.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-    def generate_audio_stream(
-        self,
-        model_state: MiniPromptState,
-        text_to_generate: str,
-    ) -> Iterator[torch.Tensor]:
-        """Yield streamed audio chunks for one prompt state and text.
-
-        Args:
-            model_state: The current prompt state.
-            text_to_generate: The text to be generated.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
 
 
 class Mini(CeluneBackend[TTSModel]):

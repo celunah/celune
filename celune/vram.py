@@ -4,16 +4,24 @@
 import math
 from dataclasses import dataclass
 from collections.abc import Mapping
-from typing import Literal, Optional, cast
+from typing import Optional, cast
 
 import torch
 
 from .constants import JSONSerializable, VRAM_REQUIREMENTS, TIERS
-
-type VramTier = Literal["low", "medium", "high", "xhigh"]
+from .typing.common import VramTier
 
 QWEN3_0_6B_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 QWEN3_1_7B_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+
+# fake is only included to satisfy the test suite
+# it is not a real backend
+BACKENDS_ALLOWED: Mapping[VramTier, list[str]] = {
+    "low": ["mini", "qwen3", "fake"],
+    "medium": ["mini", "qwen3", "fake"],
+    "high": ["mini", "qwen3", "dotstts", "voxcpm2", "fake"],
+    "xhigh": ["mini", "qwen3", "dotstts", "voxcpm2", "fake"],
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +113,7 @@ def resolve_vram_preset(
         return VramPreset(
             tier="low",
             default_backend="mini",
-            allow_voxcpm2=False,
+            allow_voxcpm2="voxcpm2" in BACKENDS_ALLOWED["low"],
             qwen3_clone_model_id=QWEN3_0_6B_MODEL,
             persona_enabled=False,
             persona_quantization="4bit",
@@ -116,7 +124,7 @@ def resolve_vram_preset(
         return VramPreset(
             tier="medium",
             default_backend="qwen3",
-            allow_voxcpm2=False,
+            allow_voxcpm2="voxcpm2" in BACKENDS_ALLOWED["medium"],
             qwen3_clone_model_id=QWEN3_1_7B_MODEL,
             persona_enabled=False,
             persona_quantization="4bit",
@@ -127,7 +135,7 @@ def resolve_vram_preset(
         return VramPreset(
             tier="high",
             default_backend="qwen3",
-            allow_voxcpm2=True,
+            allow_voxcpm2="voxcpm2" in BACKENDS_ALLOWED["high"],
             qwen3_clone_model_id=QWEN3_1_7B_MODEL,
             persona_enabled=True,
             persona_quantization="4bit",
@@ -137,7 +145,7 @@ def resolve_vram_preset(
     return VramPreset(
         tier="xhigh",
         default_backend="qwen3",
-        allow_voxcpm2=True,
+        allow_voxcpm2="voxcpm2" in BACKENDS_ALLOWED["xhigh"],
         qwen3_clone_model_id=QWEN3_1_7B_MODEL,
         persona_enabled=True,
         persona_quantization="8bit",
@@ -163,9 +171,7 @@ def resolve_backend_name(
         return preset.default_backend
 
     normalized = requested_backend.strip().lower()
-    if normalized == "voxcpm2" and not preset.allow_voxcpm2:
-        return preset.default_backend
-    if normalized in {"qwen3", "voxcpm2", "mini"}:
+    if normalized in BACKENDS_ALLOWED[preset.tier]:
         return normalized
     return preset.default_backend
 
@@ -186,12 +192,4 @@ def backend_allowed(
     """
     normalized = backend_name.strip().lower()
     preset = resolve_vram_preset(config)
-    if normalized == "qwen3":
-        return True
-    if normalized == "voxcpm2":
-        return preset.allow_voxcpm2
-    if normalized == "mini":
-        return True
-    if normalized == "fake":  # NOTE: only for testing!
-        return True
-    return False
+    return normalized in BACKENDS_ALLOWED[preset.tier]

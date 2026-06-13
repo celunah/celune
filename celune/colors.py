@@ -7,14 +7,13 @@ from typing import Final, Optional
 
 from textual.theme import Theme
 
+from .typing.common import RGB
 from .utils import to_rgb
 
 DEFAULT_BACKGROUND: Final[str] = "#1d1826"
 DEFAULT_ACCENT: Final[str] = "#cebaff"
 FADED_ACCENT: Final[str] = "#9c88ce"
 ERROR: Final[str] = "#ce2006"
-
-type RGB = tuple[int, int, int]
 
 
 def random_hex() -> str:

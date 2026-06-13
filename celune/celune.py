@@ -6,34 +6,55 @@ import time
 import queue
 import threading
 import contextlib
-from dataclasses import dataclass, field
 from pathlib import Path
-from collections.abc import Iterator
-from typing import Optional, Callable, Protocol, Union, Any, cast
+from typing import Optional, Callable, Union, cast
 
 import torch
 import numpy as np
 import numpy.typing as npt
-import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils.logging import disable_progress_bar
 from transformers.utils import logging as hf_logging
-from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from huggingface_hub.utils import disable_progress_bars
 
 from . import __version__
+from .dataclasses.celune import (
+    CELUNE_CONSTANT_PROPERTIES,
+    CELUNE_FORWARDED_PROPERTIES,
+    CeluneAudioState,
+    CeluneBackendState,
+    CeluneCallbackState,
+    CeluneModelState,
+    CelunePipelineState,
+    CeluneRuntimeState,
+    CeluneVoiceState,
+)
+from .dataclasses.properties import (
+    bind_constant_properties,
+    bind_forwarded_properties,
+)
 from .chroma import AudioRGBGlow
 from .backends.qwen3 import Qwen3
 from .extensions.base import CeluneContext
 from .extensions.manager import CeluneExtensionManager
-from .dsp import StreamingPedalboardReverb
 from .config import Config, config_bool, config_value
 from .paths import project_root
 from .runtime import log_runtime_banner, validate_runtime
-from .backends import BackendModel, CeluneBackend, resolve_backend
+from .backends import CeluneBackend, resolve_backend
 from .exceptions import NotAvailableError, WarmupError, BackendError
 from .modeling import normalizer_device, load_normalizer_components
-from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID, PipelineStates
+from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID
+from .typing.celune import (
+    CeluneStateAccessors,
+    Generative,
+    InputStateCallback,
+    MessageCallback,
+    NormalizerTokenizer,
+    ProgressCallback,
+    ReleasableObject,
+    VoiceLockStateCallback,
+)
 from .utils import format_number, format_error, discard, is_port_usable, custom_assert
 from .vram import (
     QWEN3_0_6B_MODEL,
@@ -52,7 +73,6 @@ from .persona.impl import (
     persona_quantization,
 )
 from .cevoice import (
-    CEVoicePersona,
     announce_default_bundle,
     bundle_character_name,
     default_bundle_path,
@@ -61,9 +81,6 @@ from .cevoice import (
     select_voice_bundle,
 )
 from .pipeline import (
-    AudioQueueItem,
-    SpeechStreamQueue,
-    TextQueueItem,
     acquire_pipeline,
     clear_queue,
     close as close_pipeline,
@@ -80,6 +97,7 @@ from .pipeline import (
     split_text,
     play_readiness_signal,
 )
+from .typing.pipeline import SpeechStreamQueue
 
 
 def _config_str(value: JSONSerializable) -> Optional[str]:
@@ -98,64 +116,7 @@ def _config_int(value: JSONSerializable, default: int) -> int:
     raise TypeError("config value cannot be converted to int")
 
 
-class _SupportsClose(Protocol):
-    def close(self) -> None:
-        """Release any resources owned by the object.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-
-class _SupportsUnload(Protocol):
-    def unload(self) -> None:
-        """Unload any optional runtime state owned by the object.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-
-class _Generative(Protocol):
-    def generate(self, **kwargs: Any) -> torch.Tensor:
-        """Generate token IDs from the provided model inputs.
-
-        Args:
-            kwargs: Backend-specific generation keyword arguments.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-    def device(self) -> Union[torch.device, str]:
-        """Return the device used by the generative model.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-    def parameters(self) -> Iterator[torch.nn.Parameter]:
-        """Iterate over the model parameters.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-
-type _ReleasableObject = Union[
-    _SupportsClose,
-    _SupportsUnload,
-    PreTrainedModel,
-    PreTrainedTokenizerBase,
-]
-
-
-def _release_loaded_object(value: _ReleasableObject) -> None:
+def _release_loaded_object(value: ReleasableObject) -> None:
     """Best-effort release hook for one loaded runtime object."""
     close = getattr(value, "close", None)
     if callable(close):
@@ -169,211 +130,7 @@ def _release_loaded_object(value: _ReleasableObject) -> None:
             unload()
 
 
-class NormalizerTokenizer(Protocol):
-    """Tokenizer behavior CeluneNorm uses during normalization."""
-
-    unk_token_id: Optional[int]
-    pad_token_id: Optional[int]
-    eos_token_id: Optional[int]
-
-    def convert_tokens_to_ids(self, tokens: str) -> Optional[int]:
-        """Convert one token to its integer ID.
-
-        Args:
-            tokens: A token to convert to ID.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-    def __call__(
-        self,
-        text: str,
-        *,
-        return_tensors: str,
-        add_special_tokens: bool,
-    ) -> BatchEncoding:
-        """Tokenize text for model input."""
-        raise NotImplementedError("protocol not defined")
-
-    def decode(
-        self,
-        token_ids: torch.Tensor,
-        *,
-        skip_special_tokens: bool,
-    ) -> Union[str, list[str]]:
-        """Decode generated token IDs.
-
-        Args:
-            token_ids: Token IDs to decode.
-            skip_special_tokens: Whether special tokens should be skipped while decoding.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-
-class MessageCallback(Protocol):
-    """Callback accepting a message and optional severity."""
-
-    def __call__(self, msg: str, severity: str = "info") -> None:
-        """Handle a message emitted by Celune."""
-        raise NotImplementedError("protocol not defined")
-
-
-class InputStateCallback(Protocol):
-    """Callback accepting either positional or named lock state."""
-
-    def __call__(self, locked: bool) -> None:
-        """Handle input lock-state changes."""
-        raise NotImplementedError("protocol not defined")
-
-
-class VoiceLockStateCallback(Protocol):
-    """Callback accepting either positional or named lock state."""
-
-    def __call__(self, locked: bool) -> None:
-        """Handle voice lock-state changes."""
-        raise NotImplementedError("protocol not defined")
-
-
-class ProgressCallback(Protocol):
-    """Callback accepting progress and total values."""
-
-    def __call__(self, progress: Optional[float], total: Optional[float]) -> None:
-        """Handle a progress update emitted by Celune."""
-        raise NotImplementedError("protocol not defined")
-
-
-@dataclass
-class CeluneCallbackState:
-    """Callbacks Celune uses to report state outward."""
-
-    log_callback: MessageCallback
-    status_callback: MessageCallback
-    error_callback: Callable[[str], None]
-    idle_callback: Callable[[], None]
-    queue_avail_callback: Callable[[], None]
-    voice_changed_callback: Callable[[str], None]
-    change_input_state_callback: InputStateCallback
-    change_voice_lock_state_callback: VoiceLockStateCallback
-    progress_callback: ProgressCallback
-
-
-@dataclass
-class CeluneBackendState:
-    """Backend selection and configuration state."""
-
-    config: Config
-    backend_spec: Optional[Union[str, type[CeluneBackend]]] = None
-    backend_kwargs: dict[str, JSONSerializable] = field(default_factory=dict)
-    backend: Optional[CeluneBackend] = None
-    tts_backend: str = ""
-    chunk_size: int = 0
-    language: str = "Auto"
-    dev: bool = False
-    use_normalization: bool = False
-
-
-@dataclass
-class CeluneModelState:
-    """Loaded TTS and normalizer model state."""
-
-    model: Optional[BackendModel] = None
-    model_name: str = ""
-    llm: Optional[PreTrainedModel] = None
-    tokenizer: Optional[PreTrainedTokenizerBase] = None
-    last_warmup_error: Optional[Exception] = None
-    normalizer_load_epoch: int = 0
-
-
-@dataclass
-class CeluneVoiceState:
-    """Voice and character-related state."""
-
-    current_voice: Optional[str] = None
-    current_character: Optional[str] = None
-    current_character_persona: Optional[CEVoicePersona] = None
-    voice_bundle_is_default: bool = True
-    persona_history: list[dict[str, str]] = field(default_factory=list)
-    persona_attachments: list[dict[str, str]] = field(default_factory=list)
-    voices: tuple[str, ...] = ()
-    voice_prompt: Optional[str] = None
-
-
-@dataclass
-class CelunePipelineState:
-    """Queues, worker threads, locks, and playback coordination."""
-
-    text_queue: queue.Queue[TextQueueItem] = field(default_factory=queue.Queue)
-    audio_queue: queue.Queue[AudioQueueItem] = field(default_factory=queue.Queue)
-    playback_thread: Optional[threading.Thread] = None
-    generation_thread: Optional[threading.Thread] = None
-    api_thread: Optional[threading.Thread] = None
-    persona_thread: Optional[threading.Thread] = None
-    queue_lock: threading.Lock = field(default_factory=threading.Lock)
-    utterance_force_stop: threading.Event = field(default_factory=threading.Event)
-    next_playback_source_id: int = 0
-    playback_source_statuses: dict[int, str] = field(default_factory=dict)
-    playback_source_meta: dict[int, dict[str, Union[str, float]]] = field(
-        default_factory=dict
-    )
-    playback_progress_last_emit_at: float = 0.0
-    playback_progress_last_source_id: int = 0
-    model_ready: threading.Event = field(default_factory=threading.Event)
-    playback_done: threading.Event = field(default_factory=threading.Event)
-    say_lock: threading.Lock = field(default_factory=threading.Lock)
-    wake_lock: threading.Lock = field(default_factory=threading.Lock)
-    model_lock: threading.RLock = field(default_factory=threading.RLock)
-    exit_requested: bool = False
-
-
-@dataclass
-class CeluneAudioState:
-    """Audio output and effect-related state."""
-
-    stream: Optional[sd.OutputStream] = None
-    current_sr: Optional[int] = None
-    audio_unavailable: bool = False
-    can_use_rubberband: bool = True
-    speed: float = 1.0
-    reverb: StreamingPedalboardReverb = field(default_factory=StreamingPedalboardReverb)
-    recently_saved: Optional[str] = None
-    kept_sfx_audio: Optional[npt.NDArray[np.float32]] = None
-
-
-@dataclass
-class CeluneRuntimeState:
-    """Top-level lifecycle and runtime integration state."""
-
-    regenerate: bool = False
-    locked: bool = True
-    loaded: bool = False
-    sleeping: bool = False
-    last_flavor: Optional[str] = None
-    ready_announced: bool = False
-    cur_state: str = "init"
-    is_in_tutorial: bool = False
-    extension_manager: Optional[CeluneExtensionManager] = None
-    glow: Optional[AudioRGBGlow] = None
-    vision: Optional[PersonaClient] = None
-
-
-def _forward_property(container_name: str, field_name: str) -> property:
-    """Create a property that forwards storage to a grouped state container."""
-
-    def getter(instance):
-        return getattr(getattr(instance, container_name), field_name)
-
-    def setter(instance, value) -> None:
-        setattr(getattr(instance, container_name), field_name, value)
-
-    return property(getter, setter)
-
-
-class Celune:
+class Celune(CeluneStateAccessors):
     """The character engine for Celune."""
 
     _instance: Optional["Celune"] = None
@@ -536,98 +293,8 @@ class Celune:
 
         Celune._instance = self
 
-    log_callback = _forward_property("_callbacks", "log_callback")
-    status_callback = _forward_property("_callbacks", "status_callback")
-    error_callback = _forward_property("_callbacks", "error_callback")
-    idle_callback = _forward_property("_callbacks", "idle_callback")
-    queue_avail_callback = _forward_property("_callbacks", "queue_avail_callback")
-    voice_changed_callback = _forward_property("_callbacks", "voice_changed_callback")
-    change_input_state_callback = _forward_property(
-        "_callbacks", "change_input_state_callback"
-    )
-    change_voice_lock_state_callback = _forward_property(
-        "_callbacks", "change_voice_lock_state_callback"
-    )
-    progress_callback = _forward_property("_callbacks", "progress_callback")
-
-    config = _forward_property("_backend_state", "config")
-    _backend_spec = _forward_property("_backend_state", "backend_spec")
-    _backend_kwargs = _forward_property("_backend_state", "backend_kwargs")
-    backend = _forward_property("_backend_state", "backend")
-    tts_backend = _forward_property("_backend_state", "tts_backend")
-    chunk_size = _forward_property("_backend_state", "chunk_size")
-    language = _forward_property("_backend_state", "language")
-    dev = _forward_property("_backend_state", "dev")
-    use_normalization = _forward_property("_backend_state", "use_normalization")
-
-    model = _forward_property("_model_state", "model")
-    model_name = _forward_property("_model_state", "model_name")
-    llm = _forward_property("_model_state", "llm")
-    tokenizer = _forward_property("_model_state", "tokenizer")
-    _last_warmup_error = _forward_property("_model_state", "last_warmup_error")
-    _normalizer_load_epoch = _forward_property("_model_state", "normalizer_load_epoch")
-
-    current_voice = _forward_property("_voice_state", "current_voice")
-    current_character = _forward_property("_voice_state", "current_character")
-    current_character_persona = _forward_property(
-        "_voice_state", "current_character_persona"
-    )
-    voice_bundle_is_default = _forward_property(
-        "_voice_state", "voice_bundle_is_default"
-    )
-    persona_history = _forward_property("_voice_state", "persona_history")
-    persona_attachments = _forward_property("_voice_state", "persona_attachments")
-    voices = _forward_property("_voice_state", "voices")
-    voice_prompt = _forward_property("_voice_state", "voice_prompt")
-
-    text_queue = _forward_property("_pipeline_state", "text_queue")
-    audio_queue = _forward_property("_pipeline_state", "audio_queue")
-    _playback_thread = _forward_property("_pipeline_state", "playback_thread")
-    _generation_thread = _forward_property("_pipeline_state", "generation_thread")
-    _api_thread = _forward_property("_pipeline_state", "api_thread")
-    _persona_thread = _forward_property("_pipeline_state", "persona_thread")
-    _queue_lock = _forward_property("_pipeline_state", "queue_lock")
-    _utterance_force_stop = _forward_property("_pipeline_state", "utterance_force_stop")
-    _next_playback_source_id = _forward_property(
-        "_pipeline_state", "next_playback_source_id"
-    )
-    _playback_source_statuses = _forward_property(
-        "_pipeline_state", "playback_source_statuses"
-    )
-    _playback_source_meta = _forward_property("_pipeline_state", "playback_source_meta")
-    _playback_progress_last_emit_at = _forward_property(
-        "_pipeline_state", "playback_progress_last_emit_at"
-    )
-    _playback_progress_last_source_id = _forward_property(
-        "_pipeline_state", "playback_progress_last_source_id"
-    )
-    _model_ready = _forward_property("_pipeline_state", "model_ready")
-    _playback_done = _forward_property("_pipeline_state", "playback_done")
-    _say_lock = _forward_property("_pipeline_state", "say_lock")
-    _wake_lock = _forward_property("_pipeline_state", "wake_lock")
-    _model_lock = _forward_property("_pipeline_state", "model_lock")
-    _exit_requested = _forward_property("_pipeline_state", "exit_requested")
-
-    _stream = _forward_property("_audio_state", "stream")
-    _current_sr = _forward_property("_audio_state", "current_sr")
-    _audio_unavailable = _forward_property("_audio_state", "audio_unavailable")
-    can_use_rubberband = _forward_property("_audio_state", "can_use_rubberband")
-    speed = _forward_property("_audio_state", "speed")
-    reverb = _forward_property("_audio_state", "reverb")
-    recently_saved = _forward_property("_audio_state", "recently_saved")
-    kept_sfx_audio = _forward_property("_audio_state", "kept_sfx_audio")
-
-    regenerate = _forward_property("_runtime_state", "regenerate")
-    locked = _forward_property("_runtime_state", "locked")
-    loaded = _forward_property("_runtime_state", "loaded")
-    sleeping = _forward_property("_runtime_state", "sleeping")
-    _last_flavor = _forward_property("_runtime_state", "last_flavor")
-    _ready_announced = _forward_property("_runtime_state", "ready_announced")
-    cur_state = _forward_property("_runtime_state", "cur_state")
-    is_in_tutorial = _forward_property("_runtime_state", "is_in_tutorial")
-    extension_manager = _forward_property("_runtime_state", "extension_manager")
-    glow = _forward_property("_runtime_state", "glow")
-    vision = _forward_property("_runtime_state", "vision")
+    bind_forwarded_properties(locals(), CELUNE_FORWARDED_PROPERTIES)
+    bind_constant_properties(locals(), CELUNE_CONSTANT_PROPERTIES)
 
     @staticmethod
     def _noop_message(msg: str, severity: str = "info") -> None:
@@ -1539,7 +1206,7 @@ class Celune:
         if self.llm is None or self.tokenizer is None:
             return None
 
-        llm = cast(_Generative, self.llm)
+        llm = cast(Generative, self.llm)
         tokenizer = cast(NormalizerTokenizer, self.tokenizer)
 
         def _run_inference() -> Optional[str]:
@@ -1777,156 +1444,3 @@ class Celune:
     def _playback_worker(self) -> None:
         """Receive audio chunks and play them."""
         playback_worker(self)
-
-    @property
-    def stream(self) -> Optional[sd.OutputStream]:
-        """Get the current audio output stream.
-
-        Returns:
-            Optional[sounddevice.OutputStream]: The active audio stream, if any.
-        """
-        return self._stream
-
-    @stream.setter
-    def stream(self, value: Optional[sd.OutputStream]) -> None:
-        """Set the current audio output stream.
-
-        Args:
-            value: The new output stream object.
-        """
-        self._stream = value
-
-    @property
-    def say_lock(self):
-        """Get the speech pipeline lock.
-
-        Returns:
-            threading.Lock: The lock guarding speech and playback state changes.
-        """
-        return self._say_lock
-
-    @property
-    def utterance_force_stop(self):
-        """Get the force-stop event for the current utterance.
-
-        Returns:
-            threading.Event: The event used to interrupt active speech.
-        """
-        return self._utterance_force_stop
-
-    @property
-    def queue_lock(self):
-        """Get the queue coordination lock.
-
-        Returns:
-            threading.Lock: The lock guarding queue mutations.
-        """
-        return self._queue_lock
-
-    @property
-    def force_stop_marker(self):
-        """Get the queue marker used to stop playback immediately.
-
-        Returns:
-            PipelineStates: The sentinel inserted into the audio queue.
-        """
-        return PipelineStates.UTTERANCE_FORCE_END
-
-    @property
-    def playback_done(self):
-        """Get the playback completion event.
-
-        Returns:
-            threading.Event: The event set when playback is idle.
-        """
-        return self._playback_done
-
-    @property
-    def model_ready(self):
-        """Get the model readiness event.
-
-        Returns:
-            threading.Event: The event set when the speech model is ready to use.
-        """
-        return self._model_ready
-
-    @property
-    def utterance_done(self):
-        """Get the marker that signals utterance completion.
-
-        Returns:
-            PipelineStates: The sentinel inserted when generation finishes.
-        """
-        return PipelineStates.UTTERANCE_END
-
-    @property
-    def sentinel(self):
-        """Get the global shutdown sentinel.
-
-        Returns:
-            PipelineStates: The sentinel used to stop worker threads.
-        """
-        return PipelineStates.TERMINATE
-
-    @property
-    def generation_thread(self) -> Optional[threading.Thread]:
-        """Get the generation worker thread.
-
-        Returns:
-            Optional[threading.Thread]: The active generation thread, if started.
-        """
-        return self._generation_thread
-
-    @property
-    def playback_thread(self) -> Optional[threading.Thread]:
-        """Get the playback worker thread.
-
-        Returns:
-            Optional[threading.Thread]: The active playback thread, if started.
-        """
-        return self._playback_thread
-
-    @property
-    def exit_requested(self):
-        """Get the exit flag.
-
-        Returns:
-            bool: ``True`` when Celune is shutting down, otherwise ``False``.
-        """
-        return self._exit_requested
-
-    @property
-    def model_lock(self):
-        """Get the model access lock.
-
-        Returns:
-            threading.RLock: The lock guarding model access and reloads.
-        """
-        return self._model_lock
-
-    @property
-    def audio_unavailable(self):
-        """Get the audio availability flag.
-
-        Returns:
-            bool: ``True`` when audio output initialization has failed.
-        """
-        return self._audio_unavailable
-
-    @property
-    def current_sr(self) -> Optional[int]:
-        """Get the active stream sample rate.
-
-        Returns:
-            Optional[int]: The current playback sample rate, if a stream exists.
-        """
-        return self._current_sr
-
-    @current_sr.setter
-    def current_sr(self, value: Optional[int]) -> None:
-        """Set the active stream sample rate.
-
-        Args:
-            value: The new playback sample rate.
-        """
-        self._current_sr = value

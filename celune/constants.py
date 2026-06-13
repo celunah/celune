@@ -3,8 +3,13 @@
 
 import signal
 import datetime
-from typing import Union
 from enum import auto, IntEnum, Enum
+
+from .typing.common import JSON as _JSON
+from .typing.common import JSONSerializable as _JSONSerializable
+
+JSONSerializable = _JSONSerializable
+JSON = _JSON
 
 # main app name
 # why would you rename her? she doesn't approve of it
@@ -97,11 +102,6 @@ class ExitCodes(Enum):
 
 # SIGTSTP is not defined on Windows systems
 SIGTSTP = getattr(signal, "SIGTSTP", None)
-
-type JSONSerializable = Union[
-    None, bool, int, float, str, list["JSONSerializable"], dict[str, "JSONSerializable"]
-]
-type JSON = dict[str, JSONSerializable]
 
 
 # pipeline state objects

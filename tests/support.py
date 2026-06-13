@@ -10,7 +10,7 @@ import importlib
 import contextlib
 from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace
+from types import SimpleNamespace, ModuleType
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Optional, TypedDict
 
@@ -312,6 +312,30 @@ def mock_voxcpm_backend():
     ):
         voxcpm2 = importlib.import_module("celune.backends.voxcpm2")
         yield voxcpm2.VoxCPM2
+
+
+@contextlib.contextmanager
+def mock_dotstts_backend():
+    """Import the dots.tts backend with a stub dots_tts package."""
+
+    class StubDotsTtsRuntime:
+        """Import-time stand-in for the dots.tts runtime class."""
+
+    package = ModuleType("dots_tts")
+    package.__path__ = []
+    runtime_module = ModuleType("dots_tts.runtime")
+    runtime_module.DotsTtsRuntime = StubDotsTtsRuntime  # type: ignore[missing-attribute]
+    package.runtime = runtime_module  # type: ignore[missing-attribute]
+
+    with mock.patch.dict(
+        sys.modules,
+        {
+            "dots_tts": package,
+            "dots_tts.runtime": runtime_module,
+        },
+    ):
+        dotstts = importlib.import_module("celune.backends.dotstts")
+        yield dotstts.DotsTtsMF
 
 
 @contextlib.contextmanager

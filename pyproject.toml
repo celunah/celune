@@ -24,6 +24,8 @@ dependencies = [
     # If you want Celune to use the alternative VoxCPM2-based backend, install this package.
     # This backend may not be available on some VRAM presets. Refer to Celune's default configuration for details.
     "voxcpm>=2.0.2",
+    # dots.tts is installed from Celunah's Windows-safe fork at this time.
+    "dots.tts @ git+https://github.com/celunah/dots.tts",
     # Pocket TTS is a new backend added in version 4.0.0, that allows Celune to sound the part and use up very little
     # memory, just under 200 MB!
     "pocket-tts>=2.1.0",
