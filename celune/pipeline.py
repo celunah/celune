@@ -64,6 +64,9 @@ from .dsp import (
     _to_48khz,
     is_silent_utterance,
     readiness_signal,
+    sleeping_signal,
+    working_signal,
+    error_signal,
 )
 from .utils import (
     format_number,
@@ -1649,20 +1652,32 @@ def split_text(engine: Celune, text: str) -> list[str]:
     return chunks
 
 
-def play_readiness_signal(engine: Celune) -> bool:
+def play_signal(engine: Celune, signal_type: str) -> bool:
     """Queue a readiness signal to be played.
 
     Args:
         engine: The instance of Celune to do this with.
+        signal_type: The signal type to be played.
 
     Returns:
         bool: Whether the readiness signal was processed successfully.
     """
-    if acquire_pipeline(engine, "play readiness signal"):
+    if signal_type == "readiness":
+        signal = readiness_signal()
+    elif signal_type == "working":
+        signal = working_signal()
+    elif signal_type == "sleeping":
+        signal = sleeping_signal()
+    elif signal_type == "error":
+        signal = error_signal()
+    else:
+        raise ValueError("no such signal")
+
+    if acquire_pipeline(engine, f"play {signal_type} signal"):
         engine.cur_state = "speaking"
         source_id = _next_playback_source_id(engine)
         _register_playback_source(engine, source_id, kind="sfx")
-        _queue_playback_chunk(engine, source_id, readiness_signal(), BASE_SR)
+        _queue_playback_chunk(engine, source_id, signal, BASE_SR)
         _queue_playback_done(
             engine,
             source_id,

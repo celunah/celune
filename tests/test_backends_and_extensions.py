@@ -286,6 +286,41 @@ class BackendTests(TestCase):
 
             self.assertEqual(model.prompt_text, "Pack reference.")
 
+    def test_dotstts_falls_back_to_the_active_pack_voice_ids(self) -> None:
+        """Verify dots.tts uses the pack voice when the backend default is absent."""
+
+        with mock_dotstts_backend() as dotstts_cls:
+
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                sample_rate = 48000
+
+                def __init__(self) -> None:
+                    self.prompt_audio_path = None
+                    self.prompt_text = None
+
+                def generate_stream(self, *args, **kwargs) -> Iterator[torch.Tensor]:
+                    """Generate fake dots.tts chunks."""
+                    discard(args)
+                    self.prompt_audio_path = kwargs["prompt_audio_path"]
+                    self.prompt_text = kwargs["prompt_text"]
+                    yield torch.zeros((1, 4), dtype=torch.float32)
+
+            loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
+            with (
+                mock.patch.object(dotstts_cls, "_validate_refs"),
+                mock.patch(
+                    "celune.backends.dotstts.default_loader", return_value=loader
+                ),
+            ):
+                backend = dotstts_cls(log=lambda _msg, _severity="info": None)
+                model = FakeModel()
+                list(backend.generate_stream(model, text="hello"))
+
+            self.assertEqual(model.prompt_audio_path, str(Path("calm.wav")))
+            self.assertEqual(model.prompt_text, "Pack reference.")
+
     def test_dotstts_requires_reference_text_for_valid_voice_identifiers(self) -> None:
         """Verify dots.tts rejects packs whose voices omit the required reference text."""
 

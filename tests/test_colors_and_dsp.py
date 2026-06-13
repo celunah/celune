@@ -2,7 +2,7 @@
 """Tests for color and DSP helpers."""
 
 from typing import cast
-from unittest import TestCase
+from unittest import TestCase, mock
 
 import numpy as np
 
@@ -51,6 +51,9 @@ class ColorTests(TestCase):
 class DspTests(TestCase):
     """Tests for lightweight DSP helpers."""
 
+    def tearDown(self) -> None:
+        dsp._SIGNAL_CACHE.clear()
+
     def test_make_stereo_and_resampling_validate_audio(self) -> None:
         """Verify stereo conversion and sample-rate validation paths.
 
@@ -95,3 +98,33 @@ class DspTests(TestCase):
             dsp.is_silent_utterance(normal),
             (False, UtteranceLoudnessTier.NORMAL),
         )
+
+    def test_ui_signal_helpers_reuse_cached_audio(self) -> None:
+        """Verify UI signal helpers reuse immutable cached buffers."""
+        base = np.ones((4, 2), dtype=np.float32)
+
+        with (
+            mock.patch("celune.dsp._load_readiness_signal", return_value=base) as load,
+            mock.patch(
+                "celune.dsp._pitch_shift_ui_signal",
+                side_effect=lambda audio, n_steps: audio + np.float32(n_steps),
+            ) as shift,
+        ):
+            readiness_first = dsp.readiness_signal()
+            readiness_second = dsp.readiness_signal()
+            sleeping_first = dsp.sleeping_signal()
+            sleeping_second = dsp.sleeping_signal()
+            working_first = dsp.working_signal()
+            working_second = dsp.working_signal()
+            error_first = dsp.error_signal()
+            error_second = dsp.error_signal()
+
+        self.assertIs(readiness_first, readiness_second)
+        self.assertIs(sleeping_first, sleeping_second)
+        self.assertIs(working_first, working_second)
+        self.assertIs(error_first, error_second)
+        self.assertFalse(readiness_first.flags.writeable)
+        self.assertEqual(error_first.shape, (4, 2))
+        self.assertAlmostEqual(float(np.max(np.abs(error_first))), 1.0)
+        self.assertEqual(load.call_count, 1)
+        self.assertEqual(shift.call_count, 3)

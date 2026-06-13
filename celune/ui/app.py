@@ -687,10 +687,14 @@ class CeluneUI(App):
                     f"New to {APP_NAME}? Type /tutorial to begin the tutorial."
                 )
                 self._schedule_sleep_timer()
-
+            else:
+                self.error(f"{APP_NAME} could not start")
+                self.cur_state = "error"
         except Exception as e:
             self.safe_log(f"[INIT ERROR] {format_error(e, self.celune.dev)}", "error")
             self.celune.glow.fatal()
+            if not self.celune._try_play_signal("error"):
+                self.safe_log_dev("Could not play the error signal.", "warning")
             self.error(f"{APP_NAME} could not start")
             self.cur_state = "error"
 

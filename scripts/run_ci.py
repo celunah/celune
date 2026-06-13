@@ -35,15 +35,13 @@ def _run_uv_command(*cmd: str) -> None:
             stderr=subprocess.PIPE,
             check=True,
             text=True,
-            timeout=300,
+            timeout=180,
         )
         return
     except subprocess.CalledProcessError as failed:
         combined_output = f"{failed.stdout}\n{failed.stderr}"
         if not any(marker in combined_output for marker in _CACHE_PERMISSION_MARKERS):
             raise
-    except subprocess.TimeoutExpired:
-        raise
 
     subprocess.run(
         ["uv", "--no-cache", "run", *cmd],

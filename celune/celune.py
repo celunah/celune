@@ -95,7 +95,7 @@ from .pipeline import (
     say as say_pipeline,
     think as think_pipeline,
     split_text,
-    play_readiness_signal,
+    play_signal,
 )
 from .typing.pipeline import SpeechStreamQueue
 
@@ -491,6 +491,9 @@ class Celune(CeluneStateAccessors):
             self.cur_state = "sleeping"
             self.glow.sleep()
 
+        if not self._try_play_signal("sleeping"):
+            self.log_dev("Could not play the sleeping signal.", "warning")
+
         self._ready_announced = False
         self.model_ready.clear()
         self.progress_callback(0, 1)
@@ -578,6 +581,8 @@ class Celune(CeluneStateAccessors):
                 self.loaded = False
                 self.log(f"[WAKE ERROR] {format_error(e, self.dev)}", "error")
                 self.glow.fatal()
+                if not self._try_play_signal("error"):
+                    self.log_dev("Could not play the error signal.", "warning")
                 self.cur_state = "error"
                 self.status_callback(f"{APP_NAME} could not wake", "error")
                 self.progress_callback(0, 1)
@@ -783,6 +788,17 @@ class Celune(CeluneStateAccessors):
         if self.dev:
             self.log_callback(msg, severity)
 
+    def _try_play_signal(self, signal_type: str) -> bool:
+        """Play a runtime signal only when the playback pipeline can currently accept it."""
+        playback_thread = self.playback_thread
+        if playback_thread is None or not playback_thread.is_alive():
+            return False
+
+        if self.locked and self._playback_done.is_set():
+            self._release_pipeline()
+
+        return play_signal(self, signal_type)
+
     def voice_prompt_supported(self) -> bool:
         """Return whether the active TTS configuration supports voice prompts.
 
@@ -826,6 +842,8 @@ class Celune(CeluneStateAccessors):
 
                 # VoxCPM2 uses the same model for all voices, so we don't have to reload every time
                 if new_model_name != self.model_name:
+                    if not self._try_play_signal("working"):
+                        self.log_dev("Could not play the working signal.", "warning")
                     self.log_dev(f"[RELOAD] Unloading model: {self.model_name}")
                     self.unload_runtime_state(include_normalizer=False)
                     self.log_dev(f"[RELOAD] Loading model: {new_model_name}")
@@ -835,7 +853,7 @@ class Celune(CeluneStateAccessors):
                     if not self._warmup():
                         self._raise_warmup_error("warmup failed after reload")
 
-                    if not play_readiness_signal(self):
+                    if not self._try_play_signal("readiness"):
                         self.log_dev("Could not play the readiness signal.", "warning")
 
                 self.log_dev(
@@ -854,6 +872,8 @@ class Celune(CeluneStateAccessors):
             self.loaded = False
             self.log(f"[RELOAD ERROR] {format_error(e, self.dev)}", "error")
             self.glow.fatal()
+            if not self._try_play_signal("error"):
+                self.log_dev("Could not play the error signal.", "warning")
             self.status_callback(f"{APP_NAME} could not reload", "error")
             self.progress_callback(0, 1)
             self.error_callback(f"{APP_NAME} could not reload")
@@ -884,6 +904,8 @@ class Celune(CeluneStateAccessors):
         if not self.load_available_voices():
             self.log("No voices were loaded.", "error")
             self.glow.fatal()
+            if not self._try_play_signal("error"):
+                self.log_dev("Could not play the error signal.", "warning")
             self.progress_callback(0, 1)
             self.error_callback("No voices loaded")
             return False
@@ -923,6 +945,8 @@ class Celune(CeluneStateAccessors):
             self.log(f"{APP_NAME} could not load the default model.", "error")
             self.log(format_error(e, self.dev), "error")
             self.glow.fatal()
+            if not self._try_play_signal("error"):
+                self.log_dev("Could not play the error signal.", "warning")
             self.progress_callback(0, 1)
             self.error_callback("Default model failed to load")
             return False
@@ -964,6 +988,8 @@ class Celune(CeluneStateAccessors):
             backend_name=self.backend.name,
         ):
             self.glow.fatal()
+            if not self._try_play_signal("error"):
+                self.log_dev("Could not play the error signal.", "warning")
             return False
 
         if self._warmup():
@@ -991,7 +1017,7 @@ class Celune(CeluneStateAccessors):
             )
 
         # notify readiness
-        if not play_readiness_signal(self):
+        if not self._try_play_signal("readiness"):
             self.log_dev("Could not play the readiness signal.", "warning")
 
         return True
@@ -1181,6 +1207,9 @@ class Celune(CeluneStateAccessors):
             self.log(f"[WARMUP ERROR] {format_error(e, self.dev)}", "error")
             self.cur_state = "error"
             self.glow.fatal()
+
+            if not self._try_play_signal("error"):
+                self.log_dev("Could not play the error signal.", "warning")
             self.progress_callback(0, 1)
             self.error_callback(f"{APP_NAME} could not warm up")
             return False

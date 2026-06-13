@@ -16,7 +16,7 @@ from ..constants import BASE_SR
 from ..utils import custom_assert
 from ..exceptions import BackendError
 from ..cevoice import default_loader, CEVoiceLoader
-from .base import CeluneBackend, cached_hf_snapshot_path
+from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
 class VoxCPM2(CeluneBackend[VoxCPM]):
@@ -197,21 +197,13 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         torch.use_deterministic_algorithms(True)
 
         if available and path is not None:
-            os.environ["HF_HUB_OFFLINE"] = "1"
-            with self._suppress_backend_output():
-                previous_offline = os.environ.get("HF_HUB_OFFLINE")
-                try:
-                    os.environ["HF_HUB_OFFLINE"] = "1"
+            with local_hf_offline_mode():
+                with self._suppress_backend_output():
                     self.model = VoxCPM.from_pretrained(
                         path,
                         load_denoiser=kwargs.get("load_denoiser", False),
                         optimize=kwargs.get("optimize", False),
                     )
-                finally:
-                    if previous_offline is None:
-                        os.environ.pop("HF_HUB_OFFLINE", None)
-                    else:
-                        os.environ["HF_HUB_OFFLINE"] = previous_offline
 
             return self.model
 
