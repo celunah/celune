@@ -118,17 +118,18 @@ if [[ -z "$revision" ]]; then
     exit 1
 fi
 
-CELUNE_OUTPUT_DIR="$output_dir" CELUNE_VERSION="$version" CELUNE_REVISION="$revision" uv run python - <<'EOF'
+CELUNE_OUTPUT_DIR="$output_dir" CELUNE_VERSION="$version" CELUNE_REVISION="$revision" CELUNE_ARCH="$appimage_arch" uv run python - <<'EOF'
 import hashlib
 import json
 import os
 from pathlib import Path
 
 output_dir = Path(os.environ["CELUNE_OUTPUT_DIR"])
+arch = os.environ.get("CELUNE_ARCH", "x86_64")
 manifest = {
     "version": os.environ["CELUNE_VERSION"],
     "revision": os.environ["CELUNE_REVISION"],
-    "artifact": "Celune-linux-x64",
+    "artifact": f"Celune-linux-{arch}",
     "files": {},
 }
 for name in ("celune", "celune-bin", "celune.AppImage"):

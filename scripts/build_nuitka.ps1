@@ -74,6 +74,9 @@ elseif (Test-Path $templateExe) {
 }
 
 & uv @arguments
+if ($LASTEXITCODE -ne 0) {
+    throw "Nuitka build failed with exit code $LASTEXITCODE."
+}
 
 if (-not (Test-Path $launcherSource)) {
     throw "launcher.c was not found."
@@ -94,6 +97,9 @@ $vsDevCmd = Join-Path $vsInstall "Common7\Tools\VsDevCmd.bat"
 if (-not (Test-Path $vsDevCmd)) {
     throw "VsDevCmd.bat was not found."
 }
+
+$env:CL = $null
+$env:_CL_ = $null
 
 $compileCmd = "call `"$vsDevCmd`" -arch=amd64 -host_arch=amd64 >nul && cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /Fe:`"$launcherExe`" /Fo:`"$launcherObj`" `"$launcherSource`" `"$launcherRes`" /link /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT"
 & cmd /c $compileCmd
