@@ -450,6 +450,25 @@ class UIStartupTests(TestCase):
             str(caught[0].message),
         )
 
+    def test_load_tts_marks_ui_error_when_startup_returns_false(self) -> None:
+        """Verify handled startup failures leave the UI in an error state."""
+        ui = CeluneUI()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                load=lambda: False,
+                dev=False,
+                glow=SimpleNamespace(fatal=lambda: None),
+            ),
+        )
+        ui.error = mock.Mock()
+
+        load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
+        load_tts(ui)
+
+        ui.error.assert_called_once_with(f"{APP_NAME} could not start")
+        self.assertEqual(ui.cur_state, "error")
+
     def test_textual_resource_footer_only_advertises_ctrl_q_exit(self) -> None:
         """Verify the Textual UI footer no longer advertises CTRL+C exit."""
         celune = cast(

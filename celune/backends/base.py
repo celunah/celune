@@ -6,10 +6,11 @@ import os
 import glob
 import random
 import secrets
+import threading
 import contextlib
 from pathlib import Path
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Iterator, Generator
 from typing import Callable, Optional, Mapping, Generic
 
 import torch
@@ -24,7 +25,15 @@ from ..cevoice import default_loader
 from ..exceptions import BackendError
 from ..typing.backends import BackendModel, ModelT
 
-__all__ = ["BackendModel", "CeluneBackend", "cached_hf_snapshot_path"]
+__all__ = [
+    "BackendModel",
+    "CeluneBackend",
+    "cached_hf_snapshot_path",
+    "local_hf_offline_mode",
+]
+
+
+_HF_HUB_OFFLINE_LOCK = threading.Lock()
 
 
 def cached_hf_snapshot_path(
@@ -59,6 +68,32 @@ def cached_hf_snapshot_path(
         return True, snapshot_path
 
     return False, None
+
+
+@contextlib.contextmanager
+def local_hf_offline_mode(enabled: bool = True) -> Generator[None, None, None]:
+    """Temporarily set ``HF_HUB_OFFLINE`` while serializing process-global access.
+
+    Args:
+        enabled: Whether to enable Hugging Face offline mode for the guarded block.
+
+    Yields:
+        None: Control back to the guarded caller while the environment mutation is active.
+    """
+    if not enabled:
+        yield
+        return
+
+    with _HF_HUB_OFFLINE_LOCK:
+        previous_offline = os.environ.get("HF_HUB_OFFLINE")
+        try:
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            yield
+        finally:
+            if previous_offline is None:
+                os.environ.pop("HF_HUB_OFFLINE", None)
+            else:
+                os.environ["HF_HUB_OFFLINE"] = previous_offline
 
 
 class CeluneBackend(ABC, Generic[ModelT]):

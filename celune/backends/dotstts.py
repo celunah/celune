@@ -12,14 +12,16 @@ import numpy.typing as npt
 from dots_tts.runtime import DotsTtsRuntime
 
 try:
-    from loguru import logger as loguru_logger
+    import loguru
 except ModuleNotFoundError:
     loguru_logger = None
+else:
+    loguru_logger = loguru.logger
 
 from ..utils import custom_assert
 from ..exceptions import BackendError
 from ..cevoice import default_loader, CEVoiceLoader
-from .base import CeluneBackend, cached_hf_snapshot_path
+from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
 class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
@@ -224,10 +226,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         if target == model_id:
             self.log("Downloading TTS model...", "info")
 
-        previous_offline = os.environ.get("HF_HUB_OFFLINE")
-        try:
-            if available and path is not None:
-                os.environ["HF_HUB_OFFLINE"] = "1"
+        with local_hf_offline_mode(available and path is not None):
             with self._suppress_backend_output():
                 self.model = DotsTtsRuntime.from_pretrained(
                     target,
@@ -235,11 +234,6 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                     optimize=optimize,
                     max_generate_length=max_generate_length,
                 )
-        finally:
-            if previous_offline is None:
-                os.environ.pop("HF_HUB_OFFLINE", None)
-            else:
-                os.environ["HF_HUB_OFFLINE"] = previous_offline
 
         return self.model
 
@@ -285,6 +279,12 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
 
         try:
             loader, _ = self._require_compatible_bundle()
+            if voice not in loader.bundle.voices:
+                voice = next(iter(loader.bundle.voices), None)
+                if voice is None:
+                    raise ValueError(
+                        f"backend '{self.name}' requires at least one voice in the active pack"
+                    )
             ref_wav = loader.materialize(voice, "wav")
             configured_ref_text = loader.bundle.voices[voice].get("reference_text")
             ref_text = (

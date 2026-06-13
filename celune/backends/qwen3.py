@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Qwen3 backend implementation for Celune."""
 
-import os
 import contextlib
 from collections.abc import Iterator
 from typing import Callable, Optional
@@ -13,7 +12,7 @@ from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
 from ..utils import custom_assert
 from ..exceptions import BackendError
 from ..cevoice import default_loader, CEVoiceLoader
-from .base import CeluneBackend, cached_hf_snapshot_path
+from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
 class Qwen3(CeluneBackend[FasterQwen3TTS]):
@@ -180,15 +179,8 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         available, path = self.model_is_available_locally(model_id)
 
         if available and path is not None:
-            previous_offline = os.environ.get("HF_HUB_OFFLINE")
-            try:
-                os.environ["HF_HUB_OFFLINE"] = "1"
+            with local_hf_offline_mode():
                 self.model = FasterQwen3TTS.from_pretrained(path)
-            finally:
-                if previous_offline is None:
-                    os.environ.pop("HF_HUB_OFFLINE", None)
-                else:
-                    os.environ["HF_HUB_OFFLINE"] = previous_offline
             return self.model
 
         self.log("Downloading TTS model...", "info")

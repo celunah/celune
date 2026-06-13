@@ -188,7 +188,7 @@ class CeluneCoreTests(TestCase):
         with (
             mock.patch("celune.celune.threading.Thread") as thread_cls,
             mock.patch("celune.celune.validate_runtime", return_value=True),
-            mock.patch("celune.celune.play_readiness_signal", return_value=False),
+            mock.patch("celune.celune.play_signal", return_value=False),
         ):
             thread_cls.return_value.start = mock.Mock()
             self.assertEqual(celune.load(), True)
@@ -213,7 +213,7 @@ class CeluneCoreTests(TestCase):
         with (
             mock.patch("celune.celune.threading.Thread") as thread_cls,
             mock.patch("celune.celune.validate_runtime", return_value=True),
-            mock.patch("celune.celune.play_readiness_signal", return_value=False),
+            mock.patch("celune.celune.play_signal", return_value=False),
         ):
             thread_cls.return_value.start = mock.Mock()
             self.assertEqual(celune.load(), True)
@@ -236,7 +236,8 @@ class CeluneCoreTests(TestCase):
         )
         celune.voice_changed_callback = mock.Mock()
 
-        celune.change_voice("bold")
+        with mock.patch("celune.celune.play_signal", return_value=False):
+            celune.change_voice("bold")
 
         self.assertEqual(celune.current_voice, "bold")
         self.assertEqual(celune.loaded, True)
@@ -446,7 +447,7 @@ class CeluneCoreTests(TestCase):
         with (
             mock.patch("celune.celune.threading.Thread") as thread_cls,
             mock.patch("celune.celune.validate_runtime", return_value=True),
-            mock.patch("celune.celune.play_readiness_signal", return_value=False),
+            mock.patch("celune.celune.play_signal", return_value=False),
         ):
             thread_cls.return_value.start = mock.Mock()
             self.assertEqual(celune.load(), True)
@@ -460,7 +461,8 @@ class CeluneCoreTests(TestCase):
         failing.backend.load_default_model = mock.Mock(side_effect=RuntimeError("boom"))
         errors: list[str] = []
         failing.error_callback = errors.append
-        self.assertEqual(failing.load(), False)
+        with mock.patch("celune.celune.play_signal", return_value=False):
+            self.assertEqual(failing.load(), False)
         self.assertEqual(errors, ["Default model failed to load"])
         self.assertEqual(getattr(failing.glow, "fatal_called"), True)
 
@@ -574,7 +576,8 @@ class CeluneCoreTests(TestCase):
         celune._persona_conn = mock.Mock(return_value=persona_client)
         old_backend = celune.backend
 
-        self.assertEqual(celune.enter_sleep_mode(), True)
+        with mock.patch("celune.celune.play_signal", return_value=False):
+            self.assertEqual(celune.enter_sleep_mode(), True)
 
         self.assertEqual(celune.sleeping, True)
         self.assertEqual(celune.loaded, False)
@@ -587,7 +590,8 @@ class CeluneCoreTests(TestCase):
         self.assertIsNone(celune.vision)
         persona_client.close.assert_called_once_with()
 
-        self.assertEqual(celune.wake_from_sleep(), True)
+        with mock.patch("celune.celune.play_signal", return_value=False):
+            self.assertEqual(celune.wake_from_sleep(), True)
 
         self.assertIsNot(celune.backend, old_backend)
         self.assertEqual(celune.sleeping, False)
@@ -613,8 +617,27 @@ class CeluneCoreTests(TestCase):
         celune.cur_state = "idle"
         celune.vision = mock.Mock(close=mock.Mock(side_effect=RuntimeError("boom")))
 
-        self.assertEqual(celune.enter_sleep_mode(), True)
+        with mock.patch("celune.celune.play_signal", return_value=False):
+            self.assertEqual(celune.enter_sleep_mode(), True)
         self.assertIsNone(celune.vision)
+
+    def test_sleep_mode_plays_signal_after_releasing_pipeline_lock(self) -> None:
+        """Verify the sleeping signal is not invoked while ``say_lock`` is still held."""
+        celune = self._make_celune(
+            {"sleep": {"enabled": True, "unload": {"persona": False, "tts": False}}}
+        )
+        celune.locked = False
+        celune.loaded = True
+        celune.cur_state = "idle"
+
+        def play_sleep_signal(engine: Celune, signal_type: str) -> bool:
+            self.assertEqual(signal_type, "sleeping")
+            self.assertEqual(engine.say_lock.acquire(blocking=False), True)
+            engine.say_lock.release()
+            return False
+
+        with mock.patch("celune.celune.play_signal", side_effect=play_sleep_signal):
+            self.assertEqual(celune.enter_sleep_mode(), True)
 
     def test_wake_failure_switches_glow_to_fatal_color(self) -> None:
         """Verify wake failures trigger the fixed fatal OpenRGB glow state."""
@@ -636,7 +659,10 @@ class CeluneCoreTests(TestCase):
         failing_backend = FakeBackend(log=lambda _msg, _severity="info": None)
         failing_backend.load_model = mock.Mock(side_effect=RuntimeError("boom"))
 
-        with mock.patch("celune.celune.resolve_backend", return_value=failing_backend):
+        with (
+            mock.patch("celune.celune.resolve_backend", return_value=failing_backend),
+            mock.patch("celune.celune.play_signal", return_value=False),
+        ):
             self.assertEqual(celune.wake_from_sleep(), False)
         self.assertEqual(getattr(celune.glow, "fatal_called"), True)
 
@@ -671,9 +697,12 @@ class CeluneCoreTests(TestCase):
 
         recreated_backend.load_model = mock.Mock(side_effect=blocking_load_model)
 
-        with mock.patch(
-            "celune.celune.resolve_backend", return_value=recreated_backend
-        ) as resolve_backend:
+        with (
+            mock.patch(
+                "celune.celune.resolve_backend", return_value=recreated_backend
+            ) as resolve_backend,
+            mock.patch("celune.celune.play_signal", return_value=False),
+        ):
             results: list[bool] = []
 
             def wake() -> None:
