@@ -918,7 +918,7 @@ class PipelineTests(TestCase):
         self.assertIn("Read the conversation in <short_term_memory>", system_prompt)
         self.assertIn("Earlier reply.", system_prompt)
         self.assertIn("user: What now?", system_prompt)
-        self.assertIn('[Do not reuse or rephrase: "Earlier reply."]', system_prompt)
+        self.assertIn("The assistant has already acknowledged", system_prompt)
         self.assertIn("Celune:", system_prompt)
         self.assertNotIn("<vision_context>", system_prompt)
         self.assertNotIn("<request>", system_prompt)
@@ -1043,7 +1043,7 @@ class PipelineTests(TestCase):
         self.assertIn("assistant: Yes, we catalogued the letters.", prompt)
         self.assertIn("user: What do you notice?", prompt)
         self.assertIn(
-            '[Do not reuse or rephrase: "Yes, we catalogued the letters."]',
+            "The assistant has already acknowledged",
             prompt,
         )
         self.assertIn("<vision_context>", prompt)
