@@ -723,6 +723,7 @@ def _doctor_checks() -> list[DoctorCheck]:
     optional_imports = [
         ("torchvision", "torchvision", "Persona vision support uses torchvision."),
         ("pocket_tts", "pocket-tts", f"{APP_NAME} Mini needs pocket-tts."),
+        ("dots_tts", "dots.tts", "The dots.tts MeanFlow backend needs dots.tts."),
         ("voxcpm", "voxcpm", "The VoxCPM2 backend needs voxcpm."),
         ("openrgb", "openrgb-python", "Presence lighting needs openrgb-python."),
         ("matplotlib", "matplotlib", "Developer visualizations use matplotlib."),

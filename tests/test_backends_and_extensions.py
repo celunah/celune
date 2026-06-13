@@ -14,6 +14,7 @@ from collections.abc import Iterator
 
 import numpy as np
 import numpy.typing as npt
+import torch
 
 from celune.utils import discard
 from celune.backends import resolve_backend
@@ -27,6 +28,7 @@ from celune.exceptions import (
 from .support import (
     FakeBackend,
     make_voice_loader,
+    mock_dotstts_backend,
     mock_mini_backend,
     mock_qwen3_backend,
     mock_voxcpm_backend,
@@ -107,6 +109,16 @@ class BackendTests(TestCase):
 
         self.assertIsInstance(backend, mini_cls)
         self.assertEqual(backend.name, "mini")
+
+    def test_resolve_backend_accepts_dotstts_backend_name(self) -> None:
+        """Verify the dots.tts backend resolves through the backend registry."""
+
+        with mock_dotstts_backend() as dotstts_cls:
+            with mock.patch.object(dotstts_cls, "_validate_refs"):
+                backend = resolve_backend("dotstts")
+
+        self.assertIsInstance(backend, dotstts_cls)
+        self.assertEqual(backend.name, "dotstts")
 
     def test_voxcpm2_uses_pack_cfg_scale_when_present(self) -> None:
         """Verify CEVOICE can override VoxCPM2's per-voice CFG scale."""
@@ -236,6 +248,147 @@ class BackendTests(TestCase):
                 list(backend.generate_stream(model, text="hello", voice="calm"))
 
             self.assertEqual(model.ref_text, "Pack reference.")
+
+    def test_dotstts_uses_pack_reference_text_when_present(self) -> None:
+        """Verify CEVOICE can override dots.tts reference text."""
+
+        with mock_dotstts_backend() as dotstts_cls:
+
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                sample_rate = 48000
+
+                def __init__(self) -> None:
+                    self.prompt_text = None
+
+                def generate_stream(self, *args, **kwargs) -> Iterator[torch.Tensor]:
+                    """Generate fake dots.tts chunks.
+
+                    Args:
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
+                    """
+                    discard(args)
+                    self.prompt_text = kwargs["prompt_text"]
+                    yield torch.zeros((1, 4), dtype=torch.float32)
+
+            loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
+            with (
+                mock.patch.object(dotstts_cls, "_validate_refs"),
+                mock.patch(
+                    "celune.backends.dotstts.default_loader", return_value=loader
+                ),
+            ):
+                backend = dotstts_cls(log=lambda _msg, _severity="info": None)
+                model = FakeModel()
+                list(backend.generate_stream(model, text="hello", voice="calm"))
+
+            self.assertEqual(model.prompt_text, "Pack reference.")
+
+    def test_dotstts_requires_reference_text_for_valid_voice_identifiers(self) -> None:
+        """Verify dots.tts rejects packs whose voices omit the required reference text."""
+
+        with mock_dotstts_backend() as dotstts_cls:
+            loader = make_voice_loader("calm", {})
+            with mock.patch(
+                "celune.backends.dotstts.default_loader", return_value=loader
+            ):
+                with self.assertRaisesRegex(
+                    BackendError, "requires a compatible CEVOICE/CECHAR package"
+                ):
+                    dotstts_cls(log=lambda _msg, _severity="info": None)
+
+    def test_dotstts_requires_a_compatible_voice_pack(self) -> None:
+        """Verify dots.tts refuses to initialize without a usable CEVOICE/CECHAR pack."""
+
+        with (
+            mock_dotstts_backend() as dotstts_cls,
+            mock.patch("celune.backends.dotstts.default_loader", return_value=None),
+        ):
+            with self.assertRaisesRegex(
+                BackendError, "requires a compatible CEVOICE/CECHAR package"
+            ):
+                dotstts_cls(log=lambda _msg, _severity="info": None)
+
+    def test_dotstts_manually_pumps_and_closes_backend_stream(self) -> None:
+        """Verify dots.tts iterates and closes its backend stream explicitly."""
+
+        with mock_dotstts_backend() as dotstts_cls:
+
+            class FakeStream:
+                """Minimal iterator exposing a close hook for one backend test."""
+
+                def __init__(self) -> None:
+                    self._chunks = [
+                        torch.zeros((1, 1), dtype=torch.float32),
+                        torch.ones((1, 1), dtype=torch.float32),
+                    ]
+                    self.closed = False
+
+                def __iter__(self) -> "FakeStream":
+                    return self
+
+                def __next__(self) -> torch.Tensor:
+                    if not self._chunks:
+                        raise StopIteration
+                    return self._chunks.pop(0)
+
+                def close(self) -> None:
+                    """Close the stream."""
+                    self.closed = True
+
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                sample_rate = 48000
+
+                def __init__(self) -> None:
+                    self.stream = FakeStream()
+
+                def generate_stream(self, *args, **kwargs) -> FakeStream:
+                    """Generate fake dots.tts chunks.
+
+                    Args:
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
+
+                    Returns:
+                        FakeStream: A fake stream of dots.tts chunks.
+                    """
+                    discard(args)
+                    discard(kwargs)
+                    return self.stream
+
+            loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
+            with (
+                mock.patch.object(dotstts_cls, "_validate_refs"),
+                mock.patch(
+                    "celune.backends.dotstts.default_loader", return_value=loader
+                ),
+            ):
+                backend = dotstts_cls(log=lambda _msg, _severity="info": None)
+                model = FakeModel()
+                chunks = list(
+                    backend.generate_stream(model, text="hello", voice="calm")
+                )
+
+            self.assertEqual(len(chunks), 2)
+            self.assertEqual(chunks[0][1], 48000)
+            self.assertEqual(chunks[1][0].tolist(), [1.0])
+            self.assertEqual(model.stream.closed, True)
+
+    def test_dotstts_suppresses_loguru_runtime_noise(self) -> None:
+        """Verify dots.tts suppression also disables its Loguru logger namespace."""
+
+        with mock_dotstts_backend() as dotstts_cls:
+            fake_loguru = mock.Mock()
+            with mock.patch("celune.backends.dotstts.loguru_logger", fake_loguru):
+                with dotstts_cls._suppress_backend_output():
+                    pass
+
+        fake_loguru.disable.assert_called_once_with("dots_tts")
+        fake_loguru.enable.assert_called_once_with("dots_tts")
 
     def test_qwen3_requires_reference_text_for_valid_voice_identifiers(self) -> None:
         """Verify Qwen3 rejects packs whose voices omit the required reference text."""

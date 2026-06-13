@@ -164,7 +164,7 @@ WEBUI_CSS = textwrap.dedent(
         color: var(--celune-primary, #cebaff);
         white-space: pre-wrap;
         margin: 0;
-        max-height: min(calc(75dvh - 2em), calc(100dvh - 15rem));
+        max-height: min(calc(75dvh - 2em), calc(75dvh - 15rem));
         height: 100%;
         overflow-y: auto;
         padding-right: 0.75em;
@@ -1265,6 +1265,13 @@ def _build_webui() -> gr.Blocks:
                     _webui_resources_html(),
                     elem_id="celune-resources",
                 )
+            gr.HTML(
+                textwrap.dedent(f"""
+                    <p style="color: var(--celune-primary); text-align: center;">
+                        Usage may differ. Some {APP_NAME} features may not be available.
+                    </p>
+                """)
+            )
             audio = gr.Audio(
                 value=None,
                 type="numpy",

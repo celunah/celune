@@ -246,6 +246,11 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         kwargs.pop("language", None)
         chunk_size = kwargs.pop("chunk_size", 1)
 
+        kwargs.pop("temperature", None)
+        kwargs.pop("top_k", None)
+        kwargs.pop("top_p", None)
+        kwargs.pop("repetition_penalty", None)
+
         try:
             loader, _ = self._require_compatible_bundle()
             ref_wav = loader.materialize(voice, "wav")
@@ -286,9 +291,10 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                 stream = model.generate_streaming(
                     text,
                     reference_wav_path=ref_wav,
-                    inference_timesteps=6,
+                    inference_timesteps=4,
                     cfg_value=cfg,
                     max_len=self.max_new_tokens,
+                    **kwargs,
                 )
 
                 batch: list[npt.NDArray[np.float32]] = []

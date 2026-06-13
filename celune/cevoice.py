@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 from typing import BinaryIO, Callable, Final, Mapping, Optional, Union, cast
 
 from .exceptions import CEVoiceError
-from .constants import JSONSerializable
 from .paths import project_root, temp_data_dir
+from .typing.cevoice import Manifest, ManifestValue, VoiceManifest
 
 # Celune supports both of these specifications
 # CECHAR v2 spec (Celune v4 format)
@@ -30,9 +30,6 @@ LEGACY_FORMAT_NAME: Final[str] = "CEVOICE"
 
 HEADER = struct.Struct("<8sHI")
 ALLOWED_ASSET_KINDS = {"wav", "pt"}
-type ManifestValue = Union[JSONSerializable, "Manifest"]
-type Manifest = dict[str, ManifestValue]
-type VoiceManifest = dict[str, Manifest]
 
 
 @dataclass(frozen=True)

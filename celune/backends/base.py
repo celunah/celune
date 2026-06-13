@@ -10,7 +10,7 @@ import contextlib
 from pathlib import Path
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from typing import Callable, Optional, Protocol, Mapping, TypeVar, Generic
+from typing import Callable, Optional, Mapping, Generic
 
 import torch
 import numpy as np
@@ -22,13 +22,9 @@ from ..utils import discard
 from ..constants import N_A_NUMERIC
 from ..cevoice import default_loader
 from ..exceptions import BackendError
+from ..typing.backends import BackendModel, ModelT
 
-
-class BackendModel(Protocol):
-    """Opaque backend model protocol for backend-independent storage."""
-
-
-ModelT = TypeVar("ModelT", bound=BackendModel)
+__all__ = ["BackendModel", "CeluneBackend", "cached_hf_snapshot_path"]
 
 
 def cached_hf_snapshot_path(

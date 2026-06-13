@@ -14,7 +14,7 @@ import subprocess
 import multiprocessing
 from pathlib import Path
 from collections.abc import Iterator
-from typing import Union, Callable, Optional, Literal, TypedDict, Any, overload
+from typing import Union, Callable, Optional, Literal, Any, overload
 
 import psutil
 import langdetect
@@ -22,23 +22,7 @@ import langdetect
 from .paths import traceback_path
 from .constants import REFERENCE_NEW_MOON
 from .terminal import supports_ansi as terminal_supports_ansi
-
-
-class CallerInfo(TypedDict):
-    """Caller information type annotation."""
-
-    function: str
-    filename: str
-    line: int
-
-
-class LanguageResult(TypedDict):
-    """Language detection metadata type annotation."""
-
-    language: str
-    languages: list[str]
-    probabilities: dict[str, float]
-    supported: bool
+from .typing.utils import CallerInfo, LanguageResult
 
 
 def get_revision() -> str:
@@ -828,3 +812,29 @@ def raise_test() -> None:
     """
 
     raise RuntimeError("testing exception")
+
+
+def normalize_special_characters(text: str) -> str:
+    """Normalize special characters in input string for TTS.
+
+    Args:
+        text: The text to normalize.
+
+    Returns:
+        str: The normalized text.
+    """
+
+    special_char_mappings = str.maketrans(
+        {
+            "\u201c": '"',  # left double quote
+            "\u201d": '"',  # right double quote
+            "\u201e": '"',  # double low quote
+            "\u2018": "'",  # left single quote
+            "\u2019": "'",  # right single quote
+            "\u2013": "-",  # en dash
+            "\u2014": "-",  # em dash
+            "\u2026": "...",  # ellipsis
+        }
+    )
+
+    return text.translate(special_char_mappings)

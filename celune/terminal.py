@@ -4,15 +4,10 @@
 import os
 import sys
 import ctypes
-from collections.abc import Mapping
-from typing import IO, Final, Literal, Optional, Callable, Any, cast
+from typing import IO, Final, Optional, Callable, Any, cast
 
 from .config import config_value
-from .constants import JSONSerializable
-
-type Config = Mapping[str, JSONSerializable]
-type ColorMode = Literal["auto", "truecolor", "terminal-default", "ansi", "none"]
-type ResolvedColorMode = Literal["truecolor", "terminal-default", "ansi", "none"]
+from .typing.common import ColorMode, Config, JSONSerializable, ResolvedColorMode
 
 VALID_COLOR_MODES: Final[frozenset[str]] = frozenset(
     {"auto", "truecolor", "terminal-default", "ansi", "none"}
