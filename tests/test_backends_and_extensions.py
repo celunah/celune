@@ -14,6 +14,7 @@ from collections.abc import Iterator
 
 import numpy as np
 import numpy.typing as npt
+import soundfile as sf
 import torch
 
 from celune.utils import discard
@@ -76,6 +77,28 @@ class BackendTests(TestCase):
                 mock.call("bold", "wav"),
             ],
         )
+
+    def test_base_backend_truncates_long_reference_wav_to_ten_seconds(self) -> None:
+        """Verify the shared reference helper clips long WAV prompts to ten seconds."""
+        backend = FakeBackend(log=lambda _msg, _severity="info": None)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "reference.wav"
+            canonical_temp = Path(temp_dir) / "celune-temp"
+            canonical_temp.mkdir(parents=True, exist_ok=True)
+            sf.write(source, np.zeros(12 * 24000, dtype=np.float32), 24000)
+
+            with mock.patch(
+                "celune.backends.base.temp_data_dir", return_value=canonical_temp
+            ):
+                truncated = backend._truncate_reference(source)
+
+            self.assertNotEqual(truncated, source)
+            self.assertLessEqual(sf.info(truncated).duration, 10.0)
+            self.assertEqual(truncated.parent, canonical_temp)
+            self.assertEqual(source.exists(), True)
+
+            backend.unload_model()
+            self.assertEqual(truncated.exists(), False)
 
     def test_resolve_backend_accepts_instance_type_and_rejects_unknown(self) -> None:
         """Verify supported backend specifications and invalid input failures.
@@ -149,6 +172,9 @@ class BackendTests(TestCase):
             )
             with (
                 mock.patch.object(voxcpm2_cls, "_validate_refs"),
+                mock.patch.object(
+                    voxcpm2_cls, "_truncate_reference", side_effect=lambda path: path
+                ),
                 mock.patch(
                     "celune.backends.voxcpm2.default_loader", return_value=loader
                 ),
@@ -179,6 +205,54 @@ class BackendTests(TestCase):
                 ):
                     voxcpm2_cls(log=lambda _msg, _severity="info": None)
 
+    def test_voxcpm2_uses_truncated_reference_wav_when_present(self) -> None:
+        """Verify VoxCPM2 passes reference audio through the shared truncation hook."""
+
+        with mock_voxcpm_backend() as voxcpm2_cls:
+
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                def __init__(self) -> None:
+                    self.reference_wav_path = None
+
+                def generate_streaming(
+                    self, *args, **kwargs
+                ) -> Iterator[npt.NDArray[np.float32]]:
+                    """Generate fake VoxCPM2 chunks.
+
+                    Args:
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
+                    """
+                    discard(args)
+                    self.reference_wav_path = kwargs["reference_wav_path"]
+                    yield np.zeros((1,), dtype=np.float32)
+
+            loader = make_voice_loader(
+                "calm", {"cfg_scale": 4.2, "reference_text": "Pack reference."}
+            )
+            with (
+                mock.patch(
+                    "celune.backends.voxcpm2.default_loader", return_value=loader
+                ),
+                mock.patch.object(
+                    voxcpm2_cls, "_truncate_reference", return_value=Path("trimmed.wav")
+                ),
+            ):
+                backend = voxcpm2_cls(log=lambda _msg, _severity="info": None)
+                model = FakeModel()
+                list(
+                    backend.generate_stream(
+                        model,
+                        text="hello",
+                        voice="calm",
+                        chunk_size=1,
+                    )
+                )
+
+            self.assertEqual(model.reference_wav_path, Path("trimmed.wav"))
+
     def test_voxcpm2_requires_a_compatible_voice_pack(self) -> None:
         """Verify VoxCPM2 refuses to initialize without a usable CEVOICE/CECHAR pack."""
 
@@ -202,6 +276,76 @@ class BackendTests(TestCase):
                 ):
                     mini_cls(log=lambda _msg, _severity="info": None)
 
+    def test_mini_uses_truncated_reference_wav_when_building_prompt_state(self) -> None:
+        """Verify Mini builds prompt state from the shared truncated WAV path."""
+
+        with mock_mini_backend() as mini_cls:
+            loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
+
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                sample_rate = 24000
+
+                def __init__(self) -> None:
+                    self.audio_conditioning = None
+
+                def get_state_for_audio_prompt(self, audio_conditioning: str) -> dict:
+                    """Return a fake prompt state.
+
+                    Args:
+                        audio_conditioning: Prompt WAV path passed by the backend.
+
+                    Returns:
+                        dict: A fake prompt state.
+                    """
+                    self.audio_conditioning = audio_conditioning
+                    return {}
+
+                @staticmethod
+                def generate_audio_stream(
+                    model_state: dict, text_to_generate: str
+                ) -> Iterator[torch.Tensor]:
+                    """Generate fake Pocket TTS chunks.
+
+                    Args:
+                        model_state: Prompt state used for generation.
+                        text_to_generate: Text content to synthesize.
+                    """
+                    discard(model_state)
+                    discard(text_to_generate)
+                    yield torch.zeros((1,), dtype=torch.float32)
+
+            with (
+                mock.patch("celune.backends.mini.default_loader", return_value=loader),
+                mock.patch.object(
+                    mini_cls, "_truncate_reference", return_value=Path("trimmed.wav")
+                ),
+            ):
+                backend = mini_cls(log=lambda _msg, _severity="info": None)
+                model = FakeModel()
+                list(backend.generate_stream(model, text="hello", voice="calm"))
+
+            self.assertEqual(model.audio_conditioning, str(Path("trimmed.wav")))
+
+    def test_mini_does_not_apply_reference_wav_truncation_to_reference_text(
+        self,
+    ) -> None:
+        """Verify Mini does not treat transcript text as a WAV path during validation."""
+
+        with mock_mini_backend() as mini_cls:
+            loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
+            with (
+                mock.patch("celune.backends.mini.default_loader", return_value=loader),
+                mock.patch.object(
+                    mini_cls,
+                    "_truncate_reference",
+                    side_effect=AssertionError("should not see reference text"),
+                ),
+            ):
+                backend = mini_cls(log=lambda _msg, _severity="info": None)
+                self.assertEqual(backend.voices, ["calm"])
+
     def test_mini_requires_a_compatible_voice_pack(self) -> None:
         """Verify Mini refuses to initialize without a usable CEVOICE/CECHAR pack."""
 
@@ -223,6 +367,7 @@ class BackendTests(TestCase):
                 """Fake model class for use in this test suite."""
 
                 def __init__(self) -> None:
+                    self.ref_audio = None
                     self.ref_text = None
 
                 def generate_voice_clone_streaming(
@@ -235,12 +380,16 @@ class BackendTests(TestCase):
                         kwargs: Keyword arguments used for generation.
                     """
                     discard(args)
+                    self.ref_audio = kwargs["ref_audio"]
                     self.ref_text = kwargs["ref_text"]
                     yield np.zeros((1,), dtype=np.float32), 24000, None
 
             loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
             with (
                 mock.patch.object(qwen3_cls, "_validate_refs"),
+                mock.patch.object(
+                    qwen3_cls, "_truncate_reference", side_effect=lambda path: path
+                ),
                 mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
             ):
                 backend = qwen3_cls(log=lambda _msg, _severity="info": None)
@@ -248,6 +397,47 @@ class BackendTests(TestCase):
                 list(backend.generate_stream(model, text="hello", voice="calm"))
 
             self.assertEqual(model.ref_text, "Pack reference.")
+
+    def test_qwen3_uses_truncated_reference_wav_when_present(self) -> None:
+        """Verify Qwen3 passes reference audio through the shared truncation hook."""
+
+        with mock_qwen3_backend() as qwen3_cls:
+
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                def __init__(self) -> None:
+                    self.ref_audio = None
+                    self.ref_text = None
+
+                def generate_voice_clone_streaming(
+                    self, *args, **kwargs
+                ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+                    """Generate fake Qwen3 chunks.
+
+                    Args:
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
+                    """
+                    discard(args)
+                    self.ref_audio = kwargs["ref_audio"]
+                    self.ref_text = kwargs["ref_text"]
+                    yield np.zeros((1,), dtype=np.float32), 24000, None
+
+            loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
+            with (
+                mock.patch.object(qwen3_cls, "_validate_refs"),
+                mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
+                mock.patch.object(
+                    qwen3_cls, "_truncate_reference", return_value=Path("trimmed.wav")
+                ),
+            ):
+                backend = qwen3_cls(log=lambda _msg, _severity="info": None)
+                model = FakeModel()
+                list(backend.generate_stream(model, text="hello", voice="calm"))
+
+            self.assertEqual(model.ref_text, "Pack reference.")
+            self.assertEqual(model.ref_audio, Path("trimmed.wav"))
 
     def test_dotstts_uses_pack_reference_text_when_present(self) -> None:
         """Verify CEVOICE can override dots.tts reference text."""
@@ -260,6 +450,7 @@ class BackendTests(TestCase):
                 sample_rate = 48000
 
                 def __init__(self) -> None:
+                    self.prompt_audio_path = None
                     self.prompt_text = None
 
                 def generate_stream(self, *args, **kwargs) -> Iterator[torch.Tensor]:
@@ -270,12 +461,16 @@ class BackendTests(TestCase):
                         kwargs: Keyword arguments used for generation.
                     """
                     discard(args)
+                    self.prompt_audio_path = kwargs["prompt_audio_path"]
                     self.prompt_text = kwargs["prompt_text"]
                     yield torch.zeros((1, 4), dtype=torch.float32)
 
             loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
             with (
                 mock.patch.object(dotstts_cls, "_validate_refs"),
+                mock.patch.object(
+                    dotstts_cls, "_truncate_reference", side_effect=lambda path: path
+                ),
                 mock.patch(
                     "celune.backends.dotstts.default_loader", return_value=loader
                 ),
@@ -285,6 +480,49 @@ class BackendTests(TestCase):
                 list(backend.generate_stream(model, text="hello", voice="calm"))
 
             self.assertEqual(model.prompt_text, "Pack reference.")
+
+    def test_dotstts_uses_truncated_reference_wav_when_present(self) -> None:
+        """Verify dots.tts passes reference audio through the shared truncation hook."""
+
+        with mock_dotstts_backend() as dotstts_cls:
+
+            class FakeModel:
+                """Fake model class for use in this test suite."""
+
+                sample_rate = 48000
+
+                def __init__(self) -> None:
+                    self.prompt_audio_path = None
+                    self.prompt_text = None
+
+                def generate_stream(self, *args, **kwargs) -> Iterator[torch.Tensor]:
+                    """Generate fake dots.tts chunks.
+
+                    Args:
+                        args: Arguments used for generation.
+                        kwargs: Keyword arguments used for generation.
+                    """
+                    discard(args)
+                    self.prompt_audio_path = kwargs["prompt_audio_path"]
+                    self.prompt_text = kwargs["prompt_text"]
+                    yield torch.zeros((1, 4), dtype=torch.float32)
+
+            loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
+            with (
+                mock.patch.object(dotstts_cls, "_validate_refs"),
+                mock.patch(
+                    "celune.backends.dotstts.default_loader", return_value=loader
+                ),
+                mock.patch.object(
+                    dotstts_cls, "_truncate_reference", return_value=Path("trimmed.wav")
+                ),
+            ):
+                backend = dotstts_cls(log=lambda _msg, _severity="info": None)
+                model = FakeModel()
+                list(backend.generate_stream(model, text="hello", voice="calm"))
+
+            self.assertEqual(model.prompt_text, "Pack reference.")
+            self.assertEqual(model.prompt_audio_path, str(Path("trimmed.wav")))
 
     def test_dotstts_falls_back_to_the_active_pack_voice_ids(self) -> None:
         """Verify dots.tts uses the pack voice when the backend default is absent."""
@@ -301,7 +539,12 @@ class BackendTests(TestCase):
                     self.prompt_text = None
 
                 def generate_stream(self, *args, **kwargs) -> Iterator[torch.Tensor]:
-                    """Generate fake dots.tts chunks."""
+                    """Generate fake dots.tts chunks.
+
+                    Args:
+                        args: Positional arguments accepted for backend compatibility.
+                        kwargs: Keyword arguments carrying prompt metadata under test.
+                    """
                     discard(args)
                     self.prompt_audio_path = kwargs["prompt_audio_path"]
                     self.prompt_text = kwargs["prompt_text"]
@@ -310,6 +553,9 @@ class BackendTests(TestCase):
             loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
             with (
                 mock.patch.object(dotstts_cls, "_validate_refs"),
+                mock.patch.object(
+                    dotstts_cls, "_truncate_reference", side_effect=lambda path: path
+                ),
                 mock.patch(
                     "celune.backends.dotstts.default_loader", return_value=loader
                 ),
@@ -398,6 +644,9 @@ class BackendTests(TestCase):
             loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
             with (
                 mock.patch.object(dotstts_cls, "_validate_refs"),
+                mock.patch.object(
+                    dotstts_cls, "_truncate_reference", side_effect=lambda path: path
+                ),
                 mock.patch(
                     "celune.backends.dotstts.default_loader", return_value=loader
                 ),
@@ -418,7 +667,7 @@ class BackendTests(TestCase):
 
         with mock_dotstts_backend() as dotstts_cls:
             fake_loguru = mock.Mock()
-            with mock.patch("celune.backends.dotstts.loguru_logger", fake_loguru):
+            with mock.patch("celune.backends.dotstts.loguru.logger", fake_loguru):
                 with dotstts_cls._suppress_backend_output():
                     pass
 
@@ -522,6 +771,9 @@ class BackendTests(TestCase):
             loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
             with (
                 mock.patch.object(qwen3_cls, "_validate_refs"),
+                mock.patch.object(
+                    qwen3_cls, "_truncate_reference", side_effect=lambda path: path
+                ),
                 mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
             ):
                 backend = qwen3_cls(log=lambda _msg, _severity="info": None)
@@ -568,6 +820,9 @@ class BackendTests(TestCase):
             loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
             with (
                 mock.patch.object(qwen3_cls, "_validate_refs"),
+                mock.patch.object(
+                    qwen3_cls, "_truncate_reference", side_effect=lambda path: path
+                ),
                 mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
             ):
                 backend = qwen3_cls(log=lambda _msg, _severity="info": None)
@@ -605,6 +860,9 @@ class BackendTests(TestCase):
             )
             with (
                 mock.patch.object(voxcpm2_cls, "_validate_refs"),
+                mock.patch.object(
+                    voxcpm2_cls, "_truncate_reference", side_effect=lambda path: path
+                ),
                 mock.patch(
                     "celune.backends.voxcpm2.default_loader", return_value=loader
                 ),

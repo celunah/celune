@@ -8,8 +8,8 @@ import tempfile
 import threading
 import json as _json
 from pathlib import Path
+from types import SimpleNamespace, TracebackType
 from typing import cast, Optional
-from types import SimpleNamespace
 from unittest import mock, TestCase
 from collections.abc import Iterator
 
@@ -382,8 +382,15 @@ class PipelineTests(TestCase):
             def __enter__(self) -> "FakeResponse":
                 return self
 
-            def __exit__(self, *_args: object) -> None:
-                return None
+            def __exit__(
+                self,
+                exc_type: Optional[type[BaseException]],
+                exc: Optional[BaseException],
+                traceback: Optional[TracebackType],
+            ) -> None:
+                discard(exc_type)
+                discard(exc)
+                discard(traceback)
 
             @staticmethod
             def read() -> bytes:
@@ -404,6 +411,7 @@ class PipelineTests(TestCase):
         engine = make_pipeline_engine()
         downloaded = Path("C:/Users/user/AppData/Local/Celune/temporary_audio.wav")
         audio = np.ones((8, 2), dtype=np.float32)
+        volume = 0.4
 
         with (
             mock.patch(
@@ -420,7 +428,7 @@ class PipelineTests(TestCase):
                 cast(Celune, engine),
                 "https://www.youtube.com/watch?v=demo",
                 keep=True,
-                volume=0.4,
+                volume=volume,
             )
 
         self.assertEqual(ok, True)
@@ -431,7 +439,7 @@ class PipelineTests(TestCase):
         self.assertEqual(queued_args[0], cast(Celune, engine))
         np.testing.assert_allclose(queued_args[1], np.asarray(audio, dtype=np.float32))
         self.assertEqual(queued_args[2:], (48000, "Fixture Video Title", True))
-        self.assertEqual(queued_kwargs, {"volume": 0.4})
+        self.assertEqual(queued_kwargs, {"volume": volume * 0.5})
 
     def test_queue_sfx_audio_allows_overlay_while_speech_pipeline_is_locked(
         self,

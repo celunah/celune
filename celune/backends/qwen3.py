@@ -216,10 +216,12 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
 
         try:
             loader, _ = self._require_compatible_bundle()
-            ref_wav = loader.materialize(voice, "wav")
+            ref_wav = self._truncate_reference(loader.materialize(voice, "wav"))
             configured_ref_text = loader.bundle.voices[voice].get("reference_text")
             ref_text = (
-                configured_ref_text if isinstance(configured_ref_text, str) else ""
+                configured_ref_text.strip()
+                if isinstance(configured_ref_text, str)
+                else ""
             )
         except KeyError as e:
             raise ValueError(

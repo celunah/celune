@@ -17,11 +17,12 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from . import __version__
 from .exceptions import UpdateError
 from .paths import project_root, running_compiled
+from .typing.common import JSONSerializable
 
 REMOTE_URL = "https://github.com/celunah/celune.git"
 ARTIFACT_BASE_URL = "https://nightly.link/celunah/celune/workflows/ci"
@@ -262,7 +263,7 @@ def _sha256_file(path: Path) -> str:
 
 def _bundle_checksums(
     bundle_dir: Path,
-    filenames: tuple[str, ...] | list[str],
+    filenames: Union[tuple[str, ...], list[str]],
 ) -> dict[str, str]:
     """Return checksums for bundle files present in one install directory."""
     checksums: dict[str, str] = {}
@@ -273,7 +274,7 @@ def _bundle_checksums(
     return checksums
 
 
-def _parse_bundle_manifest(raw: object) -> Optional[BundleManifest]:
+def _parse_bundle_manifest(raw: JSONSerializable) -> Optional[BundleManifest]:
     """Convert raw JSON-like data into bundle metadata."""
     if not isinstance(raw, dict):
         return None

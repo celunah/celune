@@ -245,7 +245,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
 
         try:
             loader, _ = self._require_compatible_bundle()
-            ref_wav = loader.materialize(voice, "wav")
+            ref_wav = self._truncate_reference(loader.materialize(voice, "wav"))
             configured_cfg = loader.bundle.voices[voice].get("cfg_scale")
             cfg = (
                 float(configured_cfg)

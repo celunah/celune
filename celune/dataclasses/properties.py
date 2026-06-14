@@ -1,7 +1,12 @@
 """Property helpers for grouped Celune runtime state."""
 
 from dataclasses import dataclass
-from typing import Optional
+from enum import Enum
+from typing import Optional, Union
+
+from ..typing.common import JSONSerializable
+
+ConstantPropertyValue = Union[JSONSerializable, Enum]
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +25,7 @@ class ConstantPropertySpec:
     """Describe one constant-backed property."""
 
     name: str
-    value: object
+    value: ConstantPropertyValue
     doc: Optional[str] = None
 
 
@@ -55,7 +60,9 @@ def forward_property(
     return property(getter, setter, doc=doc)
 
 
-def constant_property(value: object, *, doc: Optional[str] = None) -> property:
+def constant_property(
+    value: ConstantPropertyValue, *, doc: Optional[str] = None
+) -> property:
     """Create a read-only property that always returns one constant value.
 
     Args:
@@ -73,7 +80,7 @@ def constant_property(value: object, *, doc: Optional[str] = None) -> property:
 
 
 def bind_forwarded_properties(
-    namespace: dict[str, object],
+    namespace: dict[str, property],
     specs: tuple[ForwardedPropertySpec, ...],
 ) -> None:
     """Populate a class namespace with forwarded properties.
@@ -92,7 +99,7 @@ def bind_forwarded_properties(
 
 
 def bind_constant_properties(
-    namespace: dict[str, object],
+    namespace: dict[str, property],
     specs: tuple[ConstantPropertySpec, ...],
 ) -> None:
     """Populate a class namespace with constant-backed properties.

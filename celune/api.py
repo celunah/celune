@@ -38,7 +38,7 @@ from .utils import format_error
 from .paths import main_window_log_path, project_root
 from .dsp import _resample_audio
 from .pipeline import SpeechStreamQueue
-from .constants import BASE_SR, APP_NAME
+from .constants import BASE_SR, APP_NAME, JSONSerializable
 from .cevoice import default_loader
 from .ui import resources as ui_resources
 from .ui.app import CeluneUI
@@ -69,6 +69,17 @@ webui_status_updated_at = 0.0
 WEBUI_RESOURCE_ROTATE_SECONDS = 2.06
 WEBUI_POLL_INTERVAL_SECONDS = WEBUI_RESOURCE_ROTATE_SECONDS / 4
 WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS = 0.9
+
+WebUiUpdate = dict[str, JSONSerializable]
+WebUiAudioValue = Optional[tuple[int, npt.NDArray[np.float32]]]
+
+
+class _WebUiUnset:
+    """Sentinel type for optional WebUI input updates."""
+
+
+_WEBUI_UNSET = _WebUiUnset()
+
 WEBUI_HEAD = textwrap.dedent(
     """
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
@@ -949,7 +960,7 @@ def _webui_resources_html() -> str:
     return f'<div class="footer-block">{escape(resource)}</div>'
 
 
-def _voice_button_update() -> dict[str, object]:
+def _voice_button_update() -> WebUiUpdate:
     """Return the current browser voice-button state."""
     celune = bound_celune
     if celune is None:
@@ -969,10 +980,9 @@ def _voice_button_update() -> dict[str, object]:
     )
 
 
-_WEBUI_UNSET = object()
-
-
-def _input_update(value: object = _WEBUI_UNSET) -> dict[str, object]:
+def _input_update(
+    value: Union[Optional[str], _WebUiUnset] = _WEBUI_UNSET,
+) -> WebUiUpdate:
     """Return the current browser input state."""
     has_value = value is not _WEBUI_UNSET
     celune = bound_celune
@@ -1018,7 +1028,7 @@ def _input_update(value: object = _WEBUI_UNSET) -> dict[str, object]:
     )
 
 
-def _send_button_update() -> dict[str, object]:
+def _send_button_update() -> WebUiUpdate:
     """Return the current browser send-button state."""
     celune = bound_celune
     if celune is None:
@@ -1035,9 +1045,9 @@ def _webui_snapshot() -> tuple[
     str,
     str,
     str,
-    dict[str, object],
-    dict[str, object],
-    dict[str, object],
+    WebUiUpdate,
+    WebUiUpdate,
+    WebUiUpdate,
 ]:
     """Return the current browser UI snapshot."""
     _seed_webui_logs()
@@ -1055,12 +1065,12 @@ def _webui_snapshot() -> tuple[
 def _webui_submit_snapshot(
     input_value: Optional[str],
 ) -> tuple[
-    dict[str, object],
+    WebUiUpdate,
     str,
     str,
     str,
-    dict[str, object],
-    dict[str, object],
+    WebUiUpdate,
+    WebUiUpdate,
 ]:
     """Return a browser snapshot shaped for submit/click handlers."""
     logs_html, status_html, resources_html, voice_update, send_update, _input = (
@@ -1105,13 +1115,13 @@ def _webui_speak(
     content: str,
 ) -> Iterator[
     tuple[
-        dict[str, object],
-        object,
+        WebUiUpdate,
+        WebUiAudioValue,
         str,
         str,
         str,
-        dict[str, object],
-        dict[str, object],
+        WebUiUpdate,
+        WebUiUpdate,
     ]
 ]:
     """Speak text through the browser UI and return browser audio playback."""
@@ -1169,7 +1179,7 @@ def _webui_speak(
                 raise item
 
             audio_chunks.append(_normalized_audio(item))
-        audio_value: object
+        audio_value: WebUiAudioValue
         if audio_chunks:
             audio_value = (BASE_SR, np.concatenate(audio_chunks))
         else:
@@ -1189,9 +1199,9 @@ def _webui_cycle_voice() -> tuple[
     str,
     str,
     str,
-    dict[str, object],
-    dict[str, object],
-    dict[str, object],
+    WebUiUpdate,
+    WebUiUpdate,
+    WebUiUpdate,
 ]:
     """Cycle to the next available Celune voice from the browser UI."""
     celune = require_celune()

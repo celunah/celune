@@ -180,9 +180,9 @@ class PersonaApiTests(TestCase):
     def _mock_qwen_vl_load(
         self,
         *,
-        processor: object,
-        model: object,
-        tokenizer: Optional[object] = None,
+        processor: Optional[Union[_FakeProcessor, _FakeMultimodalProcessor]],
+        model: Union[_FakeModel, _FakeGenerativeModel, mock.Mock],
+        tokenizer: Optional[_FakeTokenizer] = None,
         processor_side_effect: Optional[Exception] = None,
     ):
         """Patch the shared Qwen VL loader entrypoints for one test."""

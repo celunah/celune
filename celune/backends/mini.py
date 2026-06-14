@@ -44,8 +44,7 @@ class Mini(CeluneBackend[TTSModel]):
         self._generated_config_path: Optional[Path] = None
         self._loaded_language = "en"
 
-    @staticmethod
-    def _require_compatible_bundle() -> tuple[CEVoiceLoader, tuple[str, ...]]:
+    def _require_compatible_bundle(self) -> tuple[CEVoiceLoader, tuple[str, ...]]:
         """Return the active CEVOICE/CECHAR loader and its usable voice names."""
         loader = default_loader()
         custom_assert(
@@ -267,7 +266,9 @@ class Mini(CeluneBackend[TTSModel]):
                 f"unknown voice '{voice}' for backend '{self.name}'"
             ) from e
 
-        voice_state = model.get_state_for_audio_prompt(str(voice_path))
+        voice_state = model.get_state_for_audio_prompt(
+            str(self._truncate_reference(voice_path))
+        )
         self._voice_states[voice] = voice_state
         return voice_state
 
@@ -361,12 +362,9 @@ class Mini(CeluneBackend[TTSModel]):
             raise ValueError("expected text to say")
 
         voice = kwargs.pop("voice", self.default_voice)
-        instruct = kwargs.pop("instruct", None)
+        kwargs.pop("instruct", None)
         kwargs.pop("language", None)
         chunk_size = kwargs.pop("chunk_size", 1)
-
-        if instruct:
-            text = f"({instruct}) {text}"
 
         self._apply_seed()
         mini_model = cast(MiniModel, model)

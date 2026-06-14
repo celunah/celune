@@ -17,7 +17,7 @@ instances can exhaust GPU resources and is not a supported usage pattern.
 import sys as _sys
 import inspect as _inspect
 import subprocess as _subprocess
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 from .constants import APP_NAME
 
@@ -80,7 +80,9 @@ if hasattr(_sys, "ps1"):
     )
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(
+    name: str,
+) -> Union[type["Celune"], type["CeluneContext"], type["CeluneExtension"]]:
     if name == "Celune":
         from .celune import Celune
 

@@ -1489,7 +1489,7 @@ def play(
         sr,
         playback_label,
         keep,
-        volume=volume,
+        volume=volume * 0.5,
     )
 
 
@@ -1661,6 +1661,9 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
 
     Returns:
         bool: Whether the readiness signal was processed successfully.
+
+    Raises:
+        ValueError: If `ValueError` needs to be raised.
     """
     if signal_type == "readiness":
         signal = readiness_signal()
@@ -1673,7 +1676,11 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
     else:
         raise ValueError("no such signal")
 
+    # if a pipeline lock is already held or was not initialized this can cause
+    # Celune to become deadlocked or it won't have an effect, so please call
+    # Celune._try_play_signal() instead of calling this method directly
     if acquire_pipeline(engine, f"play {signal_type} signal"):
+        release_to_idle = False
         engine.cur_state = "speaking"
         source_id = _next_playback_source_id(engine)
         _register_playback_source(engine, source_id, kind="sfx")
@@ -1681,8 +1688,9 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
         _queue_playback_done(
             engine,
             source_id,
-            release_pipeline_when_finished=True,
+            release_pipeline_when_finished=release_to_idle,
         )
+        release_pipeline(engine, playback_idle=False)
         return True
     return False
 
@@ -1743,6 +1751,7 @@ def generation_worker(engine: Celune) -> None:
                 pushed_audio = False
 
                 # these generation parameters are fixed and do not change
+                # this only applies to Qwen3-TTS, other backends discard this
                 generation_params: Mapping[str, JSONSerializable] = {
                     "temperature": 0.15,
                     "top_k": 20,
@@ -1783,7 +1792,12 @@ def generation_worker(engine: Celune) -> None:
                                     "This input is already normalized.", "warning"
                                 )
                             else:
-                                chunk_text = normalized
+                                differences = sum(
+                                    x != y for x, y in zip(normalized, chunk_text)
+                                ) + abs(len(normalized) - len(chunk_text))
+
+                                if differences > max(5, int(len(chunk_text) * 0.05)):
+                                    chunk_text = normalized
 
                     generated_text_parts.append(chunk_text)
                     is_first_chunk = chunk_index == 0
