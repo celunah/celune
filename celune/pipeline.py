@@ -1674,6 +1674,7 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
         raise ValueError("no such signal")
 
     if acquire_pipeline(engine, f"play {signal_type} signal"):
+        release_to_idle = signal_type == "readiness"
         engine.cur_state = "speaking"
         source_id = _next_playback_source_id(engine)
         _register_playback_source(engine, source_id, kind="sfx")
@@ -1681,8 +1682,10 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
         _queue_playback_done(
             engine,
             source_id,
-            release_pipeline_when_finished=True,
+            release_pipeline_when_finished=release_to_idle,
         )
+        if not release_to_idle:
+            release_pipeline(engine, playback_idle=False)
         return True
     return False
 

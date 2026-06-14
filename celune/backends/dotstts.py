@@ -278,13 +278,9 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             text = f"({instruct}) {text}"
 
         try:
-            loader, _ = self._require_compatible_bundle()
+            loader, voice_names = self._require_compatible_bundle()
             if voice not in loader.bundle.voices:
-                voice = next(iter(loader.bundle.voices), None)
-                if voice is None:
-                    raise ValueError(
-                        f"backend '{self.name}' requires at least one voice in the active pack"
-                    )
+                voice = voice_names[0]
             ref_wav = loader.materialize(voice, "wav")
             configured_ref_text = loader.bundle.voices[voice].get("reference_text")
             ref_text = (
@@ -305,7 +301,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                     prompt_audio_path=str(ref_wav),
                     prompt_text=ref_text,
                     language=language,
-                    speaker_scale=float(kwargs.pop("speaker_scale", 1.5)),
+                    speaker_scale=1.5,
                     ode_method="euler",
                     num_steps=4,
                     normalize_text=False,
