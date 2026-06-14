@@ -129,16 +129,6 @@ class CeluneBackend(ABC, Generic[ModelT]):
         self._truncated_reference_paths: set[Path] = set()
 
     @staticmethod
-    def _truncate_reference(
-        audio: npt.NDArray[np.float32], sr: int
-    ) -> npt.NDArray[np.float32]:
-        """Truncate a reference audio to below 10 seconds."""
-        length = int(len(audio) / sr)
-        if length > 10:
-            return audio[: sr * 10]
-        return audio
-
-    @staticmethod
     def _reference_wave_path(name: str) -> Path:
         """Return a materialized path for a reference WAV from the active CEVOICE/CECHAR pack."""
         loader = default_loader()
