@@ -262,7 +262,7 @@ def make_pipeline_engine() -> SimpleNamespace:
 
 def make_voice_loader(
     voice: str,
-    metadata: dict[str, object],
+    metadata: dict[str, JSONSerializable],
 ) -> SimpleNamespace:
     """Return a simple CEVOICE loader stub for one named voice.
 

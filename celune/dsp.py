@@ -124,8 +124,8 @@ def sleeping_signal() -> npt.NDArray[np.float32]:
     """Dynamically generate Celune's sleeping sound.
 
     Returns:
-        npt.NDArray[np.float32]: The sleeping sound formatted as a NumPy array, or a silent array if the readiness
-            sound wasn't found.
+        npt.NDArray[np.float32]: The sleeping sound formatted as a NumPy array, or a silent array if the readiness sound
+        wasn't found.
     """
 
     return _cached_signal(
@@ -141,8 +141,8 @@ def working_signal() -> npt.NDArray[np.float32]:
     """Dynamically generate Celune's working sound.
 
     Returns:
-        npt.NDArray[np.float32]: The working sound formatted as a NumPy array, or a silent array if the readiness
-            sound wasn't found.
+        npt.NDArray[np.float32]: The working sound formatted as a NumPy array, or a silent array if the readiness sound
+        wasn't found.
     """
 
     return _cached_signal(
@@ -158,8 +158,8 @@ def error_signal() -> npt.NDArray[np.float32]:
     """Dynamically generate Celune's error sound.
 
     Returns:
-        npt.NDArray[np.float32]: The error sound formatted as a NumPy array, or a silent array if the readiness
-            sound wasn't found.
+        npt.NDArray[np.float32]: The error sound formatted as a NumPy array, or a silent array if the readiness sound
+        wasn't found.
     """
 
     def factory() -> npt.NDArray[np.float32]:

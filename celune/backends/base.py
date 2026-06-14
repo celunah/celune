@@ -8,6 +8,7 @@ import random
 import secrets
 import threading
 import contextlib
+import hashlib
 from pathlib import Path
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Generator
@@ -16,6 +17,7 @@ from typing import Callable, Optional, Mapping, Generic
 import torch
 import numpy as np
 import numpy.typing as npt
+import soundfile as sf
 from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 
@@ -23,6 +25,7 @@ from ..utils import discard
 from ..constants import N_A_NUMERIC
 from ..cevoice import default_loader
 from ..exceptions import BackendError
+from ..paths import temp_data_dir
 from ..typing.backends import BackendModel, ModelT
 
 __all__ = [
@@ -34,6 +37,7 @@ __all__ = [
 
 
 _HF_HUB_OFFLINE_LOCK = threading.Lock()
+_MAX_REFERENCE_SECONDS = 10.0
 
 
 def cached_hf_snapshot_path(
@@ -77,7 +81,7 @@ def local_hf_offline_mode(enabled: bool = True) -> Generator[None, None, None]:
     Args:
         enabled: Whether to enable Hugging Face offline mode for the guarded block.
 
-    Yields:
+    Returns:
         None: Control back to the guarded caller while the environment mutation is active.
     """
     if not enabled:
@@ -122,6 +126,7 @@ class CeluneBackend(ABC, Generic[ModelT]):
         self.log = log
         self.current_seed: Optional[int] = None
         self.random_seed = True
+        self._truncated_reference_paths: set[Path] = set()
 
     @staticmethod
     def _reference_wave_path(name: str) -> Path:
@@ -132,6 +137,24 @@ class CeluneBackend(ABC, Generic[ModelT]):
                 "a compatible CEVOICE/CECHAR package must be loaded before resolving reference audio"
             )
         return loader.materialize(name, "wav")
+
+    def _truncate_reference(self, reference_wav: Path) -> Path:
+        """Return a reference WAV truncated to Celune's backend-safe duration."""
+        info = sf.info(reference_wav)
+        if info.duration <= _MAX_REFERENCE_SECONDS:
+            return reference_wav
+
+        sample_rate = int(info.samplerate)
+        frame_limit = int(sample_rate * _MAX_REFERENCE_SECONDS)
+        audio, _ = sf.read(reference_wav, frames=frame_limit, dtype="float32")
+        temp_dir = temp_data_dir(create=True)
+        digest = hashlib.sha1(str(reference_wav.resolve()).encode("utf-8")).hexdigest()[
+            :12
+        ]
+        truncated_path = temp_dir / f"{reference_wav.stem}-{digest}-10s.wav"
+        sf.write(truncated_path, audio, sample_rate)
+        self._truncated_reference_paths.add(truncated_path)
+        return truncated_path
 
     def _validate_refs(self) -> None:
         """Validate reference audio files found in the current CEVOICE/CECHAR pack."""
@@ -299,6 +322,11 @@ class CeluneBackend(ABC, Generic[ModelT]):
                 torch.cuda.synchronize()
             with contextlib.suppress(Exception):
                 torch.cuda.empty_cache()
+
+        for truncated_path in self._truncated_reference_paths:
+            with contextlib.suppress(OSError):
+                truncated_path.unlink(missing_ok=True)
+        self._truncated_reference_paths.clear()
 
     def preload_models(self) -> None:
         """Ensure all required models are available locally."""

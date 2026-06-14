@@ -5,7 +5,7 @@ import os
 import io
 import contextlib
 from collections.abc import Mapping
-from typing import Callable, Optional, Generator, Any
+from typing import Callable, Optional, Generator, Protocol
 
 from ..config import Config
 from ..cevoice import CEVoicePersona
@@ -22,6 +22,17 @@ from ..constants import (
 
 PERSONA_QUANTIZATION = "4bit"
 DevLogCallback = Callable[[str, str], None]
+
+
+class PersonaEngineView(Protocol):
+    """Typed view of the engine fields consumed by Persona helpers."""
+
+    config: Config
+    current_character_persona: Optional[CEVoicePersona]
+    current_character: Optional[str]
+    voice_bundle_is_default: bool
+    persona_history: list[dict[str, str]]
+    persona_attachments: list[dict[str, str]]
 
 
 class PersonaClientResponse:
@@ -124,7 +135,7 @@ def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
 
 
 def _config_text(
-    engine: Any,
+    engine: PersonaEngineView,
     key: str,
     default: str = "",
 ) -> str:
@@ -139,7 +150,7 @@ def _config_text(
     return default
 
 
-def pack_persona(engine: Any) -> Optional[CEVoicePersona]:
+def pack_persona(engine: PersonaEngineView) -> Optional[CEVoicePersona]:
     """Return typed CEVOICE persona metadata attached to the current engine.
 
     Args:
@@ -152,7 +163,7 @@ def pack_persona(engine: Any) -> Optional[CEVoicePersona]:
     return persona if isinstance(persona, CEVoicePersona) else None
 
 
-def pack_identity_text(engine: Any, field_name: str) -> str:
+def pack_identity_text(engine: PersonaEngineView, field_name: str) -> str:
     """Read one CEVOICE persona identity field when present.
 
     Args:
@@ -170,7 +181,7 @@ def pack_identity_text(engine: Any, field_name: str) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else ""
 
 
-def pack_persona_text(engine: Any, field_name: str) -> str:
+def pack_persona_text(engine: PersonaEngineView, field_name: str) -> str:
     """Read one top-level CEVOICE persona text field when present.
 
     Args:
@@ -187,7 +198,7 @@ def pack_persona_text(engine: Any, field_name: str) -> str:
     return value.strip() if isinstance(value, str) and value.strip() else ""
 
 
-def pack_persona_lines(engine: Any, field_name: str) -> tuple[str, ...]:
+def pack_persona_lines(engine: PersonaEngineView, field_name: str) -> tuple[str, ...]:
     """Read one CEVOICE persona text-list field when present.
 
     Args:
@@ -207,7 +218,7 @@ def pack_persona_lines(engine: Any, field_name: str) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def persona_active_character_name(engine: Any) -> str:
+def persona_active_character_name(engine: PersonaEngineView) -> str:
     """Return the active character name used for Persona memory isolation.
 
     Args:
@@ -227,7 +238,7 @@ def persona_active_character_name(engine: Any) -> str:
     return _config_text(engine, "persona_character_name", "Unknown")
 
 
-def uses_default_celune_identity(engine: Any) -> bool:
+def uses_default_celune_identity(engine: PersonaEngineView) -> bool:
     """Return whether Persona defaults should use Celune's canonical identity.
 
     Args:
@@ -250,7 +261,7 @@ def default_persona_persona() -> str:
     return DEFAULT_PERSONA_DESCRIPTION
 
 
-def default_persona_age(engine: Any) -> str:
+def default_persona_age(engine: PersonaEngineView) -> str:
     """Return the default age for the active character source.
 
     Args:
@@ -264,7 +275,7 @@ def default_persona_age(engine: Any) -> str:
     return "unknown"
 
 
-def default_persona_gender(engine: Any) -> str:
+def default_persona_gender(engine: PersonaEngineView) -> str:
     """Return a conservative gender default for the active character source.
 
     Args:
@@ -287,7 +298,7 @@ def default_persona_context() -> str:
     return DEFAULT_PERSONA_CONTEXT
 
 
-def persona_style_traits(engine: Any) -> dict[str, str]:
+def persona_style_traits(engine: PersonaEngineView) -> dict[str, str]:
     """Return the configured speaking-style traits for a Persona request.
 
     Args:
@@ -323,7 +334,7 @@ def persona_style_traits(engine: Any) -> dict[str, str]:
     return traits
 
 
-def persona_short_term_history_limit(engine: Any) -> int:
+def persona_short_term_history_limit(engine: PersonaEngineView) -> int:
     """Return the configured short-term memory length for Persona.
 
     Args:
@@ -361,7 +372,7 @@ def persona_history_limit() -> int:
     return PERSONA_HISTORY_MESSAGES
 
 
-def persona_history_messages(engine: Any) -> list[JSON]:
+def persona_history_messages(engine: PersonaEngineView) -> list[JSON]:
     """Return prior Persona chat messages in OpenAI chat format.
 
     Args:
@@ -410,7 +421,7 @@ def persona_attachment_source(path: str) -> str:
     return source
 
 
-def persona_pending_attachments(engine: Any) -> list[JSON]:
+def persona_pending_attachments(engine: PersonaEngineView) -> list[JSON]:
     """Return pending Persona attachments in Qwen chat content format.
 
     Args:

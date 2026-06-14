@@ -13,6 +13,7 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from celune.celune import Celune
 from celune.config import Config
 from celune.backends.qwen3 import Qwen3
+from celune.constants import JSONSerializable
 from celune.vram import QWEN3_0_6B_MODEL
 from celune.persona.impl import persona_quantization
 from celune.exceptions import BackendError, WarmupError
@@ -690,7 +691,7 @@ class CeluneCoreTests(TestCase):
         release_load = threading.Event()
         recreated_backend = FakeBackend(log=lambda _msg, _severity="info": None)
 
-        def blocking_load_model(model_id: str) -> dict[str, object]:
+        def blocking_load_model(model_id: str) -> dict[str, JSONSerializable]:
             load_started.set()
             self.assertEqual(release_load.wait(timeout=1), True)
             return {"model_id": model_id, "kwargs": {}}

@@ -4,24 +4,36 @@
 import os
 import contextlib
 from collections.abc import Iterator
-from typing import Callable, Optional, Mapping, Generator
+from typing import Callable, Optional, Mapping, Generator, Protocol, cast
 
 import torch
+import loguru
 import numpy as np
 import numpy.typing as npt
 from dots_tts.runtime import DotsTtsRuntime
-
-try:
-    import loguru
-except ModuleNotFoundError:
-    loguru_logger = None
-else:
-    loguru_logger = loguru.logger
 
 from ..utils import custom_assert
 from ..exceptions import BackendError
 from ..cevoice import default_loader, CEVoiceLoader
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
+
+
+class _LoguruLogger(Protocol):
+    """Subset of Loguru's logger interface used by the backend noise suppressor."""
+
+    def disable(self, name: str) -> None:
+        """Disable one logger namespace.
+
+        Args:
+            name: Logger namespace that should be silenced temporarily.
+        """
+
+    def enable(self, name: str) -> None:
+        """Enable one logger namespace.
+
+        Args:
+            name: Logger namespace that should be re-enabled after suppression.
+        """
 
 
 class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
@@ -169,9 +181,13 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         """Suppress unnecessary backend output."""
         with open(os.devnull, "w", encoding="utf-8") as devnull:
             disabled_loguru = False
-            if loguru_logger is not None:
-                with contextlib.suppress(Exception):
-                    loguru_logger.disable("dots_tts")
+            bound_logger = cast(
+                Optional[_LoguruLogger],
+                getattr(loguru, "logger", None),
+            )
+            with contextlib.suppress(Exception):
+                if bound_logger is not None:
+                    bound_logger.disable("dots_tts")
                     disabled_loguru = True
 
             try:
@@ -179,9 +195,9 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                     with contextlib.redirect_stderr(devnull):
                         yield
             finally:
-                if disabled_loguru and loguru_logger is not None:
+                if disabled_loguru and bound_logger is not None:
                     with contextlib.suppress(Exception):
-                        loguru_logger.enable("dots_tts")
+                        bound_logger.enable("dots_tts")
 
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
@@ -261,7 +277,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             ValueError: The requested voice is unsupported, or input text is empty.
         """
         voice = kwargs.pop("voice", self.default_voice)
-        instruct = kwargs.pop("instruct", None)
+        kwargs.pop("instruct", None)
         language = self.resolve_generation_language(kwargs.pop("language", None))
         chunk_size = max(1, int(kwargs.pop("chunk_size", 1)))
         text = kwargs.pop("text", None)
@@ -274,21 +290,16 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         if not text:
             raise ValueError("expected text to say")
 
-        if instruct:
-            text = f"({instruct}) {text}"
-
         try:
-            loader, _ = self._require_compatible_bundle()
+            loader, voice_names = self._require_compatible_bundle()
             if voice not in loader.bundle.voices:
-                voice = next(iter(loader.bundle.voices), None)
-                if voice is None:
-                    raise ValueError(
-                        f"backend '{self.name}' requires at least one voice in the active pack"
-                    )
-            ref_wav = loader.materialize(voice, "wav")
+                voice = voice_names[0]
+            ref_wav = self._truncate_reference(loader.materialize(voice, "wav"))
             configured_ref_text = loader.bundle.voices[voice].get("reference_text")
             ref_text = (
-                configured_ref_text if isinstance(configured_ref_text, str) else ""
+                configured_ref_text.strip()
+                if isinstance(configured_ref_text, str)
+                else ""
             )
         except KeyError as e:
             raise ValueError(
@@ -305,7 +316,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                     prompt_audio_path=str(ref_wav),
                     prompt_text=ref_text,
                     language=language,
-                    speaker_scale=float(kwargs.pop("speaker_scale", 1.5)),
+                    speaker_scale=1.5,
                     ode_method="euler",
                     num_steps=4,
                     normalize_text=False,
