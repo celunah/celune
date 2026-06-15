@@ -1748,6 +1748,184 @@ class PipelineTests(TestCase):
         self.assertEqual(backend.current_language, "fr")
         self.assertEqual(engine.model.kwargs["lang"], "fr")
 
+    def test_generation_worker_disables_smart_buffer_for_realtime_speed(self) -> None:
+        """Verify smart buffering gets out of the way when generation is realtime."""
+        engine = make_pipeline_engine()
+        queued_lengths: list[int] = []
+
+        def generate_stream(
+            model: mock.Mock, **kwargs: JSONSerializable
+        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+            discard(model)
+            discard(kwargs)
+            chunk = np.zeros((48000, 2), dtype=np.float32)
+            for _ in range(3):
+                yield chunk.copy(), 48000, None
+
+        engine.backend = SimpleNamespace(generate_stream=generate_stream)
+        engine.model_lock = threading.Lock()
+        engine.model = mock.Mock()
+        engine.language = "en"
+        engine.chunk_size = 8
+        engine.voice_prompt = None
+        engine.current_voice = "balanced"
+        engine.speed = 1.0
+        engine.can_use_rubberband = False
+        engine.reverb = SimpleNamespace(
+            strength=0.0,
+            reset=mock.Mock(),
+            flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
+        )
+        engine.queue_avail_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.exit_requested = False
+        engine.dev = False
+        engine.recently_saved = None
+        engine.smart_buffer_generation_speed = 1.3
+        engine.config = {"smart_buffer": {"enabled": True}}
+
+        engine.text_queue.put(pipeline.SpeechRequest("hello", "hello", save=True))
+        engine.text_queue.put(engine.sentinel)
+
+        with (
+            mock.patch("celune.pipeline.split_text", return_value=["hello"]),
+            mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
+            mock.patch("celune.pipeline.os.path.exists", return_value=True),
+            mock.patch("celune.pipeline._write_celune_flac"),
+            mock.patch(
+                "celune.pipeline._queue_playback_chunk",
+                side_effect=lambda _engine, _source_id, audio, _sr, _timing=None: (
+                    queued_lengths.append(len(audio))
+                ),
+            ),
+        ):
+            pipeline.generation_worker(cast(Celune, engine))
+
+        self.assertEqual(queued_lengths, [48000, 48000, 48000])
+        self.assertEqual(engine.smart_buffer_target_seconds, 0.0)
+
+    def test_generation_worker_expands_smart_buffer_when_speed_drops(self) -> None:
+        """Verify slower observed generation expands the smart buffer target."""
+        engine = make_pipeline_engine()
+        queued_lengths: list[int] = []
+
+        def generate_stream(
+            model: mock.Mock, **kwargs: JSONSerializable
+        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+            discard(model)
+            discard(kwargs)
+            chunk = np.zeros((48000, 2), dtype=np.float32)
+            for _ in range(3):
+                yield chunk.copy(), 48000, None
+
+        engine.backend = SimpleNamespace(generate_stream=generate_stream)
+        engine.model_lock = threading.Lock()
+        engine.model = mock.Mock()
+        engine.language = "en"
+        engine.chunk_size = 8
+        engine.voice_prompt = None
+        engine.current_voice = "balanced"
+        engine.speed = 1.0
+        engine.can_use_rubberband = False
+        engine.reverb = SimpleNamespace(
+            strength=0.0,
+            reset=mock.Mock(),
+            flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
+        )
+        engine.queue_avail_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.exit_requested = False
+        engine.dev = False
+        engine.recently_saved = None
+        engine.smart_buffer_generation_speed = 1.3
+        engine.config = {"smart_buffer": {"enabled": True}}
+
+        engine.text_queue.put(pipeline.SpeechRequest("hello", "hello", save=True))
+        engine.text_queue.put(engine.sentinel)
+
+        with (
+            mock.patch("celune.pipeline.split_text", return_value=["hello"]),
+            mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
+            mock.patch("celune.pipeline.os.path.exists", return_value=True),
+            mock.patch("celune.pipeline._write_celune_flac"),
+            mock.patch(
+                "celune.pipeline._queue_playback_chunk",
+                side_effect=lambda _engine, _source_id, audio, _sr, _timing=None: (
+                    queued_lengths.append(len(audio))
+                ),
+            ),
+            mock.patch(
+                "celune.pipeline.time.monotonic",
+                side_effect=[0.0, 0.1, 0.2, 2.8, 5.6, 8.4],
+            ),
+        ):
+            pipeline.generation_worker(cast(Celune, engine))
+
+        self.assertEqual(queued_lengths, [48000, 96000])
+        self.assertGreater(engine.smart_buffer_generation_speed, 0.5)
+        self.assertLess(engine.smart_buffer_generation_speed, 1.3)
+        self.assertGreater(engine.smart_buffer_target_seconds, 0.0)
+
+    def test_generation_worker_waits_for_completion_at_very_low_speed(self) -> None:
+        """Verify very slow generation fully buffers the utterance before playback."""
+        engine = make_pipeline_engine()
+        queued_lengths: list[int] = []
+
+        def generate_stream(
+            model: mock.Mock, **kwargs: JSONSerializable
+        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+            discard(model)
+            discard(kwargs)
+            chunk = np.zeros((48000, 2), dtype=np.float32)
+            for _ in range(3):
+                yield chunk.copy(), 48000, None
+
+        engine.backend = SimpleNamespace(generate_stream=generate_stream)
+        engine.model_lock = threading.Lock()
+        engine.model = mock.Mock()
+        engine.language = "en"
+        engine.chunk_size = 8
+        engine.voice_prompt = None
+        engine.current_voice = "balanced"
+        engine.speed = 1.0
+        engine.can_use_rubberband = False
+        engine.reverb = SimpleNamespace(
+            strength=0.0,
+            reset=mock.Mock(),
+            flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
+        )
+        engine.queue_avail_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.exit_requested = False
+        engine.dev = False
+        engine.recently_saved = None
+        engine.smart_buffer_generation_speed = 0.35
+        engine.config = {"smart_buffer": {"enabled": True}}
+
+        engine.text_queue.put(pipeline.SpeechRequest("hello", "hello", save=True))
+        engine.text_queue.put(engine.sentinel)
+
+        with (
+            mock.patch("celune.pipeline.split_text", return_value=["hello"]),
+            mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
+            mock.patch("celune.pipeline.os.path.exists", return_value=True),
+            mock.patch("celune.pipeline._write_celune_flac"),
+            mock.patch(
+                "celune.pipeline._queue_playback_chunk",
+                side_effect=lambda _engine, _source_id, audio, _sr, _timing=None: (
+                    queued_lengths.append(len(audio))
+                ),
+            ),
+            mock.patch(
+                "celune.pipeline.time.monotonic",
+                side_effect=[0.0, 0.5, 2.0, 4.0, 6.0, 6.0],
+            ),
+        ):
+            pipeline.generation_worker(cast(Celune, engine))
+
+        self.assertEqual(queued_lengths, [144000])
+        self.assertEqual(engine.smart_buffer_target_seconds, float("inf"))
+
     def test_split_text_breaks_long_unpunctuated_lines(self) -> None:
         """Verify long prose without punctuation still splits into chunks.
 

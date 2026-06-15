@@ -234,6 +234,8 @@ class CeluneStateAccessors:
     _audio_unavailable: bool
     can_use_rubberband: bool
     speed: float
+    smart_buffer_generation_speed: Optional[float]
+    smart_buffer_target_seconds: float
     reverb: "StreamingPedalboardReverb"
     recently_saved: Optional[str]
     kept_sfx_audio: Optional["npt.NDArray[np.float32]"]

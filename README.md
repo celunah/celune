@@ -161,8 +161,8 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 > This preset supports:
 >
 > - All of the above, and:
-> - VoxCPM2
-> - Persona (4-bit)
+> - VoxCPM2 or dots.tts MF
+> - Persona (4-bit) (cannot be used in conjunction with high-end TTS models reliably)
 >
 > Extra High (16GB+ VRAM recommended)
 >

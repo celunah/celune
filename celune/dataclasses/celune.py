@@ -125,6 +125,8 @@ class CeluneAudioState:
     audio_unavailable: bool = False
     can_use_rubberband: bool = True
     speed: float = 1.0
+    smart_buffer_generation_speed: Optional[float] = None
+    smart_buffer_target_seconds: float = 0.0
     reverb: StreamingPedalboardReverb = field(default_factory=StreamingPedalboardReverb)
     recently_saved: Optional[str] = None
     kept_sfx_audio: Optional[npt.NDArray[np.float32]] = None
@@ -248,6 +250,16 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("_audio_unavailable", "_audio_state", "audio_unavailable"),
     ForwardedPropertySpec("can_use_rubberband", "_audio_state", "can_use_rubberband"),
     ForwardedPropertySpec("speed", "_audio_state", "speed"),
+    ForwardedPropertySpec(
+        "smart_buffer_generation_speed",
+        "_audio_state",
+        "smart_buffer_generation_speed",
+    ),
+    ForwardedPropertySpec(
+        "smart_buffer_target_seconds",
+        "_audio_state",
+        "smart_buffer_target_seconds",
+    ),
     ForwardedPropertySpec("reverb", "_audio_state", "reverb"),
     ForwardedPropertySpec("recently_saved", "_audio_state", "recently_saved"),
     ForwardedPropertySpec("kept_sfx_audio", "_audio_state", "kept_sfx_audio"),
