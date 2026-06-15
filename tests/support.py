@@ -214,6 +214,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     progress: list[tuple[Optional[float], Optional[float]]] = []
     engine = SimpleNamespace()
     engine.backend = SimpleNamespace(supported_languages=("en",))
+    engine.config = {}
     engine.language = "Auto"
     engine.persona_attachments = []
     engine.persona_recent_visual_context = ()
@@ -232,6 +233,8 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine._current_sr = None
     engine.audio_unavailable = False
     engine._audio_unavailable = False
+    engine.smart_buffer_generation_speed = None
+    engine.smart_buffer_target_seconds = 0.0
     engine.text_queue = queue.Queue()
     engine.audio_queue = queue.Queue()
     engine.say_lock = threading.Lock()

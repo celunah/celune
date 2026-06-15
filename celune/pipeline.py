@@ -104,6 +104,14 @@ _FLAC_VORBIS_COMMENT_BLOCK = 4
 _MAX_FLAC_METADATA_BLOCK_SIZE = 0xFFFFFF
 _SFX_DUCK_GAIN = 0.25
 _SFX_DUCK_FADE_SECONDS = 0.15
+_LEGACY_BUFFER_SECONDS = 10.0
+_SMART_BUFFER_REALTIME_SPEED = 1.05
+_SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS = 20.0
+_SMART_BUFFER_MIN_SECONDS = 0.35
+_SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS = 0.75
+_SMART_BUFFER_MAX_SECONDS = 20.0
+_SMART_BUFFER_COMPLETE_BELOW_SPEED = 0.5
+_SMART_BUFFER_SMOOTHING = 0.35
 
 
 def _json_value(value: JSONSerializable) -> JSONSerializable:
@@ -825,6 +833,148 @@ def _config_lines(engine: Celune, key: str) -> tuple[str, ...]:
     return ()
 
 
+def _config_float(
+    source: Mapping[str, JSONSerializable], key: str, default: float
+) -> float:
+    """Read one numeric config field as a float with a fallback."""
+    value = source.get(key)
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return default
+        try:
+            return float(stripped)
+        except ValueError:
+            return default
+    return default
+
+
+def _smart_buffer_config(
+    engine: Celune,
+) -> tuple[bool, float, float, float, float, float, float]:
+    """Resolve the adaptive speech buffer settings for the current engine."""
+    value = engine.config.get("smart_buffer", {})
+    config = value if isinstance(value, dict) else {}
+    enabled = bool(config.get("enabled", True))
+    realtime_speed = max(
+        0.1,
+        _config_float(config, "realtime_speed", _SMART_BUFFER_REALTIME_SPEED),
+    )
+    protected_playback_seconds = max(
+        0.0,
+        _config_float(
+            config,
+            "protected_playback_seconds",
+            _SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS,
+        ),
+    )
+    minimum_seconds = max(
+        0.0,
+        _config_float(config, "minimum_seconds", _SMART_BUFFER_MIN_SECONDS),
+    )
+    min_speed_sample_seconds = max(
+        0.0,
+        _config_float(
+            config,
+            "min_speed_sample_seconds",
+            _SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS,
+        ),
+    )
+    max_seconds = max(
+        0.0,
+        _config_float(config, "max_seconds", _SMART_BUFFER_MAX_SECONDS),
+    )
+    complete_below_speed = max(
+        0.0,
+        _config_float(
+            config,
+            "complete_below_speed",
+            _SMART_BUFFER_COMPLETE_BELOW_SPEED,
+        ),
+    )
+    return (
+        enabled,
+        realtime_speed,
+        protected_playback_seconds,
+        minimum_seconds,
+        min_speed_sample_seconds,
+        max_seconds,
+        complete_below_speed,
+    )
+
+
+def _smart_buffer_speed_estimate(
+    engine: Celune,
+    speech_len: float,
+    generation_elapsed: float,
+    min_speed_sample_seconds: float,
+) -> Optional[float]:
+    """Estimate current generation speed in audio-seconds per wall-second."""
+    if generation_elapsed > 0.0 and speech_len >= min_speed_sample_seconds:
+        return speech_len / generation_elapsed
+
+    previous = getattr(engine, "smart_buffer_generation_speed", None)
+    if isinstance(previous, (int, float)) and previous > 0.0:
+        return float(previous)
+    return None
+
+
+def _smart_buffer_target_seconds(
+    engine: Celune,
+    speech_len: float,
+    generation_elapsed: float,
+) -> float:
+    """Return the current adaptive pre-playback buffer target in seconds."""
+    (
+        enabled,
+        realtime_speed,
+        protected_playback_seconds,
+        minimum_seconds,
+        min_speed_sample_seconds,
+        max_seconds,
+        complete_below_speed,
+    ) = _smart_buffer_config(engine)
+
+    if not enabled:
+        return _LEGACY_BUFFER_SECONDS
+
+    speed_estimate = _smart_buffer_speed_estimate(
+        engine,
+        speech_len,
+        generation_elapsed,
+        min_speed_sample_seconds,
+    )
+    if speed_estimate is None:
+        return min(max_seconds, max(1.0, minimum_seconds))
+
+    if speed_estimate >= realtime_speed:
+        return 0.0
+
+    if speed_estimate <= complete_below_speed:
+        return float("inf")
+
+    speed_deficit = max(0.0, 1.0 - speed_estimate)
+    target_seconds = minimum_seconds + (protected_playback_seconds * speed_deficit)
+    return min(max_seconds, max(minimum_seconds, target_seconds))
+
+
+def _remember_smart_buffer_speed(engine: Celune, generation_speed: float) -> None:
+    """Update the engine's rolling generation-speed estimate."""
+    if generation_speed <= 0.0:
+        return
+
+    previous = getattr(engine, "smart_buffer_generation_speed", None)
+    if isinstance(previous, (int, float)) and previous > 0.0:
+        generation_speed = (float(previous) * (1.0 - _SMART_BUFFER_SMOOTHING)) + (
+            generation_speed * _SMART_BUFFER_SMOOTHING
+        )
+    engine.smart_buffer_generation_speed = generation_speed
+
+
 def build_persona_character_card(engine: Celune) -> str:
     """Build the compact character and persona summary sent with requests.
 
@@ -1453,8 +1603,7 @@ def play(
         engine: The Celune engine that should play the sound.
         sound_path: The path to the audio file to play.
         keep: Whether to prepend this SFX to the next saved utterance.
-        volume: How loud should the SFX be played at, limited to half of max volume
-            to protect headphone users.
+        volume: How loud should the SFX be played at, limited to half of max volume to protect headphone users.
 
     Returns:
         bool: ``True`` when playback was queued successfully, otherwise ``False``.
@@ -1748,6 +1897,12 @@ def generation_worker(engine: Celune) -> None:
                 engine.log(f"[GEN] {display_text}")
                 speech_len = 0.0
                 buffered_speech_len = 0.0
+                smart_buffer_target_seconds = _smart_buffer_target_seconds(
+                    engine,
+                    0.0,
+                    0.0,
+                )
+                engine.smart_buffer_target_seconds = smart_buffer_target_seconds
                 speech_timing = SpeechTiming(start_time)
                 pushed_audio = False
 
@@ -1916,9 +2071,26 @@ def generation_worker(engine: Celune) -> None:
                             chunk_dur = len(audio_chunk) / BASE_SR
                             speech_len += chunk_dur
                             buffered_speech_len += chunk_dur
+                            generation_elapsed = max(
+                                time.monotonic() - start_time,
+                                1e-6,
+                            )
+                            smart_buffer_target_seconds = _smart_buffer_target_seconds(
+                                engine,
+                                speech_len,
+                                generation_elapsed,
+                            )
+                            engine.smart_buffer_target_seconds = (
+                                smart_buffer_target_seconds
+                            )
 
-                            # buffering helps Celune speak smoothly when performance is bad
-                            if buffered_speech_len >= 10.0:
+                            # adaptive buffering builds more headroom when generation
+                            # falls behind realtime and gets out of the way when it
+                            # does not need to aid in your ability to hear the voice
+                            if (
+                                smart_buffer_target_seconds <= 0.0
+                                or buffered_speech_len >= smart_buffer_target_seconds
+                            ):
                                 queued_audio = np.concatenate(buffer)
                                 _queue_playback_chunk(
                                     engine,
@@ -1974,7 +2146,14 @@ def generation_worker(engine: Celune) -> None:
                     f"[GEN] {format_number(speech_len, 2)} seconds, "
                     f"took {format_number(generation_time, 2)} seconds"
                 )
-                engine.log(f"Speed: x{format_number(speech_len / generation_time, 2)}")
+                generation_speed = speech_len / generation_time
+                engine.log(f"Speed: x{format_number(generation_speed, 2)}")
+                _remember_smart_buffer_speed(engine, generation_speed)
+                engine.smart_buffer_target_seconds = _smart_buffer_target_seconds(
+                    engine,
+                    speech_len,
+                    generation_time,
+                )
                 engine.log(f"TTFC: {format_number(speech_timing.ttfc_ms(), 1)} ms")
 
                 if buffer:

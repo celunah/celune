@@ -43,6 +43,20 @@ theme: dark
 # CeluneNorm is Celune's normalizer that cleans up your text to be more TTS friendly
 use_normalizer: false
 
+# smart speech buffering
+#
+# Celune can adapt its pre-playback buffer to recent and live generation speed
+# so slower generations build more headroom while fast realtime generations
+# start speaking immediately
+smart_buffer:
+  enabled: true
+  realtime_speed: 1.05
+  protected_playback_seconds: 20.0
+  minimum_seconds: 0.35
+  min_speed_sample_seconds: 0.75
+  max_seconds: 20.0
+  complete_below_speed: 0.5
+
 # VRAM target settings
 # we recommend choosing medium as a safe baseline for low VRAM users
 # the sane choice for users wanting to use Persona is the high preset
