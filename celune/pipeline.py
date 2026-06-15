@@ -1453,7 +1453,8 @@ def play(
         engine: The Celune engine that should play the sound.
         sound_path: The path to the audio file to play.
         keep: Whether to prepend this SFX to the next saved utterance.
-        volume: How loud should the SFX be played at.
+        volume: How loud should the SFX be played at, limited to half of max volume
+            to protect headphone users.
 
     Returns:
         bool: ``True`` when playback was queued successfully, otherwise ``False``.
@@ -1663,7 +1664,7 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
         bool: Whether the readiness signal was processed successfully.
 
     Raises:
-        ValueError: If `ValueError` needs to be raised.
+        ValueError: An invalid signal name was requested.
     """
     if signal_type == "readiness":
         signal = readiness_signal()
