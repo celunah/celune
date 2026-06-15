@@ -4,8 +4,8 @@
 import sys
 import re
 import logging
-from collections.abc import Collection
 from typing import Callable, Optional
+from collections.abc import Collection
 
 import readchar
 

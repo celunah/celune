@@ -1,59 +1,24 @@
 # SPDX-License-Identifier: MIT
 """Pocket TTS backend implementation for Celune."""
 
-import contextlib
 import tempfile
+import contextlib
 from pathlib import Path
 from collections.abc import Iterator, Mapping
-from typing import Callable, Optional, Protocol, cast
+from typing import Callable, Optional, cast
 
 import yaml
-import torch
 import numpy as np
 import numpy.typing as npt
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
-from .base import CeluneBackend, cached_hf_snapshot_path
-from ..cevoice import default_loader, CEVoiceLoader
-from ..exceptions import BackendError
 from ..paths import temp_data_dir
 from ..utils import custom_assert
-
-type MiniPromptState = dict[str, dict[str, torch.Tensor]]
-
-
-class MiniModel(Protocol):
-    """Pocket TTS model surface used by Celune's mini backend."""
-
-    sample_rate: int
-
-    def get_state_for_audio_prompt(self, audio_conditioning: str) -> MiniPromptState:
-        """Return a reusable prompt state for one reference audio path.
-
-        Args:
-            audio_conditioning: The audio conditioning string value.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-    def generate_audio_stream(
-        self,
-        model_state: MiniPromptState,
-        text_to_generate: str,
-    ) -> Iterator[torch.Tensor]:
-        """Yield streamed audio chunks for one prompt state and text.
-
-        Args:
-            model_state: The current prompt state.
-            text_to_generate: The text to be generated.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
+from ..exceptions import BackendError
+from ..cevoice import default_loader, CEVoiceLoader
+from ..typing.backends import MiniModel, MiniPromptState
+from .base import CeluneBackend, cached_hf_snapshot_path
 
 
 class Mini(CeluneBackend[TTSModel]):
@@ -79,8 +44,7 @@ class Mini(CeluneBackend[TTSModel]):
         self._generated_config_path: Optional[Path] = None
         self._loaded_language = "en"
 
-    @staticmethod
-    def _require_compatible_bundle() -> tuple[CEVoiceLoader, tuple[str, ...]]:
+    def _require_compatible_bundle(self) -> tuple[CEVoiceLoader, tuple[str, ...]]:
         """Return the active CEVOICE/CECHAR loader and its usable voice names."""
         loader = default_loader()
         custom_assert(
@@ -154,7 +118,7 @@ class Mini(CeluneBackend[TTSModel]):
             lang: The language identifier for differentiating models by language.
 
         Returns:
-            A language-specific model identifier or "en" if no match was found.
+            str: A language-specific model identifier, or ``"en"`` if no match was found.
         """
         alias_to_code: Mapping[str, str] = {
             "english": "en",
@@ -302,7 +266,9 @@ class Mini(CeluneBackend[TTSModel]):
                 f"unknown voice '{voice}' for backend '{self.name}'"
             ) from e
 
-        voice_state = model.get_state_for_audio_prompt(str(voice_path))
+        voice_state = model.get_state_for_audio_prompt(
+            str(self._truncate_reference(voice_path))
+        )
         self._voice_states[voice] = voice_state
         return voice_state
 
@@ -335,7 +301,7 @@ class Mini(CeluneBackend[TTSModel]):
             lang: The language identifier for differentiating models by language.
 
         Returns:
-            Whether Celune should reload a new Pocket TTS language model.
+            bool: Whether Celune should reload a new Pocket TTS language model.
         """
         return self.resolve_generation_language(lang) != self._loaded_language
 
@@ -396,12 +362,9 @@ class Mini(CeluneBackend[TTSModel]):
             raise ValueError("expected text to say")
 
         voice = kwargs.pop("voice", self.default_voice)
-        instruct = kwargs.pop("instruct", None)
+        kwargs.pop("instruct", None)
         kwargs.pop("language", None)
         chunk_size = kwargs.pop("chunk_size", 1)
-
-        if instruct:
-            text = f"({instruct}) {text}"
 
         self._apply_seed()
         mini_model = cast(MiniModel, model)

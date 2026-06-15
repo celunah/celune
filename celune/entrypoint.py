@@ -20,6 +20,8 @@ from types import SimpleNamespace, ModuleType
 
 from celune import __version__, REVISION, __tagline__
 from celune.constants import APP_NAME, APP_SLUG, ExitCodes
+from celune.paths import project_root, running_compiled
+from celune.updater import apply_update_and_restart
 
 
 def _env_flag(name: str) -> bool:
@@ -35,7 +37,7 @@ INITIAL_BACKEND = os.getenv("CELUNE_BACKEND")
 # these parameters are used by the app CLI and its commands, e.g. 'celune doctor'
 LAUNCHED_VIA_LAUNCHER = _env_flag("CELUNE_LAUNCHER")
 SCRIPT_PATH = Path(__file__).resolve()
-PROJECT_ROOT = SCRIPT_PATH.parent.parent
+PROJECT_ROOT = project_root()
 SETUP_PATH = PROJECT_ROOT / "setup.py"
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "default_config.yaml"
 SCRIPT_NAME = "main.py"
@@ -278,6 +280,14 @@ def _doctor_venv_python() -> Path:
 def _doctor_running_python() -> Path:
     """Return the interpreter path currently running the doctor command."""
     return Path(sys.executable).resolve()
+
+
+def _doctor_subprocess_python() -> Path:
+    """Return the Python executable doctor fixups should invoke."""
+    if running_compiled():
+        return _doctor_venv_python()
+
+    return _doctor_running_python()
 
 
 def _doctor_same_path(left: Path, right: Path) -> bool:
@@ -713,6 +723,7 @@ def _doctor_checks() -> list[DoctorCheck]:
     optional_imports = [
         ("torchvision", "torchvision", "Persona vision support uses torchvision."),
         ("pocket_tts", "pocket-tts", f"{APP_NAME} Mini needs pocket-tts."),
+        ("dots_tts", "dots.tts", "The dots.tts MeanFlow backend needs dots.tts."),
         ("voxcpm", "voxcpm", "The VoxCPM2 backend needs voxcpm."),
         ("openrgb", "openrgb-python", "Presence lighting needs openrgb-python."),
         ("matplotlib", "matplotlib", "Developer visualizations use matplotlib."),
@@ -873,7 +884,7 @@ def run_doctor(argv: list[str]) -> int:
         print("Attempting to fix fixable problems...")
         try:
             result = subprocess.run(
-                [sys.executable, str(SETUP_PATH)],
+                [str(_doctor_subprocess_python()), str(SETUP_PATH)],
                 cwd=PROJECT_ROOT,
                 check=False,
             )
@@ -948,8 +959,8 @@ def start(verbose: bool = False) -> None:
         verbose: Whether the app should be started in verbose (developer) mode.
 
     Raises:
-        No: If `No` needs to be raised.
-        Exception: If `Exception` needs to be raised.
+        No: Raised on Celune's name day unless explicitly overridden.
+        Exception: Re-raised after printing a traceback in developer mode.
     """
     runtime = _load_runtime()
     try:
@@ -1025,6 +1036,13 @@ def start(verbose: bool = False) -> None:
                 ).start()
 
                 if choice:
+                    if running_compiled():
+                        print(
+                            f"{APP_NAME} will close so the launcher can apply the latest artifact."
+                        )
+                        time.sleep(2)
+                        sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
+
                     print(f"Updating {APP_NAME}...")
                     try:
                         runtime.update_to_latest()
@@ -1041,6 +1059,11 @@ def start(verbose: bool = False) -> None:
                         sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
         elif runtime.check_for_update() and not runtime.supports_ansi():
             print("This terminal does not support ANSI.")
+            if running_compiled():
+                print("Requesting the launcher to refresh the packaged binaries...")
+                time.sleep(2)
+                sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
+
             print("Attempting to apply update non-interactively...")
             try:
                 runtime.update_to_latest()
@@ -1178,6 +1201,24 @@ def main(argv: Optional[list[str]] = None) -> None:
     """
     resolved_argv = normalize_argv0(argv)
     args = resolved_argv[1:]
+
+    if args and args[0] == "__apply_update":
+        if len(args) < 3:
+            print("Usage: celune __apply_update <parent-pid> <launcher-path> [args...]")
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+
+        try:
+            parent_pid = int(args[1])
+        except ValueError:
+            print("Invalid launcher PID.")
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+
+        launcher_path = Path(args[2]).resolve()
+        try:
+            sys.exit(apply_update_and_restart(parent_pid, launcher_path, args[3:]))
+        except Exception as exc:
+            print(f"{APP_NAME} could not apply the launcher update: {exc}")
+            sys.exit(EXIT_CODES.EXIT_FAILURE.value)
 
     if not args:
         start()

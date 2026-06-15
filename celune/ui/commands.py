@@ -11,11 +11,11 @@ from typing import Optional, TYPE_CHECKING
 
 import soundfile as sf
 
-from ..backends.qwen3 import Qwen3
+from ..paths import project_root
 from ..constants import APP_NAME
-from ..utils import format_error
+from ..backends.qwen3 import Qwen3
 from ..exceptions import InvalidExtensionError
-from ..utils import replace_ipa
+from ..utils import format_error, replace_ipa, format_number
 
 if TYPE_CHECKING:
     from .app import CeluneUI
@@ -65,7 +65,9 @@ def tutorial(ui: CeluneUI) -> None:
     Args:
         ui: The instance of CeluneUI that the tutorial will interact with.
     """
-    assets = Path(__file__).resolve().parents[1] / "assets"
+    assets = project_root() / "celune" / "assets"
+    if not assets.exists():
+        assets = project_root() / "assets"
     if not assets.exists():
         ui.safe_log("No tutorial assets found.", "warning")
         return
@@ -341,13 +343,40 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         return
     if command == "play":
         if not args:
-            ui.safe_log("Usage: /play <path>", "warning")
+            ui.safe_log("Usage: /play <path> [volume]", "warning")
             return
 
         try:
-            if not ui.celune.play(args[0]):
-                return
-            ui.safe_log(f"Playing {args[0]}")
+            volume = 1.0
+            if len(args) >= 2:
+                try:
+                    volume = float(args[1])
+                except ValueError:
+                    ui.safe_log(
+                        f"Invalid volume for '{command}', must be numeric.",
+                        "warning",
+                    )
+                    return
+
+            def worker() -> None:
+                try:
+                    if not ui.celune.play(args[0], volume=volume):
+                        return
+                    if args[0].startswith("https://"):
+                        ui.safe_log(
+                            f"Playing YouTube audio at {format_number(volume * 100)}% volume"
+                        )
+                    else:
+                        ui.safe_log(
+                            f"Playing {args[0]} at {format_number(volume * 100)}% volume"
+                        )
+                except Exception as exc:
+                    ui.safe_log(
+                        f"Cannot play this audio: {format_error(exc, ui.celune.dev)}",
+                        "error",
+                    )
+
+            threading.Thread(target=worker, daemon=True).start()
         except Exception as e:
             ui.safe_log(
                 f"Cannot play this file: {format_error(e, ui.celune.dev)}",

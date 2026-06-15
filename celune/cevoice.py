@@ -14,25 +14,27 @@ from dataclasses import dataclass, field
 from typing import BinaryIO, Callable, Final, Mapping, Optional, Union, cast
 
 from .exceptions import CEVoiceError
-from .constants import JSONSerializable
-from .paths import temp_data_dir
+from .paths import project_root, temp_data_dir
+from .typing.cevoice import Manifest, ManifestValue, VoiceManifest
 
+# Celune supports both of these specifications
+# CECHAR v2 spec (Celune v4 format)
 MAGIC: Final[bytes] = b"CECHAR\0\0"
 VERSION: Final[int] = 2
+FORMAT_NAME: Final[str] = "CECHAR"
+
+# CEVOICE v1 spec (Celune v3.5 format)
 LEGACY_MAGIC: Final[bytes] = b"CEVOICE\0"
 LEGACY_VERSION: Final[int] = 1
-FORMAT_NAME: Final[str] = "CECHAR"
 LEGACY_FORMAT_NAME: Final[str] = "CEVOICE"
+
 HEADER = struct.Struct("<8sHI")
 ALLOWED_ASSET_KINDS = {"wav", "pt"}
-type ManifestValue = Union[JSONSerializable, "Manifest"]
-type Manifest = dict[str, ManifestValue]
-type VoiceManifest = dict[str, Manifest]
 
 
 @dataclass(frozen=True)
 class CEVoiceAsset:
-    """One binary asset stored inside a CEVOICE package."""
+    """One binary asset stored inside a CEVOICE/CECHAR package."""
 
     offset: int
     length: int
@@ -41,7 +43,7 @@ class CEVoiceAsset:
 
 @dataclass(frozen=True)
 class CEVoice:
-    """Parsed CEVOICE package metadata and payload access."""
+    """Parsed CEVOICE/CECHAR package metadata and payload access."""
 
     path: Path
     metadata: Manifest
@@ -49,16 +51,16 @@ class CEVoice:
 
     @classmethod
     def open(cls, path: Union[str, Path]) -> CEVoice:
-        """Parse and validate a CEVOICE package.
+        """Parse and validate a CEVOICE/CECHAR package.
 
         Args:
-            path: The CEVOICE package to load.
+            path: The CEVOICE/CECHAR package to load.
 
         Returns:
             CEVoice: The CEVoice object.
 
         Raises:
-            CEVoiceError: The CEVOICE package is malformed and could not be loaded.
+            CEVoiceError: The CEVOICE/CECHAR package is malformed and could not be loaded.
         """
         bundle_path = Path(path)
         with bundle_path.open("rb") as stream:
@@ -90,10 +92,10 @@ class CEVoice:
         """Return the voice manifest.
 
         Returns:
-            VoiceManifest: The voice manifest of this CEVOICE package.
+            VoiceManifest: The voice manifest of this CEVOICE/CECHAR package.
 
         Raises:
-            CEVoiceError: The CEVOICE package does not contain a valid voice manifest.
+            CEVoiceError: The CEVOICE/CECHAR package does not contain a valid voice manifest.
         """
         voices = self.metadata.get("voices")
         if not isinstance(voices, dict):
@@ -166,7 +168,7 @@ class CEVoice:
 
 @dataclass(frozen=True, slots=True)
 class PersonaIdentity:
-    """Identity details supplied by a CEVOICE pack."""
+    """Identity details supplied by a CEVOICE/CECHAR pack."""
 
     name: str = ""
     age: str = ""
@@ -176,7 +178,7 @@ class PersonaIdentity:
 
 @dataclass(frozen=True, slots=True)
 class PersonaStyleValues:
-    """Baseline speaking-style values supplied by a CEVOICE pack."""
+    """Baseline speaking-style values supplied by a CEVOICE/CECHAR pack."""
 
     warmth: str = ""
     directness: str = ""
@@ -188,7 +190,7 @@ class PersonaStyleValues:
 
 @dataclass(frozen=True, slots=True)
 class CEVoicePersona:
-    """Persona metadata supplied by a CEVOICE pack."""
+    """Persona metadata supplied by a CEVOICE/CECHAR pack."""
 
     identity: PersonaIdentity = field(default_factory=PersonaIdentity)
     speaking_style: str = ""
@@ -224,7 +226,7 @@ class CEVoiceLoader:
             Path: The path to the extracted voice asset.
 
         Raises:
-            CEVoiceError: The CEVOICE package contains path delimiters.
+            CEVoiceError: The CEVOICE/CECHAR package contains path delimiters.
         """
         key = (voice, kind)
         if key not in self._paths:
@@ -250,19 +252,19 @@ def write_cevoice(
     metadata: Optional[Mapping[str, ManifestValue]] = None,
     voice_metadata: Optional[Mapping[str, Mapping[str, ManifestValue]]] = None,
 ) -> Path:
-    """Write a CEVOICE package from per-voice binary assets.
+    """Write a CEVOICE/CECHAR package from per-voice binary assets.
 
     Args:
-        path: The CEVOICE package to save as.
-        voices: The voice files to bundle into this CEVOICE package.
-        metadata: The metadata to bundle into this CEVOICE package.
+        path: The CEVOICE/CECHAR package to save as.
+        voices: The voice files to bundle into this CEVOICE/CECHAR package.
+        metadata: The metadata to bundle into this CEVOICE/CECHAR package.
         voice_metadata: Extra metadata stored beside each voice's assets.
 
     Returns:
-        Path: The path to the created CEVOICE package.
+        Path: The path to the created CEVOICE/CECHAR package.
 
     Raises:
-        CEVoiceError: The CEVOICE package contains path delimiters.
+        CEVoiceError: The CEVOICE/CECHAR package contains path delimiters.
     """
     payload = bytearray()
     manifest_voices: VoiceManifest = {}
@@ -536,10 +538,10 @@ def persona_metadata_from_manifest(
     """Return typed persona metadata from a CEVOICE manifest when present.
 
     Args:
-        metadata: The CEVOICE package manifest.
+        metadata: The CEVOICE/CECHAR package manifest.
 
     Returns:
-        Optional[CEVoicePersona]: The Persona metadata from the current CEVOICE package.
+        Optional[CEVoicePersona]: The Persona metadata from the current CEVOICE/CECHAR package.
     """
     raw_persona = metadata.get("persona")
     if not isinstance(raw_persona, dict):
@@ -575,13 +577,13 @@ def persona_metadata_from_manifest(
 
 
 def bundle_character_name(bundle: CEVoice) -> Optional[str]:
-    """Return the active character name implied by one CEVOICE package.
+    """Return the active character name implied by one CEVOICE/CECHAR package.
 
     Args:
-        bundle: The CEVOICE package to use.
+        bundle: The CEVOICE/CECHAR package to use.
 
     Returns:
-        Optional[str]: The character name from the current CEVOICE package.
+        Optional[str]: The character name from the current CEVOICE/CECHAR package.
     """
     persona = persona_metadata_from_manifest(bundle.metadata)
     if persona is not None and persona.identity.name.strip():
@@ -613,7 +615,7 @@ def default_bundle_path() -> Path:
     Returns:
         Path: The absolute path to Celune's default voice bundle.
     """
-    return Path(__file__).resolve().parent.parent / "voices" / "default.cevoice"
+    return project_root() / "voices" / "default.cevoice"
 
 
 def bundled_voices_dir() -> Path:
@@ -622,17 +624,17 @@ def bundled_voices_dir() -> Path:
     Returns:
         Path: The absolute path to the bundled CEVOICE directory.
     """
-    return Path(__file__).resolve().parent.parent / "voices"
+    return project_root() / "voices"
 
 
 def resolve_bundle_path(bundle: Optional[Union[str, Path]] = None) -> Path:
-    """Resolve a configured CEVOICE package name or path.
+    """Resolve a configured CEVOICE/CECHAR package name or path.
 
     Args:
         bundle: Either a built-in bundle name, an explicit bundle path, or ``None`` to select Celune's default bundle.
 
     Returns:
-        Path: The resolved CEVOICE package path.
+        Path: The resolved CEVOICE/CECHAR package path.
     """
     if bundle is None:
         return default_bundle_path()
@@ -647,13 +649,13 @@ def resolve_bundle_path(bundle: Optional[Union[str, Path]] = None) -> Path:
 
 
 def select_voice_bundle(bundle: Optional[Union[str, Path]] = None) -> Path:
-    """Select the CEVOICE package used by Celune's shared loader.
+    """Select the CEVOICE/CECHAR package used by Celune's shared loader.
 
     Args:
         bundle: Either a built-in bundle name, an explicit bundle path, or ``None`` to restore Celune's default bundle.
 
     Returns:
-        Path: The selected CEVOICE package path.
+        Path: The selected CEVOICE/CECHAR package path.
     """
     global _DEFAULT_LOADER, _DEFAULT_LOADER_INITIALIZED
     global _DEFAULT_LOADER_ANNOUNCED, _DEFAULT_LOADER_FAILED, _SELECTED_BUNDLE
@@ -683,7 +685,7 @@ def select_voice_bundle(bundle: Optional[Union[str, Path]] = None) -> Path:
 
 
 def active_bundle_path() -> Path:
-    """Return the currently selected CEVOICE package path.
+    """Return the currently selected CEVOICE/CECHAR package path.
 
     Returns:
         Path: The selected bundle path, or Celune's default bundle path.
@@ -692,10 +694,10 @@ def active_bundle_path() -> Path:
 
 
 def default_loader() -> Optional[CEVoiceLoader]:
-    """Check if a default CEVOICE package can be loaded and return the loader.
+    """Check if a default CEVOICE/CECHAR package can be loaded and return the loader.
 
     Returns:
-        Optional[CEVoiceLoader]: The default CEVOICE package loader.
+        Optional[CEVoiceLoader]: The default CEVOICE/CECHAR package loader.
     """
     global _DEFAULT_LOADER, _DEFAULT_LOADER_INITIALIZED, _DEFAULT_LOADER_FAILED
     global _DEFAULT_LOADER_FELL_BACK_FROM

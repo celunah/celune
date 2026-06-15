@@ -2,8 +2,8 @@
 """Tests for the shared Persona runtime helpers."""
 
 import contextlib
-from unittest import TestCase, mock
 from types import SimpleNamespace
+from unittest import TestCase, mock
 from typing import Optional, Union, cast
 
 from celune.persona import impl
@@ -157,7 +157,7 @@ class _FakeMultimodalProcessor:
 class _FakeQwenVlConfig:
     """Minimal config fake exposing the expected Qwen VL model type."""
 
-    model_type = "qwen2_5_vl"
+    model_type = "qwen3_vl"
 
 
 class PersonaApiTests(TestCase):
@@ -180,9 +180,9 @@ class PersonaApiTests(TestCase):
     def _mock_qwen_vl_load(
         self,
         *,
-        processor: object,
-        model: object,
-        tokenizer: Optional[object] = None,
+        processor: Optional[Union[_FakeProcessor, _FakeMultimodalProcessor]],
+        model: Union[_FakeModel, _FakeGenerativeModel, mock.Mock],
+        tokenizer: Optional[_FakeTokenizer] = None,
         processor_side_effect: Optional[Exception] = None,
     ):
         """Patch the shared Qwen VL loader entrypoints for one test."""
@@ -202,7 +202,7 @@ class PersonaApiTests(TestCase):
             )
             model_loader = stack.enter_context(
                 mock.patch(
-                    "celune.persona.runtime.Qwen2_5_VLForConditionalGeneration.from_pretrained",
+                    "celune.persona.runtime.Qwen3VLForConditionalGeneration.from_pretrained",
                     return_value=model,
                 )
             )

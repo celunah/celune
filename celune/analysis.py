@@ -4,95 +4,43 @@
 import pathlib
 import warnings
 import contextlib
-from collections.abc import Mapping
-from typing import Optional, Protocol, TypedDict, Union, cast
+from pathlib import Path
+from typing import Optional, cast
 
 import torch
 import librosa
 import matplotlib
 import numpy as np
 import numpy.typing as npt
-from matplotlib import rcParams
 from matplotlib.projections import PolarAxes
-from matplotlib import pyplot as plt
-from matplotlib import colors as mcolors
+from matplotlib import rcParams, font_manager, pyplot as plt, colors as mcolors
 from transformers import AutoModel, AutoProcessor
 
 from .cevoice import ManifestValue, default_loader
 from .constants import VOICE_EMBEDDING_MODEL, N_A_NUMERIC
+from .typing.analysis import (
+    EmbeddingPayload,
+    EmbeddingModel,
+    EmbeddingProcessor,
+    TextConfig,
+    TextConfigValue,
+    VoiceMatch,
+)
 
 matplotlib.use("Agg")
 
 # this font is included within Celune
 # check resources/fonts to find the font files
+font_path = Path(__file__).resolve().parent / "resources" / "fonts"
+if font_path.exists():
+    for font in font_path.iterdir():
+        if font.suffix.lower() in {".ttf", ".otf"}:
+            font_manager.fontManager.addfont(font)
+
 rcParams["font.family"] = "Outfit Thin"
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
-
-type TextConfigValue = Union[str, dict[str, "TextConfigValue"]]
-type TextConfig = dict[str, TextConfigValue]
-type EmbeddingPayload = Union[
-    torch.Tensor,
-    npt.NDArray[np.float32],
-    list[float],
-    Mapping[str, "EmbeddingPayload"],
-]
-
-
-class EmbeddingOutput(Protocol):
-    """Speaker embedding model output used by Celune analysis."""
-
-    last_hidden_state: EmbeddingPayload
-
-
-class EmbeddingProcessor(Protocol):
-    """Processor callable returned by the embedding model package."""
-
-    def __call__(
-        self,
-        y: npt.NDArray[np.float32],
-        *,
-        sampling_rate: int,
-    ) -> Mapping[str, torch.Tensor]:
-        """Prepare model inputs from a waveform."""
-        raise NotImplementedError("protocol not defined")
-
-
-class EmbeddingModel(Protocol):
-    """Embedding model behavior used by Celune analysis."""
-
-    def eval(self) -> None:
-        """Switch the model into evaluation mode.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-    def to(self, device: torch.device) -> torch.nn.Module:
-        """Move the model to a device.
-
-        Args:
-            device: A device to dispatch to.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-    def __call__(self, **inputs: torch.Tensor) -> EmbeddingOutput:
-        """Run embedding inference."""
-        raise NotImplementedError("protocol not defined")
-
-
-class VoiceMatch(TypedDict):
-    """Similarity score for one reference voice."""
-
-    voice: str
-    cosine: float
-    percent: float
-
 
 _EMBEDDING_MODEL: Optional[EmbeddingModel] = None
 _EMBEDDING_PROCESSOR: Optional[EmbeddingProcessor] = None
@@ -566,7 +514,7 @@ def _summarize_trait_status(traits: dict) -> tuple[str, str]:
             key=lambda name: (0.5 - low_traits[name]) * trait_weights.get(name, 1.0),
         )
         message = _text("graph", "status_underperforming_single").format(
-            traits=worst_trait
+            traits=worst_trait.lower()
         )
         return message, warn_color
 

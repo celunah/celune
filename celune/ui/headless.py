@@ -10,8 +10,8 @@ from typing import Optional, cast
 
 from ..celune import Celune
 from ..utils import discard
-from ..constants import APP_NAME, ExitCodes, SIGTSTP
 from ..config import Config, config_bool
+from ..constants import APP_NAME, ExitCodes, SIGTSTP
 
 
 class CeluneHeadlessUI:

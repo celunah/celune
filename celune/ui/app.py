@@ -6,37 +6,39 @@ import sys
 import time
 import shlex
 import logging
+import datetime
 import itertools
 import threading
 import contextlib
-import datetime
+from dataclasses import dataclass, field
+from pathlib import Path
 from collections.abc import Iterator
-from typing import cast, Optional, Callable, Union
+from typing import Optional, Callable, Union, TextIO
 
 import yaml
 from rich.text import Text
 from textual.color import Color
 from textual.timer import Timer
+from textual import work, events
 from textual.widget import Widget
 from textual.css.types import EdgeStyle
-from textual import work, events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 
-from ..celune import Celune
 from .. import colors
+from ..celune import Celune
+from ..constants import APP_NAME
 from ..cevoice import default_loader
-from .terminal import LogRedirect, UILogHandler
 from . import resources as ui_resources
 from .theme import CELUNE_CSS, severity_color
+from .terminal import LogRedirect, UILogHandler
+from ..paths import config_path, main_window_log_path
 from .commands import process_command as process_ui_command
 from ..persona.impl import (
     persona_talkback_enabled,
     persona_enabled,
 )
-from ..constants import APP_NAME
-from ..paths import config_path, main_window_log_path
 from ..utils import (
     format_error,
     indent,
@@ -45,6 +47,94 @@ from ..utils import (
     typing_delay,
     is_april_fools,
 )
+
+
+@dataclass
+class CeluneUIWidgetState:
+    """Resolved widget references owned by the UI."""
+
+    logs: Optional[RichLog] = None
+    input_box: Optional[TextArea] = None
+    style_button: Optional[Button] = None
+    status: Optional[Label] = None
+    resources: Optional[Label] = None
+    progress_bar: Optional[ProgressBar] = None
+
+
+@dataclass
+class CeluneUIThemeState:
+    """Theme and status marquee state."""
+
+    themes: tuple[str, str]
+    active_theme_name: str
+    log_history: list[tuple[str, str]] = field(default_factory=list)
+    status_severity: str = "info"
+    status_text: str = ""
+    status_marquee_offset: int = 0
+    status_marquee_gap: str = "   "
+    status_marquee_timer: Optional[Timer] = None
+
+
+@dataclass
+class CeluneUIBindingState:
+    """Bindings between the UI and the runtime."""
+
+    celune: Optional[Celune] = None
+    celune_ready: bool = False
+    celune_styles: tuple[str, ...] = ()
+    celune_voices: Optional[Iterator[str]] = None
+    style_index: int = 0
+    cur_state: str = "active"
+    consume_on_boundary: bool = False
+    suppress_input_change: bool = False
+    resource_page: int = 0
+    input_locked: bool = True
+    persona_available: bool = False
+    persona_probe_running: bool = False
+
+
+@dataclass
+class CeluneUILogCaptureState:
+    """Stdio/log redirection and persisted log state."""
+
+    old_stdout: TextIO
+    old_stderr: TextIO
+    log_stdout: Optional[LogRedirect] = None
+    log_stderr: Optional[LogRedirect] = None
+    runtime_log_capture_enabled: bool = False
+    runtime_redirect_loggers: Optional[dict[str, logging.Logger]] = None
+    runtime_redirect_handlers: Optional[dict[str, UILogHandler]] = None
+    runtime_redirect_original_handlers: Optional[dict[str, list[logging.Handler]]] = (
+        None
+    )
+    runtime_redirect_original_propagate: Optional[dict[str, bool]] = None
+    warnings_capture_enabled: bool = False
+    log_file_path: Path = field(default_factory=Path)
+    log_file_initialized: bool = False
+
+
+@dataclass
+class CeluneUIInteractionState:
+    """Transient UI effects, sleep scheduling, and tutorial state."""
+
+    border_pulse_tokens: dict[int, int] = field(default_factory=dict)
+    border_pulse_widgets: dict[int, Widget] = field(default_factory=dict)
+    tutorial_timers: list[Timer] = field(default_factory=list)
+    sleep_timer: Optional[Timer] = None
+    tutorial_token: int = 0
+    tutorial_active: bool = False
+
+
+def _forward_ui_property(container_name: str, field_name: str) -> property:
+    """Create a property that forwards storage to a grouped UI state container."""
+
+    def getter(instance):
+        return getattr(getattr(instance, container_name), field_name)
+
+    def setter(instance, value) -> None:
+        setattr(getattr(instance, container_name), field_name, value)
+
+    return property(getter, setter)
 
 
 class CeluneUI(App):
@@ -60,13 +150,6 @@ class CeluneUI(App):
         if CeluneUI._instance is not None:
             raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
 
-        self.logs = cast(RichLog, None)
-        self.input_box = cast(TextArea, None)
-        self.style_button = cast(Button, None)
-        self.status = cast(Label, None)
-        self.resources = cast(Label, None)
-        self.progress_bar = cast(ProgressBar, None)
-
         if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
             "1",
             "true",
@@ -74,53 +157,99 @@ class CeluneUI(App):
             "yes",
             "enabled",
         }:
-            self.themes = ("celune_april_fools", "celune_april_fools")
-            self.active_theme_name = "celune_april_fools"
+            themes = ("celune_april_fools", "celune_april_fools")
+            active_theme_name = "celune_april_fools"
         else:
-            self.themes = ("celune", "celune_light")
-            self.active_theme_name = "celune"
-        self.log_history: list[tuple[str, str]] = []
-        self.status_severity = "info"
+            themes = ("celune", "celune_light")
+            active_theme_name = "celune"
 
-        self.celune = cast(Celune, None)
-        self.celune_ready = False
-        self.celune_styles: tuple[str, ...] = ()
-        self.celune_voices: Iterator[str] = itertools.cycle(self.celune_styles)
-
-        self.style_index = 0
-
-        self._old_stdout = sys.stdout
-        self._old_stderr = sys.stderr
-
-        self._log_stdout = cast(LogRedirect, None)
-        self._log_stderr = cast(LogRedirect, None)
-        self._runtime_log_capture_enabled = False
-        self._runtime_redirect_loggers: Optional[dict[str, logging.Logger]] = None
-        self._runtime_redirect_handlers: Optional[dict[str, UILogHandler]] = None
-        self._runtime_redirect_original_handlers: Optional[
-            dict[str, list[logging.Handler]]
-        ] = None
-        self._runtime_redirect_original_propagate: Optional[dict[str, bool]] = None
-        self._warnings_capture_enabled: bool = False
-
-        self.cur_state = "active"
-
-        self.consume_on_boundary = False
-        self._suppress_input_change = False
-        self._resource_page = 0
-        self._border_pulse_tokens: dict[int, int] = {}
-        self._border_pulse_widgets: dict[int, Widget] = {}
-        self._tutorial_timers: list[Timer] = []
-        self._sleep_timer: Optional[Timer] = None
-        self._tutorial_token = 0
-        self._tutorial_active = False
-        self._input_locked = True
-        self._persona_available = False
-        self._persona_probe_running = False
-        self._log_file_path = main_window_log_path(create_parent=True)
-        self._log_file_initialized = False
+        self._widgets = CeluneUIWidgetState()
+        self._theme_state = CeluneUIThemeState(
+            themes=themes,
+            active_theme_name=active_theme_name,
+        )
+        self._binding_state = CeluneUIBindingState(celune_voices=itertools.cycle(()))
+        self._log_capture_state = CeluneUILogCaptureState(
+            old_stdout=sys.stdout,
+            old_stderr=sys.stderr,
+            log_file_path=main_window_log_path(create_parent=True),
+        )
+        self._interaction_state = CeluneUIInteractionState()
 
         CeluneUI._instance = self
+
+    logs = _forward_ui_property("_widgets", "logs")
+    input_box = _forward_ui_property("_widgets", "input_box")
+    style_button = _forward_ui_property("_widgets", "style_button")
+    status = _forward_ui_property("_widgets", "status")
+    resources = _forward_ui_property("_widgets", "resources")
+    progress_bar = _forward_ui_property("_widgets", "progress_bar")
+
+    themes = _forward_ui_property("_theme_state", "themes")
+    active_theme_name = _forward_ui_property("_theme_state", "active_theme_name")
+    log_history = _forward_ui_property("_theme_state", "log_history")
+    status_severity = _forward_ui_property("_theme_state", "status_severity")
+    _status_text = _forward_ui_property("_theme_state", "status_text")
+    _status_marquee_offset = _forward_ui_property(
+        "_theme_state", "status_marquee_offset"
+    )
+    _status_marquee_gap = _forward_ui_property("_theme_state", "status_marquee_gap")
+    _status_marquee_timer = _forward_ui_property("_theme_state", "status_marquee_timer")
+
+    celune = _forward_ui_property("_binding_state", "celune")
+    celune_ready = _forward_ui_property("_binding_state", "celune_ready")
+    celune_styles = _forward_ui_property("_binding_state", "celune_styles")
+    celune_voices = _forward_ui_property("_binding_state", "celune_voices")
+    style_index = _forward_ui_property("_binding_state", "style_index")
+    cur_state = _forward_ui_property("_binding_state", "cur_state")
+    consume_on_boundary = _forward_ui_property("_binding_state", "consume_on_boundary")
+    _suppress_input_change = _forward_ui_property(
+        "_binding_state", "suppress_input_change"
+    )
+    _resource_page = _forward_ui_property("_binding_state", "resource_page")
+    _input_locked = _forward_ui_property("_binding_state", "input_locked")
+    _persona_available = _forward_ui_property("_binding_state", "persona_available")
+    _persona_probe_running = _forward_ui_property(
+        "_binding_state", "persona_probe_running"
+    )
+
+    _old_stdout = _forward_ui_property("_log_capture_state", "old_stdout")
+    _old_stderr = _forward_ui_property("_log_capture_state", "old_stderr")
+    _log_stdout = _forward_ui_property("_log_capture_state", "log_stdout")
+    _log_stderr = _forward_ui_property("_log_capture_state", "log_stderr")
+    _runtime_log_capture_enabled = _forward_ui_property(
+        "_log_capture_state", "runtime_log_capture_enabled"
+    )
+    _runtime_redirect_loggers = _forward_ui_property(
+        "_log_capture_state", "runtime_redirect_loggers"
+    )
+    _runtime_redirect_handlers = _forward_ui_property(
+        "_log_capture_state", "runtime_redirect_handlers"
+    )
+    _runtime_redirect_original_handlers = _forward_ui_property(
+        "_log_capture_state", "runtime_redirect_original_handlers"
+    )
+    _runtime_redirect_original_propagate = _forward_ui_property(
+        "_log_capture_state", "runtime_redirect_original_propagate"
+    )
+    _warnings_capture_enabled = _forward_ui_property(
+        "_log_capture_state", "warnings_capture_enabled"
+    )
+    _log_file_path = _forward_ui_property("_log_capture_state", "log_file_path")
+    _log_file_initialized = _forward_ui_property(
+        "_log_capture_state", "log_file_initialized"
+    )
+
+    _border_pulse_tokens = _forward_ui_property(
+        "_interaction_state", "border_pulse_tokens"
+    )
+    _border_pulse_widgets = _forward_ui_property(
+        "_interaction_state", "border_pulse_widgets"
+    )
+    _tutorial_timers = _forward_ui_property("_interaction_state", "tutorial_timers")
+    _sleep_timer = _forward_ui_property("_interaction_state", "sleep_timer")
+    _tutorial_token = _forward_ui_property("_interaction_state", "tutorial_token")
+    _tutorial_active = _forward_ui_property("_interaction_state", "tutorial_active")
 
     def _run_on_ui_thread(self, callback: Callable[[], None]) -> None:
         if threading.current_thread() is threading.main_thread():
@@ -170,6 +299,55 @@ class CeluneUI(App):
         if self.status is None:
             return
         self.status.styles.color = self._severity_color(self.status_severity)
+
+    def _status_view_width(self) -> int:
+        """Estimate how many status characters can fit without clipping."""
+        if self.status is None:
+            return 32
+
+        size = getattr(self.status, "size", None)
+        width = getattr(size, "width", 0) if size is not None else 0
+        if isinstance(width, int) and width > 6:
+            return max(8, width - 2)
+        return 32
+
+    def _render_status_text(self) -> str:
+        """Return the current status text, marqueeing when it exceeds the label width."""
+        width = self._status_view_width()
+        if len(self._status_text) <= width:
+            self._status_marquee_offset = 0
+            return indent(self._status_text, spaces=2)
+
+        loop = f"{self._status_text}{self._status_marquee_gap}"
+        offset = self._status_marquee_offset % len(loop)
+        window = (loop * 2)[offset : offset + width]
+        return indent(window, spaces=2)
+
+    def _update_status_label(self) -> None:
+        """Push the current status text into the label."""
+        if self.status is None:
+            return
+        self.status.update(self._render_status_text())
+        self._refresh_status()
+
+    def _advance_status_marquee(self) -> None:
+        """Advance the marquee one character for long status messages."""
+        if self.status is None:
+            return
+        if len(self._status_text) <= self._status_view_width():
+            self._update_status_label()
+            return
+        self._status_marquee_offset += 1
+        self._update_status_label()
+
+    def on_resize(self, _event: events.Resize) -> None:
+        """Re-render width-sensitive widgets after the window size changes.
+
+        Args:
+            _event: Textual resize event that triggered the redraw.
+        """
+        if self.status is not None:
+            self._update_status_label()
 
     def _refresh_logs(self) -> None:
         """Repaint existing log entries using the active theme colors."""
@@ -301,6 +479,9 @@ class CeluneUI(App):
         self._install_runtime_log_redirects()
         ui_resources.prime_usage()
         self.set_interval(2.06, self.advance_resources)
+        self._status_marquee_timer = self.set_interval(
+            0.18, self._advance_status_marquee
+        )
 
         self.call_after_refresh(self.start_background_init)
         self.safe_status("Initializing")
@@ -506,10 +687,14 @@ class CeluneUI(App):
                     f"New to {APP_NAME}? Type /tutorial to begin the tutorial."
                 )
                 self._schedule_sleep_timer()
-
+            else:
+                self.error(f"{APP_NAME} could not start")
+                self.cur_state = "error"
         except Exception as e:
             self.safe_log(f"[INIT ERROR] {format_error(e, self.celune.dev)}", "error")
             self.celune.glow.fatal()
+            if not self.celune._try_play_signal("error"):
+                self.safe_log_dev("Could not play the error signal.", "warning")
             self.error(f"{APP_NAME} could not start")
             self.cur_state = "error"
 
@@ -753,8 +938,9 @@ class CeluneUI(App):
         self.status_severity = severity
 
         def update() -> None:
-            self.status.update(indent(msg, spaces=2))
-            self._refresh_status()
+            self._status_text = msg
+            self._status_marquee_offset = 0
+            self._update_status_label()
             self.update_resources()
 
         self._run_on_ui_thread(update)
@@ -1211,24 +1397,24 @@ class CeluneUI(App):
         self.exit()
 
     def graceful_exit(self) -> None:
-        """Public interface for CeluneUI._graceful_exit()."""
+        """Exit the UI through the same graceful shutdown path as internal callers."""
         self._graceful_exit()
 
     @property
     def tutorial_token(self) -> int:
-        """Property for accessing the tutorial token held by Celune.
+        """Return the active tutorial cancellation token.
 
         Returns:
-            int: The tutorial token currently in use by Celune.
+            int: The tutorial token currently used to invalidate pending tutorial work.
         """
         return self._tutorial_token
 
     @property
     def tutorial_active(self) -> bool:
-        """Property for accessing whether the tutorial is active or not.
+        """Return whether a tutorial flow is currently active.
 
         Returns:
-            bool: Celune's current tutorial flag.
+            bool: ``True`` when tutorial work is active, otherwise ``False``.
         """
         return self._tutorial_active
 
@@ -1250,13 +1436,13 @@ class CeluneUI(App):
 
     @staticmethod
     def split_command_input(text: str) -> list[str]:
-        """Public interface for CeluneUI._split_command_input().
+        """Split one slash-command string into a command name and arguments.
 
         Args:
             text: The command input to split.
 
         Returns:
-            list[str]: The return value of _split_command_input(), containing a split command name and arguments.
+            list[str]: The parsed command name followed by its arguments.
         """
 
         return CeluneUI._split_command_input(text)

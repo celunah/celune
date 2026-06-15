@@ -3,15 +3,15 @@
 
 from __future__ import annotations
 
-import contextlib
-import importlib
-import queue
 import sys
+import queue
 import threading
+import importlib
+import contextlib
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace, ModuleType
 from collections.abc import Iterator
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Optional, TypedDict
 
 import numpy as np
@@ -112,6 +112,7 @@ class FakeGlow:
         self.finished = threading.Event()
         self.finished.set()
         self.scheduled: list[npt.NDArray[np.float32]] = []
+        self.reset_audio_reactivity_called = False
 
     def start(self) -> bool:
         """Mark the fake glow as started.
@@ -160,16 +161,25 @@ class FakeGlow:
         """
         self.scheduled.append(audio)
 
+    def reset_audio_reactivity(self) -> None:
+        """Record that live audio-reactive glow state was cleared."""
+        self.reset_audio_reactivity_called = True
+
 
 class FakeStream:
     """Minimal output-stream fake that records lifecycle operations."""
 
     def __init__(self) -> None:
         """Initialize fake stream state."""
+        self.started = False
         self.stopped = False
         self.aborted = False
         self.closed = False
         self.written: list[npt.NDArray[np.float32]] = []
+
+    def start(self) -> None:
+        """Record stream startup."""
+        self.started = True
 
     def stop(self) -> None:
         """Record a graceful stream stop."""
@@ -215,6 +225,13 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.loaded = True
     engine.locked = False
     engine.cur_state = "idle"
+    engine.exit_requested = False
+    engine.stream = None
+    engine._stream = None
+    engine.current_sr = None
+    engine._current_sr = None
+    engine.audio_unavailable = False
+    engine._audio_unavailable = False
     engine.text_queue = queue.Queue()
     engine.audio_queue = queue.Queue()
     engine.say_lock = threading.Lock()
@@ -231,6 +248,11 @@ def make_pipeline_engine() -> SimpleNamespace:
         (msg, severity)
     )
     engine.progress_callback = lambda current, total: progress.append((current, total))
+    engine.idle_callback = mock.Mock()
+    engine.glow = SimpleNamespace(
+        schedule=mock.Mock(),
+        reset_audio_reactivity=mock.Mock(),
+    )
     engine.messages = messages
     engine.errors = errors
     engine.statuses = statuses
@@ -240,7 +262,7 @@ def make_pipeline_engine() -> SimpleNamespace:
 
 def make_voice_loader(
     voice: str,
-    metadata: dict[str, object],
+    metadata: dict[str, JSONSerializable],
 ) -> SimpleNamespace:
     """Return a simple CEVOICE loader stub for one named voice.
 
@@ -249,7 +271,7 @@ def make_voice_loader(
         metadata: The voice metadata.
 
     Returns:
-        A CEVOICE loader stub for the given voice.
+        SimpleNamespace: A CEVOICE loader stub for the given voice.
     """
     return SimpleNamespace(
         bundle=SimpleNamespace(voices={voice: metadata}, voice_order=(voice,)),
@@ -290,6 +312,30 @@ def mock_voxcpm_backend():
     ):
         voxcpm2 = importlib.import_module("celune.backends.voxcpm2")
         yield voxcpm2.VoxCPM2
+
+
+@contextlib.contextmanager
+def mock_dotstts_backend():
+    """Import the dots.tts backend with a stub dots_tts package."""
+
+    class StubDotsTtsRuntime:
+        """Import-time stand-in for the dots.tts runtime class."""
+
+    package = ModuleType("dots_tts")
+    package.__path__ = []
+    runtime_module = ModuleType("dots_tts.runtime")
+    runtime_module.DotsTtsRuntime = StubDotsTtsRuntime  # type: ignore[missing-attribute]
+    package.runtime = runtime_module  # type: ignore[missing-attribute]
+
+    with mock.patch.dict(
+        sys.modules,
+        {
+            "dots_tts": package,
+            "dots_tts.runtime": runtime_module,
+        },
+    ):
+        dotstts = importlib.import_module("celune.backends.dotstts")
+        yield dotstts.DotsTtsMF
 
 
 @contextlib.contextmanager

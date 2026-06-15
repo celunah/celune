@@ -2,17 +2,20 @@
 """Celune audio processing functions."""
 
 import math
-from typing import Iterable
+from typing import Iterable, Callable
 from importlib.resources import as_file, files
 
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
 from scipy.signal import resample_poly
-from pedalboard import Pedalboard, Reverb
+from pedalboard import Pedalboard, PitchShift, Reverb
 
 from .constants import UtteranceLoudnessTier, BASE_SR
 from .exceptions import AudioMismatchError, BadAudioError
+
+
+_SIGNAL_CACHE: dict[str, npt.NDArray[np.float32]] = {}
 
 
 def _resample_audio(
@@ -68,13 +71,34 @@ def _to_48khz(
     return _resample_audio(audio, source_sr, BASE_SR)
 
 
-def readiness_signal() -> npt.NDArray[np.float32]:
-    """Load Celune's startup readiness sound.
+def _pitch_shift_ui_signal(
+    audio: npt.NDArray[np.float32], n_steps: float
+) -> npt.NDArray[np.float32]:
+    """Shift pitch while preserving tempo for short deterministic UI signals."""
+    shifted = Pedalboard([PitchShift(semitones=n_steps)])(audio, BASE_SR)
+    return np.ascontiguousarray(shifted, dtype=np.float32)
 
-    Returns:
-        npt.NDArray[np.float32]: The readiness sound formatted as a NumPy array, or silent array if not found.
-    """
-    readiness_wav = files("celune").joinpath("assets", "readiness.wav")
+
+def _freeze_signal(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    """Return one shared read-only buffer for a cached UI signal."""
+    frozen = np.ascontiguousarray(audio, dtype=np.float32)
+    frozen.setflags(write=False)
+    return frozen
+
+
+def _cached_signal(
+    name: str, factory: Callable[[], npt.NDArray[np.float32]]
+) -> npt.NDArray[np.float32]:
+    """Return a cached signal waveform."""
+    if name not in _SIGNAL_CACHE:
+        _SIGNAL_CACHE[name] = _freeze_signal(factory())
+
+    return _SIGNAL_CACHE[name]
+
+
+def _load_readiness_signal() -> npt.NDArray[np.float32]:
+    """Load Celune's startup readiness sound."""
+    readiness_wav = files("celune").joinpath("assets", "chord.wav")
 
     # we did not find the Celune chord, return silence instead
     if not readiness_wav.is_file():
@@ -84,6 +108,73 @@ def readiness_signal() -> npt.NDArray[np.float32]:
         audio, sr = sf.read(path, dtype="float32")
 
     return _to_48khz(np.asarray(audio, dtype=np.float32), sr)
+
+
+def readiness_signal() -> npt.NDArray[np.float32]:
+    """Dynamically generate Celune's readiness sound.
+
+    Returns:
+        npt.NDArray[np.float32]: The readiness sound formatted as a NumPy array, or silent array if not found.
+    """
+
+    return _cached_signal("readiness", _load_readiness_signal)
+
+
+def sleeping_signal() -> npt.NDArray[np.float32]:
+    """Dynamically generate Celune's sleeping sound.
+
+    Returns:
+        npt.NDArray[np.float32]: The sleeping sound formatted as a NumPy array, or a silent array if the readiness sound
+        wasn't found.
+    """
+
+    return _cached_signal(
+        "sleeping",
+        lambda: _pitch_shift_ui_signal(
+            readiness_signal(),
+            n_steps=-1,
+        ),
+    )
+
+
+def working_signal() -> npt.NDArray[np.float32]:
+    """Dynamically generate Celune's working sound.
+
+    Returns:
+        npt.NDArray[np.float32]: The working sound formatted as a NumPy array, or a silent array if the readiness sound
+        wasn't found.
+    """
+
+    return _cached_signal(
+        "working",
+        lambda: _pitch_shift_ui_signal(
+            readiness_signal(),
+            n_steps=4,
+        ),
+    )
+
+
+def error_signal() -> npt.NDArray[np.float32]:
+    """Dynamically generate Celune's error sound.
+
+    Returns:
+        npt.NDArray[np.float32]: The error sound formatted as a NumPy array, or a silent array if the readiness sound
+        wasn't found.
+    """
+
+    def factory() -> npt.NDArray[np.float32]:
+        base = readiness_signal()
+        high = _pitch_shift_ui_signal(base, n_steps=6)
+        tritone = base + high
+
+        base_peak = np.max(np.abs(base))
+        peak = np.max(np.abs(tritone))
+        if peak > 0 and base_peak > 0:
+            tritone = tritone * (base_peak / peak)
+
+        return tritone
+
+    return _cached_signal("error", factory)
 
 
 def _soften(

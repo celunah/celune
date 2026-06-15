@@ -3,8 +3,8 @@
 
 import math
 import datetime
-from typing import Literal, Optional, Mapping, cast
 from unittest import mock, TestCase
+from typing import Literal, Optional, Mapping, cast
 
 from celune import config, utils
 from celune.constants import JSONSerializable

@@ -1,7 +1,9 @@
 <!-- markdownlint-disable-next-line MD041 -->
-![Celune](./resources/branding/celune_wordmark_transparent.png "Celune wordmark")
+![Celune](./resources/branding/celune_wordmark.png "Celune wordmark")
 
 ---
+
+![Python](https://img.shields.io/badge/Python-3.12%2F3.13-cebaff) ![License](https://img.shields.io/badge/License-MIT-cebaff) ![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff) ![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
 
 Celune is a real-time AI TTS character engine focused on expressive voice delivery with a well-made user experience.
 
@@ -30,11 +32,15 @@ All decisions and implementations were reviewed, validated, and approved by huma
 
 Celune never was, and will never become an "AI slop" project.
 
+## License note
+
+Celune is licensed under the [MIT license](https://opensource.org/license/mit), but the software may download certain models from [Hugging Face](https://huggingface.co) that are of varying licenses, such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.) or [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS). Users of Celune are expected to read and comply with any applicable license terms for the models they intend to use.
+
 ## Voices & samples
 
 Each voice is demonstrated using a short introduction and a longer narration sample to showcase consistency, pacing, and expressiveness.
 
-### Qwen
+### Qwen3-TTS
 
 | Voice | Intro | Narration |
 |---|---|---|
@@ -52,7 +58,7 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 | Bold | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_voxcpm2.wav) |
 | Upbeat | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_voxcpm2.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_voxcpm2.wav) |
 
-### Celune Mini
+### Celune Mini (Pocket TTS)
 
 | Voice | Intro | Narration |
 |---|---|---|
@@ -60,6 +66,15 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 | Calm | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_mini.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_mini.wav) |
 | Bold | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_mini.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_mini.wav) |
 | Upbeat | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_mini.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_mini.wav) |
+
+### dots.tts
+
+| Voice | Intro | Narration |
+|---|---|---|
+| Balanced | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_sc_dotstts.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/balanced_lc_dotstts.wav) |
+| Calm | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_sc_dotstts.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/calm_lc_dotstts.wav) |
+| Bold | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_dotstts.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_dotstts.wav) |
+| Upbeat | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_dotstts.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_dotstts.wav) |
 
 The demonstration lines try to showcase Celune's best, but they may include minor mistakes. This is an inherent limitation with TTS models, and Celune should not be blamed for it.
 
@@ -115,6 +130,12 @@ The terminal should support True Color, especially when using voice packs that d
 
 Terminals not supporting True Color may look incorrect, as Textual will fall back to a lower color mode.
 
+If Celune looks incorrect while your terminal supports True Color, run Celune with the following command:
+
+```bash
+COLORTERM=truecolor celune
+```
+
 If Rubber Band is not installed or fails to run, Celune will speak at normal speed, and speed controls will be unavailable.
 
 ## VRAM presets & requirements
@@ -161,6 +182,8 @@ Tested on: RTX 5070 (12 GB VRAM)
 
 ## Installation
 
+Download and extract the [latest binary artifact](https://nightly.link/celunah/celune/workflows/ci/main) prior to running the below commands.
+
 ```bash
 # Download Celune
 git clone https://github.com/celunah/celune
@@ -188,16 +211,20 @@ uv sync
 
 # Run
 # Command Prompt users
-celune
+bin\celune
 
 # PowerShell users
-.\celune.exe
+.\bin\celune.exe
 
 # Or on Unix systems:
-./celune.AppImage
+./bin/celune.AppImage
 ```
 
-You can also open Celune from within your desktop by running the aforementioned executables. They are usable as an entry point.
+Don't run `celune-bin` manually. The `celune` binary is Celune's main entrypoint.
+
+Both binaries are required for correct operation, `celune-bin` contains core code, while `celune` is the outer launcher.
+
+Celune can also run from other working directories, provided the main binary is installed correctly.
 
 ### SoX & Rubber Band installation
 
@@ -206,13 +233,13 @@ If SoX & Rubber Band are already installed, you can skip this section.
 #### Windows (Scoop)
 
 ```bat
-# Install Scoop if you don't already have it
+REM Install Scoop if you don't already have it
 powershell -ExecutionPolicy RemoteSigned -c "irm https://get.scoop.sh | iex"
 
-# Install SoX
+REM Install SoX
 scoop install sox
 
-# Install Rubber Band
+REM Install Rubber Band
 scoop install rubberband
 ```
 
@@ -250,7 +277,7 @@ To install OpenRGB, go to <https://openrgb.org/>, download and install a package
 
 Celune's VoxCPM2 backend may require a C/C++ compiler to compile dependencies. To install a suitable compiler, run one of the following commands:
 
-This is not required to use the Qwen backend, but you may need to install dependencies manually.
+This is not required to use other backends, but you may need to install dependencies manually.
 
 ```bash
 # Windows
@@ -302,33 +329,10 @@ Without this, Celune may require elevated permissions or fall back to slower beh
 See [API.md](./API.md) for REST API configuration, authentication, endpoints, and cURL examples.
 The API allows programmatic usage of all Celune features. It can be used both as a public and local interface.
 
-## Screenshots
+## Web UI
 
-The below images showcase Celune's user interface.
-
-### Before init
-
-[![Before init](./demos/init.png)](./demos/init.png)
-
-### Ready
-
-[![Ready](./demos/ready.png)](./demos/ready.png)
-
-### Talking
-
-[![Talking](./demos/speaking.png)](./demos/speaking.png)
-
-### Change voice
-
-[![Change voice](./demos/change_voice.png)](./demos/change_voice.png)
-
-### Commands
-
-[![Commands](./demos/commands.png)](./demos/commands.png)
-
-### Extension invoke
-
-[![Extension invoke](./demos/extensions.png)](./demos/extensions.png)
+Celune exposes a web interface for remote access to Celune. It reuses the Celune API commands to provide an interface for control.
+It can be accessed via `/ui` on Celune's exposed API URL.
 
 > *"Your voice, your way."*
 

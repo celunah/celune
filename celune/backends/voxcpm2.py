@@ -11,12 +11,12 @@ import numpy as np
 import numpy.typing as npt
 from voxcpm import VoxCPM
 
-from ..constants import BASE_SR
 from . import get_version
-from ..cevoice import default_loader, CEVoiceLoader
-from ..exceptions import BackendError
+from ..constants import BASE_SR
 from ..utils import custom_assert
-from .base import CeluneBackend, cached_hf_snapshot_path
+from ..exceptions import BackendError
+from ..cevoice import default_loader, CEVoiceLoader
+from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
 class VoxCPM2(CeluneBackend[VoxCPM]):
@@ -197,21 +197,13 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         torch.use_deterministic_algorithms(True)
 
         if available and path is not None:
-            os.environ["HF_HUB_OFFLINE"] = "1"
-            with self._suppress_backend_output():
-                previous_offline = os.environ.get("HF_HUB_OFFLINE")
-                try:
-                    os.environ["HF_HUB_OFFLINE"] = "1"
+            with local_hf_offline_mode():
+                with self._suppress_backend_output():
                     self.model = VoxCPM.from_pretrained(
                         path,
                         load_denoiser=kwargs.get("load_denoiser", False),
                         optimize=kwargs.get("optimize", False),
                     )
-                finally:
-                    if previous_offline is None:
-                        os.environ.pop("HF_HUB_OFFLINE", None)
-                    else:
-                        os.environ["HF_HUB_OFFLINE"] = previous_offline
 
             return self.model
 
@@ -246,9 +238,14 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         kwargs.pop("language", None)
         chunk_size = kwargs.pop("chunk_size", 1)
 
+        kwargs.pop("temperature", None)
+        kwargs.pop("top_k", None)
+        kwargs.pop("top_p", None)
+        kwargs.pop("repetition_penalty", None)
+
         try:
             loader, _ = self._require_compatible_bundle()
-            ref_wav = loader.materialize(voice, "wav")
+            ref_wav = self._truncate_reference(loader.materialize(voice, "wav"))
             configured_cfg = loader.bundle.voices[voice].get("cfg_scale")
             cfg = (
                 float(configured_cfg)
@@ -286,9 +283,10 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                 stream = model.generate_streaming(
                     text,
                     reference_wav_path=ref_wav,
-                    inference_timesteps=6,
+                    inference_timesteps=4,
                     cfg_value=cfg,
                     max_len=self.max_new_tokens,
+                    **kwargs,
                 )
 
                 batch: list[npt.NDArray[np.float32]] = []

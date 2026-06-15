@@ -7,12 +7,13 @@ from typing import Final, Optional
 
 from textual.theme import Theme
 
+from .typing.common import RGB
 from .utils import to_rgb
 
 DEFAULT_BACKGROUND: Final[str] = "#1d1826"
 DEFAULT_ACCENT: Final[str] = "#cebaff"
 FADED_ACCENT: Final[str] = "#9c88ce"
-RGB = tuple[int, int, int]
+ERROR: Final[str] = "#ce2006"
 
 
 def random_hex() -> str:
@@ -205,9 +206,9 @@ def configure_theme(
     """Rebuild Celune's theme family from three bundle-provided seed colors.
 
     Args:
-        background: The background color provided by a CEVOICE pack.
-        accent: The accent color provided by a CEVOICE pack.
-        faded_accent: The sleep-state accent color provided by a CEVOICE pack.
+        background: The background color provided by a CEVOICE/CECHAR pack.
+        accent: The accent color provided by a CEVOICE/CECHAR pack.
+        faded_accent: The sleep-state accent color provided by a CEVOICE/CECHAR pack.
     """
     global THEME, THEME_LIGHT, SEVERITY_COLORS
     dark_sleeping = FADED_ACCENT if faded_accent is None else faded_accent

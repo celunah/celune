@@ -7,8 +7,9 @@ from unittest import mock, TestCase
 import numpy as np
 
 from celune import analysis
-from celune.constants import N_A_NUMERIC
+from celune.colors import RGB
 from celune.chroma import AudioRGBGlow
+from celune.constants import N_A_NUMERIC
 
 
 class AnalysisTests(TestCase):
@@ -224,3 +225,63 @@ class ChromaTests(TestCase):
 
         self.assertEqual(glow._state, "waking")
         self.assertAlmostEqual(glow._target_brightness, 0.6)
+
+    def test_glow_target_follows_smoothed_audio_rms_without_snapping_to_max(
+        self,
+    ) -> None:
+        """Verify glow brightness tracks RMS amplitude smoothly."""
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
+        quiet = np.full((glow.fps, 2), 0.05, dtype=np.float32)
+        peak = np.zeros((glow.fps, 2), dtype=np.float32)
+        peak[0] = 1.0
+
+        glow._process_glow_chunk(quiet, 0.0)
+        quiet_target = glow._target_brightness
+        self.assertGreater(quiet_target, glow.idle_brightness)
+        self.assertLess(quiet_target, glow.max_brightness)
+
+        glow._process_glow_chunk(peak, 0.1)
+        self.assertLess(glow._target_brightness, glow.max_brightness)
+
+    def test_glow_worker_uses_audio_target_without_fixed_pulse_logic(self) -> None:
+        """Verify the normal glow branch follows audio target directly."""
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
+        glow._state = "normal"
+        glow._current_brightness = glow.idle_brightness
+        glow._target_brightness = min(glow.max_brightness, glow.idle_brightness + 0.4)
+        glow._current_color = glow.base_color.copy()
+        glow._target_color = glow.base_color.copy()
+
+        writes: list[RGB] = []
+        glow._set_all_devices = lambda rgb: writes.append(
+            (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        )
+
+        def stop_after_two_sleeps(_seconds: float) -> None:
+            if len(writes) >= 2:
+                glow._stop_event.set()
+
+        with mock.patch("celune.chroma.time.sleep", side_effect=stop_after_two_sleeps):
+            glow._run()
+
+        self.assertGreaterEqual(len(writes), 1)
+        self.assertGreater(glow._current_brightness, glow.idle_brightness)
+
+    def test_reset_audio_reactivity_clears_pending_audio_and_restores_idle(
+        self,
+    ) -> None:
+        """Verify abrupt playback resets the audio-reactive envelope to idle."""
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
+        glow._worker = mock.Mock()
+        glow._worker.is_alive.return_value = True
+        glow._state = "normal"
+        glow._smoothed_level = 0.8
+        glow._target_brightness = min(glow.max_brightness, glow.idle_brightness + 0.4)
+        glow._scheduled_chunks.append((0.0, np.ones((32, 2), dtype=np.float32)))
+
+        glow.reset_audio_reactivity()
+
+        self.assertEqual(len(glow._scheduled_chunks), 0)
+        self.assertEqual(glow._smoothed_level, 0.0)
+        self.assertEqual(glow._state, "normal")
+        self.assertAlmostEqual(glow._target_brightness, glow.idle_brightness)
