@@ -514,7 +514,7 @@ def _summarize_trait_status(traits: dict) -> tuple[str, str]:
             key=lambda name: (0.5 - low_traits[name]) * trait_weights.get(name, 1.0),
         )
         message = _text("graph", "status_underperforming_single").format(
-            traits=worst_trait
+            traits=worst_trait.lower()
         )
         return message, warn_color
 
