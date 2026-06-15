@@ -3,10 +3,10 @@
 
 import sys
 from pathlib import Path
-from typing import TypedDict, Mapping, Union, Optional, cast
+from typing import TypedDict, Union, Optional, cast
 
 try:
-    from celune.cevoice import write_cevoice, ManifestValue
+    from celune.cevoice import write_cevoice
 except ModuleNotFoundError:
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(PROJECT_ROOT))

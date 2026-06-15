@@ -57,8 +57,8 @@ jobs:
         run: |
           uv run python -c "import celune; print(dir(celune))"
 
-  launcher-smoke-linux:
-    name: Linux Launcher Build Smoke Test
+  launcher-build-linux:
+    name: Linux Launcher Build
     runs-on: ubuntu-latest
 
     steps:
@@ -68,56 +68,75 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools file
+          sudo apt-get install -y gcc wget desktop-file-utils libfuse2
 
-      - name: Build launcher (musl static)
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Sync dependencies
+        run: uv sync --dev
+
+      - name: Install Nuitka into project environment
+        run: uv pip install --python .venv/bin/python Nuitka
+
+      - name: Install appimagetool
         run: |
-          mkdir -p dist
-          musl-gcc -O2 -static launcher.c -o dist/celune
+          wget -O /tmp/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool
+          sudo mv /tmp/appimagetool /usr/local/bin/appimagetool
 
-      - name: Validate launcher binary
+      - name: Build Linux launcher artifacts
         run: |
-          test -f dist/celune
-          test -x dist/celune
-          file dist/celune
+          bash ./scripts/build_nuitka.sh
+          test -x bin/celune
+          test -x bin/celune-bin
+          test -f bin/celune.AppImage
 
-  launcher-smoke-windows:
-    name: Windows Launcher Build Smoke Test
+      - name: Upload Linux launcher artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: Celune-linux-x64
+          path: bin/
+
+  launcher-build-windows:
+    name: Windows Launcher Build
     runs-on: windows-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Build launcher
-        shell: cmd
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Sync dependencies
+        shell: powershell
+        run: uv sync --dev
+
+      - name: Install Nuitka into project environment
+        shell: powershell
+        run: uv pip install --python .venv\Scripts\python.exe Nuitka
+
+      - name: Build Windows launcher artifacts
+        shell: powershell
         run: |
-          if not exist dist mkdir dist
+          powershell -ExecutionPolicy Bypass -File .\scripts\build_nuitka.ps1
+          if (!(Test-Path .\bin\celune.exe)) { throw "bin/celune.exe not found" }
+          if (!(Test-Path .\bin\celune-bin.exe)) { throw "bin/celune-bin.exe not found" }
 
-          for /f "tokens=*" %%i in ('"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find VC\Auxiliary\Build\vcvars64.bat') do set "VCVARS=%%i"
-
-          if "%VCVARS%"=="" (
-            echo vcvars64.bat not found
-            exit /b 1
-          )
-
-          call "%VCVARS%"
-
-          where cl
-          cl /nologo /O2 /MT launcher.c resources\celune.res /link /OUT:dist\celune.exe
-
-      - name: Validate EXE
-        shell: cmd
-        run: |
-          if not exist dist\celune.exe exit /b 1
+      - name: Upload Windows launcher artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: Celune-win-x64
+          path: bin/
 
   notify-failure:
     name: Comment on CI Failure
     runs-on: ubuntu-latest
     needs:
       - python-checks
-      - launcher-smoke-linux
-      - launcher-smoke-windows
+      - launcher-build-linux
+      - launcher-build-windows
     if: ${{ always() && contains(join(needs.*.result, ','), 'failure') }}
 
     steps:
@@ -132,18 +151,18 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PYTHON_CHECKS_RESULT: ${{ needs.python-checks.result }}
-          LINUX_SMOKE_RESULT: ${{ needs.launcher-smoke-linux.result }}
-          WINDOWS_SMOKE_RESULT: ${{ needs.launcher-smoke-windows.result }}
+          LINUX_BUILD_RESULT: ${{ needs.launcher-build-linux.result }}
+          WINDOWS_BUILD_RESULT: ${{ needs.launcher-build-windows.result }}
         run: |
           failed_jobs=""
           if [ "$PYTHON_CHECKS_RESULT" = "failure" ]; then
             failed_jobs="${failed_jobs}- Anti AI Slop & Vibe Coding Checks failed"$'\n'
           fi
-          if [ "$LINUX_SMOKE_RESULT" = "failure" ]; then
-            failed_jobs="${failed_jobs}- Linux Launcher Build Smoke Test failed"$'\n'
+          if [ "$LINUX_BUILD_RESULT" = "failure" ]; then
+            failed_jobs="${failed_jobs}- Linux Launcher Build failed"$'\n'
           fi
-          if [ "$WINDOWS_SMOKE_RESULT" = "failure" ]; then
-            failed_jobs="${failed_jobs}- Windows Launcher Build Smoke Test failed"$'\n'
+          if [ "$WINDOWS_BUILD_RESULT" = "failure" ]; then
+            failed_jobs="${failed_jobs}- Windows Launcher Build failed"$'\n'
           fi
 
           body="$(printf "Detected potential slop in commit \`%s\`.\n\nThe following jobs have failed:\n%s\nPlease check the logs and unslop your code: %s\n" "$SHA" "$failed_jobs" "$RUN_URL")"

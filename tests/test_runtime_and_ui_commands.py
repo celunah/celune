@@ -7,16 +7,17 @@ import tempfile
 import warnings
 from typing import cast
 from pathlib import Path
-from unittest import mock, TestCase
 from types import SimpleNamespace
+from unittest import mock, TestCase
 
+from textual import events
 from textual.widgets import Button, Label, RichLog, TextArea
 
-from celune.backends.qwen3 import Qwen3
-from celune.celune import Celune
-from celune.config import Config
-from celune.constants import APP_NAME, JSONSerializable
 from celune import runtime
+from celune.config import Config
+from celune.celune import Celune
+from celune.backends.qwen3 import Qwen3
+from celune.constants import APP_NAME, JSONSerializable
 from celune.ui.app import CeluneUI
 from celune.ui.headless import CeluneHeadlessUI
 from celune.ui import resources as ui_resources
@@ -145,6 +146,24 @@ class RuntimeTests(TestCase):
 class UICommandTests(TestCase):
     """Tests for lightweight slash command behavior."""
 
+    @staticmethod
+    def _thread_runs_immediately(*args, **kwargs):
+        """Return a thread-like object whose start runs the target immediately."""
+        target = kwargs.get("target")
+        if target is None and args:
+            target = args[0]
+
+        class _ImmediateThread:
+            """An immediate thread harness object."""
+
+            @staticmethod
+            def start() -> None:
+                """Start the thread."""
+                if target is not None:
+                    target()
+
+        return _ImmediateThread()
+
     def setUp(self) -> None:
         self.logs: list[tuple[str, str]] = []
         self.ui = SimpleNamespace()
@@ -161,6 +180,7 @@ class UICommandTests(TestCase):
             speed=1.0,
             reverb=SimpleNamespace(strength=0.0),
             say=mock.Mock(return_value=True),
+            play=mock.Mock(return_value=True),
             vision=SimpleNamespace(enabled=True, talkback=True),
         )
 
@@ -275,6 +295,29 @@ class UICommandTests(TestCase):
 
         self.ui.celune.say.assert_not_called()
         self.assertEqual(self.logs[-1], ("Usage: /say <text>", "warning"))
+
+    def test_play_command_passes_optional_volume(self) -> None:
+        """Verify /play forwards the optional volume argument to Celune."""
+        self.ui.celune.play.return_value = True
+
+        with mock.patch(
+            "celune.ui.commands.threading.Thread",
+            side_effect=self._thread_runs_immediately,
+        ):
+            self._process_command("play", ["tone.wav", "0.4"])
+
+        self.ui.celune.play.assert_called_once_with("tone.wav", volume=0.4)
+        self.assertEqual(self.logs[-1], ("Playing tone.wav at 40% volume", "info"))
+
+    def test_play_command_rejects_invalid_volume(self) -> None:
+        """Verify /play validates a numeric optional volume argument."""
+        self._process_command("play", ["tone.wav", "loud"])
+
+        self.ui.celune.play.assert_not_called()
+        self.assertEqual(
+            self.logs[-1],
+            ("Invalid volume for 'play', must be numeric.", "warning"),
+        )
 
     def test_say_command_reports_unmatched_ipa_characters(self) -> None:
         """Verify /say keeps the usual unmatched-IPA warning path."""
@@ -407,6 +450,25 @@ class UIStartupTests(TestCase):
             str(caught[0].message),
         )
 
+    def test_load_tts_marks_ui_error_when_startup_returns_false(self) -> None:
+        """Verify handled startup failures leave the UI in an error state."""
+        ui = CeluneUI()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                load=lambda: False,
+                dev=False,
+                glow=SimpleNamespace(fatal=lambda: None),
+            ),
+        )
+        ui.error = mock.Mock()
+
+        load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
+        load_tts(ui)
+
+        ui.error.assert_called_once_with(f"{APP_NAME} could not start")
+        self.assertEqual(ui.cur_state, "error")
+
     def test_textual_resource_footer_only_advertises_ctrl_q_exit(self) -> None:
         """Verify the Textual UI footer no longer advertises CTRL+C exit."""
         celune = cast(
@@ -422,6 +484,25 @@ class UIStartupTests(TestCase):
 
         exit_page = next(page for page in pages if "CTRL+Q exit" in page)
         self.assertNotIn("CTRL+C", exit_page)
+
+    def test_gpu_usage_handles_closed_stdout_pipe(self) -> None:
+        """Verify resource polling ignores closed-pipe nvidia-smi failures."""
+        proc = mock.Mock()
+        proc.poll.return_value = 0
+        proc.communicate.side_effect = ValueError("I/O operation on closed file.")
+
+        with mock.patch("celune.ui.resources._NVIDIA_SMI", "nvidia-smi"):
+            previous_proc = ui_resources._NVIDIA_SMI_PROC
+            previous_usage = ui_resources._NVIDIA_SMI_USAGE
+            ui_resources._NVIDIA_SMI_PROC = proc
+            ui_resources._NVIDIA_SMI_USAGE = 42
+            try:
+                self.assertIsNone(ui_resources.gpu_usage())
+                self.assertIsNone(ui_resources._NVIDIA_SMI_PROC)
+                self.assertIsNone(ui_resources._NVIDIA_SMI_USAGE)
+            finally:
+                ui_resources._NVIDIA_SMI_PROC = previous_proc
+                ui_resources._NVIDIA_SMI_USAGE = previous_usage
 
     def test_textual_input_lock_update_with_persona_on_ui_thread(self) -> None:
         """Verify input state updates update with Persona."""
@@ -547,3 +628,100 @@ class UIStartupTests(TestCase):
                 )
             ],
         )
+
+    def test_safe_status_marquees_long_text_for_narrow_status_label(self) -> None:
+        """Verify long status text scrolls instead of clipping."""
+
+        class FakeLabel:
+            """Tiny fake status label with a constrained width."""
+
+            def __init__(self, width: int) -> None:
+                self.size = SimpleNamespace(width=width)
+                self.styles = SimpleNamespace(color=None)
+                self.rendered = ""
+
+            def update(self, value: str) -> None:
+                """Update the marquee label text.
+
+                Args:
+                    value: New rendered text captured from the UI update call.
+                """
+                self.rendered = value
+
+        ui = CeluneUI()
+        fake_status = FakeLabel(width=14)
+        ui.status = cast(Label, fake_status)
+        ui.resources = cast(Label, None)
+
+        ui.safe_status("Playing C:/Users/user/Music/really_long_filename_demo.wav")
+        first = fake_status.rendered
+        ui._advance_status_marquee()
+        second = fake_status.rendered
+
+        self.assertNotEqual(first, second)
+        self.assertTrue(first.startswith("  "))
+        self.assertTrue(second.startswith("  "))
+
+    def test_safe_status_keeps_short_text_static(self) -> None:
+        """Verify short status text does not marquee."""
+
+        class FakeLabel:
+            """Tiny fake status label with a constrained width."""
+
+            def __init__(self, width: int) -> None:
+                self.size = SimpleNamespace(width=width)
+                self.styles = SimpleNamespace(color=None)
+                self.rendered = ""
+
+            def update(self, value: str) -> None:
+                """Update the marquee label text.
+
+                Args:
+                    value: New rendered text captured from the UI update call.
+                """
+                self.rendered = value
+
+        ui = CeluneUI()
+        fake_status = FakeLabel(width=40)
+        ui.status = cast(Label, fake_status)
+        ui.resources = cast(Label, None)
+
+        ui.safe_status("Playing")
+        first = fake_status.rendered
+        ui._advance_status_marquee()
+
+        self.assertEqual(first, fake_status.rendered)
+
+    def test_resize_repaints_status_after_width_change(self) -> None:
+        """Verify widening the status label re-renders the current text immediately."""
+
+        class FakeLabel:
+            """Tiny fake status label with a mutable width."""
+
+            def __init__(self, width: int) -> None:
+                self.size = SimpleNamespace(width=width)
+                self.styles = SimpleNamespace(color=None)
+                self.rendered = ""
+
+            def update(self, value: str) -> None:
+                """Update the marquee label text.
+
+                Args:
+                    value: New rendered text captured from the UI update call.
+                """
+                self.rendered = value
+
+        ui = CeluneUI()
+        fake_status = FakeLabel(width=14)
+        ui.status = cast(Label, fake_status)
+        ui.resources = cast(Label, None)
+
+        message = "Playing C:/Users/user/Music/really_long_filename_demo.wav"
+        ui.safe_status(message)
+        narrow = fake_status.rendered
+
+        fake_status.size = SimpleNamespace(width=96)
+        ui.on_resize(cast(events.Resize, SimpleNamespace()))
+
+        self.assertNotEqual(narrow, fake_status.rendered)
+        self.assertEqual(fake_status.rendered, f"  {message}")

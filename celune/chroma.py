@@ -13,11 +13,11 @@ from typing import Union, Optional, TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
-from openrgb.utils import RGBColor
 from openrgb import OpenRGBClient
+from openrgb.utils import RGBColor
 
-from .colors import RGB
 from .dsp import _split
+from .colors import RGB, ERROR
 from .constants import BASE_SR
 from .utils import to_rgb, lunar_info, range_interpolated, is_celune_day
 
@@ -39,7 +39,7 @@ class AudioRGBGlow:
             self._fix_color_rendering(to_rgb(color)), dtype=np.float32
         )
         self.fatal_color = np.array(
-            self._fix_color_rendering(to_rgb("#ce2006")), dtype=np.float32
+            self._fix_color_rendering(to_rgb(ERROR)), dtype=np.float32
         )
         self._current_color = self.base_color.copy()
         self._target_color = self.base_color.copy()
@@ -53,17 +53,7 @@ class AudioRGBGlow:
         self.client = None
         self.devices = []
 
-        self.speech_threshold = 0.06
-        self._level_history = np.zeros(3, dtype=np.float32)
         self._scheduled_chunks = deque()
-
-        self.hold_duration = 1.8
-
-        # different pipeline configurations had different glow effects
-        # it currently performs a heartbeat-like pulse effect
-        self.pulse = True
-        self.fade_in_rate = 0.03
-        self.fade_out_rate = 0.02
         self.fps = 60
 
         self.transition_rate = 0.02
@@ -96,8 +86,8 @@ class AudioRGBGlow:
         self.max_brightness = 1.0
 
         self.input_gain = 4.0
-        self.gamma = 1.4
-        self.pulse_rate = 1.1
+        self.gamma = 1.8
+        self.smoothing_factor = 0.8
         self.fast = True
 
         self._lock = threading.Lock()
@@ -107,7 +97,7 @@ class AudioRGBGlow:
         self._current_brightness = 0.0
         self._target_brightness = self.idle_brightness
         self._sleep_restore_brightness = self.idle_brightness
-        self._last_speech_time = 0.0
+        self._smoothed_level = 0.0
 
         self._state = "none"
 
@@ -130,7 +120,7 @@ class AudioRGBGlow:
                 with contextlib.suppress(Exception):
                     device.set_custom_mode()
             return True
-        except TimeoutError:
+        except (TimeoutError, OSError):
             self.client = None
             self.connect_failed = True
             self.devices = []
@@ -236,7 +226,8 @@ class AudioRGBGlow:
         if not self.start():
             return
 
-        chunks = _split(audio, BASE_SR, 8)
+        chunk_seconds = 1.0 / float(self.fps)
+        chunks = _split(audio, BASE_SR, chunk_seconds)
         now = time.monotonic()
         offset = 0.0
 
@@ -257,19 +248,38 @@ class AudioRGBGlow:
 
         self._process_glow_chunk(audio, time.monotonic())
 
-    def _process_glow_chunk(self, audio: npt.NDArray[np.float32], now: float) -> None:
-        """Process one audio chunk and update recent speech timing."""
-        level = self._speech_level(audio)
-
-        self._level_history[:-1] = self._level_history[1:]
-        self._level_history[-1] = level
-        smoothed_level = float(np.mean(self._level_history))
+    def reset_audio_reactivity(self) -> None:
+        """Clear queued audio and fade the glow back to its idle brightness."""
+        if self._worker is None or not self._worker.is_alive():
+            return
 
         with self._lock:
-            if smoothed_level > self.speech_threshold:
+            self._scheduled_chunks.clear()
+            self._smoothed_level = 0.0
+            if self._state not in {"fatal", "sleeping", "waking", "leaving", "none"}:
                 self._state = "normal"
-                self._last_speech_time = now
-                self._target_brightness = self.max_brightness
+                self._target_brightness = self.idle_brightness
+
+    def _process_glow_chunk(self, audio: npt.NDArray[np.float32], now: float) -> None:
+        """Process one audio chunk and update audio-reactive brightness."""
+        del now
+        level = self._speech_level(audio)
+        smoothing = float(np.clip(self.smoothing_factor, 0.0, 0.98))
+        self._smoothed_level = (self._smoothed_level * smoothing) + (
+            level * (1.0 - smoothing)
+        )
+        smoothed_level = float(np.clip(self._smoothed_level, 0.0, 1.0))
+
+        with self._lock:
+            self._state = "normal"
+            self._target_brightness = float(
+                np.clip(
+                    self.idle_brightness
+                    + (self.max_brightness - self.idle_brightness) * smoothed_level,
+                    self.idle_brightness,
+                    self.max_brightness,
+                )
+            )
 
     @staticmethod
     def _to_mono(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
@@ -298,13 +308,14 @@ class AudioRGBGlow:
         return int(np.clip(r, 0, 255)), int(np.clip(g, 0, 255)), int(np.clip(b, 0, 255))
 
     def _speech_level(self, audio: npt.NDArray[np.float32]) -> float:
-        """Calculate normalized speech activity level."""
+        """Calculate normalized audio activity level from RMS energy."""
         audio = self._to_mono(audio)
         if audio.size == 0:
             return 0.0
 
-        amp = float(np.mean(np.abs(audio), dtype=np.float64))
-        level = np.clip(amp * self.input_gain, 0.0, 1.0)
+        rms = float(np.sqrt(np.mean(np.square(audio), dtype=np.float64)))
+        level = np.clip(rms * self.input_gain, 0.0, 1.0)
+        level = float(np.log1p(6.0 * level) / np.log1p(6.0))
         level = level ** (1.0 / self.gamma)
         return float(np.clip(level, 0.0, 1.0))
 
@@ -336,7 +347,6 @@ class AudioRGBGlow:
             with self._lock:
                 state = self._state
                 target = self._target_brightness
-                last_speech = self._last_speech_time
 
             if state == "entering":
                 target = self.idle_brightness
@@ -389,23 +399,8 @@ class AudioRGBGlow:
                             self._state = "normal"
 
             else:
-                speaking_for = now - last_speech
-                target = self.idle_brightness
-
-                if speaking_for > self.hold_duration:
-                    target = self.idle_brightness
-                elif self.pulse:
-                    pulse_phase = 2.0 * np.pi * self.pulse_rate * speaking_for
-                    pulse_wave = 0.5 * (1.0 + np.sin(pulse_phase))
-                    target = self.idle_brightness + (
-                        (self.max_brightness - self.idle_brightness) * pulse_wave
-                    )
-
-                alpha = (
-                    self.fade_in_rate
-                    if target > self._current_brightness
-                    else self.fade_out_rate
-                )
+                target = max(target, self.idle_brightness)
+                alpha = max(self.transition_rate, min(0.25, frame_sleep * 6.0))
                 self._current_brightness += (target - self._current_brightness) * alpha
                 self._current_brightness = float(
                     np.clip(

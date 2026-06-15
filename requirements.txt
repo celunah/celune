@@ -16,6 +16,8 @@ faster-qwen3-tts>=0.2.4
 # If you want Celune to use the alternative VoxCPM2-based backend, install this package.
 # This backend may not be available on some VRAM presets. Refer to Celune's default configuration for details.
 voxcpm>=2.0.0,<2.1.0
+# dots.tts is currently installed from Celunah's Windows-safe fork.
+dots.tts @ git+https://github.com/celunah/dots.tts
 # Pocket TTS is a new backend added in version 4.0.0, that allows Celune to sound the part and use up very little
 # memory, just under 200 MB!
 pocket-tts>=2.1.0
@@ -57,6 +59,7 @@ httpx>=0.27.0,<0.29.0
 # Used to detect language of input.
 langdetect>=1.0.0,<2.0.0
 iso639-lang>=2.0.0,<3.0.0
+yt-dlp
 
 # API
 uvicorn

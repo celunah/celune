@@ -2,145 +2,10 @@
 """Celune's extension annotations and classes."""
 
 from abc import ABC
-from dataclasses import dataclass, field
-from typing import Protocol, Optional, runtime_checkable
+from typing import Optional
 
-from .. import __version__
-from ..constants import JSONSerializable
+from ..dataclasses.extensions import CeluneContext
 from ..exceptions import IncompleteExtensionError
-
-CELUNE_VERSION = __version__
-
-
-@runtime_checkable
-class LogCallable(Protocol):
-    """Extension callable logging annotation."""
-
-    def __call__(self, msg: str, severity: str = "info") -> None:
-        """Emit a log message."""
-        raise IncompleteExtensionError("protocol not defined")
-
-
-@runtime_checkable
-class DevLogCallable(Protocol):
-    """Extension callable developer logging annotation."""
-
-    def __call__(self, msg: str, severity: str = "info") -> None:
-        """Emit a developer log message."""
-        raise IncompleteExtensionError("protocol not defined")
-
-
-@runtime_checkable
-class SayCallable(Protocol):
-    """Extension callable speech request annotation."""
-
-    def __call__(
-        self,
-        text: str,
-        save: bool = True,
-        display_text: Optional[str] = None,
-    ) -> bool:
-        """Queue text for speech."""
-        raise IncompleteExtensionError("protocol not defined")
-
-
-@runtime_checkable
-class ThinkCallable(Protocol):
-    """Extension callable think request annotation."""
-
-    def __call__(self, text: str) -> bool:
-        """Start a think request."""
-        raise IncompleteExtensionError("protocol not defined")
-
-
-@runtime_checkable
-class PlayCallable(Protocol):
-    """Extension callable play request annotation."""
-
-    def __call__(self, sound_path: str, keep: bool = False) -> bool:
-        """Queue an audio file for playback."""
-        raise IncompleteExtensionError("protocol not defined")
-
-
-@runtime_checkable
-class StatusCallable(Protocol):
-    """Extension callable status update annotation."""
-
-    def __call__(self, msg: str, severity: str = "info") -> None:
-        """Emit a status update."""
-        raise IncompleteExtensionError("protocol not defined")
-
-
-@runtime_checkable
-class SetVoiceCallable(Protocol):
-    """Extension callable voice setting request annotation."""
-
-    def __call__(self, name: str) -> bool:
-        """Request a voice change."""
-        raise IncompleteExtensionError("protocol not defined")
-
-
-@runtime_checkable
-class GetStateCallable(Protocol):
-    """Extension callable state read annotation."""
-
-    def __call__(self) -> str:
-        """Read the current runtime state."""
-        raise IncompleteExtensionError("protocol not defined")
-
-
-@runtime_checkable
-class WaitUntilReadyCallable(Protocol):
-    """Extension callable wait until ready annotation."""
-
-    def __call__(self, timeout: float = 30.0) -> bool:
-        """Wait for Celune to become ready."""
-        raise IncompleteExtensionError("protocol not defined")
-
-
-@dataclass(slots=True)
-class CeluneContext:
-    """Celune's extension context."""
-
-    log: LogCallable
-    log_dev: DevLogCallable
-    say: SayCallable
-    think: ThinkCallable
-    play: PlayCallable
-    status: StatusCallable
-    set_voice: SetVoiceCallable
-    get_state: GetStateCallable
-    wait_until_ready: WaitUntilReadyCallable
-
-    name: str = "Celune"
-    version: str = CELUNE_VERSION
-    shared: dict[str, JSONSerializable] = field(default_factory=dict)
-    dev: bool = False
-
-    def expose(self, key: str, value: JSONSerializable) -> None:
-        """Expose a shared object.
-
-        Args:
-            key: The name used to store the shared value.
-            value: The object to expose to other extensions.
-        """
-        self.shared[key] = value
-
-    def get(
-        self,
-        key: str,
-        default: JSONSerializable = None,
-    ) -> JSONSerializable:
-        """Get a shared object.
-
-        Args:
-            key: The name of the shared value to fetch.
-            default: The fallback value returned when the key is missing.
-
-        Returns:
-            JSONSerializable: The stored shared value, or ``default`` when absent.
-        """
-        return self.shared.get(key, default)
 
 
 class CeluneExtension(ABC):
@@ -232,12 +97,18 @@ class CeluneExtension(ABC):
 
         return self.ctx.think(text)
 
-    def play(self, sound_path: str, keep: bool = False) -> bool:
+    def play(
+        self,
+        sound_path: str,
+        keep: bool = False,
+        volume: float = 1.0,
+    ) -> bool:
         """Play arbitrary sound through Celune.
 
         Args:
             sound_path: The path to the audio file to play.
             keep: Whether to prepend this SFX to the next saved utterance.
+            volume: How loud should the SFX be played at.
 
         Returns:
             bool: ``True`` when playback was queued, otherwise ``False``.
@@ -245,7 +116,7 @@ class CeluneExtension(ABC):
         if not self.ctx.wait_until_ready():
             return False
 
-        return self.ctx.play(sound_path, keep=keep)
+        return self.ctx.play(sound_path, keep=keep, volume=volume)
 
     def status(self, msg: str, severity: str = "info") -> None:
         """Update status display.

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Qwen3 backend implementation for Celune."""
 
-import os
 import contextlib
 from collections.abc import Iterator
 from typing import Callable, Optional
@@ -10,10 +9,10 @@ import numpy as np
 import numpy.typing as npt
 from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
 
-from ..cevoice import default_loader, CEVoiceLoader
-from ..exceptions import BackendError
 from ..utils import custom_assert
-from .base import CeluneBackend, cached_hf_snapshot_path
+from ..exceptions import BackendError
+from ..cevoice import default_loader, CEVoiceLoader
+from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
 class Qwen3(CeluneBackend[FasterQwen3TTS]):
@@ -145,17 +144,6 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
 
         return self.clone_model_id
 
-    def generation_progress_total(self, text: Optional[str] = None) -> int:
-        """Return the Qwen3 streaming generation context length.
-
-        Args:
-            text: The text to check context usage of with this value.
-
-        Returns:
-            int: The max context length.
-        """
-        return self.max_new_tokens
-
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
     ) -> tuple[bool, Optional[str]]:
@@ -191,15 +179,8 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         available, path = self.model_is_available_locally(model_id)
 
         if available and path is not None:
-            previous_offline = os.environ.get("HF_HUB_OFFLINE")
-            try:
-                os.environ["HF_HUB_OFFLINE"] = "1"
+            with local_hf_offline_mode():
                 self.model = FasterQwen3TTS.from_pretrained(path)
-            finally:
-                if previous_offline is None:
-                    os.environ.pop("HF_HUB_OFFLINE", None)
-                else:
-                    os.environ["HF_HUB_OFFLINE"] = previous_offline
             return self.model
 
         self.log("Downloading TTS model...", "info")
@@ -235,10 +216,12 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
 
         try:
             loader, _ = self._require_compatible_bundle()
-            ref_wav = loader.materialize(voice, "wav")
+            ref_wav = self._truncate_reference(loader.materialize(voice, "wav"))
             configured_ref_text = loader.bundle.voices[voice].get("reference_text")
             ref_text = (
-                configured_ref_text if isinstance(configured_ref_text, str) else ""
+                configured_ref_text.strip()
+                if isinstance(configured_ref_text, str)
+                else ""
             )
         except KeyError as e:
             raise ValueError(
@@ -255,7 +238,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
                 **kwargs,
             )
 
-            for chunk in stream:  # pylint: disable=R1737
+            for chunk in stream:
                 audio_chunk, sample_rate, timing = chunk
                 if timing is not None:
                     timing = dict(timing)

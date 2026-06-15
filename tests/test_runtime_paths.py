@@ -2,6 +2,8 @@
 """Tests for Celune runtime path handling."""
 
 import tempfile
+import sys
+import os
 from pathlib import Path
 from typing import cast
 from unittest import TestCase, mock
@@ -10,14 +12,39 @@ import yaml
 from textual.widgets import RichLog
 
 from celune.constants import APP_SLUG
-from celune.paths import ensure_config_path
+from celune.paths import ensure_config_path, project_root, running_compiled
 from celune.persona.memory import default_memory_dir
+from celune.cevoice import bundled_voices_dir, default_bundle_path
 from celune.ui.app import CeluneUI
 from celune.utils import format_error
 
 
 class RuntimePathTests(TestCase):
     """Verify runtime files are written into the user data directory."""
+
+    @staticmethod
+    def _compiled_root_layout(root_parts: tuple[str, ...]) -> tuple[Path, Path]:
+        """Return a platform-native fake app root and compiled executable path."""
+        if os.name == "nt":
+            root = Path("C:/", *root_parts)
+            executable = root / "celune.exe"
+            return root, executable
+
+        root = Path("/", *root_parts)
+        executable = root / "celune"
+        return root, executable
+
+    @staticmethod
+    def _compiled_bin_layout(root_parts: tuple[str, ...]) -> tuple[Path, Path]:
+        """Return a platform-native fake repo root and compiled bin executable path."""
+        if os.name == "nt":
+            root = Path("C:/", *root_parts)
+            executable = root / "bin" / "celune.exe"
+            return root, executable
+
+        root = Path("/", *root_parts)
+        executable = root / "bin" / "celune"
+        return root, executable
 
     def tearDown(self) -> None:
         """Reset singleton UI guards after each test."""
@@ -94,3 +121,59 @@ class RuntimePathTests(TestCase):
             self.assertTrue(was_created)
             self.assertEqual(saved["theme"], "light")
             self.assertEqual(saved["headless"], True)
+
+    def test_running_compiled_detects_compiled_main_module(self) -> None:
+        """Verify compiled-mode detection checks the active main module."""
+        main_module = sys.modules["__main__"]
+        original = getattr(main_module, "__compiled__", None)
+        had_attr = hasattr(main_module, "__compiled__")
+
+        # the type errors are suppressed because they are Nuitka specific
+        try:
+            main_module.__compiled__ = True  # type: ignore[missing-attribute]
+            self.assertTrue(running_compiled())
+        finally:
+            if had_attr:
+                main_module.__compiled__ = original  # type: ignore[missing-attribute]
+            else:
+                delattr(main_module, "__compiled__")
+
+    def test_compiled_project_root_and_bundled_paths_follow_executable(self) -> None:
+        """Verify bundled files resolve beside the compiled executable."""
+        fake_main = type("CompiledMain", (), {"__compiled__": True})()
+        expected_root, executable = self._compiled_root_layout(("Apps", "Celune"))
+
+        with (
+            mock.patch.dict(sys.modules, {"__main__": fake_main}),
+            mock.patch.object(sys, "argv", [str(executable)]),
+        ):
+            self.assertEqual(project_root(), expected_root)
+            self.assertEqual(
+                default_bundle_path(),
+                expected_root / "voices" / "default.cevoice",
+            )
+            self.assertEqual(bundled_voices_dir(), expected_root / "voices")
+
+    def test_compiled_project_root_uses_repo_parent_when_running_from_bin(self) -> None:
+        """Verify compiled launches from bin/ still resolve the repository root."""
+        fake_main = type("CompiledMain", (), {"__compiled__": True})()
+        expected_root, executable = self._compiled_bin_layout(("repo",))
+
+        def fake_exists(path: Path) -> bool:
+            normalized = str(path).replace("\\", "/")
+            return normalized in {
+                str(expected_root / "celune").replace("\\", "/"),
+                str(expected_root / "default_config.yaml").replace("\\", "/"),
+                str(expected_root / "pyproject.toml").replace("\\", "/"),
+            }
+
+        with (
+            mock.patch.dict(sys.modules, {"__main__": fake_main}),
+            mock.patch.object(sys, "argv", [str(executable)]),
+            mock.patch.object(Path, "exists", fake_exists),
+        ):
+            self.assertEqual(project_root(), expected_root)
+            self.assertEqual(
+                default_bundle_path(),
+                expected_root / "voices" / "default.cevoice",
+            )

@@ -5,198 +5,39 @@ import os
 import gc
 import threading
 import contextlib
-from dataclasses import dataclass, field
 from collections.abc import Mapping, Sequence
-from typing import Literal, Optional, Protocol, TypedDict, Union, cast
+from typing import Optional, Union, cast
 
 import torch
 from transformers.tokenization_utils_base import BatchEncoding
 from transformers import (
-    Qwen2_5_VLForConditionalGeneration,
+    Qwen3VLForConditionalGeneration,
     AutoProcessor,
     AutoTokenizer,
     AutoConfig,
     BitsAndBytesConfig,
 )
 
-from ..utils import discard
+from ..utils import discard, normalize_special_characters
 from ..vram import resolve_vram_preset
 from ..constants import JSONSerializable, PERSONA_MODEL_ID, N_A_STR
-
-Role = Literal["system", "user", "assistant"]
-type VideoMetadataScalar = Optional[Union[bool, int, float, str]]
-type VisionInput = Union[JSONSerializable, torch.Tensor, bytes, memoryview]
-type ProcessorKwargValue = Union[VideoMetadataScalar, Sequence[VideoMetadataScalar]]
-type ModelGenerateKwargValue = Union[torch.Tensor, int, float, bool]
-
-
-class TextContentItem(TypedDict):
-    """Text content block accepted by Persona chat messages."""
-
-    type: Literal["text"]
-    text: str
-
-
-class ImageContentItem(TypedDict):
-    """Image content block accepted by Persona chat messages."""
-
-    type: Literal["image"]
-    image: str
-
-
-class VideoContentItem(TypedDict):
-    """Video content block accepted by Persona chat messages."""
-
-    type: Literal["video"]
-    video: str
-
-
-type ContentItem = Union[TextContentItem, ImageContentItem, VideoContentItem]
-type VideoMetadata = dict[str, VideoMetadataScalar]
-type VideoInputWithMetadata = tuple[VisionInput, VideoMetadata]
-type VisionProcessorOutput = tuple[
-    Optional[list[VisionInput]],
-    Optional[list[VideoInputWithMetadata]],
-    dict[str, ProcessorKwargValue],
-]
-type MessageContent = Union[str, list[ContentItem]]
-
-
-class ChatMessagePayload(TypedDict):
-    """Serialized chat message structure used by the Persona runtime."""
-
-    role: Role
-    content: MessageContent
-
-
-type JSONDict = ChatMessagePayload
-
-
-class ChatTemplateRenderer(Protocol):
-    """Renderer supporting Hugging Face-style chat templates."""
-
-    def apply_chat_template(
-        self,
-        conversation: Sequence[ChatMessagePayload],
-        *,
-        tokenize: bool = False,
-        add_generation_prompt: bool = True,
-        return_dict: bool = True,
-        return_tensors: str = "pt",
-    ) -> Union[str, BatchEncoding]:
-        """Render or tokenize a chat conversation.
-
-        Args:
-            conversation: The current Persona conversation.
-            tokenize: Whether the conversation should be tokenized.
-            add_generation_prompt: Whether the generation prompt should be appended.
-            return_dict: Whether a Python dict should be returned.
-            return_tensors: Whether PyTorch tensors should be returned.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-
-class PersonaTokenizer(Protocol):
-    """Tokenizer protocol used by the Persona runtime."""
-
-    eos_token_id: Optional[int]
-
-    def __call__(self, *, text: str, return_tensors: str) -> BatchEncoding:
-        """Tokenize text into a batch encoding."""
-        raise NotImplementedError("protocol not defined")
-
-    def decode(self, token_ids: torch.Tensor, *, skip_special_tokens: bool) -> str:
-        """Decode generated token IDs into text.
-
-        Args:
-            token_ids: The token IDs to decode.
-            skip_special_tokens: Whether special token IDs should be skipped while decoding.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-
-class PersonaProcessor(ChatTemplateRenderer, Protocol):
-    """Processor protocol used by the Persona runtime."""
-
-    tokenizer: Optional[PersonaTokenizer]
-
-    def __call__(
-        self,
-        *,
-        text: str,
-        images: Optional[Sequence[VisionInput]] = None,
-        videos: Optional[Sequence[VisionInput]] = None,
-        video_metadata: Optional[Sequence[VideoMetadata]] = None,
-        return_tensors: str,
-        **kwargs: ProcessorKwargValue,
-    ) -> BatchEncoding:
-        """Build multimodal model inputs."""
-        raise NotImplementedError("protocol not defined")
-
-
-class PersonaModel(Protocol):
-    """Model protocol used by the Persona runtime."""
-
-    device: Union[torch.device, str]
-
-    def generate(self, **kwargs: ModelGenerateKwargValue) -> torch.Tensor:
-        """Generate token IDs from prepared inputs.
-
-        Args:
-            kwargs: Generation-specific keyword arguments to use.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-    def eval(self) -> None:
-        """Switch the model into eval mode.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-
-@dataclass(slots=True)
-class ChatMessage:
-    """One OpenAI-style chat message."""
-
-    role: Role
-    content: MessageContent
-
-
-@dataclass(slots=True)
-class GenerateRequest:
-    """Celune-to-Persona generation request."""
-
-    model: Optional[str] = None
-    quantization: Optional[str] = None
-    quantized: bool = True
-    system: Optional[str] = None
-    user: Optional[str] = None
-    messages: list[ChatMessage] = field(default_factory=list)
-    max_new_tokens: int = 220
-    temperature: float = 0.75
-    top_p: float = 0.9
-    repetition_penalty: float = 1.05
-
-
-@dataclass(slots=True)
-class GenerateResponse:
-    """Persona generation response."""
-
-    text: str
-    response: str
-    model: str
-    quantization: str
+from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
+from ..typing.persona import (
+    ChatMessagePayload,
+    ChatTemplateRenderer,
+    ContentItem,
+    ImageContentItem,
+    MessageContent,
+    PersonaModel,
+    PersonaProcessor,
+    PersonaTokenizer,
+    Role,
+    TextContentItem,
+    VideoContentItem,
+    VideoMetadata,
+    VisionInput,
+    VisionProcessorOutput,
+)
 
 
 def _render_chat_prompt(
@@ -265,6 +106,8 @@ class PersonaBackend:
             quantization: The requested quantization mode to use.
 
         Raises:
+            TypeError: Raised when the loaded processor or model has an unsupported type.
+            RuntimeError: Raised when the requested Persona model cannot be loaded.
             ValueError: Quantization was requested when CUDA wasn't available.
         """
         if (
@@ -281,21 +124,20 @@ class PersonaBackend:
             trust_remote_code=True,
         )
         model_type = getattr(config, "model_type", N_A_STR)
+        wanted_type = "qwen3_vl"
 
-        if model_type != "qwen2_5_vl":
-            raise ValueError(
-                f"unsupported model type {config.model_type}, expected qwen2_5_vl"
+        if model_type != wanted_type:
+            raise TypeError(
+                f"unsupported model type {config.model_type}, expected {wanted_type}"
             )
 
         normalized = quantization.casefold()
         if normalized in {"4bit", "nf4", "bnb4", "bitsandbytes-4bit"}:
             if not torch.cuda.is_available():
-                raise ValueError(
-                    "Persona quantized loading requires a CUDA-enabled Torch build"
-                )
+                raise RuntimeError("CUDA support required to quantize Persona")
             model = cast(
                 PersonaModel,
-                Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
                     device_map="auto",
@@ -309,12 +151,10 @@ class PersonaBackend:
             )
         elif normalized in {"8bit", "bnb8", "bitsandbytes-8bit"}:
             if not torch.cuda.is_available():
-                raise ValueError(
-                    "Persona quantized loading requires a CUDA-enabled Torch build"
-                )
+                raise RuntimeError("CUDA support required to quantize Persona")
             model = cast(
                 PersonaModel,
-                Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
                     device_map="auto",
@@ -324,7 +164,7 @@ class PersonaBackend:
         elif normalized in {"none", "false", "off", "disabled"}:
             model = cast(
                 PersonaModel,
-                Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
                     device_map="auto",
@@ -432,7 +272,9 @@ class PersonaBackend:
 
             input_ids = cast(torch.Tensor, inputs["input_ids"])
             new_ids = output_ids[0, input_ids.shape[1] :]
-            text = tokenizer.decode(new_ids, skip_special_tokens=True).strip()
+            text = normalize_special_characters(
+                tokenizer.decode(new_ids, skip_special_tokens=True).strip()
+            )
             return GenerateResponse(
                 text=text,
                 response=text,
@@ -440,8 +282,8 @@ class PersonaBackend:
                 quantization=self.quantization,
             )
         finally:
-            # Vision requests can allocate substantial transient GPU memory for
-            # decoded image/video inputs; drop those tensors as soon as the turn ends.
+            # vision requests can allocate a large amount of memory for image/video tensors
+            # drop them after the vision-related turn is complete, and let Celune know it from context
             discard(new_ids)
             discard(output_ids)
             discard(model_inputs)

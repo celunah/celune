@@ -7,31 +7,54 @@ import queue
 import threading
 import contextlib
 from pathlib import Path
-from collections.abc import Iterator
-from typing import Optional, Callable, Protocol, Union, Any, cast
+from typing import Optional, Callable, Union, cast
 
 import torch
 import numpy as np
 import numpy.typing as npt
-import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils.logging import disable_progress_bar
 from transformers.utils import logging as hf_logging
-from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from huggingface_hub.utils import disable_progress_bars
 
-from .backends.qwen3 import Qwen3
 from . import __version__
+from .dataclasses.celune import (
+    CELUNE_CONSTANT_PROPERTIES,
+    CELUNE_FORWARDED_PROPERTIES,
+    CeluneAudioState,
+    CeluneBackendState,
+    CeluneCallbackState,
+    CeluneModelState,
+    CelunePipelineState,
+    CeluneRuntimeState,
+    CeluneVoiceState,
+)
+from .dataclasses.properties import (
+    bind_constant_properties,
+    bind_forwarded_properties,
+)
 from .chroma import AudioRGBGlow
+from .backends.qwen3 import Qwen3
 from .extensions.base import CeluneContext
 from .extensions.manager import CeluneExtensionManager
-from .dsp import StreamingPedalboardReverb
 from .config import Config, config_bool, config_value
+from .paths import project_root
 from .runtime import log_runtime_banner, validate_runtime
-from .backends import BackendModel, CeluneBackend, resolve_backend
+from .backends import CeluneBackend, resolve_backend
 from .exceptions import NotAvailableError, WarmupError, BackendError
 from .modeling import normalizer_device, load_normalizer_components
-from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID, PipelineStates
+from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID
+from .typing.celune import (
+    CeluneStateAccessors,
+    Generative,
+    InputStateCallback,
+    MessageCallback,
+    NormalizerTokenizer,
+    ProgressCallback,
+    ReleasableObject,
+    VoiceLockStateCallback,
+)
 from .utils import format_number, format_error, discard, is_port_usable, custom_assert
 from .vram import (
     QWEN3_0_6B_MODEL,
@@ -50,7 +73,6 @@ from .persona.impl import (
     persona_quantization,
 )
 from .cevoice import (
-    CEVoicePersona,
     announce_default_bundle,
     bundle_character_name,
     default_bundle_path,
@@ -59,9 +81,6 @@ from .cevoice import (
     select_voice_bundle,
 )
 from .pipeline import (
-    AudioQueueItem,
-    SpeechStreamQueue,
-    TextQueueItem,
     acquire_pipeline,
     clear_queue,
     close as close_pipeline,
@@ -76,8 +95,9 @@ from .pipeline import (
     say as say_pipeline,
     think as think_pipeline,
     split_text,
-    play_readiness_signal,
+    play_signal,
 )
+from .typing.pipeline import SpeechStreamQueue
 
 
 def _config_str(value: JSONSerializable) -> Optional[str]:
@@ -96,61 +116,7 @@ def _config_int(value: JSONSerializable, default: int) -> int:
     raise TypeError("config value cannot be converted to int")
 
 
-class _SupportsClose(Protocol):
-    def close(self) -> None:
-        """Fake return value of close().
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-
-class _SupportsUnload(Protocol):
-    def unload(self) -> None:
-        """Fake return value of unload().
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-
-class _Generative(Protocol):
-    def generate(self, **kwargs: Any) -> torch.Tensor:
-        """Fake return value of generate().
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-    def device(self) -> Union[torch.device, str]:
-        """Fake return value of device().
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-    def parameters(self) -> Iterator[torch.nn.Parameter]:
-        """Fake return value of device().
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-
-type _ReleasableObject = Union[
-    _SupportsClose,
-    _SupportsUnload,
-    PreTrainedModel,
-    PreTrainedTokenizerBase,
-]
-
-
-def _release_loaded_object(value: _ReleasableObject) -> None:
+def _release_loaded_object(value: ReleasableObject) -> None:
     """Best-effort release hook for one loaded runtime object."""
     close = getattr(value, "close", None)
     if callable(close):
@@ -164,85 +130,7 @@ def _release_loaded_object(value: _ReleasableObject) -> None:
             unload()
 
 
-class NormalizerTokenizer(Protocol):
-    """Tokenizer behavior CeluneNorm uses during normalization."""
-
-    unk_token_id: Optional[int]
-    pad_token_id: Optional[int]
-    eos_token_id: Optional[int]
-
-    def convert_tokens_to_ids(self, tokens: str) -> Optional[int]:
-        """Convert one token to its integer ID.
-
-        Args:
-            tokens: A token to convert to ID.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-    def __call__(
-        self,
-        text: str,
-        *,
-        return_tensors: str,
-        add_special_tokens: bool,
-    ) -> BatchEncoding:
-        """Tokenize text for model input."""
-        raise NotImplementedError("protocol not defined")
-
-    def decode(
-        self,
-        token_ids: torch.Tensor,
-        *,
-        skip_special_tokens: bool,
-    ) -> Union[str, list[str]]:
-        """Decode generated token IDs.
-
-        Args:
-            token_ids: Token IDs to decode.
-            skip_special_tokens: Whether special tokens should be skipped while decoding.
-
-        Raises:
-            NotImplementedError: The protocol was called directly.
-        """
-        raise NotImplementedError("protocol not defined")
-
-
-class MessageCallback(Protocol):
-    """Callback accepting a message and optional severity."""
-
-    def __call__(self, msg: str, severity: str = "info") -> None:
-        """Handle a message emitted by Celune."""
-        raise NotImplementedError("protocol not defined")
-
-
-class InputStateCallback(Protocol):
-    """Callback accepting either positional or named lock state."""
-
-    def __call__(self, locked: bool) -> None:
-        """Handle input lock-state changes."""
-        raise NotImplementedError("protocol not defined")
-
-
-class VoiceLockStateCallback(Protocol):
-    """Callback accepting either positional or named lock state."""
-
-    def __call__(self, locked: bool) -> None:
-        """Handle voice lock-state changes."""
-        raise NotImplementedError("protocol not defined")
-
-
-class ProgressCallback(Protocol):
-    """Callback accepting progress and total values."""
-
-    def __call__(self, progress: Optional[float], total: Optional[float]) -> None:
-        """Handle a progress update emitted by Celune."""
-        raise NotImplementedError("protocol not defined")
-
-
-class Celune:
+class Celune(CeluneStateAccessors):
     """The character engine for Celune."""
 
     _instance: Optional["Celune"] = None
@@ -268,27 +156,34 @@ class Celune:
         if Celune._instance is not None:
             raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
 
-        self.log_callback: MessageCallback = log_callback or self._noop_message
-        self.status_callback: MessageCallback = status_callback or self._noop_message
-        self.error_callback = error_callback or (lambda error: None)
-        self.idle_callback = idle_callback or (lambda: None)
-        self.queue_avail_callback = queue_avail_callback or (lambda: None)
-        self.voice_changed_callback = voice_changed_callback or (lambda name: None)
-        self.change_input_state_callback: InputStateCallback = (
-            change_input_state_callback or self._noop_input_state
+        self._callbacks = CeluneCallbackState(
+            log_callback=log_callback or self._noop_message,
+            status_callback=status_callback or self._noop_message,
+            error_callback=error_callback or (lambda error: None),
+            idle_callback=idle_callback or (lambda: None),
+            queue_avail_callback=queue_avail_callback or (lambda: None),
+            voice_changed_callback=voice_changed_callback or (lambda name: None),
+            change_input_state_callback=(
+                change_input_state_callback or self._noop_input_state
+            ),
+            change_voice_lock_state_callback=(
+                change_voice_lock_state_callback or self._noop_voice_lock_state
+            ),
+            progress_callback=(progress_callback or self._noop_progress),
         )
-        self.change_voice_lock_state_callback: VoiceLockStateCallback = (
-            change_voice_lock_state_callback or self._noop_voice_lock_state
-        )
-        self.progress_callback: ProgressCallback = (
-            progress_callback or self._noop_progress
-        )
+
+        self._backend_state = CeluneBackendState(config=config)
+        self._model_state = CeluneModelState()
+        self._voice_state = CeluneVoiceState()
+        self._pipeline_state = CelunePipelineState()
+        self._audio_state = CeluneAudioState()
+        self._runtime_state = CeluneRuntimeState()
+        self._pipeline_state.model_ready.set()
+        self._pipeline_state.playback_done.set()
 
         self.config = config
         select_voice_bundle(_config_str(config_value(config, "voice_bundle")))
         preset = resolve_vram_preset(config)
-        self._backend_spec: Optional[Union[str, type[CeluneBackend]]] = None
-        self._backend_kwargs: dict[str, JSONSerializable] = {}
 
         if tts_backend is None:
             tts_backend = preset.default_backend
@@ -373,67 +268,10 @@ class Celune:
             )
 
         self.language = language
-
-        self.model: Optional[BackendModel] = None
-        self.model_name = ""
-        self.llm: Optional[PreTrainedModel] = None
-        self.tokenizer: Optional[PreTrainedTokenizerBase] = None
-        self._last_warmup_error: Optional[Exception] = None
-        self._normalizer_load_epoch = 0
-
-        self.current_voice: Optional[str] = None
-        self.current_character: Optional[str] = None
-        self.current_character_persona: Optional[CEVoicePersona] = None
-        self.voice_bundle_is_default = True
-        self.persona_history: list[dict[str, str]] = []
-        self.persona_attachments: list[dict[str, str]] = []
-        self.voices: tuple[str, ...] = ()
-        self.voice_prompt: Optional[str] = None
-
-        self.text_queue: queue.Queue[TextQueueItem] = queue.Queue()
-        self.audio_queue: queue.Queue[AudioQueueItem] = queue.Queue()
-
-        self._playback_thread: Optional[threading.Thread] = None
-        self._generation_thread: Optional[threading.Thread] = None
-        self._api_thread: Optional[threading.Thread] = None
-        self._persona_thread: Optional[threading.Thread] = None
-        self._queue_lock = threading.Lock()
-        self._utterance_force_stop = threading.Event()
-        self.regenerate = False
-
-        self._stream: Optional[sd.OutputStream] = None
-        self._current_sr: Optional[int] = None
-        self._audio_unavailable = False
-        self.can_use_rubberband = True
-        self.speed: float = 1.0
-        self.reverb = StreamingPedalboardReverb()
-
-        self.locked = True
-        self.loaded = False
-        self.sleeping = False
-        self.recently_saved: Optional[str] = None
-        self.kept_sfx_audio: Optional[npt.NDArray[np.float32]] = None
-
-        self._last_flavor: Optional[str] = None
-        self._ready_announced = False
-        self._model_ready = threading.Event()
-        self._model_ready.set()
-        self._exit_requested = False
-        self._playback_done = threading.Event()
-        self._playback_done.set()
-        self._say_lock = threading.Lock()
-        self._wake_lock = threading.Lock()
-        self._model_lock = threading.RLock()
-
-        self.cur_state = "init"
-        self.is_in_tutorial = False
-
         self.dev = dev
         self.use_normalization = config_bool(
             config, "CELUNE_NORMALIZE", "use_normalizer"
         )
-
-        self.extension_manager: Optional[CeluneExtensionManager] = None
 
         glow_color = "#cebaff"
         loader = default_loader()
@@ -451,10 +289,12 @@ class Celune:
         self.glow = AudioRGBGlow(celune=self, color=glow_color)
         self.glow.start()
 
-        self.vision: Optional[PersonaClient]
         self.vision = self._persona_conn()
 
         Celune._instance = self
+
+    bind_forwarded_properties(locals(), CELUNE_FORWARDED_PROPERTIES)
+    bind_constant_properties(locals(), CELUNE_CONSTANT_PROPERTIES)
 
     @staticmethod
     def _noop_message(msg: str, severity: str = "info") -> None:
@@ -651,6 +491,9 @@ class Celune:
             self.cur_state = "sleeping"
             self.glow.sleep()
 
+        if not self._try_play_signal("sleeping"):
+            self.log_dev("Could not play the sleeping signal.", "warning")
+
         self._ready_announced = False
         self.model_ready.clear()
         self.progress_callback(0, 1)
@@ -738,6 +581,8 @@ class Celune:
                 self.loaded = False
                 self.log(f"[WAKE ERROR] {format_error(e, self.dev)}", "error")
                 self.glow.fatal()
+                if not self._try_play_signal("error"):
+                    self.log_dev("Could not play the error signal.", "warning")
                 self.cur_state = "error"
                 self.status_callback(f"{APP_NAME} could not wake", "error")
                 self.progress_callback(0, 1)
@@ -833,7 +678,7 @@ class Celune:
             bool: ``True`` when the reload thread was started, otherwise ``False``.
         """
         if name not in self.voices:
-            # this voice was not found in the current CEVOICE pack
+            # this voice was not found in the current CEVOICE/CECHAR pack
             self.log(f"Unknown voice: {name}", "warning")
             return False
 
@@ -918,7 +763,7 @@ class Celune:
             log_dev=self.log_dev,
         )
         self.extension_manager = CeluneExtensionManager(ctx)
-        self.extension_manager.autoload("extensions")
+        self.extension_manager.autoload(str(project_root() / "extensions"))
 
         self.log_dev(
             f"[Core] Loaded extensions: {', '.join(self.extension_manager.list_extensions())}"
@@ -942,6 +787,17 @@ class Celune:
         """
         if self.dev:
             self.log_callback(msg, severity)
+
+    def _try_play_signal(self, signal_type: str) -> bool:
+        """Play a runtime signal only when the playback pipeline can currently accept it."""
+        playback_thread = self.playback_thread
+        if playback_thread is None or not playback_thread.is_alive():
+            return False
+
+        if self.locked and self._playback_done.is_set():
+            self._release_pipeline()
+
+        return play_signal(self, signal_type)
 
     def voice_prompt_supported(self) -> bool:
         """Return whether the active TTS configuration supports voice prompts.
@@ -986,6 +842,8 @@ class Celune:
 
                 # VoxCPM2 uses the same model for all voices, so we don't have to reload every time
                 if new_model_name != self.model_name:
+                    if not self._try_play_signal("working"):
+                        self.log_dev("Could not play the working signal.", "warning")
                     self.log_dev(f"[RELOAD] Unloading model: {self.model_name}")
                     self.unload_runtime_state(include_normalizer=False)
                     self.log_dev(f"[RELOAD] Loading model: {new_model_name}")
@@ -995,7 +853,7 @@ class Celune:
                     if not self._warmup():
                         self._raise_warmup_error("warmup failed after reload")
 
-                    if not play_readiness_signal(self):
+                    if not self._try_play_signal("readiness"):
                         self.log_dev("Could not play the readiness signal.", "warning")
 
                 self.log_dev(
@@ -1008,11 +866,14 @@ class Celune:
             self.voice_changed_callback(voice)
             self.log(f"Voice {voice} loaded.")
             self.progress_callback(1, 1)
+            self.cur_state = "idle"
             self.status_callback("Idle")
         except Exception as e:
             self.loaded = False
             self.log(f"[RELOAD ERROR] {format_error(e, self.dev)}", "error")
             self.glow.fatal()
+            if not self._try_play_signal("error"):
+                self.log_dev("Could not play the error signal.", "warning")
             self.status_callback(f"{APP_NAME} could not reload", "error")
             self.progress_callback(0, 1)
             self.error_callback(f"{APP_NAME} could not reload")
@@ -1043,6 +904,8 @@ class Celune:
         if not self.load_available_voices():
             self.log("No voices were loaded.", "error")
             self.glow.fatal()
+            if not self._try_play_signal("error"):
+                self.log_dev("Could not play the error signal.", "warning")
             self.progress_callback(0, 1)
             self.error_callback("No voices loaded")
             return False
@@ -1082,6 +945,8 @@ class Celune:
             self.log(f"{APP_NAME} could not load the default model.", "error")
             self.log(format_error(e, self.dev), "error")
             self.glow.fatal()
+            if not self._try_play_signal("error"):
+                self.log_dev("Could not play the error signal.", "warning")
             self.progress_callback(0, 1)
             self.error_callback("Default model failed to load")
             return False
@@ -1123,6 +988,8 @@ class Celune:
             backend_name=self.backend.name,
         ):
             self.glow.fatal()
+            if not self._try_play_signal("error"):
+                self.log_dev("Could not play the error signal.", "warning")
             return False
 
         if self._warmup():
@@ -1150,7 +1017,7 @@ class Celune:
             )
 
         # notify readiness
-        if not play_readiness_signal(self):
+        if not self._try_play_signal("readiness"):
             self.log_dev("Could not play the readiness signal.", "warning")
 
         return True
@@ -1340,6 +1207,9 @@ class Celune:
             self.log(f"[WARMUP ERROR] {format_error(e, self.dev)}", "error")
             self.cur_state = "error"
             self.glow.fatal()
+
+            if not self._try_play_signal("error"):
+                self.log_dev("Could not play the error signal.", "warning")
             self.progress_callback(0, 1)
             self.error_callback(f"{APP_NAME} could not warm up")
             return False
@@ -1365,7 +1235,7 @@ class Celune:
         if self.llm is None or self.tokenizer is None:
             return None
 
-        llm = cast(_Generative, self.llm)
+        llm = cast(Generative, self.llm)
         tokenizer = cast(NormalizerTokenizer, self.tokenizer)
 
         def _run_inference() -> Optional[str]:
@@ -1549,17 +1419,18 @@ class Celune:
             return None
         return stream_queue
 
-    def play(self, sound_path: str, keep: bool = False) -> bool:
+    def play(self, sound_path: str, keep: bool = False, volume: float = 1.0) -> bool:
         """Play a sound via Celune's pipeline.
 
         Args:
             sound_path: The path to the audio file to play.
             keep: Whether to prepend this SFX to the next saved utterance.
+            volume: How loud should the SFX be played at.
 
         Returns:
             bool: ``True`` when playback was queued successfully, otherwise ``False``.
         """
-        return play_pipeline(self, sound_path, keep=keep)
+        return play_pipeline(self, sound_path, keep=keep, volume=volume)
 
     def play_audio(
         self,
@@ -1582,7 +1453,7 @@ class Celune:
         return queue_sfx_audio(self, audio, sample_rate, label, keep=keep)
 
     def close(self) -> None:
-        """Shut off Celune and exit."""
+        """Shut off Celune and release loaded runtime state."""
         try:
             close_pipeline(self)
             self._unload_persona_state()
@@ -1602,156 +1473,3 @@ class Celune:
     def _playback_worker(self) -> None:
         """Receive audio chunks and play them."""
         playback_worker(self)
-
-    @property
-    def stream(self) -> Optional[sd.OutputStream]:
-        """Get the current audio output stream.
-
-        Returns:
-            Optional[sounddevice.OutputStream]: The active audio stream, if any.
-        """
-        return self._stream
-
-    @stream.setter
-    def stream(self, value: Optional[sd.OutputStream]) -> None:
-        """Set the current audio output stream.
-
-        Args:
-            value: The new output stream object.
-        """
-        self._stream = value
-
-    @property
-    def say_lock(self):
-        """Get the speech pipeline lock.
-
-        Returns:
-            threading.Lock: The lock guarding speech and playback state changes.
-        """
-        return self._say_lock
-
-    @property
-    def utterance_force_stop(self):
-        """Get the force-stop event for the current utterance.
-
-        Returns:
-            threading.Event: The event used to interrupt active speech.
-        """
-        return self._utterance_force_stop
-
-    @property
-    def queue_lock(self):
-        """Get the queue coordination lock.
-
-        Returns:
-            threading.Lock: The lock guarding queue mutations.
-        """
-        return self._queue_lock
-
-    @property
-    def force_stop_marker(self):
-        """Get the queue marker used to stop playback immediately.
-
-        Returns:
-            PipelineStates: The sentinel inserted into the audio queue.
-        """
-        return PipelineStates.UTTERANCE_FORCE_END
-
-    @property
-    def playback_done(self):
-        """Get the playback completion event.
-
-        Returns:
-            threading.Event: The event set when playback is idle.
-        """
-        return self._playback_done
-
-    @property
-    def model_ready(self):
-        """Get the model readiness event.
-
-        Returns:
-            threading.Event: The event set when the speech model is ready to use.
-        """
-        return self._model_ready
-
-    @property
-    def utterance_done(self):
-        """Get the marker that signals utterance completion.
-
-        Returns:
-            PipelineStates: The sentinel inserted when generation finishes.
-        """
-        return PipelineStates.UTTERANCE_END
-
-    @property
-    def sentinel(self):
-        """Get the global shutdown sentinel.
-
-        Returns:
-            PipelineStates: The sentinel used to stop worker threads.
-        """
-        return PipelineStates.TERMINATE
-
-    @property
-    def generation_thread(self) -> Optional[threading.Thread]:
-        """Get the generation worker thread.
-
-        Returns:
-            Optional[threading.Thread]: The active generation thread, if started.
-        """
-        return self._generation_thread
-
-    @property
-    def playback_thread(self) -> Optional[threading.Thread]:
-        """Get the playback worker thread.
-
-        Returns:
-            Optional[threading.Thread]: The active playback thread, if started.
-        """
-        return self._playback_thread
-
-    @property
-    def exit_requested(self):
-        """Get the exit flag.
-
-        Returns:
-            bool: ``True`` when Celune is shutting down, otherwise ``False``.
-        """
-        return self._exit_requested
-
-    @property
-    def model_lock(self):
-        """Get the model access lock.
-
-        Returns:
-            threading.RLock: The lock guarding model access and reloads.
-        """
-        return self._model_lock
-
-    @property
-    def audio_unavailable(self):
-        """Get the audio availability flag.
-
-        Returns:
-            bool: ``True`` when audio output initialization has failed.
-        """
-        return self._audio_unavailable
-
-    @property
-    def current_sr(self) -> Optional[int]:
-        """Get the active stream sample rate.
-
-        Returns:
-            Optional[int]: The current playback sample rate, if a stream exists.
-        """
-        return self._current_sr
-
-    @current_sr.setter
-    def current_sr(self, value: Optional[int]) -> None:
-        """Set the active stream sample rate.
-
-        Args:
-            value: The new playback sample rate.
-        """
-        self._current_sr = value

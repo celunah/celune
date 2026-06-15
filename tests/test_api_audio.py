@@ -5,17 +5,17 @@ import io
 import json
 import time
 import queue
-from typing import cast, Optional
 from unittest import TestCase
 from types import SimpleNamespace
+from typing import cast, Optional
 
 import numpy as np
 import soundfile as sf
 from starlette.responses import Response
 
 from celune import api
-from celune.pipeline import SpeechStreamQueue
 from celune.celune import Celune
+from celune.pipeline import SpeechStreamQueue
 
 
 class ApiAudioTests(TestCase):

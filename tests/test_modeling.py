@@ -2,8 +2,8 @@
 """Tests for model loading helpers."""
 
 from typing import cast
-from unittest import TestCase, mock
 from types import SimpleNamespace
+from unittest import TestCase, mock
 
 import torch
 

@@ -3,8 +3,8 @@
 
 import io
 import contextlib
-from pathlib import Path
 from unittest import TestCase, mock
+from pathlib import Path, PureWindowsPath
 
 import main
 
@@ -13,6 +13,23 @@ entrypoint = main.load_entrypoint_module()
 
 class DoctorCommandTests(TestCase):
     """Verify `celune doctor` works without booting the full app."""
+
+    def test_main_reports_unsupported_python_before_loading_entrypoint(self) -> None:
+        """Verify doctor on Python 3.11 exits cleanly before importing 3.12-only modules."""
+        with (
+            mock.patch.object(main.sys, "version_info", (3, 11, 9)),
+            mock.patch.object(main, "_load_entrypoint_module") as load_entrypoint,
+            contextlib.redirect_stdout(io.StringIO()) as stdout,
+            self.assertRaises(SystemExit) as exit_info,
+        ):
+            main.main(["celune", "doctor"])
+
+        self.assertEqual(exit_info.exception.code, 6)
+        load_entrypoint.assert_not_called()
+        output = stdout.getvalue()
+        self.assertIn("will not run on Python 3.11.9", output)
+        self.assertIn("use at least Python 3.12", output)
+        self.assertIn("doctor", output)
 
     def test_main_routes_doctor_without_starting_app(self) -> None:
         """Verify the doctor branch exits through `run_doctor` instead of `start()`."""
@@ -41,10 +58,42 @@ class DoctorCommandTests(TestCase):
 
         self.assertEqual(exit_code, 0)
         run.assert_called_once_with(
-            [entrypoint.sys.executable, str(entrypoint.SETUP_PATH)],
+            [str(entrypoint._doctor_running_python()), str(entrypoint.SETUP_PATH)],
             cwd=entrypoint.PROJECT_ROOT,
             check=False,
         )
+
+    def test_run_doctor_fix_uses_repo_venv_python_when_compiled(self) -> None:
+        """Verify compiled doctor fixups use the repo virtualenv Python."""
+        checks = [entrypoint.DoctorCheck("Python", True, "3.12.0")]
+
+        with (
+            mock.patch.object(entrypoint, "_doctor_checks", return_value=checks),
+            mock.patch.object(entrypoint, "running_compiled", return_value=True),
+            mock.patch.object(
+                entrypoint,
+                "_doctor_venv_python",
+                return_value=Path("C:/repo/.venv/Scripts/python.exe"),
+            ),
+            mock.patch.object(entrypoint.subprocess, "run") as run,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            run.return_value.returncode = 0
+            exit_code = entrypoint.run_doctor(["celune", "doctor", "--fix"])
+
+        self.assertEqual(exit_code, 0)
+
+        run.assert_called_once()
+        args, kwargs = run.call_args
+        command = args[0]
+
+        self.assertEqual(
+            PureWindowsPath(command[0]),
+            PureWindowsPath(r"C:\repo\.venv\Scripts\python.exe"),
+        )
+        self.assertEqual(command[1], str(entrypoint.SETUP_PATH))
+        self.assertEqual(kwargs["cwd"], entrypoint.PROJECT_ROOT)
+        self.assertFalse(kwargs["check"])
 
     def test_run_doctor_rejects_unknown_args(self) -> None:
         """Verify unsupported doctor flags produce usage output and a CLI error code."""

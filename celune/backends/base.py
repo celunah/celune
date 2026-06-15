@@ -6,29 +6,38 @@ import os
 import glob
 import random
 import secrets
+import threading
 import contextlib
+import hashlib
 from pathlib import Path
-from collections.abc import Iterator
 from abc import ABC, abstractmethod
-from typing import Callable, Optional, Protocol, Mapping, TypeVar, Generic
+from collections.abc import Iterator, Generator
+from typing import Callable, Optional, Mapping, Generic
 
 import torch
 import numpy as np
 import numpy.typing as npt
-from huggingface_hub.constants import HF_HUB_CACHE
+import soundfile as sf
 from huggingface_hub import snapshot_download
+from huggingface_hub.constants import HF_HUB_CACHE
 
 from ..utils import discard
 from ..constants import N_A_NUMERIC
-from ..exceptions import BackendError
 from ..cevoice import default_loader
+from ..exceptions import BackendError
+from ..paths import temp_data_dir
+from ..typing.backends import BackendModel, ModelT
+
+__all__ = [
+    "BackendModel",
+    "CeluneBackend",
+    "cached_hf_snapshot_path",
+    "local_hf_offline_mode",
+]
 
 
-class BackendModel(Protocol):
-    """Opaque backend model protocol for backend-independent storage."""
-
-
-ModelT = TypeVar("ModelT", bound=BackendModel)
+_HF_HUB_OFFLINE_LOCK = threading.Lock()
+_MAX_REFERENCE_SECONDS = 10.0
 
 
 def cached_hf_snapshot_path(
@@ -65,6 +74,32 @@ def cached_hf_snapshot_path(
     return False, None
 
 
+@contextlib.contextmanager
+def local_hf_offline_mode(enabled: bool = True) -> Generator[None, None, None]:
+    """Temporarily set ``HF_HUB_OFFLINE`` while serializing process-global access.
+
+    Args:
+        enabled: Whether to enable Hugging Face offline mode for the guarded block.
+
+    Returns:
+        None: Control back to the guarded caller while the environment mutation is active.
+    """
+    if not enabled:
+        yield
+        return
+
+    with _HF_HUB_OFFLINE_LOCK:
+        previous_offline = os.environ.get("HF_HUB_OFFLINE")
+        try:
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            yield
+        finally:
+            if previous_offline is None:
+                os.environ.pop("HF_HUB_OFFLINE", None)
+            else:
+                os.environ["HF_HUB_OFFLINE"] = previous_offline
+
+
 class CeluneBackend(ABC, Generic[ModelT]):
     """Base class for Celune speech backends."""
 
@@ -91,10 +126,11 @@ class CeluneBackend(ABC, Generic[ModelT]):
         self.log = log
         self.current_seed: Optional[int] = None
         self.random_seed = True
+        self._truncated_reference_paths: set[Path] = set()
 
     @staticmethod
     def _reference_wave_path(name: str) -> Path:
-        """Return a materialized path for a reference WAV from the active CEVOICE pack."""
+        """Return a materialized path for a reference WAV from the active CEVOICE/CECHAR pack."""
         loader = default_loader()
         if loader is None:
             raise BackendError(
@@ -102,8 +138,26 @@ class CeluneBackend(ABC, Generic[ModelT]):
             )
         return loader.materialize(name, "wav")
 
+    def _truncate_reference(self, reference_wav: Path) -> Path:
+        """Return a reference WAV truncated to Celune's backend-safe duration."""
+        info = sf.info(reference_wav)
+        if info.duration <= _MAX_REFERENCE_SECONDS:
+            return reference_wav
+
+        sample_rate = int(info.samplerate)
+        frame_limit = int(sample_rate * _MAX_REFERENCE_SECONDS)
+        audio, _ = sf.read(reference_wav, frames=frame_limit, dtype="float32")
+        temp_dir = temp_data_dir(create=True)
+        digest = hashlib.sha1(str(reference_wav.resolve()).encode("utf-8")).hexdigest()[
+            :12
+        ]
+        truncated_path = temp_dir / f"{reference_wav.stem}-{digest}-10s.wav"
+        sf.write(truncated_path, audio, sample_rate)
+        self._truncated_reference_paths.add(truncated_path)
+        return truncated_path
+
     def _validate_refs(self) -> None:
-        """Validate reference audio files found in the current CEVOICE pack."""
+        """Validate reference audio files found in the current CEVOICE/CECHAR pack."""
         loader = default_loader()
         if loader is None:
             return
@@ -232,38 +286,6 @@ class CeluneBackend(ABC, Generic[ModelT]):
         discard(lang)
         return False
 
-    def generation_progress_total(self, text: Optional[str] = None) -> Optional[int]:
-        """Return the backend's maximum streaming generation steps, if known.
-
-        Args:
-            text: Optional text for backends whose generation budget depends on input token length.
-
-        Returns:
-            Optional[int]: Maximum generated codec/token steps for one text chunk, or ``None`` when the backend does not
-            expose a stable limit.
-        """
-        # this is a base implementation so we don't use the parameters
-        discard(text)
-
-    @staticmethod
-    def generation_progress_steps(timing: Optional[dict]) -> int:
-        """Return how many generation steps a streamed chunk represents.
-
-        Args:
-            timing: Optional backend timing metadata yielded with the audio chunk.
-
-        Returns:
-            int: Number of generated codec/token steps represented by the chunk.
-        """
-        if not timing:
-            return 1
-
-        steps = timing.get("chunk_steps")
-        if isinstance(steps, int) and steps > 0:
-            return steps
-
-        return 1
-
     def load_default_model(self) -> ModelT:
         """Load the configured default model for this backend.
 
@@ -300,6 +322,11 @@ class CeluneBackend(ABC, Generic[ModelT]):
                 torch.cuda.synchronize()
             with contextlib.suppress(Exception):
                 torch.cuda.empty_cache()
+
+        for truncated_path in self._truncated_reference_paths:
+            with contextlib.suppress(OSError):
+                truncated_path.unlink(missing_ok=True)
+        self._truncated_reference_paths.clear()
 
     def preload_models(self) -> None:
         """Ensure all required models are available locally."""

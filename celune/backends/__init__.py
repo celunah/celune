@@ -5,13 +5,15 @@ from importlib import import_module
 from importlib.metadata import version, PackageNotFoundError
 from typing import Callable, Union, Optional
 
-from .base import BackendModel, CeluneBackend
+from ..typing.backends import BackendModel
+from .base import CeluneBackend
 
 __all__ = ["BackendModel", "CeluneBackend", "get_version", "resolve_backend"]
 
 BACKENDS = {
     "mini": ("celune.backends.mini", "Mini"),
     "qwen3": ("celune.backends.qwen3", "Qwen3"),
+    "dotstts": ("celune.backends.dotstts", "DotsTtsMF"),
     "voxcpm2": ("celune.backends.voxcpm2", "VoxCPM2"),
 }
 

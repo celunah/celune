@@ -55,7 +55,13 @@ def gpu_usage() -> Optional[int]:
         if proc.poll() is None:
             return _NVIDIA_SMI_USAGE
 
-        stdout, _ = proc.communicate()
+        try:
+            stdout, _ = proc.communicate()
+        except (OSError, ValueError, subprocess.SubprocessError):
+            _NVIDIA_SMI_PROC = None
+            _NVIDIA_SMI_USAGE = None
+            return None
+
         _NVIDIA_SMI_PROC = None
 
         if proc.returncode != 0:
