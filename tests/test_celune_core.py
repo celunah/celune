@@ -14,6 +14,7 @@ from celune.celune import Celune
 from celune.config import Config
 from celune.backends.qwen3 import Qwen3
 from celune.constants import JSONSerializable
+from celune.pipeline import play_signal, release_pipeline
 from celune.vram import QWEN3_0_6B_MODEL
 from celune.persona.impl import persona_quantization
 from celune.exceptions import BackendError, WarmupError
@@ -245,6 +246,45 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(celune.cur_state, "idle")
         self.assertEqual(statuses[-1], ("Idle", "info"))
         celune.voice_changed_callback.assert_called_once_with("bold")
+
+    def test_fatal_glow_marks_runtime_error_state(self) -> None:
+        """Verify fatal glow always stamps Celune into the error state."""
+        celune = self._make_celune({})
+        celune.loaded = True
+        celune.locked = False
+        celune.cur_state = "idle"
+        celune._ready_announced = True
+
+        celune.glow.fatal()
+
+        self.assertEqual(celune.cur_state, "error")
+        self.assertEqual(celune.loaded, False)
+        self.assertEqual(celune.locked, True)
+        self.assertEqual(celune._ready_announced, False)
+
+    def test_error_signal_does_not_leave_error_state(self) -> None:
+        """Verify fatal error signals do not overwrite Celune's error state."""
+        celune = self._make_celune({})
+        celune.cur_state = "error"
+        celune.locked = False
+        celune._playback_thread = mock.Mock(is_alive=mock.Mock(return_value=True))
+
+        with mock.patch("celune.celune.play_signal", wraps=play_signal):
+            result = celune._try_play_signal("error")
+
+        self.assertEqual(result, True)
+        self.assertEqual(celune.cur_state, "error")
+
+    def test_release_pipeline_keeps_error_state_sticky(self) -> None:
+        """Verify cleanup does not revive Celune from a fatal error."""
+        celune = self._make_celune({})
+        celune.cur_state = "error"
+        celune.locked = True
+
+        release_pipeline(celune)
+
+        self.assertEqual(celune.cur_state, "error")
+        self.assertEqual(celune.locked, False)
 
     def test_persona_talkback_config_can_disable_persona_input_mode(self) -> None:
         """Verify persona talkback can be disabled without disabling Persona."""

@@ -57,6 +57,14 @@ smart_buffer:
   max_seconds: 20.0
   complete_below_speed: 0.5
 
+# IPA auto-conversion
+# Celune can auto-convert IPA strings into English-like approximations
+# if you want to try speaking the IPA raw, disable this feature
+#
+# false = IPA is converted to English like compounds
+# true = IPA is treated as is
+ipa: false
+
 # VRAM target settings
 # we recommend choosing medium as a safe baseline for low VRAM users
 # the sane choice for users wanting to use Persona is the high preset

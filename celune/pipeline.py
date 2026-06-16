@@ -503,7 +503,8 @@ def release_pipeline(engine: Celune, playback_idle: bool = True) -> None:
         engine.locked = False
         if playback_idle:
             engine.playback_done.set()
-            engine.cur_state = "idle"
+            if engine.cur_state != "error":
+                engine.cur_state = "idle"
         engine.log_dev("[LOCK] released")
 
 
@@ -1470,7 +1471,7 @@ def queue_speech(
     engine.model_ready.wait()
 
     if not engine.loaded:
-        engine.log("Model became unavailable before speaking.", "warning")
+        engine.log("Core engine is not loaded.", "warning")
         engine.error_callback(f"{APP_NAME} is not currently ready")
         engine.progress_callback(0, 1)
         return False
@@ -1518,7 +1519,7 @@ def queue_speech(
 
     try:
         if not engine.loaded:
-            engine.log("Model became unavailable before queueing speech.", "warning")
+            engine.log("Core engine is not loaded.", "warning")
             engine.error_callback(f"{APP_NAME} is not currently ready")
             release_pipeline(engine)
             engine.progress_callback(0, 1)
@@ -1831,7 +1832,8 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
     # Celune._try_play_signal() instead of calling this method directly
     if acquire_pipeline(engine, f"play {signal_type} signal"):
         release_to_idle = False
-        engine.cur_state = "speaking"
+        if signal_type != "error" and engine.cur_state != "error":
+            engine.cur_state = "speaking"
         source_id = _next_playback_source_id(engine)
         _register_playback_source(engine, source_id, kind="sfx")
         _queue_playback_chunk(engine, source_id, signal, BASE_SR)
@@ -1883,9 +1885,7 @@ def generation_worker(engine: Celune) -> None:
                 engine.model_ready.wait()
 
                 if not engine.loaded:
-                    engine.log(
-                        "Skipping generation because model is not ready.", "warning"
-                    )
+                    engine.log("Core engine is not loaded.", "warning")
                     engine.locked = False
                     if stream_queue is not None:
                         stream_queue.put(NotAvailableError("model is not ready"))
@@ -2341,6 +2341,10 @@ def _finalize_playback_idle(
     _reset_glow_audio_reactivity(engine)
     engine.progress_callback(1, 1)
     engine.playback_done.set()
+
+    if engine.cur_state == "error":
+        return
+
     if not getattr(engine, "locked", False):
         engine.cur_state = "idle"
     engine.idle_callback()
@@ -2428,7 +2432,8 @@ def playback_worker(engine: Celune) -> None:
                 close_stream(engine, abort=True)
                 engine.playback_done.set()
                 release_pipeline(engine)
-                engine.idle_callback()
+                if engine.cur_state != "error":
+                    engine.idle_callback()
                 return False
 
             if isinstance(pending, PlaybackChunk):
@@ -2445,7 +2450,8 @@ def playback_worker(engine: Celune) -> None:
 
             close_stream(engine, abort=True)
             release_pipeline(engine)
-            engine.idle_callback()
+            if engine.cur_state != "error":
+                engine.idle_callback()
             return
 
         try:
@@ -2467,7 +2473,8 @@ def playback_worker(engine: Celune) -> None:
             close_stream(engine, abort=True)
             engine.playback_done.set()
             release_pipeline(engine)
-            engine.idle_callback()
+            if engine.cur_state != "error":
+                engine.idle_callback()
             continue
 
         if isinstance(item, PlaybackChunk):
@@ -2493,7 +2500,8 @@ def playback_worker(engine: Celune) -> None:
                 _playback_source_statuses(engine).clear()
                 _playback_source_meta(engine).clear()
                 release_pipeline(engine)
-                engine.idle_callback()
+                if engine.cur_state != "error":
+                    engine.idle_callback()
                 break
 
             ready_ids = [

@@ -13,7 +13,7 @@ import contextlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from collections.abc import Iterator
-from typing import Optional, Callable, Union, TextIO
+from typing import Optional, Callable, Union, TextIO, cast
 
 import yaml
 from rich.text import Text
@@ -21,6 +21,8 @@ from textual.color import Color
 from textual.timer import Timer
 from textual import work, events
 from textual.widget import Widget
+from textual.theme import Theme
+from textual.app import ScreenStackError
 from textual.css.types import EdgeStyle
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -46,6 +48,7 @@ from ..utils import (
     typing_animation,
     typing_delay,
     is_april_fools,
+    supports_ansi,
 )
 
 
@@ -59,6 +62,8 @@ class CeluneUIWidgetState:
     status: Optional[Label] = None
     resources: Optional[Label] = None
     progress_bar: Optional[ProgressBar] = None
+    header: Optional[Label] = None
+    header_lines: tuple[Label, ...] = ()
 
 
 @dataclass
@@ -67,6 +72,7 @@ class CeluneUIThemeState:
 
     themes: tuple[str, str]
     active_theme_name: str
+    fatal_error_active: bool = False
     log_history: list[tuple[str, str]] = field(default_factory=list)
     status_severity: str = "info"
     status_text: str = ""
@@ -184,9 +190,12 @@ class CeluneUI(App):
     status = _forward_ui_property("_widgets", "status")
     resources = _forward_ui_property("_widgets", "resources")
     progress_bar = _forward_ui_property("_widgets", "progress_bar")
+    header = _forward_ui_property("_widgets", "header")
+    header_lines = _forward_ui_property("_widgets", "header_lines")
 
     themes = _forward_ui_property("_theme_state", "themes")
     active_theme_name = _forward_ui_property("_theme_state", "active_theme_name")
+    _fatal_error_active = _forward_ui_property("_theme_state", "fatal_error_active")
     log_history = _forward_ui_property("_theme_state", "log_history")
     status_severity = _forward_ui_property("_theme_state", "status_severity")
     _status_text = _forward_ui_property("_theme_state", "status_text")
@@ -261,11 +270,70 @@ class CeluneUI(App):
         """Return the current theme color for a log severity."""
         return severity_color(self.active_theme_name, severity)
 
+    def _runtime_theme_name(self) -> str:
+        """Return the current Textual theme name, including runtime error overrides."""
+        if self._fatal_error_active:
+            if self.active_theme_name == "celune_light":
+                return "celune_light_error"
+            return "celune_error"
+        return self.active_theme_name
+
+    def _register_runtime_error_themes(self) -> None:
+        """Register error themes used for runtime failure states."""
+        dark_foreground = colors._ensure_contrast(
+            colors.ERROR_HIGHLIGHT,
+            colors.ERROR_BACKGROUND,
+            7.0,
+        )
+        light_foreground = colors._ensure_contrast(
+            colors.ERROR_HIGHLIGHT,
+            colors.ERROR_LIGHT_BACKGROUND,
+            7.0,
+        )
+        dark_theme = Theme(
+            name="celune_error",
+            primary=colors.ERROR_DARK_ACCENT,
+            secondary=colors.ERROR_DARK_ACCENT,
+            accent=colors.THEME.error,
+            foreground=dark_foreground,
+            background=colors.ERROR_BACKGROUND,
+            surface=colors.ERROR_BACKGROUND,
+            warning=colors.THEME.warning,
+            error=colors.THEME.error,
+            dark=True,
+        )
+        light_theme = Theme(
+            name="celune_light_error",
+            primary=colors.ERROR_DARK_ACCENT,
+            secondary=colors.ERROR_DARK_ACCENT,
+            accent=colors.THEME_LIGHT.error,
+            foreground=light_foreground,
+            background=colors.ERROR_LIGHT_BACKGROUND,
+            surface=colors.ERROR_LIGHT_BACKGROUND,
+            warning=colors.THEME_LIGHT.warning,
+            error=colors.THEME_LIGHT.error,
+            dark=False,
+        )
+        if dark_theme.name not in self.available_themes:
+            self.register_theme(dark_theme)
+        if light_theme.name not in self.available_themes:
+            self.register_theme(light_theme)
+
+    def _ensure_themes_registered(self) -> None:
+        """Register Celune's built-in themes when the app is not fully mounted yet."""
+        if colors.THEME.name not in self.available_themes:
+            self.register_theme(colors.THEME)
+        if colors.THEME_LIGHT.name not in self.available_themes:
+            self.register_theme(colors.THEME_LIGHT)
+        if colors.THEME_APRIL_FOOLS.name not in self.available_themes:
+            self.register_theme(colors.THEME_APRIL_FOOLS)
+        self._register_runtime_error_themes()
+
     def _apply_theme(self, theme_name: str) -> None:
         """Apply theme and repaint theme-sensitive widgets."""
         self._clear_border_pulses()
         self.active_theme_name = theme_name
-        self.theme = theme_name
+        self.theme = self._runtime_theme_name()
         self._refresh_status()
         self._refresh_theme_text()
         self._refresh_logs()
@@ -287,12 +355,86 @@ class CeluneUI(App):
         self._border_pulse_tokens.clear()
 
     def _refresh_theme_text(self) -> None:
-        """Refresh widgets that use the active theme's normal text color."""
-        color = self._severity_color("info")
+        """Refresh widgets after a runtime theme change."""
+
+        def repaint(widget: object) -> None:
+            refresh = getattr(widget, "refresh", None)
+            if refresh is None:
+                return
+            try:
+                refresh(layout=False)
+            except TypeError:
+                refresh()
+
+        runtime_theme_name = self._runtime_theme_name()
+        self._ensure_themes_registered()
+        if self.theme != runtime_theme_name:
+            self.theme = runtime_theme_name
+        try:
+            screen = self.screen
+        except ScreenStackError:
+            screen = None
+        if screen is not None and hasattr(screen, "styles"):
+            screen.styles.background = None
+            repaint(screen)
         if self.logs is not None:
-            self.logs.styles.color = color
+            self.logs.styles.color = None
+            self.logs.styles.border = None
+            self.logs.styles.background = None
+            self.logs.styles.scrollbar_color = None
+            self.logs.styles.scrollbar_color_hover = None
+            self.logs.styles.scrollbar_color_active = None
+            self.logs.styles.scrollbar_background = None
+            self.logs.styles.scrollbar_background_hover = None
+            self.logs.styles.scrollbar_background_active = None
+            repaint(self.logs)
+        if self.input_box is not None:
+            self.input_box.styles.color = None
+            self.input_box.styles.border = None
+            self.input_box.styles.background = None
+            self.input_box.styles.scrollbar_color = None
+            self.input_box.styles.scrollbar_color_hover = None
+            self.input_box.styles.scrollbar_color_active = None
+            self.input_box.styles.scrollbar_background = None
+            self.input_box.styles.scrollbar_background_hover = None
+            self.input_box.styles.scrollbar_background_active = None
+            repaint(self.input_box)
+        if self.style_button is not None:
+            self.style_button.styles.color = None
+            self.style_button.styles.border = None
+            self.style_button.styles.background = None
+            repaint(self.style_button)
         if self.resources is not None:
-            self.resources.styles.color = color
+            self.resources.styles.color = None
+            repaint(self.resources)
+        if self.header is not None:
+            self.header.styles.color = None
+            repaint(self.header)
+        for line in self.header_lines:
+            line.styles.border_top = None
+            repaint(line)
+        if self.progress_bar is not None and hasattr(self.progress_bar, "styles"):
+            self.progress_bar.styles.color = None
+            self.progress_bar.styles.background = None
+            repaint(self.progress_bar)
+
+    def _wrap_runtime_fatal_glow(self) -> None:
+        """Mirror runtime fatal glow events into the UI fatal theme flag."""
+        if self.celune is None or getattr(self.celune, "_ui_fatal_glow_wrapped", False):
+            return
+
+        glow = getattr(self.celune, "glow", None)
+        if glow is None or not hasattr(glow, "fatal"):
+            return
+        original_fatal = glow.fatal
+
+        def wrapped_fatal() -> None:
+            self._fatal_error_active = True
+            self._run_on_ui_thread(self._refresh_theme_text)
+            original_fatal()
+
+        glow.fatal = wrapped_fatal
+        setattr(self.celune, "_ui_fatal_glow_wrapped", True)
 
     def _refresh_status(self) -> None:
         """Refresh the status color for the active theme."""
@@ -442,9 +584,8 @@ class CeluneUI(App):
                         faded_accent,
                     )
 
-        self.register_theme(colors.THEME)
-        self.register_theme(colors.THEME_LIGHT)
-        self.register_theme(colors.THEME_APRIL_FOOLS)
+        self._ensure_themes_registered()
+        self._wrap_runtime_fatal_glow()
 
         if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
             "1",
@@ -473,6 +614,9 @@ class CeluneUI(App):
         self.resources = self.query_one("#resources", Label)
         self.style_button = self.query_one("#style", Button)
         self.progress_bar = self.query_one("#progress", ProgressBar)
+        self.header = self.query_one("#header", Label)
+        self.header_lines = tuple(cast(Label, widget) for widget in self.query(".line"))
+        self.set_focus(None)
         self._refresh_status()
         self._refresh_theme_text()
         self._refresh_logs()
@@ -495,6 +639,13 @@ class CeluneUI(App):
         def update() -> None:
             pages = ui_resources.resource_pages(self.celune, self.active_theme_name)
             text = pages[self._resource_page % len(pages)]
+
+            if supports_ansi() and self.celune.cur_state == "error":
+                if self._resource_page % 2:
+                    self._old_stdout.write(f"\x1b]2;{APP_NAME}\x07")
+                else:
+                    self._old_stdout.write("\x1b]2;has crashed\x07")
+
             self.resources.update(indent(text, spaces=2, direction="right"))
 
         self._run_on_ui_thread(update)
@@ -666,6 +817,12 @@ class CeluneUI(App):
         try:
             if self.celune.load():
                 self.celune_styles = self.celune.voices
+                if not self.celune_styles:
+                    self.change_input_state(locked=True)
+                    self.change_voice_lock_state(locked=True)
+                    self.error(f"{APP_NAME} could not start")
+                    self.cur_state = "error"
+                    return
                 self.celune_voices = itertools.cycle(self.celune_styles)
                 if self.celune.current_voice in self.celune_styles:
                     self.style_index = self.celune_styles.index(
@@ -688,15 +845,19 @@ class CeluneUI(App):
                 )
                 self._schedule_sleep_timer()
             else:
-                self.error(f"{APP_NAME} could not start")
                 self.cur_state = "error"
+                self.change_input_state(locked=True)
+                self.change_voice_lock_state(locked=True)
+                self.error(f"{APP_NAME} could not start")
         except Exception as e:
+            self.cur_state = "error"
             self.safe_log(f"[INIT ERROR] {format_error(e, self.celune.dev)}", "error")
             self.celune.glow.fatal()
             if not self.celune._try_play_signal("error"):
                 self.safe_log_dev("Could not play the error signal.", "warning")
+            self.change_input_state(locked=True)
+            self.change_voice_lock_state(locked=True)
             self.error(f"{APP_NAME} could not start")
-            self.cur_state = "error"
 
     def safe_progress(
         self, progress: Optional[float], total: Optional[float] = None
@@ -935,11 +1096,14 @@ class CeluneUI(App):
             )
             severity = "info"
 
+        if severity != "error":
+            self._fatal_error_active = False
         self.status_severity = severity
 
         def update() -> None:
             self._status_text = msg
             self._status_marquee_offset = 0
+            self._refresh_theme_text()
             self._update_status_label()
             self.update_resources()
 
@@ -1048,14 +1212,17 @@ class CeluneUI(App):
         if all(char in ".!?;:, " for char in to_say):
             return
 
-        ipa_decoded, unmatched = replace_ipa(to_say, strict=True)
-        if unmatched > 0:
-            self.safe_log_dev(
-                f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
-                "warning",
-            )
+        if self.celune.config.get("ipa") is False:
+            ipa_decoded, unmatched = replace_ipa(to_say, strict=True)
+            if unmatched > 0:
+                self.safe_log_dev(
+                    f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
+                    "warning",
+                )
 
-        self.celune.say(ipa_decoded, display_text=to_say)
+            self.celune.say(ipa_decoded, display_text=to_say)
+        else:
+            self.celune.say(to_say)
 
     def _submit_text(self, text: str, process_commands: bool = True) -> bool:
         """Submit text through the same path as the input box."""
@@ -1100,13 +1267,16 @@ class CeluneUI(App):
         if persona_talkback_enabled(self.celune.config):
             handled = self.celune.think(text)
         else:
-            ipa_decoded, unmatched = replace_ipa(text, strict=True)
-            if unmatched > 0:
-                self.safe_log_dev(
-                    f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
-                    "warning",
-                )
-            handled = self.celune.say(ipa_decoded, display_text=text)
+            if self.celune.config.get("ipa") is False:
+                ipa_decoded, unmatched = replace_ipa(text, strict=True)
+                if unmatched > 0:
+                    self.safe_log_dev(
+                        f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
+                        "warning",
+                    )
+                handled = self.celune.say(ipa_decoded, display_text=text)
+            else:
+                handled = self.celune.say(text)
 
         if not handled:
             return False
@@ -1296,6 +1466,16 @@ class CeluneUI(App):
         if event.button != self.style_button:
             return
 
+        if len(self.celune.voices) == 0 or not self.celune_styles:
+            self.safe_log("No voices are loaded.", "warning")
+            self.change_voice_lock_state(locked=True)
+            return
+
+        if not self.celune_ready:
+            self.safe_log("Core engine is not loaded.", "warning")
+            self.change_voice_lock_state(locked=True)
+            return
+
         self.style_index = (self.style_index + 1) % len(self.celune_styles)
         next_voice = self.celune_styles[self.style_index]
         threading.Thread(
@@ -1317,7 +1497,11 @@ class CeluneUI(App):
 
     def tts_idle(self) -> None:
         """Reset UI state after Celune stops talking."""
-        if self.cur_state == "exiting":
+        if self.cur_state in {"exiting", "error"} or not self.celune_ready:
+            if self.input_box is not None:
+                self.input_box.placeholder = "Please wait"
+            if self.style_button is not None:
+                self.style_button.disabled = True
             return
         self.celune.locked = False
         if self.celune.sleeping:
@@ -1337,7 +1521,7 @@ class CeluneUI(App):
         self,
     ) -> None:  # allow enqueuing new inputs while speaking but after generation
         """Unlock input queueing after Celune completes generation."""
-        if self.cur_state == "exiting":
+        if self.cur_state in {"exiting", "error"} or not self.celune_ready:
             return
         self.celune.locked = False
         self._cancel_sleep_timer()
