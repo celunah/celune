@@ -279,7 +279,7 @@ def _embedding_tensor_to_numpy(value: EmbeddingPayload) -> npt.NDArray[np.float3
     if array.ndim != 1:
         raise ValueError(f"expected a 1D embedding, got shape {array.shape}")
     if array.shape[0] != 2048:
-        raise ValueError(f"expected a 2048-d embedding, got {array.shape[0]}")
+        raise ValueError(f"expected a 2048-size embedding, got {array.shape[0]}")
     return array
 
 
