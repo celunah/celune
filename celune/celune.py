@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Celune's backend layer."""
 
+import os
 import gc
 import time
 import queue
@@ -287,6 +288,7 @@ class Celune(CeluneStateAccessors):
                     glow_color = configured_glow
 
         self.glow = AudioRGBGlow(celune=self, color=glow_color)
+        self._wrap_fatal_glow()
         self.glow.start()
 
         self.vision = self._persona_conn()
@@ -311,6 +313,27 @@ class Celune(CeluneStateAccessors):
     @staticmethod
     def _noop_progress(progress: Optional[float], total: Optional[float]) -> None:
         """Discard a progress callback."""
+
+    def _enter_fatal_error_state(self) -> None:
+        """Mark the runtime as unrecoverably failed before fatal handlers run."""
+        self.cur_state = "error"
+        self.loaded = False
+        self.locked = True
+        self._ready_announced = False
+
+    def _wrap_fatal_glow(self) -> None:
+        """Ensure all fatal glow paths also stamp the runtime state as failed."""
+        if getattr(self.glow, "_celune_fatal_wrapped", False):
+            return
+
+        original_fatal = self.glow.fatal
+
+        def wrapped_fatal() -> None:
+            self._enter_fatal_error_state()
+            original_fatal()
+
+        self.glow.fatal = wrapped_fatal
+        setattr(self.glow, "_celune_fatal_wrapped", True)
 
     @staticmethod
     def _validate_backend_against_preset(
@@ -578,6 +601,7 @@ class Celune(CeluneStateAccessors):
                 self.change_voice_lock_state_callback(locked=len(self.voices) < 2)
                 return True
             except Exception as e:
+                self.cur_state = "error"
                 self.loaded = False
                 self.log(f"[WAKE ERROR] {format_error(e, self.dev)}", "error")
                 self.glow.fatal()
@@ -869,6 +893,7 @@ class Celune(CeluneStateAccessors):
             self.cur_state = "idle"
             self.status_callback("Idle")
         except Exception as e:
+            self.cur_state = "error"
             self.loaded = False
             self.log(f"[RELOAD ERROR] {format_error(e, self.dev)}", "error")
             self.glow.fatal()
@@ -902,6 +927,7 @@ class Celune(CeluneStateAccessors):
 
         log_runtime_banner(self.log, self.backend.name)
         if not self.load_available_voices():
+            self.cur_state = "error"
             self.log("No voices were loaded.", "error")
             self.glow.fatal()
             if not self._try_play_signal("error"):
@@ -942,6 +968,7 @@ class Celune(CeluneStateAccessors):
             active_voice = self.current_voice or self.voices[0]
             self.model_name = self.backend.model_id_for_voice(active_voice)
         except Exception as e:
+            self.cur_state = "error"
             self.log(f"{APP_NAME} could not load the default model.", "error")
             self.log(format_error(e, self.dev), "error")
             self.glow.fatal()
@@ -987,6 +1014,7 @@ class Celune(CeluneStateAccessors):
             dev=self.dev,
             backend_name=self.backend.name,
         ):
+            self.cur_state = "error"
             self.glow.fatal()
             if not self._try_play_signal("error"):
                 self.log_dev("Could not play the error signal.", "warning")
@@ -998,8 +1026,11 @@ class Celune(CeluneStateAccessors):
             self._release_pipeline()
             self.glow.enter()  # Celune has entered your PC
         else:
+            self.cur_state = "error"
             self.log("[WARMUP] Warmup failed.", "error")
             self.glow.fatal()
+            if not self._try_play_signal("error"):
+                self.log("Could not play the error signal.", "warning")
             return False
 
         if self.use_normalization:
@@ -1180,12 +1211,23 @@ class Celune(CeluneStateAccessors):
         warmup_text = "A"
         self._last_warmup_error = None
 
+        forced_error = os.getenv("CELUNE_FORCE_ERROR") in {
+            "1",
+            "true",
+            "on",
+            "yes",
+            "enabled",
+        }
+
+        if forced_error:
+            raise WarmupError("forced warmup failure")
+
         try:
             warmup_start = time.perf_counter()
 
             with self._model_lock:
                 if self.model is None:
-                    raise NotAvailableError("cannot warm up without a model reference")
+                    raise WarmupError("cannot warm up a null model")
 
                 for _, _, _ in self.backend.generate_stream(
                     self.model,
@@ -1200,14 +1242,15 @@ class Celune(CeluneStateAccessors):
             warmup_end = time.perf_counter()
             warmup_took = warmup_end - warmup_start
             self.log_dev(f"[WARMUP] done, took {format_number(warmup_took, 2)} seconds")
+
             self.progress_callback(1, 1)
             return True
         except Exception as e:
+            self.cur_state = "error"
             self._last_warmup_error = e
             self.log(f"[WARMUP ERROR] {format_error(e, self.dev)}", "error")
             self.cur_state = "error"
             self.glow.fatal()
-
             if not self._try_play_signal("error"):
                 self.log_dev("Could not play the error signal.", "warning")
             self.progress_callback(0, 1)

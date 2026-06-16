@@ -127,6 +127,7 @@ class ApiWebUITests(TestCase):
             ) = api._webui_snapshot()
 
         self.assertIn("Ready to speak.", logs_html)
+        self.assertIn("--celune-ui-accent:", status_html)
         self.assertIn("style=", logs_html)
         self.assertIn("Idle", status_html)
         self.assertIn("10.66/11.94", resources_html)
@@ -215,6 +216,36 @@ class ApiWebUITests(TestCase):
         self.assertEqual(send_update["interactive"], False)
         self.assertEqual(voice_update["interactive"], False)
 
+    def test_webui_snapshot_keeps_failed_no_voice_runtime_locked(self) -> None:
+        """Verify a failed no-voice runtime stays in an error/locked browser state."""
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice=None,
+                voices=(),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+            ),
+        )
+        api.webui_input_locked = False
+        api.webui_input_placeholder = "Enter text to speak here"
+        api.webui_voice_locked = False
+
+        with mock.patch(
+            "celune.api.ui_resources.resource_pages",
+            return_value=("VRAM: 10.66/11.94 GB available",),
+        ):
+            _logs, status_html, _resources, voice_update, send_update, input_update = (
+                api._webui_snapshot()
+            )
+
+        self.assertIn(f"{api.APP_NAME} could not start", status_html)
+        self.assertEqual(voice_update["value"], "No voice set")
+        self.assertEqual(voice_update["interactive"], False)
+        self.assertEqual(send_update["interactive"], False)
+        self.assertEqual(input_update["interactive"], False)
+
     def test_seeded_logs_strip_persisted_time_prefix(self) -> None:
         """Verify persisted log timestamps do not show up in the browser log view."""
         stripped = api._strip_webui_log_prefix(
@@ -242,6 +273,8 @@ class ApiWebUITests(TestCase):
         self.assertIn("--celune-background: #112233;", api.webui_theme_style)
         self.assertIn("--celune-sleeping: #556677;", api.webui_theme_style)
         self.assertIn("--celune-primary:", api.webui_theme_style)
+        self.assertIn("--celune-ui-accent:", api.webui_theme_style)
+        self.assertIn("--celune-ui-bg:", api.webui_theme_style)
         self.assertIn('rel="icon"', api.WEBUI_HEAD)
 
     def test_webui_css_keeps_log_panel_flexible(self) -> None:
@@ -448,3 +481,56 @@ class ApiWebUITests(TestCase):
         self.assertIn("Speaking", status2)
         self.assertIn("VRAM: first", resources1)
         self.assertIn("Friday, June 11, 2026", resources2)
+
+    def test_webui_runtime_theme_keeps_normal_palette_for_error_status(self) -> None:
+        """Verify browser error statuses no longer switch the full UI palette."""
+        api._set_webui_status("I can't speak right now.", "error")
+
+        theme_html = api._webui_theme_html()
+
+        self.assertIn(
+            api.colors.THEME.background or api.colors.DEFAULT_BACKGROUND, theme_html
+        )
+        self.assertNotIn(api.colors.ERROR_BACKGROUND, theme_html)
+
+    def test_webui_nonfatal_error_status_keeps_normal_theme(self) -> None:
+        """Verify non-fatal browser errors do not switch the UI into the fatal palette."""
+        api._set_webui_status("I can't change my voice right now.", "error")
+
+        theme_html = api._webui_theme_html()
+
+        self.assertIn(
+            api.colors.THEME.background or api.colors.DEFAULT_BACKGROUND, theme_html
+        )
+        self.assertNotIn(api.colors.ERROR_BACKGROUND, theme_html)
+
+    def test_webui_wrapped_fatal_glow_requests_api_shutdown(self) -> None:
+        """Verify fatal glow stops the API/WebUI surface instead of tinting it red."""
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+                log_callback=lambda msg, severity="info": None,
+                status_callback=lambda msg, severity="info": None,
+                voice_changed_callback=lambda name: None,
+                change_input_state_callback=lambda locked: None,
+                change_voice_lock_state_callback=lambda locked: None,
+                glow=SimpleNamespace(fatal=mock.Mock()),
+            ),
+        )
+        api.bound_celune = celune
+        api.current_api_server = cast(
+            api.StartedServer,
+            SimpleNamespace(should_exit=False, force_exit=False),
+        )
+
+        api._wrap_celune_callbacks(celune)
+        celune.glow.fatal()
+
+        self.assertIsNone(api.bound_celune)
+        self.assertTrue(api.current_api_server.should_exit)
+        self.assertTrue(api.current_api_server.force_exit)

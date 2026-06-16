@@ -461,21 +461,25 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.safe_log("Submit inputs normally instead.")
             return
 
-        ipa_decoded, unmatched = replace_ipa(raw_text, strict=True)
-        if unmatched > 0:
-            safe_log_dev = getattr(ui, "safe_log_dev", None)
-            if callable(safe_log_dev):
-                safe_log_dev(
-                    f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
-                    "warning",
-                )
-            else:
-                ui.safe_log(
-                    f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
-                    "warning",
-                )
+        if ui.celune.config.get("ipa") is False:
+            ipa_decoded, unmatched = replace_ipa(raw_text, strict=True)
+            if unmatched > 0:
+                safe_log_dev = getattr(ui, "safe_log_dev", None)
+                if callable(safe_log_dev):
+                    safe_log_dev(
+                        f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
+                        "warning",
+                    )
+                else:
+                    ui.safe_log(
+                        f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
+                        "warning",
+                    )
 
-        ui.celune.say(ipa_decoded, display_text=raw_text)
+            ui.celune.say(ipa_decoded, display_text=raw_text)
+        else:
+            ui.celune.say(raw_text)
+
         return
     if command == "seed":
         if not args:

@@ -66,6 +66,7 @@ webui_voice_locked = True
 webui_theme_style = ""
 webui_status_source = "probe"
 webui_status_updated_at = 0.0
+current_api_server: Optional["StartedServer"] = None
 WEBUI_RESOURCE_ROTATE_SECONDS = 2.06
 WEBUI_POLL_INTERVAL_SECONDS = WEBUI_RESOURCE_ROTATE_SECONDS / 4
 WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS = 0.9
@@ -95,7 +96,7 @@ WEBUI_CSS = textwrap.dedent(
     html,
     body,
     gradio-app {
-        background: var(--celune-background, #1d1826) !important;
+        background: var(--celune-ui-bg, var(--celune-background, #1d1826)) !important;
     }
 
     .column {
@@ -103,7 +104,7 @@ WEBUI_CSS = textwrap.dedent(
     }
 
     .gradio-container {
-        background: var(--celune-background, #1d1826);
+        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
         font-family: Outfit, sans-serif !important;
         height: 100dvh;
         overflow: hidden;
@@ -113,7 +114,7 @@ WEBUI_CSS = textwrap.dedent(
     .gradio-container .wrap,
     .gradio-container .loading-container,
     .gradio-container .loading-container > div {
-        background: var(--celune-background, #1d1826) !important;
+        background: var(--celune-ui-bg, var(--celune-background, #1d1826)) !important;
     }
 
     .main {
@@ -131,6 +132,7 @@ WEBUI_CSS = textwrap.dedent(
         gap: 0.75rem;
         height: calc(100dvh - 2rem);
         min-height: 0;
+        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
     }
 
     #celune-header {
@@ -140,19 +142,19 @@ WEBUI_CSS = textwrap.dedent(
 
     #celune-header .line {
         width: 100%;
-        background: var(--celune-primary, #cebaff);
+        background: var(--celune-ui-accent, var(--celune-primary, #cebaff));
         height: 2px;
     }
 
     #celune-header .title {
         font-weight: bold;
         padding: 0 2em;
-        color: var(--celune-primary, #cebaff);
+        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
     }
 
     button#celune-style, button#celune-send {
         background: var(--celune-button-bg, #3a304c);
-        color: var(--celune-primary, #cebaff);
+        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
         border-radius: 4px;
     }
 
@@ -161,7 +163,8 @@ WEBUI_CSS = textwrap.dedent(
     }
 
     #celune-log-panel {
-        border: 2px solid var(--celune-primary, #cebaff);
+        border: 2px solid var(--celune-ui-accent, var(--celune-primary, #cebaff));
+        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
         padding: 1em;
         border-radius: 8px;
         max-height: min(75dvh, calc(100dvh - 20rem));
@@ -172,7 +175,7 @@ WEBUI_CSS = textwrap.dedent(
 
     #celune-log-panel pre {
         font-family: "JetBrains Mono", monospace;
-        color: var(--celune-primary, #cebaff);
+        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
         white-space: pre-wrap;
         margin: 0;
         max-height: min(calc(75dvh - 2em), calc(75dvh - 15rem));
@@ -180,12 +183,16 @@ WEBUI_CSS = textwrap.dedent(
         overflow-y: auto;
         padding-right: 0.75em;
         scrollbar-gutter: stable both-edges;
+        scrollbar-color: var(--celune-ui-accent, var(--celune-primary, #cebaff))
+            var(--celune-ui-bg, var(--celune-background, #1d1826));
     }
 
     #celune-input textarea {
-        background: var(--celune-input-bg, #3a304c);
-        color: var(--celune-primary, #cebaff);
+        background: var(--celune-ui-input-bg, var(--celune-input-bg, #3a304c));
+        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
         border-radius: 4px;
+        scrollbar-color: var(--celune-ui-accent, var(--celune-primary, #cebaff))
+            var(--celune-ui-bg, var(--celune-background, #1d1826));
     }
 
     #celune-input textarea::placeholder {
@@ -194,7 +201,7 @@ WEBUI_CSS = textwrap.dedent(
 
     #celune-resources .footer-block {
         text-align: right;
-        color: var(--celune-primary, #cebaff);
+        color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
     }
 
     .webui-desktop-only {
@@ -222,6 +229,23 @@ WEBUI_CSS = textwrap.dedent(
 
     button#celune-send {
         display: none;
+    }
+
+    #celune-log-panel pre::-webkit-scrollbar,
+    #celune-input textarea::-webkit-scrollbar {
+        width: 0.8rem;
+    }
+
+    #celune-log-panel pre::-webkit-scrollbar-track,
+    #celune-input textarea::-webkit-scrollbar-track {
+        background: var(--celune-ui-bg, var(--celune-background, #1d1826));
+    }
+
+    #celune-log-panel pre::-webkit-scrollbar-thumb,
+    #celune-input textarea::-webkit-scrollbar-thumb {
+        background: var(--celune-ui-accent, var(--celune-primary, #cebaff));
+        border-radius: 999px;
+        border: 2px solid var(--celune-ui-bg, var(--celune-background, #1d1826));
     }
 
     @media (max-width: 768px), (any-pointer: coarse), (hover: none) {
@@ -277,7 +301,7 @@ WEBUI_CSS = textwrap.dedent(
             border-radius: 4px 0 0 4px;
             border-right: 1px solid color-mix(
                 in srgb,
-                var(--celune-primary, #cebaff) 50%,
+                var(--celune-ui-accent, var(--celune-primary, #cebaff)) 50%,
                 black
             );
         }
@@ -286,7 +310,7 @@ WEBUI_CSS = textwrap.dedent(
             border-radius: 0 4px 4px 0;
             border-left: 1px solid color-mix(
                 in srgb,
-                var(--celune-primary, #cebaff) 50%,
+                var(--celune-ui-accent, var(--celune-primary, #cebaff)) 50%,
                 black
             );
         }
@@ -353,6 +377,9 @@ def _configure_webui_theme() -> None:
         f"--celune-foreground: {foreground};"
         f"--celune-secondary: {secondary};"
         f"--celune-accent: {accent};"
+        f"--celune-ui-accent: {primary};"
+        f"--celune-ui-bg: {background};"
+        f"--celune-ui-input-bg: {input_bg};"
         f"--celune-sleeping: {sleeping};"
         f"--celune-button-bg: {button_bg};"
         f"--celune-button-hover: {button_hover};"
@@ -383,6 +410,15 @@ class StartedServer(uvicorn.Server):
         await super().startup(sockets=sockets)
         if self.started and self.on_started is not None:
             self.on_started()
+
+
+def _shutdown_api_for_fatal_error() -> None:
+    """Stop the browser/API surface after a fatal Celune runtime failure."""
+    global bound_celune
+    bound_celune = None
+    if current_api_server is not None:
+        current_api_server.should_exit = True
+        current_api_server.force_exit = True
 
 
 def _clean_token(token: Optional[str]) -> Optional[str]:
@@ -545,15 +581,18 @@ def bind_celune(celune: Celune) -> None:
     webui_last_resource_advance = 0.0
     webui_last_probed_state = None
     _configure_webui_theme()
-    webui_input_locked = celune.locked
+    has_voice = bool(celune.current_voice) or bool(celune.voices)
+    webui_input_locked = celune.locked or not has_voice
     webui_input_placeholder = (
         "Currently in tutorial mode"
         if celune.is_in_tutorial
         else "Please wait"
-        if celune and celune.locked
+        if celune and webui_input_locked
         else "Enter text to speak here"
     )
-    webui_voice_locked = len(celune.voices) < 2 or celune.is_in_tutorial
+    webui_voice_locked = (
+        len(celune.voices) < 2 or celune.is_in_tutorial or not has_voice
+    )
     _seed_webui_logs()
     _wrap_celune_callbacks(celune)
     if celune.current_voice:
@@ -568,6 +607,21 @@ def _webui_status_color(severity: str) -> str:
     """Return the browser UI color for a given severity."""
     palette = colors.SEVERITY_COLORS.get("celune", colors.SEVERITY_COLORS["celune"])
     return palette.get(severity, palette["info"])
+
+
+def _webui_theme_html() -> str:
+    """Render runtime CSS variables for the browser UI theme."""
+    severity = "info"
+    accent = _webui_status_color(severity)
+    background = colors.THEME.background or colors.DEFAULT_BACKGROUND
+    input_bg = colors._blend(accent, background, 0.78)
+    return (
+        "<style>:root {"
+        f"--celune-ui-accent: {accent};"
+        f"--celune-ui-bg: {background};"
+        f"--celune-ui-input-bg: {input_bg};"
+        "}</style>"
+    )
 
 
 def _webui_log_line_html(message: str, severity: str = "info") -> str:
@@ -635,6 +689,9 @@ def _set_webui_status(
 
 def _probed_status_text(celune: Celune) -> tuple[str, str]:
     """Return the best-effort footer status derived from Celune's live state."""
+    if not celune.current_voice and not celune.voices:
+        return (f"{APP_NAME} could not start", "error")
+
     state = (celune.cur_state or "").strip().lower()
     return {
         "idle": ("Idle", "info"),
@@ -720,20 +777,35 @@ def _wrap_celune_callbacks(celune: Celune) -> None:
 
     def wrapped_input_state(locked: bool) -> None:
         global webui_input_locked, webui_input_placeholder
-        webui_input_locked = locked
+        has_voice = bool(celune.current_voice) or bool(celune.voices)
+        webui_input_locked = locked or not has_voice
         webui_input_placeholder = (
             "Currently in tutorial mode"
             if celune.is_in_tutorial
             else "Please wait"
-            if celune and locked
+            if celune and webui_input_locked
             else "Enter text to speak here"
         )
         original_input_state(locked)
 
     def wrapped_voice_lock_state(locked: bool) -> None:
         global webui_voice_locked
-        webui_voice_locked = locked
+        webui_voice_locked = (
+            locked
+            or len(celune.voices) < 2
+            or not bool(celune.current_voice or celune.voices)
+        )
         original_voice_lock_state(locked)
+
+    glow = getattr(celune, "glow", None)
+    if glow is not None and hasattr(glow, "fatal"):
+        original_fatal = glow.fatal
+
+        def wrapped_fatal() -> None:
+            original_fatal()
+            _shutdown_api_for_fatal_error()
+
+        glow.fatal = wrapped_fatal
 
     celune.log_callback = wrapped_log
     celune.status_callback = wrapped_status
@@ -937,6 +1009,7 @@ def _webui_status_html() -> str:
     """Render the footer status cell."""
     color = _webui_status_color(webui_status_severity)
     return (
+        f"{_webui_theme_html()}"
         '<div class="footer-block" '
         f'style="color: {color};">{escape(webui_status_text)}</div>'
     )
@@ -966,11 +1039,12 @@ def _voice_button_update() -> WebUiUpdate:
     if celune is None:
         return gr.update(value="Loading", interactive=False)
 
+    has_voice = bool(celune.current_voice) or bool(celune.voices)
     voice_name = celune.current_voice or (
-        celune.voices[0] if celune.voices else "Voice"
+        celune.voices[0] if celune.voices else "No Voice Set"
     )
     interactive = (
-        not webui_voice_locked
+        not webui_voice_locked and len(celune.voices) >= 2 and has_voice
         if getattr(celune, "_webui_callbacks_wrapped", False)
         else len(celune.voices) >= 2 and not celune.is_in_tutorial
     )
@@ -1008,13 +1082,16 @@ def _input_update(
             interactive=False,
             placeholder="Currently in tutorial mode",
         )
+    has_voice = bool(celune.current_voice) or bool(celune.voices)
     if getattr(celune, "_webui_callbacks_wrapped", False):
-        interactive = not webui_input_locked
+        interactive = not webui_input_locked and has_voice
         placeholder = webui_input_placeholder
     else:
-        interactive = not celune.locked
+        interactive = not celune.locked and has_voice
         placeholder = (
-            "Please wait" if celune and celune.locked else "Enter text to speak here"
+            "Please wait"
+            if celune and (celune.locked or not has_voice)
+            else "Enter text to speak here"
         )
     if has_value:
         return gr.update(
@@ -1033,10 +1110,11 @@ def _send_button_update() -> WebUiUpdate:
     celune = bound_celune
     if celune is None:
         return gr.update(interactive=False)
+    has_voice = bool(celune.current_voice) or bool(celune.voices)
     interactive = (
-        not webui_input_locked
+        not webui_input_locked and has_voice
         if getattr(celune, "_webui_callbacks_wrapped", False)
-        else not celune.is_in_tutorial and not celune.locked
+        else not celune.is_in_tutorial and not celune.locked and has_voice
     )
     return gr.update(interactive=interactive)
 
@@ -1073,9 +1151,14 @@ def _webui_submit_snapshot(
     WebUiUpdate,
 ]:
     """Return a browser snapshot shaped for submit/click handlers."""
-    logs_html, status_html, resources_html, voice_update, send_update, _input = (
-        _webui_snapshot()
-    )
+    (
+        logs_html,
+        status_html,
+        resources_html,
+        voice_update,
+        send_update,
+        _input,
+    ) = _webui_snapshot()
     return (
         _input_update(input_value),
         logs_html,
@@ -1205,7 +1288,7 @@ def _webui_cycle_voice() -> tuple[
 ]:
     """Cycle to the next available Celune voice from the browser UI."""
     celune = require_celune()
-    if len(celune.voices) < 2:
+    if len(celune.voices) < 2 or not bool(celune.current_voice or celune.voices):
         return _webui_snapshot()
 
     current_voice = celune.current_voice or celune.voices[0]
@@ -1702,7 +1785,12 @@ def run_api(
         config,
         on_started=lambda: started_callback(bind_host, port),
     )
-    server.run()
+    global current_api_server
+    current_api_server = server
+    try:
+        server.run()
+    finally:
+        current_api_server = None
 
 
 def start_api(

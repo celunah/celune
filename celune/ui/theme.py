@@ -61,6 +61,10 @@ CELUNE_CSS = """
         background: transparent;
     }
 
+    #input .text-area--placeholder {
+        color: $secondary;
+    }
+
     #style:focus, #style:hover, #style.-active, #input:hover {
         border: round $foreground;
         background: $background;

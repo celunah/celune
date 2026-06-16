@@ -14,6 +14,10 @@ DEFAULT_BACKGROUND: Final[str] = "#1d1826"
 DEFAULT_ACCENT: Final[str] = "#cebaff"
 FADED_ACCENT: Final[str] = "#9c88ce"
 ERROR: Final[str] = "#ce2006"
+ERROR_BACKGROUND: Final[str] = "#26181a"
+ERROR_LIGHT_BACKGROUND: Final[str] = "#ffe8e8"
+ERROR_HIGHLIGHT: Final[str] = "#ff999e"
+ERROR_DARK_ACCENT: Final[str] = "#d46169"
 
 
 def random_hex() -> str:

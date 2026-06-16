@@ -13,6 +13,7 @@ from unittest import mock, TestCase
 from textual import events
 from textual.widgets import Button, Label, RichLog, TextArea
 
+from celune import colors
 from celune import runtime
 from celune.config import Config
 from celune.celune import Celune
@@ -22,6 +23,9 @@ from celune.ui.app import CeluneUI
 from celune.ui.headless import CeluneHeadlessUI
 from celune.ui import resources as ui_resources
 from celune.ui.commands import attachment_source, process_command
+from celune.ui.theme import severity_color
+
+from tests.support import FakeBackend
 
 
 class RuntimeTests(TestCase):
@@ -173,6 +177,7 @@ class UICommandTests(TestCase):
         )
         self.ui.safe_log_dev = self.ui.safe_log
         self.ui.celune = SimpleNamespace(
+            config={"ipa": False},
             backend=SimpleNamespace(),
             voice_prompt=None,
             persona_attachments=[],
@@ -376,6 +381,7 @@ class UIStartupTests(TestCase):
             "#resources": Label(),
             "#style": Button(),
             "#progress": SimpleNamespace(update=lambda **_: None),
+            "#header": Label(),
         }
         ui.celune = cast(Celune, SimpleNamespace(config={}, close=lambda: None))
 
@@ -391,7 +397,9 @@ class UIStartupTests(TestCase):
                 "query_one",
                 side_effect=lambda selector, *_args: fake_widgets[selector],
             ),
+            mock.patch.object(ui, "query", return_value=[]),
             mock.patch.object(ui, "set_interval"),
+            mock.patch.object(ui, "set_focus") as set_focus,
             mock.patch.object(ui, "call_after_refresh"),
             mock.patch.object(ui, "safe_status"),
             mock.patch.object(ui, "update_resources"),
@@ -404,6 +412,7 @@ class UIStartupTests(TestCase):
         self.assertIs(sys.stdout, original_stdout)
         self.assertIs(sys.stderr, original_stderr)
         self.assertFalse(ui._runtime_log_capture_enabled)
+        set_focus.assert_called_once_with(None)
 
     def test_runtime_log_capture_restores_stdio_after_shutdown(self) -> None:
         """Verify explicit runtime capture swaps and restores stdio cleanly."""
@@ -453,6 +462,9 @@ class UIStartupTests(TestCase):
     def test_load_tts_marks_ui_error_when_startup_returns_false(self) -> None:
         """Verify handled startup failures leave the UI in an error state."""
         ui = CeluneUI()
+        ui.input_box = TextArea()
+        ui.style_button = Button("No Voice Set")
+        ui.resources = cast(Label, None)
         ui.celune = cast(
             Celune,
             SimpleNamespace(
@@ -468,6 +480,57 @@ class UIStartupTests(TestCase):
 
         ui.error.assert_called_once_with(f"{APP_NAME} could not start")
         self.assertEqual(ui.cur_state, "error")
+        self.assertEqual(ui.input_box.placeholder, "Please wait")
+        self.assertEqual(ui.style_button.disabled, True)
+        self.assertFalse(ui._fatal_error_active)
+
+    def test_tts_idle_does_not_recover_error_state_before_runtime_ready(self) -> None:
+        """Verify signal callbacks cannot revert a failed startup back to idle."""
+        ui = CeluneUI()
+        ui.celune_ready = False
+        ui.cur_state = "error"
+        ui.input_box = TextArea()
+        ui.style_button = Button("No Voice Set")
+        ui.resources = cast(Label, None)
+        ui.status = Label()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                locked=True,
+                sleeping=False,
+                is_in_tutorial=False,
+                voices=(),
+                cur_state="error",
+            ),
+        )
+
+        ui.tts_idle()
+
+        self.assertEqual(ui.cur_state, "error")
+        self.assertEqual(ui.input_box.placeholder, "Please wait")
+        self.assertEqual(ui.style_button.disabled, True)
+
+    def test_on_button_pressed_ignores_voice_switch_when_no_voices_loaded(self) -> None:
+        """Verify voice cycling is blocked cleanly when startup left no voices loaded."""
+        ui = CeluneUI()
+        ui.celune_ready = False
+        ui.style_button = Button("No Voice Set")
+        ui.safe_log = mock.Mock()
+        ui.change_voice_lock_state = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                is_in_tutorial=False,
+                voices=(),
+            ),
+        )
+
+        ui.on_button_pressed(
+            cast(Button.Pressed, SimpleNamespace(button=ui.style_button))
+        )
+
+        ui.safe_log.assert_called_once_with("No voices are loaded.", "warning")
+        ui.change_voice_lock_state.assert_called_once_with(locked=True)
 
     def test_textual_resource_footer_only_advertises_ctrl_q_exit(self) -> None:
         """Verify the Textual UI footer no longer advertises CTRL+C exit."""
@@ -691,6 +754,157 @@ class UIStartupTests(TestCase):
         ui._advance_status_marquee()
 
         self.assertEqual(first, fake_status.rendered)
+
+    def test_safe_status_repaints_terminal_accent_for_error(self) -> None:
+        """Verify error status repaints the terminal shell accent to the error color."""
+
+        class FakeLabel:
+            """Simple label test double with mutable styles."""
+
+            def __init__(self) -> None:
+                self.size = SimpleNamespace(width=40)
+                self.styles = SimpleNamespace(color=None, border=None, border_top=None)
+                self.rendered = ""
+
+            def update(self, value: str) -> None:
+                """Capture the rendered label value.
+
+                Args:
+                    value: The latest label content.
+                """
+                self.rendered = value
+
+        class FakeWidget:
+            """Simple widget test double with mutable styles."""
+
+            def __init__(self) -> None:
+                self.styles = SimpleNamespace(
+                    color=None,
+                    border=None,
+                    border_top=None,
+                    background=None,
+                    scrollbar_color=None,
+                    scrollbar_color_hover=None,
+                    scrollbar_color_active=None,
+                    scrollbar_background=None,
+                    scrollbar_background_hover=None,
+                    scrollbar_background_active=None,
+                )
+                self.rendered = ""
+
+            def update(self, value: str = "") -> None:
+                """Capture the rendered label value.
+
+                Args:
+                    value: The latest label content.
+                """
+                self.rendered = value
+
+        ui = CeluneUI()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(config={}, backend=FakeBackend, is_in_tutorial=False),
+        )
+        ui.logs = cast(RichLog, FakeWidget())
+        ui.input_box = cast(TextArea, FakeWidget())
+        ui.style_button = cast(Button, FakeWidget())
+        ui.resources = cast(Label, FakeWidget())
+        ui.header = cast(Label, FakeWidget())
+        ui.progress_bar = cast(Button, FakeWidget())
+        ui.header_lines = (cast(Label, FakeWidget()), cast(Label, FakeWidget()))
+        ui.status = cast(Label, FakeLabel())
+
+        ui._fatal_error_active = True
+        ui.safe_status("Could not start", "error")
+
+        expected = severity_color(ui.active_theme_name, "error")
+        self.assertEqual(ui.theme, "celune_error")
+        self.assertIsNone(ui.logs.styles.color)
+        self.assertIsNone(ui.logs.styles.border)
+        self.assertIsNone(ui.logs.styles.background)
+        self.assertIsNone(ui.logs.styles.scrollbar_color)
+        self.assertIsNone(ui.input_box.styles.border)
+        self.assertIsNone(ui.input_box.styles.background)
+        self.assertIsNone(ui.input_box.styles.scrollbar_color)
+        self.assertIsNone(ui.style_button.styles.border)
+        self.assertIsNone(ui.style_button.styles.background)
+        self.assertIsNone(ui.resources.styles.color)
+        self.assertIsNone(ui.header.styles.color)
+        self.assertIsNone(ui.header_lines[0].styles.border_top)
+        self.assertIsNone(ui.progress_bar.styles.color)
+        self.assertIsNone(ui.progress_bar.styles.background)
+        self.assertEqual(ui.status.styles.color, expected)
+        error_theme = ui.get_theme("celune_error")
+        self.assertIsNotNone(error_theme)
+        self.assertEqual(error_theme.primary, colors.ERROR_DARK_ACCENT)
+        self.assertEqual(error_theme.accent, expected)
+        self.assertEqual(
+            error_theme.foreground,
+            colors._ensure_contrast(
+                colors.ERROR_HIGHLIGHT,
+                colors.ERROR_BACKGROUND,
+                7.0,
+            ),
+        )
+        self.assertEqual(error_theme.background, colors.ERROR_BACKGROUND)
+
+    def test_nonfatal_error_status_keeps_normal_theme(self) -> None:
+        """Verify ordinary error statuses do not switch into the fatal error theme."""
+        ui = CeluneUI()
+        ui.status = Label()
+
+        ui.safe_status("Minor issue", "error")
+
+        self.assertEqual(ui.theme, "celune")
+        self.assertFalse(ui._fatal_error_active)
+
+    def test_wrapped_fatal_glow_activates_error_theme(self) -> None:
+        """Verify the fatal theme only activates through wrapped ``glow.fatal()``."""
+        ui = CeluneUI()
+        ui.status = Label()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(glow=SimpleNamespace(fatal=mock.Mock())),
+        )
+
+        ui._wrap_runtime_fatal_glow()
+        ui.celune.glow.fatal()
+
+        self.assertTrue(ui._fatal_error_active)
+        self.assertEqual(ui.theme, "celune_error")
+
+    def test_runtime_error_themes_cover_dark_and_light_modes(self) -> None:
+        """Verify both dedicated runtime error themes are registered correctly."""
+        ui = CeluneUI()
+
+        ui._register_runtime_error_themes()
+
+        dark_error = ui.get_theme("celune_error")
+        light_error = ui.get_theme("celune_light_error")
+        self.assertIsNotNone(dark_error)
+        self.assertIsNotNone(light_error)
+        self.assertEqual(dark_error.background, colors.ERROR_BACKGROUND)
+        self.assertEqual(light_error.background, colors.ERROR_LIGHT_BACKGROUND)
+        self.assertEqual(dark_error.accent, colors.THEME.error)
+        self.assertEqual(light_error.accent, colors.THEME_LIGHT.error)
+        self.assertEqual(dark_error.primary, colors.ERROR_DARK_ACCENT)
+        self.assertEqual(light_error.primary, colors.ERROR_DARK_ACCENT)
+        self.assertEqual(
+            dark_error.foreground,
+            colors._ensure_contrast(
+                colors.ERROR_HIGHLIGHT,
+                colors.ERROR_BACKGROUND,
+                7.0,
+            ),
+        )
+        self.assertEqual(
+            light_error.foreground,
+            colors._ensure_contrast(
+                colors.ERROR_HIGHLIGHT,
+                colors.ERROR_LIGHT_BACKGROUND,
+                7.0,
+            ),
+        )
 
     def test_resize_repaints_status_after_width_change(self) -> None:
         """Verify widening the status label re-renders the current text immediately."""
