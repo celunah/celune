@@ -32,7 +32,7 @@ VOICE_EMBEDDING_MODEL = "marksverdhei/Qwen3-Voice-Embedding-12Hz-1.7B"
 PERSONA_MEMORY_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 # this model is loaded by Celune, and used to control the persona
-PERSONA_MODEL_ID = "Qwen/Qwen2.5-VL-3B-Instruct"
+PERSONA_MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
 PERSONA_HISTORY_MESSAGES = 20
 
 # used to pre-calculate the next full moon for the glow boost
@@ -87,13 +87,13 @@ class ExitCodes(Enum):
     # we can't properly docstring enum values, so the comments below serve as docstrings
 
     EXIT_SUCCESS = 0  # Celune exited successfully.
-    EXIT_PENDING_UPDATE = 7  # Celune has a pending update.
     EXIT_FAILURE = 1  # Celune experienced a general failure.
     EXIT_NO_ANSI = 2  # Celune did not find an ANSI capable terminal.
     EXIT_ALREADY_RUNNING = 3  # Celune is already running.
     EXIT_MISSING_DEPENDENCIES = 4  # Celune is missing required dependencies.
     EXIT_UNKNOWN_ARGS = 5  # Celune CLI command is unknown.
     EXIT_BAD_PYTHON = 6  # Celune is trying to run on an unsupported Python interpreter.
+    EXIT_PENDING_UPDATE = 7  # Celune has a pending update.
 
     # the following exit codes may be disabled by the end user
     EXIT_CELINE_DAY_SIX_SEVEN = 67  # Celune refuses to run on Celine Day.
