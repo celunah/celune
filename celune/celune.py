@@ -35,9 +35,19 @@ from .dataclasses.properties import (
     bind_constant_properties,
     bind_forwarded_properties,
 )
+from .dataclasses.events import (
+    CharacterChangedEvent,
+    CharacterLoadedEvent,
+    CharacterUnloadedEvent,
+    ReadyEvent,
+    ShutdownEvent,
+    StateChangedEvent,
+    VoiceChangedEvent,
+)
 from .chroma import AudioRGBGlow
 from .backends.qwen3 import Qwen3
 from .extensions.base import CeluneContext
+from .extensions.events import EventDispatcher
 from .extensions.manager import CeluneExtensionManager
 from .config import Config, config_bool, config_value
 from .paths import project_root
@@ -56,6 +66,7 @@ from .typing.celune import (
     ReleasableObject,
     VoiceLockStateCallback,
 )
+from .typing.events import EventName, EventPayload
 from .utils import format_number, format_error, discard, is_port_usable, custom_assert
 from .vram import (
     QWEN3_0_6B_MODEL,
@@ -172,6 +183,7 @@ class Celune(CeluneStateAccessors):
             ),
             progress_callback=(progress_callback or self._noop_progress),
         )
+        self._event_dispatcher = EventDispatcher(log_warning=self.log, dev=dev)
 
         self._backend_state = CeluneBackendState(config=config)
         self._model_state = CeluneModelState()
@@ -298,6 +310,35 @@ class Celune(CeluneStateAccessors):
     bind_forwarded_properties(locals(), CELUNE_FORWARDED_PROPERTIES)
     bind_constant_properties(locals(), CELUNE_CONSTANT_PROPERTIES)
 
+    @property
+    def cur_state(self) -> str:
+        """Return Celune's current runtime state.
+
+        Returns:
+            str: The current runtime-state label.
+        """
+        return self._runtime_state.cur_state
+
+    @cur_state.setter
+    def cur_state(self, value: str) -> None:
+        """Store Celune's runtime state and emit transition events on change.
+
+        Args:
+            value: The new runtime-state label to store.
+        """
+        old_state = self._runtime_state.cur_state
+        self._runtime_state.cur_state = value
+        if old_state == value:
+            return
+        self._emit_event(
+            "state_changed",
+            StateChangedEvent(
+                celune=self,
+                old_state=old_state,
+                new_state=value,
+            ),
+        )
+
     @staticmethod
     def _noop_message(msg: str, severity: str = "info") -> None:
         """Discard a message callback."""
@@ -334,6 +375,65 @@ class Celune(CeluneStateAccessors):
 
         self.glow.fatal = wrapped_fatal
         setattr(self.glow, "_celune_fatal_wrapped", True)
+
+    def _emit_event(self, event_name: EventName, event: EventPayload) -> None:
+        """Dispatch one typed event through Celune's internal event bus."""
+        self._event_dispatcher.emit(event_name, event)
+
+    @staticmethod
+    def _bundle_path_string(bundle: object) -> Optional[str]:
+        """Return one bundle path as a string when it is available."""
+        path = getattr(bundle, "path", None)
+        if path is None:
+            return None
+        return str(path)
+
+    def _emit_character_event_transition(
+        self,
+        old_character: Optional[str],
+        old_bundle_path: Optional[str],
+        new_character: Optional[str],
+        new_bundle_path: Optional[str],
+        new_is_default: bool,
+    ) -> None:
+        """Emit the appropriate character lifecycle event for one bundle transition."""
+        if old_character and new_character:
+            if old_character == new_character and old_bundle_path == new_bundle_path:
+                return
+            self._emit_event(
+                "character_changed",
+                CharacterChangedEvent(
+                    celune=self,
+                    old_character=old_character,
+                    new_character=new_character,
+                    old_bundle_path=old_bundle_path,
+                    new_bundle_path=new_bundle_path,
+                    new_is_default=new_is_default,
+                ),
+            )
+            return
+
+        if new_character:
+            self._emit_event(
+                "character_loaded",
+                CharacterLoadedEvent(
+                    celune=self,
+                    character_name=new_character,
+                    bundle_path=new_bundle_path,
+                    is_default=new_is_default,
+                ),
+            )
+            return
+
+        if old_character:
+            self._emit_event(
+                "character_unloaded",
+                CharacterUnloadedEvent(
+                    celune=self,
+                    character_name=old_character,
+                    bundle_path=old_bundle_path,
+                ),
+            )
 
     @staticmethod
     def _validate_backend_against_preset(
@@ -632,10 +732,18 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when a CEVOICE bundle was loaded, otherwise ``False``.
         """
+        previous_loader = default_loader()
+        previous_bundle_path = (
+            self._bundle_path_string(previous_loader.bundle)
+            if previous_loader is not None
+            else None
+        )
+        previous_character = self.current_character
         select_voice_bundle(bundle)
         loader = default_loader()
         if loader is None:
             self.current_character_persona = None
+            self.current_character = None
             self.voice_bundle_is_default = True
             voices = tuple(self.backend.voices)
             self.voices = voices
@@ -646,8 +754,16 @@ class Celune(CeluneStateAccessors):
                 if voices
                 else None
             )
+            self._emit_character_event_transition(
+                previous_character,
+                previous_bundle_path,
+                None,
+                None,
+                True,
+            )
             return bool(voices)
 
+        new_bundle_path = self._bundle_path_string(loader.bundle)
         self.voice_bundle_is_default = loader.bundle.path == default_bundle_path()
         self.current_character_persona = persona_metadata_from_manifest(
             loader.bundle.metadata
@@ -667,6 +783,13 @@ class Celune(CeluneStateAccessors):
             else voices[0]
             if voices
             else None
+        )
+        self._emit_character_event_transition(
+            previous_character,
+            previous_bundle_path,
+            self.current_character,
+            new_bundle_path,
+            self.voice_bundle_is_default,
         )
         return bool(voices)
 
@@ -786,7 +909,7 @@ class Celune(CeluneStateAccessors):
             dev=self.dev,
             log_dev=self.log_dev,
         )
-        self.extension_manager = CeluneExtensionManager(ctx)
+        self.extension_manager = CeluneExtensionManager(ctx, self._event_dispatcher)
         self.extension_manager.autoload(str(project_root() / "extensions"))
 
         self.log_dev(
@@ -859,6 +982,7 @@ class Celune(CeluneStateAccessors):
         self.status_callback("Reloading")
         self.progress_callback(None, None)
         self.cur_state = "reloading"
+        active_voice = self.current_voice or voice
 
         try:
             with self._model_lock:
@@ -888,6 +1012,15 @@ class Celune(CeluneStateAccessors):
                 self.loaded = True
 
             self.voice_changed_callback(voice)
+            if active_voice != voice:
+                self._emit_event(
+                    "voice_changed",
+                    VoiceChangedEvent(
+                        celune=self,
+                        old_voice=active_voice,
+                        new_voice=voice,
+                    ),
+                )
             self.log(f"Voice {voice} loaded.")
             self.progress_callback(1, 1)
             self.cur_state = "idle"
@@ -1036,9 +1169,6 @@ class Celune(CeluneStateAccessors):
         if self.use_normalization:
             self.load_normalizer()
 
-        if self.extension_manager is not None:
-            self.extension_manager.autostart_all()
-
         self._start_configured_api()
 
         if persona_enabled(self.config) and not persona_is_available():
@@ -1050,6 +1180,8 @@ class Celune(CeluneStateAccessors):
         # notify readiness
         if not self._try_play_signal("readiness"):
             self.log_dev("Could not play the readiness signal.", "warning")
+
+        self._emit_event("ready", ReadyEvent(celune=self))
 
         return True
 
@@ -1497,6 +1629,7 @@ class Celune(CeluneStateAccessors):
 
     def close(self) -> None:
         """Shut off Celune and release loaded runtime state."""
+        self._emit_event("shutdown", ShutdownEvent(celune=self))
         try:
             close_pipeline(self)
             self._unload_persona_state()

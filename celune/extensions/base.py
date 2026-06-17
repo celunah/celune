@@ -36,7 +36,7 @@ class CeluneExtension(ABC):
         return self.ctx.get_state()
 
     def autostart(self) -> None:
-        """Run extension startup logic."""
+        """Run deprecated extension startup logic."""
         self.log(f"{self.name} has no autostart, skipping", "warning")
 
     def invoke(self, *args, **kwargs) -> None:

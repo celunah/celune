@@ -245,7 +245,6 @@ class CeluneStateAccessors:
     sleeping: bool
     _last_flavor: Optional[str]
     _ready_announced: bool
-    cur_state: str
     is_in_tutorial: bool
     extension_manager: Optional["CeluneExtensionManager"]
     glow: "AudioRGBGlow"
@@ -265,3 +264,13 @@ class CeluneStateAccessors:
     model_lock: "threading.RLock"
     audio_unavailable: bool
     current_sr: Optional[int]
+
+    @property
+    def cur_state(self) -> str:
+        """Return the current runtime-state label."""
+        raise NotImplementedError("typing surface only")
+
+    @cur_state.setter
+    def cur_state(self, value: str) -> None:
+        """Store the current runtime-state label."""
+        raise NotImplementedError("typing surface only")
