@@ -128,3 +128,21 @@ class DspTests(TestCase):
         self.assertAlmostEqual(float(np.max(np.abs(error_first))), 1.0)
         self.assertEqual(load.call_count, 1)
         self.assertEqual(shift.call_count, 3)
+
+    def test_reverb_strength_reduces_dry_level_to_preserve_headroom(self) -> None:
+        """Verify stronger reverb keeps the combined dry/wet gain under control."""
+        reverb = dsp.StreamingPedalboardReverb()
+
+        reverb.strength = 0.0
+        reverb._update_params()
+        self.assertAlmostEqual(reverb.reverb.wet_level, 0.0)
+        self.assertAlmostEqual(reverb.reverb.dry_level, 1.0)
+
+        reverb.strength = 1.0
+        reverb._update_params()
+        self.assertAlmostEqual(reverb.reverb.wet_level, 0.16)
+        self.assertAlmostEqual(reverb.reverb.dry_level, 0.84)
+        self.assertLessEqual(
+            reverb.reverb.wet_level + reverb.reverb.dry_level,
+            1.0,
+        )
