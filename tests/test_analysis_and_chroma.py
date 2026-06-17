@@ -25,7 +25,7 @@ class AnalysisTests(TestCase):
         converted = analysis._embedding_tensor_to_numpy(embedding)
         self.assertEqual(converted.shape, (2048,))
 
-        with self.assertRaisesRegex(ValueError, "2048-d"):
+        with self.assertRaisesRegex(ValueError, "2048-size"):
             analysis._embedding_tensor_to_numpy(np.ones(3, dtype=np.float32))
 
         cosine, percent = analysis._cosine_similarity_percent(embedding, embedding)

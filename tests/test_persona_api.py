@@ -322,16 +322,16 @@ class PersonaApiTests(TestCase):
             model=fake_model,
             tokenizer=fake_tokenizer,
         ) as loaders:
-            backend.load("Qwen/Qwen2.5-VL-3B-Instruct", "none")
+            backend.load("Qwen/Qwen3-VL-4B-Instruct", "none")
 
         loaders["processor_loader"].assert_called_once_with(
-            "Qwen/Qwen2.5-VL-3B-Instruct",
+            "Qwen/Qwen3-VL-4B-Instruct",
             trust_remote_code=True,
         )
         loaders["model_loader"].assert_called_once()
         self.assertEqual(
             loaders["model_loader"].call_args.args,
-            ("Qwen/Qwen2.5-VL-3B-Instruct",),
+            ("Qwen/Qwen3-VL-4B-Instruct",),
         )
         self.assertEqual(
             loaders["model_loader"].call_args.kwargs,
@@ -360,7 +360,7 @@ class PersonaApiTests(TestCase):
             model=fake_model,
             tokenizer=fake_tokenizer,
         ) as loaders:
-            backend.load("Qwen/Qwen2.5-VL-3B-Instruct", "none")
+            backend.load("Qwen/Qwen3-VL-4B-Instruct", "none")
 
         loaders["tokenizer_loader"].assert_not_called()
         self.assertIs(backend.processor, fake_processor)
@@ -381,10 +381,10 @@ class PersonaApiTests(TestCase):
             ),
             self.assertRaisesRegex(
                 ValueError,
-                "Persona processor failed to load for model 'Qwen/Qwen2.5-VL-3B-Instruct'",
+                "Persona processor failed to load for model 'Qwen/Qwen3-VL-4B-Instruct'",
             ) as exc_info,
         ):
-            backend.load("Qwen/Qwen2.5-VL-3B-Instruct", "none")
+            backend.load("Qwen/Qwen3-VL-4B-Instruct", "none")
 
         self.assertIsInstance(exc_info.exception.__cause__, RuntimeError)
 
