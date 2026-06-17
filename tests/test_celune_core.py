@@ -173,7 +173,7 @@ class CeluneCoreTests(TestCase):
 
         self.assertIsNotNone(client)
         assert client is not None
-        self.assertEqual(persona.persona_model_id(), "Qwen/Qwen2.5-VL-3B-Instruct")
+        self.assertEqual(persona.persona_model_id(), "Qwen/Qwen3-VL-4B-Instruct")
         client.close()
 
     def test_load_preloads_persona_runtime_when_available(self) -> None:
@@ -196,7 +196,7 @@ class CeluneCoreTests(TestCase):
             self.assertEqual(celune.load(), True)
 
         persona_client.load.assert_called_once_with(
-            "Qwen/Qwen2.5-VL-3B-Instruct",
+            "Qwen/Qwen3-VL-4B-Instruct",
             "4bit",
         )
 
@@ -644,7 +644,7 @@ class CeluneCoreTests(TestCase):
         celune._warmup.assert_called_once_with()
         celune.load_normalizer.assert_called_once_with()
         persona_client.load.assert_called_once_with(
-            "Qwen/Qwen2.5-VL-3B-Instruct",
+            "Qwen/Qwen3-VL-4B-Instruct",
             "4bit",
         )
 
