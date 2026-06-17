@@ -1,27 +1,21 @@
 # Gallery
 
-These images show off Celune's user interface.
-
-## Before init
+Want to look at how the software looks like?
 
 [![Before init](./demos/init.png)](./demos/init.png)
 
-## Ready
-
 [![Ready](./demos/ready.png)](./demos/ready.png)
-
-## Talking
 
 [![Talking](./demos/speaking.png)](./demos/speaking.png)
 
-## Change voice
-
 [![Change voice](./demos/change_voice.png)](./demos/change_voice.png)
-
-## Commands
 
 [![Commands](./demos/commands.png)](./demos/commands.png)
 
-## Extension invoke
-
 [![Extension invoke](./demos/extensions.png)](./demos/extensions.png)
+
+[![Fatal error](./demos/fatal_error.png)](./demos/fatal_error.png)
+
+[![Web UI](./demos/webui.png)](./demos/webui.png)
+
+[![Web UI (Mobile Responsive)](./demos/webui_mobile.png)](./demos/webui_mobile.png)
