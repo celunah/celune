@@ -254,9 +254,10 @@ class StreamingPedalboardReverb:
         s = np.clip(self.strength, 0.0, 1.0)
 
         wet = 0.16 * (s**2)
+        dry = 1.0 - wet
 
         self.reverb.wet_level = wet
-        self.reverb.dry_level = 1.0
+        self.reverb.dry_level = dry
 
     def process(
         self, audio: npt.NDArray[np.float32], sr: int = BASE_SR
