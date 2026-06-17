@@ -1926,6 +1926,51 @@ class PipelineTests(TestCase):
         self.assertEqual(queued_lengths, [144000])
         self.assertEqual(engine.smart_buffer_target_seconds, float("inf"))
 
+    def test_generation_worker_handles_save_false_without_concatenate_error(
+        self,
+    ) -> None:
+        """Verify silence analysis does not crash when output saving is disabled."""
+        engine = make_pipeline_engine()
+        engine.backend = SimpleNamespace(
+            generate_stream=lambda _model, **_kwargs: iter(
+                [(np.zeros((8, 2), dtype=np.float32), 48000, None)]
+            )
+        )
+        engine.model_lock = threading.Lock()
+        engine.model = mock.Mock()
+        engine.language = "en"
+        engine.chunk_size = 8
+        engine.voice_prompt = None
+        engine.current_voice = "balanced"
+        engine.speed = 1.0
+        engine.can_use_rubberband = False
+        engine.reverb = SimpleNamespace(
+            strength=0.0,
+            reset=mock.Mock(),
+            flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
+        )
+        engine.queue_avail_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.exit_requested = False
+        engine.dev = False
+        engine.recently_saved = None
+
+        engine.text_queue.put(pipeline.SpeechRequest("hello", "hello", save=False))
+        engine.text_queue.put(engine.sentinel)
+
+        with (
+            mock.patch("celune.pipeline.split_text", return_value=["hello"]),
+            mock.patch(
+                "celune.pipeline.is_silent_utterance", return_value=(False, 0)
+            ) as silent_mock,
+            mock.patch("celune.pipeline._write_celune_flac") as write_mock,
+        ):
+            pipeline.generation_worker(cast(Celune, engine))
+
+        silent_mock.assert_called_once()
+        write_mock.assert_not_called()
+        self.assertIsNone(engine.recently_saved)
+
     def test_split_text_breaks_long_unpunctuated_lines(self) -> None:
         """Verify long prose without punctuation still splits into chunks.
 

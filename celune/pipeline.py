@@ -2066,8 +2066,7 @@ def generation_worker(engine: Celune) -> None:
                                 break
 
                             buffer.append(audio_chunk)
-                            if save_output:
-                                full_audio.append(audio_chunk)
+                            full_audio.append(audio_chunk)
                             chunk_dur = len(audio_chunk) / BASE_SR
                             speech_len += chunk_dur
                             buffered_speech_len += chunk_dur
@@ -2189,9 +2188,12 @@ def generation_worker(engine: Celune) -> None:
                                 full_audio.append(tail)
 
                     engine.reverb.reset()
-                    is_silent, silence_tier = is_silent_utterance(
-                        np.concatenate(full_audio)
-                    )
+                    is_silent = False
+                    silence_tier = 0
+                    if full_audio:
+                        is_silent, silence_tier = is_silent_utterance(
+                            np.concatenate(full_audio)
+                        )
 
                     if is_silent and silence_tier == 2:
                         engine.regenerate = True
