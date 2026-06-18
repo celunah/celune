@@ -58,10 +58,10 @@ from .persona.impl import (
     persona_style_traits,
 )
 from .dsp import (
-    _resample_audio,
-    _soften,
-    _split,
-    _to_48khz,
+    resample_audio,
+    soften,
+    split,
+    to_48khz,
     is_silent_utterance,
     readiness_signal,
     sleeping_signal,
@@ -1575,7 +1575,7 @@ def queue_sfx_audio(
             f"Sample rate: {sample_rate} Hz, length: {format_number(audio_len, 2)} seconds"
         )
 
-        audio = _resample_audio(audio, sample_rate)
+        audio = resample_audio(audio, sample_rate)
         if keep:
             engine.kept_sfx_audio = audio.copy()
 
@@ -1584,7 +1584,7 @@ def queue_sfx_audio(
         _register_playback_source(engine, source_id, kind="sfx", base_gain=volume)
         engine.cur_state = "speaking"
         # push the smallest possible chunks for responsive stopping
-        for chunk in _split(audio, BASE_SR, 1):
+        for chunk in split(audio, BASE_SR, 1):
             _queue_playback_chunk(engine, source_id, chunk, BASE_SR)
         _queue_playback_done(engine, source_id)
 
@@ -2033,7 +2033,7 @@ def generation_worker(engine: Celune) -> None:
                             if isinstance(audio_chunk, torch.Tensor):
                                 audio_chunk = audio_chunk.cpu().numpy()
 
-                            audio_chunk = _to_48khz(
+                            audio_chunk = to_48khz(
                                 np.asarray(audio_chunk, dtype=np.float32), sr
                             )
 
@@ -2059,7 +2059,7 @@ def generation_worker(engine: Celune) -> None:
                                 audio_chunk = np.asarray(audio_chunk, dtype=np.float32)
 
                             if is_first_chunk:
-                                audio_chunk = _soften(audio_chunk, BASE_SR, end=False)
+                                audio_chunk = soften(audio_chunk, BASE_SR, end=False)
                                 is_first_chunk = False
 
                             if engine.exit_requested:
@@ -2292,7 +2292,7 @@ def _playback_blocks(
 ) -> deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]:
     """Split one queued source chunk into short blocks for the mixer."""
     blocks = deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]()
-    pieces = _split(chunk.audio, chunk.sample_rate, block_seconds)
+    pieces = split(chunk.audio, chunk.sample_rate, block_seconds)
     if not pieces:
         pieces = [np.asarray(chunk.audio, dtype=np.float32)]
     for index, piece in enumerate(pieces):
@@ -2392,6 +2392,21 @@ def _finalize_playback_idle(
                 "Please close any memory-resident applications to improve performance.",
                 "warning",
             )
+
+
+celune_metadata_payload = _celune_metadata_payload
+parse_vorbis_comment_block = _parse_vorbis_comment_block
+flac_metadata_blocks = _flac_metadata_blocks
+write_flac_metadata = _write_flac_metadata
+write_celune_flac = _write_celune_flac
+register_playback_source = _register_playback_source
+set_playback_source_status = _set_playback_source_status
+queue_playback_chunk = _queue_playback_chunk
+queue_playback_done = _queue_playback_done
+youtube_sfx_title = _youtube_sfx_title
+download_youtube_sfx = _download_youtube_sfx
+remember_visual_context = _remember_visual_context
+finalize_playback_idle = _finalize_playback_idle
 
 
 def playback_worker(engine: Celune) -> None:

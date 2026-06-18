@@ -374,6 +374,8 @@ class PersonaBackend:
         prompt = _render_chat_prompt(renderer, messages)
         return tokenizer(text=prompt, return_tensors="pt").to(model.device)
 
+    build_inputs = _build_inputs
+
 
 class PersonaRuntime:
     """Lazy Persona model runtime owned by the Celune process."""
@@ -541,6 +543,9 @@ def _messages_have_vision(messages: Sequence[ChatMessagePayload]) -> bool:
                 return True
 
     return False
+
+
+messages_have_vision = _messages_have_vision
 
 
 def _processor_supports_native_vision(processor: PersonaProcessor) -> bool:

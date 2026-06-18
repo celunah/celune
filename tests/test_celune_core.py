@@ -270,7 +270,7 @@ class CeluneCoreTests(TestCase):
         celune._playback_thread = mock.Mock(is_alive=mock.Mock(return_value=True))
 
         with mock.patch("celune.celune.play_signal", wraps=play_signal):
-            result = celune._try_play_signal("error")
+            result = celune.try_play_signal("error")
 
         self.assertEqual(result, True)
         self.assertEqual(celune.cur_state, "error")
@@ -460,13 +460,13 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(logs[-1], ("visible", "info"))
 
         celune.loaded = False
-        self.assertEqual(celune._wait_until_idle(timeout=0), False)
+        self.assertEqual(celune.wait_until_idle(timeout=0), False)
         celune.loaded = True
         celune.locked = False
-        self.assertEqual(celune._wait_until_idle(timeout=0), True)
+        self.assertEqual(celune.wait_until_idle(timeout=0), True)
 
         self.assertEqual(
-            celune._api_settings(),
+            celune.api_settings(),
             (True, "127.0.0.1", 2060, None, 60),
         )
         self.assertEqual(logs[-2][1], "warning")
@@ -771,6 +771,6 @@ class CeluneCoreTests(TestCase):
         celune._last_warmup_error = cause
 
         with self.assertRaises(WarmupError) as exc_info:
-            celune._raise_warmup_error("warmup failed after sleep")
+            celune.raise_warmup_error("warmup failed after sleep")
 
         self.assertIs(exc_info.exception.__cause__, cause)

@@ -431,6 +431,8 @@ class Celune(CeluneStateAccessors):
             raise WarmupError(message) from self._last_warmup_error
         raise WarmupError(message)
 
+    raise_warmup_error = _raise_warmup_error
+
     def unload_normalizer_state(self) -> None:
         """Unload only CeluneNorm components and release unused memory."""
         self._unload_normalizer_components()
@@ -770,6 +772,8 @@ class Celune(CeluneStateAccessors):
         with self._say_lock:
             return (not self.locked) and self.loaded
 
+    wait_until_idle = _wait_until_idle
+
     def setup_extensions(self) -> None:
         """Configure Celune's extension manager."""
         ctx = CeluneContext(
@@ -811,6 +815,20 @@ class Celune(CeluneStateAccessors):
         """
         if self.dev:
             self.log_callback(msg, severity)
+
+    def try_play_signal(self, signal_type: str) -> bool:
+        """Public interface for Celune._try_play_signal.
+
+        Args:
+            signal_type: The signal type to play.
+
+        Returns:
+            bool: ``True`` when the requested signal was played, otherwise ``False``.
+
+        Raises:
+            ValueError: An invalid signal was requested.
+        """
+        return self._try_play_signal(signal_type)
 
     def _try_play_signal(self, signal_type: str) -> bool:
         """Play a runtime signal only when the playback pipeline can currently accept it."""
@@ -1108,6 +1126,8 @@ class Celune(CeluneStateAccessors):
             requests_per_minute = 60
 
         return enabled, host, port, token, max(0, requests_per_minute)
+
+    api_settings = _api_settings
 
     def _start_configured_api(self) -> None:
         """Start the API from config without blocking Celune startup."""

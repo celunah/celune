@@ -199,6 +199,8 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                     with contextlib.suppress(Exception):
                         bound_logger.enable("dots_tts")
 
+    suppress_backend_output = _suppress_backend_output
+
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
     ) -> tuple[bool, Optional[str]]:

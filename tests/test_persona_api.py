@@ -238,11 +238,11 @@ class PersonaApiTests(TestCase):
     def test_messages_have_vision_only_for_explicit_media_items(self) -> None:
         """Verify visual mode is enabled only for explicit media attachments."""
         self.assertEqual(
-            runtime._messages_have_vision([self._text_message("user", "hello")]),
+            runtime.messages_have_vision([self._text_message("user", "hello")]),
             False,
         )
         self.assertEqual(
-            runtime._messages_have_vision(
+            runtime.messages_have_vision(
                 [
                     self._content_message(
                         "user",
@@ -253,7 +253,7 @@ class PersonaApiTests(TestCase):
             False,
         )
         self.assertEqual(
-            runtime._messages_have_vision(
+            runtime.messages_have_vision(
                 [
                     self._content_message(
                         "user",
@@ -269,7 +269,7 @@ class PersonaApiTests(TestCase):
             True,
         )
         self.assertEqual(
-            runtime._messages_have_vision(
+            runtime.messages_have_vision(
                 [
                     self._content_message(
                         "user",
@@ -299,7 +299,7 @@ class PersonaApiTests(TestCase):
             "celune.persona.runtime._render_chat_prompt",
             return_value="User: hello\n\nAssistant:",
         ) as render:
-            encoded = backend._build_inputs(messages)
+            encoded = backend.build_inputs(messages)
 
         self.assertIsInstance(encoded, _FakeEncoded)
         self.assertEqual(encoded.device, "cpu")
@@ -419,7 +419,7 @@ class PersonaApiTests(TestCase):
                 return_value="User: [image]\n\nAssistant:",
             ),
         ):
-            encoded = backend._build_inputs(messages)
+            encoded = backend.build_inputs(messages)
 
         self.assertIsInstance(encoded, _FakeEncoded)
         self.assertEqual(encoded.device, "cpu")
