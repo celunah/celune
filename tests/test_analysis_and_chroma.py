@@ -226,6 +226,18 @@ class ChromaTests(TestCase):
         self.assertEqual(glow._state, "waking")
         self.assertAlmostEqual(glow._target_brightness, 0.6)
 
+    def test_sleeping_glow_ignores_audio_reactivity(self) -> None:
+        """Verify queued audio cannot knock the glow out of its sleeping state."""
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
+        glow._state = "sleeping"
+        sleeping_target = glow.idle_brightness * 0.25
+        glow._target_brightness = sleeping_target
+
+        glow.process_glow_chunk(np.ones((64, 2), dtype=np.float32), 0.0)
+
+        self.assertEqual(glow._state, "sleeping")
+        self.assertAlmostEqual(glow._target_brightness, sleeping_target)
+
     def test_glow_target_follows_smoothed_audio_rms_without_snapping_to_max(
         self,
     ) -> None:
@@ -237,7 +249,7 @@ class ChromaTests(TestCase):
 
         glow.process_glow_chunk(quiet, 0.0)
         quiet_target = glow._target_brightness
-        self.assertGreater(quiet_target, glow.idle_brightness)
+        self.assertEqual(quiet_target, glow.idle_brightness)
         self.assertLess(quiet_target, glow.max_brightness)
 
         glow.process_glow_chunk(peak, 0.1)
