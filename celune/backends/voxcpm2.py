@@ -159,6 +159,8 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                 with contextlib.redirect_stderr(devnull):
                     yield
 
+    suppress_backend_output = _suppress_backend_output
+
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
     ) -> tuple[bool, Optional[str]]:

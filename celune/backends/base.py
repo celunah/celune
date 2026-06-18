@@ -170,6 +170,9 @@ class CeluneBackend(ABC, Generic[ModelT]):
             if isinstance(assets, dict) and "pt" in assets:
                 loader.materialize(name, "pt")
 
+    truncate_reference = _truncate_reference
+    validate_refs = _validate_refs
+
     def _apply_seed(self) -> None:
         """Seed all generation RNGs for the next backend operation."""
         if self.random_seed:

@@ -68,11 +68,11 @@ class UpdaterTests(TestCase):
         Raises:
             AssertionError: Version helper behavior changes unexpectedly.
         """
-        self.assertEqual(updater._normalize_tag("refs/tags/v4.0.0"), "4.0.0")
-        self.assertEqual(updater._short_revision("abcdef123"), "abcdef1")
-        self.assertEqual(updater._short_revision(""), "unknown")
-        self.assertEqual(updater._is_newer_version_tag("9.9.9", "4.0.0"), True)
-        self.assertEqual(updater._is_newer_version_tag("4.0.0", "4.0.0"), False)
+        self.assertEqual(updater.normalize_tag("refs/tags/v4.0.0"), "4.0.0")
+        self.assertEqual(updater.short_revision("abcdef123"), "abcdef1")
+        self.assertEqual(updater.short_revision(""), "unknown")
+        self.assertEqual(updater.is_newer_version_tag("9.9.9", "4.0.0"), True)
+        self.assertEqual(updater.is_newer_version_tag("4.0.0", "4.0.0"), False)
 
     def test_check_for_update_returns_none_for_dirty_worktree(self) -> None:
         """Verify dirty repositories suppress update prompts.
@@ -158,19 +158,19 @@ class UpdaterTests(TestCase):
             "celune.updater._git_succeeds",
             side_effect=[True],
         ):
-            self.assertFalse(updater._has_new_remote_revision("a" * 40, "b" * 40))
+            self.assertFalse(updater.has_new_remote_revision("a" * 40, "b" * 40))
 
         with mock.patch(
             "celune.updater._git_succeeds",
             side_effect=[False, True],
         ):
-            self.assertTrue(updater._has_new_remote_revision("a" * 40, "b" * 40))
+            self.assertTrue(updater.has_new_remote_revision("a" * 40, "b" * 40))
 
         with mock.patch(
             "celune.updater._git_succeeds",
             side_effect=[False, False],
         ):
-            self.assertFalse(updater._has_new_remote_revision("a" * 40, "b" * 40))
+            self.assertFalse(updater.has_new_remote_revision("a" * 40, "b" * 40))
 
     def test_check_for_update_compiled_uses_bundle_checksums(self) -> None:
         """Verify compiled update detection compares bundle checksums against artifact metadata."""
@@ -183,8 +183,8 @@ class UpdaterTests(TestCase):
                 "revision": "a" * 40,
                 "artifact": "Celune-win-x64",
                 "files": {
-                    "celune.exe": updater._sha256_file(bundle_dir / "celune.exe"),
-                    "celune-bin.exe": updater._sha256_file(
+                    "celune.exe": updater.sha256_file(bundle_dir / "celune.exe"),
+                    "celune-bin.exe": updater.sha256_file(
                         bundle_dir / "celune-bin.exe"
                     ),
                 },
@@ -228,8 +228,8 @@ class UpdaterTests(TestCase):
             (bundle_dir / "celune.exe").write_bytes(b"launcher")
             (bundle_dir / "celune-bin.exe").write_bytes(b"runtime")
             local_files = {
-                "celune.exe": updater._sha256_file(bundle_dir / "celune.exe"),
-                "celune-bin.exe": updater._sha256_file(bundle_dir / "celune-bin.exe"),
+                "celune.exe": updater.sha256_file(bundle_dir / "celune.exe"),
+                "celune-bin.exe": updater.sha256_file(bundle_dir / "celune-bin.exe"),
             }
             manifest = {
                 "version": "4.1.0",

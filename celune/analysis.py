@@ -383,6 +383,13 @@ def _voice_drift_level(drift_percent: float) -> str:
     return "wrong"
 
 
+embedding_tensor_to_numpy = _embedding_tensor_to_numpy
+load_reference_embedding = _load_reference_embedding
+available_reference_voices = _available_reference_voices
+cosine_similarity_percent = _cosine_similarity_percent
+voice_drift_level = _voice_drift_level
+
+
 def add_reference_similarity_metrics(
     metrics: dict,
     y: npt.NDArray[np.float32],
