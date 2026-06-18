@@ -58,7 +58,7 @@ class DoctorCommandTests(TestCase):
 
         self.assertEqual(exit_code, 0)
         run.assert_called_once_with(
-            [str(entrypoint._doctor_running_python()), str(entrypoint.SETUP_PATH)],
+            [str(entrypoint.doctor_running_python()), str(entrypoint.SETUP_PATH)],
             cwd=entrypoint.PROJECT_ROOT,
             check=False,
         )
@@ -177,7 +177,7 @@ class DoctorCommandTests(TestCase):
             ),
             mock.patch.object(entrypoint.Path, "exists", return_value=True),
         ):
-            checks = entrypoint._doctor_checks()
+            checks = entrypoint.doctor_checks()
 
         python_env = next(
             check for check in checks if check.label == "Python environment"
@@ -207,7 +207,7 @@ class DoctorCommandTests(TestCase):
                 entrypoint, "_doctor_run_compute_test", return_value="cuda:0"
             ),
         ):
-            checks = entrypoint._doctor_torch_details()
+            checks = entrypoint.doctor_torch_details()
 
         by_label = {check.label: check for check in checks}
         self.assertEqual(by_label["Accelerator backend"].severity, "warning")

@@ -30,7 +30,7 @@ class ColorTests(TestCase):
         colors.configure_theme("#101010", "#222222")
         self.assertEqual(colors.THEME.background, "#101010")
         self.assertGreaterEqual(
-            colors._contrast_ratio(
+            colors.contrast_ratio(
                 colors.THEME.primary,
                 cast(str, colors.THEME.background),
             ),
@@ -61,15 +61,15 @@ class DspTests(TestCase):
             AssertionError: DSP behavior changes unexpectedly.
         """
         mono = np.array([0.0, 1.0], dtype=np.float32)
-        stereo = dsp._make_stereo(mono)
+        stereo = dsp.make_stereo(mono)
         self.assertEqual(stereo.shape, (2, 2))
         self.assertTrue(np.array_equal(stereo[:, 0], mono))
 
         with self.assertRaises(AudioMismatchError):
-            dsp._make_stereo(np.zeros((2, 3), dtype=np.float32))
+            dsp.make_stereo(np.zeros((2, 3), dtype=np.float32))
         with self.assertRaises(BadAudioError):
-            dsp._resample_audio(stereo, 0)
-        self.assertEqual(dsp._resample_audio(stereo, 48000).shape, (2, 2))
+            dsp.resample_audio(stereo, 0)
+        self.assertEqual(dsp.resample_audio(stereo, 48000).shape, (2, 2))
 
     def test_soften_split_and_silence_detection(self) -> None:
         """Verify softening, chunk splitting, and loudness tiers.
@@ -78,9 +78,9 @@ class DspTests(TestCase):
             AssertionError: DSP output changes unexpectedly.
         """
         audio = np.ones((10, 2), dtype=np.float32)
-        softened = dsp._soften(audio.copy(), sr=10, duration=0.2, start_gain=0.5)
+        softened = dsp.soften(audio.copy(), sr=10, duration=0.2, start_gain=0.5)
         self.assertAlmostEqual(float(softened[0, 0]), 0.5)
-        chunks = list(dsp._split(np.zeros((20, 2), dtype=np.float32), 10, 5))
+        chunks = list(dsp.split(np.zeros((20, 2), dtype=np.float32), 10, 5))
         self.assertEqual([len(chunk) for chunk in chunks], [4, 4, 4, 4, 4])
 
         silent = np.zeros((4, 2), dtype=np.float32)
@@ -134,12 +134,12 @@ class DspTests(TestCase):
         reverb = dsp.StreamingPedalboardReverb()
 
         reverb.strength = 0.0
-        reverb._update_params()
+        reverb.update_params()
         self.assertAlmostEqual(reverb.reverb.wet_level, 0.0)
         self.assertAlmostEqual(reverb.reverb.dry_level, 1.0)
 
         reverb.strength = 1.0
-        reverb._update_params()
+        reverb.update_params()
         self.assertAlmostEqual(reverb.reverb.wet_level, 0.16)
         self.assertAlmostEqual(reverb.reverb.dry_level, 0.84)
         self.assertLessEqual(

@@ -344,7 +344,7 @@ class UICommandTests(TestCase):
     def test_windows_command_split_keeps_literal_backslashes(self) -> None:
         """Verify Windows slash commands keep single-backslash file paths intact."""
         with mock.patch("celune.ui.app.os.name", "nt"):
-            parts = CeluneUI._split_command_input(
+            parts = CeluneUI.split_command_input(
                 r'attach "C:\Users\user\Downloads\bad suggestion.png"'
             )
 
@@ -426,12 +426,12 @@ class UIStartupTests(TestCase):
                 mock.patch.object(ui, "_install_runtime_log_redirects"),
                 mock.patch.object(ui, "_remove_runtime_log_redirects"),
             ):
-                ui._enable_runtime_log_capture()
+                ui.enable_runtime_log_capture()
                 self.assertTrue(ui._runtime_log_capture_enabled)
                 self.assertIs(sys.stdout, ui._log_stdout)
                 self.assertIs(sys.stderr, ui._log_stderr)
 
-                ui._disable_runtime_log_capture()
+                ui.disable_runtime_log_capture()
 
             self.assertFalse(ui._runtime_log_capture_enabled)
             self.assertIs(sys.stdout, original_stdout)
@@ -615,8 +615,8 @@ class UIStartupTests(TestCase):
             ),
         )
 
-        ui._persona_available = ui._persona_loaded()
-        self.assertEqual(ui._normal_input_placeholder(), "Enter text to speak here")
+        ui._persona_available = ui.persona_loaded()
+        self.assertEqual(ui.normal_input_placeholder(), "Enter text to speak here")
 
         ui.celune = cast(
             Celune,
@@ -628,8 +628,8 @@ class UIStartupTests(TestCase):
                 vision=object(),
             ),
         )
-        ui._persona_available = ui._persona_loaded()
-        self.assertEqual(ui._normal_input_placeholder(), "Say something...")
+        ui._persona_available = ui.persona_loaded()
+        self.assertEqual(ui.normal_input_placeholder(), "Say something...")
 
     def test_runtime_logger_warning_is_routed_into_ui_logs(self) -> None:
         """Verify known Python logger warnings do not bleed into the terminal."""
@@ -643,7 +643,7 @@ class UIStartupTests(TestCase):
         self.addCleanup(setattr, logger, "handlers", original_handlers)
         self.addCleanup(setattr, logger, "propagate", original_propagate)
 
-        ui._install_runtime_log_redirects()
+        ui.install_runtime_log_redirects()
         self.addCleanup(ui._remove_runtime_log_redirects)
 
         logger.warning(
@@ -673,7 +673,7 @@ class UIStartupTests(TestCase):
         self.addCleanup(setattr, logger, "handlers", original_handlers)
         self.addCleanup(setattr, logger, "propagate", original_propagate)
 
-        ui._install_runtime_log_redirects()
+        ui.install_runtime_log_redirects()
         self.addCleanup(ui._remove_runtime_log_redirects)
 
         logger.warning(
@@ -718,7 +718,7 @@ class UIStartupTests(TestCase):
 
         ui.safe_status("Playing C:/Users/user/Music/really_long_filename_demo.wav")
         first = fake_status.rendered
-        ui._advance_status_marquee()
+        ui.advance_status_marquee()
         second = fake_status.rendered
 
         self.assertNotEqual(first, second)
@@ -751,7 +751,7 @@ class UIStartupTests(TestCase):
 
         ui.safe_status("Playing")
         first = fake_status.rendered
-        ui._advance_status_marquee()
+        ui.advance_status_marquee()
 
         self.assertEqual(first, fake_status.rendered)
 
@@ -840,7 +840,7 @@ class UIStartupTests(TestCase):
         self.assertEqual(error_theme.accent, expected)
         self.assertEqual(
             error_theme.foreground,
-            colors._ensure_contrast(
+            colors.ensure_contrast(
                 colors.ERROR_HIGHLIGHT,
                 colors.ERROR_BACKGROUND,
                 7.0,
@@ -867,7 +867,7 @@ class UIStartupTests(TestCase):
             SimpleNamespace(glow=SimpleNamespace(fatal=mock.Mock())),
         )
 
-        ui._wrap_runtime_fatal_glow()
+        ui.wrap_runtime_fatal_glow()
         ui.celune.glow.fatal()
 
         self.assertTrue(ui._fatal_error_active)
@@ -877,7 +877,7 @@ class UIStartupTests(TestCase):
         """Verify both dedicated runtime error themes are registered correctly."""
         ui = CeluneUI()
 
-        ui._register_runtime_error_themes()
+        ui.register_runtime_error_themes()
 
         dark_error = ui.get_theme("celune_error")
         light_error = ui.get_theme("celune_light_error")
@@ -891,7 +891,7 @@ class UIStartupTests(TestCase):
         self.assertEqual(light_error.primary, colors.ERROR_DARK_ACCENT)
         self.assertEqual(
             dark_error.foreground,
-            colors._ensure_contrast(
+            colors.ensure_contrast(
                 colors.ERROR_HIGHLIGHT,
                 colors.ERROR_BACKGROUND,
                 7.0,
@@ -899,7 +899,7 @@ class UIStartupTests(TestCase):
         )
         self.assertEqual(
             light_error.foreground,
-            colors._ensure_contrast(
+            colors.ensure_contrast(
                 colors.ERROR_HIGHLIGHT,
                 colors.ERROR_LIGHT_BACKGROUND,
                 7.0,

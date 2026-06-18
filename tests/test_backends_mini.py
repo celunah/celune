@@ -24,7 +24,7 @@ class MiniBackendTests(TestCase):
         self.assertEqual(backend.resolve_generation_language("pt-BR"), "pt")
         self.assertEqual(backend.resolve_generation_language("english"), "en")
         self.assertEqual(backend.resolve_generation_language("pl"), "en")
-        self.assertEqual(backend._resolve_language_name("pl"), "english")
+        self.assertEqual(backend.resolve_language_name("pl"), "english")
 
     def test_unload_model_removes_generated_config_file(self) -> None:
         """Verify Pocket TTS generated configs are deleted on unload."""
@@ -51,7 +51,7 @@ class MiniBackendTests(TestCase):
             languages_dir = Path(temp_dir) / "languages"
             (languages_dir / "french_24l").mkdir(parents=True)
 
-            resolved = backend._resolve_snapshot_language_dir(temp_dir, "fr")
+            resolved = backend.resolve_snapshot_language_dir(temp_dir, "fr")
 
         self.assertEqual(resolved.name, "french_24l")
 
@@ -70,6 +70,6 @@ class MiniBackendTests(TestCase):
                     "pocket_tts.utils.config": SimpleNamespace(CONFIGS_DIR=config_dir),
                 },
             ):
-                resolved = backend._resolve_template_config_path("fr")
+                resolved = backend.resolve_template_config_path("fr")
 
         self.assertEqual(resolved, template_path)

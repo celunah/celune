@@ -211,6 +211,13 @@ def _split(
         yield audio[i : i + frames]
 
 
+resample_audio = _resample_audio
+make_stereo = _make_stereo
+to_48khz = _to_48khz
+soften = _soften
+split = _split
+
+
 def is_silent_utterance(audio: npt.NDArray[np.float32]) -> tuple[bool, int]:
     """Validate if this utterance is silent or not.
 
@@ -329,3 +336,5 @@ class StreamingPedalboardReverb:
     def reset(self) -> None:
         """Reset reverb state."""
         self._first_chunk = True
+
+    update_params = _update_params

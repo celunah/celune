@@ -639,6 +639,13 @@ def _wait_for_pid_exit(pid: int, timeout: float = 120.0) -> None:
     raise UpdateError("timed out waiting for the launcher to exit")
 
 
+short_revision = _short_revision
+normalize_tag = _normalize_tag
+is_newer_version_tag = _is_newer_version_tag
+has_new_remote_revision = _has_new_remote_revision
+sha256_file = _sha256_file
+
+
 def apply_update_and_restart(
     parent_pid: int,
     launcher_path: Path,

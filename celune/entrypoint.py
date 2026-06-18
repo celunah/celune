@@ -816,6 +816,11 @@ def _doctor_checks() -> list[DoctorCheck]:
     return checks
 
 
+doctor_running_python = _doctor_running_python
+doctor_torch_details = _doctor_torch_details
+doctor_checks = _doctor_checks
+
+
 def run_doctor(argv: list[str]) -> int:
     """Run `celune doctor` and optionally repair the environment.
 

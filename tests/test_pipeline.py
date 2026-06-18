@@ -244,7 +244,7 @@ class PipelineTests(TestCase):
                     "celune.pipeline.subprocess.run", side_effect=fake_run
                 ) as run,
             ):
-                resolved = pipeline._download_youtube_sfx(
+                resolved = pipeline.download_youtube_sfx(
                     cast(Celune, engine),
                     "https://youtu.be/demo",
                 )
@@ -284,7 +284,7 @@ class PipelineTests(TestCase):
                     "celune.pipeline.subprocess.run", side_effect=fake_run
                 ) as run,
             ):
-                resolved = pipeline._download_youtube_sfx(
+                resolved = pipeline.download_youtube_sfx(
                     cast(Celune, engine),
                     "https://youtu.be/demo",
                 )
@@ -323,7 +323,7 @@ class PipelineTests(TestCase):
                     ),
                 ),
             ):
-                resolved = pipeline._download_youtube_sfx(
+                resolved = pipeline.download_youtube_sfx(
                     cast(Celune, engine),
                     "https://youtu.be/demo",
                 )
@@ -361,7 +361,7 @@ class PipelineTests(TestCase):
                     ),
                 ),
             ):
-                resolved = pipeline._download_youtube_sfx(
+                resolved = pipeline.download_youtube_sfx(
                     cast(Celune, engine),
                     "https://youtu.be/demo",
                 )
@@ -402,7 +402,7 @@ class PipelineTests(TestCase):
                 return b'{"title":"Fixture Video Title"}'
 
         with mock.patch("celune.pipeline.urlopen", return_value=FakeResponse()):
-            title = pipeline._youtube_sfx_title("https://youtu.be/demo")
+            title = pipeline.youtube_sfx_title("https://youtu.be/demo")
 
         self.assertEqual(title, "Fixture Video Title")
 
@@ -494,20 +494,20 @@ class PipelineTests(TestCase):
         engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
         fake_stream = FakeStream()
 
-        pipeline._queue_playback_chunk(
+        pipeline.queue_playback_chunk(
             cast(Celune, engine),
             1,
             np.full((2400, 2), 0.2, dtype=np.float32),
             48000,
         )
-        pipeline._queue_playback_chunk(
+        pipeline.queue_playback_chunk(
             cast(Celune, engine),
             2,
             np.full((2400, 2), 0.3, dtype=np.float32),
             48000,
         )
-        pipeline._queue_playback_done(cast(Celune, engine), 1)
-        pipeline._queue_playback_done(cast(Celune, engine), 2)
+        pipeline.queue_playback_done(cast(Celune, engine), 1)
+        pipeline.queue_playback_done(cast(Celune, engine), 2)
         engine.audio_queue.put(engine.sentinel)
 
         with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
@@ -597,13 +597,13 @@ class PipelineTests(TestCase):
                 super().write(audio)
                 if not self.injected:
                     self.injected = True
-                    pipeline._queue_playback_chunk(
+                    pipeline.queue_playback_chunk(
                         cast(Celune, engine),
                         2,
                         np.full((2400, 2), 0.4, dtype=np.float32),
                         48000,
                     )
-                    pipeline._queue_playback_done(
+                    pipeline.queue_playback_done(
                         cast(Celune, engine),
                         2,
                         release_pipeline_when_finished=True,
@@ -611,13 +611,13 @@ class PipelineTests(TestCase):
                     engine.audio_queue.put(engine.sentinel)
 
         fake_stream = InjectingStream()
-        pipeline._queue_playback_chunk(
+        pipeline.queue_playback_chunk(
             cast(Celune, engine),
             1,
             np.full((9600, 2), 0.1, dtype=np.float32),
             48000,
         )
-        pipeline._queue_playback_done(cast(Celune, engine), 1)
+        pipeline.queue_playback_done(cast(Celune, engine), 1)
 
         with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
             pipeline.playback_worker(cast(Celune, engine))
@@ -655,16 +655,16 @@ class PipelineTests(TestCase):
                 super().write(audio)
                 if not self.injected:
                     self.injected = True
-                    pipeline._set_playback_source_status(
+                    pipeline.set_playback_source_status(
                         cast(Celune, engine), 2, "Speaking"
                     )
-                    pipeline._queue_playback_chunk(
+                    pipeline.queue_playback_chunk(
                         cast(Celune, engine),
                         2,
                         np.full((2400, 2), 0.4, dtype=np.float32),
                         48000,
                     )
-                    pipeline._queue_playback_done(
+                    pipeline.queue_playback_done(
                         cast(Celune, engine),
                         2,
                         release_pipeline_when_finished=True,
@@ -717,20 +717,20 @@ class PipelineTests(TestCase):
                 super().write(audio)
                 if not self.injected:
                     self.injected = True
-                    pipeline._register_playback_source(
+                    pipeline.register_playback_source(
                         cast(Celune, engine), 2, kind="speech"
                     )
-                    pipeline._set_playback_source_status(
+                    pipeline.set_playback_source_status(
                         cast(Celune, engine), 2, "Speaking"
                     )
                     for _ in range(3):
-                        pipeline._queue_playback_chunk(
+                        pipeline.queue_playback_chunk(
                             cast(Celune, engine),
                             2,
                             np.zeros((2400, 2), dtype=np.float32),
                             48000,
                         )
-                    pipeline._queue_playback_done(
+                    pipeline.queue_playback_done(
                         cast(Celune, engine),
                         2,
                         release_pipeline_when_finished=True,
@@ -778,7 +778,7 @@ class PipelineTests(TestCase):
         engine.audio_queue = queue.Queue()
         fake_stream = FakeStream()
 
-        pipeline._queue_playback_chunk(
+        pipeline.queue_playback_chunk(
             cast(Celune, engine),
             1,
             np.full((2400, 2), 0.3, dtype=np.float32),
@@ -801,7 +801,7 @@ class PipelineTests(TestCase):
         engine.cur_state = "speaking"
         engine.dev = False
 
-        pipeline._finalize_playback_idle(cast(Celune, engine))
+        pipeline.finalize_playback_idle(cast(Celune, engine))
 
         engine.glow.reset_audio_reactivity.assert_called_once_with()
         self.assertEqual(engine.playback_done.is_set(), True)
@@ -1593,7 +1593,7 @@ class PipelineTests(TestCase):
         engine.current_character = "Fixture"
         engine.current_voice = "balanced"
 
-        pipeline._remember_visual_context(
+        pipeline.remember_visual_context(
             [
                 {
                     "type": "image",
@@ -1604,7 +1604,7 @@ class PipelineTests(TestCase):
             cast(Celune, engine),
             "What was in the old file?",
         )
-        pipeline._remember_visual_context(
+        pipeline.remember_visual_context(
             [
                 {
                     "type": "video",
@@ -2028,17 +2028,17 @@ class PipelineTests(TestCase):
             sf.write(
                 str(path), np.zeros((8, 2), dtype=np.float32), 48000, format="FLAC"
             )
-            pipeline._write_flac_metadata(
+            pipeline.write_flac_metadata(
                 str(path),
                 {"artist": "Celune", "date": 2026, "invalid=key": "ignored"},
             )
-            blocks, _ = pipeline._flac_metadata_blocks(path.read_bytes())
+            blocks, _ = pipeline.flac_metadata_blocks(path.read_bytes())
             comment_block = next(
                 payload
                 for block_type, payload in blocks
                 if block_type == pipeline._FLAC_VORBIS_COMMENT_BLOCK
             )
-            _, comments = pipeline._parse_vorbis_comment_block(comment_block)
+            _, comments = pipeline.parse_vorbis_comment_block(comment_block)
         self.assertIn(("artist", "Celune"), comments)
         self.assertIn(("date", "2026"), comments)
         self.assertNotIn(("invalid=key", "ignored"), comments)
@@ -2063,7 +2063,7 @@ class PipelineTests(TestCase):
             use_normalization=False,
             current_character="Fixture",
         )
-        metadata = pipeline._celune_metadata_payload(
+        metadata = pipeline.celune_metadata_payload(
             cast(Celune, engine),
             text="hello",
             display_text="one two three four five six",
@@ -2077,7 +2077,7 @@ class PipelineTests(TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "voice.flac"
             metadata["created_at"] = "2026-05-16T10:00:00+00:00"
-            pipeline._write_celune_flac(
+            pipeline.write_celune_flac(
                 cast(Celune, engine),
                 str(path),
                 np.zeros((8, 2), dtype=np.float32),
@@ -2085,13 +2085,13 @@ class PipelineTests(TestCase):
                 "PCM_24",
                 metadata,
             )
-            blocks, _ = pipeline._flac_metadata_blocks(path.read_bytes())
+            blocks, _ = pipeline.flac_metadata_blocks(path.read_bytes())
             comment_block = next(
                 payload
                 for block_type, payload in blocks
                 if block_type == pipeline._FLAC_VORBIS_COMMENT_BLOCK
             )
-            _, comments = pipeline._parse_vorbis_comment_block(comment_block)
+            _, comments = pipeline.parse_vorbis_comment_block(comment_block)
             tags = dict(comments)
         self.assertEqual(tags["artist"], "Fixture")
         self.assertEqual(tags["album"], "Celune via fake")

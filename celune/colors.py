@@ -118,6 +118,11 @@ def _ensure_contrast(color: str, background: str, minimum: float) -> str:
     )
 
 
+blend = _blend
+contrast_ratio = _contrast_ratio
+ensure_contrast = _ensure_contrast
+
+
 def _default_dark_palette() -> dict[str, str]:
     return {
         "primary": "#cebaff",

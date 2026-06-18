@@ -36,7 +36,7 @@ from . import colors
 from .celune import Celune
 from .utils import format_error
 from .paths import main_window_log_path, project_root
-from .dsp import _resample_audio
+from .dsp import resample_audio
 from .pipeline import SpeechStreamQueue
 from .constants import BASE_SR, APP_NAME, JSONSerializable
 from .cevoice import default_loader
@@ -365,9 +365,9 @@ def _configure_webui_theme() -> None:
     secondary = colors.THEME.secondary or primary
     accent = colors.THEME.accent or primary
     sleeping = palette["sleeping"]
-    button_bg = colors._blend(primary, background, 0.72)
-    button_hover = colors._blend(primary, background, 0.6)
-    input_bg = colors._blend(primary, background, 0.78)
+    button_bg = colors.blend(primary, background, 0.72)
+    button_hover = colors.blend(primary, background, 0.6)
+    input_bg = colors.blend(primary, background, 0.78)
 
     webui_theme_style = (
         "<style>"
@@ -614,7 +614,7 @@ def _webui_theme_html() -> str:
     severity = "info"
     accent = _webui_status_color(severity)
     background = colors.THEME.background or colors.DEFAULT_BACKGROUND
-    input_bg = colors._blend(accent, background, 0.78)
+    input_bg = colors.blend(accent, background, 0.78)
     return (
         "<style>:root {"
         f"--celune-ui-accent: {accent};"
@@ -1180,7 +1180,7 @@ def _webui_run_command(text: str) -> bool:
         return False
 
     try:
-        parts = CeluneUI._split_command_input(text[1:])
+        parts = CeluneUI.split_command_input(text[1:])
     except ValueError as e:
         _append_webui_log(f"Command parsing error: {e}", "error")
         return False
@@ -1276,6 +1276,17 @@ def _webui_speak(
         )
         snapshot = _webui_submit_snapshot("")
         yield snapshot[0], None, *snapshot[1:]
+
+
+configure_webui_theme = _configure_webui_theme
+is_browser_ui_request = _is_browser_ui_request
+webui_theme_html = _webui_theme_html
+strip_webui_log_prefix = _strip_webui_log_prefix
+set_webui_status = _set_webui_status
+wrap_celune_callbacks = _wrap_celune_callbacks
+speech_job_snapshot = _speech_job_snapshot
+webui_snapshot = _webui_snapshot
+webui_speak = _webui_speak
 
 
 def _webui_cycle_voice() -> tuple[
@@ -1701,7 +1712,7 @@ async def sfx(
 
     try:
         audio, sr = sf.read(io.BytesIO(data), dtype="float32")
-        audio = _resample_audio(np.asarray(audio, dtype=np.float32), sr)
+        audio = resample_audio(np.asarray(audio, dtype=np.float32), sr)
     except Exception as e:
         return JSONResponse(
             status_code=400,

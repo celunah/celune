@@ -67,7 +67,7 @@ class BackendTests(TestCase):
 
         with mock.patch("celune.backends.base.default_loader", return_value=loader):
             backend = FakeBackend(log=lambda _msg, _severity="info": None)
-            backend._validate_refs()
+            backend.validate_refs()
 
         self.assertEqual(
             materialize.call_args_list,
@@ -90,7 +90,7 @@ class BackendTests(TestCase):
             with mock.patch(
                 "celune.backends.base.temp_data_dir", return_value=canonical_temp
             ):
-                truncated = backend._truncate_reference(source)
+                truncated = backend.truncate_reference(source)
 
             self.assertNotEqual(truncated, source)
             self.assertLessEqual(sf.info(truncated).duration, 10.0)
@@ -668,7 +668,7 @@ class BackendTests(TestCase):
         with mock_dotstts_backend() as dotstts_cls:
             fake_loguru = mock.Mock()
             with mock.patch("celune.backends.dotstts.loguru.logger", fake_loguru):
-                with dotstts_cls._suppress_backend_output():
+                with dotstts_cls.suppress_backend_output():
                     pass
 
         fake_loguru.disable.assert_called_once_with("dots_tts")
