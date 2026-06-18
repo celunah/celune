@@ -16,7 +16,7 @@ import numpy.typing as npt
 from openrgb import OpenRGBClient
 from openrgb.utils import RGBColor
 
-from .dsp import _split
+from .dsp import split
 from .colors import RGB, ERROR
 from .constants import BASE_SR
 from .utils import to_rgb, lunar_info, range_interpolated, is_celune_day
@@ -227,7 +227,7 @@ class AudioRGBGlow:
             return
 
         chunk_seconds = 1.0 / float(self.fps)
-        chunks = _split(audio, BASE_SR, chunk_seconds)
+        chunks = split(audio, BASE_SR, chunk_seconds)
         now = time.monotonic()
         offset = 0.0
 
@@ -418,3 +418,9 @@ class AudioRGBGlow:
             time.sleep(frame_sleep)
 
         self._set_all_devices((0, 0, 0))
+
+    process_glow_chunk = _process_glow_chunk
+    to_mono = _to_mono
+    fix_color_rendering = _fix_color_rendering
+    speech_level = _speech_level
+    run = _run

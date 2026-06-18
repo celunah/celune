@@ -211,6 +211,10 @@ class Mini(CeluneBackend[TTSModel]):
             f"invalid Pocket TTS snapshot: template config for {language_name} not found"
         )
 
+    resolve_language_name = _resolve_language_name
+    resolve_snapshot_language_dir = _resolve_snapshot_language_dir
+    resolve_template_config_path = _resolve_template_config_path
+
     def _build_generated_config_path(
         self, snapshot_path: str, lang: str = "en"
     ) -> Path:

@@ -97,9 +97,9 @@ class ApiAudioTests(TestCase):
                 audio=b"fresh",
             )
 
-            self.assertIsNone(api._speech_job_snapshot("old"))
+            self.assertIsNone(api.speech_job_snapshot("old"))
             self.assertNotIn("old", api.speech_jobs)
-            self.assertIsNotNone(api._speech_job_snapshot("fresh"))
+            self.assertIsNotNone(api.speech_job_snapshot("fresh"))
         finally:
             api.speech_job_ttl_seconds = previous_ttl
             api.speech_jobs.clear()

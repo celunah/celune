@@ -4,7 +4,10 @@
 import os
 import sys
 import time
+import types
 import shlex
+import signal
+import ctypes
 import logging
 import datetime
 import itertools
@@ -30,7 +33,7 @@ from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 
 from .. import colors
 from ..celune import Celune
-from ..constants import APP_NAME
+from ..constants import APP_NAME, SIGTSTP
 from ..cevoice import default_loader
 from . import resources as ui_resources
 from .theme import CELUNE_CSS, severity_color
@@ -49,6 +52,7 @@ from ..utils import (
     typing_delay,
     is_april_fools,
     supports_ansi,
+    discard,
 )
 
 
@@ -280,12 +284,12 @@ class CeluneUI(App):
 
     def _register_runtime_error_themes(self) -> None:
         """Register error themes used for runtime failure states."""
-        dark_foreground = colors._ensure_contrast(
+        dark_foreground = colors.ensure_contrast(
             colors.ERROR_HIGHLIGHT,
             colors.ERROR_BACKGROUND,
             7.0,
         )
-        light_foreground = colors._ensure_contrast(
+        light_foreground = colors.ensure_contrast(
             colors.ERROR_HIGHLIGHT,
             colors.ERROR_LIGHT_BACKGROUND,
             7.0,
@@ -563,6 +567,13 @@ class CeluneUI(App):
             )
 
         colors.configure_theme()
+
+        if os.name == "nt":
+            self._install_windows_signal_handler()
+        else:
+            if SIGTSTP is not None:
+                signal.signal(SIGTSTP, self._signal_handler)
+            signal.signal(signal.SIGTERM, self._signal_handler)
 
         loader = default_loader()
         if loader is not None:
@@ -853,7 +864,7 @@ class CeluneUI(App):
             self.cur_state = "error"
             self.safe_log(f"[INIT ERROR] {format_error(e, self.celune.dev)}", "error")
             self.celune.glow.fatal()
-            if not self.celune._try_play_signal("error"):
+            if not self.celune.try_play_signal("error"):
                 self.safe_log_dev("Could not play the error signal.", "warning")
             self.change_input_state(locked=True)
             self.change_voice_lock_state(locked=True)
@@ -897,7 +908,7 @@ class CeluneUI(App):
     def _with_darkened_brightness(color: Color) -> Color:
         """Return ``color`` with a visibly darker brightness."""
         target_brightness = max(0.0, color.brightness * 0.6)
-        return CeluneUI._with_brightness(color, target_brightness)
+        return CeluneUI.with_brightness(color, target_brightness)
 
     def pulse_border(self, target: Union[str, Widget]) -> None:
         """Softly pulse a widget border darker and back.
@@ -1251,7 +1262,7 @@ class CeluneUI(App):
 
         if process_commands and text.startswith("/"):
             try:
-                parts = self._split_command_input(text[1:])
+                parts = self.split_command_input(text[1:])
             except ValueError as e:
                 self.safe_log(f"Command parsing error: {e}", "error")
                 return False
@@ -1576,8 +1587,43 @@ class CeluneUI(App):
                     return
                 self.consume_buffer(len(text))
 
+    def _signal_handler(self, sig: int, frame: Optional[types.FrameType]) -> None:
+        """Handle incoming signals."""
+        discard(frame)
+
+        if SIGTSTP is not None and sig == SIGTSTP:
+            return
+
+        self._graceful_exit()
+
+    def _install_windows_signal_handler(self) -> None:
+        """Install Windows console shutdown handler."""
+        winfunctype = getattr(ctypes, "WINFUNCTYPE", None)
+        windll = getattr(ctypes, "windll", None)
+
+        if winfunctype is None or windll is None:
+            return
+
+        handler_type = winfunctype(ctypes.c_bool, ctypes.c_uint)
+        self._windows_signal_handler = handler_type(self._signal_handler_windows)
+
+        windll.kernel32.SetConsoleCtrlHandler(
+            self._windows_signal_handler,
+            True,
+        )
+
+    def _signal_handler_windows(self, sig: int) -> bool:
+        """Handle incoming Windows signals."""
+        if sig in (2, 5, 6):
+            self._graceful_exit()
+            return True
+        return False
+
     def _graceful_exit(self) -> None:
         """Exit from Celune gracefully."""
+        # while Python cleanup would tear down the core, we'd rather explicitly tell Celune to shut down
+        # before we tell Textual to exit its main loop
+        self.celune.close()
         self.exit()
 
     def graceful_exit(self) -> None:
@@ -1628,5 +1674,25 @@ class CeluneUI(App):
         Returns:
             list[str]: The parsed command name followed by its arguments.
         """
+        posix = os.name != "nt"
+        parts = shlex.split(text, posix=posix)
+        if posix:
+            return parts
 
-        return CeluneUI._split_command_input(text)
+        normalized: list[str] = []
+        for part in parts:
+            if len(part) >= 2 and part[0] == part[-1] and part[0] in {"'", '"'}:
+                normalized.append(part[1:-1])
+            else:
+                normalized.append(part)
+        return normalized
+
+    register_runtime_error_themes = _register_runtime_error_themes
+    wrap_runtime_fatal_glow = _wrap_runtime_fatal_glow
+    advance_status_marquee = _advance_status_marquee
+    enable_runtime_log_capture = _enable_runtime_log_capture
+    install_runtime_log_redirects = _install_runtime_log_redirects
+    disable_runtime_log_capture = _disable_runtime_log_capture
+    with_brightness = _with_brightness
+    normal_input_placeholder = _normal_input_placeholder
+    persona_loaded = _persona_loaded

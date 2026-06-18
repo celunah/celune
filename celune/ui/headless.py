@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Headless UI."""
 
-import sys
+import os
 import time
+import ctypes
 import signal
 import warnings
 from types import FrameType
@@ -11,7 +12,7 @@ from typing import Optional, cast
 from ..celune import Celune
 from ..utils import discard
 from ..config import Config, config_bool
-from ..constants import APP_NAME, ExitCodes, SIGTSTP
+from ..constants import APP_NAME, SIGTSTP
 
 
 class CeluneHeadlessUI:
@@ -40,6 +41,7 @@ class CeluneHeadlessUI:
             config, "CELUNE_HEADLESS_NOCOLOR", "headless_nocolor"
         )
         self.reset = "\x1b[0m" if not self.no_color else ""
+        self._exit = False
 
         CeluneHeadlessUI._instance = self
 
@@ -97,10 +99,16 @@ class CeluneHeadlessUI:
                 RuntimeWarning,
             )
 
-        signal.signal(signal.SIGINT, self.signal_handler)
-        if SIGTSTP is not None:
-            signal.signal(SIGTSTP, self.signal_handler)
-        while True:
+        if os.name == "nt":
+            self._install_windows_signal_handler()
+        else:
+            signal.signal(signal.SIGINT, self._signal_handler)
+            signal.signal(signal.SIGTERM, self._signal_handler)
+
+            if SIGTSTP is not None:
+                signal.signal(SIGTSTP, self._signal_handler)
+
+        while not self._exit:
             time.sleep(1)
 
     def close(self) -> None:
@@ -111,16 +119,36 @@ class CeluneHeadlessUI:
 
         CeluneHeadlessUI._instance = None
 
-    def signal_handler(self, sig: int, frame: Optional[FrameType]) -> None:
-        """Exit in headless mode on CTRL+C and handle CTRL+Z.
+    def _install_windows_signal_handler(self) -> None:
+        """Install Windows console shutdown handler."""
+        winfunctype = getattr(ctypes, "WINFUNCTYPE", None)
+        windll = getattr(ctypes, "windll", None)
 
-        Args:
-            sig: The received signal number.
-            frame: The current stack frame from the signal handler.
-        """
+        if winfunctype is None or windll is None:
+            return
+
+        handler_type = winfunctype(ctypes.c_bool, ctypes.c_uint)
+        self._windows_signal_handler = handler_type(self._signal_handler_windows)
+
+        windll.kernel32.SetConsoleCtrlHandler(
+            self._windows_signal_handler,
+            True,
+        )
+
+    def _signal_handler_windows(self, sig: int) -> bool:
+        """Handle incoming Windows signals."""
+        if sig in (2, 5, 6):
+            self.close()
+            self._exit = True
+            return True
+        return False
+
+    def _signal_handler(self, sig: int, frame: Optional[FrameType]) -> None:
+        """Handle incoming signals."""
+        discard(frame)
+
         if SIGTSTP is not None and sig == SIGTSTP:
             return
 
-        discard(frame)
         self.close()
-        sys.exit(ExitCodes.EXIT_SUCCESS.value)
+        self._exit = True
