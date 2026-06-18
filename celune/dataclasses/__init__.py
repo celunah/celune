@@ -22,11 +22,14 @@ if TYPE_CHECKING:
         GenerateResponse,
     )
     from .pipeline import (
+        AudioOutput,
+        AudioInputRequest,
         PlaybackChunk,
         PlaybackSourceDone,
         SpeechDone,
         SpeechRequest,
         SpeechTiming,
+        VoiceConversionRequest,
     )
     from .properties import (
         ConstantPropertySpec,
@@ -48,6 +51,8 @@ _MODULE_EXPORTS = {
     "CelunePipelineState": "celune",
     "CeluneRuntimeState": "celune",
     "CeluneVoiceState": "celune",
+    "AudioOutput": "pipeline",
+    "AudioInputRequest": "pipeline",
     "ChatMessage": "persona",
     "ConstantPropertySpec": "properties",
     "ForwardedPropertySpec": "properties",
@@ -58,6 +63,7 @@ _MODULE_EXPORTS = {
     "SpeechDone": "pipeline",
     "SpeechRequest": "pipeline",
     "SpeechTiming": "pipeline",
+    "VoiceConversionRequest": "pipeline",
     "bind_constant_properties": "properties",
     "bind_forwarded_properties": "properties",
     "constant_property": "properties",
@@ -68,6 +74,8 @@ __all__ = [
     "CELUNE_CONSTANT_PROPERTIES",
     "CELUNE_FORWARDED_PROPERTIES",
     "CeluneAudioState",
+    "AudioOutput",
+    "AudioInputRequest",
     "CeluneBackendState",
     "CeluneCallbackState",
     "CeluneContext",
@@ -85,6 +93,7 @@ __all__ = [
     "SpeechDone",
     "SpeechRequest",
     "SpeechTiming",
+    "VoiceConversionRequest",
     "bind_constant_properties",
     "bind_forwarded_properties",
     "constant_property",

@@ -12,6 +12,7 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from ..backends import CeluneBackend
+from ..vc_backends import CeluneVCBackend
 from ..cevoice import CEVoicePersona
 from ..chroma import AudioRGBGlow
 from ..config import Config
@@ -57,6 +58,10 @@ class CeluneBackendState:
     backend_kwargs: dict[str, JSONSerializable] = field(default_factory=dict)
     backend: Optional[CeluneBackend] = None
     tts_backend: str = ""
+    vc_backend_spec: Optional[Union[str, type[CeluneVCBackend]]] = None
+    vc_backend: Optional[CeluneVCBackend] = None
+    voice_conversion_backend: str = ""
+    input_mode: str = "text_to_speech"
     chunk_size: int = 0
     language: str = "Auto"
     dev: bool = False
@@ -174,6 +179,14 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("_backend_kwargs", "_backend_state", "backend_kwargs"),
     ForwardedPropertySpec("backend", "_backend_state", "backend"),
     ForwardedPropertySpec("tts_backend", "_backend_state", "tts_backend"),
+    ForwardedPropertySpec("_vc_backend_spec", "_backend_state", "vc_backend_spec"),
+    ForwardedPropertySpec("vc_backend", "_backend_state", "vc_backend"),
+    ForwardedPropertySpec(
+        "voice_conversion_backend",
+        "_backend_state",
+        "voice_conversion_backend",
+    ),
+    ForwardedPropertySpec("input_mode", "_backend_state", "input_mode"),
     ForwardedPropertySpec("chunk_size", "_backend_state", "chunk_size"),
     ForwardedPropertySpec("language", "_backend_state", "language"),
     ForwardedPropertySpec("dev", "_backend_state", "dev"),

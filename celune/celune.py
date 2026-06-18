@@ -31,6 +31,7 @@ from .dataclasses.celune import (
     CeluneRuntimeState,
     CeluneVoiceState,
 )
+from .dataclasses.pipeline import AudioInputRequest
 from .dataclasses.properties import (
     bind_constant_properties,
     bind_forwarded_properties,
@@ -53,6 +54,7 @@ from .config import Config, config_bool, config_value
 from .paths import project_root
 from .runtime import log_runtime_banner, validate_runtime
 from .backends import CeluneBackend, resolve_backend
+from .vc_backends import CeluneVCBackend, resolve_vc_backend
 from .exceptions import NotAvailableError, WarmupError, BackendError
 from .modeling import normalizer_device, load_normalizer_components
 from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID
@@ -102,6 +104,7 @@ from .pipeline import (
     queue_sfx_audio,
     playback_worker,
     play as play_pipeline,
+    handle_audio_input,
     queue_speech,
     release_pipeline,
     say as say_pipeline,
@@ -128,6 +131,24 @@ def _config_int(value: JSONSerializable, default: int) -> int:
     raise TypeError("config value cannot be converted to int")
 
 
+def _resolve_input_mode(config: Config, requested_mode: Optional[str] = None) -> str:
+    """Resolve Celune's active input mode from config and optional override."""
+    candidate = requested_mode
+    if candidate is None:
+        candidate = _config_str(config_value(config, "input_mode"))
+    if candidate is None:
+        candidate = _config_str(config_value(config, "mode"))
+    if candidate is None:
+        return "text_to_speech"
+
+    normalized = candidate.strip().lower()
+    if normalized in {"text_to_speech", "tts"}:
+        return "text_to_speech"
+    if normalized in {"voice_conversion", "revoice"}:
+        return "voice_conversion"
+    raise ValueError(f"unknown input mode: '{candidate}'")
+
+
 def _release_loaded_object(value: ReleasableObject) -> None:
     """Best-effort release hook for one loaded runtime object."""
     close = getattr(value, "close", None)
@@ -151,6 +172,8 @@ class Celune(CeluneStateAccessors):
         self,
         config: Config,
         tts_backend: Optional[Union[str, CeluneBackend, type[CeluneBackend]]] = None,
+        vc_backend: Optional[Union[str, CeluneVCBackend, type[CeluneVCBackend]]] = None,
+        input_mode: Optional[str] = None,
         chunk_size: int = 0,  # defaulted to 0 because not all backends use this
         target_chunk_length: float = 0.64,
         language: str = "Auto",  # Qwen3 backend accepts a language, others may not
@@ -195,6 +218,7 @@ class Celune(CeluneStateAccessors):
         self._pipeline_state.playback_done.set()
 
         self.config = config
+        self.input_mode = _resolve_input_mode(config, input_mode)
         select_voice_bundle(_config_str(config_value(config, "voice_bundle")))
         preset = resolve_vram_preset(config)
 
@@ -258,6 +282,40 @@ class Celune(CeluneStateAccessors):
             ) from e
         except Exception as e:
             raise BackendError(f"internal backend error: {format_error(e, dev)}") from e
+
+        if vc_backend is None and self.input_mode == "voice_conversion":
+            vc_backend = _config_str(
+                config_value(config, "voice_conversion_backend")
+            ) or _config_str(config_value(config, "vc_backend"))
+            if vc_backend is None:
+                vc_backend = "passthrough"
+
+        try:
+            if vc_backend is not None:
+                if not isinstance(vc_backend, CeluneVCBackend):
+                    self._vc_backend_spec = vc_backend
+                self.vc_backend = resolve_vc_backend(
+                    vc_backend,
+                    log=self.log_callback,
+                )
+                self.voice_conversion_backend = self.vc_backend.name
+            else:
+                self.vc_backend = None
+                self.voice_conversion_backend = ""
+        except ValueError as e:
+            raise BackendError(str(e)) from e
+        except TypeError as e:
+            raise BackendError(
+                f"invalid voice-conversion backend specification: '{vc_backend}'"
+            ) from e
+        except ModuleNotFoundError as e:
+            raise BackendError(
+                f"voice-conversion backend '{vc_backend}' has unmet dependencies: '{e.name}'"
+            ) from e
+        except Exception as e:
+            raise BackendError(
+                f"internal voice-conversion backend error: {format_error(e, dev)}"
+            ) from e
 
         if chunk_size:
             self.chunk_size = chunk_size
@@ -450,6 +508,16 @@ class Celune(CeluneStateAccessors):
                 f"'{backend.clone_model_id}' for VRAM tier '{preset.tier}'"
             )
 
+    def _is_voice_conversion_mode(self) -> bool:
+        """Return whether Celune is currently running in voice-conversion mode."""
+        return self.input_mode == "voice_conversion"
+
+    def _active_runtime_backend_name(self) -> str:
+        """Return the backend name that should represent the active speech runtime."""
+        if self._is_voice_conversion_mode() and self.vc_backend is not None:
+            return self.vc_backend.name
+        return self.backend.name
+
     @staticmethod
     def _clear_queue(q: queue.Queue) -> None:
         """Drain all pending items from a queue."""
@@ -500,6 +568,8 @@ class Celune(CeluneStateAccessors):
         discard(self, "model")
 
         self.backend.unload_model()
+        if self.vc_backend is not None:
+            self.vc_backend.unload_model()
 
         if include_normalizer:
             self._unload_normalizer_components()
@@ -523,6 +593,18 @@ class Celune(CeluneStateAccessors):
             **self._backend_kwargs,
         )
         self.tts_backend = self.backend.name
+        return True
+
+    def _recreate_vc_backend(self) -> bool:
+        """Rebuild the VC backend from its original constructor recipe."""
+        if self._vc_backend_spec is None:
+            return False
+
+        self.vc_backend = resolve_vc_backend(
+            self._vc_backend_spec,
+            log=self.log_callback,
+        )
+        self.voice_conversion_backend = self.vc_backend.name
         return True
 
     def _raise_warmup_error(self, message: str) -> None:
@@ -658,21 +740,32 @@ class Celune(CeluneStateAccessors):
 
             try:
                 with self._model_lock:
-                    active_voice = self.current_voice or (
-                        self.voices[0] if self.voices else None
-                    )
-                    if active_voice is None:
-                        raise NotAvailableError("cannot wake without an active voice")
+                    if self._is_voice_conversion_mode():
+                        if self.vc_backend is None:
+                            raise NotAvailableError(
+                                "cannot wake without a configured voice conversion backend"
+                            )
+                        if unload["tts"] and self._recreate_vc_backend():
+                            self.log_dev("[SLEEP] Recreated VC backend")
+                        self.vc_backend.preload_models()
+                    else:
+                        active_voice = self.current_voice or (
+                            self.voices[0] if self.voices else None
+                        )
+                        if active_voice is None:
+                            raise NotAvailableError(
+                                "cannot wake without an active voice"
+                            )
 
-                    if unload["tts"] or self.model is None:
-                        if unload["tts"] and self._recreate_tts_backend():
-                            self.log_dev("[SLEEP] Recreated TTS backend")
-                        model_id = self.backend.model_id_for_voice(active_voice)
-                        self.log_dev(f"[SLEEP] Loading model: {model_id}")
-                        self.model = self.backend.load_model(model_id)
-                        self.model_name = model_id
-                        if not self._warmup():
-                            self._raise_warmup_error("warmup failed after sleep")
+                        if unload["tts"] or self.model is None:
+                            if unload["tts"] and self._recreate_tts_backend():
+                                self.log_dev("[SLEEP] Recreated TTS backend")
+                            model_id = self.backend.model_id_for_voice(active_voice)
+                            self.log_dev(f"[SLEEP] Loading model: {model_id}")
+                            self.model = self.backend.load_model(model_id)
+                            self.model_name = model_id
+                            if not self._warmup():
+                                self._raise_warmup_error("warmup failed after sleep")
 
                     if unload["normalizer"] and self.use_normalization:
                         self.load_normalizer()
@@ -1004,30 +1097,38 @@ class Celune(CeluneStateAccessors):
 
         try:
             with self._model_lock:
-                new_model_name = self.backend.model_id_for_voice(voice)
+                if self._is_voice_conversion_mode():
+                    self.current_voice = voice
+                    self.loaded = True
+                else:
+                    new_model_name = self.backend.model_id_for_voice(voice)
 
-                # VoxCPM2 uses the same model for all voices, so we don't have to reload every time
-                if new_model_name != self.model_name:
-                    if not self._try_play_signal("working"):
-                        self.log_dev("Could not play the working signal.", "warning")
-                    self.log_dev(f"[RELOAD] Unloading model: {self.model_name}")
-                    self.unload_runtime_state(include_normalizer=False)
-                    self.log_dev(f"[RELOAD] Loading model: {new_model_name}")
-                    self.model = self.backend.load_model(new_model_name)
+                    # VoxCPM2 uses the same model for all voices, so we don't have to reload every time
+                    if new_model_name != self.model_name:
+                        if not self._try_play_signal("working"):
+                            self.log_dev(
+                                "Could not play the working signal.", "warning"
+                            )
+                        self.log_dev(f"[RELOAD] Unloading model: {self.model_name}")
+                        self.unload_runtime_state(include_normalizer=False)
+                        self.log_dev(f"[RELOAD] Loading model: {new_model_name}")
+                        self.model = self.backend.load_model(new_model_name)
 
-                    self.log("Rewarming up...")
-                    if not self._warmup():
-                        self._raise_warmup_error("warmup failed after reload")
+                        self.log("Rewarming up...")
+                        if not self._warmup():
+                            self._raise_warmup_error("warmup failed after reload")
 
-                    if not self._try_play_signal("readiness"):
-                        self.log_dev("Could not play the readiness signal.", "warning")
+                        if not self._try_play_signal("readiness"):
+                            self.log_dev(
+                                "Could not play the readiness signal.", "warning"
+                            )
 
-                self.log_dev(
-                    "[RELOAD] The target model is the same as the model currently in use."
-                )
+                    self.log_dev(
+                        "[RELOAD] The target model is the same as the model currently in use."
+                    )
 
-                self.current_voice = voice
-                self.loaded = True
+                    self.current_voice = voice
+                    self.loaded = True
 
             self.voice_changed_callback(voice)
             if active_voice != voice:
@@ -1076,7 +1177,7 @@ class Celune(CeluneStateAccessors):
         disable_progress_bars()
         hf_logging.set_verbosity_error()
 
-        log_runtime_banner(self.log, self.backend.name)
+        log_runtime_banner(self.log, self._active_runtime_backend_name())
         if not self.load_available_voices():
             self.cur_state = "error"
             self.log("No voices were loaded.", "error")
@@ -1111,23 +1212,39 @@ class Celune(CeluneStateAccessors):
         )
 
         self.progress_callback(None, None)
-        self.backend.preload_models()
+        if self._is_voice_conversion_mode():
+            if self.vc_backend is None:
+                self.cur_state = "error"
+                self.log("Voice conversion backend is not configured.", "error")
+                self.glow.fatal()
+                if not self._try_play_signal("error"):
+                    self.log_dev("Could not play the error signal.", "warning")
+                self.progress_callback(0, 1)
+                self.error_callback("Voice conversion backend is not configured")
+                return False
 
-        self.log("All voices are available.")
-        try:
-            self.model = self.backend.load_default_model()
-            active_voice = self.current_voice or self.voices[0]
-            self.model_name = self.backend.model_id_for_voice(active_voice)
-        except Exception as e:
-            self.cur_state = "error"
-            self.log(f"{APP_NAME} could not load the default model.", "error")
-            self.log(format_error(e, self.dev), "error")
-            self.glow.fatal()
-            if not self._try_play_signal("error"):
-                self.log_dev("Could not play the error signal.", "warning")
-            self.progress_callback(0, 1)
-            self.error_callback("Default model failed to load")
-            return False
+            self.vc_backend.preload_models()
+            self.model = None
+            self.model_name = ""
+            self.log("Voice conversion backend is ready.")
+        else:
+            self.backend.preload_models()
+
+            self.log("All voices are available.")
+            try:
+                self.model = self.backend.load_default_model()
+                active_voice = self.current_voice or self.voices[0]
+                self.model_name = self.backend.model_id_for_voice(active_voice)
+            except Exception as e:
+                self.cur_state = "error"
+                self.log(f"{APP_NAME} could not load the default model.", "error")
+                self.log(format_error(e, self.dev), "error")
+                self.glow.fatal()
+                if not self._try_play_signal("error"):
+                    self.log_dev("Could not play the error signal.", "warning")
+                self.progress_callback(0, 1)
+                self.error_callback("Default model failed to load")
+                return False
 
         if self.vision is not None:
             self.log("Initializing Persona...")
@@ -1145,15 +1262,19 @@ class Celune(CeluneStateAccessors):
             else:
                 self.log("Persona initialized.")
 
-        generation_thread = threading.Thread(
-            target=self._generation_worker, daemon=True
-        )
         playback_thread = threading.Thread(target=self._playback_worker, daemon=True)
+
+        generation_thread = None
+        if not self._is_voice_conversion_mode():
+            generation_thread = threading.Thread(
+                target=self._generation_worker, daemon=True
+            )
 
         self._generation_thread = generation_thread
         self._playback_thread = playback_thread
 
-        generation_thread.start()
+        if generation_thread is not None:
+            generation_thread.start()
         playback_thread.start()
 
         if not validate_runtime(
@@ -1163,7 +1284,7 @@ class Celune(CeluneStateAccessors):
             glow_connect_failed=self.glow.connect_failed,
             format_error=format_error,
             dev=self.dev,
-            backend_name=self.backend.name,
+            backend_name=self._active_runtime_backend_name(),
         ):
             self.cur_state = "error"
             self.glow.fatal()
@@ -1171,7 +1292,11 @@ class Celune(CeluneStateAccessors):
                 self.log_dev("Could not play the error signal.", "warning")
             return False
 
-        if self._warmup():
+        warmup_ok = True
+        if not self._is_voice_conversion_mode():
+            warmup_ok = self._warmup()
+
+        if warmup_ok:
             self.loaded = True
             self._model_ready.set()
             self._release_pipeline()
@@ -1539,6 +1664,11 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` if Celune processed this smart request, otherwise ``False``.
         """
+        if self.input_mode != "text_to_speech":
+            self.log("Text input is unavailable in voice conversion mode.", "warning")
+            self.error_callback("Text input is unavailable in voice conversion mode")
+            return False
+
         if self.is_in_tutorial:
             self.log("Speech input is disabled during the tutorial.", "warning")
             return False
@@ -1596,6 +1726,12 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when the text was queued successfully, otherwise ``False``.
         """
+        if self.input_mode != "text_to_speech":
+            self.log("Text input is unavailable in voice conversion mode.", "warning")
+            self.error_callback("Text input is unavailable in voice conversion mode")
+            self.progress_callback(0, 1)
+            return False
+
         return say_pipeline(self, text, save=save, display_text=display_text)
 
     def say_stream(self, text: str, save: bool = True) -> Optional[SpeechStreamQueue]:
@@ -1613,6 +1749,31 @@ class Celune(CeluneStateAccessors):
         if not queue_speech(self, text, save=save, stream_queue=stream_queue):
             return None
         return stream_queue
+
+    def submit_audio(
+        self,
+        audio: npt.NDArray[np.float32],
+        sample_rate: int,
+        label: str = "audio input",
+    ) -> bool:
+        """Accept audio input for future non-TTS engine modes.
+
+        Args:
+            audio: Decoded mono or stereo input audio.
+            sample_rate: Sample rate for the submitted audio.
+            label: Human-readable label for the input source.
+
+        Returns:
+            bool: ``True`` when the current mode accepted the audio input.
+        """
+        return handle_audio_input(
+            self,
+            AudioInputRequest(
+                audio=np.asarray(audio, dtype=np.float32),
+                sample_rate=sample_rate,
+                label=label,
+            ),
+        )
 
     def play(self, sound_path: str, keep: bool = False, volume: float = 1.0) -> bool:
         """Play a sound via Celune's pipeline.

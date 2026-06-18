@@ -19,11 +19,12 @@ import soundfile as sf
 
 from celune import pipeline
 from celune.celune import Celune
+from celune.dataclasses.pipeline import AudioInputRequest
 from celune.utils import discard
 from celune.persona.prompts import PersonaPromptBuilder
 from celune.constants import JSON, JSONSerializable, PipelineStates
 from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
-from .support import FakeStream, make_pipeline_engine
+from .support import FakeStream, FakeVCBackend, make_pipeline_engine
 from .test_persona_memory import StubEmbeddingMemoryStore
 
 
@@ -213,6 +214,90 @@ class PipelineTests(TestCase):
         engine.loaded = False
         self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), False)
         self.assertEqual(engine.errors, ["Celune is not currently ready"])
+
+    def test_handle_audio_input_accepts_and_ignores_audio_by_default(self) -> None:
+        """Verify engine-level audio input is a safe explicit no-op in TTS mode."""
+        engine = make_pipeline_engine()
+        engine.log = mock.Mock()
+        engine.log_dev = mock.Mock()
+        engine.loaded = True
+        engine.locked = False
+        engine.cur_state = "idle"
+        audio = np.ones((16, 2), dtype=np.float32)
+        request = AudioInputRequest(audio=audio, sample_rate=48000, label="mic test")
+
+        result = pipeline.handle_audio_input(cast(Celune, engine), request)
+
+        self.assertEqual(result, True)
+        self.assertEqual(engine.text_queue.empty(), True)
+        self.assertEqual(engine.audio_queue.empty(), True)
+        self.assertEqual(engine.cur_state, "idle")
+        engine.log.assert_not_called()
+        engine.log_dev.assert_called_once()
+
+    def test_handle_audio_input_routes_to_vc_backend_in_voice_conversion_mode(
+        self,
+    ) -> None:
+        """Verify VC mode sends audio input through the configured VC backend."""
+        engine = make_pipeline_engine()
+        engine.input_mode = "voice_conversion"
+        engine.vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
+        engine.current_voice = "balanced"
+        engine.current_character = "Celune"
+        audio = np.ones((16, 2), dtype=np.float32)
+        request = AudioInputRequest(audio=audio, sample_rate=48000, label="mic test")
+
+        with mock.patch("celune.pipeline.queue_sfx_audio", return_value=True) as queue:
+            result = pipeline.handle_audio_input(cast(Celune, engine), request)
+
+        self.assertEqual(result, True)
+        queue.assert_called_once()
+        queued_audio = queue.call_args.args[1]
+        self.assertEqual(queue.call_args.args[2], 48000)
+        self.assertEqual(queue.call_args.args[3], "mic test")
+        self.assertEqual(queued_audio.shape, (16, 2))
+        self.assertIsNot(queued_audio, audio)
+        self.assertEqual(np.array_equal(queued_audio, audio), True)
+        self.assertEqual(engine.text_queue.empty(), True)
+
+    def test_handle_audio_input_reports_missing_vc_backend_cleanly(self) -> None:
+        """Verify VC mode surfaces a clean error when no VC backend is configured."""
+        engine = make_pipeline_engine()
+        engine.input_mode = "voice_conversion"
+        engine.vc_backend = None
+        engine.log = mock.Mock()
+        audio = np.ones((8, 2), dtype=np.float32)
+
+        result = pipeline.handle_audio_input(
+            cast(Celune, engine),
+            AudioInputRequest(audio=audio, sample_rate=24000, label="fixture"),
+        )
+
+        self.assertEqual(result, False)
+        engine.log.assert_called_once()
+        self.assertEqual(
+            engine.errors,
+            ["Voice conversion backend is not configured"],
+        )
+        self.assertEqual(engine.audio_queue.empty(), True)
+
+    def test_tts_mode_does_not_route_audio_to_vc_backend(self) -> None:
+        """Verify the default TTS mode ignores audio instead of invoking VC routing."""
+        engine = make_pipeline_engine()
+        engine.input_mode = "text_to_speech"
+        engine.vc_backend = mock.Mock()
+
+        result = pipeline.handle_audio_input(
+            cast(Celune, engine),
+            AudioInputRequest(
+                audio=np.ones((4, 2), dtype=np.float32),
+                sample_rate=16000,
+                label="fixture",
+            ),
+        )
+
+        self.assertEqual(result, True)
+        engine.vc_backend.convert.assert_not_called()
 
     def test_download_youtube_sfx_writes_expected_temp_wav(self) -> None:
         """Verify yt-dlp downloads to Celune's fixed temporary WAV path."""

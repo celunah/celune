@@ -5,6 +5,7 @@ from __future__ import annotations
 import queue
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Union
 
 import numpy as np
@@ -25,6 +26,36 @@ class SpeechRequest:
         "queue.Queue[Optional[Union[npt.NDArray[np.float32], Exception]]]"
     ] = None
     normalize: bool = False
+
+
+@dataclass(frozen=True)
+class AudioInputRequest:
+    """Engine-level audio input accepted for future non-TTS modes."""
+
+    audio: npt.NDArray[np.float32]
+    sample_rate: int
+    label: str = "audio input"
+
+
+@dataclass(frozen=True)
+class VoiceConversionRequest:
+    """Audio input plus target voice metadata for voice conversion backends."""
+
+    source_audio: npt.NDArray[np.float32]
+    sample_rate: int
+    target_voice: Optional[str] = None
+    target_character: Optional[str] = None
+    target_references: tuple[Path, ...] = ()
+    label: str = "audio input"
+
+
+@dataclass(frozen=True)
+class AudioOutput:
+    """Decoded playable audio returned by speech or conversion pipelines."""
+
+    audio: npt.NDArray[np.float32]
+    sample_rate: int
+    label: str = "audio output"
 
 
 @dataclass(frozen=True)

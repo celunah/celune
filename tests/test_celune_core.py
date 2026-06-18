@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock, TestCase
 
+import numpy as np
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
@@ -14,11 +15,11 @@ from celune.celune import Celune
 from celune.config import Config
 from celune.backends.qwen3 import Qwen3
 from celune.constants import JSONSerializable
-from celune.pipeline import play_signal, release_pipeline
+from celune.pipeline import handle_audio_input, play_signal, release_pipeline
 from celune.vram import QWEN3_0_6B_MODEL
 from celune.persona.impl import persona_quantization
 from celune.exceptions import BackendError, WarmupError
-from .support import FakeBackend, FakeGlow
+from .support import FakeBackend, FakeGlow, FakeVCBackend
 
 
 class CeluneCoreTests(TestCase):
@@ -223,6 +224,45 @@ class CeluneCoreTests(TestCase):
         persona_client.close.assert_called_once_with()
         self.assertIsNone(celune.vision)
 
+    def test_load_voice_conversion_mode_skips_tts_model_load_and_warmup(self) -> None:
+        """Verify VC mode does not boot the TTS runtime during startup."""
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+        ):
+            celune = Celune(
+                config={"mode": "voice_conversion"},
+                tts_backend=FakeBackend,
+                vc_backend=FakeVCBackend,
+            )
+            self.addCleanup(self._close_celune, celune)
+
+        celune.setup_extensions = mock.Mock()
+        celune._warmup = mock.Mock(return_value=True)
+        celune._start_configured_api = mock.Mock()
+        celune.backend.preload_models = mock.Mock()
+        celune.backend.load_default_model = mock.Mock(return_value={"model": "unused"})
+        assert celune.vc_backend is not None
+        celune.vc_backend.preload_models = mock.Mock()
+
+        with (
+            mock.patch("celune.celune.threading.Thread") as thread_cls,
+            mock.patch("celune.celune.validate_runtime", return_value=True),
+            mock.patch("celune.celune.play_signal", return_value=False),
+        ):
+            thread_cls.return_value.start = mock.Mock()
+            self.assertEqual(celune.load(), True)
+
+        celune.backend.preload_models.assert_not_called()
+        celune.backend.load_default_model.assert_not_called()
+        celune._warmup.assert_not_called()
+        celune.vc_backend.preload_models.assert_called_once_with()
+        self.assertIsNone(celune.model)
+        self.assertEqual(celune.model_name, "")
+        self.assertEqual(celune._generation_thread, None)
+        self.assertEqual(thread_cls.call_count, 1)
+
     def test_change_voice_returns_runtime_state_to_idle(self) -> None:
         """Verify successful voice reload leaves Celune in the idle state."""
         celune = self._make_celune({})
@@ -245,6 +285,35 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(celune.loaded, True)
         self.assertEqual(celune.cur_state, "idle")
         self.assertEqual(statuses[-1], ("Idle", "info"))
+        celune.voice_changed_callback.assert_called_once_with("bold")
+
+    def test_change_voice_in_voice_conversion_mode_skips_tts_reload(self) -> None:
+        """Verify VC mode updates the target voice without loading TTS models."""
+        celune = self._make_celune({})
+        celune.input_mode = "voice_conversion"
+        celune.current_voice = "balanced"
+        celune.voices = ("balanced", "bold")
+        celune.loaded = True
+        celune.cur_state = "idle"
+        celune.backend.model_id_for_voice = mock.Mock(return_value="shared-model")
+        celune.backend.load_model = mock.Mock(return_value={"model": "unused"})
+        celune._warmup = mock.Mock(return_value=True)
+        statuses: list[tuple[str, str]] = []
+        celune.status_callback = lambda msg, severity="info": statuses.append(
+            (msg, severity)
+        )
+        celune.voice_changed_callback = mock.Mock()
+
+        with mock.patch("celune.celune.play_signal", return_value=False):
+            celune.change_voice("bold")
+
+        self.assertEqual(celune.current_voice, "bold")
+        self.assertEqual(celune.loaded, True)
+        self.assertEqual(celune.cur_state, "idle")
+        self.assertEqual(statuses[-1], ("Idle", "info"))
+        celune.backend.model_id_for_voice.assert_not_called()
+        celune.backend.load_model.assert_not_called()
+        celune._warmup.assert_not_called()
         celune.voice_changed_callback.assert_called_once_with("bold")
 
     def test_fatal_glow_marks_runtime_error_state(self) -> None:
@@ -471,6 +540,95 @@ class CeluneCoreTests(TestCase):
         )
         self.assertEqual(logs[-2][1], "warning")
         self.assertEqual(logs[-1][1], "warning")
+
+    def test_submit_audio_is_accepted_and_does_not_use_tts(self) -> None:
+        """Verify audio input is accepted without disturbing the text/TTS path."""
+        celune = self._make_celune({})
+        audio = np.ones((32, 2), dtype=np.float32)
+
+        with (
+            mock.patch("celune.celune.handle_audio_input", return_value=True) as handle,
+            mock.patch("celune.celune.say_pipeline", return_value=True) as say_pipeline,
+        ):
+            self.assertEqual(celune.submit_audio(audio, 48000, label="fixture"), True)
+            self.assertEqual(celune.say("hello"), True)
+
+        handle.assert_called_once()
+        submitted_request = handle.call_args.args[1]
+        self.assertEqual(submitted_request.sample_rate, 48000)
+        self.assertEqual(submitted_request.label, "fixture")
+        self.assertEqual(submitted_request.audio.shape, (32, 2))
+        say_pipeline.assert_called_once_with(
+            celune,
+            "hello",
+            save=True,
+            display_text=None,
+        )
+
+    def test_submit_audio_routes_to_vc_backend_in_voice_conversion_mode(self) -> None:
+        """Verify VC mode routes audio input through the configured VC backend."""
+        celune = self._make_celune({})
+        celune.input_mode = "voice_conversion"
+        celune.vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
+        audio = np.ones((24, 2), dtype=np.float32)
+
+        with (
+            mock.patch(
+                "celune.celune.handle_audio_input", wraps=handle_audio_input
+            ) as handle,
+            mock.patch(
+                "celune.pipeline.queue_sfx_audio", return_value=True
+            ) as queue_sfx,
+            mock.patch("celune.celune.say_pipeline", return_value=True) as say_pipeline,
+        ):
+            self.assertEqual(celune.submit_audio(audio, 44100, label="fixture"), True)
+
+        handle.assert_called_once()
+        queue_sfx.assert_called_once()
+        say_pipeline.assert_not_called()
+
+    def test_voice_conversion_mode_rejects_text_input(self) -> None:
+        """Verify VC mode rejects text input instead of using the TTS backend."""
+        celune = self._make_celune({})
+        celune.input_mode = "voice_conversion"
+
+        with mock.patch(
+            "celune.celune.say_pipeline", return_value=True
+        ) as say_pipeline:
+            self.assertEqual(celune.say("hello"), False)
+
+        say_pipeline.assert_not_called()
+
+    def test_constructor_accepts_passthrough_vc_backend_in_voice_conversion_mode(
+        self,
+    ) -> None:
+        """Verify VC mode resolves the default passthrough backend cleanly."""
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+        ):
+            celune = Celune(
+                config={"mode": "voice_conversion"}, tts_backend=FakeBackend
+            )
+            self.addCleanup(self._close_celune, celune)
+
+        self.assertEqual(celune.input_mode, "voice_conversion")
+        self.assertEqual(celune.voice_conversion_backend, "passthrough")
+
+    def test_constructor_rejects_unknown_vc_backend_cleanly(self) -> None:
+        """Verify unsupported VC backends surface a readable backend error."""
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+            self.assertRaisesRegex(BackendError, "unknown voice-conversion backend"),
+        ):
+            Celune(
+                config={"mode": "voice_conversion"},
+                tts_backend=FakeBackend,
+                vc_backend="missing",
+            )
 
     def test_load_success_and_model_failure_paths_are_stubbed(self) -> None:
         """Verify successful startup and default-model failure handling.
