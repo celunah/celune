@@ -19,8 +19,11 @@ import torch
 
 from celune.utils import discard
 from celune.backends import resolve_backend
+from celune.vc_backends import resolve_vc_backend
+from celune.vc_backends.passthrough import CelunePassthroughVCBackend
 from celune.extensions.manager import CeluneExtensionManager
 from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.exceptions import (
     BackendError,
     ExtensionAlreadyRegisteredError,
@@ -28,6 +31,7 @@ from celune.exceptions import (
 )
 from .support import (
     FakeBackend,
+    FakeVCBackend,
     make_voice_loader,
     mock_dotstts_backend,
     mock_mini_backend,
@@ -113,6 +117,37 @@ class BackendTests(TestCase):
             resolve_backend("missing")
         with self.assertRaisesRegex(TypeError, "backend_name"):
             resolve_backend(123)  # type: ignore[arg-type]
+
+    def test_resolve_vc_backend_accepts_instance_type_and_rejects_unknown(self) -> None:
+        """Verify supported VC backend specifications and invalid input failures."""
+        instance = FakeVCBackend(log=lambda _msg, _severity="info": None)
+        self.assertIs(resolve_vc_backend(instance), instance)
+        self.assertIsInstance(resolve_vc_backend(FakeVCBackend), FakeVCBackend)
+        with self.assertRaisesRegex(ValueError, "unknown voice-conversion backend"):
+            resolve_vc_backend("missing")
+        with self.assertRaisesRegex(TypeError, "voice-conversion backend"):
+            resolve_vc_backend(123)  # type: ignore[arg-type]
+
+    def test_passthrough_vc_backend_returns_playable_output(self) -> None:
+        """Verify the passthrough VC backend returns decoded audio unchanged."""
+        backend = CelunePassthroughVCBackend(log=lambda _msg, _severity="info": None)
+        source = np.ones((12, 2), dtype=np.float32)
+
+        output = backend.convert(
+            VoiceConversionRequest(
+                source_audio=source,
+                sample_rate=44100,
+                target_voice="balanced",
+                target_character="Celune",
+                label="fixture audio",
+            )
+        )
+
+        self.assertEqual(output.sample_rate, 44100)
+        self.assertEqual(output.label, "fixture audio")
+        self.assertEqual(output.audio.shape, (12, 2))
+        self.assertEqual(np.array_equal(output.audio, source), True)
+        self.assertIsNot(output.audio, source)
 
     def test_resolve_backend_accepts_mini_backend_name(self) -> None:
         """Verify the Pocket TTS backend resolves through the backend registry."""

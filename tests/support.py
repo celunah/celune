@@ -19,7 +19,9 @@ import numpy.typing as npt
 
 from celune.utils import discard
 from celune.backends.base import CeluneBackend
+from celune.vc_backends.base import CeluneVCBackend
 from celune.constants import JSONSerializable, PipelineStates
+from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -86,6 +88,27 @@ class FakeBackend(CeluneBackend):
         """
         del model, kwargs
         yield np.zeros((8, 2), dtype=np.float32), 48000, {"chunk_steps": 2}
+
+
+class FakeVCBackend(CeluneVCBackend):
+    """Tiny VC backend implementation used by tests without model work."""
+
+    name = "fake-vc"
+
+    def convert(self, request: VoiceConversionRequest) -> AudioOutput:
+        """Return the source audio unchanged for one voice-conversion request.
+
+        Args:
+            request: The voice-conversion request under test.
+
+        Returns:
+            AudioOutput: Playable audio copied from the request payload.
+        """
+        return AudioOutput(
+            audio=np.asarray(request.source_audio, dtype=np.float32).copy(),
+            sample_rate=request.sample_rate,
+            label=request.label,
+        )
 
 
 class FakeGlow:
@@ -214,8 +237,12 @@ def make_pipeline_engine() -> SimpleNamespace:
     progress: list[tuple[Optional[float], Optional[float]]] = []
     engine = SimpleNamespace()
     engine.backend = SimpleNamespace(supported_languages=("en",))
+    engine.vc_backend = None
     engine.config = {}
+    engine.input_mode = "text_to_speech"
     engine.language = "Auto"
+    engine.current_voice = "balanced"
+    engine.current_character = None
     engine.persona_attachments = []
     engine.persona_recent_visual_context = ()
     engine.use_normalization = False

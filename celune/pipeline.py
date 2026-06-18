@@ -31,10 +31,12 @@ from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
 from . import __version__
 from .dataclasses.pipeline import (
+    AudioInputRequest,
     PlaybackChunk,
     PlaybackSourceDone,
     SpeechRequest,
     SpeechTiming,
+    VoiceConversionRequest,
 )
 from .exceptions import NotAvailableError
 from .persona.memory import PersonaMemoryStore
@@ -106,6 +108,8 @@ _SFX_DUCK_GAIN = 0.25
 _SFX_DUCK_FADE_SECONDS = 0.15
 _LEGACY_BUFFER_SECONDS = 10.0
 _SMART_BUFFER_REALTIME_SPEED = 1.05
+
+
 _SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS = 20.0
 _SMART_BUFFER_MIN_SECONDS = 0.35
 _SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS = 0.75
@@ -1429,6 +1433,49 @@ def say(
     return queue_speech(
         engine, text, save=save, stream_queue=None, display_text=display_text
     )
+
+
+def handle_audio_input(engine: Celune, request: AudioInputRequest) -> bool:
+    """Accept engine-level audio input and route it according to the active mode.
+
+    Args:
+        engine: The Celune engine receiving the audio input.
+        request: The submitted audio input request.
+
+    Returns:
+        bool: ``True`` when the request was accepted, otherwise ``False``.
+    """
+    audio = np.asarray(request.audio, dtype=np.float32)
+    if getattr(engine, "input_mode", "text_to_speech") == "voice_conversion":
+        backend = getattr(engine, "vc_backend", None)
+        if backend is None:
+            engine.log("Voice conversion backend is not configured.", "warning")
+            engine.error_callback("Voice conversion backend is not configured")
+            engine.progress_callback(0, 1)
+            return False
+
+        output = backend.convert(
+            VoiceConversionRequest(
+                source_audio=audio,
+                sample_rate=request.sample_rate,
+                target_voice=getattr(engine, "current_voice", None),
+                target_character=getattr(engine, "current_character", None),
+                target_references=(),
+                label=request.label,
+            )
+        )
+        return queue_sfx_audio(
+            engine,
+            output.audio,
+            output.sample_rate,
+            output.label,
+        )
+
+    engine.log_dev(
+        "Audio input was accepted but ignored because the current mode is text-to-speech only."
+        f" label={request.label!r} sample_rate={request.sample_rate} shape={audio.shape!r}"
+    )
+    return True
 
 
 def queue_speech(

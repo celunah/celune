@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from ..dsp import StreamingPedalboardReverb
     from ..extensions.manager import CeluneExtensionManager
     from ..persona.impl import PersonaClient
+    from ..vc_backends import CeluneVCBackend
 
 
 class SupportsClose(Protocol):
@@ -192,6 +193,10 @@ class CeluneStateAccessors:
     _backend_kwargs: dict[str, JSONSerializable]
     backend: "CeluneBackend"
     tts_backend: str
+    _vc_backend_spec: Optional[Union[str, type["CeluneVCBackend"]]]
+    vc_backend: Optional["CeluneVCBackend"]
+    voice_conversion_backend: str
+    input_mode: str
     chunk_size: int
     language: str
     dev: bool
@@ -267,10 +272,21 @@ class CeluneStateAccessors:
 
     @property
     def cur_state(self) -> str:
-        """Return the current runtime-state label."""
+        """Return the current runtime-state label.
+
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
+        """
         raise NotImplementedError("typing surface only")
 
     @cur_state.setter
     def cur_state(self, value: str) -> None:
-        """Store the current runtime-state label."""
+        """Store the current runtime-state label.
+
+        Args:
+            value: The new runtime-state label.
+
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
+        """
         raise NotImplementedError("typing surface only")
