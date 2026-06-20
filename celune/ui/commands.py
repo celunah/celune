@@ -14,6 +14,7 @@ import soundfile as sf
 from ..paths import project_root
 from ..constants import APP_NAME
 from ..backends.qwen3 import Qwen3
+from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..exceptions import InvalidExtensionError
 from ..utils import format_error, replace_ipa, format_number
 
@@ -178,6 +179,8 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         ui.safe_log("/speed <speed> - Change speaking speed.")
         ui.safe_log("/reverb <strength> - Change reverb strength.")
+        ui.safe_log("/backend <name> - Hot-reload a TTS backend.")
+        ui.safe_log("/cevoice <name|path> - Hot-reload a CEVOICE pack.")
 
         if ui.celune.backend.name == "qwen3":
             ui.safe_log(
@@ -316,6 +319,62 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.safe_log(f"Invalid argument: {args[0]}", "warning")
         else:
             ui.safe_log(f"Reverb strength set to {args[0]}%.")
+        return
+    if command == "backend":
+        if not args:
+            ui.safe_log("Usage: /backend <name>", "warning")
+            return
+
+        backend_name = args[0]
+
+        if backend_name == ui.celune.backend.name:
+            ui.safe_log("This backend is already loaded.", "warning")
+            return
+
+        def backend_worker() -> None:
+            try:
+                if ui.celune.set_backend_and_wait(backend_name):
+                    ui.celune.try_play_signal("readiness")
+                    ui.safe_log(f"Switched to backend: {backend_name}")
+                else:
+                    ui.safe_log(
+                        "Backend was not switched.",
+                        "warning",
+                    )
+            except Exception as exc:
+                ui.safe_log(
+                    f"Failed to switch backend: {format_error(exc, ui.celune.dev)}",
+                    "error",
+                )
+
+        threading.Thread(target=backend_worker, daemon=True).start()
+        return
+    if command == "cevoice":
+        if not args:
+            ui.safe_log("Usage: /cevoice <name|path>", "warning")
+            return
+
+        bundle = args[0]
+        if resolve_bundle_path(bundle) == active_bundle_path():
+            ui.safe_log("This character is already loaded.", "warning")
+            return
+
+        def cevoice_worker() -> None:
+            try:
+                if ui.celune.set_cevoice_and_wait(bundle):
+                    ui.safe_log(f"Character changed: {bundle}")
+                else:
+                    ui.safe_log(
+                        f"Could not switch character to {bundle}.",
+                        "warning",
+                    )
+            except Exception as exc:
+                ui.safe_log(
+                    f"Cannot switch to this character: {format_error(exc, ui.celune.dev)}",
+                    "error",
+                )
+
+        threading.Thread(target=cevoice_worker, daemon=True).start()
         return
     if command == "xvectoronly":
         backend = ui.celune.backend

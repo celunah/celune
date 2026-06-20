@@ -10,7 +10,6 @@ import numpy.typing as npt
 from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
 
 from ..utils import custom_assert
-from ..exceptions import BackendError
 from ..cevoice import default_loader, CEVoiceLoader
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
@@ -63,7 +62,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         loader = default_loader()
         custom_assert(
             loader is not None,
-            BackendError(
+            FileNotFoundError(
                 "backend 'qwen3' requires a compatible CEVOICE/CECHAR package "
                 "with at least one valid voice identifier"
             ),
@@ -83,7 +82,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         )
         custom_assert(
             bool(voice_names),
-            BackendError(
+            FileNotFoundError(
                 "backend 'qwen3' requires a compatible CEVOICE/CECHAR package "
                 "with at least one valid voice identifier"
             ),

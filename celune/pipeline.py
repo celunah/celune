@@ -31,6 +31,7 @@ from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
 from . import __version__
 from .dataclasses.pipeline import (
+    AudioOutput,
     AudioInputRequest,
     PlaybackChunk,
     PlaybackSourceDone,
@@ -59,6 +60,7 @@ from .persona.impl import (
     persona_short_term_history_limit,
     persona_style_traits,
 )
+from .cevoice import default_loader
 from .dsp import (
     resample_audio,
     soften,
@@ -697,6 +699,7 @@ def _queue_playback_done(
     source_id: int,
     *,
     release_pipeline_when_finished: bool = False,
+    notify_idle_when_finished: bool = True,
     saved_path: Optional[str] = None,
     analysis_audio: Optional[npt.NDArray[np.float32]] = None,
 ) -> None:
@@ -705,6 +708,7 @@ def _queue_playback_done(
         PlaybackSourceDone(
             source_id=source_id,
             release_pipeline=release_pipeline_when_finished,
+            notify_idle=notify_idle_when_finished,
             saved_path=saved_path,
             analysis_audio=analysis_audio,
         )
@@ -1447,23 +1451,9 @@ def handle_audio_input(engine: Celune, request: AudioInputRequest) -> bool:
     """
     audio = np.asarray(request.audio, dtype=np.float32)
     if getattr(engine, "input_mode", "text_to_speech") == "voice_conversion":
-        backend = getattr(engine, "vc_backend", None)
-        if backend is None:
-            engine.log("Voice conversion backend is not configured.", "warning")
-            engine.error_callback("Voice conversion backend is not configured")
-            engine.progress_callback(0, 1)
+        output = convert_audio_input(engine, request)
+        if output is None:
             return False
-
-        output = backend.convert(
-            VoiceConversionRequest(
-                source_audio=audio,
-                sample_rate=request.sample_rate,
-                target_voice=getattr(engine, "current_voice", None),
-                target_character=getattr(engine, "current_character", None),
-                target_references=(),
-                label=request.label,
-            )
-        )
         return queue_sfx_audio(
             engine,
             output.audio,
@@ -1476,6 +1466,47 @@ def handle_audio_input(engine: Celune, request: AudioInputRequest) -> bool:
         f" label={request.label!r} sample_rate={request.sample_rate} shape={audio.shape!r}"
     )
     return True
+
+
+def convert_audio_input(
+    engine: Celune, request: AudioInputRequest
+) -> Optional[AudioOutput]:
+    """Run one VC conversion request and return the converted audio output.
+
+    Args:
+        engine: The Celune engine receiving the audio input.
+        request: The submitted audio input request.
+
+    Returns:
+        Optional[AudioOutput]: The converted audio output, or ``None`` when voice conversion is unavailable.
+    """
+    backend = getattr(engine, "vc_backend", None)
+    if backend is None:
+        engine.log("Voice conversion backend is not configured.", "warning")
+        engine.error_callback("Voice conversion backend is not configured")
+        engine.progress_callback(0, 1)
+        return None
+
+    target_references: tuple[pathlib.Path, ...] = ()
+    current_voice = getattr(engine, "current_voice", None)
+    if isinstance(current_voice, str) and current_voice.strip():
+        loader = default_loader()
+        if loader is not None:
+            try:
+                target_references = (loader.materialize(current_voice, "wav"),)
+            except Exception:
+                target_references = ()
+
+    return backend.convert(
+        VoiceConversionRequest(
+            source_audio=np.asarray(request.audio, dtype=np.float32),
+            sample_rate=request.sample_rate,
+            target_voice=getattr(engine, "current_voice", None),
+            target_character=getattr(engine, "current_character", None),
+            target_references=target_references,
+            label=request.label,
+        )
+    )
 
 
 def queue_speech(
@@ -1879,7 +1910,7 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
     # Celune._try_play_signal() instead of calling this method directly
     if acquire_pipeline(engine, f"play {signal_type} signal"):
         release_to_idle = False
-        if signal_type != "error" and engine.cur_state != "error":
+        if signal_type not in {"error", "working"} and engine.cur_state != "error":
             engine.cur_state = "speaking"
         source_id = _next_playback_source_id(engine)
         _register_playback_source(engine, source_id, kind="sfx")
@@ -1888,6 +1919,7 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
             engine,
             source_id,
             release_pipeline_when_finished=release_to_idle,
+            notify_idle_when_finished=signal_type == "readiness",
         )
         release_pipeline(engine, playback_idle=False)
         return True
@@ -2394,8 +2426,10 @@ def _finalize_playback_idle(
     if engine.cur_state == "error":
         return
 
-    if not getattr(engine, "locked", False):
-        engine.cur_state = "idle"
+    if getattr(engine, "locked", False):
+        return
+
+    engine.cur_state = "idle"
     engine.idle_callback()
 
     if random.random() < 0.01:
@@ -2426,7 +2460,11 @@ def _finalize_playback_idle(
                 engine.current_voice,
             )
 
-        if not getattr(engine, "_ready_announced", False):
+        if (
+            engine.cur_state == "idle"
+            and getattr(engine, "loaded", False)
+            and not getattr(engine, "_ready_announced", False)
+        ):
             engine.log("Ready to speak.")
             engine._ready_announced = True
 
@@ -2657,7 +2695,8 @@ def playback_worker(engine: Celune) -> None:
                             and engine.text_queue.empty(),
                         )
                     if (
-                        not source_buffers
+                        marker.notify_idle
+                        and not source_buffers
                         and engine.audio_queue.empty()
                         and engine.text_queue.empty()
                     ):
@@ -2666,6 +2705,14 @@ def playback_worker(engine: Celune) -> None:
                             saved_path=marker.saved_path,
                             analysis_audio=marker.analysis_audio,
                         )
+                    elif (
+                        not source_buffers
+                        and engine.audio_queue.empty()
+                        and engine.text_queue.empty()
+                    ):
+                        engine.playback_done.set()
+                        _reset_glow_audio_reactivity(engine)
+                        engine.progress_callback(1, 1)
 
         while True:
             orphaned = [
@@ -2688,7 +2735,8 @@ def playback_worker(engine: Celune) -> None:
                         and engine.text_queue.empty(),
                     )
                 if (
-                    not source_buffers
+                    marker.notify_idle
+                    and not source_buffers
                     and engine.audio_queue.empty()
                     and engine.text_queue.empty()
                 ):
@@ -2697,6 +2745,14 @@ def playback_worker(engine: Celune) -> None:
                         saved_path=marker.saved_path,
                         analysis_audio=marker.analysis_audio,
                     )
+                elif (
+                    not source_buffers
+                    and engine.audio_queue.empty()
+                    and engine.text_queue.empty()
+                ):
+                    engine.playback_done.set()
+                    _reset_glow_audio_reactivity(engine)
+                    engine.progress_callback(1, 1)
 
         if stop_requested and not source_buffers and not source_done:
             break

@@ -9,6 +9,7 @@ import secrets
 import threading
 import contextlib
 import hashlib
+import unittest.mock
 from pathlib import Path
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Generator
@@ -19,13 +20,12 @@ import numpy as np
 import numpy.typing as npt
 import soundfile as sf
 from huggingface_hub import snapshot_download
-from huggingface_hub.constants import HF_HUB_CACHE
 
 from ..utils import discard
 from ..constants import N_A_NUMERIC
 from ..cevoice import default_loader
 from ..exceptions import BackendError
-from ..paths import temp_data_dir
+from ..paths import huggingface_hub_cache_dir, temp_data_dir
 from ..typing.backends import BackendModel, ModelT
 
 __all__ = [
@@ -38,6 +38,27 @@ __all__ = [
 
 _HF_HUB_OFFLINE_LOCK = threading.Lock()
 _MAX_REFERENCE_SECONDS = 10.0
+_RUNTIME_PRIMITIVE_TYPES = (str, bytes, bytearray, int, float, bool, type(None))
+
+
+def _call_runtime_hook_if_present(value: object, name: str) -> bool:
+    """Call one release hook only when it already exists on the runtime object."""
+    with contextlib.suppress(TypeError):
+        existing = vars(value).get(name)
+        if callable(existing):
+            with contextlib.suppress(Exception):
+                existing()
+            return True
+
+    if isinstance(value, unittest.mock.NonCallableMock):
+        return False
+
+    hook = getattr(value, name, None)
+    if callable(hook):
+        with contextlib.suppress(Exception):
+            hook()
+        return True
+    return False
 
 
 def cached_hf_snapshot_path(
@@ -52,7 +73,10 @@ def cached_hf_snapshot_path(
     Returns:
         tuple[bool, Optional[str]]: Whether there is a usable cache path for the model, and its location.
     """
-    model_dir = os.path.join(HF_HUB_CACHE, f"models--{model.replace('/', '--')}")
+    model_dir = os.path.join(
+        str(huggingface_hub_cache_dir()),
+        f"models--{model.replace('/', '--')}",
+    )
     refs_main = os.path.join(model_dir, "refs", "main")
     snapshot_dir = os.path.join(model_dir, "snapshots")
 
@@ -98,6 +122,70 @@ def local_hf_offline_mode(enabled: bool = True) -> Generator[None, None, None]:
                 os.environ.pop("HF_HUB_OFFLINE", None)
             else:
                 os.environ["HF_HUB_OFFLINE"] = previous_offline
+
+
+def _release_runtime_container_members(value: object, seen: set[int]) -> None:
+    """Recursively release nested runtime members held in common containers."""
+    if isinstance(value, dict):
+        for nested in list(value.values()):
+            _release_runtime_references(nested, seen)
+        with contextlib.suppress(Exception):
+            value.clear()
+        return
+
+    if isinstance(value, list):
+        for nested in list(value):
+            _release_runtime_references(nested, seen)
+        with contextlib.suppress(Exception):
+            value.clear()
+        return
+
+    if isinstance(value, set):
+        for nested in list(value):
+            _release_runtime_references(nested, seen)
+        with contextlib.suppress(Exception):
+            value.clear()
+        return
+
+    if isinstance(value, tuple):
+        for nested in value:
+            _release_runtime_references(nested, seen)
+
+
+def _release_runtime_object_members(value: object, seen: set[int]) -> None:
+    """Recursively release nested runtime members held on one object instance."""
+    with contextlib.suppress(TypeError):
+        members = list(vars(value).items())
+        for attr_name, attr_value in members:
+            if attr_value is value:
+                continue
+            _release_runtime_references(attr_value, seen)
+            if attr_name in {"close", "unload"}:
+                continue
+            with contextlib.suppress(Exception):
+                setattr(value, attr_name, None)
+
+
+def _release_runtime_references(value: object, seen: set[int]) -> None:
+    """Recursively release nested references on an about-to-be-discarded runtime object."""
+    if isinstance(value, _RUNTIME_PRIMITIVE_TYPES):
+        return
+
+    value_id = id(value)
+    if value_id in seen:
+        return
+    seen.add(value_id)
+
+    if _call_runtime_hook_if_present(value, "close"):
+        return
+    if _call_runtime_hook_if_present(value, "unload"):
+        return
+
+    if isinstance(value, unittest.mock.NonCallableMock):
+        return
+
+    _release_runtime_container_members(value, seen)
+    _release_runtime_object_members(value, seen)
 
 
 class CeluneBackend(ABC, Generic[ModelT]):
@@ -318,6 +406,9 @@ class CeluneBackend(ABC, Generic[ModelT]):
                 if callable(unload):
                     with contextlib.suppress(Exception):
                         unload()
+            seen = {id(model)}
+            _release_runtime_container_members(model, seen)
+            _release_runtime_object_members(model, seen)
 
         gc.collect()
         if torch.cuda.is_available():

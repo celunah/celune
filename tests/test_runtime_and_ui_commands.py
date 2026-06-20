@@ -178,7 +178,7 @@ class UICommandTests(TestCase):
         self.ui.safe_log_dev = self.ui.safe_log
         self.ui.celune = SimpleNamespace(
             config={"ipa": False},
-            backend=SimpleNamespace(),
+            backend=FakeBackend,
             voice_prompt=None,
             persona_attachments=[],
             can_use_rubberband=True,
@@ -186,7 +186,9 @@ class UICommandTests(TestCase):
             reverb=SimpleNamespace(strength=0.0),
             say=mock.Mock(return_value=True),
             play=mock.Mock(return_value=True),
+            try_play_signal=mock.Mock(return_value=True),
             vision=SimpleNamespace(enabled=True, talkback=True),
+            dev=False,
         )
 
     def _process_command(self, command: str, args: list[str]) -> None:
@@ -237,6 +239,65 @@ class UICommandTests(TestCase):
         self.assertEqual(self.ui.celune.reverb.strength, 0.5)
         self._process_command("reverb", ["150"])
         self.assertEqual(self.logs[-1][1], "warning")
+
+    def test_backend_and_cevoice_commands_request_hot_reloads(self) -> None:
+        """Verify slash commands delegate backend and CEVOICE hot reloads into Celune."""
+        self.ui.celune.set_backend_and_wait = mock.Mock(return_value=True)
+        self.ui.celune.set_cevoice_and_wait = mock.Mock(return_value=True)
+
+        with mock.patch(
+            "celune.ui.commands.threading.Thread",
+            side_effect=self._thread_runs_immediately,
+        ):
+            self._process_command("backend", ["mini"])
+            self._process_command("cevoice", ["nova"])
+
+        self.ui.celune.set_backend_and_wait.assert_called_once_with("mini")
+        self.ui.celune.set_cevoice_and_wait.assert_called_once_with("nova")
+        self.assertEqual(self.logs[-2], ("Switched to backend: mini", "info"))
+        self.assertEqual(self.logs[-1], ("Character changed: nova", "info"))
+
+    def test_cevoice_command_reports_failed_character_switch(self) -> None:
+        """Verify /cevoice warns when the requested pack cannot be loaded."""
+        self.ui.celune.set_cevoice_and_wait = mock.Mock(return_value=False)
+
+        with mock.patch(
+            "celune.ui.commands.threading.Thread",
+            side_effect=self._thread_runs_immediately,
+        ):
+            self._process_command("cevoice", ["invalid_character"])
+
+        self.ui.celune.set_cevoice_and_wait.assert_called_once_with("invalid_character")
+        self.assertEqual(
+            self.logs[-1],
+            ("Could not switch character to invalid_character.", "warning"),
+        )
+
+    def test_cevoice_command_rejects_already_loaded_character(self) -> None:
+        """Verify /cevoice warns instead of reloading the active pack."""
+        self.ui.celune.set_cevoice_and_wait = mock.Mock(return_value=True)
+
+        with (
+            mock.patch(
+                "celune.ui.commands.resolve_bundle_path",
+                return_value=Path("voices/nova.cevoice"),
+            ),
+            mock.patch(
+                "celune.ui.commands.active_bundle_path",
+                return_value=Path("voices/nova.cevoice"),
+            ),
+            mock.patch(
+                "celune.ui.commands.threading.Thread",
+                side_effect=self._thread_runs_immediately,
+            ),
+        ):
+            self._process_command("cevoice", ["nova"])
+
+        self.ui.celune.set_cevoice_and_wait.assert_not_called()
+        self.assertEqual(
+            self.logs[-1],
+            ("This character is already loaded.", "warning"),
+        )
 
     def test_voiceprompt_command_is_blocked_when_model_lacks_instruction_control(
         self,
@@ -509,6 +570,36 @@ class UIStartupTests(TestCase):
         self.assertEqual(ui.cur_state, "error")
         self.assertEqual(ui.input_box.placeholder, "Please wait")
         self.assertEqual(ui.style_button.disabled, True)
+
+    def test_tts_idle_keeps_controls_locked_while_runtime_is_reloading(self) -> None:
+        """Verify idle playback callbacks do not unlock the UI mid-reload."""
+        ui = CeluneUI()
+        ui.celune_ready = True
+        ui.cur_state = "idle"
+        ui.input_box = TextArea()
+        ui.style_button = Button("Balanced")
+        ui.resources = cast(Label, None)
+        ui.status = Label()
+        ui.change_input_state = mock.Mock()
+        ui.change_voice_lock_state = mock.Mock()
+        ui.safe_status = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                locked=True,
+                sleeping=False,
+                is_in_tutorial=False,
+                voices=("balanced", "bold"),
+                cur_state="reloading",
+            ),
+        )
+
+        ui.tts_idle()
+
+        self.assertEqual(ui.celune.locked, True)
+        ui.change_input_state.assert_called_once_with(locked=True)
+        ui.change_voice_lock_state.assert_called_once_with(locked=True)
+        ui.safe_status.assert_not_called()
 
     def test_on_button_pressed_ignores_voice_switch_when_no_voices_loaded(self) -> None:
         """Verify voice cycling is blocked cleanly when startup left no voices loaded."""
@@ -872,6 +963,36 @@ class UIStartupTests(TestCase):
 
         self.assertTrue(ui._fatal_error_active)
         self.assertEqual(ui.theme, "celune_error")
+
+    def test_fatal_theme_stays_pinned_after_later_nonfatal_status_updates(self) -> None:
+        """Verify later routine events cannot clear the fatal UI theme once activated."""
+        ui = CeluneUI()
+        ui.status = Label()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(glow=SimpleNamespace(fatal=mock.Mock())),
+        )
+
+        ui.wrap_runtime_fatal_glow()
+        ui.celune.glow.fatal()
+        ui.safe_status("Idle")
+        ui.safe_status("Speaking")
+
+        self.assertTrue(ui._fatal_error_active)
+        self.assertEqual(ui.theme, "celune_error")
+
+    def test_fatal_status_text_ignores_later_idle_updates(self) -> None:
+        """Verify fatal UI status text is not overwritten by later normal lifecycle events."""
+        ui = CeluneUI()
+        ui.status = Label()
+        ui.safe_status("Celune could not warm up", "error")
+        ui._fatal_error_active = True
+
+        ui.safe_status("Idle")
+        ui.safe_status("Speaking")
+
+        self.assertEqual(ui._status_text, "Celune could not warm up")
+        self.assertEqual(ui.status_severity, "error")
 
     def test_runtime_error_themes_cover_dark_and_light_modes(self) -> None:
         """Verify both dedicated runtime error themes are registered correctly."""

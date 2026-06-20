@@ -82,6 +82,7 @@ class PlaybackSourceDone:
 
     source_id: int
     release_pipeline: bool = False
+    notify_idle: bool = True
     saved_path: Optional[str] = None
     analysis_audio: Optional[npt.NDArray[np.float32]] = None
 

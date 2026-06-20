@@ -24,7 +24,7 @@ from celune.utils import discard
 from celune.persona.prompts import PersonaPromptBuilder
 from celune.constants import JSON, JSONSerializable, PipelineStates
 from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
-from .support import FakeStream, FakeVCBackend, make_pipeline_engine
+from .support import FakeStream, FakeVCBackend, make_pipeline_engine, make_voice_loader
 from .test_persona_memory import StubEmbeddingMemoryStore
 
 
@@ -128,6 +128,21 @@ class PipelineTests(TestCase):
         self.assertEqual(pipeline.force_stop_speech(celune_engine), True)
         self.assertEqual(engine.text_queue.empty(), True)
         self.assertIs(engine.audio_queue.get_nowait(), engine.force_stop_marker)
+
+    def test_working_signal_completion_does_not_notify_idle(self) -> None:
+        """Verify the transitional working cue is not treated as a readiness idle event."""
+        engine = make_pipeline_engine()
+        engine.cur_state = "reloading"
+
+        self.assertEqual(pipeline.play_signal(cast(Celune, engine), "working"), True)
+
+        queued = list(engine.audio_queue.queue)
+        done_markers = [
+            item for item in queued if isinstance(item, pipeline.PlaybackSourceDone)
+        ]
+        self.assertEqual(len(done_markers), 1)
+        self.assertEqual(done_markers[0].notify_idle, False)
+        self.assertEqual(engine.cur_state, "reloading")
 
     def test_queue_speech_handles_success_and_failure_paths(self) -> None:
         """Verify speech queueing success and rejection paths.
@@ -247,10 +262,26 @@ class PipelineTests(TestCase):
         audio = np.ones((16, 2), dtype=np.float32)
         request = AudioInputRequest(audio=audio, sample_rate=48000, label="mic test")
 
-        with mock.patch("celune.pipeline.queue_sfx_audio", return_value=True) as queue:
+        convert_mock = mock.Mock(
+            return_value=SimpleNamespace(
+                audio=np.asarray(audio, dtype=np.float32).copy(),
+                sample_rate=48000,
+                label="mic test",
+            )
+        )
+        engine.vc_backend.convert = convert_mock
+        loader = make_voice_loader("balanced", {"reference_text": "Pack reference."})
+
+        with (
+            mock.patch("celune.pipeline.default_loader", return_value=loader),
+            mock.patch("celune.pipeline.queue_sfx_audio", return_value=True) as queue,
+        ):
             result = pipeline.handle_audio_input(cast(Celune, engine), request)
 
         self.assertEqual(result, True)
+        convert_mock.assert_called_once()
+        vc_request = convert_mock.call_args.args[0]
+        self.assertEqual(vc_request.target_references, (Path("balanced.wav"),))
         queue.assert_called_once()
         queued_audio = queue.call_args.args[1]
         self.assertEqual(queue.call_args.args[2], 48000)
@@ -606,6 +637,45 @@ class PipelineTests(TestCase):
         np.testing.assert_allclose(np.concatenate(glow_calls), 0.5, atol=1e-6)
         self.assertEqual(engine.playback_done.is_set(), True)
 
+    def test_playback_worker_does_not_emit_idle_for_non_idle_completion_marker(
+        self,
+    ) -> None:
+        """Verify non-readiness completion markers cannot snap the runtime back to idle."""
+        engine = make_pipeline_engine()
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.cur_state = "reloading"
+        engine.idle_callback = mock.Mock()
+        engine.glow = SimpleNamespace(schedule=mock.Mock())
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+        fake_stream = FakeStream()
+
+        pipeline.queue_playback_chunk(
+            cast(Celune, engine),
+            1,
+            np.full((2400, 2), 0.2, dtype=np.float32),
+            48000,
+        )
+        pipeline.queue_playback_done(
+            cast(Celune, engine),
+            1,
+            notify_idle_when_finished=False,
+        )
+        engine.audio_queue.put(engine.sentinel)
+
+        with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
+            pipeline.playback_worker(cast(Celune, engine))
+
+        engine.idle_callback.assert_not_called()
+        self.assertEqual(engine.cur_state, "reloading")
+        self.assertEqual(engine.playback_done.is_set(), True)
+
     def test_playback_worker_reports_live_audio_progress(self) -> None:
         """Verify playback progress follows audio position without flooding updates."""
         engine = make_pipeline_engine()
@@ -892,6 +962,36 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.playback_done.is_set(), True)
         self.assertEqual(engine.cur_state, "idle")
         engine.idle_callback.assert_called_once_with()
+
+    def test_finalize_playback_idle_does_not_announce_readiness_while_reloading(
+        self,
+    ) -> None:
+        """Verify transitional playback does not announce readiness mid-reload."""
+        engine = make_pipeline_engine()
+        engine.locked = True
+        engine.loaded = False
+        engine.cur_state = "reloading"
+
+        pipeline.finalize_playback_idle(cast(Celune, engine))
+
+        self.assertNotIn(("Ready to speak.", "info"), engine.messages)
+        self.assertEqual(getattr(engine, "_ready_announced", False), False)
+        self.assertEqual(engine.cur_state, "reloading")
+
+    def test_finalize_playback_idle_does_not_emit_idle_callback_while_locked(
+        self,
+    ) -> None:
+        """Verify locked non-readiness playback cannot unlock the UI through idle callbacks."""
+        engine = make_pipeline_engine()
+        engine.locked = True
+        engine.loaded = False
+        engine.cur_state = "reloading"
+
+        pipeline.finalize_playback_idle(cast(Celune, engine))
+
+        engine.idle_callback.assert_not_called()
+        self.assertEqual(engine.playback_done.is_set(), True)
+        self.assertEqual(engine.cur_state, "reloading")
 
     def test_think_builds_persona_payload_and_queues_response(self) -> None:
         """Verify Persona request formatting without loading a Persona model.

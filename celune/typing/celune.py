@@ -247,6 +247,7 @@ class CeluneStateAccessors:
     regenerate: bool
     locked: bool
     loaded: bool
+    _reload_pending: bool
     sleeping: bool
     _last_flavor: Optional[str]
     _ready_announced: bool

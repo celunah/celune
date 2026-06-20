@@ -120,7 +120,11 @@ class ManagerEventTests(TestCase):
 
             @subscribe("ready")
             def on_ready(self, _event: ReadyEvent) -> None:
-                """React to a mock ready event."""
+                """React to a mock ready event.
+
+                Args:
+                    _event: The ready event payload.
+                """
                 received.append("ready")
 
             def invoke(self, *args, **kwargs) -> None:
@@ -146,12 +150,20 @@ class ManagerEventTests(TestCase):
 
             @subscribe("ready", enabled=False)
             def on_ready(self, _event: ReadyEvent) -> None:
-                """React to a mock ready event."""
+                """React to a mock ready event.
+
+                Args:
+                    _event: The ready event payload.
+                """
                 received.append("ready")
 
             @subscribe("voice_changed", enabled=True)
             def on_voice_changed(self, _event: VoiceChangedEvent) -> None:
-                """React to a mock voice change event."""
+                """React to a mock voice change event.
+
+                Args:
+                    _event: The voice-change event payload.
+                """
                 received.append("voice")
 
             def invoke(self, *args, **kwargs) -> None:

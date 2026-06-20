@@ -13,7 +13,6 @@ import numpy.typing as npt
 from dots_tts.runtime import DotsTtsRuntime
 
 from ..utils import custom_assert
-from ..exceptions import BackendError
 from ..cevoice import default_loader, CEVoiceLoader
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
@@ -94,7 +93,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         loader = default_loader()
         custom_assert(
             loader is not None,
-            BackendError(
+            FileNotFoundError(
                 "backend 'dotstts' requires a compatible CEVOICE/CECHAR package "
                 "with at least one valid voice identifier"
             ),
@@ -114,7 +113,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         )
         custom_assert(
             bool(voice_names),
-            BackendError(
+            FileNotFoundError(
                 "backend 'dotstts' requires a compatible CEVOICE/CECHAR package "
                 "with at least one valid voice identifier"
             ),

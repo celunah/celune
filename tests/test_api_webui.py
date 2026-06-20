@@ -448,6 +448,71 @@ class ApiWebUITests(TestCase):
         self.assertIsInstance(final_audio, tuple)
         self.assertEqual(cast(tuple[int, np.ndarray], final_audio)[0], 48000)
 
+    def test_webui_convert_audio_returns_browser_audio_after_conversion(self) -> None:
+        """Verify browser audio conversion returns one playable browser payload."""
+        converted_audio = np.ones((10, 2), dtype=np.float32) * 0.5
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                input_mode="voice_conversion",
+                convert_audio=mock.Mock(
+                    return_value=SimpleNamespace(
+                        audio=converted_audio,
+                        sample_rate=24000,
+                        label="browser audio input",
+                    )
+                ),
+                dev=False,
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+            ),
+        )
+
+        with mock.patch(
+            "celune.api.ui_resources.resource_pages",
+            return_value=("VRAM: 10.66/11.94 GB available",),
+        ):
+            source_value, browser_audio, *_rest = api._webui_convert_audio(
+                (44100, np.zeros((16, 2), dtype=np.float32))
+            )
+
+        self.assertIsNone(source_value)
+        self.assertIsInstance(browser_audio, tuple)
+        sample_rate, array = cast(tuple[int, np.ndarray], browser_audio)
+        self.assertEqual(sample_rate, 24000)
+        self.assertEqual(array.shape, (10, 2))
+
+    def test_webui_convert_audio_rejects_text_to_speech_mode(self) -> None:
+        """Verify browser audio conversion is unavailable outside VC mode."""
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                input_mode="text_to_speech",
+                dev=False,
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+            ),
+        )
+
+        with mock.patch(
+            "celune.api.ui_resources.resource_pages",
+            return_value=("VRAM: 10.66/11.94 GB available",),
+        ):
+            source_value, browser_audio, logs_html, *_rest = api._webui_convert_audio(
+                (44100, np.zeros((8, 2), dtype=np.float32))
+            )
+
+        self.assertIsNotNone(source_value)
+        self.assertEqual(source_value[0], 44100)
+        self.assertIsNone(browser_audio)
+        self.assertIn("voice conversion mode", logs_html)
+
     def test_webui_snapshot_probes_runtime_status_and_rotates_resources(self) -> None:
         """Verify footer polling refreshes status and rotates the resource page."""
         api.bound_celune = cast(
