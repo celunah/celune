@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Runtime filesystem paths for Celune user data."""
 
+import os
 import sys
 import shutil
 from pathlib import Path
@@ -11,6 +12,9 @@ from platformdirs import user_data_dir
 from .constants import APP_SLUG
 
 _REPO_MARKERS = ("celune", "default_config.yaml", "pyproject.toml")
+_HF_HOME_ENV = "HF_HOME"
+_HF_HUB_CACHE_ENV = "HF_HUB_CACHE"
+_TRANSFORMERS_CACHE_ENV = "TRANSFORMERS_CACHE"
 
 
 def running_compiled() -> bool:
@@ -52,6 +56,79 @@ def app_data_dir(create: bool = False) -> Path:
     if create:
         path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def huggingface_home_dir(create: bool = False) -> Path:
+    """Return Celune's default Hugging Face home directory.
+
+    Args:
+        create: Whether this directory should be created before being returned.
+
+    Returns:
+        Path: Celune's Hugging Face home directory inside the user data folder.
+    """
+    path = app_data_dir(create=create) / "huggingface"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def huggingface_hub_cache_dir(create: bool = False) -> Path:
+    """Return Celune's default Hugging Face Hub snapshot cache directory.
+
+    Args:
+        create: Whether this directory should be created before being returned.
+
+    Returns:
+        Path: Celune's Hugging Face Hub cache directory.
+    """
+    path = huggingface_home_dir(create=create) / "hub"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def transformers_cache_dir(create: bool = False) -> Path:
+    """Return Celune's default Transformers cache directory.
+
+    Args:
+        create: Whether this directory should be created before being returned.
+
+    Returns:
+        Path: Celune's Transformers cache directory.
+    """
+    path = huggingface_home_dir(create=create) / "transformers"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def configure_huggingface_cache_environment(force: bool = False) -> None:
+    """Point Hugging Face caches at Celune's user data directory in portable mode.
+
+    Args:
+        force: Whether to apply the portable cache defaults even outside compiled builds.
+    """
+    default_hf_home = str(huggingface_home_dir())
+    default_hf_hub_cache = str(huggingface_hub_cache_dir())
+    default_transformers_cache = str(transformers_cache_dir())
+
+    if not force and not running_compiled():
+        # If this process previously enabled Celune's portable defaults,
+        # clear them again for source-tree runs so local development and tests
+        # continue to use the host Hugging Face cache.
+        if os.environ.get(_HF_HOME_ENV) == default_hf_home:
+            os.environ.pop(_HF_HOME_ENV, None)
+        if os.environ.get(_HF_HUB_CACHE_ENV) == default_hf_hub_cache:
+            os.environ.pop(_HF_HUB_CACHE_ENV, None)
+        if os.environ.get(_TRANSFORMERS_CACHE_ENV) == default_transformers_cache:
+            os.environ.pop(_TRANSFORMERS_CACHE_ENV, None)
+        return
+
+    if _HF_HOME_ENV not in os.environ:
+        os.environ[_HF_HOME_ENV] = default_hf_home
+    if _HF_HUB_CACHE_ENV not in os.environ:
+        os.environ[_HF_HUB_CACHE_ENV] = default_hf_hub_cache
 
 
 def memory_data_dir(create: bool = False) -> Path:

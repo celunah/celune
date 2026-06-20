@@ -73,6 +73,7 @@ WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS = 0.9
 
 WebUiUpdate = dict[str, JSONSerializable]
 WebUiAudioValue = Optional[tuple[int, npt.NDArray[np.float32]]]
+WebUiInputAudioValue = Optional[tuple[int, npt.NDArray[np.float32]]]
 
 
 class _WebUiUnset:
@@ -860,13 +861,13 @@ def _normalized_audio(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]
     return normalized
 
 
-def _flac_bytes(audio: npt.NDArray[np.float32]) -> bytes:
-    """Encode 48 kHz audio as PCM24 FLAC bytes."""
+def _flac_bytes(audio: npt.NDArray[np.float32], sample_rate: int = BASE_SR) -> bytes:
+    """Encode audio as PCM24 FLAC bytes."""
     buffer = io.BytesIO()
     sf.write(
         buffer,
         _normalized_audio(audio),
-        BASE_SR,
+        sample_rate,
         format="FLAC",
         subtype="PCM_24",
     )
@@ -919,15 +920,18 @@ def _webui_audio_array(chunks: SpeechStreamQueue) -> npt.NDArray[np.float32]:
     return np.concatenate(audio_chunks)
 
 
-def stream_headers() -> dict[str, str]:
+def stream_headers(sample_rate: int = BASE_SR) -> dict[str, str]:
     """Return headers describing the FLAC response.
+
+    Args:
+        sample_rate: Sample rate advertised in the response headers.
 
     Returns:
         dict[str, str]: Response headers for a FLAC response.
     """
     return {
         "X-Audio-Format": "flac-pcm24",
-        "X-Sample-Rate": str(BASE_SR),
+        "X-Sample-Rate": str(sample_rate),
         "X-Channels": "2",
     }
 
@@ -1194,6 +1198,25 @@ def _webui_run_command(text: str) -> bool:
     return True
 
 
+def _decode_uploaded_audio(
+    data: bytes,
+) -> tuple[npt.NDArray[np.float32], int]:
+    """Decode uploaded audio bytes into float32 audio and a source sample rate."""
+    audio, sample_rate = sf.read(io.BytesIO(data), dtype="float32")
+    return np.asarray(audio, dtype=np.float32), int(sample_rate)
+
+
+def _voice_conversion_unavailable_response() -> JSONResponse:
+    """Return a standard API error for VC-only endpoints in TTS mode."""
+    return JSONResponse(
+        status_code=409,
+        content={
+            "error": "wrong_mode",
+            "message": "I am not currently able to do this.",
+        },
+    )
+
+
 def _webui_speak(
     content: str,
 ) -> Iterator[
@@ -1276,6 +1299,107 @@ def _webui_speak(
         )
         snapshot = _webui_submit_snapshot("")
         yield snapshot[0], None, *snapshot[1:]
+
+
+def _webui_convert_audio(
+    source_audio: WebUiInputAudioValue,
+) -> tuple[
+    WebUiInputAudioValue,
+    WebUiAudioValue,
+    str,
+    str,
+    str,
+    WebUiUpdate,
+    WebUiUpdate,
+]:
+    """Convert uploaded audio through the active VC backend for browser playback."""
+    if source_audio is None:
+        _append_webui_log(
+            "Upload or record audio before starting voice conversion.",
+            "warning",
+        )
+        logs_html, status_html, resources_html, voice_update, send_update, _input = (
+            _webui_snapshot()
+        )
+        return (
+            None,
+            None,
+            logs_html,
+            status_html,
+            resources_html,
+            voice_update,
+            send_update,
+        )
+
+    celune = require_celune()
+    if getattr(celune, "input_mode", "text_to_speech") != "voice_conversion":
+        _append_webui_log(
+            "Audio conversion is only available in voice conversion mode.",
+            "warning",
+        )
+        logs_html, status_html, resources_html, voice_update, send_update, _input = (
+            _webui_snapshot()
+        )
+        return (
+            source_audio,
+            None,
+            logs_html,
+            status_html,
+            resources_html,
+            voice_update,
+            send_update,
+        )
+
+    sample_rate, audio = source_audio
+    api_log("CONVERT(WEBUI)", "uploaded audio")
+    try:
+        output = celune.convert_audio(audio, sample_rate, label="browser audio input")
+    except Exception as e:
+        _append_webui_log(
+            f"[WEBUI ERROR] {format_error(e, celune.dev)}",
+            "error",
+        )
+        logs_html, status_html, resources_html, voice_update, send_update, _input = (
+            _webui_snapshot()
+        )
+        return (
+            source_audio,
+            None,
+            logs_html,
+            status_html,
+            resources_html,
+            voice_update,
+            send_update,
+        )
+
+    if output is None:
+        _append_webui_log("I can't convert that right now.", "warning")
+        logs_html, status_html, resources_html, voice_update, send_update, _input = (
+            _webui_snapshot()
+        )
+        return (
+            source_audio,
+            None,
+            logs_html,
+            status_html,
+            resources_html,
+            voice_update,
+            send_update,
+        )
+
+    converted_audio = (output.sample_rate, np.asarray(output.audio, dtype=np.float32))
+    logs_html, status_html, resources_html, voice_update, send_update, _input = (
+        _webui_snapshot()
+    )
+    return (
+        None,
+        converted_audio,
+        logs_html,
+        status_html,
+        resources_html,
+        voice_update,
+        send_update,
+    )
 
 
 configure_webui_theme = _configure_webui_theme
@@ -1363,6 +1487,17 @@ def _build_webui() -> gr.Blocks:
                         min_width=0,
                         interactive=False,
                     )
+            source_audio = gr.Audio(
+                value=None,
+                type="numpy",
+                sources=["upload", "microphone"],
+                label="Source audio",
+                elem_id="celune-source-audio",
+            )
+            convert_button = gr.Button(
+                value="Convert Audio",
+                elem_id="celune-convert-audio",
+            )
             with gr.Row(elem_id="celune-footer"):
                 status = gr.HTML(_webui_status_html(), elem_id="celune-status")
                 resources = gr.HTML(
@@ -1427,6 +1562,20 @@ def _build_webui() -> gr.Blocks:
         voice_button.click(  # pylint: disable=E1101
             _webui_cycle_voice,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
+            show_progress="hidden",
+        )
+        convert_button.click(  # pylint: disable=E1101
+            _webui_convert_audio,
+            inputs=[source_audio],
+            outputs=[
+                source_audio,
+                audio,
+                logs,
+                status,
+                resources,
+                voice_button,
+                send_button,
+            ],
             show_progress="hidden",
         )
 
@@ -1711,14 +1860,14 @@ async def sfx(
         )
 
     try:
-        audio, sr = sf.read(io.BytesIO(data), dtype="float32")
-        audio = resample_audio(np.asarray(audio, dtype=np.float32), sr)
-    except Exception as e:
+        audio, sr = _decode_uploaded_audio(data)
+        audio = resample_audio(audio, sr)
+    except Exception:
         return JSONResponse(
             status_code=400,
             content={
                 "error": "invalid_audio",
-                "message": f"I can't understand that sound file: {format_error(e, celune.dev)}",
+                "message": "I don't understand your input.",
             },
         )
 
@@ -1738,6 +1887,80 @@ async def sfx(
         chunks(),
         media_type="audio/flac",
         headers=stream_headers(),
+    )
+
+
+@api.post("/v1/convert", response_model=None)
+async def convert_audio(
+    file: UploadFile = File(...),
+) -> Union[StreamingResponse, JSONResponse]:
+    """Convert an uploaded source audio file through the active VC backend.
+
+    Args:
+        file: The uploaded source audio file to convert.
+
+    Returns:
+        Union[StreamingResponse, JSONResponse]: The converted audio stream, or a JSON error payload if conversion
+        failed.
+    """
+    celune = require_celune()
+    if getattr(celune, "input_mode", "text_to_speech") != "voice_conversion":
+        return _voice_conversion_unavailable_response()
+
+    filename = file.filename or f"convert_{uuid.uuid4()}"
+    api_log("CONVERT", filename)
+
+    data = await file.read(max_sfx_upload_bytes + 1)
+    if len(data) > max_sfx_upload_bytes:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "error": "request_too_large",
+                "message": "That source audio is too large for me to convert.",
+            },
+        )
+
+    try:
+        audio, sample_rate = _decode_uploaded_audio(data)
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "invalid_audio",
+                "message": "I don't understand your input.",
+            },
+        )
+
+    try:
+        output = celune.convert_audio(audio, sample_rate, label=filename)
+    except Exception:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "request_failed",
+                "message": "I couldn't convert that.",
+            },
+        )
+
+    if output is None:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "not_ready",
+                "message": "I can't convert that.",
+            },
+        )
+
+    def chunks() -> Iterator[bytes]:
+        yield _flac_bytes(
+            np.asarray(output.audio, dtype=np.float32),
+            sample_rate=output.sample_rate,
+        )
+
+    return StreamingResponse(
+        chunks(),
+        media_type="audio/flac",
+        headers=stream_headers(output.sample_rate),
     )
 
 

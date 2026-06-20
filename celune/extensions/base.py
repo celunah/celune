@@ -2,7 +2,8 @@
 """Celune's extension annotations and classes."""
 
 from abc import ABC
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Union
 
 from ..dataclasses.extensions import CeluneContext
 from ..exceptions import IncompleteExtensionError
@@ -140,3 +141,25 @@ class CeluneExtension(ABC):
             return False
 
         return self.ctx.set_voice(voice)
+
+    def with_backend(self, backend_name: str):
+        """Temporarily switch Celune to another backend inside a ``with`` block.
+
+        Args:
+            backend_name: The backend name to activate temporarily.
+
+        Returns:
+            contextlib.AbstractContextManager[None]: A context manager that restores the previous backend on exit.
+        """
+        return self.ctx.with_backend(backend_name)
+
+    def with_cevoice(self, bundle: Optional[Union[str, Path]]):
+        """Temporarily switch Celune to another CEVOICE bundle inside a ``with`` block.
+
+        Args:
+            bundle: The CEVOICE bundle name or path to activate temporarily.
+
+        Returns:
+            contextlib.AbstractContextManager[None]: A context manager that restores the previous CEVOICE pack on exit.
+        """
+        return self.ctx.with_cevoice(bundle)

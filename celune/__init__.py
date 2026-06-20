@@ -20,6 +20,9 @@ import subprocess as _subprocess
 from typing import TYPE_CHECKING, Callable, Union
 
 from .constants import APP_NAME
+from .paths import configure_huggingface_cache_environment
+
+configure_huggingface_cache_environment()
 
 if TYPE_CHECKING:
     from .celune import Celune

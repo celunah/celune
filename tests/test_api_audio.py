@@ -5,12 +5,15 @@ import io
 import json
 import time
 import queue
-from unittest import TestCase
+import asyncio
+from unittest import TestCase, mock
 from types import SimpleNamespace
 from typing import cast, Optional
 
 import numpy as np
 import soundfile as sf
+from fastapi import UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.responses import Response
 
 from celune import api
@@ -20,6 +23,30 @@ from celune.pipeline import SpeechStreamQueue
 
 class ApiAudioTests(TestCase):
     """Tests for API audio payload formatting."""
+
+    @staticmethod
+    def _wav_bytes(
+        audio: np.ndarray,
+        sample_rate: int = 24000,
+    ) -> bytes:
+        """Encode one in-memory WAV fixture for upload tests."""
+        buffer = io.BytesIO()
+        sf.write(buffer, audio, sample_rate, format="WAV")
+        return buffer.getvalue()
+
+    @staticmethod
+    async def _response_bytes(response: Response) -> bytes:
+        """Collect one response body for direct route-call tests."""
+        if getattr(response, "body", None) is not None:
+            return bytes(response.body)
+
+        chunks: list[bytes] = []
+        async for chunk in cast(StreamingResponse, response).body_iterator:
+            if isinstance(chunk, str):
+                chunks.append(chunk.encode("utf-8"))
+            else:
+                chunks.append(bytes(chunk))
+        return b"".join(chunks)
 
     def test_audio_bytes_encode_flac_from_stream_chunks(self) -> None:
         """Verify queued speech audio is returned as PCM24 FLAC."""
@@ -103,3 +130,76 @@ class ApiAudioTests(TestCase):
         finally:
             api.speech_job_ttl_seconds = previous_ttl
             api.speech_jobs.clear()
+
+    def test_convert_route_rejects_requests_outside_voice_conversion_mode(self) -> None:
+        """Verify VC conversion uploads are rejected while running in TTS mode."""
+        previous_celune = api.bound_celune
+        audio = np.zeros((24, 2), dtype=np.float32)
+
+        try:
+            api.bound_celune = cast(
+                Celune,
+                SimpleNamespace(
+                    input_mode="text_to_speech",
+                    dev=False,
+                ),
+            )
+            response = asyncio.run(
+                api.convert_audio(
+                    UploadFile(
+                        file=io.BytesIO(self._wav_bytes(audio)),
+                        filename="fixture.wav",
+                    )
+                )
+            )
+        finally:
+            api.bound_celune = previous_celune
+
+        self.assertEqual(response.status_code, 409)
+        payload = json.loads(bytes(cast(JSONResponse, response).body))
+        self.assertIn("I am not currently able", payload["message"])
+
+    def test_convert_route_returns_converted_audio(self) -> None:
+        """Verify VC conversion uploads return FLAC audio from the engine."""
+        previous_celune = api.bound_celune
+        source_audio = np.zeros((24, 2), dtype=np.float32)
+        converted_audio = np.ones((12, 2), dtype=np.float32) * 0.25
+
+        try:
+            api.bound_celune = cast(
+                Celune,
+                SimpleNamespace(
+                    input_mode="voice_conversion",
+                    dev=False,
+                    convert_audio=mock.Mock(
+                        return_value=SimpleNamespace(
+                            audio=converted_audio,
+                            sample_rate=24000,
+                            label="fixture.wav",
+                        )
+                    ),
+                ),
+            )
+            response = asyncio.run(
+                api.convert_audio(
+                    UploadFile(
+                        file=io.BytesIO(
+                            self._wav_bytes(source_audio, sample_rate=44100)
+                        ),
+                        filename="fixture.wav",
+                    )
+                )
+            )
+        finally:
+            api.bound_celune = previous_celune
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["x-sample-rate"], "24000")
+        payload = asyncio.run(self._response_bytes(response))
+        self.assertEqual(payload[:4], b"fLaC")
+        decoded_audio, sample_rate = sf.read(
+            io.BytesIO(payload),
+            dtype="float32",
+        )
+        self.assertEqual(sample_rate, 24000)
+        self.assertEqual(decoded_audio.shape, (12, 2))

@@ -2,12 +2,10 @@
 """Structured prompt building for the Persona system."""
 
 import textwrap
-from pathlib import Path
+import contextlib
 from dataclasses import dataclass, field
 
-from platformdirs import user_data_dir
-
-from ..constants import APP_SLUG
+from ..paths import temp_data_dir
 
 
 def _render_lines(lines: list[str]) -> str:
@@ -203,6 +201,15 @@ class PersonaPromptBuilder:
     """Build structured runtime prompts for the Persona system."""
 
     @staticmethod
+    def _write_debug_prompt(prompt: str) -> None:
+        """Persist the current Persona prompt when the temp directory is writable."""
+        with contextlib.suppress(OSError):
+            (temp_data_dir(create=True) / "rag_prompt.txt").write_text(
+                prompt,
+                encoding="utf-8",
+            )
+
+    @staticmethod
     def build(context: PersonaContext) -> str:
         """Return the structured Persona runtime prompt.
 
@@ -273,15 +280,10 @@ class PersonaPromptBuilder:
             f"{context.character_profile.name}:",
         ]
 
-        # this is for inspecting your RAG prompt, in case your character goes off the guidelines
-        # it is located in the following paths:
-        # %localappdata%\celune\temp\rag_prompt.txt on Windows, or
-        # ~/.local/share/celune/temp/rag_prompt.txt on Linux
-        with open(
-            Path(user_data_dir(APP_SLUG, appauthor=False)) / "temp" / "rag_prompt.txt",
-            "w",
-            encoding="utf-8",
-        ) as f:
-            f.write("\n\n".join(section for section in sections if section))
+        prompt = "\n\n".join(section for section in sections if section)
 
-        return "\n\n".join(section for section in sections if section)
+        # This debug dump helps inspect Persona prompt regressions without
+        # breaking prompt generation when the runtime data directory is unavailable.
+        PersonaPromptBuilder._write_debug_prompt(prompt)
+
+        return prompt

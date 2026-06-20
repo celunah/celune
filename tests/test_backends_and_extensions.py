@@ -6,8 +6,9 @@ import tempfile
 import textwrap
 import importlib
 import threading
+import contextlib
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 from types import SimpleNamespace
 from unittest import mock, TestCase
 from collections.abc import Iterator
@@ -18,6 +19,7 @@ import soundfile as sf
 import torch
 
 from celune.utils import discard
+from celune.celune import Celune
 from celune.backends import resolve_backend
 from celune.vc_backends import resolve_vc_backend
 from celune.vc_backends.passthrough import CelunePassthroughVCBackend
@@ -25,7 +27,6 @@ from celune.extensions.manager import CeluneExtensionManager
 from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.exceptions import (
-    BackendError,
     ExtensionAlreadyRegisteredError,
     InvalidExtensionError,
 )
@@ -127,6 +128,38 @@ class BackendTests(TestCase):
             resolve_vc_backend("missing")
         with self.assertRaisesRegex(TypeError, "voice-conversion backend"):
             resolve_vc_backend(123)  # type: ignore[arg-type]
+
+    def test_unload_model_releases_nested_runtime_members(self) -> None:
+        """Verify backend unload clears nested releasable members hidden inside wrapper objects."""
+
+        class NestedRuntime:
+            """Minimal nested runtime object exposing a close hook."""
+
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                """Record runtime shutdown."""
+                self.closed = True
+
+        class WrapperRuntime:
+            """Minimal wrapper that keeps releasable objects in nested attributes."""
+
+            def __init__(self) -> None:
+                self.inner = NestedRuntime()
+                self.cache = {"child": NestedRuntime()}
+
+        backend = FakeBackend(log=lambda _msg, _severity="info": None)
+        runtime = WrapperRuntime()
+        inner = runtime.inner
+        cached = runtime.cache["child"]
+        backend.model = cast(object, runtime)
+
+        backend.unload_model()
+
+        self.assertEqual(inner.closed, True)
+        self.assertEqual(cached.closed, True)
+        self.assertIsNone(backend.model)
 
     def test_passthrough_vc_backend_returns_playable_output(self) -> None:
         """Verify the passthrough VC backend returns decoded audio unchanged."""
@@ -236,7 +269,7 @@ class BackendTests(TestCase):
                 "celune.backends.voxcpm2.default_loader", return_value=loader
             ):
                 with self.assertRaisesRegex(
-                    BackendError, "requires a compatible CEVOICE/CECHAR package"
+                    FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
                 ):
                     voxcpm2_cls(log=lambda _msg, _severity="info": None)
 
@@ -296,7 +329,7 @@ class BackendTests(TestCase):
             mock.patch("celune.backends.voxcpm2.default_loader", return_value=None),
         ):
             with self.assertRaisesRegex(
-                BackendError, "requires a compatible CEVOICE/CECHAR package"
+                FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
             ):
                 voxcpm2_cls(log=lambda _msg, _severity="info": None)
 
@@ -307,7 +340,7 @@ class BackendTests(TestCase):
             loader = make_voice_loader("calm", {})
             with mock.patch("celune.backends.mini.default_loader", return_value=loader):
                 with self.assertRaisesRegex(
-                    BackendError, "requires a compatible CEVOICE/CECHAR package"
+                    FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
                 ):
                     mini_cls(log=lambda _msg, _severity="info": None)
 
@@ -389,7 +422,7 @@ class BackendTests(TestCase):
             mock.patch("celune.backends.mini.default_loader", return_value=None),
         ):
             with self.assertRaisesRegex(
-                BackendError, "requires a compatible CEVOICE/CECHAR package"
+                FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
             ):
                 mini_cls(log=lambda _msg, _severity="info": None)
 
@@ -611,7 +644,7 @@ class BackendTests(TestCase):
                 "celune.backends.dotstts.default_loader", return_value=loader
             ):
                 with self.assertRaisesRegex(
-                    BackendError, "requires a compatible CEVOICE/CECHAR package"
+                    FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
                 ):
                     dotstts_cls(log=lambda _msg, _severity="info": None)
 
@@ -623,7 +656,7 @@ class BackendTests(TestCase):
             mock.patch("celune.backends.dotstts.default_loader", return_value=None),
         ):
             with self.assertRaisesRegex(
-                BackendError, "requires a compatible CEVOICE/CECHAR package"
+                FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
             ):
                 dotstts_cls(log=lambda _msg, _severity="info": None)
 
@@ -718,7 +751,7 @@ class BackendTests(TestCase):
                 "celune.backends.qwen3.default_loader", return_value=loader
             ):
                 with self.assertRaisesRegex(
-                    BackendError, "requires a compatible CEVOICE/CECHAR package"
+                    FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
                 ):
                     qwen3_cls(log=lambda _msg, _severity="info": None)
 
@@ -730,7 +763,7 @@ class BackendTests(TestCase):
             mock.patch("celune.backends.qwen3.default_loader", return_value=None),
         ):
             with self.assertRaisesRegex(
-                BackendError, "requires a compatible CEVOICE/CECHAR package"
+                FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
             ):
                 qwen3_cls(log=lambda _msg, _severity="info": None)
 
@@ -750,7 +783,7 @@ class BackendTests(TestCase):
             mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
         ):
             with self.assertRaisesRegex(
-                BackendError, "requires a compatible CEVOICE/CECHAR package"
+                FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
             ):
                 qwen3_cls(log=lambda _msg, _severity="info": None)
 
@@ -935,6 +968,12 @@ class ExtensionTests(TestCase):
             set_voice=lambda name: True,
             get_state=lambda: "idle",
             wait_until_ready=lambda timeout=30.0: True,
+            backend_override=lambda backend_name: contextlib.nullcontext(
+                cast(Celune, SimpleNamespace())
+            ),
+            cevoice_override=lambda bundle: contextlib.nullcontext(
+                cast(Celune, SimpleNamespace())
+            ),
         )
 
     def test_context_and_extension_helpers_delegate_calls(self) -> None:
@@ -956,6 +995,10 @@ class ExtensionTests(TestCase):
         self.assertEqual(extension.play("quiet.wav", keep=True, volume=0.25), True)
         self.assertEqual(self.play_calls[-1], ("quiet.wav", True, 0.25))
         self.assertEqual(extension.set_voice("bold"), True)
+        with extension.with_backend("mini"):
+            pass
+        with extension.with_cevoice("nova"):
+            pass
 
     def test_manager_registers_invokes_and_autoloads_extensions(self) -> None:
         """Verify registration, duplicate handling, and directory autoloading.

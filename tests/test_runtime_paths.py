@@ -12,7 +12,15 @@ import yaml
 from textual.widgets import RichLog
 
 from celune.constants import APP_SLUG
-from celune.paths import ensure_config_path, project_root, running_compiled
+from celune.paths import (
+    configure_huggingface_cache_environment,
+    ensure_config_path,
+    huggingface_home_dir,
+    huggingface_hub_cache_dir,
+    project_root,
+    running_compiled,
+    transformers_cache_dir,
+)
 from celune.persona.memory import default_memory_dir
 from celune.cevoice import bundled_voices_dir, default_bundle_path
 from celune.ui.app import CeluneUI
@@ -56,6 +64,117 @@ class RuntimePathTests(TestCase):
 
         with mock.patch("celune.persona.memory.memory_data_dir", return_value=expected):
             self.assertEqual(default_memory_dir(), expected)
+
+    def test_huggingface_cache_dirs_live_in_runtime_data(self) -> None:
+        """Verify Celune's default Hugging Face caches live under user data."""
+        expected_root = Path("C:/runtime-data")
+
+        with mock.patch("celune.paths.user_data_dir", return_value=str(expected_root)):
+            self.assertEqual(
+                huggingface_home_dir(),
+                expected_root / "huggingface",
+            )
+            self.assertEqual(
+                huggingface_hub_cache_dir(),
+                expected_root / "huggingface" / "hub",
+            )
+            self.assertEqual(
+                transformers_cache_dir(),
+                expected_root / "huggingface" / "transformers",
+            )
+
+    def test_huggingface_cache_environment_defaults_to_runtime_data(self) -> None:
+        """Verify Celune points Hugging Face caches at the runtime data directory."""
+        expected_root = Path("C:/runtime-data")
+
+        with (
+            mock.patch("celune.paths.user_data_dir", return_value=str(expected_root)),
+            mock.patch("celune.paths.running_compiled", return_value=True),
+            mock.patch.dict(os.environ, {}, clear=True),
+        ):
+            configure_huggingface_cache_environment()
+
+            self.assertEqual(
+                os.environ["HF_HOME"],
+                str(expected_root / "huggingface"),
+            )
+            self.assertEqual(
+                os.environ["HF_HUB_CACHE"],
+                str(expected_root / "huggingface" / "hub"),
+            )
+
+    def test_huggingface_cache_environment_respects_existing_overrides(self) -> None:
+        """Verify explicit cache env vars are preserved."""
+        existing = {
+            "HF_HOME": "X:/hf-home",
+            "HF_HUB_CACHE": "X:/hf-hub",
+        }
+
+        with (
+            mock.patch("celune.paths.running_compiled", return_value=True),
+            mock.patch.dict(os.environ, existing.copy(), clear=True),
+        ):
+            configure_huggingface_cache_environment()
+            self.assertEqual(os.environ["HF_HOME"], existing["HF_HOME"])
+            self.assertEqual(os.environ["HF_HUB_CACHE"], existing["HF_HUB_CACHE"])
+
+    def test_huggingface_cache_environment_skips_source_tree_imports(self) -> None:
+        """Verify source-tree runs keep the host Hugging Face cache defaults."""
+        with (
+            mock.patch("celune.paths.running_compiled", return_value=False),
+            mock.patch.dict(os.environ, {}, clear=True),
+        ):
+            configure_huggingface_cache_environment()
+            self.assertNotIn("HF_HOME", os.environ)
+            self.assertNotIn("HF_HUB_CACHE", os.environ)
+
+    def test_huggingface_cache_environment_clears_celune_portable_defaults(
+        self,
+    ) -> None:
+        """Verify source-tree runs clear Celune-owned portable cache defaults."""
+        expected_root = Path("C:/runtime-data")
+
+        with (
+            mock.patch("celune.paths.user_data_dir", return_value=str(expected_root)),
+            mock.patch("celune.paths.running_compiled", return_value=False),
+            mock.patch.dict(
+                os.environ,
+                {
+                    "HF_HOME": str(expected_root / "huggingface"),
+                    "HF_HUB_CACHE": str(expected_root / "huggingface" / "hub"),
+                    "TRANSFORMERS_CACHE": str(
+                        expected_root / "huggingface" / "transformers"
+                    ),
+                },
+                clear=True,
+            ),
+        ):
+            configure_huggingface_cache_environment()
+            self.assertNotIn("HF_HOME", os.environ)
+            self.assertNotIn("HF_HUB_CACHE", os.environ)
+            self.assertNotIn("TRANSFORMERS_CACHE", os.environ)
+
+    def test_huggingface_cache_environment_keeps_non_celune_overrides(
+        self,
+    ) -> None:
+        """Verify source-tree runs preserve unrelated explicit Hugging Face overrides."""
+        existing = {
+            "HF_HOME": "X:/hf-home",
+            "HF_HUB_CACHE": "X:/hf-hub",
+            "TRANSFORMERS_CACHE": "X:/legacy-transformers-cache",
+        }
+
+        with (
+            mock.patch("celune.paths.running_compiled", return_value=False),
+            mock.patch.dict(os.environ, existing.copy(), clear=True),
+        ):
+            configure_huggingface_cache_environment()
+            self.assertEqual(os.environ["HF_HOME"], existing["HF_HOME"])
+            self.assertEqual(os.environ["HF_HUB_CACHE"], existing["HF_HUB_CACHE"])
+            self.assertEqual(
+                os.environ["TRANSFORMERS_CACHE"],
+                existing["TRANSFORMERS_CACHE"],
+            )
 
     def test_format_error_writes_traceback_to_runtime_directory(self) -> None:
         """Verify developer tracebacks are saved via the runtime path helper.

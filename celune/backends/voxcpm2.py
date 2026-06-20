@@ -6,7 +6,6 @@ import contextlib
 from collections.abc import Iterator
 from typing import Callable, Optional, Mapping, Generator
 
-import torch
 import numpy as np
 import numpy.typing as npt
 from voxcpm import VoxCPM
@@ -14,7 +13,6 @@ from voxcpm import VoxCPM
 from . import get_version
 from ..constants import BASE_SR
 from ..utils import custom_assert
-from ..exceptions import BackendError
 from ..cevoice import default_loader, CEVoiceLoader
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
@@ -87,7 +85,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         loader = default_loader()
         custom_assert(
             loader is not None,
-            BackendError(
+            FileNotFoundError(
                 "backend 'voxcpm2' requires a compatible CEVOICE/CECHAR package "
                 "with at least one valid voice identifier"
             ),
@@ -107,7 +105,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         )
         custom_assert(
             bool(voice_names),
-            BackendError(
+            FileNotFoundError(
                 "backend 'voxcpm2' requires a compatible CEVOICE/CECHAR package "
                 "with at least one valid voice identifier"
             ),
@@ -195,8 +193,22 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         """
         available, path = self.model_is_available_locally(model_id)
 
-        torch.backends.cudnn.deterministic = True
-        torch.use_deterministic_algorithms(True)
+        # NOTE:
+        # this may cause errors in internal ops when switching backends
+        # where one backend ran with deterministic algorithms, others without them,
+        # which can cause errors such as:
+        #
+        #   RuntimeError: _unsafe_index found unexpected index type Float
+        #
+        # while switching in order from: voxcpm2 -> dotstts -> qwen3,
+        # which is then trapped in Celune's warmup failure except block, and may potentially
+        # leave the runtime in a buggy state, or even trigger fatal errors
+        #
+        # please do not modulate deterministic algorithm state in PyTorch on a per-backend basis
+
+        # import torch
+        # torch.backends.cudnn.deterministic = True
+        # torch.use_deterministic_algorithms(True)
 
         if available and path is not None:
             with local_hf_offline_mode():

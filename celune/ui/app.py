@@ -1107,8 +1107,9 @@ class CeluneUI(App):
             )
             severity = "info"
 
-        if severity != "error":
-            self._fatal_error_active = False
+        if self._fatal_error_active and severity != "error":
+            return
+
         self.status_severity = severity
 
         def update() -> None:
@@ -1513,6 +1514,12 @@ class CeluneUI(App):
                 self.input_box.placeholder = "Please wait"
             if self.style_button is not None:
                 self.style_button.disabled = True
+            return
+        if self.celune.cur_state in {"reloading", "waking"}:
+            self.change_input_state(locked=True)
+            self.change_voice_lock_state(locked=True)
+            if self.celune.cur_state == "waking":
+                self.safe_status("Waking up")
             return
         self.celune.locked = False
         if self.celune.sleeping:

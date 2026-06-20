@@ -9,6 +9,8 @@ import shutil
 import struct
 import hashlib
 import tempfile
+import threading
+import contextlib
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import BinaryIO, Callable, Final, Mapping, Optional, Union, cast
@@ -211,6 +213,7 @@ class CEVoiceLoader:
                 dir=str(temp_data_dir(create=True)),
             )
         )
+        register_protected_temp_path(self._directory)
         self._paths: dict[tuple[str, str], Path] = {}
         atexit.register(self.close)
 
@@ -243,6 +246,7 @@ class CEVoiceLoader:
 
     def close(self) -> None:
         """Remove extracted temporary files."""
+        unregister_protected_temp_path(self._directory)
         shutil.rmtree(self._directory, ignore_errors=True)
 
 
@@ -607,6 +611,56 @@ _DEFAULT_LOADER_FAILED = False
 _SELECTED_BUNDLE: Optional[Path] = None
 _SELECTED_BUNDLE_IS_NAMED = False
 _DEFAULT_LOADER_FELL_BACK_FROM: Optional[Path] = None
+_PROTECTED_TEMP_PATHS: set[Path] = set()
+_PROTECTED_TEMP_PATHS_LOCK = threading.RLock()
+
+
+def register_protected_temp_path(path: Union[str, Path]) -> Path:
+    """Register one live temp path that Celune cleanup must not delete.
+
+    Args:
+        path: The live temp path to protect.
+
+    Returns:
+        Path: The normalized protected path.
+    """
+    resolved = Path(path).resolve()
+    with _PROTECTED_TEMP_PATHS_LOCK:
+        _PROTECTED_TEMP_PATHS.add(resolved)
+    return resolved
+
+
+def unregister_protected_temp_path(path: Union[str, Path]) -> None:
+    """Remove one previously protected temp path from cleanup protection.
+
+    Args:
+        path: The temp path to unprotect.
+    """
+    resolved = Path(path).resolve()
+    with _PROTECTED_TEMP_PATHS_LOCK:
+        _PROTECTED_TEMP_PATHS.discard(resolved)
+
+
+def is_protected_temp_path(path: Union[str, Path]) -> bool:
+    """Return whether one temp path is protected from Celune cleanup.
+
+    Args:
+        path: The temp path to check.
+
+    Returns:
+        bool: ``True`` when the path is registered directly or nested under one that is.
+    """
+    resolved = Path(path).resolve()
+    with _PROTECTED_TEMP_PATHS_LOCK:
+        protected_paths = tuple(_PROTECTED_TEMP_PATHS)
+
+    for protected in protected_paths:
+        if resolved == protected:
+            return True
+        with contextlib.suppress(ValueError):
+            resolved.relative_to(protected)
+            return True
+    return False
 
 
 def default_bundle_path() -> Path:
