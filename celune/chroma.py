@@ -271,6 +271,8 @@ class AudioRGBGlow:
         smoothed_level = float(np.clip(self._smoothed_level, 0.0, 1.0))
 
         with self._lock:
+            if self._state in {"fatal", "sleeping", "waking", "leaving", "none"}:
+                return
             self._state = "normal"
             self._target_brightness = float(
                 np.clip(
