@@ -5,8 +5,8 @@ from abc import ABC
 from pathlib import Path
 from typing import Optional, Union
 
-from ..dataclasses.extensions import CeluneContext
 from ..exceptions import IncompleteExtensionError
+from ..dataclasses.extensions import CeluneContext
 
 
 class CeluneExtension(ABC):

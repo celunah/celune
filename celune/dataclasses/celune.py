@@ -2,8 +2,8 @@
 
 import queue
 import threading
-from dataclasses import dataclass, field
 from typing import Optional, Union
+from dataclasses import dataclass, field
 
 import numpy as np
 import numpy.typing as npt
@@ -11,16 +11,17 @@ import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from ..backends import CeluneBackend
-from ..vc_backends import CeluneVCBackend
-from ..cevoice import CEVoicePersona
-from ..chroma import AudioRGBGlow
 from ..config import Config
-from ..constants import JSONSerializable, PipelineStates
+from ..chroma import AudioRGBGlow
+from ..cevoice import CEVoicePersona
+from ..backends import CeluneBackend
+from ..persona.impl import PersonaClient
+from ..vc_backends import CeluneVCBackend
+from ..typing.backends import BackendModel
 from ..dsp import StreamingPedalboardReverb
 from ..extensions.manager import CeluneExtensionManager
-from ..persona.impl import PersonaClient
-from ..typing.backends import BackendModel
+from ..constants import JSONSerializable, PipelineStates
+from .properties import ConstantPropertySpec, ForwardedPropertySpec
 from ..typing.celune import (
     ErrorCallback,
     IdleCallback,
@@ -31,7 +32,6 @@ from ..typing.celune import (
     VoiceChangedCallback,
     VoiceLockStateCallback,
 )
-from .properties import ConstantPropertySpec, ForwardedPropertySpec
 
 
 @dataclass

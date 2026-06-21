@@ -4,8 +4,8 @@
 import tempfile
 import contextlib
 from pathlib import Path
-from collections.abc import Iterator, Mapping
 from typing import Callable, Optional, cast
+from collections.abc import Iterator, Mapping
 
 import yaml
 import numpy as np
@@ -15,7 +15,6 @@ from huggingface_hub import snapshot_download
 
 from ..paths import temp_data_dir
 from ..utils import custom_assert
-
 from ..cevoice import default_loader, CEVoiceLoader
 from ..typing.backends import MiniModel, MiniPromptState
 from .base import CeluneBackend, cached_hf_snapshot_path

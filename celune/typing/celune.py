@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from ..vc_backends import CeluneVCBackend
 
 
-GenerationKwarg = Union[torch.Tensor, int, bool, None]
+type GenerationKwarg = Union[torch.Tensor, int, bool, None]
 
 
 class SupportsClose(Protocol):
@@ -87,7 +87,7 @@ class Generative(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
-ReleasableObject = Union[
+type ReleasableObject = Union[
     SupportsClose,
     SupportsUnload,
     PreTrainedModel,
@@ -173,10 +173,10 @@ class ProgressCallback(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
-ErrorCallback = Callable[[str], None]
-IdleCallback = Callable[[], None]
-QueueAvailableCallback = Callable[[], None]
-VoiceChangedCallback = Callable[[str], None]
+type ErrorCallback = Callable[[str], None]
+type IdleCallback = Callable[[], None]
+type QueueAvailableCallback = Callable[[], None]
+type VoiceChangedCallback = Callable[[str], None]
 
 
 class CeluneStateAccessors:

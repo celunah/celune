@@ -18,10 +18,10 @@ from typing import Optional
 from dataclasses import dataclass
 from types import SimpleNamespace, ModuleType
 
-from celune import __version__, REVISION, __tagline__
-from celune.constants import APP_NAME, APP_SLUG, ExitCodes
-from celune.paths import project_root, running_compiled
 from celune.updater import apply_update_and_restart
+from celune import __version__, REVISION, __tagline__
+from celune.paths import project_root, running_compiled
+from celune.constants import APP_NAME, APP_SLUG, ExitCodes
 
 
 def _env_flag(name: str) -> bool:

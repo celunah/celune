@@ -10,12 +10,12 @@ from typing import Optional, Protocol, Union, cast
 import torch
 import numpy as np
 import numpy.typing as npt
-from transformers import AutoModel, AutoModelForSequenceClassification, AutoTokenizer
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+from transformers import AutoModel, AutoModelForSequenceClassification, AutoTokenizer
 
-from ..constants import JSONSerializable, PERSONA_EMOTION_MODEL
 from ..utils import discard
+from ..constants import JSONSerializable, PERSONA_EMOTION_MODEL
 
 type EmbeddingVector = npt.NDArray[np.float32]
 

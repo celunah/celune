@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import queue
 import time
-from dataclasses import dataclass
+import queue
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Optional, Union
 
 import numpy as np

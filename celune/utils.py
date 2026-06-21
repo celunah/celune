@@ -21,8 +21,8 @@ import langdetect
 
 from .paths import traceback_path
 from .constants import REFERENCE_NEW_MOON
-from .terminal import supports_ansi as terminal_supports_ansi
 from .typing.utils import CallerInfo, LanguageResult
+from .terminal import supports_ansi as terminal_supports_ansi
 
 
 def get_revision() -> str:

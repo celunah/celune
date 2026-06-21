@@ -7,21 +7,21 @@ import threading
 import traceback
 import importlib.util
 from pathlib import Path
-from dataclasses import dataclass
 from types import ModuleType
+from dataclasses import dataclass
 from typing import Callable, Optional, cast
 
-from ..dataclasses.events import ReadyEvent
 from ..typing.events import EventName
+from ..typing.events import EventPayload
 from ..utils import format_error, discard
+from ..dataclasses.events import ReadyEvent
 from .base import CeluneContext, CeluneExtension
+from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
 from .events import (
     EventDispatcher,
     RegisteredEventHandler,
     iter_subscriptions,
 )
-from ..typing.events import EventPayload
-from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
 
 
 @dataclass(frozen=True)

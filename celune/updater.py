@@ -3,26 +3,26 @@
 
 from __future__ import annotations
 
-import ctypes
-import hashlib
-import json
 import os
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
+import json
 import time
-import urllib.request
+import ctypes
+import shutil
+import hashlib
 import zipfile
-from dataclasses import dataclass
+import tempfile
+import subprocess
+import urllib.request
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Optional, Union
 
 from . import __version__
 from .exceptions import UpdateError
-from .paths import project_root, running_compiled
 from .typing.common import JSONSerializable
+from .paths import project_root, running_compiled
 
 REMOTE_URL = "https://github.com/celunah/celune.git"
 ARTIFACT_BASE_URL = "https://nightly.link/celunah/celune/workflows/ci"
