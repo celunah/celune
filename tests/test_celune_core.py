@@ -28,6 +28,7 @@ from celune.pipeline import (
 from celune.vram import QWEN3_0_6B_MODEL
 from celune.persona.impl import persona_quantization
 from celune.exceptions import BackendError, WarmupError
+from celune.utils import discard
 from .support import FakeBackend, FakeGlow, FakeVCBackend
 
 
@@ -122,6 +123,7 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(celune.current_voice, "balanced")
 
         fake_bundle = mock.Mock()
+        fake_bundle.path = Path("fixture.cevoice")
         fake_bundle.voice_order = ("bold", "balanced")
         fake_bundle.metadata = {
             "name": "Pack Name",
@@ -140,7 +142,13 @@ class CeluneCoreTests(TestCase):
         }
         fake_loader = mock.Mock(bundle=fake_bundle)
         celune.backend.uses_voice_bundles = True
-        with mock.patch("celune.celune.default_loader", return_value=fake_loader):
+        with (
+            mock.patch("celune.celune.default_loader", return_value=fake_loader),
+            mock.patch(
+                "celune.celune.bundle_matches_default_pack_checksum",
+                return_value=False,
+            ),
+        ):
             self.assertEqual(celune.load_voice_bundle(Path("fixture.cevoice")), True)
         self.assertEqual(celune.current_voice, "bold")
         self.assertEqual(celune.current_character, "Fixture")
@@ -213,6 +221,51 @@ class CeluneCoreTests(TestCase):
             "Celune found 2 residual temporary items.",
             "warning",
         )
+
+    def test_load_voice_bundle_marks_default_pack_from_checksum(self) -> None:
+        """Verify default-pack detection follows the CEVOICE checksum, not the character name."""
+        celune = self._make_celune({})
+        fake_bundle = mock.Mock()
+        fake_bundle.path = Path("renamed-default.cevoice")
+        fake_bundle.voice_order = ("balanced", "bold")
+        fake_bundle.metadata = {"name": "Pack Name", "default_voice": "balanced"}
+        fake_loader = mock.Mock(bundle=fake_bundle)
+        celune.backend.uses_voice_bundles = True
+
+        with (
+            mock.patch("celune.celune.default_loader", return_value=fake_loader),
+            mock.patch(
+                "celune.celune.bundle_matches_default_pack_checksum",
+                return_value=True,
+            ),
+        ):
+            self.assertEqual(celune.load_voice_bundle(Path("fixture.cevoice")), True)
+
+        self.assertEqual(celune.voice_bundle_is_default, True)
+
+    def test_load_voice_bundle_rejects_named_celune_without_default_checksum(
+        self,
+    ) -> None:
+        """Verify non-default packs named Celune do not inherit default-pack behavior."""
+        celune = self._make_celune({})
+        fake_bundle = mock.Mock()
+        fake_bundle.path = Path("custom-celune.cevoice")
+        fake_bundle.voice_order = ("balanced", "bold")
+        fake_bundle.metadata = {"name": "Celune", "default_voice": "balanced"}
+        fake_loader = mock.Mock(bundle=fake_bundle)
+        celune.backend.uses_voice_bundles = True
+
+        with (
+            mock.patch("celune.celune.default_loader", return_value=fake_loader),
+            mock.patch(
+                "celune.celune.bundle_matches_default_pack_checksum",
+                return_value=False,
+            ),
+        ):
+            self.assertEqual(celune.load_voice_bundle(Path("fixture.cevoice")), True)
+
+        self.assertEqual(celune.current_character, "Celune")
+        self.assertEqual(celune.voice_bundle_is_default, False)
 
     def test_persona_connection_uses_in_process_runtime(self) -> None:
         """Verify Celune connects to Persona through the local in-process runtime.
@@ -782,7 +835,8 @@ class CeluneCoreTests(TestCase):
             default_voice = "storm"
 
             def generate_stream(self, model, **kwargs: JSONSerializable):
-                del model, kwargs
+                discard(model)
+                discard(kwargs)
                 raise RuntimeError("warmup blew up")
 
         celune = self._make_celune({})
@@ -1098,7 +1152,8 @@ class CeluneCoreTests(TestCase):
 
             def generate_stream(self, model, **kwargs: JSONSerializable):
                 observed_backend_names.append(celune.backend.name)
-                del model, kwargs
+                discard(model)
+                discard(kwargs)
                 raise RuntimeError("warmup blew up")
 
         with mock.patch("celune.celune.play_signal", return_value=False):
@@ -1239,7 +1294,8 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.select_voice_bundle", side_effect=fake_select),
             mock.patch("celune.celune.default_loader", side_effect=fake_loader),
             mock.patch(
-                "celune.celune.default_bundle_path", return_value=Path("celune.cevoice")
+                "celune.celune.bundle_matches_default_pack_checksum",
+                side_effect=lambda path: Path(path).name == "celune.cevoice",
             ),
             mock.patch(
                 "celune.celune.active_bundle_path", side_effect=lambda: selected["path"]

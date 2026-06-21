@@ -13,13 +13,14 @@ from typing import Callable, Optional, cast
 
 from ..dataclasses.events import ReadyEvent
 from ..typing.events import EventName
-from ..utils import format_error
+from ..utils import format_error, discard
 from .base import CeluneContext, CeluneExtension
 from .events import (
     EventDispatcher,
     RegisteredEventHandler,
     iter_subscriptions,
 )
+from ..typing.events import EventPayload
 from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
 
 
@@ -113,7 +114,7 @@ class CeluneExtensionManager:
         for name in list(self.extensions.keys()):
             self.unregister(name)
 
-    def emit(self, event_name: EventName, event: object) -> None:
+    def emit(self, event_name: EventName, event: EventPayload) -> None:
         """Forward one event to the shared dispatcher.
 
         Args:
@@ -299,7 +300,7 @@ class CeluneExtensionManager:
                 registered = self._register_handler(
                     owner_name=extension.name,
                     event_name=subscription.event_name,
-                    callback=callback,
+                    callback=cast(Callable[..., None], callback),
                 )
                 handlers.append(registered)
 
@@ -322,7 +323,7 @@ class CeluneExtensionManager:
         def legacy_ready_callback(
             event: ReadyEvent, ext: CeluneExtension = extension
         ) -> None:
-            del event
+            discard(event)
 
             def runner() -> None:
                 try:
@@ -400,13 +401,13 @@ class CeluneExtensionManager:
         *,
         owner_name: str,
         event_name: EventName,
-        callback: object,
+        callback: Callable[..., None],
     ) -> RegisteredEventHandler:
         """Register one discovered callback against the dispatcher."""
         if not callable(callback):
             raise TypeError("event callback is not callable")
 
-        typed_callback = cast(Callable[[object], None], callback)
+        typed_callback = cast(Callable[[EventPayload], None], callback)
         self.dispatcher.subscribe(
             event_name,
             typed_callback,

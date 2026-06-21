@@ -20,9 +20,13 @@ import subprocess as _subprocess
 from typing import TYPE_CHECKING, Callable, Union
 
 from .constants import APP_NAME
-from .paths import configure_huggingface_cache_environment
+from .paths import (
+    configure_huggingface_cache_environment,
+    configure_huggingface_runtime,
+)
 
 configure_huggingface_cache_environment()
+configure_huggingface_runtime()
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -92,7 +96,7 @@ def __getattr__(
     type["Celune"],
     type["CeluneContext"],
     type["CeluneExtension"],
-    Callable[..., object],
+    Callable[..., Callable[..., None]],
 ]:
     if name == "Celune":
         from .celune import Celune

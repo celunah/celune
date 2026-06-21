@@ -6,6 +6,7 @@ from pathlib import Path
 
 import celune
 from celune import CeluneExtension
+from celune.utils import discard
 
 
 class TestExtension(CeluneExtension):
@@ -20,7 +21,8 @@ class TestExtension(CeluneExtension):
         Args:
             event: Ready event emitted after Celune finishes startup.
         """
-        del event
+        discard(event)
+
         self.log("Log test")
         time.sleep(1)  # due to threading, this does not block
         self.status("Status test")

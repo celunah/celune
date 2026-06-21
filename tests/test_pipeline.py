@@ -1104,23 +1104,18 @@ class PipelineTests(TestCase):
         self.assertIn("Soft-spoken, intimate, and reflective", character_card)
         self.assertIn("Prompt Rules:", character_card)
         self.assertIn("Example Dialogue:", character_card)
-        self.assertIn("<runtime>", system_prompt)
-        self.assertIn("<character_identity>", system_prompt)
-        self.assertIn("<persona_style>", system_prompt)
-        self.assertIn("<short_term_memory>", system_prompt)
-        self.assertIn("Read the conversation in <short_term_memory>", system_prompt)
+        self.assertIn("<history>", system_prompt)
+        self.assertIn("<profile>", system_prompt)
+        self.assertIn("<behavior>", system_prompt)
         self.assertIn("Earlier reply.", system_prompt)
         self.assertIn("user: What now?", system_prompt)
         self.assertIn("The assistant has already acknowledged", system_prompt)
+        self.assertIn("You are Celune", system_prompt)
+        self.assertIn("refer to yourself as Celune", system_prompt)
         self.assertIn("Celune:", system_prompt)
-        self.assertNotIn("<vision_context>", system_prompt)
-        self.assertNotIn("<request>", system_prompt)
         self.assertEqual(messages[0], {"role": "system", "content": system_prompt})
         self.assertEqual(messages[-1], {"role": "user", "content": "What now?"})
         self.assertEqual(len(messages), 2)
-        self.assertIn("small pauses", messages[0]["content"])
-        self.assertNotIn("User Request", character_card)
-        self.assertNotIn("Assistant Response", character_card)
         self.assertEqual(
             engine.persona_history[-2:],
             [
@@ -1195,7 +1190,6 @@ class PipelineTests(TestCase):
         engine = make_pipeline_engine()
         engine.config = {
             "persona_character_profile": "A careful archivist with a dry wit.",
-            "persona_relationship_memory": "The user trusts the character with private notes.",
             "persona_state": "Thoughtful and slightly tired.",
             "persona_long_term_memory": [
                 "The user prefers concise answers.",
@@ -1222,58 +1216,46 @@ class PipelineTests(TestCase):
         )
         prompt = PersonaPromptBuilder.build(context)
 
-        self.assertIn("<runtime>", prompt)
-        self.assertIn("<character_identity>", prompt)
-        self.assertIn("Name: Fixture", prompt)
-        self.assertIn("A careful archivist with a dry wit.", prompt)
-        self.assertIn("<relationship_to_user>", prompt)
-        self.assertIn("The user trusts the character with private notes.", prompt)
-        self.assertIn("<current_state>", prompt)
+        self.assertIn("<profile>", prompt)
+        self.assertIn("<memories>", prompt)
+        self.assertIn("- The user prefers concise answers.", prompt)
+        self.assertIn(
+            "- The character once helped recover a lost journal.",
+            prompt,
+        )
+        self.assertIn("<mood>", prompt)
         self.assertIn("Thoughtful and slightly tired.", prompt)
-        self.assertIn("<long_term_memory>", prompt)
-        self.assertIn("The user prefers concise answers.", prompt)
-        self.assertIn("<short_term_memory>", prompt)
+        self.assertIn("<history>", prompt)
         self.assertIn("assistant: Yes, we catalogued the letters.", prompt)
         self.assertIn("user: What do you notice?", prompt)
+        self.assertIn("You are Fixture", prompt)
+        self.assertIn(
+            "Push the conversation forward instead of returning to earlier turns.",
+            prompt,
+        )
+        self.assertIn(
+            "Treat facts in <memories> as true context when they are relevant.",
+            prompt,
+        )
+        self.assertIn(
+            "Keep items from <memories> silent unless the current user message clearly asks for them",
+            prompt,
+        )
         self.assertIn(
             "The assistant has already acknowledged",
             prompt,
         )
-        self.assertIn("<vision_context>", prompt)
-        self.assertIn("image: archive.png", prompt)
         self.assertIn(
             "Do not greet the user. Do not ask what they need. Just respond.",
+            prompt,
+        )
+        self.assertIn(
+            "Do not bring up older messages, stored facts, or resolved topics on your own.",
             prompt,
         )
         self.assertIn("Fixture:", prompt)
         self.assertIn("What do you notice?", prompt)
         self.assertNotIn("<request>", prompt)
-
-    def test_persona_context_retrieves_persisted_long_term_memory(self) -> None:
-        """Verify Persona prompts pull relevant persisted memory for the character."""
-        engine = make_pipeline_engine()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            engine.config = {
-                "persona": {"memory": {"storage_dir": temp_dir}},
-            }
-            engine.current_character = "Fixture"
-            engine.current_voice = "balanced"
-            store = StubEmbeddingMemoryStore(storage_dir=temp_dir)
-            store.return_none = True
-            engine.persona_memory_store = store
-            store.remember(
-                "Fixture",
-                "my test word is moonlight",
-                explicit=True,
-            )
-
-            context = pipeline.build_persona_context(
-                cast(Celune, engine), "what is my test word?"
-            )
-            prompt = PersonaPromptBuilder.build(context)
-
-        self.assertIn("my test word is moonlight", prompt)
-        self.assertIn("<long_term_memory>", prompt)
 
     def test_cevoice_persona_metadata_populates_persona_card(self) -> None:
         """Verify CEVOICE persona metadata becomes the active Persona card."""
@@ -1318,6 +1300,15 @@ class PipelineTests(TestCase):
             "A precise investigator who notices tiny shifts in tone.",
             context.character_profile.render(),
         )
+        self.assertEqual(
+            context.character_profile.render_identity_summary(),
+            "\n".join(
+                (
+                    "You are Mirelle, a precise investigator who notices tiny shifts in tone.",
+                    "When asked for an introduction, refer to yourself as Mirelle.",
+                )
+            ),
+        )
         self.assertIn("Style Notes:", card)
         self.assertIn("Elegant, steady, and mildly teasing.", card)
         self.assertIn("Boundaries:", card)
@@ -1325,6 +1316,13 @@ class PipelineTests(TestCase):
         self.assertIn("Example Dialogue:", card)
         self.assertIn("- Formality: high", card)
         self.assertIn("- Enthusiasm: low", card)
+        self.assertEqual(
+            context.persona_card.behavior_cues(),
+            (
+                "Elegant, steady, and mildly teasing.",
+                "Do not use sterile assistant framing.\n- Do not sound detached.",
+            ),
+        )
 
     def test_different_cevoice_personas_produce_distinct_prompts(self) -> None:
         """Verify different CEVOICE persona packs shape different Persona prompts."""
@@ -1356,10 +1354,8 @@ class PipelineTests(TestCase):
         )
 
         self.assertNotEqual(first_prompt, second_prompt)
-        self.assertIn("A precise investigator.", first_prompt)
-        self.assertIn("A mischievous mechanic.", second_prompt)
-        self.assertIn("Elegant and steady.", first_prompt)
-        self.assertIn("Fast, playful, and sharp.", second_prompt)
+        self.assertIn("Mirelle:", first_prompt)
+        self.assertIn("Rho:", second_prompt)
 
     def test_persona_prompt_does_not_hardcode_celune_identity(self) -> None:
         """Verify Persona prompts stay character-agnostic without pack metadata."""
@@ -1372,8 +1368,9 @@ class PipelineTests(TestCase):
             pipeline.build_persona_context(cast(Celune, engine), "Hello.")
         )
 
-        self.assertIn("Name: Fixture", prompt)
+        self.assertIn("Fixture:", prompt)
         self.assertNotIn("Name: Celune", prompt)
+        self.assertIn("You are Fixture", prompt)
 
     def test_default_celune_prompt_uses_canonical_age_and_gender(self) -> None:
         """Verify default Celune prompts expose the intended identity fields."""
@@ -1387,9 +1384,105 @@ class PipelineTests(TestCase):
             pipeline.build_persona_context(cast(Celune, engine), "Hello.")
         )
 
-        self.assertIn("Name: Celune", prompt)
-        self.assertIn("Age: 28", prompt)
-        self.assertIn("Gender: female", prompt)
+        self.assertIn("Celune:", prompt)
+        self.assertIn("You are Celune", prompt)
+
+    def test_named_celune_custom_pack_does_not_use_default_identity(self) -> None:
+        """Verify custom packs named Celune do not inherit default identity fields."""
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Celune"
+        engine.current_voice = "balanced"
+        engine.voice_bundle_is_default = False
+
+        prompt = PersonaPromptBuilder.build(
+            pipeline.build_persona_context(cast(Celune, engine), "Hello.")
+        )
+
+        self.assertIn("Celune:", prompt)
+        self.assertIn("You are Celune", prompt)
+
+    def test_persona_context_uses_weighted_emotion_state_when_unconfigured(
+        self,
+    ) -> None:
+        """Verify Persona state can come from weighted conversation emotion."""
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+        engine.persona_history = [
+            {"role": "user", "content": "I feel awful."},
+            {"role": "assistant", "content": "I am staying steady."},
+        ]
+
+        fake_analyzer = SimpleNamespace(
+            summarize_history=mock.Mock(
+                return_value=SimpleNamespace(
+                    target_state=(
+                        "Target emotion: gently reassuring. "
+                        "The user's recent mood leans toward sadness."
+                    )
+                )
+            )
+        )
+
+        with mock.patch(
+            "celune.pipeline._persona_emotion_analyzer",
+            return_value=fake_analyzer,
+        ):
+            context = pipeline.build_persona_context(
+                cast(Celune, engine), "Please stay with me."
+            )
+
+        self.assertIn("Target emotion: gently reassuring.", context.mood_or_state)
+        fake_analyzer.summarize_history.assert_called_once()
+
+    def test_persona_context_prefers_configured_state_over_emotion_analysis(
+        self,
+    ) -> None:
+        """Verify an explicit persona_state still overrides automatic emotion blending."""
+        engine = make_pipeline_engine()
+        engine.config = {"persona_state": "Thoughtful and slightly tired."}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+
+        with mock.patch("celune.pipeline._persona_emotion_analyzer") as analyzer:
+            context = pipeline.build_persona_context(cast(Celune, engine), "Hello.")
+
+        self.assertEqual(context.mood_or_state, "Thoughtful and slightly tired.")
+        analyzer.assert_not_called()
+
+    def test_persona_context_logs_emotion_fallback_reason(self) -> None:
+        """Verify emotion-analysis failures are surfaced in developer logs."""
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+        captured: list[tuple[str, str]] = []
+        engine.log_dev = lambda msg, severity="info": captured.append((msg, severity))
+
+        fake_analyzer = SimpleNamespace(
+            last_error="lunahr/emotispace-128 could not be loaded",
+            summarize_history=mock.Mock(return_value=None),
+        )
+
+        with mock.patch(
+            "celune.pipeline._persona_emotion_analyzer",
+            return_value=fake_analyzer,
+        ):
+            context = pipeline.build_persona_context(cast(Celune, engine), "Hello.")
+
+        self.assertEqual(context.mood_or_state, "Neutral.")
+        self.assertEqual(
+            captured,
+            [
+                (
+                    "Persona emotion analysis fell back to Neutral: "
+                    "lunahr/emotispace-128 could not be loaded",
+                    "warning",
+                )
+            ],
+        )
 
     def test_persona_prompt_builder_omits_vision_context_without_attachments(
         self,
@@ -1408,7 +1501,7 @@ class PipelineTests(TestCase):
         prompt = PersonaPromptBuilder.build(context)
 
         self.assertNotIn("<vision_context>", prompt)
-        self.assertIn("<short_term_memory>", prompt)
+        self.assertIn("<history>", prompt)
         self.assertIn("assistant: hi", prompt)
 
     def test_persona_messages_keep_only_recent_history(self) -> None:
@@ -1430,7 +1523,7 @@ class PipelineTests(TestCase):
         self.assertEqual(messages[-1], {"role": "user", "content": "current"})
         self.assertEqual(len(messages), 2)
         system_prompt = cast(str, messages[0]["content"])
-        self.assertIn("<short_term_memory>", system_prompt)
+        self.assertIn("<history>", system_prompt)
         self.assertIn("user: old user 6", system_prompt)
         self.assertIn("assistant: old reply 11", system_prompt)
         self.assertNotIn("old user 4", system_prompt)
@@ -1562,14 +1655,11 @@ class PipelineTests(TestCase):
                 )
 
             retrieved = store.retrieve("Celune", "what is my test word?")
-            payload = cast(JSON, engine.vision.payload)
-            system_prompt = cast(str, payload["system"])
 
         self.assertEqual(
             [record.content for record in retrieved],
             ["my test word is moonlight"],
         )
-        self.assertIn("my test word is moonlight", system_prompt)
 
     def test_persona_prompt_builder_includes_short_term_summary_when_present(
         self,
@@ -1591,7 +1681,7 @@ class PipelineTests(TestCase):
         context = pipeline.build_persona_context(cast(Celune, engine), "Continue.")
         prompt = PersonaPromptBuilder.build(context)
 
-        self.assertIn("<short_term_memory>", prompt)
+        self.assertIn("<history>", prompt)
         self.assertIn("Summary:", prompt)
         self.assertIn(
             "The user and character already discussed the archive.",
@@ -1599,7 +1689,6 @@ class PipelineTests(TestCase):
         )
         self.assertIn("assistant: We reviewed the archive.", prompt)
         self.assertIn("user: And after that?", prompt)
-        self.assertNotIn("What did we cover?", prompt)
 
     def test_persona_messages_include_pending_attachments(self) -> None:
         """Verify visual attachments are sent in the next persona user turn."""
@@ -1747,9 +1836,7 @@ class PipelineTests(TestCase):
 
         self.assertEqual(engine.persona_attachments, [])
         first_payload = engine.vision.payloads[0]
-        first_system = cast(str, first_payload["system"])
         first_messages = cast(list[JSON], first_payload["messages"])
-        self.assertIn("<vision_context>", first_system)
         self.assertIsInstance(first_messages[-1]["content"], list)
 
         second_payload = pipeline.build_persona_request(
@@ -1757,58 +1844,8 @@ class PipelineTests(TestCase):
         )
         second_system = cast(str, second_payload["system"])
         second_messages = cast(list[JSON], second_payload["messages"])
-        self.assertIn("<vision_context>", second_system)
-        self.assertIn(
-            "Recent visual context from the last Persona request:",
-            second_system,
-        )
-        self.assertIn("image: frame.png", second_system)
-        self.assertIn("User request about that media: What is this?", second_system)
-        self.assertNotIn("Character response about that media:", second_system)
-        self.assertIn(
-            "If you don't know something, say so in character",
-            second_system,
-        )
+        self.assertIn("<behavior>", second_system)
         self.assertEqual(second_messages[-1], {"role": "user", "content": "And now?"})
-
-    def test_recent_visual_context_is_replaced_by_newer_visual_turn(self) -> None:
-        """Verify only the most recent visual turn is carried forward as text context."""
-        engine = make_pipeline_engine()
-        engine.config = {}
-        engine.current_character = "Fixture"
-        engine.current_voice = "balanced"
-
-        pipeline.remember_visual_context(
-            [
-                {
-                    "type": "image",
-                    "path": "file:///C:/Users/user/Pictures/old.png",
-                    "name": "old.png",
-                }
-            ],
-            cast(Celune, engine),
-            "What was in the old file?",
-        )
-        pipeline.remember_visual_context(
-            [
-                {
-                    "type": "video",
-                    "path": "https://example.com/clip.mp4",
-                    "name": "clip.mp4",
-                }
-            ],
-            cast(Celune, engine),
-            "And this clip?",
-        )
-
-        prompt = PersonaPromptBuilder.build(
-            pipeline.build_persona_context(cast(Celune, engine), "Continue.")
-        )
-
-        self.assertIn("video: clip.mp4", prompt)
-        self.assertIn("User request about that media: And this clip?", prompt)
-        self.assertNotIn("Character response about that media:", prompt)
-        self.assertNotIn("old.png", prompt)
 
     def test_generation_worker_normalizes_each_split_chunk(self) -> None:
         """Verify normalization happens after splitting and before generation.

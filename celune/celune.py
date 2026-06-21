@@ -9,17 +9,14 @@ import queue
 import threading
 import contextlib
 from pathlib import Path
-from typing import Optional, Callable, Union, cast
+from typing import Optional, Callable, Protocol, Union, cast
 from dataclasses import dataclass
 
 import torch
 import numpy as np
 import numpy.typing as npt
 from transformers.modeling_utils import PreTrainedModel
-from transformers.utils.logging import disable_progress_bar
-from transformers.utils import logging as hf_logging
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-from huggingface_hub.utils import disable_progress_bars
 
 from . import __version__
 from .dataclasses.celune import (
@@ -70,6 +67,7 @@ from .typing.celune import (
     ReleasableObject,
     VoiceLockStateCallback,
 )
+from .typing.backends import BackendModel
 from .typing.events import EventName, EventPayload
 from .utils import format_number, format_error, discard, is_port_usable, custom_assert
 from .vram import (
@@ -92,8 +90,8 @@ from .cevoice import (
     CEVoicePersona,
     active_bundle_path,
     announce_default_bundle,
+    bundle_matches_default_pack_checksum,
     bundle_character_name,
-    default_bundle_path,
     default_loader,
     is_protected_temp_path,
     persona_metadata_from_manifest,
@@ -120,6 +118,14 @@ from .pipeline import (
     play_signal,
 )
 from .typing.pipeline import SpeechStreamQueue
+
+
+class _BundleWithPath(Protocol):
+    """Protocol for bundle-like objects that expose a path."""
+
+    @property
+    def path(self) -> Union[str, Path]:
+        """Return the bundle path."""
 
 
 def _config_str(value: JSONSerializable) -> Optional[str]:
@@ -194,7 +200,7 @@ class Celune(CeluneStateAccessors):
         backend_spec: Optional[Union[str, type[CeluneBackend]]]
         backend_kwargs: dict[str, JSONSerializable]
         tts_backend: str
-        model: Optional[object]
+        model: Optional[BackendModel]
         model_name: str
         voices: tuple[str, ...]
         current_voice: Optional[str]
@@ -480,14 +486,7 @@ class Celune(CeluneStateAccessors):
 
     @staticmethod
     def _is_ephemeral_temp_path(path: Path) -> bool:
-        """Return whether one temp path is safe for residual cleanup.
-
-        Args:
-            path: The temp file or directory to classify.
-
-        Returns:
-            bool: ``True`` when the path matches Celune's disposable temp artifacts.
-        """
+        """Return whether one temp path is safe for residual cleanup."""
         if path.is_dir():
             return path.name.startswith(_EPHEMERAL_TEMP_DIR_PREFIXES)
 
@@ -497,11 +496,7 @@ class Celune(CeluneStateAccessors):
         return path.name.startswith(_EPHEMERAL_TEMP_FILE_PREFIXES)
 
     def _cleanup_residual_temp_data(self, temp_dir: Path) -> None:
-        """Delete only Celune's disposable residual temp artifacts.
-
-        Args:
-            temp_dir: The Celune temp directory to scan.
-        """
+        """Delete only Celune's disposable residual temp artifacts."""
         disposable_paths = [
             path
             for path in temp_dir.iterdir()
@@ -529,12 +524,11 @@ class Celune(CeluneStateAccessors):
                     path.unlink(missing_ok=True)
 
     @staticmethod
-    def _bundle_path_string(bundle: object) -> Optional[str]:
+    def _bundle_path_string(bundle: Optional[_BundleWithPath]) -> Optional[str]:
         """Return one bundle path as a string when it is available."""
-        path = getattr(bundle, "path", None)
-        if path is None:
+        if bundle is None:
             return None
-        return str(path)
+        return str(bundle.path)
 
     def _emit_character_event_transition(
         self,
@@ -726,7 +720,7 @@ class Celune(CeluneStateAccessors):
             backend_spec=self._backend_spec,
             backend_kwargs=dict(self._backend_kwargs),
             tts_backend=self.tts_backend,
-            model=cast(Optional[object], self.model),
+            model=self.model,
             model_name=self.model_name,
             voices=self.voices,
             current_voice=self.current_voice,
@@ -785,7 +779,7 @@ class Celune(CeluneStateAccessors):
             )
 
         snapshot.backend = restored_backend
-        snapshot.model = cast(Optional[object], restored_model)
+        snapshot.model = cast(Optional[BackendModel], restored_model)
         snapshot.model_name = restored_model_name
 
     def _resolve_voice_state(
@@ -824,7 +818,7 @@ class Celune(CeluneStateAccessors):
                     current_voice,
                     bundle_character_name(loader.bundle),
                     persona_metadata_from_manifest(loader.bundle.metadata),
-                    loader.bundle.path == default_bundle_path(),
+                    bundle_matches_default_pack_checksum(loader.bundle.path),
                 )
 
         voices = tuple(backend.voices)
@@ -1360,7 +1354,9 @@ class Celune(CeluneStateAccessors):
             return bool(voices)
 
         new_bundle_path = self._bundle_path_string(loader.bundle)
-        self.voice_bundle_is_default = loader.bundle.path == default_bundle_path()
+        self.voice_bundle_is_default = bundle_matches_default_pack_checksum(
+            loader.bundle.path
+        )
         self.current_character_persona = persona_metadata_from_manifest(
             loader.bundle.metadata
         )
@@ -1507,8 +1503,8 @@ class Celune(CeluneStateAccessors):
 
         Args:
             backend_spec: The backend name, type, or instance to activate.
-            timeout: Optional maximum seconds to wait for the reload to finish.
-                Pass ``None`` to wait until the reload completes.
+            timeout: Optional maximum seconds to wait for the reload to finish. Pass ``None`` to wait until the reload
+                completes.
 
         Returns:
             bool: ``True`` when the requested backend finished loading.
@@ -1567,8 +1563,8 @@ class Celune(CeluneStateAccessors):
 
         Args:
             bundle: The CEVOICE bundle name or path to activate.
-            timeout: Optional maximum seconds to wait for the reload to finish.
-                Pass ``None`` to wait until the reload completes.
+            timeout: Optional maximum seconds to wait for the reload to finish. Pass ``None`` to wait until the reload
+                completes.
 
         Returns:
             bool: ``True`` when the requested CEVOICE pack finished loading.
@@ -1861,10 +1857,6 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when initialization completed successfully, otherwise ``False``.
         """
-        disable_progress_bar()
-        disable_progress_bars()
-        hf_logging.set_verbosity_error()
-
         log_runtime_banner(self.log, self._active_runtime_backend_name())
         self._cleanup_residual_temp_data(app_data_dir() / "temp")
         if not self.load_available_voices():
@@ -1882,10 +1874,7 @@ class Celune(CeluneStateAccessors):
             character = self.current_character or announced_character
             self.current_character = character
 
-            # the default pack's SHA256 hash is:
-            # 22ff70762e7f6f3e734cc62c81c286f7482de6155b2394e7a6ddec1a892f63e0
-            # please check it later, or else non-default packs named Celune will show the "default" tag
-            if character == "Celune":
+            if self.voice_bundle_is_default:
                 self.log(f"Current character: {character} (default)")
             else:
                 self.log(f"Current character: {character}")

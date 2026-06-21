@@ -5,6 +5,8 @@ import sys
 import tempfile
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 from unittest import TestCase, mock
 
 from celune import subscribe
@@ -24,6 +26,7 @@ from celune.dataclasses.extensions import CeluneContext
 from celune.extensions.base import CeluneExtension
 from celune.extensions.events import EventDispatcher, iter_subscriptions
 from celune.extensions.manager import CeluneExtensionManager
+from celune.typing.events import ReadyEventCallback
 from .support import FakeBackend, FakeGlow
 
 
@@ -39,37 +42,55 @@ class DispatcherTests(TestCase):
     def test_dispatcher_registers_dispatches_and_unregisters_handlers(self) -> None:
         """Verify handlers receive events until they are unsubscribed."""
         calls: list[str] = []
+        ready_event = ReadyEvent(celune=cast(Celune, SimpleNamespace()))
 
-        def first(_event: object) -> None:
+        def first(_event: ReadyEvent) -> None:
             calls.append("first")
 
-        def second(_event: object) -> None:
+        def second(_event: ReadyEvent) -> None:
             calls.append("second")
 
-        self.dispatcher.subscribe("ready", first, owner_name="first")
-        self.dispatcher.subscribe("ready", second, owner_name="second")
-        self.dispatcher.emit("ready", object())
+        self.dispatcher.subscribe(
+            "ready",
+            cast(ReadyEventCallback, first),
+            owner_name="first",
+        )
+        self.dispatcher.subscribe(
+            "ready",
+            cast(ReadyEventCallback, second),
+            owner_name="second",
+        )
+        self.dispatcher.emit("ready", ready_event)
         self.assertEqual(calls, ["first", "second"])
 
         self.dispatcher.unsubscribe("ready", first)
-        self.dispatcher.emit("ready", object())
+        self.dispatcher.emit("ready", ready_event)
         self.assertEqual(calls, ["first", "second", "second"])
 
     def test_dispatcher_logs_handler_failures_and_continues(self) -> None:
         """Verify one failing handler does not block later handlers."""
         calls: list[str] = []
+        ready_event = ReadyEvent(celune=cast(Celune, SimpleNamespace()))
 
-        def broken(_event: object) -> None:
+        def broken(_event: ReadyEvent) -> None:
             calls.append("broken")
             raise RuntimeError("boom")
 
-        def healthy(_event: object) -> None:
+        def healthy(_event: ReadyEvent) -> None:
             calls.append("healthy")
 
-        self.dispatcher.subscribe("ready", broken, owner_name="broken")
-        self.dispatcher.subscribe("ready", healthy, owner_name="healthy")
+        self.dispatcher.subscribe(
+            "ready",
+            cast(ReadyEventCallback, broken),
+            owner_name="broken",
+        )
+        self.dispatcher.subscribe(
+            "ready",
+            cast(ReadyEventCallback, healthy),
+            owner_name="healthy",
+        )
 
-        self.dispatcher.emit("ready", object())
+        self.dispatcher.emit("ready", ready_event)
 
         self.assertEqual(calls, ["broken", "healthy"])
         self.assertEqual(self.logs[-1][1], "warning")

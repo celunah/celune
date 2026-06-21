@@ -691,7 +691,7 @@ def _set_webui_status(
 def _probed_status_text(celune: Celune) -> tuple[str, str]:
     """Return the best-effort footer status derived from Celune's live state."""
     if not celune.current_voice and not celune.voices:
-        return (f"{APP_NAME} could not start", "error")
+        return f"{APP_NAME} could not start", "error"
 
     state = (celune.cur_state or "").strip().lower()
     return {
@@ -1487,17 +1487,6 @@ def _build_webui() -> gr.Blocks:
                         min_width=0,
                         interactive=False,
                     )
-            source_audio = gr.Audio(
-                value=None,
-                type="numpy",
-                sources=["upload", "microphone"],
-                label="Source audio",
-                elem_id="celune-source-audio",
-            )
-            convert_button = gr.Button(
-                value="Convert Audio",
-                elem_id="celune-convert-audio",
-            )
             with gr.Row(elem_id="celune-footer"):
                 status = gr.HTML(_webui_status_html(), elem_id="celune-status")
                 resources = gr.HTML(
@@ -1562,20 +1551,6 @@ def _build_webui() -> gr.Blocks:
         voice_button.click(  # pylint: disable=E1101
             _webui_cycle_voice,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
-            show_progress="hidden",
-        )
-        convert_button.click(  # pylint: disable=E1101
-            _webui_convert_audio,
-            inputs=[source_audio],
-            outputs=[
-                source_audio,
-                audio,
-                logs,
-                status,
-                resources,
-                voice_button,
-                send_button,
-            ],
             show_progress="hidden",
         )
 

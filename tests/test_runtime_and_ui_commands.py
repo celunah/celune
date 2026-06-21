@@ -783,6 +783,34 @@ class UIStartupTests(TestCase):
             ],
         )
 
+    def test_runtime_huggingface_logger_error_is_routed_into_ui_logs(self) -> None:
+        """Verify Hugging Face logger errors are routed into the UI log widget."""
+        ui = CeluneUI()
+        captured: list[tuple[str, str]] = []
+        ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
+
+        logger = logging.getLogger("huggingface_hub")
+        original_handlers = list(logger.handlers)
+        original_propagate = logger.propagate
+        self.addCleanup(setattr, logger, "handlers", original_handlers)
+        self.addCleanup(setattr, logger, "propagate", original_propagate)
+
+        ui.install_runtime_log_redirects()
+        self.addCleanup(ui._remove_runtime_log_redirects)
+
+        logger.error("download failed because the connection dropped")
+
+        self.assertEqual(
+            captured,
+            [
+                (
+                    "Internal runtime error: download failed because the "
+                    "connection dropped",
+                    "error",
+                )
+            ],
+        )
+
     def test_safe_status_marquees_long_text_for_narrow_status_label(self) -> None:
         """Verify long status text scrolls instead of clipping."""
 

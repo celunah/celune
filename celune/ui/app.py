@@ -16,7 +16,7 @@ import contextlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from collections.abc import Iterator
-from typing import Optional, Callable, Union, TextIO, cast
+from typing import Optional, Callable, Protocol, Union, TextIO, cast
 
 import yaml
 from rich.text import Text
@@ -361,7 +361,11 @@ class CeluneUI(App):
     def _refresh_theme_text(self) -> None:
         """Refresh widgets after a runtime theme change."""
 
-        def repaint(widget: object) -> None:
+        class _RefreshableWidget(Protocol):
+            def refresh(self, *args, **kwargs) -> object:
+                """Refresh one widget in place."""
+
+        def repaint(widget: _RefreshableWidget) -> None:
             refresh = getattr(widget, "refresh", None)
             if refresh is None:
                 return
@@ -698,7 +702,12 @@ class CeluneUI(App):
         self._runtime_redirect_original_handlers = {}
         self._runtime_redirect_original_propagate = {}
 
-        for logger_name in ("torch.utils.flop_counter", "py.warnings"):
+        for logger_name in (
+            "torch.utils.flop_counter",
+            "py.warnings",
+            "huggingface_hub",
+            "transformers",
+        ):
             logger = logging.getLogger(logger_name)
             handler = UILogHandler(self.safe_log)
             self._runtime_redirect_loggers[logger_name] = logger
