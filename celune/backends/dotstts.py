@@ -12,7 +12,7 @@ import numpy as np
 import numpy.typing as npt
 from dots_tts.runtime import DotsTtsRuntime
 
-from ..utils import custom_assert
+from ..utils import custom_assert, discard
 from ..cevoice import default_loader, CEVoiceLoader
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
@@ -212,7 +212,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         Returns:
             tuple[bool, Optional[str]]: A cache availability flag and the resolved snapshot path when present.
         """
-        del lang
+        discard(lang)
         return cached_hf_snapshot_path(
             model,
             [

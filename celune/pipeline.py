@@ -41,6 +41,7 @@ from .dataclasses.pipeline import (
 )
 from .exceptions import NotAvailableError
 from .persona.memory import PersonaMemoryStore
+from .persona.emotion import PersonaEmotionAnalyzer
 from .analysis import analyze_voice_audio
 from .paths import app_data_dir, project_root, running_compiled
 from .persona.impl import (
@@ -87,13 +88,13 @@ from .persona.prompts import (
     PersonaPromptBuilder,
     RetrievedMemoryBundle,
     ShortTermHistory,
-    VisualContext,
 )
 from .constants import (
     APP_NAME,
     APP_SLUG,
     BASE_SR,
     JSON,
+    PERSONA_EMOTION_MODEL,
     JSONSerializable,
     PERSONA_MEMORY_EMBEDDING_MODEL,
 )
@@ -997,89 +998,6 @@ def build_persona_character_card(engine: Celune) -> str:
     return f"{context.character_profile.render()}\n\n{context.persona_card.render()}"
 
 
-def _build_visual_context(engine: Celune) -> VisualContext:
-    """Return the optional visual context summary for the current request."""
-    remembered = _recent_visual_context_items(engine)
-    attachments = getattr(engine, "persona_attachments", [])
-    if not isinstance(attachments, list):
-        return VisualContext(items=remembered)
-
-    items = list(remembered)
-    for attachment in attachments:
-        if not isinstance(attachment, dict):
-            continue
-        kind = attachment.get("type")
-        name = attachment.get("name")
-        path = attachment.get("path")
-        if not isinstance(kind, str) or not kind.strip():
-            continue
-        label = name.strip() if isinstance(name, str) and name.strip() else ""
-        source = path.strip() if isinstance(path, str) and path.strip() else ""
-        if label and source:
-            items.append(f"{kind.strip()}: {label} ({source})")
-        elif label:
-            items.append(f"{kind.strip()}: {label}")
-        elif source:
-            items.append(f"{kind.strip()}: {source}")
-
-    return VisualContext(items=tuple(items))
-
-
-def _recent_visual_context_items(engine: Celune) -> tuple[str, ...]:
-    """Return textual carry-over context from the most recent visual request."""
-    items = getattr(engine, "persona_recent_visual_context", ())
-    if isinstance(items, str):
-        stripped = items.strip()
-        return (stripped,) if stripped else ()
-    if isinstance(items, (list, tuple)):
-        return tuple(
-            item.strip() for item in items if isinstance(item, str) and item.strip()
-        )
-    return ()
-
-
-def _remember_visual_context(
-    attachments: list[JSONSerializable],
-    engine: Celune,
-    request: str,
-) -> None:
-    """Store a text summary for the most recent one-shot visual request."""
-    if not isinstance(attachments, list):
-        setattr(engine, "persona_recent_visual_context", ())
-        return
-
-    media_items: list[str] = []
-    for attachment in attachments:
-        if not isinstance(attachment, dict):
-            continue
-        kind = attachment.get("type")
-        name = attachment.get("name")
-        path = attachment.get("path")
-        if not isinstance(kind, str) or not kind.strip():
-            continue
-        label = name.strip() if isinstance(name, str) and name.strip() else ""
-        source = path.strip() if isinstance(path, str) and path.strip() else ""
-        if label and source:
-            media_items.append(f"{kind.strip()}: {label} ({source})")
-        elif label:
-            media_items.append(f"{kind.strip()}: {label}")
-        elif source:
-            media_items.append(f"{kind.strip()}: {source}")
-
-    if not media_items:
-        setattr(engine, "persona_recent_visual_context", ())
-        return
-
-    remembered = [
-        "Recent visual context from the last Persona request:",
-        *media_items,
-    ]
-    clean_request = request.strip()
-    if clean_request:
-        remembered.append(f"User request about that media: {clean_request}")
-    setattr(engine, "persona_recent_visual_context", tuple(remembered))
-
-
 def _build_short_term_history(engine: Celune) -> ShortTermHistory:
     """Return the current-run chat history for the Persona prompt."""
     messages = persona_history_messages(engine)
@@ -1095,6 +1013,72 @@ def _build_short_term_history(engine: Celune) -> ShortTermHistory:
     if isinstance(raw_summary, str) and raw_summary.strip():
         session_summary = raw_summary.strip()
     return ShortTermHistory(turns=tuple(turns), session_summary=session_summary)
+
+
+def _persona_emotion_analyzer(engine: Celune) -> Optional[PersonaEmotionAnalyzer]:
+    """Return the configured Persona emotion analyzer for this engine."""
+    existing = getattr(engine, "persona_emotion_analyzer", None)
+    if isinstance(existing, PersonaEmotionAnalyzer):
+        return existing
+
+    emotion_config = persona_config(engine.config).get("emotion")
+    if isinstance(emotion_config, dict):
+        enabled = emotion_config.get("enabled", True)
+        if isinstance(enabled, bool) and not enabled:
+            return None
+        model_name = emotion_config.get("model")
+        user_weight = emotion_config.get("user_weight", 0.75)
+        assistant_weight = emotion_config.get("assistant_weight", 0.25)
+        decay_power = emotion_config.get("history_decay_power", 3.0)
+        analyzer = PersonaEmotionAnalyzer(
+            model_name=model_name.strip()
+            if isinstance(model_name, str) and model_name.strip()
+            else PERSONA_EMOTION_MODEL,
+            user_weight=float(user_weight)
+            if isinstance(user_weight, (int, float))
+            and not isinstance(user_weight, bool)
+            else 0.75,
+            assistant_weight=float(assistant_weight)
+            if isinstance(assistant_weight, (int, float))
+            and not isinstance(assistant_weight, bool)
+            else 0.25,
+            history_decay_power=float(decay_power)
+            if isinstance(decay_power, (int, float))
+            and not isinstance(decay_power, bool)
+            else 3.0,
+        )
+    else:
+        analyzer = PersonaEmotionAnalyzer()
+
+    setattr(engine, "persona_emotion_analyzer", analyzer)
+    return analyzer
+
+
+def _persona_mood_or_state(
+    engine: Celune,
+    request: str,
+) -> str:
+    """Return the Persona state string for the current request."""
+    configured_state = _config_text(engine, "persona_state", "")
+    if configured_state:
+        return configured_state
+
+    analyzer = _persona_emotion_analyzer(engine)
+    if analyzer is None:
+        return "Neutral."
+
+    summary = analyzer.summarize_history(persona_history_messages(engine), request)
+    if summary is None or not summary.target_state.strip():
+        emotion_warning = (
+            f"Persona emotion analysis fell back to Neutral: {analyzer.last_error}"
+            if analyzer.last_error.strip()
+            else "Persona emotion analysis fell back to Neutral."
+        )
+        log_dev = getattr(engine, "log_dev", None)
+        if callable(log_dev):
+            log_dev(emotion_warning, "warning")
+        return "Neutral."
+    return summary.target_state
 
 
 def _persona_memory_store(engine: Celune) -> Optional[PersonaMemoryStore]:
@@ -1244,17 +1228,14 @@ def build_persona_context(engine: Celune, request: str) -> PersonaContext:
         prompt_rules=pack_persona_lines(engine, "prompt_rules"),
         example_dialogue=pack_persona_lines(engine, "example_dialogue"),
     )
-    relationship_memory = _config_text(engine, "persona_relationship_memory", "")
-    mood_or_state = _config_text(engine, "persona_state", "Neutral.")
+    mood_or_state = _persona_mood_or_state(engine, request)
 
     return PersonaContext(
         character_profile=character_profile,
         persona_card=persona_card,
-        relationship_memory=relationship_memory or "None.",
         mood_or_state=mood_or_state,
         retrieved_long_term_memory=_build_retrieved_memory_bundle(engine, request),
         current_run_chat_history=_build_short_term_history(engine),
-        visual_context=_build_visual_context(engine),
         user_message=request.strip(),
     )
 
@@ -1371,7 +1352,6 @@ def think(engine: Celune, request: str) -> bool:
     _store_persona_memories(engine, request)
     payload = build_persona_request(engine, request)
     attachments = getattr(engine, "persona_attachments", None)
-    attachment_snapshot = list(attachments) if isinstance(attachments, list) else []
 
     try:
         vision = engine.vision
@@ -1394,8 +1374,6 @@ def think(engine: Celune, request: str) -> bool:
     if not spoken_text:
         engine.log("Persona system returned an empty response.", "warning")
         return False
-
-    _remember_visual_context(attachment_snapshot, engine, request)
 
     history = getattr(engine, "persona_history", None)
     if isinstance(history, list):
@@ -2492,7 +2470,6 @@ queue_playback_chunk = _queue_playback_chunk
 queue_playback_done = _queue_playback_done
 youtube_sfx_title = _youtube_sfx_title
 download_youtube_sfx = _download_youtube_sfx
-remember_visual_context = _remember_visual_context
 finalize_playback_idle = _finalize_playback_idle
 
 

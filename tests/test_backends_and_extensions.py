@@ -21,6 +21,7 @@ import torch
 from celune.utils import discard
 from celune.celune import Celune
 from celune.backends import resolve_backend
+from celune.typing.backends import BackendModel
 from celune.vc_backends import resolve_vc_backend
 from celune.vc_backends.passthrough import CelunePassthroughVCBackend
 from celune.extensions.manager import CeluneExtensionManager
@@ -153,7 +154,7 @@ class BackendTests(TestCase):
         runtime = WrapperRuntime()
         inner = runtime.inner
         cached = runtime.cache["child"]
-        backend.model = cast(object, runtime)
+        backend.model = cast(BackendModel, runtime)
 
         backend.unload_model()
 

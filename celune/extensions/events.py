@@ -15,7 +15,9 @@ from ..typing.events import (
     CharacterLoadedEventCallback,
     CharacterUnloadedEventCallback,
     ErrorEventCallback,
+    EventCallback,
     EventName,
+    EventPayload,
     FatalEventCallback,
     GenerationEndEventCallback,
     GenerationErrorEventCallback,
@@ -64,7 +66,8 @@ EVENT_NAMES: tuple[EventName, ...] = (
 )
 _EVENT_NAME_SET = frozenset(EVENT_NAMES)
 EVENT_HANDLER_METADATA_ATTR = "__celune_event_subscriptions__"
-_DecoratedCallback = TypeVar("_DecoratedCallback", bound=Callable[..., object])
+_DecoratedCallback = TypeVar("_DecoratedCallback", bound=Callable[..., None])
+_DispatcherCallback = Callable[[EventPayload], None]
 
 
 @dataclass(frozen=True)
@@ -80,7 +83,7 @@ class RegisteredEventHandler:
     """Stored event-subscription metadata used for later cleanup."""
 
     event_name: EventName
-    callback: Callable[[object], None]
+    callback: EventCallback
     owner_name: str
 
 
@@ -96,10 +99,8 @@ class EventDispatcher:
         self._log_warning = log_warning
         self._dev = dev
         self._lock = threading.RLock()
-        self._callbacks: dict[EventName, list[Callable[[object], None]]] = defaultdict(
-            list
-        )
-        self._owners: dict[tuple[EventName, Callable[[object], None]], str] = {}
+        self._callbacks: dict[EventName, list[_DispatcherCallback]] = defaultdict(list)
+        self._owners: dict[tuple[EventName, _DispatcherCallback], str] = {}
 
     @overload
     def subscribe(
@@ -213,6 +214,14 @@ class EventDispatcher:
         owner_name: Optional[str] = None,
     ) -> None: ...
 
+    @overload
+    def subscribe(
+        self,
+        event_name: EventName,
+        callback: EventCallback,
+        owner_name: Optional[str] = None,
+    ) -> None: ...
+
     def subscribe(
         self,
         event_name: EventName,
@@ -229,7 +238,7 @@ class EventDispatcher:
         self._validate_event_name(event_name)
         with self._lock:
             callbacks = self._callbacks[event_name]
-            typed_callback = cast(Callable[[object], None], callback)
+            typed_callback = cast(_DispatcherCallback, callback)
             if typed_callback not in callbacks:
                 callbacks.append(typed_callback)
             self._owners[(event_name, typed_callback)] = (
@@ -334,6 +343,13 @@ class EventDispatcher:
         callback: CharacterUnloadedEventCallback,
     ) -> None: ...
 
+    @overload
+    def unsubscribe(
+        self,
+        event_name: EventName,
+        callback: EventCallback,
+    ) -> None: ...
+
     def unsubscribe(
         self,
         event_name: EventName,
@@ -350,7 +366,7 @@ class EventDispatcher:
             callbacks = self._callbacks.get(event_name)
             if callbacks is None:
                 return
-            typed_callback = cast(Callable[[object], None], callback)
+            typed_callback = cast(_DispatcherCallback, callback)
             try:
                 callbacks.remove(typed_callback)
             except ValueError:
@@ -434,9 +450,9 @@ class EventDispatcher:
     ) -> None: ...
 
     @overload
-    def emit(self, event_name: EventName, event: object) -> None: ...
+    def emit(self, event_name: EventName, event: EventPayload) -> None: ...
 
-    def emit(self, event_name: EventName, event: object) -> None:
+    def emit(self, event_name: EventName, event: EventPayload) -> None:
         """Dispatch an event to all current subscribers.
 
         Args:
@@ -473,7 +489,7 @@ class EventDispatcher:
             raise ValueError(f"unknown event name: {event_name}")
 
     @staticmethod
-    def _describe_callback(callback: Callable[[object], None]) -> str:
+    def _describe_callback(callback: _DispatcherCallback) -> str:
         """Return a useful callback label for logs."""
         qualname = getattr(callback, "__qualname__", None)
         if isinstance(qualname, str) and qualname:
@@ -485,10 +501,10 @@ class EventDispatcher:
 
 
 def _store_subscription_metadata(
-    callback: Callable[[object], None],
+    callback: Callable[..., None],
     event_name: EventName,
     enabled: bool,
-) -> Callable[[object], None]:
+) -> Callable[..., None]:
     """Attach one declared event subscription to a callback."""
     EventDispatcher._validate_event_name(event_name)
     subscription = EventSubscription(event_name=event_name, enabled=enabled)
@@ -506,7 +522,7 @@ def _store_subscription_metadata(
 
 
 def iter_subscriptions(
-    callback: object,
+    callback: Callable[..., None],
 ) -> tuple[EventSubscription, ...]:
     """Return the declared event subscriptions stored on a callback.
 
@@ -654,14 +670,14 @@ def subscribe(
         enabled: Whether the handler should be auto-registered when discovered.
 
     Returns:
-        Callable[..., object]: Decorator that records the event name on the callback.
+        Callable[..., Callable[..., None]]: Decorator that records the event name on the callback.
     """
 
     def decorator(callback: _DecoratedCallback) -> _DecoratedCallback:
         return cast(
             _DecoratedCallback,
             _store_subscription_metadata(
-                cast(Callable[[object], None], callback),
+                cast(_DispatcherCallback, callback),
                 event_name,
                 enabled,
             ),

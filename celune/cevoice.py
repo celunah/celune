@@ -32,6 +32,9 @@ LEGACY_FORMAT_NAME: Final[str] = "CEVOICE"
 
 HEADER = struct.Struct("<8sHI")
 ALLOWED_ASSET_KINDS = {"wav", "pt"}
+DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
+    "22ff70762e7f6f3e734cc62c81c286f7482de6155b2394e7a6ddec1a892f63e0"
+)
 
 
 @dataclass(frozen=True)
@@ -232,17 +235,20 @@ class CEVoiceLoader:
             CEVoiceError: The CEVOICE/CECHAR package contains path delimiters.
         """
         key = (voice, kind)
-        if key not in self._paths:
+        path = self._paths.get(key)
+        if path is None or not path.is_file():
             if "/" in voice or "\\" in voice or voice in {"", ".", ".."}:
                 raise CEVoiceError(f"invalid voice name '{voice}'")
             if "/" in kind or "\\" in kind or kind in {"", ".", ".."}:
                 raise CEVoiceError(f"invalid asset kind '{kind}'")
             extension = suffix or f".{kind}"
             safe_voice = Path(voice).name
+            register_protected_temp_path(self._directory)
+            self._directory.mkdir(parents=True, exist_ok=True)
             path = self._directory / f"{safe_voice}{extension}"
             path.write_bytes(self.bundle.read_asset(voice, kind))
             self._paths[key] = path
-        return self._paths[key]
+        return path
 
     def close(self) -> None:
         """Remove extracted temporary files."""
@@ -670,6 +676,37 @@ def default_bundle_path() -> Path:
         Path: The absolute path to Celune's default voice bundle.
     """
     return project_root() / "voices" / "default.cevoice"
+
+
+def bundle_sha256(path: Union[str, Path]) -> str:
+    """Return the SHA-256 checksum of one CEVOICE/CECHAR bundle file.
+
+    Args:
+        path: The bundle file to hash.
+
+    Returns:
+        str: The lowercase hexadecimal SHA-256 checksum for the bundle.
+    """
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def bundle_matches_default_pack_checksum(path: Union[str, Path]) -> bool:
+    """Return whether one bundle matches Celune's canonical default pack bytes.
+
+    Args:
+        path: The bundle file to compare against Celune's bundled default pack checksum.
+
+    Returns:
+        bool: ``True`` when the file checksum matches the canonical default CEVOICE pack.
+    """
+    try:
+        return bundle_sha256(path) == DEFAULT_CEVOICE_PACK_SHA256
+    except OSError:
+        return False
 
 
 def bundled_voices_dir() -> Path:

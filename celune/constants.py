@@ -30,6 +30,8 @@ NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v2.0-ctx2048"
 VOICE_EMBEDDING_MODEL = "marksverdhei/Qwen3-Voice-Embedding-12Hz-1.7B"
 # this embedding model is used to retrieve long-term Persona memories semantically when available
 PERSONA_MEMORY_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+# this model is used to infer conversation emotion and derive Persona's target response mood
+PERSONA_EMOTION_MODEL = "lunahr/emotispace-128"
 
 # this model is loaded by Celune, and used to control the persona
 PERSONA_MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"

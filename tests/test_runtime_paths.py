@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Tests for Celune runtime path handling."""
 
+import logging
 import tempfile
 import sys
 import os
@@ -14,6 +15,7 @@ from textual.widgets import RichLog
 from celune.constants import APP_SLUG
 from celune.paths import (
     configure_huggingface_cache_environment,
+    configure_huggingface_runtime,
     ensure_config_path,
     huggingface_home_dir,
     huggingface_hub_cache_dir,
@@ -175,6 +177,27 @@ class RuntimePathTests(TestCase):
                 os.environ["TRANSFORMERS_CACHE"],
                 existing["TRANSFORMERS_CACHE"],
             )
+
+    def test_huggingface_runtime_disables_global_progress_and_logs(self) -> None:
+        """Verify Celune globally suppresses Hugging Face progress and log noise."""
+        with (
+            mock.patch("celune.paths.disable_progress_bar") as disable_transformers,
+            mock.patch("celune.paths.disable_progress_bars") as disable_hub,
+            mock.patch("celune.paths.hf_logging.set_verbosity_error") as set_verbosity,
+            mock.patch("celune.paths.logging.getLogger") as get_logger,
+            mock.patch.dict(os.environ, {}, clear=True),
+        ):
+            logger = mock.Mock()
+            get_logger.return_value = logger
+
+            configure_huggingface_runtime()
+
+        self.assertEqual(os.environ["HF_HUB_DISABLE_PROGRESS_BARS"], "1")
+        disable_transformers.assert_called_once_with()
+        disable_hub.assert_called_once_with()
+        set_verbosity.assert_called_once_with()
+        get_logger.assert_called_once_with("huggingface_hub")
+        logger.setLevel.assert_called_once_with(logging.ERROR)
 
     def test_format_error_writes_traceback_to_runtime_directory(self) -> None:
         """Verify developer tracebacks are saved via the runtime path helper.

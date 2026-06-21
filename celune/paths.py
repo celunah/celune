@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
-"""Runtime filesystem paths for Celune user data."""
+"""Runtime filesystem paths and global Hugging Face runtime setup for Celune."""
 
+import logging
 import os
 import sys
 import shutil
@@ -8,12 +9,16 @@ from pathlib import Path
 from typing import Optional
 
 from platformdirs import user_data_dir
+from huggingface_hub.utils import disable_progress_bars
+from transformers.utils.logging import disable_progress_bar
+from transformers.utils import logging as hf_logging
 
 from .constants import APP_SLUG
 
 _REPO_MARKERS = ("celune", "default_config.yaml", "pyproject.toml")
 _HF_HOME_ENV = "HF_HOME"
 _HF_HUB_CACHE_ENV = "HF_HUB_CACHE"
+_HF_HUB_DISABLE_PROGRESS_BARS_ENV = "HF_HUB_DISABLE_PROGRESS_BARS"
 _TRANSFORMERS_CACHE_ENV = "TRANSFORMERS_CACHE"
 
 
@@ -129,6 +134,15 @@ def configure_huggingface_cache_environment(force: bool = False) -> None:
         os.environ[_HF_HOME_ENV] = default_hf_home
     if _HF_HUB_CACHE_ENV not in os.environ:
         os.environ[_HF_HUB_CACHE_ENV] = default_hf_hub_cache
+
+
+def configure_huggingface_runtime() -> None:
+    """Apply Celune's process-wide Hugging Face logging and progress suppression."""
+    os.environ.setdefault(_HF_HUB_DISABLE_PROGRESS_BARS_ENV, "1")
+    disable_progress_bar()
+    disable_progress_bars()
+    hf_logging.set_verbosity_error()
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
 
 def memory_data_dir(create: bool = False) -> Path:

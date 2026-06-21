@@ -247,9 +247,7 @@ def uses_default_celune_identity(engine: PersonaEngineView) -> bool:
     Returns:
         bool: ``True`` when the default Celune voice bundle is active for Celune.
     """
-    if not bool(getattr(engine, "voice_bundle_is_default", False)):
-        return False
-    return persona_active_character_name(engine).strip().lower() == "celune"
+    return bool(getattr(engine, "voice_bundle_is_default", False))
 
 
 def default_persona_persona() -> str:

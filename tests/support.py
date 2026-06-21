@@ -86,7 +86,8 @@ class FakeBackend(CeluneBackend):
         Returns:
             Iterator[tuple[npt.NDArray[np.float32], int, dict[str, int]]]: An iterator yielding one fake audio chunk.
         """
-        del model, kwargs
+        discard(model)
+        discard(kwargs)
         yield np.zeros((8, 2), dtype=np.float32), 48000, {"chunk_steps": 2}
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol, Union
+from typing import TYPE_CHECKING, Callable, Optional, Protocol, Union
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
@@ -27,6 +27,9 @@ if TYPE_CHECKING:
     from ..extensions.manager import CeluneExtensionManager
     from ..persona.impl import PersonaClient
     from ..vc_backends import CeluneVCBackend
+
+
+GenerationKwarg = Union[torch.Tensor, int, bool, None]
 
 
 class SupportsClose(Protocol):
@@ -56,7 +59,7 @@ class SupportsUnload(Protocol):
 class Generative(Protocol):
     """Protocol for normalization-capable language models."""
 
-    def generate(self, **kwargs: Any) -> torch.Tensor:
+    def generate(self, **kwargs: GenerationKwarg) -> torch.Tensor:
         """Generate token IDs from the provided model inputs.
 
         Args:
