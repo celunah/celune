@@ -5,8 +5,8 @@ import os
 import gc
 import threading
 import contextlib
-from collections.abc import Mapping, Sequence
 from typing import Optional, Union, cast
+from collections.abc import Mapping, Sequence
 
 import torch
 from transformers.tokenization_utils_base import BatchEncoding
@@ -18,8 +18,8 @@ from transformers import (
     BitsAndBytesConfig,
 )
 
-from ..utils import discard, normalize_special_characters
 from ..vram import resolve_vram_preset
+from ..utils import discard, normalize_special_characters
 from ..constants import JSONSerializable, PERSONA_MODEL_ID, N_A_STR
 from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
 from ..typing.persona import (

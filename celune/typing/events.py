@@ -22,7 +22,7 @@ from ..dataclasses.events import (
 )
 
 
-EventName = Literal[
+type EventName = Literal[
     "ready",
     "shutdown",
     "fatal",
@@ -113,22 +113,22 @@ if TYPE_CHECKING:
     from ..celune import Celune
 
 
-ReadyEventCallback = Callable[[ReadyEvent], None]
-ShutdownEventCallback = Callable[[ShutdownEvent], None]
-FatalEventCallback = Callable[[FatalEvent], None]
-ErrorEventCallback = Callable[[ErrorEvent], None]
-VoiceChangedEventCallback = Callable[[VoiceChangedEvent], None]
-StateChangedEventCallback = Callable[[StateChangedEvent], None]
-GenerationStartEventCallback = Callable[[GenerationStartEvent], None]
-GenerationEndEventCallback = Callable[[GenerationEndEvent], None]
-GenerationErrorEventCallback = Callable[[GenerationErrorEvent], None]
-AudioStartEventCallback = Callable[[AudioStartEvent], None]
-AudioEndEventCallback = Callable[[AudioEndEvent], None]
-CharacterChangedEventCallback = Callable[[CharacterChangedEvent], None]
-CharacterLoadedEventCallback = Callable[[CharacterLoadedEvent], None]
-CharacterUnloadedEventCallback = Callable[[CharacterUnloadedEvent], None]
+type ReadyEventCallback = Callable[[ReadyEvent], None]
+type ShutdownEventCallback = Callable[[ShutdownEvent], None]
+type FatalEventCallback = Callable[[FatalEvent], None]
+type ErrorEventCallback = Callable[[ErrorEvent], None]
+type VoiceChangedEventCallback = Callable[[VoiceChangedEvent], None]
+type StateChangedEventCallback = Callable[[StateChangedEvent], None]
+type GenerationStartEventCallback = Callable[[GenerationStartEvent], None]
+type GenerationEndEventCallback = Callable[[GenerationEndEvent], None]
+type GenerationErrorEventCallback = Callable[[GenerationErrorEvent], None]
+type AudioStartEventCallback = Callable[[AudioStartEvent], None]
+type AudioEndEventCallback = Callable[[AudioEndEvent], None]
+type CharacterChangedEventCallback = Callable[[CharacterChangedEvent], None]
+type CharacterLoadedEventCallback = Callable[[CharacterLoadedEvent], None]
+type CharacterUnloadedEventCallback = Callable[[CharacterUnloadedEvent], None]
 
-EventPayload = Union[
+type EventPayload = Union[
     ReadyEvent,
     ShutdownEvent,
     FatalEvent,
@@ -145,7 +145,7 @@ EventPayload = Union[
     CharacterUnloadedEvent,
 ]
 
-EventCallback = Union[
+type EventCallback = Union[
     ReadyEventCallback,
     ShutdownEventCallback,
     FatalEventCallback,

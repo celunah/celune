@@ -6,9 +6,9 @@ import os
 import glob
 import random
 import secrets
+import hashlib
 import threading
 import contextlib
-import hashlib
 import unittest.mock
 from pathlib import Path
 from abc import ABC, abstractmethod
@@ -34,8 +34,8 @@ from ..utils import discard
 from ..constants import N_A_NUMERIC
 from ..cevoice import default_loader
 from ..exceptions import BackendError
-from ..paths import huggingface_hub_cache_dir, temp_data_dir
 from ..typing.backends import BackendModel, ModelT
+from ..paths import huggingface_hub_cache_dir, temp_data_dir
 
 __all__ = [
     "BackendModel",

@@ -3,14 +3,14 @@
 
 import os
 import gc
-import shutil
 import time
 import queue
+import shutil
 import threading
 import contextlib
 from pathlib import Path
-from typing import Optional, Callable, Protocol, Union, cast
 from dataclasses import dataclass
+from typing import Optional, Callable, Protocol, Union, cast
 
 import torch
 import numpy as np

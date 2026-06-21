@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Unified voice-conversion backend abstractions for Celune."""
 
-from abc import ABC, abstractmethod
 from typing import Callable
+from abc import ABC, abstractmethod
 
 from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 

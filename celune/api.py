@@ -9,16 +9,16 @@ import socket
 import datetime
 import textwrap
 import threading
+from html import escape
 from hmac import compare_digest
 from dataclasses import dataclass
-from html import escape
 from collections import defaultdict, deque
 from typing import Callable, Iterator, Optional, Union
 
-import gradio as gr
-import uvicorn
 import numpy as np
 import numpy.typing as npt
+import uvicorn
+import gradio as gr
 import soundfile as sf
 from pydantic import BaseModel, Field
 from starlette.middleware.base import RequestResponseEndpoint
@@ -31,17 +31,17 @@ from fastapi.responses import (
     RedirectResponse,
 )
 
-from . import __version__
 from . import colors
+from . import __version__
 from .celune import Celune
-from .utils import format_error
-from .paths import main_window_log_path, project_root
-from .dsp import resample_audio
-from .pipeline import SpeechStreamQueue
-from .constants import BASE_SR, APP_NAME, JSONSerializable
-from .cevoice import default_loader
-from .ui import resources as ui_resources
 from .ui.app import CeluneUI
+from .utils import format_error
+from .dsp import resample_audio
+from .cevoice import default_loader
+from .pipeline import SpeechStreamQueue
+from .ui import resources as ui_resources
+from .paths import main_window_log_path, project_root
+from .constants import BASE_SR, APP_NAME, JSONSerializable
 
 api = FastAPI(title=f"{APP_NAME}API")
 bound_celune: Optional[Celune] = None

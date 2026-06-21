@@ -14,9 +14,9 @@ import soundfile as sf
 from ..paths import project_root
 from ..constants import APP_NAME
 from ..backends.qwen3 import Qwen3
-from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..exceptions import InvalidExtensionError
 from ..utils import format_error, replace_ipa, format_number
+from ..cevoice import active_bundle_path, resolve_bundle_path
 
 if TYPE_CHECKING:
     from .app import CeluneUI

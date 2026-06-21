@@ -1,19 +1,19 @@
 # SPDX-License-Identifier: MIT
 """Runtime filesystem paths and global Hugging Face runtime setup for Celune."""
 
-import logging
 import os
 import sys
 import shutil
+import logging
 from pathlib import Path
 from typing import Optional
 
 from platformdirs import user_data_dir
 from huggingface_hub.utils import disable_progress_bars
-from transformers.utils.logging import disable_progress_bar
 from transformers.utils import logging as hf_logging
+from transformers.utils.logging import disable_progress_bar
 
-from .constants import APP_SLUG
+from .constants import APP_NAME, APP_SLUG
 
 _REPO_MARKERS = ("celune", "default_config.yaml", "pyproject.toml")
 _HF_HOME_ENV = "HF_HOME"
@@ -57,7 +57,7 @@ def app_data_dir(create: bool = False) -> Path:
     Returns:
         Path: Celune's user data directory.
     """
-    path = Path(user_data_dir(APP_SLUG, appauthor=False))
+    path = Path(user_data_dir(APP_NAME, appauthor=False))
     if create:
         path.mkdir(parents=True, exist_ok=True)
     return path

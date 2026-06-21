@@ -11,7 +11,7 @@ class BackendModel(Protocol):
 
 
 ModelT = TypeVar("ModelT", bound=BackendModel)
-MiniPromptState = dict[str, dict[str, torch.Tensor]]
+type MiniPromptState = dict[str, dict[str, torch.Tensor]]
 
 
 class MiniModel(Protocol):

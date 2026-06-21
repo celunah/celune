@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import threading
-from collections import defaultdict
 from dataclasses import dataclass
+from collections import defaultdict
 from typing import TYPE_CHECKING, Callable, Literal, Optional, TypeVar, cast, overload
 
 from ..typing.events import (

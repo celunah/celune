@@ -16,11 +16,11 @@ from ..dataclasses.pipeline import (
     VoiceConversionRequest,
 )
 
-SpeechStreamItem = Optional[Union[npt.NDArray[np.float32], Exception]]
-SpeechStreamQueue = queue.Queue[SpeechStreamItem]
-TextQueueItem = Union[SpeechRequest, PipelineStates]
-AudioInputItem = AudioInputRequest
-AudioOutputItem = AudioOutput
-VoiceConversionInputItem = VoiceConversionRequest
-AudioChunk = PlaybackChunk
-AudioQueueItem = Union[PlaybackChunk, PlaybackSourceDone, PipelineStates]
+type SpeechStreamItem = Optional[Union[npt.NDArray[np.float32], Exception]]
+type SpeechStreamQueue = queue.Queue[SpeechStreamItem]
+type TextQueueItem = Union[SpeechRequest, PipelineStates]
+type AudioInputItem = AudioInputRequest
+type AudioOutputItem = AudioOutput
+type VoiceConversionInputItem = VoiceConversionRequest
+type AudioChunk = PlaybackChunk
+type AudioQueueItem = Union[PlaybackChunk, PlaybackSourceDone, PipelineStates]

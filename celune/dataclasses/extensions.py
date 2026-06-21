@@ -1,8 +1,8 @@
 """Extension-facing dataclasses."""
 
+from pathlib import Path
 from dataclasses import dataclass, field
 from contextlib import AbstractContextManager
-from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Callable, Union
 
 from .. import __version__

@@ -13,29 +13,29 @@ import datetime
 import itertools
 import threading
 import contextlib
-from dataclasses import dataclass, field
 from pathlib import Path
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from typing import Optional, Callable, Protocol, Union, TextIO, cast
 
 import yaml
 from rich.text import Text
 from textual.color import Color
 from textual.timer import Timer
+from textual.theme import Theme
 from textual import work, events
 from textual.widget import Widget
-from textual.theme import Theme
-from textual.app import ScreenStackError
 from textual.css.types import EdgeStyle
+from textual.app import ScreenStackError
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 
 from .. import colors
 from ..celune import Celune
-from ..constants import APP_NAME, SIGTSTP
 from ..cevoice import default_loader
 from . import resources as ui_resources
+from ..constants import APP_NAME, SIGTSTP
 from .theme import CELUNE_CSS, severity_color
 from .terminal import LogRedirect, UILogHandler
 from ..paths import config_path, main_window_log_path

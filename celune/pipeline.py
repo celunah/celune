@@ -5,20 +5,20 @@ from __future__ import annotations
 
 import os
 import re
-import json
 import sys
+import json
 import time
 import queue
 import random
 import pathlib
 import datetime
-import contextlib
 import subprocess
-from importlib import util as importlib_util
+import contextlib
 from collections import deque
-from typing import TYPE_CHECKING, Optional, Mapping, Union, cast
-from urllib.parse import urlparse, urlencode
 from urllib.request import urlopen
+from urllib.parse import urlparse, urlencode
+from importlib import util as importlib_util
+from typing import TYPE_CHECKING, Optional, Mapping, Union, cast
 
 import torch
 import numpy as np
