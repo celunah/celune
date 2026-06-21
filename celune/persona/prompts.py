@@ -273,9 +273,12 @@ class PersonaPromptBuilder:
             ),
             _render_optional_section(
                 "mood",
-                context.mood_or_state.strip() or "neutral",
+                context.mood_or_state.strip() or "Target emotion: neutral.",
             ),
-            f"<behavior>\n{_render_lines(behavior_lines)}\n</behavior>".strip(),
+            _render_optional_section(
+                "behavior",
+                _render_lines(behavior_lines),
+            ),
             f"{name}:",
         ]
 
