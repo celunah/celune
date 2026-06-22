@@ -5,7 +5,9 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12%2F3.13-cebaff) ![License](https://img.shields.io/badge/License-MIT-cebaff) ![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff) ![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
 
-Celune is a real-time AI TTS character engine focused on expressive voice delivery with a well-made user experience.
+Celune is a real-time AI TTS character engine which can be used for a variety of use cases.
+
+Whether it's roleplay, PA systems, or something else, it can do it all.
 
 It has been designed to provide fast, high-quality voice generation, even on consumer-grade hardware.
 
