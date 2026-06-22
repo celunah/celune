@@ -35,10 +35,10 @@ from .. import colors
 from ..celune import Celune
 from ..cevoice import default_loader
 from . import resources as ui_resources
-from ..constants import APP_NAME, SIGTSTP
 from .theme import CELUNE_CSS, severity_color
 from .terminal import LogRedirect, UILogHandler
 from ..paths import config_path, main_window_log_path
+from ..constants import APP_NAME, SIGTSTP, CRASH_LINES
 from .commands import process_command as process_ui_command
 from ..persona.impl import (
     persona_talkback_enabled,
@@ -363,7 +363,12 @@ class CeluneUI(App):
 
         class _RefreshableWidget(Protocol):
             def refresh(self, *args, **kwargs) -> object:
-                """Refresh one widget in place."""
+                """Refresh one widget in place.
+
+                Args:
+                    args: Value for `args`.
+                    kwargs: Value for `kwargs`.
+                """
 
         def repaint(widget: _RefreshableWidget) -> None:
             refresh = getattr(widget, "refresh", None)
@@ -656,10 +661,7 @@ class CeluneUI(App):
             text = pages[self._resource_page % len(pages)]
 
             if supports_ansi() and self.celune.cur_state == "error":
-                if self._resource_page % 2:
-                    self._old_stdout.write(f"\x1b]2;{APP_NAME}\x07")
-                else:
-                    self._old_stdout.write("\x1b]2;has crashed\x07")
+                self._write_terminal_escape(f"\x1b]2;{next(CRASH_LINES)}\x07")
 
             self.resources.update(indent(text, spaces=2, direction="right"))
 
@@ -670,8 +672,6 @@ class CeluneUI(App):
         if self._runtime_log_capture_enabled:
             return
 
-        self._old_stdout = sys.stdout
-        self._old_stderr = sys.stderr
         self._log_stdout = LogRedirect(
             write_callback=self.safe_log,
             default_severity="info",
@@ -691,6 +691,16 @@ class CeluneUI(App):
         sys.stderr = self._log_stderr
         self._install_runtime_log_redirects()
         self._runtime_log_capture_enabled = True
+
+    def _write_terminal_escape(self, escape: str) -> None:
+        """Write one ANSI escape sequence to the real terminal when available."""
+        if self._log_stdout is not None:
+            self._log_stdout.ansi(escape)
+            return
+
+        if self._old_stdout is not None:
+            self._old_stdout.write(escape)
+            self._old_stdout.flush()
 
     def _install_runtime_log_redirects(self) -> None:
         """Route known runtime logger output into Celune's UI log widget."""
@@ -864,6 +874,10 @@ class CeluneUI(App):
                     f"New to {APP_NAME}? Type /tutorial to begin the tutorial."
                 )
                 self._schedule_sleep_timer()
+                if supports_ansi(self._old_stdout):
+                    self.call_from_thread(
+                        self._write_terminal_escape, f"\x1b]2;{APP_NAME}\x07"
+                    )
             else:
                 self.cur_state = "error"
                 self.change_input_state(locked=True)
@@ -1507,6 +1521,7 @@ class CeluneUI(App):
 
     def on_unmount(self) -> None:
         """Unload Celune."""
+        self._write_terminal_escape(f"\x1b]2;{APP_NAME} is exiting...\x07")
         if self.celune is not None:
             self.celune.close()
 

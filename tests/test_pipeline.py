@@ -144,6 +144,50 @@ class PipelineTests(TestCase):
         self.assertEqual(done_markers[0].notify_idle, False)
         self.assertEqual(engine.cur_state, "reloading")
 
+    def test_readiness_signal_does_not_block_concurrent_speech_queueing(self) -> None:
+        """Verify the readiness cue does not briefly reject speech as busy."""
+        engine = make_pipeline_engine()
+        queued_during_signal: list[bool] = []
+        original_register = pipeline.register_playback_source
+
+        def register_and_queue(
+            engine_arg: Celune,
+            source_id: int,
+            *,
+            kind: str,
+            base_gain: float = 1.0,
+        ) -> None:
+            with mock.patch(
+                "celune.pipeline.detect_language",
+                return_value={
+                    "language": "en",
+                    "languages": ["en"],
+                    "supported": True,
+                    "probabilities": {"en": 1.0},
+                },
+            ):
+                queued_during_signal.append(
+                    pipeline.queue_speech(cast(Celune, engine), "hello")
+                )
+            original_register(
+                engine_arg,
+                source_id,
+                kind=kind,
+                base_gain=base_gain,
+            )
+
+        with mock.patch(
+            "celune.pipeline._register_playback_source",
+            side_effect=register_and_queue,
+        ):
+            self.assertEqual(
+                pipeline.play_signal(cast(Celune, engine), "readiness"), True
+            )
+
+        self.assertEqual(queued_during_signal, [True])
+        request = engine.text_queue.get_nowait()
+        self.assertEqual(request.text, "hello")
+
     def test_queue_speech_handles_success_and_failure_paths(self) -> None:
         """Verify speech queueing success and rejection paths.
 
