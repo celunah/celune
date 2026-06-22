@@ -3,6 +3,7 @@
 
 import sys
 import inspect
+import warnings
 import threading
 import traceback
 import importlib.util
@@ -132,17 +133,16 @@ class CeluneExtensionManager:
             )
             return
 
-        self.context.log(
-            (
-                "[Core] autostart_all() is deprecated. "
-                "Use @celune.subscribe('ready') instead."
-            ),
-            "warning",
+        warnings.warn(
+            "CeluneExtensionManager.autostart_all() is deprecated, "
+            "please use @celune.subscribe('ready') in your extensions instead",
+            DeprecationWarning,
+            stacklevel=2,
         )
         started = 0
         for name, ext in self.extensions.items():
             if self._uses_legacy_autostart(ext):
-                self.context.log_dev(f"[Core] Running deprecated autostart for: {name}")
+                self.context.log_dev(f"[Core] Running autostart for: {name}")
 
                 def runner(e=ext, n=name):
                     try:
@@ -312,12 +312,11 @@ class CeluneExtensionManager:
         if not self._uses_legacy_autostart(extension):
             return
 
-        self.context.log(
-            (
-                f"[Core] Extension '{extension.name}' uses deprecated autostart() "
-                "behavior. Please migrate to @celune.subscribe('ready')."
-            ),
-            "warning",
+        warnings.warn(
+            "CeluneExtension.autostart() is deprecated, "
+            "please use @celune.subscribe('ready') instead",
+            DeprecationWarning,
+            stacklevel=2,
         )
 
         def legacy_ready_callback(

@@ -333,39 +333,11 @@ The API allows programmatic usage of all Celune features. It can be used both as
 
 ## Extensions
 
-Celune extensions still inherit from `CeluneExtension` and are still loaded through the extension manager from the `extensions` directory. Existing extensions continue to work without modification.
+Celune comes with extension support, allowing custom code to run with the engine.
 
-Extensions may now also subscribe to typed engine lifecycle events with `@celune.subscribe(...)`. Decorated handlers are discovered automatically when the extension loads and are removed automatically when the extension unloads.
+Extensions may subscribe at will to certain core events with `@celune.subscribe(...)`.
 
-For startup logic, prefer `@celune.subscribe("ready")`. The older `AUTOSTART = True` and `autostart()` hook remains available only as a deprecated compatibility path.
-
-Any subscribed handler can be opted in or out directly at the decorator site:
-
-```python
-@celune.subscribe("ready", enabled=False)
-def on_ready(event) -> None:
-    ...
-```
-
-```python
-import celune
-from celune import CeluneExtension
-
-
-@celune.subscribe("ready")
-def on_ready(event) -> None:
-    event.celune.log("Module-level ready handler.")
-
-
-class DemoExtension(CeluneExtension):
-    EXTENSION_NAME = "Demo"
-
-    @celune.subscribe("voice_changed")
-    def on_voice_changed(self, event) -> None:
-        self.log(f"Voice changed from {event.old_voice} to {event.new_voice}.")
-```
-
-Available event names:
+Celune exposes the following core events to extensions:
 
 - `ready`
 - `shutdown`
@@ -382,14 +354,9 @@ Available event names:
 - `character_loaded`
 - `character_unloaded`
 
-Typed payload dataclasses live in `celune.dataclasses.events`, and callback aliases plus event-name literals live in `celune.typing.events`.
+For example extension usage, check the [example extension](./extensions/test.py).
 
-Error handling guarantees:
-
-- Extension event callbacks are isolated from the core engine.
-- Callback failures are logged as warnings.
-- One failing callback does not stop the remaining callbacks.
-- Non-required extensions never crash Celune through the event bus.
+The aforementioned extension defines a basic usage case for Celune extensions.
 
 ## Web UI
 
