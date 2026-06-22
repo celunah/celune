@@ -3,6 +3,7 @@
 
 import signal
 import datetime
+import itertools
 from enum import auto, IntEnum, Enum
 
 from .typing.common import JSON as _JSON
@@ -141,3 +142,12 @@ VRAM_REQUIREMENTS = {
     "high": 12,
     "xhigh": 16,
 }
+
+CRASH_LINES = itertools.cycle(
+    [
+        f"{APP_NAME} has crashed.",
+        f"Please check {APP_NAME}'s",
+        "log widget for",
+        "more information.",
+    ]
+)

@@ -22,6 +22,7 @@ from celune.constants import APP_NAME, JSONSerializable
 from celune.ui.app import CeluneUI
 from celune.ui.headless import CeluneHeadlessUI
 from celune.ui import resources as ui_resources
+from celune.ui import terminal as ui_terminal
 from celune.ui.commands import attachment_source, process_command
 from celune.ui.theme import severity_color
 
@@ -497,6 +498,104 @@ class UIStartupTests(TestCase):
             self.assertFalse(ui._runtime_log_capture_enabled)
             self.assertIs(sys.stdout, original_stdout)
             self.assertIs(sys.stderr, original_stderr)
+        finally:
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+
+    def test_runtime_log_capture_preserves_original_terminal_passthrough(self) -> None:
+        """Verify runtime capture keeps ANSI passthrough bound to the original terminal."""
+        ui = CeluneUI()
+        ui.safe_log = lambda *_args, **_kwargs: None
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        terminal = mock.Mock()
+        terminal.isatty.return_value = True
+        redirected_stdout = mock.Mock()
+        redirected_stderr = mock.Mock()
+        redirected_stdout.isatty.return_value = True
+        redirected_stderr.isatty.return_value = True
+        ui._old_stdout = terminal
+        ui._old_stderr = terminal
+
+        try:
+            sys.stdout = redirected_stdout
+            sys.stderr = redirected_stderr
+
+            with mock.patch.object(ui, "_install_runtime_log_redirects"):
+                ui.enable_runtime_log_capture()
+
+            self.assertIs(ui._old_stdout, terminal)
+            self.assertIs(ui._old_stderr, terminal)
+            self.assertIsNotNone(ui._log_stdout)
+            self.assertIsNotNone(ui._log_stderr)
+            assert ui._log_stdout is not None
+            assert ui._log_stderr is not None
+            self.assertIs(ui._log_stdout.underlying_stdout, terminal)
+            self.assertIs(ui._log_stdout.underlying_stderr, terminal)
+            self.assertIs(ui._log_stderr.underlying_stdout, terminal)
+            self.assertIs(ui._log_stderr.underlying_stderr, terminal)
+        finally:
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+
+    def test_log_redirect_ansi_forwards_and_flushes_underlying_stdout(self) -> None:
+        """Verify ANSI escape forwarding reaches the original terminal stream."""
+        stream = mock.Mock()
+        stream.isatty.return_value = True
+        redirect = ui_terminal.LogRedirect(
+            stdout=stream,
+            stderr=stream,
+            write_callback=lambda *_args, **_kwargs: None,
+        )
+
+        redirect.ansi(f"\x1b]2;{APP_NAME}\x07")
+
+        stream.write.assert_called_once_with(f"\x1b]2;{APP_NAME}\x07")
+        stream.flush.assert_called_once_with()
+
+    def test_load_tts_writes_terminal_title_to_original_stdout(self) -> None:
+        """Verify the ready-state title reset targets the original terminal stream."""
+        ui = CeluneUI()
+        ui.safe_log = lambda *_args, **_kwargs: None
+        ui.safe_status = mock.Mock()
+        ui.tts_voice_changed = mock.Mock()
+        ui.safe_progress = mock.Mock()
+        ui.change_input_state = mock.Mock()
+        ui.change_voice_lock_state = mock.Mock()
+        ui._schedule_sleep_timer = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                load=lambda: True,
+                voices=("balanced", "bold"),
+                current_voice="balanced",
+                use_normalization=False,
+                dev=False,
+                glow=SimpleNamespace(fatal=lambda: None),
+            ),
+        )
+        terminal = mock.Mock()
+        terminal.isatty.return_value = True
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        ui._old_stdout = terminal
+        ui._old_stderr = terminal
+
+        try:
+            with (
+                mock.patch("celune.ui.app.supports_ansi", return_value=True),
+                mock.patch.object(ui, "_install_runtime_log_redirects"),
+                mock.patch.object(
+                    ui,
+                    "call_from_thread",
+                    side_effect=lambda callback, *args: callback(*args),
+                ),
+            ):
+                load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
+                load_tts(ui)
+
+            terminal.write.assert_called_with(f"\x1b]2;{APP_NAME}\x07")
+            terminal.flush.assert_called()
         finally:
             sys.stdout = original_stdout
             sys.stderr = original_stderr

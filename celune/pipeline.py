@@ -1886,6 +1886,18 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
     # if a pipeline lock is already held or was not initialized this can cause
     # Celune to become deadlocked or it won't have an effect, so please call
     # Celune._try_play_signal() instead of calling this method directly
+    if signal_type == "readiness":
+        source_id = _next_playback_source_id(engine)
+        _register_overlay_playback(engine)
+        _register_playback_source(engine, source_id, kind="sfx")
+        _queue_playback_chunk(engine, source_id, signal, BASE_SR)
+        _queue_playback_done(
+            engine,
+            source_id,
+            notify_idle_when_finished=True,
+        )
+        return True
+
     if acquire_pipeline(engine, f"play {signal_type} signal"):
         release_to_idle = False
         if signal_type not in {"error", "working"} and engine.cur_state != "error":

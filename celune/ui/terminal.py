@@ -139,6 +139,7 @@ class LogRedirect:
         if any_ansi:
             escapes = "".join(any_ansi)
             self.underlying_stdout.write(escapes)
+            self.underlying_stdout.flush()
 
     def flush(self) -> None:
         """Flush the buffers."""

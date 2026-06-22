@@ -14,7 +14,7 @@ import subprocess
 import multiprocessing
 from pathlib import Path
 from collections.abc import Iterator
-from typing import Union, Callable, Optional, Literal, Any, overload
+from typing import Union, Callable, Optional, Literal, Any, TextIO, overload
 
 import psutil
 import langdetect
@@ -255,13 +255,16 @@ def run_async(
     return proc
 
 
-def supports_ansi() -> bool:
+def supports_ansi(stream: Optional[TextIO] = None) -> bool:
     """Does the terminal support ANSI color codes?
 
+    Args:
+        stream: The stream to check ANSI capabilities of.
+
     Returns:
-        bool: Whether the terminal supports ANSI color codes.
+        bool: Whether the current terminal or specified stream supports ANSI color codes.
     """
-    return terminal_supports_ansi()
+    return terminal_supports_ansi(stream)
 
 
 def format_error(e: Exception, dev: bool) -> str:
