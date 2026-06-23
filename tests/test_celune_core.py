@@ -908,10 +908,12 @@ class CeluneCoreTests(TestCase):
         celune.loaded = True
         celune.change_input_state_callback = mock.Mock()
         celune.change_voice_lock_state_callback = mock.Mock()
-        signal_states: list[tuple[str, str, bool]] = []
+        signal_states: list[tuple[str, str, bool, bool]] = []
 
         def record_signal(signal_type: str) -> bool:
-            signal_states.append((signal_type, celune.cur_state, celune.loaded))
+            signal_states.append(
+                (signal_type, celune.cur_state, celune.loaded, celune._reload_pending)
+            )
             return True
 
         celune._try_play_signal = mock.Mock(side_effect=record_signal)
@@ -919,7 +921,7 @@ class CeluneCoreTests(TestCase):
         with mock.patch("celune.celune.threading.Thread") as thread_cls:
             self.assertEqual(celune.set_backend("mini"), True)
 
-        self.assertEqual(signal_states, [("working", "idle", True)])
+        self.assertEqual(signal_states, [("working", "idle", True, True)])
         celune.change_input_state_callback.assert_called_once_with(locked=True)
         celune.change_voice_lock_state_callback.assert_called_once_with(locked=True)
         self.assertEqual(celune.cur_state, "idle")

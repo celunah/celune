@@ -6,6 +6,7 @@ from pathlib import Path
 
 import celune
 from celune import CeluneExtension
+from celune.dataclasses.events import ReadyEvent, VoiceChangedEvent
 from celune.utils import discard
 
 
@@ -15,7 +16,7 @@ class TestExtension(CeluneExtension):
     EXTENSION_NAME = "Test"
 
     @celune.subscribe("ready", enabled=False)
-    def on_ready(self, event) -> None:
+    def on_ready(self, event: ReadyEvent) -> None:
         """Demonstrate extension behavior when Celune becomes ready.
 
         Args:
@@ -49,7 +50,7 @@ class TestExtension(CeluneExtension):
         self.say("You will only hear this once.", save=False)
 
     @celune.subscribe("voice_changed")
-    def on_voice_changed(self, event) -> None:
+    def on_voice_changed(self, event: VoiceChangedEvent) -> None:
         """Demonstrate access to typed voice-change event payloads.
 
         Args:

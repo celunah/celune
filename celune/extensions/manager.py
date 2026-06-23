@@ -114,6 +114,9 @@ class CeluneExtensionManager:
         """Unregister all loaded extensions and auto-registered handlers."""
         for name in list(self.extensions.keys()):
             self.unregister(name)
+        for owner_key in list(self._event_registrations.keys()):
+            self._unregister_owner(owner_key)
+        self._module_registrations.clear()
 
     def emit(self, event_name: EventName, event: EventPayload) -> None:
         """Forward one event to the shared dispatcher.
@@ -384,6 +387,10 @@ class CeluneExtensionManager:
 
         if not handlers:
             return False
+
+        previous = self._module_registrations.get(module.__name__)
+        if previous is not None:
+            self._unregister_owner(previous.owner_key)
 
         self._event_registrations[owner_key] = handlers
         self._module_registrations[module.__name__] = _ModuleRegistration(

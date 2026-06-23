@@ -95,10 +95,16 @@ class SpeechTiming:
     first_chunk_time: Optional[float] = None
     first_playback_time: Optional[float] = None
 
-    def mark_first_chunk(self) -> None:
-        """Record when the backend yields its first audio chunk."""
+    def mark_first_chunk(self, chunk_time: Optional[float] = None) -> None:
+        """Record when the backend produces its first audio chunk.
+
+        Args:
+            chunk_time: Optional backend-provided monotonic timestamp to use.
+        """
         if self.first_chunk_time is None:
-            self.first_chunk_time = time.monotonic()
+            self.first_chunk_time = (
+                chunk_time if isinstance(chunk_time, float) else time.monotonic()
+            )
 
     def mark_first_playback(self) -> None:
         """Record when the first audio chunk is sent to the output stream."""

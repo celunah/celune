@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Tests for Celune runtime path handling."""
 
-import logging
 import tempfile
 import sys
 import os
@@ -21,7 +20,6 @@ from celune.paths import (
     huggingface_hub_cache_dir,
     project_root,
     running_compiled,
-    transformers_cache_dir,
 )
 from celune.persona.memory import default_memory_dir
 from celune.cevoice import bundled_voices_dir, default_bundle_path
@@ -79,10 +77,6 @@ class RuntimePathTests(TestCase):
             self.assertEqual(
                 huggingface_hub_cache_dir(),
                 expected_root / "huggingface" / "hub",
-            )
-            self.assertEqual(
-                transformers_cache_dir(),
-                expected_root / "huggingface" / "transformers",
             )
 
     def test_huggingface_cache_environment_defaults_to_runtime_data(self) -> None:
@@ -144,9 +138,6 @@ class RuntimePathTests(TestCase):
                 {
                     "HF_HOME": str(expected_root / "huggingface"),
                     "HF_HUB_CACHE": str(expected_root / "huggingface" / "hub"),
-                    "TRANSFORMERS_CACHE": str(
-                        expected_root / "huggingface" / "transformers"
-                    ),
                 },
                 clear=True,
             ),
@@ -154,7 +145,6 @@ class RuntimePathTests(TestCase):
             configure_huggingface_cache_environment()
             self.assertNotIn("HF_HOME", os.environ)
             self.assertNotIn("HF_HUB_CACHE", os.environ)
-            self.assertNotIn("TRANSFORMERS_CACHE", os.environ)
 
     def test_huggingface_cache_environment_keeps_non_celune_overrides(
         self,
@@ -163,7 +153,6 @@ class RuntimePathTests(TestCase):
         existing = {
             "HF_HOME": "X:/hf-home",
             "HF_HUB_CACHE": "X:/hf-hub",
-            "TRANSFORMERS_CACHE": "X:/legacy-transformers-cache",
         }
 
         with (
@@ -173,31 +162,19 @@ class RuntimePathTests(TestCase):
             configure_huggingface_cache_environment()
             self.assertEqual(os.environ["HF_HOME"], existing["HF_HOME"])
             self.assertEqual(os.environ["HF_HUB_CACHE"], existing["HF_HUB_CACHE"])
-            self.assertEqual(
-                os.environ["TRANSFORMERS_CACHE"],
-                existing["TRANSFORMERS_CACHE"],
-            )
 
-    def test_huggingface_runtime_disables_global_progress_and_logs(self) -> None:
-        """Verify Celune globally suppresses Hugging Face progress and log noise."""
+    def test_huggingface_runtime_disables_global_progress_bars(self) -> None:
+        """Verify Celune suppresses Hugging Face progress bars without muting logs."""
         with (
             mock.patch("celune.paths.disable_progress_bar") as disable_transformers,
             mock.patch("celune.paths.disable_progress_bars") as disable_hub,
-            mock.patch("celune.paths.hf_logging.set_verbosity_error") as set_verbosity,
-            mock.patch("celune.paths.logging.getLogger") as get_logger,
             mock.patch.dict(os.environ, {}, clear=True),
         ):
-            logger = mock.Mock()
-            get_logger.return_value = logger
-
             configure_huggingface_runtime()
+            self.assertEqual(os.environ["HF_HUB_DISABLE_PROGRESS_BARS"], "1")
 
-        self.assertEqual(os.environ["HF_HUB_DISABLE_PROGRESS_BARS"], "1")
         disable_transformers.assert_called_once_with()
         disable_hub.assert_called_once_with()
-        set_verbosity.assert_called_once_with()
-        get_logger.assert_called_once_with("huggingface_hub")
-        logger.setLevel.assert_called_once_with(logging.ERROR)
 
     def test_format_error_writes_traceback_to_runtime_directory(self) -> None:
         """Verify developer tracebacks are saved via the runtime path helper.

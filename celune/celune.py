@@ -497,6 +497,9 @@ class Celune(CeluneStateAccessors):
 
     def _cleanup_residual_temp_data(self, temp_dir: Path) -> None:
         """Delete only Celune's disposable residual temp artifacts."""
+        if not temp_dir.is_dir():
+            return
+
         disposable_paths = [
             path
             for path in temp_dir.iterdir()
@@ -1797,6 +1800,7 @@ class Celune(CeluneStateAccessors):
                         self.unload_runtime_state(include_normalizer=False)
                         self.log_dev(f"[RELOAD] Loading model: {new_model_name}")
                         self.model = self.backend.load_model(new_model_name)
+                        self.model_name = new_model_name
 
                         self.log("Rewarming up...")
                         if not self._warmup():

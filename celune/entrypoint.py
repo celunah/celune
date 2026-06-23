@@ -968,11 +968,10 @@ def start(verbose: bool = False) -> None:
         Exception: Re-raised after printing a traceback in developer mode.
     """
     runtime = _load_runtime()
-    if runtime.supports_ansi():
-        sys.stdout.write(f"\x1b]2;{APP_NAME} is starting up...\x07")
-        sys.stdout.flush()
-
     try:
+        if runtime.supports_ansi():
+            sys.stdout.write(f"\x1b]2;{APP_NAME} is starting up...\x07")
+            sys.stdout.flush()
         date = datetime.datetime.now()
         if runtime.has_name_day("Celine", date) and not runtime.env_bool(
             "CELUNE_OVERRIDE_CELINE_DAY"

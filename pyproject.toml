@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "4.1.0"
+version = "4.2.0"
 description = "Real-time AI TTS character engine with expressive voices and high-quality playback"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -100,16 +100,20 @@ explicit = true
 [dependency-groups]
 # Install to run CI workflows.
 dev = [
+    # Is there any faster unit test-specific library to use here?
     "pytest",
+    # "I really hate pyright." - she says.
     "pyrefly",
     "pylint",
+    # Docstrings matter, so everyone can read the code more easily.
     "docstr-coverage",
     "ruff",
+    # This package is required to compile Celune into a properly packaged binary, bypassing the need to run Python.
+    "nuitka>=4.1.2",
     # If not installed, type checkers may complain.
     "types-pyyaml",
     "types-psutil",
     "types-tqdm",
-    "nuitka>=4.1.2",
 ]
 
 [project.optional-dependencies]
@@ -122,8 +126,4 @@ api = [
 ]
 
 [tool.pytest.ini_options]
-filterwarnings = [
-    "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
-    "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
-    "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
-]
+filterwarnings = "ignore::DeprecationWarning"

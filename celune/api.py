@@ -21,6 +21,7 @@ import uvicorn
 import gradio as gr
 import soundfile as sf
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import RequestResponseEndpoint
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import (
@@ -1846,7 +1847,9 @@ async def sfx(
             },
         )
 
-    if not celune.play_audio(audio, BASE_SR, label=filename, keep=keep):
+    if not await run_in_threadpool(
+        celune.play_audio, audio, BASE_SR, label=filename, keep=keep
+    ):
         return JSONResponse(
             status_code=409,
             content={
@@ -1907,7 +1910,9 @@ async def convert_audio(
         )
 
     try:
-        output = celune.convert_audio(audio, sample_rate, label=filename)
+        output = await run_in_threadpool(
+            celune.convert_audio, audio, sample_rate, label=filename
+        )
     except Exception:
         return JSONResponse(
             status_code=500,

@@ -4,13 +4,11 @@
 import os
 import sys
 import shutil
-import logging
 from pathlib import Path
 from typing import Optional
 
 from platformdirs import user_data_dir
 from huggingface_hub.utils import disable_progress_bars
-from transformers.utils import logging as hf_logging
 from transformers.utils.logging import disable_progress_bar
 
 from .constants import APP_NAME, APP_SLUG
@@ -19,7 +17,6 @@ _REPO_MARKERS = ("celune", "default_config.yaml", "pyproject.toml")
 _HF_HOME_ENV = "HF_HOME"
 _HF_HUB_CACHE_ENV = "HF_HUB_CACHE"
 _HF_HUB_DISABLE_PROGRESS_BARS_ENV = "HF_HUB_DISABLE_PROGRESS_BARS"
-_TRANSFORMERS_CACHE_ENV = "TRANSFORMERS_CACHE"
 
 
 def running_compiled() -> bool:
@@ -93,21 +90,6 @@ def huggingface_hub_cache_dir(create: bool = False) -> Path:
     return path
 
 
-def transformers_cache_dir(create: bool = False) -> Path:
-    """Return Celune's default Transformers cache directory.
-
-    Args:
-        create: Whether this directory should be created before being returned.
-
-    Returns:
-        Path: Celune's Transformers cache directory.
-    """
-    path = huggingface_home_dir(create=create) / "transformers"
-    if create:
-        path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def configure_huggingface_cache_environment(force: bool = False) -> None:
     """Point Hugging Face caches at Celune's user data directory in portable mode.
 
@@ -116,7 +98,6 @@ def configure_huggingface_cache_environment(force: bool = False) -> None:
     """
     default_hf_home = str(huggingface_home_dir())
     default_hf_hub_cache = str(huggingface_hub_cache_dir())
-    default_transformers_cache = str(transformers_cache_dir())
 
     if not force and not running_compiled():
         # If this process previously enabled Celune's portable defaults,
@@ -126,8 +107,6 @@ def configure_huggingface_cache_environment(force: bool = False) -> None:
             os.environ.pop(_HF_HOME_ENV, None)
         if os.environ.get(_HF_HUB_CACHE_ENV) == default_hf_hub_cache:
             os.environ.pop(_HF_HUB_CACHE_ENV, None)
-        if os.environ.get(_TRANSFORMERS_CACHE_ENV) == default_transformers_cache:
-            os.environ.pop(_TRANSFORMERS_CACHE_ENV, None)
         return
 
     if _HF_HOME_ENV not in os.environ:
@@ -137,12 +116,10 @@ def configure_huggingface_cache_environment(force: bool = False) -> None:
 
 
 def configure_huggingface_runtime() -> None:
-    """Apply Celune's process-wide Hugging Face logging and progress suppression."""
+    """Apply Celune's process-wide Hugging Face progress suppression."""
     os.environ.setdefault(_HF_HUB_DISABLE_PROGRESS_BARS_ENV, "1")
     disable_progress_bar()
     disable_progress_bars()
-    hf_logging.set_verbosity_error()
-    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
 
 def memory_data_dir(create: bool = False) -> Path:

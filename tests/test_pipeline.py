@@ -1430,6 +1430,8 @@ class PipelineTests(TestCase):
 
         self.assertIn("Celune:", prompt)
         self.assertIn("You are Celune", prompt)
+        self.assertNotIn("Gender: female", prompt)
+        self.assertNotIn("The speaker uses a more confident", prompt)
 
     def test_named_celune_custom_pack_does_not_use_default_identity(self) -> None:
         """Verify custom packs named Celune do not inherit default identity fields."""
