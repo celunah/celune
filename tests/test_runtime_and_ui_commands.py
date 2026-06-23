@@ -433,8 +433,8 @@ class UIStartupTests(TestCase):
         ):
             ui.on_mount()
 
-    def test_textual_ui_delays_stdio_redirects_until_runtime_is_ready(self) -> None:
-        """Verify mount keeps real stdio until Celune explicitly enables capture."""
+    def test_textual_ui_mount_enables_stdio_redirects_before_runtime_load(self) -> None:
+        """Verify mount captures startup stdio before Celune begins loading."""
         ui = CeluneUI()
         fake_widgets = {
             "#logs": RichLog(),
@@ -450,31 +450,36 @@ class UIStartupTests(TestCase):
         original_stdout = sys.stdout
         original_stderr = sys.stderr
 
-        with (
-            mock.patch("celune.ui.app.colors.configure_theme"),
-            mock.patch("celune.ui.app.default_loader", return_value=None),
-            mock.patch("celune.ui.app.ui_resources.prime_usage"),
-            mock.patch.object(
-                ui,
-                "query_one",
-                side_effect=lambda selector, *_args: fake_widgets[selector],
-            ),
-            mock.patch.object(ui, "query", return_value=[]),
-            mock.patch.object(ui, "set_interval"),
-            mock.patch.object(ui, "set_focus") as set_focus,
-            mock.patch.object(ui, "call_after_refresh"),
-            mock.patch.object(ui, "safe_status"),
-            mock.patch.object(ui, "update_resources"),
-            mock.patch.object(ui, "_refresh_status"),
-            mock.patch.object(ui, "_refresh_theme_text"),
-            mock.patch.object(ui, "_refresh_logs"),
-        ):
-            ui.on_mount()
+        try:
+            with (
+                mock.patch("celune.ui.app.colors.configure_theme"),
+                mock.patch("celune.ui.app.default_loader", return_value=None),
+                mock.patch("celune.ui.app.ui_resources.prime_usage"),
+                mock.patch.object(
+                    ui,
+                    "query_one",
+                    side_effect=lambda selector, *_args: fake_widgets[selector],
+                ),
+                mock.patch.object(ui, "query", return_value=[]),
+                mock.patch.object(ui, "set_interval"),
+                mock.patch.object(ui, "set_focus") as set_focus,
+                mock.patch.object(ui, "call_after_refresh"),
+                mock.patch.object(ui, "safe_status"),
+                mock.patch.object(ui, "update_resources"),
+                mock.patch.object(ui, "_refresh_status"),
+                mock.patch.object(ui, "_refresh_theme_text"),
+                mock.patch.object(ui, "_refresh_logs"),
+            ):
+                ui.on_mount()
 
-        self.assertIs(sys.stdout, original_stdout)
-        self.assertIs(sys.stderr, original_stderr)
-        self.assertFalse(ui._runtime_log_capture_enabled)
-        set_focus.assert_called_once_with(None)
+            self.assertIs(sys.stdout, ui._log_stdout)
+            self.assertIs(sys.stderr, ui._log_stderr)
+            self.assertTrue(ui._runtime_log_capture_enabled)
+            set_focus.assert_called_once_with(None)
+        finally:
+            ui.disable_runtime_log_capture()
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
 
     def test_runtime_log_capture_restores_stdio_after_shutdown(self) -> None:
         """Verify explicit runtime capture swaps and restores stdio cleanly."""
@@ -552,6 +557,32 @@ class UIStartupTests(TestCase):
 
         stream.write.assert_called_once_with(f"\x1b]2;{APP_NAME}\x07")
         stream.flush.assert_called_once_with()
+
+    def test_log_redirect_reclassifies_warning_like_stdout_lines(self) -> None:
+        """Verify raw stdout warning text is surfaced with warning severity."""
+        stream = mock.Mock()
+        stream.isatty.return_value = True
+        captured: list[tuple[str, str]] = []
+        redirect = ui_terminal.LogRedirect(
+            stdout=stream,
+            stderr=stream,
+            write_callback=lambda msg, severity: captured.append((msg, severity)),
+            default_severity="info",
+        )
+
+        redirect.write(
+            "C:/tmp/hub.py:110: FutureWarning: TRANSFORMERS_CACHE is deprecated\n"
+        )
+
+        self.assertEqual(
+            captured,
+            [
+                (
+                    "C:/tmp/hub.py:110: FutureWarning: TRANSFORMERS_CACHE is deprecated",
+                    "warning",
+                )
+            ],
+        )
 
     def test_load_tts_writes_terminal_title_to_original_stdout(self) -> None:
         """Verify the ready-state title reset targets the original terminal stream."""
@@ -822,16 +853,12 @@ class UIStartupTests(TestCase):
         self.assertEqual(ui.normal_input_placeholder(), "Say something...")
 
     def test_runtime_logger_warning_is_routed_into_ui_logs(self) -> None:
-        """Verify known Python logger warnings do not bleed into the terminal."""
+        """Verify external Python logger warnings are routed into the UI logs."""
         ui = CeluneUI()
         captured: list[tuple[str, str]] = []
         ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
 
         logger = logging.getLogger("torch.utils.flop_counter")
-        original_handlers = list(logger.handlers)
-        original_propagate = logger.propagate
-        self.addCleanup(setattr, logger, "handlers", original_handlers)
-        self.addCleanup(setattr, logger, "propagate", original_propagate)
 
         ui.install_runtime_log_redirects()
         self.addCleanup(ui._remove_runtime_log_redirects)
@@ -858,11 +885,6 @@ class UIStartupTests(TestCase):
         ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
 
         logger = logging.getLogger("py.warnings")
-        original_handlers = list(logger.handlers)
-        original_propagate = logger.propagate
-        self.addCleanup(setattr, logger, "handlers", original_handlers)
-        self.addCleanup(setattr, logger, "propagate", original_propagate)
-
         ui.install_runtime_log_redirects()
         self.addCleanup(ui._remove_runtime_log_redirects)
 
@@ -889,11 +911,6 @@ class UIStartupTests(TestCase):
         ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
 
         logger = logging.getLogger("huggingface_hub")
-        original_handlers = list(logger.handlers)
-        original_propagate = logger.propagate
-        self.addCleanup(setattr, logger, "handlers", original_handlers)
-        self.addCleanup(setattr, logger, "propagate", original_propagate)
-
         ui.install_runtime_log_redirects()
         self.addCleanup(ui._remove_runtime_log_redirects)
 
@@ -908,6 +925,26 @@ class UIStartupTests(TestCase):
                     "error",
                 )
             ],
+        )
+
+    def test_runtime_global_log_redirect_captures_unlisted_external_logger(
+        self,
+    ) -> None:
+        """Verify arbitrary external loggers are captured without per-backend wiring."""
+        ui = CeluneUI()
+        captured: list[tuple[str, str]] = []
+        ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
+
+        logger = logging.getLogger("some.third_party.backend")
+
+        ui.install_runtime_log_redirects()
+        self.addCleanup(ui._remove_runtime_log_redirects)
+
+        logger.warning("backend emitted a warning")
+
+        self.assertEqual(
+            captured,
+            [("Internal runtime warning: backend emitted a warning", "warning")],
         )
 
     def test_safe_status_marquees_long_text_for_narrow_status_label(self) -> None:

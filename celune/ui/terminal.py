@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Terminal UI helpers."""
 
+import logging
 import re
 import sys
-import logging
 from typing import Callable, Optional
 from collections.abc import Collection
 
@@ -94,6 +94,34 @@ class LogRedirect:
             filter_messages  # these messages will be filtered out by the logger
         )
 
+    @staticmethod
+    def _severity_for_message(message: str, default_severity: str) -> str:
+        """Infer log severity from one redirected text line."""
+        lowered = message.casefold()
+
+        if "[error]" in lowered:
+            return "error"
+        if "[warning]" in lowered:
+            return "warning"
+        if "traceback (most recent call last):" in lowered:
+            return "error"
+        if re.search(
+            r"\b(?:error|exception|fatal(?: error)?)\b",
+            lowered,
+        ):
+            return "error"
+        if re.search(
+            (
+                r"\b(?:warning|futurewarning|deprecationwarning|"
+                r"pendingdeprecationwarning|runtimewarning|resourcewarning|"
+                r"userwarning|syntaxwarning|importwarning|unicodewarning|"
+                r"byteswarning)\b"
+            ),
+            lowered,
+        ):
+            return "warning"
+        return default_severity
+
     def write(self, text: str) -> None:
         """Write text to the logger.
 
@@ -124,7 +152,10 @@ class LogRedirect:
             self._buffer = self._buffer[pos + 1 :]
 
             if chunk:
-                self.write_callback(chunk, self.default_severity)
+                self.write_callback(
+                    chunk,
+                    self._severity_for_message(chunk, self.default_severity),
+                )
 
     def ansi(self, escape: str) -> None:
         """Write ANSI escape code(s) to the terminal directly.
@@ -144,7 +175,11 @@ class LogRedirect:
     def flush(self) -> None:
         """Flush the buffers."""
         if self._buffer.strip():
-            self.write_callback(self._buffer.strip(), self.default_severity)
+            chunk = self._buffer.strip()
+            self.write_callback(
+                chunk,
+                self._severity_for_message(chunk, self.default_severity),
+            )
         self._buffer = ""
 
     def isatty(self) -> bool:
@@ -195,3 +230,15 @@ class UILogHandler(logging.Handler):
             prefix = "Internal runtime notice:"
 
         self.write_callback(" ".join([prefix, message]), severity)
+
+
+def is_celune_log_record(record: logging.LogRecord) -> bool:
+    """Return whether a logging record belongs to Celune itself.
+
+    Args:
+        record: The logging record to classify.
+
+    Returns:
+        bool: ``True`` when the record originated from Celune loggers.
+    """
+    return record.name == "celune" or record.name.startswith("celune.")

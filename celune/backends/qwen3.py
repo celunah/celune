@@ -2,6 +2,7 @@
 """Qwen3 backend implementation for Celune."""
 
 import contextlib
+import time
 from collections.abc import Iterator
 from typing import Callable, Optional
 
@@ -228,6 +229,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
             ) from e
 
         stream = None
+        first_chunk_time: Optional[float] = None
         try:
             stream = model.generate_voice_clone_streaming(
                 ref_audio=ref_wav,
@@ -239,11 +241,16 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
 
             for chunk in stream:
                 audio_chunk, sample_rate, timing = chunk
+                if first_chunk_time is None:
+                    first_chunk_time = time.monotonic()
                 if timing is not None:
                     timing = dict(timing)
                     total_steps = timing.get("total_steps_so_far")
                     if timing.get("is_final") and isinstance(total_steps, int):
                         timing["missing_eos"] = total_steps >= self.max_new_tokens
+                    timing.setdefault("first_chunk_time", first_chunk_time)
+                else:
+                    timing = {"first_chunk_time": first_chunk_time}
                 yield audio_chunk, sample_rate, timing
         finally:
             if stream is not None and hasattr(stream, "close"):

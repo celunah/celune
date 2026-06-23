@@ -3,6 +3,7 @@
 
 import tempfile
 import contextlib
+import time
 from pathlib import Path
 from typing import Callable, Optional, cast
 from collections.abc import Iterator, Mapping
@@ -380,8 +381,11 @@ class Mini(CeluneBackend[TTSModel]):
         pending_steps = 0
         chunk_index = 0
         total_steps = 0
+        first_chunk_time: Optional[float] = None
 
         for chunk in mini_model.generate_audio_stream(voice_state, text):
+            if first_chunk_time is None:
+                first_chunk_time = time.monotonic()
             chunk_array = chunk.detach().cpu().float().numpy()
             batch.append(chunk_array)
 
@@ -398,6 +402,7 @@ class Mini(CeluneBackend[TTSModel]):
                         "chunk_index": chunk_index,
                         "chunk_steps": pending_steps,
                         "total_steps_so_far": total_steps,
+                        "first_chunk_time": first_chunk_time,
                         "is_final": False,
                     },
                 )
@@ -418,6 +423,7 @@ class Mini(CeluneBackend[TTSModel]):
                         "chunk_index": chunk_index,
                         "chunk_steps": pending_steps,
                         "total_steps_so_far": total_steps,
+                        "first_chunk_time": first_chunk_time,
                         "is_final": False,
                     },
                 )
@@ -432,6 +438,7 @@ class Mini(CeluneBackend[TTSModel]):
                     "chunk_index": chunk_index,
                     "chunk_steps": len(batch),
                     "total_steps_so_far": total_steps,
+                    "first_chunk_time": first_chunk_time,
                     "is_final": True,
                 },
             )
@@ -445,6 +452,7 @@ class Mini(CeluneBackend[TTSModel]):
                     "chunk_index": chunk_index,
                     "chunk_steps": pending_steps,
                     "total_steps_so_far": total_steps,
+                    "first_chunk_time": first_chunk_time,
                     "is_final": True,
                 },
             )

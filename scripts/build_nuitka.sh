@@ -11,6 +11,12 @@ app_dir="$output_dir/Celune.AppDir"
 desktop_src="$repo_root/Celune.AppDir/celune.desktop"
 icon_src="$repo_root/Celune.AppDir/celune.png"
 
+if pgrep celune &>/dev/null; then
+    echo "Celune is already running, terminating before proceeding with build."
+    pkill -9 celune
+    pkill -9 celune-bin
+fi
+
 version_line="$(grep -m1 '^version = "' "$repo_root/pyproject.toml")"
 if [[ -z "$version_line" ]]; then
     echo "Could not determine the project version from pyproject.toml." >&2

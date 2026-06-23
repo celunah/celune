@@ -36,7 +36,7 @@ from ..celune import Celune
 from ..cevoice import default_loader
 from . import resources as ui_resources
 from .theme import CELUNE_CSS, severity_color
-from .terminal import LogRedirect, UILogHandler
+from .terminal import LogRedirect, UILogHandler, is_celune_log_record
 from ..paths import config_path, main_window_log_path
 from ..constants import APP_NAME, SIGTSTP, CRASH_LINES
 from .commands import process_command as process_ui_command
@@ -112,12 +112,18 @@ class CeluneUILogCaptureState:
     log_stdout: Optional[LogRedirect] = None
     log_stderr: Optional[LogRedirect] = None
     runtime_log_capture_enabled: bool = False
-    runtime_redirect_loggers: Optional[dict[str, logging.Logger]] = None
-    runtime_redirect_handlers: Optional[dict[str, UILogHandler]] = None
-    runtime_redirect_original_handlers: Optional[dict[str, list[logging.Handler]]] = (
-        None
-    )
-    runtime_redirect_original_propagate: Optional[dict[str, bool]] = None
+    runtime_redirect_handler: Optional[UILogHandler] = None
+    runtime_redirect_original_call_handlers: Optional[
+        Callable[[logging.Logger, logging.LogRecord], None]
+    ] = None
+    runtime_redirect_original_last_resort: Optional[logging.Handler] = None
+    runtime_redirect_original_raise_exceptions: Optional[bool] = None
+    original_dunder_stdout: Optional[TextIO] = None
+    original_dunder_stderr: Optional[TextIO] = None
+    stderr_pipe_read_fd: Optional[int] = None
+    stderr_pipe_write_fd: Optional[int] = None
+    stderr_original_fd_dup: Optional[int] = None
+    stderr_forward_thread: Optional[threading.Thread] = None
     warnings_capture_enabled: bool = False
     log_file_path: Path = field(default_factory=Path)
     log_file_initialized: bool = False
@@ -233,17 +239,35 @@ class CeluneUI(App):
     _runtime_log_capture_enabled = _forward_ui_property(
         "_log_capture_state", "runtime_log_capture_enabled"
     )
-    _runtime_redirect_loggers = _forward_ui_property(
-        "_log_capture_state", "runtime_redirect_loggers"
+    _runtime_redirect_handler = _forward_ui_property(
+        "_log_capture_state", "runtime_redirect_handler"
     )
-    _runtime_redirect_handlers = _forward_ui_property(
-        "_log_capture_state", "runtime_redirect_handlers"
+    _runtime_redirect_original_call_handlers = _forward_ui_property(
+        "_log_capture_state", "runtime_redirect_original_call_handlers"
     )
-    _runtime_redirect_original_handlers = _forward_ui_property(
-        "_log_capture_state", "runtime_redirect_original_handlers"
+    _runtime_redirect_original_last_resort = _forward_ui_property(
+        "_log_capture_state", "runtime_redirect_original_last_resort"
     )
-    _runtime_redirect_original_propagate = _forward_ui_property(
-        "_log_capture_state", "runtime_redirect_original_propagate"
+    _runtime_redirect_original_raise_exceptions = _forward_ui_property(
+        "_log_capture_state", "runtime_redirect_original_raise_exceptions"
+    )
+    _original_dunder_stdout = _forward_ui_property(
+        "_log_capture_state", "original_dunder_stdout"
+    )
+    _original_dunder_stderr = _forward_ui_property(
+        "_log_capture_state", "original_dunder_stderr"
+    )
+    _stderr_pipe_read_fd = _forward_ui_property(
+        "_log_capture_state", "stderr_pipe_read_fd"
+    )
+    _stderr_pipe_write_fd = _forward_ui_property(
+        "_log_capture_state", "stderr_pipe_write_fd"
+    )
+    _stderr_original_fd_dup = _forward_ui_property(
+        "_log_capture_state", "stderr_original_fd_dup"
+    )
+    _stderr_forward_thread = _forward_ui_property(
+        "_log_capture_state", "stderr_forward_thread"
     )
     _warnings_capture_enabled = _forward_ui_property(
         "_log_capture_state", "warnings_capture_enabled"
@@ -640,7 +664,7 @@ class CeluneUI(App):
         self._refresh_status()
         self._refresh_theme_text()
         self._refresh_logs()
-        self._install_runtime_log_redirects()
+        self._enable_runtime_log_capture()
         ui_resources.prime_usage()
         self.set_interval(2.06, self.advance_resources)
         self._status_marquee_timer = self.set_interval(
@@ -689,7 +713,9 @@ class CeluneUI(App):
 
         sys.stdout = self._log_stdout
         sys.stderr = self._log_stderr
+        self._redirect_dunder_stdio()
         self._install_runtime_log_redirects()
+        self._install_low_level_stderr_capture()
         self._runtime_log_capture_enabled = True
 
     def _write_terminal_escape(self, escape: str) -> None:
@@ -703,60 +729,175 @@ class CeluneUI(App):
             self._old_stdout.flush()
 
     def _install_runtime_log_redirects(self) -> None:
-        """Route known runtime logger output into Celune's UI log widget."""
-        if self._runtime_redirect_loggers is not None:
+        """Route non-Celune Python logging output into Celune's UI log widget."""
+        if self._runtime_redirect_handler is not None:
             return
 
-        self._runtime_redirect_loggers = {}
-        self._runtime_redirect_handlers = {}
-        self._runtime_redirect_original_handlers = {}
-        self._runtime_redirect_original_propagate = {}
+        handler = UILogHandler(self.safe_log)
+        original_call_handlers = logging.Logger.callHandlers
 
-        for logger_name in (
-            "torch.utils.flop_counter",
-            "py.warnings",
-            "huggingface_hub",
-            "transformers",
-        ):
-            logger = logging.getLogger(logger_name)
-            handler = UILogHandler(self.safe_log)
-            self._runtime_redirect_loggers[logger_name] = logger
-            self._runtime_redirect_handlers[logger_name] = handler
-            self._runtime_redirect_original_handlers[logger_name] = list(
-                logger.handlers
-            )
-            self._runtime_redirect_original_propagate[logger_name] = logger.propagate
-            logger.handlers = [handler]
-            logger.propagate = False
+        def call_handlers(self: logging.Logger, record: logging.LogRecord) -> None:
+            if is_celune_log_record(record):
+                original_call_handlers(self, record)
+                return
+
+            handler.handle(record)
+
+        self._runtime_redirect_handler = handler
+        self._runtime_redirect_original_call_handlers = original_call_handlers
+        self._runtime_redirect_original_last_resort = logging.lastResort
+        self._runtime_redirect_original_raise_exceptions = logging.raiseExceptions
+        logging.Logger.callHandlers = call_handlers
+        logging.lastResort = None
+        logging.raiseExceptions = False
 
         logging.captureWarnings(True)
         self._warnings_capture_enabled = True
 
-    def _remove_runtime_log_redirects(self) -> None:
-        """Restore Python logger output handlers replaced by the UI."""
-        loggers = self._runtime_redirect_loggers
-        handlers = self._runtime_redirect_handlers
-        original_handlers = self._runtime_redirect_original_handlers
-        original_propagate = self._runtime_redirect_original_propagate
+    def _redirect_dunder_stdio(self) -> None:
+        """Redirect ``sys.__stdout__`` and ``sys.__stderr__`` when possible."""
+        if self._original_dunder_stdout is None:
+            self._original_dunder_stdout = sys.__stdout__
+        if self._original_dunder_stderr is None:
+            self._original_dunder_stderr = sys.__stderr__
+
+        if self._log_stdout is not None:
+            sys.__stdout__ = self._log_stdout
+        if self._log_stderr is not None:
+            sys.__stderr__ = self._log_stderr
+
+    def _restore_dunder_stdio(self) -> None:
+        """Restore ``sys.__stdout__`` and ``sys.__stderr__`` after capture ends."""
+        if self._original_dunder_stdout is not None:
+            sys.__stdout__ = self._original_dunder_stdout
+        if self._original_dunder_stderr is not None:
+            sys.__stderr__ = self._original_dunder_stderr
+
+        self._original_dunder_stdout = None
+        self._original_dunder_stderr = None
+
+    def _install_low_level_stderr_capture(self) -> None:
+        """Capture writes that bypass Python and go straight to stderr."""
+        if self._stderr_forward_thread is not None:
+            return
+
+        stderr_stream = self._old_stderr
+        if stderr_stream is None or not hasattr(stderr_stream, "fileno"):
+            return
+
+        original_fd_dup: Optional[int] = None
+        pipe_read_fd: Optional[int] = None
+        pipe_write_fd: Optional[int] = None
+
+        try:
+            stderr_fd = stderr_stream.fileno()
+            if not isinstance(stderr_fd, int):
+                return
+            original_fd_dup = os.dup(stderr_fd)
+            pipe_read_fd, pipe_write_fd = os.pipe()
+            os.dup2(pipe_write_fd, stderr_fd)
+        except (AttributeError, OSError, TypeError, ValueError):
+            with contextlib.suppress(OSError):
+                if original_fd_dup is not None:
+                    os.close(original_fd_dup)
+            with contextlib.suppress(OSError):
+                if pipe_read_fd is not None:
+                    os.close(pipe_read_fd)
+            with contextlib.suppress(OSError):
+                if pipe_write_fd is not None:
+                    os.close(pipe_write_fd)
+            return
+
+        self._stderr_original_fd_dup = original_fd_dup
+        self._stderr_pipe_read_fd = pipe_read_fd
+        self._stderr_pipe_write_fd = pipe_write_fd
+
+        forward_thread = threading.Thread(
+            target=self._forward_low_level_stderr,
+            name="celune-stderr-capture",
+            daemon=True,
+        )
+        self._stderr_forward_thread = forward_thread
+        forward_thread.start()
+
+    def _forward_low_level_stderr(self) -> None:
+        """Forward low-level stderr bytes back to the terminal and UI log."""
+        read_fd = self._stderr_pipe_read_fd
+        original_fd_dup = self._stderr_original_fd_dup
+        redirect = self._log_stderr
+
+        if read_fd is None or original_fd_dup is None or redirect is None:
+            return
+
+        encoding = getattr(self._old_stderr, "encoding", None) or "utf-8"
+        errors = getattr(self._old_stderr, "errors", None) or "replace"
+
+        while True:
+            try:
+                payload = os.read(read_fd, 4096)
+            except OSError:
+                break
+
+            if not payload:
+                break
+
+            redirect.write(payload.decode(encoding, errors=errors))
+
+        redirect.flush()
+
+    def _remove_low_level_stderr_capture(self) -> None:
+        """Restore stderr after low-level capture was installed."""
+        stderr_stream = self._old_stderr
+        original_fd_dup = self._stderr_original_fd_dup
+        pipe_write_fd = self._stderr_pipe_write_fd
+        pipe_read_fd = self._stderr_pipe_read_fd
+
         if (
-            loggers is not None
-            and handlers is not None
-            and original_handlers is not None
-            and original_propagate is not None
+            stderr_stream is not None
+            and hasattr(stderr_stream, "fileno")
+            and original_fd_dup is not None
         ):
-            for logger_name, logger in loggers.items():
-                logger.handlers = original_handlers[logger_name]
-                logger.propagate = original_propagate[logger_name]
-                handlers[logger_name].close()
+            with contextlib.suppress(OSError, ValueError):
+                stderr_stream.flush()
+            with contextlib.suppress(OSError, ValueError):
+                os.dup2(original_fd_dup, stderr_stream.fileno())
+
+        if pipe_write_fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(pipe_write_fd)
+        if pipe_read_fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(pipe_read_fd)
+        if original_fd_dup is not None:
+            with contextlib.suppress(OSError):
+                os.close(original_fd_dup)
+
+        self._stderr_pipe_read_fd = None
+        self._stderr_pipe_write_fd = None
+        self._stderr_original_fd_dup = None
+        self._stderr_forward_thread = None
+
+    def _remove_runtime_log_redirects(self) -> None:
+        """Restore Python logging dispatch after UI shutdown."""
+        handler = self._runtime_redirect_handler
+        original_call_handlers = self._runtime_redirect_original_call_handlers
+        if handler is not None and original_call_handlers is not None:
+            logging.Logger.callHandlers = original_call_handlers
+            logging.lastResort = self._runtime_redirect_original_last_resort
+            if self._runtime_redirect_original_raise_exceptions is not None:
+                logging.raiseExceptions = (
+                    self._runtime_redirect_original_raise_exceptions
+                )
+            handler.close()
 
         if self._warnings_capture_enabled:
             logging.captureWarnings(False)
             self._warnings_capture_enabled = False
 
-        self._runtime_redirect_loggers = None
-        self._runtime_redirect_handlers = None
-        self._runtime_redirect_original_handlers = None
-        self._runtime_redirect_original_propagate = None
+        self._runtime_redirect_handler = None
+        self._runtime_redirect_original_call_handlers = None
+        self._runtime_redirect_original_last_resort = None
+        self._runtime_redirect_original_raise_exceptions = None
 
     def _disable_runtime_log_capture(self) -> None:
         """Restore global stdio once the UI is shutting down."""
@@ -765,7 +906,9 @@ class CeluneUI(App):
         if self._log_stderr is not None:
             self._log_stderr.flush()
 
+        self._remove_low_level_stderr_capture()
         self._remove_runtime_log_redirects()
+        self._restore_dunder_stdio()
 
         sys.stdout = self._old_stdout
         sys.stderr = self._old_stderr
@@ -869,7 +1012,6 @@ class CeluneUI(App):
                     self.safe_progress(1, 1)
                 self.change_input_state(locked=False)
                 self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
-                self.call_from_thread(self._enable_runtime_log_capture)
                 self.safe_log(
                     f"New to {APP_NAME}? Type /tutorial to begin the tutorial."
                 )

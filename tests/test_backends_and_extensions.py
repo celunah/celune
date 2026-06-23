@@ -953,6 +953,17 @@ class ExtensionTests(TestCase):
     """Tests for extension context and manager behavior."""
 
     def setUp(self) -> None:
+        self.backend_override = mock.Mock(
+            side_effect=lambda backend_name: contextlib.nullcontext(
+                cast(Celune, SimpleNamespace())
+            )
+        )
+
+        self.cevoice_override = mock.Mock(
+            side_effect=lambda bundle: contextlib.nullcontext(
+                cast(Celune, SimpleNamespace())
+            )
+        )
         self.logs: list[tuple[str, str]] = []
         self.dev_logs: list[tuple[str, str]] = []
         self.invocations: list[tuple[str, tuple[str, ...]]] = []
@@ -969,12 +980,8 @@ class ExtensionTests(TestCase):
             set_voice=lambda name: True,
             get_state=lambda: "idle",
             wait_until_ready=lambda timeout=30.0: True,
-            backend_override=lambda backend_name: contextlib.nullcontext(
-                cast(Celune, SimpleNamespace())
-            ),
-            cevoice_override=lambda bundle: contextlib.nullcontext(
-                cast(Celune, SimpleNamespace())
-            ),
+            backend_override=self.backend_override,
+            cevoice_override=self.cevoice_override,
         )
 
     def test_context_and_extension_helpers_delegate_calls(self) -> None:
@@ -1000,6 +1007,8 @@ class ExtensionTests(TestCase):
             pass
         with extension.with_cevoice("nova"):
             pass
+        self.backend_override.assert_called_once_with("mini")
+        self.cevoice_override.assert_called_once_with("nova")
 
     def test_manager_registers_invokes_and_autoloads_extensions(self) -> None:
         """Verify registration, duplicate handling, and directory autoloading.

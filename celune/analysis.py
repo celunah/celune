@@ -17,7 +17,11 @@ from matplotlib import rcParams, font_manager, pyplot as plt, colors as mcolors
 from transformers import AutoModel, AutoProcessor
 
 from .cevoice import ManifestValue, default_loader
-from .constants import VOICE_EMBEDDING_MODEL, N_A_NUMERIC
+from .constants import (
+    VOICE_EMBEDDING_MODEL,
+    N_A_NUMERIC,
+    remote_code_model_revision,
+)
 from .typing.analysis import (
     EmbeddingPayload,
     EmbeddingModel,
@@ -318,11 +322,13 @@ def _load_embedding_model() -> tuple[EmbeddingProcessor, EmbeddingModel]:
     global _EMBEDDING_MODEL, _EMBEDDING_PROCESSOR
 
     if _EMBEDDING_MODEL is None or _EMBEDDING_PROCESSOR is None:
+        revision = remote_code_model_revision(VOICE_EMBEDDING_MODEL)
         _EMBEDDING_PROCESSOR = cast(
             EmbeddingProcessor,
             AutoProcessor.from_pretrained(
                 VOICE_EMBEDDING_MODEL,
                 trust_remote_code=True,
+                revision=revision,
             ),
         )
         _EMBEDDING_MODEL = cast(
@@ -330,6 +336,7 @@ def _load_embedding_model() -> tuple[EmbeddingProcessor, EmbeddingModel]:
             AutoModel.from_pretrained(
                 VOICE_EMBEDDING_MODEL,
                 trust_remote_code=True,
+                revision=revision,
             ),
         )
         _EMBEDDING_MODEL.eval()

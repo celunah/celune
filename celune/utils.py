@@ -840,4 +840,5 @@ def normalize_special_characters(text: str) -> str:
         }
     )
 
-    return text.translate(special_char_mappings).replace("  ", " ")
+    normalized = text.translate(special_char_mappings)
+    return re.sub(r"\s{2,}", " ", normalized)

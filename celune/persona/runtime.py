@@ -20,7 +20,12 @@ from transformers import (
 
 from ..vram import resolve_vram_preset
 from ..utils import discard, normalize_special_characters
-from ..constants import JSONSerializable, PERSONA_MODEL_ID, N_A_STR
+from ..constants import (
+    JSONSerializable,
+    PERSONA_MODEL_ID,
+    N_A_STR,
+    remote_code_model_revision,
+)
 from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
 from ..typing.persona import (
     ChatMessagePayload,
@@ -118,10 +123,12 @@ class PersonaBackend:
             return
 
         self.unload()
+        revision = remote_code_model_revision(model_id)
 
         config = AutoConfig.from_pretrained(
             model_id,
             trust_remote_code=True,
+            revision=revision,
         )
         model_type = getattr(config, "model_type", N_A_STR)
         wanted_type = "qwen3_vl"
@@ -140,6 +147,7 @@ class PersonaBackend:
                 Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
+                    revision=revision,
                     device_map="auto",
                     quantization_config=BitsAndBytesConfig(
                         load_in_4bit=True,
@@ -157,6 +165,7 @@ class PersonaBackend:
                 Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
+                    revision=revision,
                     device_map="auto",
                     quantization_config=BitsAndBytesConfig(load_in_8bit=True),
                 ),
@@ -167,6 +176,7 @@ class PersonaBackend:
                 Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
+                    revision=revision,
                     device_map="auto",
                     torch_dtype=torch.bfloat16,
                 ),
@@ -180,6 +190,7 @@ class PersonaBackend:
                 AutoProcessor.from_pretrained(
                     model_id,
                     trust_remote_code=True,
+                    revision=revision,
                 ),
             )
         except Exception as exc:
@@ -195,6 +206,7 @@ class PersonaBackend:
                 AutoTokenizer.from_pretrained(
                     model_id,
                     trust_remote_code=True,
+                    revision=revision,
                 ),
             )
 

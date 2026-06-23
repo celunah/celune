@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest import TestCase, mock
 from typing import Optional, Union, cast
 
+from celune.constants import PERSONA_MODEL_REVISION
 from celune.persona import impl
 from celune.utils import discard
 from celune.persona import runtime
@@ -324,9 +325,15 @@ class PersonaApiTests(TestCase):
         ) as loaders:
             backend.load("Qwen/Qwen3-VL-4B-Instruct", "none")
 
+        loaders["config_loader"].assert_called_once_with(
+            "Qwen/Qwen3-VL-4B-Instruct",
+            trust_remote_code=True,
+            revision=PERSONA_MODEL_REVISION,
+        )
         loaders["processor_loader"].assert_called_once_with(
             "Qwen/Qwen3-VL-4B-Instruct",
             trust_remote_code=True,
+            revision=PERSONA_MODEL_REVISION,
         )
         loaders["model_loader"].assert_called_once()
         self.assertEqual(
@@ -337,6 +344,7 @@ class PersonaApiTests(TestCase):
             loaders["model_loader"].call_args.kwargs,
             {
                 "trust_remote_code": True,
+                "revision": PERSONA_MODEL_REVISION,
                 "device_map": "auto",
                 "torch_dtype": runtime.torch.bfloat16,
             },

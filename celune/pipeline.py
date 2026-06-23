@@ -100,6 +100,7 @@ from .constants import (
 )
 from .typing.pipeline import SpeechStreamQueue
 
+
 if TYPE_CHECKING:
     from .celune import Celune
 
@@ -1472,7 +1473,12 @@ def convert_audio_input(
         if loader is not None:
             try:
                 target_references = (loader.materialize(current_voice, "wav"),)
-            except Exception:
+            except Exception as e:
+                engine.log(
+                    "Could not load reference audio for voice conversion:"
+                    f"{format_error(e, getattr(engine, 'dev', False))}"
+                    "warning"
+                )
                 target_references = ()
 
     return backend.convert(
@@ -2097,7 +2103,13 @@ def generation_worker(engine: Celune) -> None:
                             if engine.utterance_force_stop.is_set():
                                 break
 
-                            speech_timing.mark_first_chunk()
+                            first_chunk_time = None
+                            if timing is not None:
+                                raw_first_chunk_time = timing.get("first_chunk_time")
+                                if isinstance(raw_first_chunk_time, float):
+                                    first_chunk_time = raw_first_chunk_time
+
+                            speech_timing.mark_first_chunk(first_chunk_time)
 
                             if isinstance(audio_chunk, torch.Tensor):
                                 audio_chunk = audio_chunk.cpu().numpy()

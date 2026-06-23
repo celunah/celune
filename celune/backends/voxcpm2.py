@@ -3,6 +3,7 @@
 
 import os
 import contextlib
+import time
 from collections.abc import Iterator
 from typing import Callable, Optional, Mapping, Generator
 
@@ -308,8 +309,11 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                 pending_steps = 0
                 chunk_index = 0
                 total_steps = 0
+                first_chunk_time: Optional[float] = None
 
                 for chunk in stream:
+                    if first_chunk_time is None:
+                        first_chunk_time = time.monotonic()
                     batch.append(chunk)
 
                     if len(batch) < chunks_per_batch:
@@ -325,6 +329,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                                 "chunk_index": chunk_index,
                                 "chunk_steps": pending_steps,
                                 "total_steps_so_far": total_steps,
+                                "first_chunk_time": first_chunk_time,
                                 "is_final": False,
                             },
                         )
@@ -343,8 +348,9 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                             {
                                 "backend": self.name,
                                 "chunk_index": chunk_index,
-                                "chunk_steps": len(batch),
+                                "chunk_steps": pending_steps,
                                 "total_steps_so_far": total_steps,
+                                "first_chunk_time": first_chunk_time,
                                 "is_final": False,
                             },
                         )
@@ -359,6 +365,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                             "chunk_index": chunk_index,
                             "chunk_steps": len(batch),
                             "total_steps_so_far": total_steps,
+                            "first_chunk_time": first_chunk_time,
                             "is_final": True,
                             "missing_eos": total_steps >= self.max_new_tokens,
                         },
@@ -373,6 +380,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                             "chunk_index": chunk_index,
                             "chunk_steps": pending_steps,
                             "total_steps_so_far": total_steps,
+                            "first_chunk_time": first_chunk_time,
                             "is_final": True,
                             "missing_eos": total_steps >= self.max_new_tokens,
                         },

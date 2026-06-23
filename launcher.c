@@ -684,7 +684,7 @@ int run_windows(int argc, char **argv) {
     char path_value[5200];
     int updated_path_len = snprintf(path_value, sizeof(path_value), "%s;%s", python_home, updated_path);
     if (updated_path_len < 0 || (size_t)updated_path_len >= sizeof(path_value)) {
-        printfe("Celune cannot set up %PATH%, the path is too long.\n");
+        printfe("Celune cannot set up %%PATH%%, the path is too long.\n");
         return 1;
     }
 
