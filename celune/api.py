@@ -43,6 +43,7 @@ from .pipeline import SpeechStreamQueue
 from .ui import resources as ui_resources
 from .paths import main_window_log_path, project_root
 from .constants import BASE_SR, APP_NAME, JSONSerializable
+from .i18n import string
 
 api = FastAPI(title=f"{APP_NAME}API")
 bound_celune: Optional[Celune] = None
@@ -62,7 +63,7 @@ webui_resource_page = 0
 webui_last_resource_advance = 0.0
 webui_last_probed_state: Optional[str] = None
 webui_input_locked = True
-webui_input_placeholder = "Please wait"
+webui_input_placeholder = string("webui.wait_placeholder")
 webui_voice_locked = True
 webui_theme_style = ""
 webui_status_source = "probe"
@@ -545,7 +546,7 @@ async def api_security(
             status_code=401,
             content={
                 "error": "unauthorized",
-                "message": "Who are you? Send me an authentication token.",
+                "message": string("api.unauthorized"),
             },
             headers={"WWW-Authenticate": "Bearer"},
         )
@@ -561,7 +562,7 @@ async def api_security(
             status_code=429,
             content={
                 "error": "ratelimit_exceeded",
-                "message": "Please wait until you make me speak again.",
+                "message": string("api.rate_limit"),
             },
             headers={"Retry-After": str(retry_after)},
         )
@@ -586,11 +587,11 @@ def bind_celune(celune: Celune) -> None:
     has_voice = bool(celune.current_voice) or bool(celune.voices)
     webui_input_locked = celune.locked or not has_voice
     webui_input_placeholder = (
-        "Currently in tutorial mode"
+        string("webui.tutorial_placeholder")
         if celune.is_in_tutorial
-        else "Please wait"
+        else string("webui.wait_placeholder")
         if celune and webui_input_locked
-        else "Enter text to speak here"
+        else string("webui.input_placeholder")
     )
     webui_voice_locked = (
         len(celune.voices) < 2 or celune.is_in_tutorial or not has_voice
@@ -598,9 +599,11 @@ def bind_celune(celune: Celune) -> None:
     _seed_webui_logs()
     _wrap_celune_callbacks(celune)
     if celune.current_voice:
-        _append_webui_log(f"Voice ready: {celune.current_voice}.")
+        _append_webui_log(string("webui.voice_ready", voice=celune.current_voice))
     _set_webui_status(
-        "Idle" if celune.cur_state == "idle" else celune.cur_state.title(),
+        string("status.idle")
+        if celune.cur_state == "idle"
+        else celune.cur_state.title(),
         source="probe",
     )
 
@@ -692,20 +695,23 @@ def _set_webui_status(
 def _probed_status_text(celune: Celune) -> tuple[str, str]:
     """Return the best-effort footer status derived from Celune's live state."""
     if not celune.current_voice and not celune.voices:
-        return f"{APP_NAME} could not start", "error"
+        return string("status.could_not_start", app_name=APP_NAME), "error"
 
     state = (celune.cur_state or "").strip().lower()
     return {
-        "idle": ("Idle", "info"),
-        "speaking": ("Speaking", "info"),
-        "thinking": ("Thinking", "info"),
-        "waking": ("Waking up", "info"),
-        "reloading": ("Reloading", "info"),
-        "sleeping": ("Sleeping", "sleeping"),
-        "init": ("Initializing", "info"),
-        "generating": ("Generating", "info"),
-        "error": (f"{APP_NAME} could not continue", "error"),
-    }.get(state, (state.title() if state else "Initializing", "info"))
+        "idle": (string("status.idle"), "info"),
+        "speaking": (string("status.speaking"), "info"),
+        "thinking": (string("status.thinking"), "info"),
+        "waking": (string("status.waking_up"), "info"),
+        "reloading": (string("status.reloading"), "info"),
+        "sleeping": (string("status.sleeping"), "sleeping"),
+        "init": (string("status.initializing"), "info"),
+        "generating": (string("status.generating"), "info"),
+        "error": (string("status.could_not_continue", app_name=APP_NAME), "error"),
+    }.get(
+        state,
+        (state.title() if state else string("status.initializing"), "info"),
+    )
 
 
 def _probe_webui_runtime() -> None:
@@ -721,13 +727,13 @@ def _probe_webui_runtime() -> None:
     if current_state != webui_last_probed_state:
         if current_state == "sleeping":
             _append_webui_log(
-                f"{APP_NAME} is currently sleeping. Type anything to wake up.",
+                string("webui.sleeping_log", app_name=APP_NAME),
                 "sleeping",
             )
         status_text, severity = _probed_status_text(celune)
         should_override_status = (
             webui_last_probed_state is None
-            or webui_status_text == "Starting up"
+            or webui_status_text == string("status.api_starting")
             or webui_status_source != "callback"
             or now - webui_status_updated_at >= WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS
             or current_state in {"idle", "sleeping", "error"}
@@ -774,7 +780,7 @@ def _wrap_celune_callbacks(celune: Celune) -> None:
         original_status(msg, severity)
 
     def wrapped_voice_changed(name: str) -> None:
-        _append_webui_log(f"Voice changed to {name}.")
+        _append_webui_log(string("webui.voice_changed", voice=name))
         original_voice_changed(name)
 
     def wrapped_input_state(locked: bool) -> None:
@@ -782,11 +788,11 @@ def _wrap_celune_callbacks(celune: Celune) -> None:
         has_voice = bool(celune.current_voice) or bool(celune.voices)
         webui_input_locked = locked or not has_voice
         webui_input_placeholder = (
-            "Currently in tutorial mode"
+            string("webui.tutorial_placeholder")
             if celune.is_in_tutorial
-            else "Please wait"
+            else string("webui.wait_placeholder")
             if celune and webui_input_locked
-            else "Enter text to speak here"
+            else string("webui.input_placeholder")
         )
         original_input_state(locked)
 
@@ -829,7 +835,7 @@ def require_celune() -> Celune:
     if bound_celune is None:
         raise HTTPException(
             status_code=503,
-            detail="I'm not currently available.",
+            detail=string("webui.not_available"),
         )
     return bound_celune
 
@@ -1070,22 +1076,22 @@ def _input_update(
             return gr.update(
                 value=value,
                 interactive=False,
-                placeholder="Please wait",
+                placeholder=string("webui.wait_placeholder"),
             )
         return gr.update(
             interactive=False,
-            placeholder="Please wait",
+            placeholder=string("webui.wait_placeholder"),
         )
     if celune.is_in_tutorial:
         if has_value:
             return gr.update(
                 value=value,
                 interactive=False,
-                placeholder="Currently in tutorial mode",
+                placeholder=string("webui.tutorial_placeholder"),
             )
         return gr.update(
             interactive=False,
-            placeholder="Currently in tutorial mode",
+            placeholder=string("webui.tutorial_placeholder"),
         )
     has_voice = bool(celune.current_voice) or bool(celune.voices)
     if getattr(celune, "_webui_callbacks_wrapped", False):
@@ -1094,9 +1100,9 @@ def _input_update(
     else:
         interactive = not celune.locked and has_voice
         placeholder = (
-            "Please wait"
+            string("webui.wait_placeholder")
             if celune and (celune.locked or not has_voice)
-            else "Enter text to speak here"
+            else string("webui.input_placeholder")
         )
     if has_value:
         return gr.update(
@@ -1179,7 +1185,7 @@ def _webui_run_command(text: str) -> bool:
     ui = CeluneUI._instance
     if ui is None:
         _append_webui_log(
-            f"{APP_NAME} must be running to run commands.",
+            string("webui.must_be_running_for_commands", app_name=APP_NAME),
             "warning",
         )
         return False
@@ -1187,7 +1193,7 @@ def _webui_run_command(text: str) -> bool:
     try:
         parts = CeluneUI.split_command_input(text[1:])
     except ValueError as e:
-        _append_webui_log(f"Command parsing error: {e}", "error")
+        _append_webui_log(string("webui.command_parsing_error", error=e), "error")
         return False
 
     if not parts:
@@ -1213,7 +1219,7 @@ def _voice_conversion_unavailable_response() -> JSONResponse:
         status_code=409,
         content={
             "error": "wrong_mode",
-            "message": "I am not currently able to do this.",
+            "message": string("webui.wrong_mode"),
         },
     )
 
@@ -1250,14 +1256,14 @@ def _webui_speak(
     current_state = (celune.cur_state or "").strip().lower()
     if current_state == "waking":
         _append_webui_log(
-            f"{APP_NAME} has not yet returned from sleep mode.", "warning"
+            string("webui.not_returned_from_sleep", app_name=APP_NAME), "warning"
         )
         snapshot = _webui_submit_snapshot(text)
         yield snapshot[0], None, *snapshot[1:]
         return
 
     if getattr(celune, "sleeping", False):
-        _set_webui_status("Waking up")
+        _set_webui_status(string("status.waking_up"))
         snapshot = _webui_submit_snapshot(text)
         yield snapshot[0], None, *snapshot[1:]
         if not celune.wake_from_sleep():
@@ -1267,7 +1273,7 @@ def _webui_speak(
 
     chunks = celune.say_stream(text, save=True)
     if chunks is None:
-        _append_webui_log("I'm currently busy. Try again later.", "warning")
+        _append_webui_log(string("webui.busy_try_again"), "warning")
         snapshot = _webui_submit_snapshot(text)
         yield snapshot[0], None, *snapshot[1:]
         return
@@ -1295,7 +1301,7 @@ def _webui_speak(
         yield snapshot[0], audio_value, *snapshot[1:]
     except Exception as e:
         _append_webui_log(
-            f"[WEBUI ERROR] {format_error(e, celune.dev)}",
+            string("webui.error", error=format_error(e, celune.dev)),
             "error",
         )
         snapshot = _webui_submit_snapshot("")
@@ -1316,7 +1322,7 @@ def _webui_convert_audio(
     """Convert uploaded audio through the active VC backend for browser playback."""
     if source_audio is None:
         _append_webui_log(
-            "Upload or record audio before starting voice conversion.",
+            string("webui.upload_audio_first"),
             "warning",
         )
         logs_html, status_html, resources_html, voice_update, send_update, _input = (
@@ -1335,7 +1341,7 @@ def _webui_convert_audio(
     celune = require_celune()
     if getattr(celune, "input_mode", "text_to_speech") != "voice_conversion":
         _append_webui_log(
-            "Audio conversion is only available in voice conversion mode.",
+            string("webui.conversion_only_in_vc_mode"),
             "warning",
         )
         logs_html, status_html, resources_html, voice_update, send_update, _input = (
@@ -1357,7 +1363,7 @@ def _webui_convert_audio(
         output = celune.convert_audio(audio, sample_rate, label="browser audio input")
     except Exception as e:
         _append_webui_log(
-            f"[WEBUI ERROR] {format_error(e, celune.dev)}",
+            string("webui.error", error=format_error(e, celune.dev)),
             "error",
         )
         logs_html, status_html, resources_html, voice_update, send_update, _input = (
@@ -1374,7 +1380,7 @@ def _webui_convert_audio(
         )
 
     if output is None:
-        _append_webui_log("I can't convert that right now.", "warning")
+        _append_webui_log(string("webui.cannot_convert_right_now"), "warning")
         logs_html, status_html, resources_html, voice_update, send_update, _input = (
             _webui_snapshot()
         )
@@ -1435,7 +1441,7 @@ def _webui_cycle_voice() -> tuple[
     api_log("VOICE(WEBUI)", next_voice)
 
     if not celune.set_voice_and_wait(next_voice):
-        _append_webui_log("I can't change my voice right now.", "error")
+        _append_webui_log(string("webui.cannot_change_voice_right_now"), "error")
 
     return _webui_snapshot()
 
@@ -1467,7 +1473,7 @@ def _build_webui() -> gr.Blocks:
                     lines=1,
                     max_lines=4,
                     show_label=False,
-                    placeholder="Please wait",
+                    placeholder=string("webui.wait_placeholder"),
                     container=False,
                     elem_id="celune-input",
                     scale=8,
@@ -1475,14 +1481,14 @@ def _build_webui() -> gr.Blocks:
                 )
                 with gr.Row(elem_id="celune-actions", scale=2):
                     voice_button = gr.Button(
-                        value="Balanced",
+                        value=string("webui.default_voice_button"),
                         elem_id="celune-style",
                         scale=1,
                         min_width=0,
                         interactive=False,
                     )
                     send_button = gr.Button(
-                        value="Send",
+                        value=string("webui.send_button"),
                         elem_id="celune-send",
                         scale=1,
                         min_width=0,
@@ -1497,7 +1503,7 @@ def _build_webui() -> gr.Blocks:
             gr.HTML(
                 textwrap.dedent(f"""
                     <p style="color: var(--celune-primary); text-align: center;">
-                        Usage may differ. Some {APP_NAME} features may not be available.
+                        {string("webui.features_may_differ", app_name=APP_NAME)}
                     </p>
                 """)
             )
@@ -1662,7 +1668,7 @@ def speak(body: SpeakRequest) -> Union[StreamingResponse, JSONResponse]:
             status_code=409,
             content={
                 "error": "not_ready",
-                "message": "I'm currently busy. Try again later.",
+                "message": string("webui.busy_try_again"),
             },
         )
 
@@ -1691,7 +1697,7 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
             status_code=409,
             content={
                 "error": "not_ready",
-                "message": "I'm currently busy. Try again later.",
+                "message": string("webui.busy_try_again"),
             },
         )
 
@@ -1730,7 +1736,7 @@ def think(body: ThinkRequest) -> JSONResponse:
             status_code=409,
             content={
                 "error": "not_ready",
-                "message": "I'm currently busy. Try again later.",
+                "message": string("webui.busy_try_again"),
             },
         )
 
@@ -1753,7 +1759,7 @@ def speak_job(job_id: str) -> Union[Response, JSONResponse]:
             status_code=404,
             content={
                 "error": "not_found",
-                "message": "I don't know that speech job.",
+                "message": string("api.speech_job_unknown"),
             },
         )
 
@@ -1790,7 +1796,7 @@ def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
             status_code=400,
             content={
                 "error": "invalid_value",
-                "message": "I don't know how to speak in that voice.",
+                "message": string("api.invalid_voice"),
             },
         )
 
@@ -1799,7 +1805,7 @@ def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
             status_code=500,
             content={
                 "error": "request_failed",
-                "message": "I can't change my voice right now.",
+                "message": string("webui.cannot_change_voice_right_now"),
             },
         )
 
@@ -1831,7 +1837,7 @@ async def sfx(
             status_code=413,
             content={
                 "error": "request_too_large",
-                "message": "That sound is too large for me to play.",
+                "message": string("api.sound_too_large"),
             },
         )
 
@@ -1843,7 +1849,7 @@ async def sfx(
             status_code=400,
             content={
                 "error": "invalid_audio",
-                "message": "I don't understand your input.",
+                "message": string("api.invalid_input"),
             },
         )
 
@@ -1854,7 +1860,7 @@ async def sfx(
             status_code=409,
             content={
                 "error": "not_ready",
-                "message": "I can't play that right now.",
+                "message": string("api.cannot_play_now"),
             },
         )
 
@@ -1894,7 +1900,7 @@ async def convert_audio(
             status_code=413,
             content={
                 "error": "request_too_large",
-                "message": "That source audio is too large for me to convert.",
+                "message": string("api.source_audio_too_large"),
             },
         )
 
@@ -1905,7 +1911,7 @@ async def convert_audio(
             status_code=400,
             content={
                 "error": "invalid_audio",
-                "message": "I don't understand your input.",
+                "message": string("api.invalid_input"),
             },
         )
 
@@ -1918,7 +1924,7 @@ async def convert_audio(
             status_code=500,
             content={
                 "error": "request_failed",
-                "message": "I couldn't convert that.",
+                "message": string("api.could_not_convert"),
             },
         )
 
@@ -1927,7 +1933,7 @@ async def convert_audio(
             status_code=409,
             content={
                 "error": "not_ready",
-                "message": "I can't convert that.",
+                "message": string("api.cannot_convert"),
             },
         )
 
@@ -1981,8 +1987,12 @@ def run_api(
     bind_host = resolve_api_host(token=auth_token, host=host)
 
     def _default_started(bhost: str, bport: int) -> None:
-        http = "http"
-        message = f"{APP_NAME} API has started on {http}://{bhost}:{bport}"
+        message = string(
+            "api.runner_started",
+            app_name=APP_NAME,
+            host=bhost,
+            port=bport,
+        )
         if celune is not None:
             celune.log(message)
         else:
@@ -2033,8 +2043,14 @@ def start_api(
     failed = threading.Event()
 
     def _started(bind_host: str, bind_port: int) -> None:
-        http = "http"
-        celune.log(f"{APP_NAME} API has started on {http}://{bind_host}:{bind_port}")
+        celune.log(
+            string(
+                "api.runner_started",
+                app_name=APP_NAME,
+                host=bind_host,
+                port=bind_port,
+            )
+        )
         started.set()
 
     def _runner() -> None:
@@ -2051,11 +2067,15 @@ def start_api(
         except SystemExit as exc:
             if exc.code not in (0, None):
                 failed.set()
-                celune.log(f"API runner has exited. Exit code {exc.code}", "warning")
+                celune.log(
+                    string("api.runner_exit_code", code=exc.code),
+                    "warning",
+                )
         except Exception as e:
             failed.set()
             celune.log(
-                f"Could not start the API: {format_error(e, celune.dev)}", "warning"
+                string("api.could_not_start", error=format_error(e, celune.dev)),
+                "warning",
             )
 
     thread = threading.Thread(target=_runner, daemon=True, name=f"{APP_NAME}API")
@@ -2066,7 +2086,7 @@ def start_api(
 
     if not started.is_set() and not failed.is_set():
         celune.log(
-            f"API runner has not responded after {startup_timeout:.1f}s, and has timed out.",
+            string("api.runner_timeout", seconds=startup_timeout),
             "warning",
         )
 
