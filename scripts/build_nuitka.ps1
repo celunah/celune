@@ -8,15 +8,14 @@ $launcherSource = Join-Path $repoRoot "launcher.c"
 $launcherRes = Join-Path $repoRoot "resources\celune.res"
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 $projectVersion = Select-String -Path (Join-Path $repoRoot "pyproject.toml") -Pattern '^version = "([^"]+)"' | Select-Object -First 1
-$existingProcess = Get-Process celune -ErrorAction SilentlyContinue
+$existingProcesses = Get-Process -Name @("celune", "celune-bin") -ErrorAction SilentlyContinue
 
 $env:CL = "/O2 /GL /GS /guard:cf /DNDEBUG"
 $env:_CL_ = "/link /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT"
 
-if ($null -ne $existingProcess) {
++if ($null -ne $existingProcesses) {
     Write-Host "Celune is already running, terminating before proceeding with build."
-    Stop-Process -Name celune -Force
-    Stop-Process -Name celune-bin -Force
+    $existingProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
 if ($null -eq $projectVersion) {

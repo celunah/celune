@@ -11,10 +11,13 @@ app_dir="$output_dir/Celune.AppDir"
 desktop_src="$repo_root/Celune.AppDir/celune.desktop"
 icon_src="$repo_root/Celune.AppDir/celune.png"
 
-if pgrep celune &>/dev/null; then
+if pgrep -x celune >/dev/null || pgrep -x celune-bin >/dev/null; then
     echo "Celune is already running, terminating before proceeding with build."
-    pkill -9 celune
-    pkill -9 celune-bin
+    pkill -TERM -x celune || true
+    pkill -TERM -x celune-bin || true
+    sleep 1
+    pkill -KILL -x celune || true
+    pkill -KILL -x celune-bin || true
 fi
 
 version_line="$(grep -m1 '^version = "' "$repo_root/pyproject.toml")"
