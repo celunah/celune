@@ -440,6 +440,12 @@ STRINGS["en"].update(
         "cli.apply_update_usage": "Usage: celune __apply_update <parent-pid> <launcher-path> [args...]",
         "cli.invalid_launcher_pid": "Invalid launcher PID.",
         "cli.apply_launcher_update_failed": "{app_name} could not apply the launcher update: {error}",
+        "osc.starting": "{app_name} is starting up...",
+        "osc.crash_1": "{app_name} has crashed.",
+        "osc.crash_2": "Please check {app_name}'s",
+        "osc.crash_3": "log widget for",
+        "osc.crash_4": "more information.",
+        "osc.exiting": "{app_name} is exiting...",
     }
 )
 
