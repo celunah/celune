@@ -126,4 +126,10 @@ api = [
 ]
 
 [tool.pytest.ini_options]
-filterwarnings = "ignore::DeprecationWarning"
+filterwarnings = [
+     "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
+     "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
+     "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
+     "ignore:CeluneExtension\\.autostart\\(\\) is deprecated, please use @celune\\.subscribe\\('ready'\\) instead:DeprecationWarning",
+     "ignore:CeluneExtensionManager\\.autostart_all\\(\\) is deprecated, please use @celune\\.subscribe\\('ready'\\) in your extensions instead:DeprecationWarning",
+]
