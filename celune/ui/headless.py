@@ -13,6 +13,7 @@ from ..celune import Celune
 from ..utils import discard
 from ..config import Config, config_bool
 from ..constants import APP_NAME, SIGTSTP
+from ..i18n import string
 
 
 class CeluneHeadlessUI:
@@ -78,9 +79,9 @@ class CeluneHeadlessUI:
         """
         prefix = ""
         if severity == "warning":
-            prefix = "[WARN] "
+            prefix = string("headless.warn_prefix")
         elif severity == "error":
-            prefix = "[ERROR] "
+            prefix = string("headless.error_prefix")
         print(f"{prefix}{self.severity_color(severity)}{msg}{self.reset}", flush=True)
 
     def headless_error(self, error: str) -> None:
@@ -95,7 +96,11 @@ class CeluneHeadlessUI:
         """Start the headless interface."""
         if not self._has_celune():
             warnings.warn(
-                f"{self.__class__.__name__} has no attached {APP_NAME} instance: this will do nothing",
+                string(
+                    "headless.no_attached_instance",
+                    class_name=self.__class__.__name__,
+                    app_name=APP_NAME,
+                ),
                 RuntimeWarning,
             )
 

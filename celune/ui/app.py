@@ -39,6 +39,7 @@ from .theme import CELUNE_CSS, severity_color
 from .terminal import LogRedirect, UILogHandler, is_celune_log_record
 from ..paths import config_path, main_window_log_path
 from ..constants import APP_NAME, SIGTSTP, CRASH_LINES
+from ..i18n import string
 from .commands import process_command as process_ui_command
 from ..persona.impl import (
     persona_talkback_enabled,
@@ -582,8 +583,8 @@ class CeluneUI(App):
                 id="progress", show_percentage=False, show_eta=False, total=1
             )
             with Horizontal(id="controls"):
-                yield TextArea(id="input", placeholder="Please wait")
-                yield Button("No Voice Set", id="style", disabled=True)
+                yield TextArea(id="input", placeholder=string("ui.wait_placeholder"))
+                yield Button(string("ui.no_voice_set"), id="style", disabled=True)
             with Horizontal(id="bottom"):
                 yield Label("", id="status")
                 yield Label("", id="resources")
@@ -648,7 +649,7 @@ class CeluneUI(App):
                 self.active_theme_name = "celune_light"
             else:
                 self.active_theme_name = "celune"
-                self.safe_log("Invalid theme, defaulting to dark", "warning")
+                self.safe_log(string("ui.invalid_theme_defaulting_dark"), "warning")
 
         self.theme = self.active_theme_name
 
@@ -964,10 +965,10 @@ class CeluneUI(App):
 
         if self.celune.enter_sleep_mode():
             self.safe_log(
-                f"{APP_NAME} is currently sleeping. Type anything to wake up.",
+                string("ui.sleeping_log", app_name=APP_NAME),
                 "sleeping",
             )
-            self.safe_status("Sleeping", "sleeping")
+            self.safe_status(string("ui.sleeping_status"), "sleeping")
             self.change_voice_lock_state(locked=True)
 
     @work(thread=True, exclusive=True)
@@ -978,7 +979,7 @@ class CeluneUI(App):
                 self._schedule_sleep_timer()
         finally:
             if self.celune.sleeping:
-                self.safe_status("Sleeping", "sleeping")
+                self.safe_status(string("ui.sleeping_status"), "sleeping")
 
     def start_background_init(self) -> None:
         """Run the initialization function."""
@@ -993,7 +994,7 @@ class CeluneUI(App):
                 if not self.celune_styles:
                     self.change_input_state(locked=True)
                     self.change_voice_lock_state(locked=True)
-                    self.error(f"{APP_NAME} could not start")
+                    self.error(string("ui.app_could_not_start", app_name=APP_NAME))
                     self.cur_state = "error"
                     return
                 self.celune_voices = itertools.cycle(self.celune_styles)
@@ -1004,7 +1005,7 @@ class CeluneUI(App):
                 else:
                     self.style_index = 0
                 self.celune_ready = True
-                self.safe_status("Idle")
+                self.safe_status(string("ui.idle_status"))
                 self.tts_voice_changed(
                     self.celune.current_voice or self.celune.voices[0]
                 )
@@ -1012,9 +1013,7 @@ class CeluneUI(App):
                     self.safe_progress(1, 1)
                 self.change_input_state(locked=False)
                 self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
-                self.safe_log(
-                    f"New to {APP_NAME}? Type /tutorial to begin the tutorial."
-                )
+                self.safe_log(string("ui.tutorial_prompt", app_name=APP_NAME))
                 self._schedule_sleep_timer()
                 if supports_ansi(self._old_stdout):
                     self.call_from_thread(
@@ -1024,16 +1023,16 @@ class CeluneUI(App):
                 self.cur_state = "error"
                 self.change_input_state(locked=True)
                 self.change_voice_lock_state(locked=True)
-                self.error(f"{APP_NAME} could not start")
+                self.error(string("ui.app_could_not_start", app_name=APP_NAME))
         except Exception as e:
             self.cur_state = "error"
             self.safe_log(f"[INIT ERROR] {format_error(e, self.celune.dev)}", "error")
             self.celune.glow.fatal()
             if not self.celune.try_play_signal("error"):
-                self.safe_log_dev("Could not play the error signal.", "warning")
+                self.safe_log_dev(string("ui.error_signal_unavailable"), "warning")
             self.change_input_state(locked=True)
             self.change_voice_lock_state(locked=True)
-            self.error(f"{APP_NAME} could not start")
+            self.error(string("ui.app_could_not_start", app_name=APP_NAME))
 
     def safe_progress(
         self, progress: Optional[float], total: Optional[float] = None
@@ -1644,12 +1643,12 @@ class CeluneUI(App):
             return
 
         if len(self.celune.voices) == 0 or not self.celune_styles:
-            self.safe_log("No voices are loaded.", "warning")
+            self.safe_log(string("ui.no_voices_loaded"), "warning")
             self.change_voice_lock_state(locked=True)
             return
 
         if not self.celune_ready:
-            self.safe_log("Core engine is not loaded.", "warning")
+            self.safe_log(string("ui.core_engine_not_loaded"), "warning")
             self.change_voice_lock_state(locked=True)
             return
 

@@ -58,6 +58,21 @@ class I18nTests(TestCase):
             i18n.STRINGS.clear()
             i18n.STRINGS.update(original)
 
+    def test_string_falls_back_from_specific_locale_to_base_language(self) -> None:
+        """Verify locale variants can reuse a base-language translation table.
+
+        Raises:
+            AssertionError: Locale normalization behavior changes unexpectedly.
+        """
+        original = dict(i18n.STRINGS)
+        try:
+            i18n.STRINGS["en"] = {"hello": "Hello"}
+            i18n.set_locale("en-US")
+            self.assertEqual(i18n.string("hello"), "Hello")
+        finally:
+            i18n.STRINGS.clear()
+            i18n.STRINGS.update(original)
+
 
 class UpdaterTests(TestCase):
     """Tests for pure updater decision logic."""

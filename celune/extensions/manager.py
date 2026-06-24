@@ -16,6 +16,7 @@ from ..typing.events import EventName
 from ..typing.events import EventPayload
 from ..utils import format_error, discard
 from ..dataclasses.events import ReadyEvent
+from ..i18n import string
 from .base import CeluneContext, CeluneExtension
 from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
 from .events import (
@@ -131,14 +132,13 @@ class CeluneExtensionManager:
         """Run deprecated legacy autostart handlers."""
         if self.auto_started:
             self.context.log(
-                "[Core] Cannot autostart Celune extensions more than one time.",
+                string("extensions.autostart_once"),
                 "warning",
             )
             return
 
         warnings.warn(
-            "CeluneExtensionManager.autostart_all() is deprecated, "
-            "please use @celune.subscribe('ready') in your extensions instead",
+            string("extensions.autostart_all_deprecated"),
             DeprecationWarning,
             stacklevel=2,
         )
@@ -152,7 +152,13 @@ class CeluneExtensionManager:
                         e.autostart()
                     except Exception as ex:
                         self.context.log(
-                            f"[Core] Could not autostart {n}: {traceback.format_exc() if self.context.dev else ex}",
+                            string(
+                                "extensions.autostart_failed",
+                                name=n,
+                                error=(
+                                    traceback.format_exc() if self.context.dev else ex
+                                ),
+                            ),
                             "warning",
                         )
 
@@ -184,8 +190,11 @@ class CeluneExtensionManager:
                 ext.invoke(*args, **kwargs)
             except Exception as ex:
                 self.context.log(
-                    f"[Core] Failed to invoke '{name}': "
-                    f"{format_error(ex, self.context.dev)}",
+                    string(
+                        "extensions.invoke_failed",
+                        name=name,
+                        error=format_error(ex, self.context.dev),
+                    ),
                     "warning",
                 )
 
@@ -209,16 +218,17 @@ class CeluneExtensionManager:
 
         if not extensions_dir.exists():
             self.context.log(
-                f"[Core] Extension folder not found: {extensions_dir}", "warning"
+                string("extensions.folder_not_found", path=extensions_dir),
+                "warning",
             )
-            self.context.log("Extensions will not be available.", "warning")
+            self.context.log(string("extensions.unavailable"), "warning")
             return
 
         if not extensions_dir.is_dir():
             self.context.log(
-                f"[Core] Extension path is not a directory: {extensions_dir}"
+                string("extensions.path_not_directory", path=extensions_dir)
             )
-            self.context.log("Extensions will not be available.", "warning")
+            self.context.log(string("extensions.unavailable"), "warning")
             return
 
         self.context.log_dev(f"[Core] Scanning extension folder: {extensions_dir}")
@@ -233,7 +243,7 @@ class CeluneExtensionManager:
                 spec = importlib.util.spec_from_file_location(module_name, file_path)
                 if spec is None or spec.loader is None:
                     self.context.log(
-                        f"[Core] Could not load spec for: {file_path.name}"
+                        string("extensions.spec_load_failed", name=file_path.name)
                     )
                     continue
 
@@ -242,8 +252,11 @@ class CeluneExtensionManager:
                 spec.loader.exec_module(module)
             except Exception as e:
                 self.context.log(
-                    f"[Core] Failed to import '{file_path.name}': "
-                    f"{traceback.format_exc() if self.context.dev else e}",
+                    string(
+                        "extensions.import_failed",
+                        name=file_path.name,
+                        error=traceback.format_exc() if self.context.dev else e,
+                    ),
                     "warning",
                 )
                 continue
@@ -270,14 +283,21 @@ class CeluneExtensionManager:
                     found_any = True
                 except Exception as e:
                     self.context.log(
-                        f"[Core] Failed to register '{obj.__name__}' "
-                        f"from '{file_path.name}': {traceback.format_exc() if self.context.dev else e}",
+                        string(
+                            "extensions.register_failed",
+                            name=obj.__name__,
+                            file_name=file_path.name,
+                            error=traceback.format_exc() if self.context.dev else e,
+                        ),
                         "warning",
                     )
 
             if not found_any:
                 self.context.log(
-                    f"[Core] {file_path.name} is not a Celune extension, skipping",
+                    string(
+                        "extensions.not_extension_skipping",
+                        file_name=file_path.name,
+                    ),
                     "warning",
                 )
 
@@ -316,8 +336,7 @@ class CeluneExtensionManager:
             return
 
         warnings.warn(
-            "CeluneExtension.autostart() is deprecated, "
-            "please use @celune.subscribe('ready') instead",
+            string("extensions.autostart_deprecated"),
             DeprecationWarning,
             stacklevel=2,
         )

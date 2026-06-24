@@ -352,7 +352,7 @@ class PipelineTests(TestCase):
         engine.log.assert_called_once()
         self.assertEqual(
             engine.errors,
-            ["Voice conversion backend is not configured"],
+            ["Voice conversion backend is not configured."],
         )
         self.assertEqual(engine.audio_queue.empty(), True)
 

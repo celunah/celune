@@ -57,6 +57,7 @@ from .vc_backends import CeluneVCBackend, resolve_vc_backend
 from .exceptions import NotAvailableError, WarmupError, BackendError
 from .modeling import normalizer_device, load_normalizer_components
 from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID
+from .i18n import string
 from .typing.celune import (
     CeluneStateAccessors,
     Generative,
@@ -511,13 +512,20 @@ class Celune(CeluneStateAccessors):
             return
 
         if trailing_files == 1:
-            self.log(f"{APP_NAME} found a residual temporary item.", "warning")
-        else:
             self.log(
-                f"{APP_NAME} found {trailing_files} residual temporary items.",
+                string("celune.residual_temp_item", app_name=APP_NAME),
                 "warning",
             )
-        self.log("Deleting...", "warning")
+        else:
+            self.log(
+                string(
+                    "celune.residual_temp_items",
+                    app_name=APP_NAME,
+                    count=trailing_files,
+                ),
+                "warning",
+            )
+        self.log(string("celune.deleting"), "warning")
 
         with contextlib.suppress(OSError):
             for path in disposable_paths:
@@ -617,7 +625,7 @@ class Celune(CeluneStateAccessors):
             return None
 
         if not persona_is_available():
-            self.log("Persona could not be initialized.", "warning")
+            self.log(string("celune.persona_init_failed"), "warning")
             return None
 
         return create_persona_client(self.config, log_dev=self.log_dev)
@@ -867,9 +875,15 @@ class Celune(CeluneStateAccessors):
             snapshot = self._capture_reload_snapshot()
             preset = resolve_vram_preset(self.config)
             candidate_kwargs = self._backend_reload_kwargs(backend_spec)
-            self.log(f"{APP_NAME} is switching to {requested_name}, please wait...")
+            self.log(
+                string(
+                    "celune.switching_backend",
+                    app_name=APP_NAME,
+                    backend=requested_name,
+                )
+            )
             self._ready_announced = False
-            self.status_callback("Reloading backend")
+            self.status_callback(string("status.reloading_backend"))
             self.progress_callback(None, None)
             self.cur_state = "reloading"
 
@@ -946,17 +960,17 @@ class Celune(CeluneStateAccessors):
                         new_voice=candidate_voice,
                     ),
                 )
-            self.log(f"Switched backend to {requested_name}.")
+            self.log(string("celune.switched_backend", backend=requested_name))
             self.progress_callback(1, 1)
             self.cur_state = "idle"
-            self.status_callback("Idle")
+            self.status_callback(string("status.idle"))
             return True
         except Exception as e:
             self.log(
-                f"[RELOAD ERROR] {format_error(e, self.dev)}",
+                string("celune.reload_error", error=format_error(e, self.dev)),
                 "error",
             )
-            self.status_callback("Restoring backend")
+            self.status_callback(string("status.restoring_backend"))
             self.progress_callback(None, None)
             if (
                 candidate_backend is not None
@@ -980,10 +994,10 @@ class Celune(CeluneStateAccessors):
             else:
                 self.cur_state = "idle"
             self._last_warmup_error = None
-            self.status_callback("Idle")
+            self.status_callback(string("status.idle"))
             self.progress_callback(1, 1)
             self.log(
-                "Could not load this backend. The previous backend was restored.",
+                string("celune.backend_restore_failed"),
                 "warning",
             )
             return False
@@ -1011,9 +1025,9 @@ class Celune(CeluneStateAccessors):
                 if previous_loader is not None
                 else active_bundle_path()
             )
-            self.log(f"{APP_NAME} is reloading the character, please stand by...")
+            self.log(string("celune.reloading_character", app_name=APP_NAME))
             self._ready_announced = False
-            self.status_callback("Reloading character")
+            self.status_callback(string("status.reloading_character"))
             self.progress_callback(None, None)
             self.cur_state = "reloading"
 
@@ -1070,15 +1084,18 @@ class Celune(CeluneStateAccessors):
                     ),
                 )
             self.log(
-                f"Switched to character: {bundle if bundle is not None else previous_bundle.name}"
+                string(
+                    "celune.switched_character",
+                    character=(bundle if bundle is not None else previous_bundle.name),
+                )
             )
             self.progress_callback(1, 1)
             self.cur_state = "idle"
-            self.status_callback("Idle")
+            self.status_callback(string("status.idle"))
             return True
         except Exception as e:
             self.log(
-                f"[RELOAD ERROR] {format_error(e, self.dev)}",
+                string("celune.reload_error", error=format_error(e, self.dev)),
                 "error",
             )
             if (
@@ -1092,10 +1109,10 @@ class Celune(CeluneStateAccessors):
                 self._restore_reload_snapshot(snapshot)
             else:
                 self.cur_state = "idle"
-            self.status_callback("Idle")
+            self.status_callback(string("status.idle"))
             self.progress_callback(1, 1)
             self.log(
-                "Could not switch to this character. The previous character was restored.",
+                string("celune.character_restore_failed"),
                 "warning",
             )
             return False
@@ -1232,7 +1249,7 @@ class Celune(CeluneStateAccessors):
 
             _, _, unload = self._sleep_config()
             self.model_ready.clear()
-            self.status_callback("Waking up")
+            self.status_callback(string("status.waking_up"))
             self.progress_callback(None, None)
             self.cur_state = "waking"
 
@@ -1277,8 +1294,11 @@ class Celune(CeluneStateAccessors):
                                     persona_quantization(self.config),
                                 )
                             except Exception as e:
-                                self.log("Persona not initialized.", "warning")
-                                self.log("Continuing in speech-only mode.", "warning")
+                                self.log(
+                                    string("celune.persona_not_initialized"),
+                                    "warning",
+                                )
+                                self.log(string("celune.speech_only_mode"), "warning")
                                 self.log(format_error(e, self.dev), "warning")
                                 self.vision.close()
                                 self.vision = None
@@ -1289,21 +1309,26 @@ class Celune(CeluneStateAccessors):
                     self.glow.wake()
 
                 self.progress_callback(1, 1)
-                self.status_callback("Idle")
+                self.status_callback(string("status.idle"))
                 self.change_input_state_callback(locked=False)
                 self.change_voice_lock_state_callback(locked=len(self.voices) < 2)
                 return True
             except Exception as e:
                 self.cur_state = "error"
                 self.loaded = False
-                self.log(f"[WAKE ERROR] {format_error(e, self.dev)}", "error")
+                self.log(
+                    string("celune.wake_error", error=format_error(e, self.dev)),
+                    "error",
+                )
                 self.glow.fatal()
                 if not self._try_play_signal("error"):
-                    self.log_dev("Could not play the error signal.", "warning")
+                    self.log_dev(string("ui.error_signal_unavailable"), "warning")
                 self.cur_state = "error"
-                self.status_callback(f"{APP_NAME} could not wake", "error")
+                self.status_callback(
+                    string("status.could_not_wake", app_name=APP_NAME), "error"
+                )
                 self.progress_callback(0, 1)
-                self.error_callback(f"{APP_NAME} could not wake")
+                self.error_callback(string("status.could_not_wake", app_name=APP_NAME))
                 return False
             finally:
                 self.model_ready.set()
@@ -1421,13 +1446,13 @@ class Celune(CeluneStateAccessors):
         """
         if name not in self.voices:
             # this voice was not found in the current CEVOICE/CECHAR pack
-            self.log(f"Unknown voice: {name}", "warning")
+            self.log(string("celune.unknown_voice", voice=name), "warning")
             return False
 
         self.change_input_state_callback(locked=True)
 
         if not self._model_ready.is_set():
-            self.log("Waiting for models to load...")
+            self.log(string("celune.waiting_for_models"))
             self._model_ready.wait(timeout=5)
 
         self._model_ready.clear()
@@ -1454,7 +1479,7 @@ class Celune(CeluneStateAccessors):
             return False
 
         if not self._model_ready.wait(timeout=timeout):
-            self.log("Timed out while switching voice.", "warning")
+            self.log(string("celune.voice_switch_timeout"), "warning")
             return False
         return self.loaded and self.current_voice == name
 
@@ -1471,14 +1496,17 @@ class Celune(CeluneStateAccessors):
             bool: ``True`` when the reload worker was started.
         """
         if self._reload_pending or self.cur_state == "reloading":
-            self.log("A backend or character reload is already in progress.", "warning")
+            self.log(string("celune.reload_already_in_progress"), "warning")
             return False
         if isinstance(backend_spec, str):
             normalized_backend = backend_spec.strip().lower()
             if normalized_backend not in BACKENDS:
                 self.log(
-                    f"Unknown backend: {backend_spec} "
-                    f"(available: {', '.join(BACKENDS.keys())})",
+                    string(
+                        "celune.unknown_backend",
+                        backend=backend_spec,
+                        available=", ".join(BACKENDS.keys()),
+                    ),
                     "warning",
                 )
                 return False
@@ -1516,7 +1544,7 @@ class Celune(CeluneStateAccessors):
             return False
 
         if not self._model_ready.wait(timeout=timeout):
-            self.log("Timed out while switching backends.", "warning")
+            self.log(string("celune.backend_switch_timeout"), "warning")
             return False
 
         target_name = (
@@ -1536,13 +1564,15 @@ class Celune(CeluneStateAccessors):
             bool: ``True`` when the reload worker was started.
         """
         if self._reload_pending or self.cur_state == "reloading":
-            self.log("A backend or character reload is already in progress.", "warning")
+            self.log(string("celune.reload_already_in_progress"), "warning")
             return False
 
         if bundle is not None:
             resolved_bundle = resolve_bundle_path(bundle)
             if not resolved_bundle.exists():
-                self.log(f"Voice pack not found: {bundle}", "warning")
+                self.log(
+                    string("celune.voice_pack_not_found", bundle=bundle), "warning"
+                )
                 return False
 
         self.change_input_state_callback(locked=True)
@@ -1576,7 +1606,7 @@ class Celune(CeluneStateAccessors):
             return False
 
         if not self._model_ready.wait(timeout=timeout):
-            self.log("Timed out while switching characters.", "warning")
+            self.log(string("celune.character_switch_timeout"), "warning")
             return False
         return self.loaded and active_bundle_path() == resolve_bundle_path(bundle)
 
@@ -1648,24 +1678,19 @@ class Celune(CeluneStateAccessors):
         # don't wait a timeout while Celune is downloading a model
         ok = self._model_ready.wait(timeout=timeout)
         if not ok:
-            self.log("Timed out while waiting to become ready.", "warning")
-            self.log(
-                "A possible reason for this may be a model download or high GPU activity.",
-                "warning",
-            )
-            self.log(
-                "This is not a fatal error, the utterance may be retried.", "warning"
-            )
+            self.log(string("celune.ready_wait_timeout"), "warning")
+            self.log(string("celune.ready_wait_reason"), "warning")
+            self.log(string("celune.ready_wait_not_fatal"), "warning")
             return False
 
         if not self.loaded:
-            self.log("Model was unloaded while waiting to become ready.", "warning")
+            self.log(string("celune.model_unloaded_while_waiting"), "warning")
             return False
 
         ok = self._playback_done.wait(timeout=timeout)
         if not ok:
             self.log(
-                "Timed out while waiting for playback pipeline to become idle.",
+                string("celune.playback_idle_timeout"),
                 "warning",
             )
             return False
@@ -1775,9 +1800,9 @@ class Celune(CeluneStateAccessors):
             WarmupError: The newly loaded voice fails warmup.
         """
 
-        self.log(f"{APP_NAME} is reloading, please stand by...")
+        self.log(string("celune.reloading", app_name=APP_NAME))
         self._ready_announced = False
-        self.status_callback("Reloading")
+        self.status_callback(string("status.reloading"))
         self.progress_callback(None, None)
         self.cur_state = "reloading"
         active_voice = self.current_voice or voice
@@ -1802,7 +1827,7 @@ class Celune(CeluneStateAccessors):
                         self.model = self.backend.load_model(new_model_name)
                         self.model_name = new_model_name
 
-                        self.log("Rewarming up...")
+                        self.log(string("celune.rewarming_up"))
                         if not self._warmup():
                             self._raise_warmup_error("warmup failed after reload")
 
@@ -1828,20 +1853,26 @@ class Celune(CeluneStateAccessors):
                         new_voice=voice,
                     ),
                 )
-            self.log(f"Voice {voice} loaded.")
+            self.log(string("celune.voice_loaded", voice=voice))
             self.progress_callback(1, 1)
             self.cur_state = "idle"
-            self.status_callback("Idle")
+            self.status_callback(string("status.idle"))
         except Exception as e:
             self.cur_state = "error"
             self.loaded = False
-            self.log(f"[RELOAD ERROR] {format_error(e, self.dev)}", "error")
+            self.log(
+                string("celune.reload_error", error=format_error(e, self.dev)),
+                "error",
+            )
             self.glow.fatal()
             if not self._try_play_signal("error"):
-                self.log_dev("Could not play the error signal.", "warning")
-            self.status_callback(f"{APP_NAME} could not reload", "error")
+                self.log_dev(string("ui.error_signal_unavailable"), "warning")
+            self.status_callback(
+                string("status.could_not_reload", app_name=APP_NAME),
+                "error",
+            )
             self.progress_callback(0, 1)
-            self.error_callback(f"{APP_NAME} could not reload")
+            self.error_callback(string("status.could_not_reload", app_name=APP_NAME))
         finally:
             self._model_ready.set()
             self.change_input_state_callback(locked=False)
@@ -1865,12 +1896,12 @@ class Celune(CeluneStateAccessors):
         self._cleanup_residual_temp_data(app_data_dir() / "temp")
         if not self.load_available_voices():
             self.cur_state = "error"
-            self.log("No voices were loaded.", "error")
+            self.log(string("celune.no_voices_loaded"), "error")
             self.glow.fatal()
             if not self._try_play_signal("error"):
-                self.log_dev("Could not play the error signal.", "warning")
+                self.log_dev(string("ui.error_signal_unavailable"), "warning")
             self.progress_callback(0, 1)
-            self.error_callback("No voices loaded")
+            self.error_callback(string("celune.no_voices_loaded_short"))
             return False
 
         if self.backend.uses_voice_bundles:
@@ -1879,9 +1910,11 @@ class Celune(CeluneStateAccessors):
             self.current_character = character
 
             if self.voice_bundle_is_default:
-                self.log(f"Current character: {character} (default)")
+                self.log(
+                    string("celune.current_character_default", character=character)
+                )
             else:
-                self.log(f"Current character: {character}")
+                self.log(string("celune.current_character", character=character))
 
         self.setup_extensions()
 
@@ -1890,59 +1923,65 @@ class Celune(CeluneStateAccessors):
             self.log(vram_message, "warning")
 
         self.log(
-            f"Current VRAM preset: {str(self.config.get('vram', 'unknown')).title()}"
+            string(
+                "celune.current_vram_preset",
+                preset=str(self.config.get("vram", "unknown")).title(),
+            )
         )
 
         self.progress_callback(None, None)
         if self._is_voice_conversion_mode():
             if self.vc_backend is None:
                 self.cur_state = "error"
-                self.log("No voice conversion backend is available.", "error")
+                self.log(string("celune.no_vc_backend"), "error")
                 self.glow.fatal()
                 if not self._try_play_signal("error"):
-                    self.log_dev("Could not play the error signal.", "warning")
+                    self.log_dev(string("ui.error_signal_unavailable"), "warning")
                 self.progress_callback(0, 1)
-                self.error_callback("No valid voice conversion backend")
+                self.error_callback(string("celune.no_valid_vc_backend"))
                 return False
 
             self.vc_backend.preload_models()
             self.model = None
             self.model_name = ""
-            self.log("Ready to accept voice conversions.")
+            self.log(string("celune.ready_for_vc"))
         else:
             self.backend.preload_models()
 
-            self.log("All voices are available.")
+            self.log(string("celune.all_voices_available"))
             try:
                 self.model = self.backend.load_default_model()
                 active_voice = self.current_voice or self.voices[0]
                 self.model_name = self.backend.model_id_for_voice(active_voice)
             except Exception as e:
                 self.cur_state = "error"
-                self.log(f"{APP_NAME} could not load the default model.", "error")
+                self.log(
+                    string("celune.default_model_load_failed", app_name=APP_NAME),
+                    "error",
+                )
                 self.log(format_error(e, self.dev), "error")
                 self.glow.fatal()
                 if not self._try_play_signal("error"):
-                    self.log_dev("Could not play the error signal.", "warning")
+                    self.log_dev(string("ui.error_signal_unavailable"), "warning")
                 self.progress_callback(0, 1)
-                self.error_callback("Default model failed to load")
+                self.error_callback(string("celune.default_model_failed_short"))
                 return False
 
         if self.vision is not None:
-            self.log("Initializing Persona...")
+            self.log(string("celune.initializing_persona"))
             try:
                 self.vision.load(
                     persona_model_id(self.config),
                     persona_quantization(self.config),
                 )
             except Exception as e:
-                self.log("Persona not initialized.", "warning")
-                self.log("Continuing in speech-only mode.", "warning")
+                self.log(string("celune.persona_not_initialized"), "warning")
+                self.log(string("celune.speech_only_mode"), "warning")
                 self.log(format_error(e, self.dev), "warning")
                 self.vision.close()
                 self.vision = None
             else:
-                self.log("Persona initialized.")
+                self.log(string("celune.persona_initialized"))
 
         playback_thread = threading.Thread(target=self._playback_worker, daemon=True)
 
@@ -1971,7 +2010,7 @@ class Celune(CeluneStateAccessors):
             self.cur_state = "error"
             self.glow.fatal()
             if not self._try_play_signal("error"):
-                self.log_dev("Could not play the error signal.", "warning")
+                self.log_dev(string("ui.error_signal_unavailable"), "warning")
             return False
 
         warmup_ok = True
@@ -1985,10 +2024,10 @@ class Celune(CeluneStateAccessors):
             self.glow.enter()  # Celune has entered your PC
         else:
             self.cur_state = "error"
-            self.log("[WARMUP] Warmup failed.", "error")
+            self.log(string("celune.warmup_failed"), "error")
             self.glow.fatal()
             if not self._try_play_signal("error"):
-                self.log("Could not play the error signal.", "warning")
+                self.log(string("ui.error_signal_unavailable"), "warning")
             return False
 
         if self.use_normalization:
@@ -1998,7 +2037,7 @@ class Celune(CeluneStateAccessors):
 
         if persona_enabled(self.config) and not persona_is_available():
             self.log(
-                f"Personas are unavailable. {APP_NAME} is operating in speech-only mode.",
+                string("celune.personas_unavailable", app_name=APP_NAME),
                 "warning",
             )
 
@@ -2029,7 +2068,7 @@ class Celune(CeluneStateAccessors):
         token = str(token_value).strip() if token_value is not None else None
         if not token:
             self.log(
-                f"No API token set. {APP_NAME} API will bind only to the local network.",
+                string("celune.no_api_token", app_name=APP_NAME),
                 "warning",
             )
             token = None
@@ -2039,14 +2078,14 @@ class Celune(CeluneStateAccessors):
         except (TypeError, ValueError):
             invalid_port = api_config.get("port", 2060)
             self.log(
-                f"{APP_NAME} API port ({invalid_port}) is invalid, will use 2060 instead.",
+                string("celune.api_port_invalid", app_name=APP_NAME, port=invalid_port),
                 "warning",
             )
             port = 2060
 
         if not 1 <= port <= 65535:
             self.log(
-                f"{APP_NAME} API port ({port}) is out of range, will use 2060 instead.",
+                string("celune.api_port_out_of_range", app_name=APP_NAME, port=port),
                 "warning",
             )
             port = 2060
@@ -2059,7 +2098,11 @@ class Celune(CeluneStateAccessors):
         except (TypeError, ValueError):
             invalid_ratelimit = api_config.get("rate_limit_per_minute", 60)
             self.log(
-                f"{APP_NAME} API rate limit ({invalid_ratelimit}) is invalid, using 60/min.",
+                string(
+                    "celune.api_rate_limit_invalid",
+                    app_name=APP_NAME,
+                    rate=invalid_ratelimit,
+                ),
                 "warning",
             )
             requests_per_minute = 60
@@ -2075,22 +2118,28 @@ class Celune(CeluneStateAccessors):
             return
 
         if not is_port_usable(port):
-            self.log(f"Port {port} is unavailable.", "warning")
-            self.log(f"{APP_NAME} API will not be available.", "warning")
+            self.log(string("celune.port_unavailable", port=port), "warning")
+            self.log(string("celune.api_unavailable", app_name=APP_NAME), "warning")
             return
 
         try:
             from .api import start_api
         except ModuleNotFoundError as package:
             self.log(
-                f"A required package ({package.name}) isn't installed.",
+                string(
+                    "celune.required_package_missing",
+                    package=package.name,
+                ),
                 "warning",
             )
-            self.log(f"{APP_NAME} API will not be available.", "warning")
+            self.log(string("celune.api_unavailable", app_name=APP_NAME), "warning")
             return
         except Exception as e:
-            self.log(f"Package import failed: {format_error(e, self.dev)}", "warning")
-            self.log(f"{APP_NAME} API will not be available.", "warning")
+            self.log(
+                string("celune.package_import_failed", error=format_error(e, self.dev)),
+                "warning",
+            )
+            self.log(string("celune.api_unavailable", app_name=APP_NAME), "warning")
             return
 
         try:
@@ -2103,9 +2152,10 @@ class Celune(CeluneStateAccessors):
             )
         except Exception as e:
             self.log(
-                f"An internal error occurred: {format_error(e, self.dev)}", "warning"
+                string("celune.internal_error", error=format_error(e, self.dev)),
+                "warning",
             )
-            self.log(f"{APP_NAME} API will not be available.", "warning")
+            self.log(string("celune.api_unavailable", app_name=APP_NAME), "warning")
             return
 
     def load_normalizer(self) -> None:
@@ -2142,12 +2192,18 @@ class Celune(CeluneStateAccessors):
 
                     self.tokenizer = loaded_tokenizer
                     self.llm = loaded_llm
-                self.log("Normalizer loaded.")
+                self.log(string("celune.normalizer_loaded"))
                 self.progress_callback(1, 1)
             except Exception as e:
-                self.log(f"[NORMALIZER ERROR] {format_error(e, self.dev)}", "error")
-                self.log("Normalizer failed to load.", "warning")
-                self.log("Normalization will not be available.", "warning")
+                self.log(
+                    string(
+                        "celune.normalizer_error",
+                        error=format_error(e, self.dev),
+                    ),
+                    "error",
+                )
+                self.log(string("celune.normalizer_failed"), "warning")
+                self.log(string("celune.normalization_unavailable"), "warning")
                 self.progress_callback(0, 1)
 
         if self.vision is not None:
@@ -2158,8 +2214,11 @@ class Celune(CeluneStateAccessors):
         thread.start()
         self.progress_callback(None, None)
         self.log(
-            f"Loading normalizer {NORMALIZER_MODEL_ID} on "
-            f"{normalizer_device(self.config)}..."
+            string(
+                "celune.loading_normalizer",
+                model_id=NORMALIZER_MODEL_ID,
+                device=normalizer_device(self.config),
+            )
         )
 
     def _warmup(
@@ -2170,8 +2229,8 @@ class Celune(CeluneStateAccessors):
         voice: Optional[str] = None,
     ) -> bool:
         """Warm up Celune's speech capabilities."""
-        self.log("[WARMUP] Warming up...")
-        self.status_callback("Warming up")
+        self.log(string("celune.warmup_start"))
+        self.status_callback(string("status.warming_up"))
         self.progress_callback(None, None)
         warmup_text = "A"
         self._last_warmup_error = None
@@ -2215,14 +2274,19 @@ class Celune(CeluneStateAccessors):
             return True
         except Exception as e:
             self._last_warmup_error = e
-            self.log(f"[WARMUP ERROR] {format_error(e, self.dev)}", "error")
+            self.log(
+                string("celune.warmup_error", error=format_error(e, self.dev)),
+                "error",
+            )
             self.progress_callback(0, 1)
             if fatal_on_failure:
                 self.cur_state = "error"
                 self.glow.fatal()
                 if not self._try_play_signal("error"):
-                    self.log_dev("Could not play the error signal.", "warning")
-                self.error_callback(f"{APP_NAME} could not warm up")
+                    self.log_dev(string("ui.error_signal_unavailable"), "warning")
+                self.error_callback(
+                    string("celune.warmup_failed_app", app_name=APP_NAME)
+                )
             return False
 
     # as of CeluneNorm 2.0, normalization ACTUALLY works with long inputs
@@ -2281,9 +2345,9 @@ class Celune(CeluneStateAccessors):
                 token_ids = cast(torch.Tensor, tokens["input_ids"])
                 len_tokens = token_ids.shape[1]
 
-                self.log(f"Tokens to normalize: {len_tokens}")
+                self.log(string("celune.tokens_to_normalize", count=len_tokens))
                 if len_tokens > 512:
-                    self.log("Input is too long to normalize.", "warning")
+                    self.log(string("celune.input_too_long_to_normalize"), "warning")
                     return None
 
                 with torch.inference_mode():
@@ -2302,7 +2366,7 @@ class Celune(CeluneStateAccessors):
 
                 # CeluneNorm shouldn't do this, but if it does happen, stop Celune from saying nothing
                 if new_ids.numel() == 0:
-                    self.log("Normalizer returned no tokens.", "warning")
+                    self.log(string("celune.normalizer_returned_no_tokens"), "warning")
                     return None
 
                 out = tokenizer.decode(new_ids, skip_special_tokens=True)
@@ -2317,18 +2381,26 @@ class Celune(CeluneStateAccessors):
 
                 # are we absolutely sure CeluneNorm did produce something before Celune gets to say it?
                 if not out:
-                    self.log("Normalizer did not produce normal output.", "warning")
+                    self.log(string("celune.normalizer_bad_output"), "warning")
                     return None
 
                 inf_total = time.perf_counter() - inf_start
-                self.log(f"Normalized text: {out}")
-                self.log(f"Normalization took {format_number(inf_total, 2)} seconds.")
+                self.log(string("celune.normalized_text", text=out))
+                self.log(
+                    string(
+                        "celune.normalization_took",
+                        seconds=format_number(inf_total, 2),
+                    )
+                )
 
                 return out
 
             except Exception as e:
                 self.log(
-                    f"[NORMALIZATION ERROR] {format_error(e, self.dev)}",
+                    string(
+                        "celune.normalization_error",
+                        error=format_error(e, self.dev),
+                    ),
                     "error",
                 )
                 return None
@@ -2356,26 +2428,29 @@ class Celune(CeluneStateAccessors):
             bool: ``True`` if Celune processed this smart request, otherwise ``False``.
         """
         if self.input_mode != "text_to_speech":
-            self.log("Text input is unavailable in voice conversion mode.", "warning")
-            self.error_callback("Text input is unavailable in voice conversion mode")
+            self.log(string("celune.text_input_unavailable_vc"), "warning")
+            self.error_callback(string("celune.text_input_unavailable_vc"))
             return False
 
         if self.is_in_tutorial:
-            self.log("Speech input is disabled during the tutorial.", "warning")
+            self.log(string("celune.speech_input_disabled_tutorial"), "warning")
             return False
 
         if self.sleeping:
-            self.log(f"Cannot think while {APP_NAME} is sleeping.", "warning")
-            self.error_callback(f"{APP_NAME} is currently sleeping")
+            self.log(
+                string("celune.cannot_think_sleeping", app_name=APP_NAME),
+                "warning",
+            )
+            self.error_callback(string("celune.app_sleeping", app_name=APP_NAME))
             return False
 
         with self.say_lock:
             if self.locked or self.cur_state in {"generating", "speaking"}:
-                self.log(f"Tried to think while {APP_NAME} was busy.", "warning")
-                self.error_callback(f"{APP_NAME} is currently busy")
+                self.log(string("celune.busy_thinking", app_name=APP_NAME), "warning")
+                self.error_callback(string("celune.app_busy", app_name=APP_NAME))
                 return False
 
-        self.status_callback("Thinking")
+        self.status_callback(string("status.thinking"))
         self.cur_state = "thinking"
         self.progress_callback(None, None)
         self._ready_announced = False
@@ -2398,7 +2473,7 @@ class Celune(CeluneStateAccessors):
                 return
 
         if not think_pipeline(self, text):
-            self.log("Will say the input instead.", "warning")
+            self.log(string("celune.say_instead"), "warning")
             self.say(text)
 
     def say(
@@ -2418,8 +2493,8 @@ class Celune(CeluneStateAccessors):
             bool: ``True`` when the text was queued successfully, otherwise ``False``.
         """
         if self.input_mode != "text_to_speech":
-            self.log("Text input is unavailable in voice conversion mode.", "warning")
-            self.error_callback("Text input is unavailable in voice conversion mode")
+            self.log(string("celune.text_input_unavailable_vc"), "warning")
+            self.error_callback(string("celune.text_input_unavailable_vc"))
             self.progress_callback(0, 1)
             return False
 
@@ -2484,10 +2559,10 @@ class Celune(CeluneStateAccessors):
         """
         if not self._is_voice_conversion_mode():
             self.log(
-                "Audio conversion is unavailable outside voice conversion mode.",
+                string("celune.audio_conversion_unavailable"),
                 "warning",
             )
-            self.error_callback("Not possible")
+            self.error_callback(string("celune.not_possible"))
             self.progress_callback(0, 1)
             return None
 
