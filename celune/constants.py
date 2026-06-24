@@ -7,6 +7,7 @@ import itertools
 from enum import auto, IntEnum, Enum
 from typing import Optional
 
+from .i18n import string
 from .typing.common import JSON as _JSON
 from .typing.common import JSONSerializable as _JSONSerializable
 
@@ -166,9 +167,9 @@ VRAM_REQUIREMENTS = {
 
 CRASH_LINES = itertools.cycle(
     [
-        f"{APP_NAME} has crashed.",
-        f"Please check {APP_NAME}'s",
-        "log widget for",
-        "more information.",
+        string("osc.crash_1", app_name=APP_NAME),
+        string("osc.crash_2", app_name=APP_NAME),
+        string("osc.crash_3"),
+        string("osc.crash_4"),
     ]
 )

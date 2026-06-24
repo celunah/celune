@@ -1662,7 +1662,9 @@ class CeluneUI(App):
 
     def on_unmount(self) -> None:
         """Unload Celune."""
-        self._write_terminal_escape(f"\x1b]2;{APP_NAME} is exiting...\x07")
+        self._write_terminal_escape(
+            f"\x1b]2;{string('osc.exiting', app_name=APP_NAME)}\x07"
+        )
         if self.celune is not None:
             self.celune.close()
 
