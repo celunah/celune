@@ -13,7 +13,7 @@ $existingProcesses = Get-Process -Name @("celune", "celune-bin") -ErrorAction Si
 $env:CL = "/O2 /GL /GS /guard:cf /DNDEBUG"
 $env:_CL_ = "/link /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT"
 
-+if ($null -ne $existingProcesses) {
+if ($null -ne $existingProcesses) {
     Write-Host "Celune is already running, terminating before proceeding with build."
     $existingProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
 }
