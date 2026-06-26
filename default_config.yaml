@@ -24,6 +24,14 @@ voice_bundle: default
 # and auto-voice analysis upon end of utterance
 dev: false
 
+# Voice conversion settings
+#
+# positive values raise the converted voice, negative values lower it
+# useful for helping cross-gender conversions land more naturally
+voice_conversion_pitch_shift: 0
+# false = talk mode, true = sing mode
+voice_conversion_f0_condition: false
+
 # headless mode / Celune embedded framework
 #
 # this will disable the UI and only API and extensions can make

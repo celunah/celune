@@ -9,9 +9,10 @@ import threading
 import contextlib
 from pathlib import Path
 from typing import Optional, cast
+from types import ModuleType
 from types import SimpleNamespace
 from unittest import mock, TestCase
-from collections.abc import Iterator
+from collections.abc import Iterator, Generator
 
 import numpy as np
 import numpy.typing as npt
@@ -20,10 +21,11 @@ import torch
 
 from celune.utils import discard
 from celune.celune import Celune
-from celune.backends import resolve_backend
+from celune.backends.tts import resolve_backend
 from celune.typing.backends import BackendModel
-from celune.vc_backends import resolve_vc_backend
-from celune.vc_backends.passthrough import CelunePassthroughVCBackend
+from celune.backends.vc import resolve_vc_backend
+from celune.backends.vc.passthrough import CelunePassthroughVCBackend
+from celune.backends.vc.seedvc import CeluneSeedVCBackend
 from celune.extensions.manager import CeluneExtensionManager
 from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.dataclasses.pipeline import VoiceConversionRequest
@@ -71,7 +73,7 @@ class BackendTests(TestCase):
             materialize=materialize,
         )
 
-        with mock.patch("celune.backends.base.default_loader", return_value=loader):
+        with mock.patch("celune.backends.tts.base.default_loader", return_value=loader):
             backend = FakeBackend(log=lambda _msg, _severity="info": None)
             backend.validate_refs()
 
@@ -94,7 +96,7 @@ class BackendTests(TestCase):
             sf.write(source, np.zeros(12 * 24000, dtype=np.float32), 24000)
 
             with mock.patch(
-                "celune.backends.base.temp_data_dir", return_value=canonical_temp
+                "celune.backends.tts.base.temp_data_dir", return_value=canonical_temp
             ):
                 truncated = backend.truncate_reference(source)
 
@@ -183,6 +185,247 @@ class BackendTests(TestCase):
         self.assertEqual(np.array_equal(output.audio, source), True)
         self.assertIsNot(output.audio, source)
 
+    def test_resolve_vc_backend_accepts_seedvc_backend_name(self) -> None:
+        """Verify the Seed-VC backend resolves through the VC backend registry."""
+        backend = resolve_vc_backend("seed-vc")
+        self.assertIsInstance(backend, CeluneSeedVCBackend)
+        self.assertEqual(backend.name, "seed-vc")
+
+    def test_seedvc_backend_requires_reference_audio(self) -> None:
+        """Verify Seed-VC refuses requests without a target reference WAV."""
+        backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
+
+        with self.assertRaisesRegex(
+            ValueError, "requires at least one target reference"
+        ):
+            backend.convert(
+                VoiceConversionRequest(
+                    source_audio=np.ones((8,), dtype=np.float32),
+                    sample_rate=24000,
+                    label="fixture",
+                )
+            )
+
+    def test_seedvc_backend_converts_audio_with_cached_wrapper(self) -> None:
+        """Verify Seed-VC wraps converted audio into Celune's VC output contract."""
+        backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
+        captured: dict[str, object] = {}
+
+        class FakeWrapper:
+            """Minimal Seed-VC wrapper stand-in for one backend test."""
+
+            @staticmethod
+            def convert_voice(**kwargs):
+                """Return a generator-style conversion result for backend tests.
+
+                Args:
+                    kwargs: Value for `kwargs`.
+
+                Returns:
+                    Result of this function.
+                """
+                captured.update(kwargs)
+                assert Path(str(kwargs["source"])).exists()
+                assert Path(str(kwargs["target"])).exists()
+
+                def result_generator() -> Generator[
+                    None, None, npt.NDArray[np.float32]
+                ]:
+                    yield from ()
+                    return np.array([0.25, -0.25], dtype=np.float32)
+
+                return result_generator()
+
+        backend._wrapper = FakeWrapper()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "target.wav"
+            sf.write(target, np.zeros((16,), dtype=np.float32), 24000)
+
+            output = backend.convert(
+                VoiceConversionRequest(
+                    source_audio=np.ones((12, 2), dtype=np.float32),
+                    sample_rate=24000,
+                    target_voice="balanced",
+                    target_character="Celune",
+                    target_references=(target,),
+                    label="fixture audio",
+                )
+            )
+
+        self.assertEqual(output.sample_rate, 22050)
+        self.assertEqual(output.label, "fixture audio")
+        self.assertEqual(output.audio.dtype, np.float32)
+        self.assertEqual(output.audio.tolist(), [0.25, -0.25])
+        self.assertEqual(captured["stream_output"], False)
+        self.assertEqual(captured["f0_condition"], False)
+        self.assertEqual(captured["pitch_shift"], 0)
+
+    def test_seedvc_backend_leaves_pitch_shift_to_the_shared_vc_pipeline(
+        self,
+    ) -> None:
+        """Verify Seed-VC keeps wrapper pitch shifting disabled for shared output handling."""
+        backend = CeluneSeedVCBackend(
+            log=lambda _msg, _severity="info": None,
+            pitch_shift=-6,
+        )
+        captured: dict[str, object] = {}
+
+        class FakeWrapper:
+            """Minimal Seed-VC wrapper stand-in for request override coverage."""
+
+            @staticmethod
+            def convert_voice(**kwargs):
+                """Return a generator-style conversion result for backend tests.
+
+                Args:
+                    kwargs: Value for `kwargs`.
+
+                Returns:
+                    Result of this function.
+                """
+                captured.update(kwargs)
+
+                def result_generator() -> Generator[
+                    None, None, npt.NDArray[np.float32]
+                ]:
+                    yield from ()
+                    return np.array([0.1, -0.1], dtype=np.float32)
+
+                return result_generator()
+
+        backend._wrapper = FakeWrapper()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "target.wav"
+            sf.write(target, np.zeros((16,), dtype=np.float32), 24000)
+
+            backend.convert(
+                VoiceConversionRequest(
+                    source_audio=np.ones((12, 2), dtype=np.float32),
+                    sample_rate=24000,
+                    target_references=(target,),
+                    pitch_shift=9,
+                )
+            )
+
+        self.assertEqual(captured["pitch_shift"], 0)
+
+    def test_seedvc_backend_prefers_request_f0_condition_over_backend_default(
+        self,
+    ) -> None:
+        """Verify one conversion request can override talk vs sing mode."""
+        backend = CeluneSeedVCBackend(
+            log=lambda _msg, _severity="info": None,
+            f0_condition=False,
+        )
+        captured: dict[str, object] = {}
+
+        class FakeWrapper:
+            """Minimal Seed-VC wrapper stand-in for f0 override coverage."""
+
+            @staticmethod
+            def convert_voice(**kwargs):
+                """Return a generator-style conversion result for backend tests.
+
+                Args:
+                    kwargs: Value for `kwargs`.
+
+                Returns:
+                    Result of this function.
+                """
+                captured.update(kwargs)
+
+                def result_generator() -> Generator[
+                    None, None, npt.NDArray[np.float32]
+                ]:
+                    yield from ()
+                    return np.array([0.1, -0.1], dtype=np.float32)
+
+                return result_generator()
+
+        backend._wrapper = FakeWrapper()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "target.wav"
+            sf.write(target, np.zeros((16,), dtype=np.float32), 24000)
+
+            output = backend.convert(
+                VoiceConversionRequest(
+                    source_audio=np.ones((12, 2), dtype=np.float32),
+                    sample_rate=24000,
+                    target_references=(target,),
+                    f0_condition=True,
+                )
+            )
+
+        self.assertEqual(captured["f0_condition"], True)
+        self.assertEqual(output.sample_rate, 44100)
+
+    def test_seedvc_backend_redirects_package_checkpoint_downloads_into_app_data(
+        self,
+    ) -> None:
+        """Verify Celune overrides Seed-VC's repo-local checkpoint cache path."""
+        backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
+        captured: list[tuple[str, str, str]] = []
+
+        fake_hf_utils = ModuleType("seed_vc.hf_utils")
+        fake_wrapper = ModuleType("seed_vc.seed_vc_wrapper")
+
+        def fake_hf_hub_download(
+            repo_id: str,
+            filename: str,
+            cache_dir: str,
+        ) -> str:
+            captured.append((repo_id, filename, cache_dir))
+            return str(Path(cache_dir) / filename)
+
+        setattr(fake_hf_utils, "hf_hub_download", fake_hf_hub_download)
+        setattr(
+            fake_hf_utils, "load_custom_model_from_hf", lambda *args, **kwargs: None
+        )
+        setattr(fake_wrapper, "load_custom_model_from_hf", lambda *args, **kwargs: None)
+        setattr(fake_wrapper, "SeedVCWrapper", type("FakeSeedVCWrapper", (), {}))
+
+        def import_module(name: str) -> ModuleType:
+            if name == "seed_vc.hf_utils":
+                return fake_hf_utils
+            if name == "seed_vc.seed_vc_wrapper":
+                return fake_wrapper
+            return importlib.import_module(name)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            expected_cache_dir = Path(temp_dir) / "checkpoints"
+
+            with (
+                mock.patch(
+                    "celune.backends.vc.seedvc.app_data_dir",
+                    return_value=Path(temp_dir),
+                ),
+                mock.patch(
+                    "celune.backends.vc.seedvc.importlib.import_module",
+                    side_effect=import_module,
+                ),
+            ):
+                backend._load_wrapper_type()
+                resolved = getattr(fake_wrapper, "load_custom_model_from_hf")(
+                    "funasr/campplus",
+                    "campplus_cn_common.bin",
+                    None,
+                )
+
+        self.assertEqual(Path(resolved), expected_cache_dir / "campplus_cn_common.bin")
+        self.assertEqual(
+            captured,
+            [
+                (
+                    "funasr/campplus",
+                    "campplus_cn_common.bin",
+                    str(expected_cache_dir),
+                )
+            ],
+        )
+
     def test_resolve_backend_accepts_mini_backend_name(self) -> None:
         """Verify the Pocket TTS backend resolves through the backend registry."""
 
@@ -193,7 +436,7 @@ class BackendTests(TestCase):
             sys.modules,
             {"pocket_tts": SimpleNamespace(TTSModel=StubTTSModel)},
         ):
-            mini = importlib.import_module("celune.backends.mini")
+            mini = importlib.import_module("celune.backends.tts.mini")
             mini_cls = mini.Mini
 
             with mock.patch.object(mini_cls, "_validate_refs"):
@@ -245,7 +488,7 @@ class BackendTests(TestCase):
                     voxcpm2_cls, "_truncate_reference", side_effect=lambda path: path
                 ),
                 mock.patch(
-                    "celune.backends.voxcpm2.default_loader", return_value=loader
+                    "celune.backends.tts.voxcpm2.default_loader", return_value=loader
                 ),
             ):
                 backend = voxcpm2_cls(log=lambda _msg, _severity="info": None)
@@ -267,7 +510,7 @@ class BackendTests(TestCase):
         with mock_voxcpm_backend() as voxcpm2_cls:
             loader = make_voice_loader("calm", {})
             with mock.patch(
-                "celune.backends.voxcpm2.default_loader", return_value=loader
+                "celune.backends.tts.voxcpm2.default_loader", return_value=loader
             ):
                 with self.assertRaisesRegex(
                     FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
@@ -303,7 +546,7 @@ class BackendTests(TestCase):
             )
             with (
                 mock.patch(
-                    "celune.backends.voxcpm2.default_loader", return_value=loader
+                    "celune.backends.tts.voxcpm2.default_loader", return_value=loader
                 ),
                 mock.patch.object(
                     voxcpm2_cls, "_truncate_reference", return_value=Path("trimmed.wav")
@@ -327,7 +570,7 @@ class BackendTests(TestCase):
 
         with (
             mock_voxcpm_backend() as voxcpm2_cls,
-            mock.patch("celune.backends.voxcpm2.default_loader", return_value=None),
+            mock.patch("celune.backends.tts.voxcpm2.default_loader", return_value=None),
         ):
             with self.assertRaisesRegex(
                 FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
@@ -339,7 +582,9 @@ class BackendTests(TestCase):
 
         with mock_mini_backend() as mini_cls:
             loader = make_voice_loader("calm", {})
-            with mock.patch("celune.backends.mini.default_loader", return_value=loader):
+            with mock.patch(
+                "celune.backends.tts.mini.default_loader", return_value=loader
+            ):
                 with self.assertRaisesRegex(
                     FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
                 ):
@@ -386,7 +631,9 @@ class BackendTests(TestCase):
                     yield torch.zeros((1,), dtype=torch.float32)
 
             with (
-                mock.patch("celune.backends.mini.default_loader", return_value=loader),
+                mock.patch(
+                    "celune.backends.tts.mini.default_loader", return_value=loader
+                ),
                 mock.patch.object(
                     mini_cls, "_truncate_reference", return_value=Path("trimmed.wav")
                 ),
@@ -405,7 +652,9 @@ class BackendTests(TestCase):
         with mock_mini_backend() as mini_cls:
             loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
             with (
-                mock.patch("celune.backends.mini.default_loader", return_value=loader),
+                mock.patch(
+                    "celune.backends.tts.mini.default_loader", return_value=loader
+                ),
                 mock.patch.object(
                     mini_cls,
                     "_truncate_reference",
@@ -420,7 +669,7 @@ class BackendTests(TestCase):
 
         with (
             mock_mini_backend() as mini_cls,
-            mock.patch("celune.backends.mini.default_loader", return_value=None),
+            mock.patch("celune.backends.tts.mini.default_loader", return_value=None),
         ):
             with self.assertRaisesRegex(
                 FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
@@ -459,7 +708,9 @@ class BackendTests(TestCase):
                 mock.patch.object(
                     qwen3_cls, "_truncate_reference", side_effect=lambda path: path
                 ),
-                mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
+                mock.patch(
+                    "celune.backends.tts.qwen3.default_loader", return_value=loader
+                ),
             ):
                 backend = qwen3_cls(log=lambda _msg, _severity="info": None)
                 model = FakeModel()
@@ -496,7 +747,9 @@ class BackendTests(TestCase):
             loader = make_voice_loader("calm", {"reference_text": "Pack reference."})
             with (
                 mock.patch.object(qwen3_cls, "_validate_refs"),
-                mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
+                mock.patch(
+                    "celune.backends.tts.qwen3.default_loader", return_value=loader
+                ),
                 mock.patch.object(
                     qwen3_cls, "_truncate_reference", return_value=Path("trimmed.wav")
                 ),
@@ -541,7 +794,7 @@ class BackendTests(TestCase):
                     dotstts_cls, "_truncate_reference", side_effect=lambda path: path
                 ),
                 mock.patch(
-                    "celune.backends.dotstts.default_loader", return_value=loader
+                    "celune.backends.tts.dotstts.default_loader", return_value=loader
                 ),
             ):
                 backend = dotstts_cls(log=lambda _msg, _severity="info": None)
@@ -580,7 +833,7 @@ class BackendTests(TestCase):
             with (
                 mock.patch.object(dotstts_cls, "_validate_refs"),
                 mock.patch(
-                    "celune.backends.dotstts.default_loader", return_value=loader
+                    "celune.backends.tts.dotstts.default_loader", return_value=loader
                 ),
                 mock.patch.object(
                     dotstts_cls, "_truncate_reference", return_value=Path("trimmed.wav")
@@ -626,7 +879,7 @@ class BackendTests(TestCase):
                     dotstts_cls, "_truncate_reference", side_effect=lambda path: path
                 ),
                 mock.patch(
-                    "celune.backends.dotstts.default_loader", return_value=loader
+                    "celune.backends.tts.dotstts.default_loader", return_value=loader
                 ),
             ):
                 backend = dotstts_cls(log=lambda _msg, _severity="info": None)
@@ -642,7 +895,7 @@ class BackendTests(TestCase):
         with mock_dotstts_backend() as dotstts_cls:
             loader = make_voice_loader("calm", {})
             with mock.patch(
-                "celune.backends.dotstts.default_loader", return_value=loader
+                "celune.backends.tts.dotstts.default_loader", return_value=loader
             ):
                 with self.assertRaisesRegex(
                     FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
@@ -654,7 +907,7 @@ class BackendTests(TestCase):
 
         with (
             mock_dotstts_backend() as dotstts_cls,
-            mock.patch("celune.backends.dotstts.default_loader", return_value=None),
+            mock.patch("celune.backends.tts.dotstts.default_loader", return_value=None),
         ):
             with self.assertRaisesRegex(
                 FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
@@ -717,7 +970,7 @@ class BackendTests(TestCase):
                     dotstts_cls, "_truncate_reference", side_effect=lambda path: path
                 ),
                 mock.patch(
-                    "celune.backends.dotstts.default_loader", return_value=loader
+                    "celune.backends.tts.dotstts.default_loader", return_value=loader
                 ),
             ):
                 backend = dotstts_cls(log=lambda _msg, _severity="info": None)
@@ -736,7 +989,7 @@ class BackendTests(TestCase):
 
         with mock_dotstts_backend() as dotstts_cls:
             fake_loguru = mock.Mock()
-            with mock.patch("celune.backends.dotstts.loguru.logger", fake_loguru):
+            with mock.patch("celune.backends.tts.dotstts.loguru.logger", fake_loguru):
                 with dotstts_cls.suppress_backend_output():
                     pass
 
@@ -749,7 +1002,7 @@ class BackendTests(TestCase):
         with mock_qwen3_backend() as qwen3_cls:
             loader = make_voice_loader("calm", {})
             with mock.patch(
-                "celune.backends.qwen3.default_loader", return_value=loader
+                "celune.backends.tts.qwen3.default_loader", return_value=loader
             ):
                 with self.assertRaisesRegex(
                     FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
@@ -761,7 +1014,7 @@ class BackendTests(TestCase):
 
         with (
             mock_qwen3_backend() as qwen3_cls,
-            mock.patch("celune.backends.qwen3.default_loader", return_value=None),
+            mock.patch("celune.backends.tts.qwen3.default_loader", return_value=None),
         ):
             with self.assertRaisesRegex(
                 FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
@@ -781,7 +1034,7 @@ class BackendTests(TestCase):
 
         with (
             mock_qwen3_backend() as qwen3_cls,
-            mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
+            mock.patch("celune.backends.tts.qwen3.default_loader", return_value=loader),
         ):
             with self.assertRaisesRegex(
                 FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
@@ -843,7 +1096,9 @@ class BackendTests(TestCase):
                 mock.patch.object(
                     qwen3_cls, "_truncate_reference", side_effect=lambda path: path
                 ),
-                mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
+                mock.patch(
+                    "celune.backends.tts.qwen3.default_loader", return_value=loader
+                ),
             ):
                 backend = qwen3_cls(log=lambda _msg, _severity="info": None)
                 model = FakeModel()
@@ -892,7 +1147,9 @@ class BackendTests(TestCase):
                 mock.patch.object(
                     qwen3_cls, "_truncate_reference", side_effect=lambda path: path
                 ),
-                mock.patch("celune.backends.qwen3.default_loader", return_value=loader),
+                mock.patch(
+                    "celune.backends.tts.qwen3.default_loader", return_value=loader
+                ),
             ):
                 backend = qwen3_cls(log=lambda _msg, _severity="info": None)
                 chunk = next(
@@ -933,7 +1190,7 @@ class BackendTests(TestCase):
                     voxcpm2_cls, "_truncate_reference", side_effect=lambda path: path
                 ),
                 mock.patch(
-                    "celune.backends.voxcpm2.default_loader", return_value=loader
+                    "celune.backends.tts.voxcpm2.default_loader", return_value=loader
                 ),
             ):
                 backend = voxcpm2_cls(log=lambda _msg, _severity="info": None)

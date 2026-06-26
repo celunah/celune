@@ -19,14 +19,14 @@ if TYPE_CHECKING:
     import numpy.typing as npt
     import sounddevice as sd
 
-    from ..backends import BackendModel, CeluneBackend
+    from ..backends.tts import BackendModel, CeluneBackend
     from ..cevoice import CEVoicePersona
     from ..chroma import AudioRGBGlow
     from ..constants import PipelineStates
     from ..dsp import StreamingPedalboardReverb
     from ..extensions.manager import CeluneExtensionManager
     from ..persona.impl import PersonaClient
-    from ..vc_backends import CeluneVCBackend
+    from ..backends.vc import CeluneVCBackend
 
 
 type GenerationKwarg = Union[torch.Tensor, int, bool, None]
@@ -177,6 +177,11 @@ type ErrorCallback = Callable[[str], None]
 type IdleCallback = Callable[[], None]
 type QueueAvailableCallback = Callable[[], None]
 type VoiceChangedCallback = Callable[[str], None]
+type TTSBackendRecipe = Union[str, type["CeluneBackend"]]
+type VCBackendRecipe = Union[str, type["CeluneVCBackend"]]
+type TTSBackendSpec = Union[TTSBackendRecipe, "CeluneBackend"]
+type VCBackendSpec = Union[VCBackendRecipe, "CeluneVCBackend"]
+type CoreBackendSpec = Union[TTSBackendSpec, VCBackendSpec]
 
 
 class CeluneStateAccessors:
@@ -192,13 +197,15 @@ class CeluneStateAccessors:
     change_voice_lock_state_callback: VoiceLockStateCallback
     progress_callback: ProgressCallback
     config: Config
-    _backend_spec: Optional[Union[str, type["CeluneBackend"]]]
+    _backend_spec: Optional[TTSBackendRecipe]
     _backend_kwargs: dict[str, JSONSerializable]
     backend: "CeluneBackend"
     tts_backend: str
-    _vc_backend_spec: Optional[Union[str, type["CeluneVCBackend"]]]
+    _vc_backend_spec: Optional[VCBackendRecipe]
     vc_backend: Optional["CeluneVCBackend"]
     voice_conversion_backend: str
+    vc_pitch_shift: int
+    vc_f0_condition: bool
     input_mode: str
     chunk_size: int
     language: str

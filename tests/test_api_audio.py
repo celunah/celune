@@ -160,7 +160,7 @@ class ApiAudioTests(TestCase):
         self.assertIn("I am not currently able", payload["message"])
 
     def test_convert_route_returns_converted_audio(self) -> None:
-        """Verify VC conversion uploads return FLAC audio from the engine."""
+        """Verify VC conversion uploads return FLAC audio in Celune's playback format."""
         previous_celune = api.bound_celune
         source_audio = np.zeros((24, 2), dtype=np.float32)
         converted_audio = np.ones((12, 2), dtype=np.float32) * 0.25
@@ -194,12 +194,12 @@ class ApiAudioTests(TestCase):
             api.bound_celune = previous_celune
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["x-sample-rate"], "24000")
+        self.assertEqual(response.headers["x-sample-rate"], "48000")
         payload = asyncio.run(self._response_bytes(response))
         self.assertEqual(payload[:4], b"fLaC")
         decoded_audio, sample_rate = sf.read(
             io.BytesIO(payload),
             dtype="float32",
         )
-        self.assertEqual(sample_rate, 24000)
-        self.assertEqual(decoded_audio.shape, (12, 2))
+        self.assertEqual(sample_rate, 48000)
+        self.assertEqual(decoded_audio.shape, (24, 2))

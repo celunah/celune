@@ -63,6 +63,7 @@ from .persona.impl import (
 )
 from .cevoice import default_loader
 from .dsp import (
+    pitch_shift_audio,
     resample_audio,
     soften,
     split,
@@ -1446,6 +1447,7 @@ def handle_audio_input(engine: Celune, request: AudioInputRequest) -> bool:
             output.audio,
             output.sample_rate,
             output.label,
+            log_length=request.log_playback,
         )
 
     engine.log_dev(
@@ -1491,7 +1493,7 @@ def convert_audio_input(
                 )
                 target_references = ()
 
-    return backend.convert(
+    output = backend.convert(
         VoiceConversionRequest(
             source_audio=np.asarray(request.audio, dtype=np.float32),
             sample_rate=request.sample_rate,
@@ -1499,7 +1501,30 @@ def convert_audio_input(
             target_character=getattr(engine, "current_character", None),
             target_references=target_references,
             label=request.label,
+            pitch_shift=0,
+            f0_condition=(
+                request.f0_condition
+                if isinstance(request.f0_condition, bool)
+                else getattr(engine, "vc_f0_condition", False)
+            ),
         )
+    )
+    resolved_pitch_shift = (
+        request.pitch_shift
+        if isinstance(request.pitch_shift, int)
+        else getattr(engine, "vc_pitch_shift", 0)
+    )
+    if resolved_pitch_shift == 0:
+        return output
+
+    return AudioOutput(
+        audio=pitch_shift_audio(
+            np.asarray(output.audio, dtype=np.float32),
+            output.sample_rate,
+            resolved_pitch_shift,
+        ),
+        sample_rate=output.sample_rate,
+        label=output.label,
     )
 
 
@@ -1628,6 +1653,7 @@ def queue_sfx_audio(
     label: str,
     keep: bool = False,
     volume: float = 1.0,
+    log_length: bool = True,
 ) -> bool:
     """Queue decoded SFX audio through Celune's playback pipeline.
 
@@ -1638,6 +1664,7 @@ def queue_sfx_audio(
         label: Human-readable label for logs and status.
         keep: Whether to prepend this SFX to the next saved utterance.
         volume: Gain multiplier applied before the clip is queued for playback.
+        log_length: Whether to log the prepared playback sample rate and length.
 
     Returns:
         bool: ``True`` when playback was queued successfully, otherwise ``False``.
@@ -1646,17 +1673,18 @@ def queue_sfx_audio(
         Exception: Re-raised after releasing the pipeline if SFX playback setup fails.
     """
     try:
-        audio = np.asarray(audio, dtype=np.float32)
-        audio_len = len(audio) / sample_rate
-        engine.log(
-            string(
-                "pipeline.sample_rate_length",
-                sample_rate=sample_rate,
-                seconds=format_number(audio_len, 2),
+        audio = prepare_playback_audio(audio, sample_rate)
+        playback_sample_rate = BASE_SR
+        audio_len = len(audio) / playback_sample_rate
+        if log_length:
+            engine.log(
+                string(
+                    "pipeline.sample_rate_length",
+                    sample_rate=playback_sample_rate,
+                    seconds=format_number(audio_len, 2),
+                )
             )
-        )
 
-        audio = resample_audio(audio, sample_rate)
         if keep:
             engine.kept_sfx_audio = audio.copy()
 
@@ -1665,8 +1693,8 @@ def queue_sfx_audio(
         _register_playback_source(engine, source_id, kind="sfx", base_gain=volume)
         engine.cur_state = "speaking"
         # push the smallest possible chunks for responsive stopping
-        for chunk in split(audio, BASE_SR, 1):
-            _queue_playback_chunk(engine, source_id, chunk, BASE_SR)
+        for chunk in split(audio, playback_sample_rate, 1):
+            _queue_playback_chunk(engine, source_id, chunk, playback_sample_rate)
         _queue_playback_done(engine, source_id)
 
         _set_playback_source_status(
@@ -1678,6 +1706,22 @@ def queue_sfx_audio(
     except Exception:
         engine.playback_done.set()
         raise
+
+
+def prepare_playback_audio(
+    audio: npt.NDArray[np.float32],
+    sample_rate: int,
+) -> npt.NDArray[np.float32]:
+    """Normalize audio to Celune's shared playback format.
+
+    Args:
+        audio: Decoded mono or stereo audio.
+        sample_rate: Source sample rate for the decoded audio.
+
+    Returns:
+        npt.NDArray[np.float32]: Audio resampled into Celune's playback format.
+    """
+    return resample_audio(np.asarray(audio, dtype=np.float32), sample_rate)
 
 
 def play(
@@ -2530,7 +2574,19 @@ def _finalize_playback_idle(
             and getattr(engine, "loaded", False)
             and not getattr(engine, "_ready_announced", False)
         ):
-            engine.log(string("pipeline.ready_to_speak"))
+            is_vc_mode = False
+            mode_check = getattr(engine, "_is_voice_conversion_mode", None)
+            if callable(mode_check):
+                is_vc_mode = bool(mode_check())
+            else:
+                is_vc_mode = (
+                    getattr(engine, "input_mode", "text_to_speech")
+                    == "voice_conversion"
+                )
+            if is_vc_mode:
+                engine.log(string("pipeline.ready_to_vc"))
+            else:
+                engine.log(string("pipeline.ready_to_speak"))
             engine._ready_announced = True
 
     if torch.cuda.is_available():

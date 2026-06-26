@@ -154,6 +154,9 @@ def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[st
 
     pages.append("/help commands")
     if celune is not None:
+        if getattr(celune, "input_mode", "text_to_speech") == "voice_conversion":
+            pages.append("CTRL+R toggle recording")
+
         active_theme = theme_name
         enter_action = "skip" if celune.is_in_tutorial else "say"
 

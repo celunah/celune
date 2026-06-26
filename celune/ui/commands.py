@@ -13,7 +13,7 @@ import soundfile as sf
 
 from ..paths import project_root
 from ..constants import APP_NAME
-from ..backends.qwen3 import Qwen3
+from ..backends.tts.qwen3 import Qwen3
 from ..exceptions import InvalidExtensionError
 from ..utils import format_error, replace_ipa, format_number
 from ..cevoice import active_bundle_path, resolve_bundle_path
@@ -158,6 +158,43 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
     """
 
     ui.input_box.load_text("")
+
+    def refresh_vc_controls() -> None:
+        refresh = getattr(ui, "refresh_vc_controls", None)
+        if callable(refresh):
+            refresh()
+
+    def set_vc_f0_condition(enabled: bool) -> None:
+        setter = getattr(ui, "set_vc_f0_condition", None)
+        if callable(setter):
+            setter(enabled)
+            return
+
+        ui.celune.vc_f0_condition = enabled
+        backend = getattr(ui.celune, "vc_backend", None)
+        if backend is not None and hasattr(backend, "f0_condition"):
+            setattr(backend, "f0_condition", enabled)
+        refresh_vc_controls()
+        ui.safe_log(
+            string(
+                "commands.vcmode_set",
+                mode=string("ui.vc_mode_sing" if enabled else "ui.vc_mode_talk"),
+            )
+        )
+
+    def set_vc_pitch_shift(value: int) -> None:
+        setter = getattr(ui, "set_vc_pitch_shift", None)
+        if callable(setter):
+            setter(value)
+            return
+
+        ui.celune.vc_pitch_shift = value
+        backend = getattr(ui.celune, "vc_backend", None)
+        if backend is not None and hasattr(backend, "pitch_shift"):
+            setattr(backend, "pitch_shift", value)
+        refresh_vc_controls()
+        ui.safe_log(string("commands.vcpitch_set", value=value))
+
     if command == "help":
         ui.safe_log(string("commands.help_header", app_name=APP_NAME))
         ui.safe_log(string("commands.help_available"))
@@ -175,6 +212,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(string("commands.help_reverb"))
         ui.safe_log(string("commands.help_backend"))
         ui.safe_log(string("commands.help_cevoice"))
+        if getattr(ui.celune, "input_mode", "text_to_speech") == "voice_conversion":
+            ui.safe_log(string("commands.help_vc"))
+            ui.safe_log(string("commands.help_vcmode"))
+            ui.safe_log(string("commands.help_vcpitch"))
 
         if ui.celune.backend.name == "qwen3":
             ui.safe_log(string("commands.help_xvectoronly"))
@@ -318,7 +359,16 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         backend_name = args[0]
 
-        if backend_name == ui.celune.backend.name:
+        active_backend = getattr(ui.celune, "_active_runtime_backend_name", None)
+        if callable(active_backend):
+            active_backend_name = active_backend()
+        elif getattr(ui.celune, "input_mode", "text_to_speech") == "voice_conversion":
+            backend = getattr(ui.celune, "vc_backend", None)
+            active_backend_name = getattr(backend, "name", "")
+        else:
+            backend = getattr(ui.celune, "backend", None)
+            active_backend_name = getattr(backend, "name", "")
+        if backend_name == active_backend_name:
             ui.safe_log(string("commands.backend_already_loaded"), "warning")
             return
 
@@ -371,6 +421,102 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 )
 
         threading.Thread(target=cevoice_worker, daemon=True).start()
+        return
+    if command == "vc":
+        if getattr(ui.celune, "input_mode", "text_to_speech") != "voice_conversion":
+            ui.safe_log(string("commands.voice_conversion_only"), "warning")
+            return
+
+        if not args:
+            ui.safe_log(string("commands.usage_vc"), "warning")
+            return
+
+        source_path = Path(args[0]).expanduser()
+        if not source_path.exists() or not source_path.is_file():
+            ui.safe_log(
+                string("commands.vc_file_not_found", path=args[0]),
+                "warning",
+            )
+            return
+
+        def vc_worker() -> None:
+            try:
+                audio, sample_rate = sf.read(
+                    str(source_path),
+                    dtype="float32",
+                    always_2d=False,
+                )
+            except Exception as exc:
+                ui.safe_log(
+                    string(
+                        "commands.vc_decode_failed",
+                        error=format_error(exc, ui.celune.dev),
+                    ),
+                    "error",
+                )
+                return
+
+            if ui.celune.submit_audio(
+                audio,
+                sample_rate,
+                label=source_path.name,
+            ):
+                ui.safe_log(
+                    string("commands.vc_submitted", path=str(source_path)),
+                )
+                return
+
+            ui.safe_log(
+                string("commands.vc_submission_failed", path=str(source_path)),
+                "warning",
+            )
+
+        threading.Thread(target=vc_worker, daemon=True).start()
+        return
+    if command == "vcmode":
+        if getattr(ui.celune, "input_mode", "text_to_speech") != "voice_conversion":
+            ui.safe_log(string("commands.voice_conversion_only"), "warning")
+            return
+
+        if not args:
+            ui.safe_log(string("commands.usage_vcmode"), "warning")
+            return
+
+        mode = args[0].lower()
+        if mode == "talk":
+            set_vc_f0_condition(False)
+            return
+        if mode == "sing":
+            set_vc_f0_condition(True)
+            return
+
+        ui.safe_log(string("commands.usage_vcmode"), "warning")
+        return
+    if command == "vcpitch":
+        if getattr(ui.celune, "input_mode", "text_to_speech") != "voice_conversion":
+            ui.safe_log(string("commands.voice_conversion_only"), "warning")
+            return
+
+        if not args:
+            ui.safe_log(string("commands.usage_vcpitch"), "warning")
+            return
+
+        raw_value = args[0].lower()
+        if raw_value == "clear":
+            set_vc_pitch_shift(0)
+            return
+
+        try:
+            semitones = int(raw_value)
+        except ValueError:
+            ui.safe_log(string("commands.usage_vcpitch"), "warning")
+            return
+
+        if not -12 <= semitones <= 12:
+            ui.safe_log(string("commands.vcpitch_range"), "warning")
+            return
+
+        set_vc_pitch_shift(semitones)
         return
     if command == "xvectoronly":
         backend = ui.celune.backend

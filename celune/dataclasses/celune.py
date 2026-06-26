@@ -14,9 +14,9 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from ..config import Config
 from ..chroma import AudioRGBGlow
 from ..cevoice import CEVoicePersona
-from ..backends import CeluneBackend
+from ..backends.tts import CeluneBackend
 from ..persona.impl import PersonaClient
-from ..vc_backends import CeluneVCBackend
+from ..backends.vc import CeluneVCBackend
 from ..typing.backends import BackendModel
 from ..dsp import StreamingPedalboardReverb
 from ..extensions.manager import CeluneExtensionManager
@@ -29,6 +29,8 @@ from ..typing.celune import (
     MessageCallback,
     ProgressCallback,
     QueueAvailableCallback,
+    TTSBackendRecipe,
+    VCBackendRecipe,
     VoiceChangedCallback,
     VoiceLockStateCallback,
 )
@@ -54,13 +56,15 @@ class CeluneBackendState:
     """Backend selection and configuration state."""
 
     config: Config
-    backend_spec: Optional[Union[str, type[CeluneBackend]]] = None
+    backend_spec: Optional[TTSBackendRecipe] = None
     backend_kwargs: dict[str, JSONSerializable] = field(default_factory=dict)
     backend: Optional[CeluneBackend] = None
     tts_backend: str = ""
-    vc_backend_spec: Optional[Union[str, type[CeluneVCBackend]]] = None
+    vc_backend_spec: Optional[VCBackendRecipe] = None
     vc_backend: Optional[CeluneVCBackend] = None
     voice_conversion_backend: str = ""
+    vc_pitch_shift: int = 0
+    vc_f0_condition: bool = False
     input_mode: str = "text_to_speech"
     chunk_size: int = 0
     language: str = "Auto"
@@ -187,6 +191,8 @@ CELUNE_FORWARDED_PROPERTIES = (
         "_backend_state",
         "voice_conversion_backend",
     ),
+    ForwardedPropertySpec("vc_pitch_shift", "_backend_state", "vc_pitch_shift"),
+    ForwardedPropertySpec("vc_f0_condition", "_backend_state", "vc_f0_condition"),
     ForwardedPropertySpec("input_mode", "_backend_state", "input_mode"),
     ForwardedPropertySpec("chunk_size", "_backend_state", "chunk_size"),
     ForwardedPropertySpec("language", "_backend_state", "language"),

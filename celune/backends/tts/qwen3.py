@@ -10,8 +10,8 @@ import numpy as np
 import numpy.typing as npt
 from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
 
-from ..utils import custom_assert
-from ..cevoice import default_loader, CEVoiceLoader
+from ...utils import custom_assert
+from ...cevoice import default_loader, CEVoiceLoader
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
