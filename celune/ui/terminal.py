@@ -94,6 +94,15 @@ class LogRedirect:
             filter_messages  # these messages will be filtered out by the logger
         )
 
+    def _is_filtered_message(self, message: str) -> bool:
+        """Return whether one redirected message should be suppressed."""
+        if self.filter_messages is None:
+            return False
+
+        return any(
+            filtered_message in message for filtered_message in self.filter_messages
+        )
+
     @staticmethod
     def _severity_for_message(message: str, default_severity: str) -> str:
         """Infer log severity from one redirected text line."""
@@ -131,10 +140,6 @@ class LogRedirect:
         if not text:
             return
 
-        if self.filter_messages is not None:
-            if text in self.filter_messages:
-                return
-
         # strip any incoming ANSI, but keep TTY specific input
         ansi_regex = re.compile(
             r"\x1b(?:\[[0-?]*[ -/]*[@-~]|][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])"
@@ -151,7 +156,7 @@ class LogRedirect:
             chunk = self._buffer[:pos].strip()
             self._buffer = self._buffer[pos + 1 :]
 
-            if chunk:
+            if chunk and not self._is_filtered_message(chunk):
                 self.write_callback(
                     chunk,
                     self._severity_for_message(chunk, self.default_severity),
@@ -176,10 +181,11 @@ class LogRedirect:
         """Flush the buffers."""
         if self._buffer.strip():
             chunk = self._buffer.strip()
-            self.write_callback(
-                chunk,
-                self._severity_for_message(chunk, self.default_severity),
-            )
+            if not self._is_filtered_message(chunk):
+                self.write_callback(
+                    chunk,
+                    self._severity_for_message(chunk, self.default_severity),
+                )
         self._buffer = ""
 
     def isatty(self) -> bool:
@@ -194,9 +200,23 @@ class LogRedirect:
 class UILogHandler(logging.Handler):
     """Route Python logging records into Celune's UI log callback."""
 
-    def __init__(self, write_callback: Callable[[str, str], None]) -> None:
+    def __init__(
+        self,
+        write_callback: Callable[[str, str], None],
+        filter_messages: Optional[Collection[str]] = None,
+    ) -> None:
         super().__init__()
         self.write_callback = write_callback
+        self.filter_messages = filter_messages
+
+    def _is_filtered_message(self, message: str) -> bool:
+        """Return whether one logging message should be suppressed."""
+        if self.filter_messages is None:
+            return False
+
+        return any(
+            filtered_message in message for filtered_message in self.filter_messages
+        )
 
     def emit(self, record: logging.LogRecord) -> None:
         """Forward one Python logging record into the UI log stream.
@@ -218,6 +238,9 @@ class UILogHandler(logging.Handler):
             in message
         ):
             message = "triton not found; flop counting will not work for triton kernels"
+
+        if self._is_filtered_message(message):
+            return
 
         if record.levelno >= logging.ERROR:
             severity = "error"

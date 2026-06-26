@@ -9,7 +9,14 @@ from .base import CeluneVCBackend
 __all__ = ["CeluneVCBackend", "resolve_vc_backend"]
 
 VC_BACKENDS = {
-    "passthrough": ("celune.vc_backends.passthrough", "CelunePassthroughVCBackend"),
+    "passthrough": (
+        "celune.backends.vc.passthrough",
+        "CelunePassthroughVCBackend",
+    ),
+    "seed-vc": (
+        "celune.backends.vc.seedvc",
+        "CeluneSeedVCBackend",
+    ),
 }
 
 

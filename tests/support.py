@@ -18,8 +18,8 @@ import numpy as np
 import numpy.typing as npt
 
 from celune.utils import discard
-from celune.backends.base import CeluneBackend
-from celune.vc_backends.base import CeluneVCBackend
+from celune.backends.tts.base import CeluneBackend
+from celune.backends.vc.base import CeluneVCBackend
 from celune.constants import JSONSerializable, PipelineStates
 from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
@@ -326,7 +326,7 @@ def mock_qwen3_backend():
             )
         },
     ):
-        qwen3 = importlib.import_module("celune.backends.qwen3")
+        qwen3 = importlib.import_module("celune.backends.tts.qwen3")
         yield qwen3.Qwen3
 
 
@@ -341,7 +341,7 @@ def mock_voxcpm_backend():
         sys.modules,
         {"voxcpm": SimpleNamespace(VoxCPM=StubVoxCPM)},
     ):
-        voxcpm2 = importlib.import_module("celune.backends.voxcpm2")
+        voxcpm2 = importlib.import_module("celune.backends.tts.voxcpm2")
         yield voxcpm2.VoxCPM2
 
 
@@ -365,7 +365,7 @@ def mock_dotstts_backend():
             "dots_tts.runtime": runtime_module,
         },
     ):
-        dotstts = importlib.import_module("celune.backends.dotstts")
+        dotstts = importlib.import_module("celune.backends.tts.dotstts")
         yield dotstts.DotsTtsMF
 
 
@@ -380,5 +380,5 @@ def mock_mini_backend():
         sys.modules,
         {"pocket_tts": SimpleNamespace(TTSModel=StubTTSModel)},
     ):
-        mini = importlib.import_module("celune.backends.mini")
+        mini = importlib.import_module("celune.backends.tts.mini")
         yield mini.Mini

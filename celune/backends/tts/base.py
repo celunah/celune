@@ -30,12 +30,12 @@ import numpy.typing as npt
 import soundfile as sf
 from huggingface_hub import snapshot_download
 
-from ..utils import discard
-from ..constants import N_A_NUMERIC
-from ..cevoice import default_loader
-from ..exceptions import BackendError
-from ..typing.backends import BackendModel, ModelT
-from ..paths import huggingface_hub_cache_dir, temp_data_dir
+from ...utils import discard
+from ...constants import N_A_NUMERIC
+from ...cevoice import default_loader
+from ...exceptions import BackendError
+from ...typing.backends import BackendModel, ModelT
+from ...paths import huggingface_hub_cache_dir, temp_data_dir
 
 __all__ = [
     "BackendModel",

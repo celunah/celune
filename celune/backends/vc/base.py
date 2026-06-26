@@ -4,7 +4,7 @@
 from typing import Callable
 from abc import ABC, abstractmethod
 
-from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["CeluneVCBackend"]
 

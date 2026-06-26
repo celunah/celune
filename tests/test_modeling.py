@@ -8,7 +8,7 @@ from unittest import TestCase, mock
 import torch
 
 from celune import modeling
-from celune.backends import CeluneBackend
+from celune.backends.tts import CeluneBackend
 
 
 class ModelingTests(TestCase):

@@ -326,6 +326,8 @@ class PipelineTests(TestCase):
         convert_mock.assert_called_once()
         vc_request = convert_mock.call_args.args[0]
         self.assertEqual(vc_request.target_references, (Path("balanced.wav"),))
+        self.assertEqual(vc_request.pitch_shift, 0)
+        self.assertEqual(vc_request.f0_condition, False)
         queue.assert_called_once()
         queued_audio = queue.call_args.args[1]
         self.assertEqual(queue.call_args.args[2], 48000)
@@ -355,6 +357,79 @@ class PipelineTests(TestCase):
             ["Voice conversion backend is not configured."],
         )
         self.assertEqual(engine.audio_queue.empty(), True)
+
+    def test_handle_audio_input_applies_engine_vc_pitch_shift_to_output(
+        self,
+    ) -> None:
+        """Verify VC routing applies the configured pitch shift to converted output."""
+        engine = make_pipeline_engine()
+        engine.input_mode = "voice_conversion"
+        engine.vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
+        engine.current_voice = "balanced"
+        engine.current_character = "Celune"
+        engine.vc_pitch_shift = -5
+        request = AudioInputRequest(
+            audio=np.ones((12, 2), dtype=np.float32),
+            sample_rate=48000,
+            label="mic test",
+        )
+        convert_mock = mock.Mock(
+            return_value=SimpleNamespace(
+                audio=np.ones((12, 2), dtype=np.float32),
+                sample_rate=48000,
+                label="mic test",
+            )
+        )
+        engine.vc_backend.convert = convert_mock
+        loader = make_voice_loader("balanced", {"reference_text": "Pack reference."})
+
+        with (
+            mock.patch("celune.pipeline.default_loader", return_value=loader),
+            mock.patch("celune.pipeline.queue_sfx_audio", return_value=True),
+            mock.patch(
+                "celune.pipeline.pitch_shift_audio",
+                return_value=np.ones((12, 2), dtype=np.float32) * 0.25,
+            ) as shift_audio,
+        ):
+            result = pipeline.handle_audio_input(cast(Celune, engine), request)
+
+        self.assertEqual(result, True)
+        self.assertEqual(convert_mock.call_args.args[0].pitch_shift, 0)
+        shift_audio.assert_called_once_with(mock.ANY, 48000, -5)
+
+    def test_handle_audio_input_passes_engine_vc_f0_condition_to_vc_backend(
+        self,
+    ) -> None:
+        """Verify VC routing carries the configured engine conversion mode."""
+        engine = make_pipeline_engine()
+        engine.input_mode = "voice_conversion"
+        engine.vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
+        engine.current_voice = "balanced"
+        engine.current_character = "Celune"
+        engine.vc_f0_condition = True
+        request = AudioInputRequest(
+            audio=np.ones((12, 2), dtype=np.float32),
+            sample_rate=48000,
+            label="mic test",
+        )
+        convert_mock = mock.Mock(
+            return_value=SimpleNamespace(
+                audio=np.ones((12, 2), dtype=np.float32),
+                sample_rate=48000,
+                label="mic test",
+            )
+        )
+        engine.vc_backend.convert = convert_mock
+        loader = make_voice_loader("balanced", {"reference_text": "Pack reference."})
+
+        with (
+            mock.patch("celune.pipeline.default_loader", return_value=loader),
+            mock.patch("celune.pipeline.queue_sfx_audio", return_value=True),
+        ):
+            result = pipeline.handle_audio_input(cast(Celune, engine), request)
+
+        self.assertEqual(result, True)
+        self.assertEqual(convert_mock.call_args.args[0].f0_condition, True)
 
     def test_tts_mode_does_not_route_audio_to_vc_backend(self) -> None:
         """Verify the default TTS mode ignores audio instead of invoking VC routing."""

@@ -14,10 +14,10 @@ import numpy.typing as npt
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
-from ..paths import temp_data_dir
-from ..utils import custom_assert
-from ..cevoice import default_loader, CEVoiceLoader
-from ..typing.backends import MiniModel, MiniPromptState
+from ...paths import temp_data_dir
+from ...utils import custom_assert
+from ...cevoice import default_loader, CEVoiceLoader
+from ...typing.backends import MiniModel, MiniPromptState
 from .base import CeluneBackend, cached_hf_snapshot_path
 
 

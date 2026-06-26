@@ -1,45 +1,27 @@
 # SPDX-License-Identifier: MIT
-"""dots.tts MeanFlow backend implementation for Celune."""
+"""VoxCPM2 backend implementation for Celune."""
 
 import os
 import contextlib
 import time
 from collections.abc import Iterator
-from typing import Callable, Optional, Mapping, Generator, Protocol, cast
+from typing import Callable, Optional, Mapping, Generator
 
-import torch
-import loguru
 import numpy as np
 import numpy.typing as npt
-from dots_tts.runtime import DotsTtsRuntime
+from voxcpm import VoxCPM
 
-from ..utils import custom_assert, discard
-from ..cevoice import default_loader, CEVoiceLoader
+from . import get_version
+from ...constants import BASE_SR
+from ...utils import custom_assert
+from ...cevoice import default_loader, CEVoiceLoader
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
-class _LoguruLogger(Protocol):
-    """Subset of Loguru's logger interface used by the backend noise suppressor."""
+class VoxCPM2(CeluneBackend[VoxCPM]):
+    """Celune VoxCPM2 backend."""
 
-    def disable(self, name: str) -> None:
-        """Disable one logger namespace.
-
-        Args:
-            name: Logger namespace that should be silenced temporarily.
-        """
-
-    def enable(self, name: str) -> None:
-        """Enable one logger namespace.
-
-        Args:
-            name: Logger namespace that should be re-enabled after suppression.
-        """
-
-
-class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
-    """Celune dots.tts MeanFlow backend."""
-
-    name: str = "dotstts"
+    name: str = "voxcpm2"
     uses_voice_bundles: bool = True
     chunk_rate: float = 6.25
     max_new_tokens: int = 512
@@ -77,15 +59,25 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
     )
 
     voice_models: Optional[Mapping[str, str]] = {
-        "balanced": "rednote-hilab/dots.tts-mf",
-        "calm": "rednote-hilab/dots.tts-mf",
-        "bold": "rednote-hilab/dots.tts-mf",
-        "upbeat": "rednote-hilab/dots.tts-mf",
+        "balanced": "openbmb/VoxCPM2",
+        "calm": "openbmb/VoxCPM2",
+        "bold": "openbmb/VoxCPM2",
+        "upbeat": "openbmb/VoxCPM2",
+    }
+
+    # fallback values for packs that omit cfg_scale
+    voice_cfg: Mapping[str, float] = {
+        "balanced": 2.4,
+        "calm": 3.0,
+        "bold": 2.4,
+        "upbeat": 2.4,
     }
     default_voice: Optional[str] = "balanced"
 
     def __init__(self, log: Callable[[str, str], None]) -> None:
         super().__init__(log=log)
+        self.log = log
+        self.optimize_enabled = False
         self._validate_refs()
 
     @staticmethod
@@ -95,7 +87,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         custom_assert(
             loader is not None,
             FileNotFoundError(
-                "backend 'dotstts' requires a compatible CEVOICE/CECHAR package "
+                "backend 'voxcpm2' requires a compatible CEVOICE/CECHAR package "
                 "with at least one valid voice identifier"
             ),
         )
@@ -115,7 +107,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         custom_assert(
             bool(voice_names),
             FileNotFoundError(
-                "backend 'dotstts' requires a compatible CEVOICE/CECHAR package "
+                "backend 'voxcpm2' requires a compatible CEVOICE/CECHAR package "
                 "with at least one valid voice identifier"
             ),
         )
@@ -124,7 +116,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         return loader, voice_names
 
     def _validate_refs(self) -> None:
-        """Validate dots.tts reference audio files from the active CEVOICE/CECHAR pack."""
+        """Validate VoxCPM2 reference audio files from the active CEVOICE/CECHAR pack."""
         loader, voice_names = self._require_compatible_bundle()
         for name in voice_names:
             loader.materialize(name, "wav")
@@ -140,7 +132,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         return list(voice_names)
 
     def model_id_for_voice(self, voice: str) -> str:
-        """Resolve a voice from the active pack to the shared dots.tts model.
+        """Resolve a voice from the active pack to the shared VoxCPM2 model.
 
         Args:
             voice: The voice name to resolve.
@@ -154,50 +146,17 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             ValueError(f"{self.name} cannot resolve a model for voice '{voice}'"),
         )
         assert voice in voice_names
+
         return self.default_model_id
-
-    def resolve_generation_language(self, lang: Optional[str]) -> Optional[str]:
-        """Normalize generation language tags to dots.tts-friendly values.
-
-        Args:
-            lang: The requested language identifier, if any.
-
-        Returns:
-            Optional[str]: The normalized backend-facing language identifier.
-        """
-        if lang is None:
-            return None
-
-        normalized = lang.strip().lower()
-        if not normalized or normalized == "auto":
-            return None
-        if normalized.startswith("zh"):
-            return "zh"
-        return normalized
 
     @staticmethod
     @contextlib.contextmanager
     def _suppress_backend_output() -> Generator[None, None, None]:
         """Suppress unnecessary backend output."""
         with open(os.devnull, "w", encoding="utf-8") as devnull:
-            disabled_loguru = False
-            bound_logger = cast(
-                Optional[_LoguruLogger],
-                getattr(loguru, "logger", None),
-            )
-            with contextlib.suppress(Exception):
-                if bound_logger is not None:
-                    bound_logger.disable("dots_tts")
-                    disabled_loguru = True
-
-            try:
-                with contextlib.redirect_stdout(devnull):
-                    with contextlib.redirect_stderr(devnull):
-                        yield
-            finally:
-                if disabled_loguru and bound_logger is not None:
-                    with contextlib.suppress(Exception):
-                        bound_logger.enable("dots_tts")
+            with contextlib.redirect_stdout(devnull):
+                with contextlib.redirect_stderr(devnull):
+                    yield
 
     suppress_backend_output = _suppress_backend_output
 
@@ -211,139 +170,160 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             lang: The language identifier for differentiating models by language.
 
         Returns:
-            tuple[bool, Optional[str]]: A cache availability flag and the resolved snapshot path when present.
+            tuple[bool, Optional[str]]: A flag indicating cache availability and the resolved snapshot path when
+            present.
         """
-        discard(lang)
         return cached_hf_snapshot_path(
             model,
             [
                 "config.json",
-                "*.safetensors",
+                "model*.safetensors",
                 "tokenizer_config.json",
             ],
         )
 
-    def load_model(self, model_id: str, **kwargs) -> DotsTtsRuntime:
-        """Load the given dots.tts model.
+    def load_model(self, model_id: str, **kwargs) -> VoxCPM:
+        """Load the given voice model.
 
         Args:
-            model_id: The dots.tts model repository ID to load.
-            kwargs: Additional keyword arguments to use while loading dots.tts.
+            model_id: The VoxCPM2 model repository ID to load.
+            kwargs: Additional keyword arguments to use while loading VoxCPM2.
 
         Returns:
-            DotsTtsRuntime: The loaded dots.tts runtime instance.
+            VoxCPM: The loaded VoxCPM2 model instance.
         """
         available, path = self.model_is_available_locally(model_id)
-        precision = kwargs.get("precision", "bfloat16")
-        optimize = bool(kwargs.get("optimize", False))
-        max_generate_length = int(
-            kwargs.get("max_generate_length", self.max_new_tokens)
-        )
 
-        target = path if available and path is not None else model_id
-        if target == model_id:
-            self.log("Downloading TTS model...", "info")
+        # NOTE:
+        # this may cause errors in internal ops when switching backends
+        # where one backend ran with deterministic algorithms, others without them,
+        # which can cause errors such as:
+        #
+        #   RuntimeError: _unsafe_index found unexpected index type Float
+        #
+        # while switching in order from: voxcpm2 -> dotstts -> qwen3,
+        # which is then trapped in Celune's warmup failure except block, and may potentially
+        # leave the runtime in a buggy state, or even trigger fatal errors
+        #
+        # please do not modulate deterministic algorithm state in PyTorch on a per-backend basis
 
-        with local_hf_offline_mode(available and path is not None):
-            with self._suppress_backend_output():
-                self.model = DotsTtsRuntime.from_pretrained(
-                    target,
-                    precision=precision,
-                    optimize=optimize,
-                    max_generate_length=max_generate_length,
-                )
+        # import torch
+        # torch.backends.cudnn.deterministic = True
+        # torch.use_deterministic_algorithms(True)
 
+        if available and path is not None:
+            with local_hf_offline_mode():
+                with self._suppress_backend_output():
+                    self.model = VoxCPM.from_pretrained(
+                        path,
+                        load_denoiser=kwargs.get("load_denoiser", False),
+                        optimize=kwargs.get("optimize", False),
+                    )
+
+            return self.model
+
+        self.log("Downloading TTS model...", "info")
+        with self._suppress_backend_output():
+            self.model = VoxCPM.from_pretrained(
+                model_id,
+                load_denoiser=kwargs.get("load_denoiser", False),
+                optimize=kwargs.get("optimize", False),
+            )
         return self.model
 
-    @staticmethod
-    def _to_numpy_audio(chunk: torch.Tensor) -> npt.NDArray[np.float32]:
-        """Convert one streamed torch chunk to a Celune-compatible audio array."""
-        audio = chunk.detach().float().cpu().numpy()
-        audio = np.asarray(audio, dtype=np.float32).reshape(-1)
-        return audio
-
     def generate_stream(
-        self, model: DotsTtsRuntime, **kwargs
+        self, model: VoxCPM, **kwargs
     ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
-        """Generate Celune-compatible audio chunks.
+        """Generate Celune compatible audio chunks.
 
         Args:
-            model: The loaded dots.tts runtime instance.
-            kwargs: Streaming generation keyword arguments to use.
+            model: The loaded VoxCPM model instance.
+            kwargs: Streaming generation arguments passed to the backend.
 
         Returns:
-            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of dots.tts streaming audio
-            chunks.
+            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of ``(audio, sample_rate,
+            timing)`` tuples suitable for Celune's playback pipeline.
 
         Raises:
-            ValueError: The requested voice is unsupported, or input text is empty.
+            ValueError: The requested voice is unknown or input text is empty.
+            NotImplementedError: If streaming support is unavailable.
         """
         voice = kwargs.pop("voice", self.default_voice)
-        kwargs.pop("instruct", None)
-        language = self.resolve_generation_language(kwargs.pop("language", None))
-        chunk_size = max(1, int(kwargs.pop("chunk_size", 1)))
-        text = kwargs.pop("text", None)
+        instruct = kwargs.pop("instruct", None)
+        kwargs.pop("language", None)
+        chunk_size = kwargs.pop("chunk_size", 1)
 
         kwargs.pop("temperature", None)
         kwargs.pop("top_k", None)
         kwargs.pop("top_p", None)
         kwargs.pop("repetition_penalty", None)
 
-        if not text:
-            raise ValueError("expected text to say")
-
         try:
-            loader, voice_names = self._require_compatible_bundle()
-            if voice not in loader.bundle.voices:
-                voice = voice_names[0]
+            loader, _ = self._require_compatible_bundle()
             ref_wav = self._truncate_reference(loader.materialize(voice, "wav"))
-            configured_ref_text = loader.bundle.voices[voice].get("reference_text")
-            ref_text = (
-                configured_ref_text.strip()
-                if isinstance(configured_ref_text, str)
-                else ""
+            configured_cfg = loader.bundle.voices[voice].get("cfg_scale")
+            cfg = (
+                float(configured_cfg)
+                if isinstance(configured_cfg, (int, float))
+                and not isinstance(configured_cfg, bool)
+                else self.voice_cfg.get(
+                    voice, self.voice_cfg[self.default_voice or "balanced"]
+                )
             )
         except KeyError as e:
             raise ValueError(
                 f"unknown voice '{voice}' for backend '{self.name}'"
             ) from e
 
+        text = kwargs.pop("text", None)
+        if not text:
+            raise ValueError("expected text to say")
+
+        if instruct:
+            text = f"({instruct}) {text}"
+
         self._apply_seed()
+
+        if not hasattr(model, "generate_streaming"):
+            version = get_version("voxcpm")
+            raise NotImplementedError(
+                f"streaming support not available (requires voxcpm>=1.5.0, installed: {version})"
+            )
+
+        chunks_per_batch = max(1, round(chunk_size / (1 / self.chunk_rate)))
 
         stream = None
         try:
             with self._suppress_backend_output():
-                stream = model.generate_stream(
-                    text=text,
-                    prompt_audio_path=str(ref_wav),
-                    prompt_text=ref_text,
-                    language=language,
-                    speaker_scale=1.5,
-                    ode_method="euler",
-                    num_steps=4,
-                    normalize_text=False,
+                stream = model.generate_streaming(
+                    text,
+                    reference_wav_path=ref_wav,
+                    inference_timesteps=4,
+                    cfg_value=cfg,
+                    max_len=self.max_new_tokens,
                     **kwargs,
                 )
 
                 batch: list[npt.NDArray[np.float32]] = []
-                chunk_index = 0
-                total_steps = 0
                 pending_audio: Optional[npt.NDArray[np.float32]] = None
                 pending_steps = 0
+                chunk_index = 0
+                total_steps = 0
                 first_chunk_time: Optional[float] = None
 
                 for chunk in stream:
                     if first_chunk_time is None:
                         first_chunk_time = time.monotonic()
-                    batch.append(self._to_numpy_audio(chunk))
-                    if len(batch) < chunk_size:
+                    batch.append(chunk)
+
+                    if len(batch) < chunks_per_batch:
                         continue
 
                     if pending_audio is not None:
                         total_steps += pending_steps
                         yield (
                             pending_audio,
-                            int(getattr(model, "sample_rate", 48000)),
+                            BASE_SR,
                             {
                                 "backend": self.name,
                                 "chunk_index": chunk_index,
@@ -364,7 +344,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                         total_steps += pending_steps
                         yield (
                             pending_audio,
-                            int(getattr(model, "sample_rate", 48000)),
+                            BASE_SR,
                             {
                                 "backend": self.name,
                                 "chunk_index": chunk_index,
@@ -379,7 +359,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                     total_steps += len(batch)
                     yield (
                         np.concatenate(batch),
-                        int(getattr(model, "sample_rate", 48000)),
+                        BASE_SR,
                         {
                             "backend": self.name,
                             "chunk_index": chunk_index,
@@ -387,13 +367,14 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                             "total_steps_so_far": total_steps,
                             "first_chunk_time": first_chunk_time,
                             "is_final": True,
+                            "missing_eos": total_steps >= self.max_new_tokens,
                         },
                     )
                 elif pending_audio is not None:
                     total_steps += pending_steps
                     yield (
                         pending_audio,
-                        int(getattr(model, "sample_rate", 48000)),
+                        BASE_SR,
                         {
                             "backend": self.name,
                             "chunk_index": chunk_index,
@@ -401,8 +382,10 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                             "total_steps_so_far": total_steps,
                             "first_chunk_time": first_chunk_time,
                             "is_final": True,
+                            "missing_eos": total_steps >= self.max_new_tokens,
                         },
                     )
+
         finally:
             if stream is not None and hasattr(stream, "close"):
                 with contextlib.suppress(Exception):

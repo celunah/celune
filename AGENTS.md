@@ -104,6 +104,16 @@ If this process updates typing or dataclass related docstrings, remove the place
 
 This process may leave some formatting inaccuracies, run `uv run ruff format .` again after completing docstrings.
 
+## Localization
+
+Celune does not use hardcoded strings in English. Define each new string you add into Celune's localization string database.
+
+Do not use raw string literals in the code. Always use `string("key_name", **kwargs)` in string literals to populate them from the global localization string database.
+
+If you find any raw strings in the code, add them to the localization string database, and remove the hardcoded string.
+
+Make sure to only modify user facing strings (both normal and dev mode strings), don't change anything internal.
+
 ## Python and Environment
 
 * Supported Python versions are 3.12 and 3.13.

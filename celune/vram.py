@@ -14,13 +14,12 @@ from .constants import JSONSerializable, VRAM_REQUIREMENTS, TIERS
 QWEN3_0_6B_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 QWEN3_1_7B_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
 
-# fake is only included to satisfy the test suite
-# it is not a real backend
+TEST_BACKENDS = ("fake", "counting")
 BACKENDS_ALLOWED: Mapping[VramTier, list[str]] = {
-    "low": ["mini", "qwen3", "fake"],
-    "medium": ["mini", "qwen3", "fake"],
-    "high": ["mini", "qwen3", "dotstts", "voxcpm2", "fake"],
-    "xhigh": ["mini", "qwen3", "dotstts", "voxcpm2", "fake"],
+    "low": ["mini", "qwen3", *TEST_BACKENDS],
+    "medium": ["mini", "qwen3", *TEST_BACKENDS],
+    "high": ["mini", "qwen3", "dotstts", "voxcpm2", *TEST_BACKENDS],
+    "xhigh": ["mini", "qwen3", "dotstts", "voxcpm2", *TEST_BACKENDS],
 }
 
 
