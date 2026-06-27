@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 _NVIDIA_SMI: Optional[str] = shutil.which("nvidia-smi")
 _NVIDIA_SMI_PROC: Optional[subprocess.Popen[str]] = None
 _NVIDIA_SMI_USAGE: Optional[int] = None
+FOOTER_ROTATE_SECONDS = 2.06
 
 
 def format_vram() -> str:

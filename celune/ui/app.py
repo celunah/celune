@@ -38,7 +38,9 @@ from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 from .. import colors
 from ..celune import Celune
 from ..cevoice import default_loader
+from ..config import resolve_audio_device_with_info
 from . import resources as ui_resources
+from .resources import FOOTER_ROTATE_SECONDS
 from .theme import CELUNE_CSS, severity_color
 from .terminal import LogRedirect, UILogHandler, is_celune_log_record
 from ..paths import config_path, main_window_log_path
@@ -62,7 +64,7 @@ from ..utils import (
 
 _VC_PITCH_SHIFT_MIN = -12
 _VC_PITCH_SHIFT_MAX = 12
-_VC_LIVE_STREAM_CHUNK_SECONDS = 0.75
+_VC_LIVE_STREAM_CHUNK_SECONDS = 1.0
 _VC_FEEDBACK_RMS_MIN_PREVIOUS = 0.05
 _VC_FEEDBACK_RMS_MIN_CURRENT = 0.18
 _VC_FEEDBACK_RMS_RISE_RATIO = 2.0
@@ -763,7 +765,7 @@ class CeluneUI(App):
         self._refresh_logs()
         self._enable_runtime_log_capture()
         ui_resources.prime_usage()
-        self.set_interval(2.06, self.advance_resources)
+        self.set_interval(FOOTER_ROTATE_SECONDS, self.advance_resources)
         self._status_marquee_timer = self.set_interval(
             0.18, self._advance_status_marquee
         )
@@ -1656,12 +1658,42 @@ class CeluneUI(App):
         """Start recording from the active system input device for VC."""
         if self.celune is None or not self._is_voice_conversion_mode():
             return False
+        if (
+            getattr(self.celune, "sleeping", False)
+            or getattr(
+                self.celune,
+                "cur_state",
+                "",
+            )
+            == "waking"
+        ):
+            return False
 
         if self._vc_recording_active():
             return True
 
+        input_config = getattr(self.celune, "config", None)
+        input_device_key = (
+            "input_recording_device"
+            if isinstance(input_config, dict)
+            and "input_recording_device" in input_config
+            else "input_device"
+        )
+        input_device, direct_device_info = resolve_audio_device_with_info(
+            input_config,
+            input_device_key,
+            "input",
+        )
+
         try:
-            device_info = cast(dict[str, object], sd.query_devices(kind="input"))
+            device_info = (
+                cast(dict[str, object], dict(direct_device_info))
+                if direct_device_info is not None
+                else cast(
+                    dict[str, object],
+                    sd.query_devices(device=input_device, kind="input"),
+                )
+            )
         except Exception as e:
             self.safe_log(
                 string(
@@ -1706,6 +1738,7 @@ class CeluneUI(App):
                         queued_sample_rate,
                         label=queued_label,
                         log_playback=False,
+                        reset_ready_announcement=False,
                     ):
                         self.safe_log(
                             string("ui.recording_stream_submit_failed"),
@@ -1774,6 +1807,7 @@ class CeluneUI(App):
                 channels=channel_count,
                 dtype="float32",
                 callback=callback,
+                device=input_device,
             )
             stream.start()
         except Exception as e:
@@ -2147,6 +2181,18 @@ class CeluneUI(App):
                 return
 
             if event.key == "ctrl+r":
+                if getattr(self.celune, "sleeping", False):
+                    self._cancel_sleep_timer()
+                    self.safe_status(string("status.waking_up"))
+                    self.change_input_state(locked=True)
+                    self.wake_from_sleep()
+                    event.prevent_default()
+                    event.stop()
+                    return
+                if getattr(self.celune, "cur_state", "") == "waking":
+                    event.prevent_default()
+                    event.stop()
+                    return
                 if self.toggle_vc_recording():
                     event.prevent_default()
                     event.stop()

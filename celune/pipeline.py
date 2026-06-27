@@ -40,6 +40,7 @@ from .dataclasses.pipeline import (
     VoiceConversionRequest,
 )
 from .exceptions import NotAvailableError
+from .config import resolve_audio_device
 from .persona.memory import PersonaMemoryStore
 from .persona.emotion import PersonaEmotionAnalyzer
 from .analysis import analyze_voice_audio
@@ -530,11 +531,21 @@ def _next_playback_source_id(engine: Celune) -> int:
 
 def _register_overlay_playback(engine: Celune) -> None:
     """Mark the mixer busy for a newly queued non-speech playback source."""
+    _register_overlay_playback_state(engine, reset_ready_announcement=True)
+
+
+def _register_overlay_playback_state(
+    engine: Celune,
+    *,
+    reset_ready_announcement: bool,
+) -> None:
+    """Mark the mixer busy for overlay playback with optional ready reset."""
     with engine.say_lock:
         if not engine.locked:
             engine.cur_state = "speaking"
         engine.playback_done.clear()
-        engine._ready_announced = False
+        if reset_ready_announcement:
+            engine._ready_announced = False
 
 
 def _playback_source_statuses(engine: Celune) -> dict[int, str]:
@@ -1448,6 +1459,7 @@ def handle_audio_input(engine: Celune, request: AudioInputRequest) -> bool:
             output.sample_rate,
             output.label,
             log_length=request.log_playback,
+            reset_ready_announcement=request.reset_ready_announcement,
         )
 
     engine.log_dev(
@@ -1654,6 +1666,7 @@ def queue_sfx_audio(
     keep: bool = False,
     volume: float = 1.0,
     log_length: bool = True,
+    reset_ready_announcement: bool = True,
 ) -> bool:
     """Queue decoded SFX audio through Celune's playback pipeline.
 
@@ -1665,6 +1678,7 @@ def queue_sfx_audio(
         keep: Whether to prepend this SFX to the next saved utterance.
         volume: Gain multiplier applied before the clip is queued for playback.
         log_length: Whether to log the prepared playback sample rate and length.
+        reset_ready_announcement: Whether this source should trigger a later ready announcement.
 
     Returns:
         bool: ``True`` when playback was queued successfully, otherwise ``False``.
@@ -1689,7 +1703,10 @@ def queue_sfx_audio(
             engine.kept_sfx_audio = audio.copy()
 
         source_id = _next_playback_source_id(engine)
-        _register_overlay_playback(engine)
+        _register_overlay_playback_state(
+            engine,
+            reset_ready_announcement=reset_ready_announcement,
+        )
         _register_playback_source(engine, source_id, kind="sfx", base_gain=volume)
         engine.cur_state = "speaking"
         # push the smallest possible chunks for responsive stopping
@@ -2498,18 +2515,35 @@ def _ensure_playback_stream(engine: Celune, sample_rate: int) -> bool:
         close_stream(engine, abort=True)
 
     try:
+        output_device_key = (
+            "output_recording_device"
+            if "output_recording_device" in engine.config
+            else "output_device"
+        )
+        output_device = resolve_audio_device(
+            engine.config,
+            output_device_key,
+            "output",
+        )
         engine.current_sr = sample_rate
         engine.stream = sd.OutputStream(
             samplerate=sample_rate,
             channels=2,
             dtype="float32",
             blocksize=0,
+            device=output_device,
         )
         if engine.stream is None:
             raise NotAvailableError("audio stream is not available")
         engine.stream.start()
         engine.log_dev(f"[PLAY] started stream at {sample_rate} Hz")
         return True
+    except ValueError as error:
+        if not getattr(engine, "audio_unavailable", False):
+            engine.log(str(error), "error")
+            engine.error_callback(string("pipeline.no_audio_devices_short"))
+        engine._audio_unavailable = True
+        return False
     except sd.PortAudioError:
         if not getattr(engine, "audio_unavailable", False):
             engine.log(

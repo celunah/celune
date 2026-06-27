@@ -756,6 +756,89 @@ class PipelineTests(TestCase):
         np.testing.assert_allclose(np.concatenate(glow_calls), 0.5, atol=1e-6)
         self.assertEqual(engine.playback_done.is_set(), True)
 
+    def test_playback_worker_uses_configured_output_device(self) -> None:
+        """Verify playback streams honor the configured output device override."""
+        engine = make_pipeline_engine()
+        engine.config = {"output_recording_device": "VB-Cable Output"}
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.current_voice = "balanced"
+        engine.idle_callback = mock.Mock()
+        engine.glow = SimpleNamespace(schedule=mock.Mock())
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+        fake_stream = FakeStream()
+
+        pipeline.queue_playback_chunk(
+            cast(Celune, engine),
+            1,
+            np.full((2400, 2), 0.2, dtype=np.float32),
+            48000,
+        )
+        pipeline.queue_playback_done(cast(Celune, engine), 1)
+        engine.audio_queue.put(engine.sentinel)
+
+        with mock.patch(
+            "celune.pipeline.sd.OutputStream",
+            return_value=fake_stream,
+        ) as mock_stream:
+            pipeline.playback_worker(cast(Celune, engine))
+
+        self.assertEqual(mock_stream.call_args.kwargs["device"], "VB-Cable Output")
+
+    def test_playback_worker_logs_friendly_output_device_match_errors(self) -> None:
+        """Verify ambiguous output devices are logged without surfacing a traceback."""
+        engine = make_pipeline_engine()
+        engine.config = {"output_recording_device": "CABLE-B Input"}
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.current_voice = "balanced"
+        engine.idle_callback = mock.Mock()
+        engine.glow = SimpleNamespace(schedule=mock.Mock())
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+
+        pipeline.queue_playback_chunk(
+            cast(Celune, engine),
+            1,
+            np.full((2400, 2), 0.2, dtype=np.float32),
+            48000,
+        )
+        pipeline.queue_playback_done(cast(Celune, engine), 1)
+        engine.audio_queue.put(engine.sentinel)
+
+        with mock.patch(
+            "celune.pipeline.resolve_audio_device",
+            side_effect=ValueError(
+                "The specified output device name has multiple matches for "
+                "'CABLE-B Input (VB-Audio Cable B)':\n"
+                "- [22] CABLE-B Input (VB-Audio Cable B), Windows DirectSound\n"
+                "- [28] CABLE-B Input (VB-Audio Cable B), Windows WASAPI\n\n"
+                "Please specify one of the above devices, then restart Celune."
+            ),
+        ):
+            pipeline.playback_worker(cast(Celune, engine))
+
+        self.assertEqual(engine.errors[-1], "No suitable audio devices")
+        error_messages = [
+            msg for msg, severity in engine.messages if severity == "error"
+        ]
+        self.assertTrue(error_messages)
+        self.assertIn(
+            "The specified output device name has multiple matches",
+            error_messages[-1],
+        )
+
     def test_playback_worker_does_not_emit_idle_for_non_idle_completion_marker(
         self,
     ) -> None:
