@@ -3,7 +3,7 @@
 
 import os
 from copy import deepcopy
-from typing import Optional, Union
+from typing import Optional, Union, Literal
 from collections.abc import Mapping
 
 import sounddevice as sd
@@ -14,7 +14,7 @@ from .typing.common import Config, JSONSerializable
 
 ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
 AudioDeviceConfig = Optional[Union[int, str]]
-AudioDeviceDirection = str
+AudioDeviceDirection = Literal["input", "output"]
 
 
 def env_bool(name: str, fallback: bool = False) -> bool:

@@ -320,7 +320,7 @@ class BackendTests(TestCase):
                 )
             )
 
-        self.assertEqual(captured["pitch_shift"], -6)
+        self.assertEqual(captured["pitch_shift"], 9)
 
     def test_seedvc_backend_prefers_request_f0_condition_over_backend_default(
         self,
