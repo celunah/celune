@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Tests for backend resolution and extension infrastructure."""
 
+import re
 import sys
 import tempfile
 import textwrap
@@ -22,6 +23,7 @@ import torch
 from celune.utils import discard
 from celune.celune import Celune
 from celune.backends.tts import resolve_backend
+from celune.i18n import string
 from celune.typing.backends import BackendModel
 from celune.backends.vc import resolve_vc_backend
 from celune.backends.vc.passthrough import CelunePassthroughVCBackend
@@ -117,7 +119,16 @@ class BackendTests(TestCase):
         instance = FakeBackend(log=lambda _msg, _severity="info": None)
         self.assertIs(resolve_backend(instance), instance)
         self.assertIsInstance(resolve_backend(FakeBackend), FakeBackend)
-        with self.assertRaisesRegex(ValueError, "unknown backend"):
+        with self.assertRaisesRegex(
+            ValueError,
+            re.escape(
+                string(
+                    "celune.unknown_backend",
+                    backend="missing",
+                    available="mini, qwen3, dotstts, voxcpm2",
+                )
+            ),
+        ):
             resolve_backend("missing")
         with self.assertRaisesRegex(TypeError, "backend_name"):
             resolve_backend(123)  # type: ignore[arg-type]
@@ -261,10 +272,10 @@ class BackendTests(TestCase):
         self.assertEqual(captured["f0_condition"], False)
         self.assertEqual(captured["pitch_shift"], 0)
 
-    def test_seedvc_backend_leaves_pitch_shift_to_the_shared_vc_pipeline(
+    def test_seedvc_backend_uses_configured_pitch_shift_for_wrapper_requests(
         self,
     ) -> None:
-        """Verify Seed-VC keeps wrapper pitch shifting disabled for shared output handling."""
+        """Verify Seed-VC forwards its configured pitch shift into wrapper requests."""
         backend = CeluneSeedVCBackend(
             log=lambda _msg, _severity="info": None,
             pitch_shift=-6,
@@ -309,7 +320,7 @@ class BackendTests(TestCase):
                 )
             )
 
-        self.assertEqual(captured["pitch_shift"], 0)
+        self.assertEqual(captured["pitch_shift"], -6)
 
     def test_seedvc_backend_prefers_request_f0_condition_over_backend_default(
         self,

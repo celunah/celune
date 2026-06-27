@@ -87,12 +87,12 @@ def pitch_shift_audio(
     """Shift audio pitch while preserving tempo at the given sample rate.
 
     Args:
-        audio: Value for `audio`.
-        sample_rate: Value for `sample_rate`.
-        n_steps: Value for `n_steps`.
+        audio: Input waveform to shift, provided as a float32 NumPy array.
+        sample_rate: Sample rate associated with ``audio``.
+        n_steps: Number of semitones to shift the signal up or down.
 
     Returns:
-        Result of this function.
+        npt.NDArray[np.float32]: A contiguous float32 waveform with pitch shifted and tempo preserved.
     """
     if n_steps == 0:
         return np.ascontiguousarray(audio, dtype=np.float32)

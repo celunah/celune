@@ -1575,6 +1575,7 @@ class CeluneUI(App):
     def _stop_vc_recording_stream(
         self,
     ) -> tuple[
+        Optional[sd.InputStream],
         Optional[npt.NDArray[np.float32]],
         int,
         str,
@@ -1591,14 +1592,25 @@ class CeluneUI(App):
         submission_queue = self._vc_recording_submission_queue
         captured_frames = self._vc_recording_captured_frames
         self._clear_vc_recording_state()
+        return (
+            stream,
+            buffered_audio,
+            sample_rate,
+            label,
+            submission_queue,
+            captured_frames,
+        )
 
-        if stream is not None:
-            with contextlib.suppress(Exception):
-                stream.stop()
-            with contextlib.suppress(Exception):
-                stream.close()
+    @staticmethod
+    def _shutdown_vc_stream(stream: Optional[sd.InputStream]) -> None:
+        """Stop and close one VC input stream outside the recording lock."""
+        if stream is None:
+            return
 
-        return buffered_audio, sample_rate, label, submission_queue, captured_frames
+        with contextlib.suppress(Exception):
+            stream.stop()
+        with contextlib.suppress(Exception):
+            stream.close()
 
     def _cancel_vc_recording(self, announce: bool = True) -> bool:
         """Stop VC recording without submitting audio for conversion."""
@@ -1606,11 +1618,12 @@ class CeluneUI(App):
             return False
 
         with self._vc_recording_lock:
-            _audio, _sample_rate, label, submission_queue, _captured_frames = (
+            stream, _audio, _sample_rate, label, submission_queue, _captured_frames = (
                 self._stop_vc_recording_stream()
             )
             if submission_queue is not None:
                 submission_queue.put(None)
+        self._shutdown_vc_stream(stream)
 
         if announce:
             self.safe_log(string("ui.recording_stopped", label=label), "info")
@@ -1622,13 +1635,19 @@ class CeluneUI(App):
             return
 
         with self._vc_recording_lock:
-            buffered_audio, sample_rate, label, submission_queue, _captured_frames = (
-                self._stop_vc_recording_stream()
-            )
+            (
+                stream,
+                buffered_audio,
+                sample_rate,
+                label,
+                submission_queue,
+                _captured_frames,
+            ) = self._stop_vc_recording_stream()
             if submission_queue is not None and buffered_audio is not None:
                 submission_queue.put((buffered_audio, sample_rate, label))
             if submission_queue is not None:
                 submission_queue.put(None)
+        self._shutdown_vc_stream(stream)
 
         self.safe_log(string("ui.recording_stopped_feedback", label=label), "warning")
         self.update_resources()
@@ -1795,6 +1814,7 @@ class CeluneUI(App):
         if self._vc_recording_active():
             with self._vc_recording_lock:
                 (
+                    stream,
                     buffered_audio,
                     sample_rate,
                     label,
@@ -1805,6 +1825,7 @@ class CeluneUI(App):
                     submission_queue.put((buffered_audio, sample_rate, label))
                 if submission_queue is not None:
                     submission_queue.put(None)
+            self._shutdown_vc_stream(stream)
 
             self.safe_log(string("ui.recording_stopped", label=label), "info")
             self.update_resources()

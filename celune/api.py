@@ -1054,7 +1054,8 @@ def _webui_resources_html() -> str:
 
 def _webui_shortcuts_html() -> str:
     """Render browser-side keyboard shortcuts for WebUI-only controls."""
-    return textwrap.dedent(
+    recording_shortcut = string("ui.footer_toggle_recording")
+    script = textwrap.dedent(
         """
         <script>
         (() => {
@@ -1066,7 +1067,7 @@ def _webui_shortcuts_html() -> str:
           function recordingShortcutEnabled() {
             const resources = document.querySelector("#celune-resources");
             const text = resources ? (resources.textContent || "") : "";
-            return text.includes("CTRL+R toggle recording");
+            return text.includes("__CELUNE_RECORDING_SHORTCUT__");
           }
 
           function clickRecordingButton() {
@@ -1124,6 +1125,10 @@ def _webui_shortcuts_html() -> str:
         </script>
         """
     ).strip()
+    return script.replace(
+        "__CELUNE_RECORDING_SHORTCUT__",
+        repr(recording_shortcut)[1:-1],
+    )
 
 
 def _voice_button_update() -> WebUiUpdate:
