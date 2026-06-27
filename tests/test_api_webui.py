@@ -3,11 +3,13 @@
 
 from types import SimpleNamespace
 from queue import Queue
+import asyncio
 from typing import cast
 from unittest import TestCase, mock
 
 import numpy as np
 from starlette.requests import Request
+from starlette.responses import Response
 
 from celune import api
 from celune.celune import Celune
@@ -32,8 +34,10 @@ class ApiWebUITests(TestCase):
         self.previous_theme_style = api.webui_theme_style
         self.previous_status_source = api.webui_status_source
         self.previous_status_updated_at = api.webui_status_updated_at
+        self.previous_auth_token = api.auth_token
         self.previous_logs = list(api.webui_log_lines)
         api.bound_celune = None
+        api.auth_token = None
         api.webui_log_lines.clear()
         api.webui_logs_seeded = True
         api.webui_resource_page = 0
@@ -60,8 +64,30 @@ class ApiWebUITests(TestCase):
         api.webui_theme_style = self.previous_theme_style
         api.webui_status_source = self.previous_status_source
         api.webui_status_updated_at = self.previous_status_updated_at
+        api.auth_token = self.previous_auth_token
         api.webui_log_lines.clear()
         api.webui_log_lines.extend(self.previous_logs)
+
+    @staticmethod
+    async def _passthrough_response(_request: Request) -> Response:
+        """Return a simple response for middleware pass-through tests."""
+        return Response("ok")
+
+    @staticmethod
+    def _request(path: str, method: str = "GET") -> Request:
+        """Build one lightweight test request."""
+        return Request(
+            {
+                "type": "http",
+                "method": method,
+                "path": path,
+                "headers": [],
+                "query_string": b"",
+                "client": ("127.0.0.1", 2060),
+                "scheme": "http",
+                "server": ("127.0.0.1", 2060),
+            }
+        )
 
     def test_root_redirects_to_browser_ui(self) -> None:
         """Verify the fallback root now forwards users to the browser UI."""
@@ -71,33 +97,38 @@ class ApiWebUITests(TestCase):
 
     def test_browser_ui_requests_bypass_api_security_detection(self) -> None:
         """Verify mounted browser UI paths are recognized by the API middleware."""
-        ui_request = Request(
-            {
-                "type": "http",
-                "method": "GET",
-                "path": "/ui/assets/index.js",
-                "headers": [],
-                "query_string": b"",
-                "client": ("127.0.0.1", 2060),
-                "scheme": "http",
-                "server": ("127.0.0.1", 2060),
-            }
-        )
-        api_request = Request(
-            {
-                "type": "http",
-                "method": "GET",
-                "path": "/v1/version",
-                "headers": [],
-                "query_string": b"",
-                "client": ("127.0.0.1", 2060),
-                "scheme": "http",
-                "server": ("127.0.0.1", 2060),
-            }
-        )
+        ui_request = self._request("/ui/assets/index.js")
+        api_request = self._request("/v1/version")
 
         self.assertEqual(api.is_browser_ui_request(ui_request), True)
         self.assertEqual(api.is_browser_ui_request(api_request), False)
+
+    def test_api_security_allows_public_read_only_routes_without_token(self) -> None:
+        """Verify safe read-only routes stay reachable even when API auth is enabled."""
+        api.auth_token = "secret"
+
+        for path in ("/", "/favicon.ico", "/v1", "/v1/version", "/ui"):
+            response = asyncio.run(
+                api.api_security(
+                    self._request(path),
+                    self._passthrough_response,
+                )
+            )
+            self.assertEqual(response.status_code, 200, path)
+
+    def test_api_security_requires_token_for_generating_routes(self) -> None:
+        """Verify protected API routes still reject unauthenticated requests."""
+        api.auth_token = "secret"
+
+        response = asyncio.run(
+            api.api_security(
+                self._request("/v1/speak", method="POST"),
+                self._passthrough_response,
+            )
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
 
     def test_webui_snapshot_uses_bound_celune_state(self) -> None:
         """Verify the browser snapshot mirrors current logs, status, and voice state."""
@@ -563,6 +594,52 @@ class ApiWebUITests(TestCase):
             pitch_shift=6,
             f0_condition=True,
         )
+
+    def test_webui_convert_audio_normalizes_integer_browser_audio(self) -> None:
+        """Verify browser-side PCM arrays are normalized before VC conversion."""
+        captured_audio: dict[str, np.ndarray] = {}
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                input_mode="voice_conversion",
+                convert_audio=mock.Mock(
+                    side_effect=lambda audio, sample_rate, **_kwargs: (
+                        captured_audio.setdefault("audio", np.asarray(audio)),
+                        SimpleNamespace(
+                            audio=np.zeros((4, 2), dtype=np.float32),
+                            sample_rate=sample_rate,
+                            label="browser audio input",
+                        ),
+                    )[1]
+                ),
+                dev=False,
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+            ),
+        )
+
+        source_pcm = np.array(
+            [[32767, -32768], [16384, -16384]],
+            dtype=np.int16,
+        )
+
+        with mock.patch(
+            "celune.api.ui_resources.resource_pages",
+            return_value=("VRAM: 10.66/11.94 GB available",),
+        ):
+            _source_value, browser_audio, *_rest = api._webui_convert_audio(
+                (44100, source_pcm)
+            )
+
+        self.assertIsInstance(browser_audio, tuple)
+        normalized = captured_audio["audio"]
+        self.assertEqual(normalized.dtype, np.float32)
+        self.assertTrue(np.max(np.abs(normalized)) <= 1.0)
+        self.assertAlmostEqual(float(normalized[0, 0]), 32767 / 32768, places=5)
+        self.assertEqual(float(normalized[0, 1]), -1.0)
 
     def test_webui_convert_audio_rejects_text_to_speech_mode(self) -> None:
         """Verify browser audio conversion is unavailable outside VC mode."""
