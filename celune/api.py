@@ -75,7 +75,8 @@ WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS = 0.9
 
 WebUiUpdate = dict[str, JSONSerializable]
 WebUiAudioValue = Optional[tuple[int, npt.NDArray[np.float32]]]
-WebUiInputAudioValue = Optional[tuple[int, npt.NDArray[np.float32]]]
+WebUiInputArray = Union[npt.NDArray[np.float32], npt.NDArray[np.int16]]
+WebUiInputAudioValue = Optional[tuple[int, WebUiInputArray]]
 
 
 class _WebUiUnset:
@@ -502,10 +503,26 @@ def _authenticated(request: Request) -> bool:
     return given is not None and compare_digest(given, auth_token)
 
 
-def _is_browser_ui_request(request: Request) -> bool:
+def is_browser_ui_request(request: Request) -> bool:
     """Return whether the request targets the mounted browser UI."""
     path = request.url.path.rstrip("/")
     return path == "/ui" or path.startswith("/ui/")
+
+
+def _is_public_api_request(request: Request) -> bool:
+    """Return whether the request is safe to serve without an API token."""
+    method = request.method.upper()
+    path = request.url.path.rstrip("/") or "/"
+
+    if is_browser_ui_request(request):
+        return True
+
+    return method == "GET" and path in {
+        "/",
+        "/favicon.ico",
+        "/v1",
+        "/v1/version",
+    }
 
 
 def _rate_limit_key(request: Request) -> str:
@@ -550,7 +567,7 @@ async def api_security(
     Returns:
         Response: The response returned by the protected route or security layer.
     """
-    if _is_browser_ui_request(request):
+    if _is_public_api_request(request):
         return await call_next(request)
 
     if not _authenticated(request):
@@ -1245,7 +1262,7 @@ def _webui_vc_controls_update() -> tuple[
     """Return the current browser VC control state."""
     celune = bound_celune
     vc_enabled = _webui_vc_mode_active(celune)
-    control_interactive = bool(celune is not None and vc_enabled)
+    control_interactive = celune is not None and vc_enabled
     return (
         gr.update(interactive=control_interactive),
         gr.update(interactive=control_interactive),
@@ -1335,6 +1352,23 @@ def _decode_uploaded_audio(
     """Decode uploaded audio bytes into float32 audio and a source sample rate."""
     audio, sample_rate = sf.read(io.BytesIO(data), dtype="float32")
     return np.asarray(audio, dtype=np.float32), int(sample_rate)
+
+
+def _normalize_webui_audio_input(
+    source_audio: WebUiInputAudioValue,
+) -> WebUiAudioValue:
+    """Normalize one Gradio audio value to Celune's float32 waveform contract."""
+    if source_audio is None:
+        return None
+
+    sample_rate, audio = source_audio
+    normalized = np.asarray(audio)
+    if normalized.dtype == np.int16:
+        normalized = normalized.astype(np.float32) / 32768.0
+    else:
+        normalized = normalized.astype(np.float32, copy=False)
+
+    return sample_rate, np.ascontiguousarray(normalized, dtype=np.float32)
 
 
 def _voice_conversion_unavailable_response() -> JSONResponse:
@@ -1483,7 +1517,9 @@ def _webui_convert_audio(
             send_update,
         )
 
-    sample_rate, audio = source_audio
+    normalized_source_audio = _normalize_webui_audio_input(source_audio)
+    assert normalized_source_audio is not None
+    sample_rate, audio = normalized_source_audio
     api_log("CONVERT(WEBUI)", "uploaded audio")
     try:
         output = celune.convert_audio(
@@ -1543,7 +1579,6 @@ def _webui_convert_audio(
 
 
 configure_webui_theme = _configure_webui_theme
-is_browser_ui_request = _is_browser_ui_request
 webui_theme_html = _webui_theme_html
 strip_webui_log_prefix = _strip_webui_log_prefix
 set_webui_status = _set_webui_status
