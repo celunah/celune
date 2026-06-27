@@ -17,6 +17,7 @@ import soundfile as sf
 
 from .base import CeluneVCBackend
 from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+from ...i18n import string
 from ...paths import app_data_dir
 
 __all__ = ["CeluneSeedVCBackend"]
@@ -133,7 +134,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             wrapper_module = importlib.import_module("seed_vc.seed_vc_wrapper")
         except ImportError as e:
             raise ImportError(
-                "Seed-VC backend requires the 'seed_vc' package to be installed"
+                string("seedvc.package_required", package="seed_vc")
             ) from e
 
         cls._configure_seedvc_downloads(hf_utils_module, wrapper_module)
@@ -144,7 +145,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         with self._wrapper_lock:
             if self._wrapper is None:
                 wrapper_type = self._load_wrapper_type()
-                self.log("Loading Seed-VC models...", "info")
+                self.log(string("seedvc.loading_models"), "info")
                 self._wrapper = wrapper_type()
             return self._wrapper
 
@@ -174,7 +175,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         """Return the sample rate produced by the backend's default Seed-VC mode.
 
         Returns:
-            Result of this function.
+            int: ``44100`` when f0 conditioning is enabled, otherwise ``22050``.
         """
         return 44100 if self.f0_condition else 22050
 
@@ -215,9 +216,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             ValueError: The request does not include a target reference WAV.
         """
         if not request.target_references:
-            raise ValueError(
-                "Seed-VC requires at least one target reference WAV for conversion"
-            )
+            raise ValueError(string("seedvc.target_reference_required"))
 
         target_reference = request.target_references[0]
         wrapper = self._get_wrapper()
@@ -234,7 +233,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                     inference_cfg_rate=self.inference_cfg_rate,
                     f0_condition=f0_condition,
                     auto_f0_adjust=self.auto_f0_adjust,
-                    pitch_shift=0,
+                    pitch_shift=self.pitch_shift,
                     stream_output=False,
                 )
             )

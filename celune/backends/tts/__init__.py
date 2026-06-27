@@ -6,6 +6,7 @@ from importlib import import_module
 from importlib.metadata import version, PackageNotFoundError
 
 from .base import CeluneBackend
+from ...i18n import string
 from ...typing.backends import BackendModel
 
 __all__ = ["BackendModel", "CeluneBackend", "get_version", "resolve_backend"]
@@ -71,13 +72,15 @@ def resolve_backend(
             module_name, class_name = BACKENDS[key]
         except KeyError as e:
             raise ValueError(
-                f"unknown backend: '{backend_name}' (available: {', '.join(BACKENDS.keys())})"
+                string(
+                    "celune.unknown_backend",
+                    backend=backend_name,
+                    available=", ".join(BACKENDS.keys()),
+                )
             ) from e
 
         module = import_module(module_name)
         backend_cls = getattr(module, class_name)
         return backend_cls(log=log, **backend_kwargs)
 
-    raise TypeError(
-        "'backend_name' must be a backend instance, backend type, or backend name string"
-    )
+    raise TypeError(string("celune.invalid_backend_type"))

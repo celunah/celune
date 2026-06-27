@@ -19,11 +19,11 @@ CI_PATHS = ((".",), ("celune", "tests"), ("celune", "tests"), ("tests",))
 cmds_failed = 0
 total_errors = []
 
-_AGENT_ERROR_MARKERS = {
+_AGENT_ERROR_MARKERS = (
     "Access is denied",
     "Permission denied",
     "Operation not permitted",
-}
+)
 
 
 def _agent_permission_marker(output: str) -> Optional[str]:

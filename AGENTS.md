@@ -112,7 +112,7 @@ Do not use raw string literals in the code. Always use `string("key_name", **kwa
 
 If you find any raw strings in the code, add them to the localization string database, and remove the hardcoded string.
 
-Make sure to only modify user facing strings (both normal and dev mode strings), don't change anything internal.
+Make sure to only modify user-facing strings (both normal and dev mode strings), don't change anything internal.
 
 ## Python and Environment
 

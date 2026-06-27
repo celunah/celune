@@ -590,7 +590,7 @@ class ApiWebUITests(TestCase):
         self.assertIsNotNone(source_value)
         self.assertEqual(source_value[0], 44100)
         self.assertIsNone(browser_audio)
-        self.assertIn("voice conversion mode", logs_html)
+        self.assertIn(string("webui.conversion_only_in_vc_mode"), logs_html)
 
     def test_build_webui_exposes_tts_and_vc_tabs(self) -> None:
         """Verify the browser UI separates TTS and VC into distinct tabs."""
@@ -602,7 +602,10 @@ class ApiWebUITests(TestCase):
             if component.get("type") == "tabitem"
         ]
 
-        self.assertEqual(tab_labels, ["TTS", "VC"])
+        self.assertEqual(
+            tab_labels,
+            [string("webui.tts_tab_label"), string("webui.vc_tab_label")],
+        )
 
     def test_webui_snapshot_probes_runtime_status_and_rotates_resources(self) -> None:
         """Verify footer polling refreshes status and rotates the resource page."""
@@ -636,7 +639,7 @@ class ApiWebUITests(TestCase):
         """Verify the WebUI shortcut script exposes the VC recording hotkey."""
         shortcuts_html = api._webui_shortcuts_html()
 
-        self.assertIn("CTRL+R toggle recording", shortcuts_html)
+        self.assertIn(string("ui.footer_toggle_recording"), shortcuts_html)
         self.assertIn("#celune-source-audio", shortcuts_html)
         self.assertIn("keydown", shortcuts_html)
 

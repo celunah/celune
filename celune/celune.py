@@ -728,7 +728,7 @@ class Celune(CeluneStateAccessors):
         """Public interface for Celune._is_voice_conversion_mode.
 
         Returns:
-            Result of this function.
+            bool: Whether this Celune instance is currently in voice conversion mode.
         """
         return self._is_voice_conversion_mode()
 

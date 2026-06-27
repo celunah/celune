@@ -15,6 +15,7 @@ from . import get_version
 from ...constants import BASE_SR
 from ...utils import custom_assert
 from ...cevoice import default_loader, CEVoiceLoader
+from ...i18n import string
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
@@ -87,8 +88,10 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         custom_assert(
             loader is not None,
             FileNotFoundError(
-                "backend 'voxcpm2' requires a compatible CEVOICE/CECHAR package "
-                "with at least one valid voice identifier"
+                string(
+                    "celune.compatible_bundle_required",
+                    backend="voxcpm2",
+                )
             ),
         )
         assert loader is not None
@@ -107,8 +110,10 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         custom_assert(
             bool(voice_names),
             FileNotFoundError(
-                "backend 'voxcpm2' requires a compatible CEVOICE/CECHAR package "
-                "with at least one valid voice identifier"
+                string(
+                    "celune.compatible_bundle_required",
+                    backend="voxcpm2",
+                )
             ),
         )
         assert bool(voice_names)

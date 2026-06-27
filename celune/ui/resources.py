@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Optional
 import torch
 import psutil
 
+from ..i18n import string
 from ..utils import celune_day_status, lunar_info, lunar_phase
 
 if TYPE_CHECKING:
@@ -155,7 +156,7 @@ def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[st
     pages.append("/help commands")
     if celune is not None:
         if getattr(celune, "input_mode", "text_to_speech") == "voice_conversion":
-            pages.append("CTRL+R toggle recording")
+            pages.append(string("ui.footer_toggle_recording"))
 
         active_theme = theme_name
         enter_action = "skip" if celune.is_in_tutorial else "say"
