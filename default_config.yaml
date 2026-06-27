@@ -1,4 +1,4 @@
-# TTS backend
+# backend
 # you will be asked to choose, but VRAM presets may limit availibility
 # of certain backends
 #
@@ -6,6 +6,7 @@
 # dotstts = slower, very high quality
 # voxcpm2 = slower, high quality
 # mini = much faster, and just as good
+# seed-vc = VC backend, converts speech rather than generating it
 backend: null
 
 # Qwen3 TTS settings
@@ -16,6 +17,8 @@ qwen3_x_vector_only: true
 # CEVOICE voice selection
 #
 # default voices are in the "default" pack and are usable for most
+# check scripts\cac.py to create your own custom voice pack by following
+# step by step instructions
 voice_bundle: default
 
 # developer mode
@@ -24,13 +27,23 @@ voice_bundle: default
 # and auto-voice analysis upon end of utterance
 dev: false
 
-# Voice conversion settings
+# voice conversion default settings
 #
 # positive values raise the converted voice, negative values lower it
 # useful for helping cross-gender conversions land more naturally
 voice_conversion_pitch_shift: 0
 # false = talk mode, true = sing mode
 voice_conversion_f0_condition: false
+
+# audio device settings
+#
+# set either key to a sounddevice device name or numeric index
+# null = use the current system default device
+#
+# if the specified device name has several matches, Celune will list the possible device
+# entries and request you to select one and restart the application after selecting it
+input_device: null
+output_device: null
 
 # headless mode / Celune embedded framework
 #

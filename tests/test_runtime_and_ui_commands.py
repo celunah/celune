@@ -980,6 +980,7 @@ class UIStartupTests(TestCase):
                 submit_audio=mock.Mock(return_value=True),
                 is_in_tutorial=False,
                 dev=False,
+                config={"input_device": "Stereo Mix (Realtek)"},
             ),
         )
         ui.safe_log = mock.Mock()
@@ -1017,8 +1018,11 @@ class UIStartupTests(TestCase):
                     "default_samplerate": 48000,
                     "name": "Stereo Mix",
                 },
-            ),
-            mock.patch("celune.ui.app.sd.InputStream", side_effect=FakeInputStream),
+            ) as mock_query_devices,
+            mock.patch(
+                "celune.ui.app.sd.InputStream",
+                side_effect=FakeInputStream,
+            ) as mock_input_stream,
         ):
             start_event = SimpleNamespace(
                 key="ctrl+r",
@@ -1056,6 +1060,14 @@ class UIStartupTests(TestCase):
             )
             ui.on_key(cast(events.Key, stop_event))
 
+        mock_query_devices.assert_called_once_with(
+            device="Stereo Mix (Realtek)",
+            kind="input",
+        )
+        self.assertEqual(
+            mock_input_stream.call_args.kwargs["device"],
+            "Stereo Mix (Realtek)",
+        )
         for _ in range(50):
             if cast(mock.Mock, ui.celune.submit_audio).call_count >= 2:
                 break
@@ -1073,6 +1085,14 @@ class UIStartupTests(TestCase):
         )
         self.assertEqual(submit_calls[0].kwargs["log_playback"], False)
         self.assertEqual(submit_calls[-1].kwargs["log_playback"], False)
+        self.assertEqual(
+            submit_calls[0].kwargs["reset_ready_announcement"],
+            False,
+        )
+        self.assertEqual(
+            submit_calls[-1].kwargs["reset_ready_announcement"],
+            False,
+        )
         self.assertGreaterEqual(len(first_submit_args[0]), 36000)
         self.assertEqual(len(final_submit_args[0]), 8)
 
@@ -1160,6 +1180,42 @@ class UIStartupTests(TestCase):
                 if call.args
             )
         )
+
+    def test_ctrl_r_wakes_sleeping_celune_without_starting_recording(self) -> None:
+        """Verify CTRL+R wakes a sleeping VC runtime instead of starting capture."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                input_mode="voice_conversion",
+                vc_backend=SimpleNamespace(),
+                sleeping=True,
+                cur_state="sleeping",
+                config={},
+            ),
+        )
+        ui.safe_status = mock.Mock()
+        ui.change_input_state = mock.Mock()
+        ui.wake_from_sleep = mock.Mock()
+        ui._cancel_sleep_timer = mock.Mock()
+        ui.toggle_vc_recording = mock.Mock(return_value=True)
+
+        start_event = SimpleNamespace(
+            key="ctrl+r",
+            prevent_default=mock.Mock(),
+            stop=mock.Mock(),
+        )
+
+        ui.on_key(cast(events.Key, start_event))
+
+        ui._cancel_sleep_timer.assert_called_once()
+        ui.safe_status.assert_called_once_with("Waking up")
+        ui.change_input_state.assert_called_once_with(locked=True)
+        ui.wake_from_sleep.assert_called_once_with()
+        ui.toggle_vc_recording.assert_not_called()
+        start_event.prevent_default.assert_called_once_with()
+        start_event.stop.assert_called_once_with()
 
     def test_gpu_usage_handles_closed_stdout_pipe(self) -> None:
         """Verify resource polling ignores closed-pipe nvidia-smi failures."""

@@ -38,6 +38,7 @@ class AudioInputRequest:
     pitch_shift: Optional[int] = None
     f0_condition: Optional[bool] = None
     log_playback: bool = True
+    reset_ready_announcement: bool = True
 
 
 @dataclass(frozen=True)

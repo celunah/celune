@@ -808,6 +808,7 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(submitted_request.sample_rate, 48000)
         self.assertEqual(submitted_request.label, "fixture")
         self.assertEqual(submitted_request.audio.shape, (32, 2))
+        self.assertEqual(submitted_request.reset_ready_announcement, True)
         say_pipeline.assert_called_once_with(
             celune,
             "hello",

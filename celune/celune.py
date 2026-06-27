@@ -2783,6 +2783,7 @@ class Celune(CeluneStateAccessors):
         pitch_shift: Optional[int] = None,
         f0_condition: Optional[bool] = None,
         log_playback: bool = True,
+        reset_ready_announcement: bool = True,
     ) -> bool:
         """Accept audio input for future non-TTS engine modes.
 
@@ -2793,6 +2794,8 @@ class Celune(CeluneStateAccessors):
             pitch_shift: Optional semitone adjustment to apply during VC.
             f0_condition: Optional override enabling Seed-VC singing mode.
             log_playback: Whether playback timing and length info should be logged.
+            reset_ready_announcement: Whether this audio input should allow a later ready message once
+                playback completes.
 
         Returns:
             bool: ``True`` when the current mode accepted the audio input.
@@ -2806,6 +2809,7 @@ class Celune(CeluneStateAccessors):
                 pitch_shift=pitch_shift,
                 f0_condition=f0_condition,
                 log_playback=log_playback,
+                reset_ready_announcement=reset_ready_announcement,
             ),
         )
 
