@@ -1582,7 +1582,7 @@ def queue_speech(
 
     engine.model_ready.wait()
 
-    if not engine.loaded:
+    if not engine.loaded and not getattr(engine.backend, "is_fake", False):
         engine.log(string("ui.core_engine_not_loaded"), "warning")
         engine.error_callback(string("pipeline.not_ready_app", app_name=APP_NAME))
         engine.progress_callback(0, 1)
@@ -1632,7 +1632,7 @@ def queue_speech(
         return False
 
     try:
-        if not engine.loaded:
+        if not engine.loaded and not engine.backend.is_fake:
             engine.log(string("ui.core_engine_not_loaded"), "warning")
             engine.error_callback(string("pipeline.not_ready_app", app_name=APP_NAME))
             release_pipeline(engine)
@@ -2055,7 +2055,7 @@ def generation_worker(engine: Celune) -> None:
             try:
                 engine.model_ready.wait()
 
-                if not engine.loaded:
+                if not engine.loaded and not engine.backend.is_fake:
                     engine.log(string("ui.core_engine_not_loaded"), "warning")
                     engine.locked = False
                     if stream_queue is not None:

@@ -3,7 +3,7 @@
 
 import os
 from copy import deepcopy
-from typing import Optional, Union
+from typing import Optional, Union, Literal
 from collections.abc import Mapping
 
 import sounddevice as sd
@@ -14,7 +14,7 @@ from .typing.common import Config, JSONSerializable
 
 ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
 AudioDeviceConfig = Optional[Union[int, str]]
-AudioDeviceDirection = str
+AudioDeviceDirection = Literal["input", "output"]
 
 
 def env_bool(name: str, fallback: bool = False) -> bool:
@@ -103,7 +103,16 @@ def resolve_audio_device(
     key: str,
     direction: AudioDeviceDirection,
 ) -> AudioDeviceConfig:
-    """Resolve one configured audio device into an exact PortAudio selector."""
+    """Resolve one configured audio device into an exact PortAudio selector.
+
+    Args:
+        config: Configuration mapping that may declare one device selector.
+        key: Config key to resolve from the mapping.
+        direction: Whether the selector is for input or output audio.
+
+    Returns:
+        AudioDeviceConfig: Exact selector data suitable for PortAudio lookup.
+    """
     resolved, _device_info = resolve_audio_device_with_info(config, key, direction)
     return resolved
 

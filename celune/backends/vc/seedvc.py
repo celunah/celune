@@ -233,7 +233,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                     inference_cfg_rate=self.inference_cfg_rate,
                     f0_condition=f0_condition,
                     auto_f0_adjust=self.auto_f0_adjust,
-                    pitch_shift=self.pitch_shift,
+                    pitch_shift=request.pitch_shift
+                    if request.pitch_shift is not None
+                    else 0,
                     stream_output=False,
                 )
             )

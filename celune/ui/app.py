@@ -563,6 +563,29 @@ class CeluneUI(App):
         glow.fatal = wrapped_fatal
         setattr(self.celune, "_ui_fatal_glow_wrapped", True)
 
+    def _bind_runtime_callbacks(self) -> None:
+        """Bind one attached Celune instance back into this UI."""
+        if self.celune is None:
+            return
+
+        self.celune.log_callback = self.tts_log
+        self.celune.status_callback = self.safe_status
+        self.celune.error_callback = self.error
+        self.celune.idle_callback = self.tts_idle
+        self.celune.queue_avail_callback = self.tts_queue_avail
+        self.celune.voice_changed_callback = self.tts_voice_changed
+        self.celune.change_input_state_callback = self.change_input_state
+        self.celune.change_voice_lock_state_callback = self.change_voice_lock_state
+        self.celune.progress_callback = self.safe_progress
+
+    def _is_ui_test_mode(self) -> bool:
+        """Return whether the attached runtime is the interactive fake-backend UI test mode."""
+        if self.celune is None:
+            return False
+
+        backend = getattr(self.celune, "backend", None)
+        return bool(getattr(backend, "is_fake", False)) and "pytest" not in sys.modules
+
     def _refresh_status(self) -> None:
         """Refresh the status color for the active theme."""
         if self.status is None:
@@ -725,6 +748,7 @@ class CeluneUI(App):
                     )
 
         self._ensure_themes_registered()
+        self._bind_runtime_callbacks()
         self._wrap_runtime_fatal_glow()
 
         if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
@@ -763,7 +787,8 @@ class CeluneUI(App):
         self.refresh_vc_controls()
         self._refresh_theme_text()
         self._refresh_logs()
-        self._enable_runtime_log_capture()
+        if not self.celune.backend.is_fake or "pytest" in sys.modules:
+            self._enable_runtime_log_capture()
         ui_resources.prime_usage()
         self.set_interval(FOOTER_ROTATE_SECONDS, self.advance_resources)
         self._status_marquee_timer = self.set_interval(
@@ -1093,6 +1118,14 @@ class CeluneUI(App):
             if self.celune.load():
                 self.celune_styles = self.celune.voices
                 if not self.celune_styles:
+                    if self._is_ui_test_mode():
+                        if not self.celune.use_normalization:
+                            self.safe_progress(1, 1)
+                        self.change_input_state(locked=True)
+                        self.change_voice_lock_state(locked=True)
+                        self.safe_status(string("ui.test_mode_active"))
+                        return
+
                     self.change_input_state(locked=True)
                     self.change_voice_lock_state(locked=True)
                     self.error(string("ui.app_could_not_start", app_name=APP_NAME))
@@ -1355,7 +1388,9 @@ class CeluneUI(App):
         def update() -> None:
             self._input_locked = locked
             self.input_box.placeholder = (
-                "Please wait" if locked else self._normal_input_placeholder()
+                string("ui.wait_placeholder")
+                if locked
+                else self._normal_input_placeholder()
             )
             self.style_button.disabled = locked
             if self._is_voice_conversion_mode():
@@ -1959,6 +1994,15 @@ class CeluneUI(App):
         if not text:
             return False
 
+        if self._is_ui_test_mode():
+            self._suppress_input_change = True
+            try:
+                self.input_box.load_text("")
+            finally:
+                self._suppress_input_change = False
+            self.safe_status(string("ui.test_mode_active"))
+            return True
+
         if self.celune.cur_state == "waking":
             self._cancel_sleep_timer()
             self.safe_status(string("status.waking_up"))
@@ -2014,7 +2058,7 @@ class CeluneUI(App):
 
         self._cancel_sleep_timer()
         self.style_button.disabled = True
-        self.input_box.placeholder = "Please wait"
+        self.input_box.placeholder = string("ui.wait_placeholder")
         self.input_box.load_text("")
         self.update_resources()
         return True
@@ -2238,7 +2282,7 @@ class CeluneUI(App):
             self.change_voice_lock_state(locked=True)
             return
 
-        if not self.celune_ready:
+        if not self.celune_ready and not self.celune.backend.is_fake:
             self.safe_log(string("ui.core_engine_not_loaded"), "warning")
             self.change_voice_lock_state(locked=True)
             return
@@ -2270,7 +2314,7 @@ class CeluneUI(App):
         """Reset UI state after Celune stops talking."""
         if self.cur_state in {"exiting", "error"} or not self.celune_ready:
             if self.input_box is not None:
-                self.input_box.placeholder = "Please wait"
+                self.input_box.placeholder = string("ui.wait_placeholder")
             if self.style_button is not None:
                 self.style_button.disabled = True
             return

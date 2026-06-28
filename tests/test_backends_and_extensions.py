@@ -230,10 +230,11 @@ class BackendTests(TestCase):
                 """Return a generator-style conversion result for backend tests.
 
                 Args:
-                    kwargs: Value for `kwargs`.
+                    kwargs: Wrapper arguments forwarded from the backend under test.
 
                 Returns:
-                    Result of this function.
+                    Generator[None, None, npt.NDArray[np.float32]]: One generator whose return value carries the
+                    converted waveform.
                 """
                 captured.update(kwargs)
                 assert Path(str(kwargs["source"])).exists()
@@ -290,10 +291,11 @@ class BackendTests(TestCase):
                 """Return a generator-style conversion result for backend tests.
 
                 Args:
-                    kwargs: Value for `kwargs`.
+                    kwargs: Wrapper arguments forwarded from the backend under test.
 
                 Returns:
-                    Result of this function.
+                    Generator[None, None, npt.NDArray[np.float32]]: One generator whose return value carries the
+                    converted waveform.
                 """
                 captured.update(kwargs)
 
@@ -320,7 +322,7 @@ class BackendTests(TestCase):
                 )
             )
 
-        self.assertEqual(captured["pitch_shift"], -6)
+        self.assertEqual(captured["pitch_shift"], 9)
 
     def test_seedvc_backend_prefers_request_f0_condition_over_backend_default(
         self,
@@ -340,10 +342,11 @@ class BackendTests(TestCase):
                 """Return a generator-style conversion result for backend tests.
 
                 Args:
-                    kwargs: Value for `kwargs`.
+                    kwargs: Wrapper arguments forwarded from the backend under test.
 
                 Returns:
-                    Result of this function.
+                    Generator[None, None, npt.NDArray[np.float32]]: One generator whose return value carries the
+                    converted waveform.
                 """
                 captured.update(kwargs)
 

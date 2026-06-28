@@ -3,6 +3,7 @@
 
 import os
 import gc
+import sys
 import time
 import queue
 import shutil
@@ -2151,7 +2152,12 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when initialization completed successfully, otherwise ``False``.
         """
-        log_runtime_banner(self.log, self._active_runtime_backend_name())
+        log_runtime_banner(self.log, self.vc_backend or self.backend)
+
+        if self.backend.is_fake and "pytest" not in sys.modules:
+            self.log(string("celune.test_mode_active", app_name=APP_NAME))
+            return True
+
         self._cleanup_residual_temp_data(app_data_dir() / "temp")
         if not self.load_available_voices():
             self.cur_state = "error"
@@ -2794,8 +2800,8 @@ class Celune(CeluneStateAccessors):
             pitch_shift: Optional semitone adjustment to apply during VC.
             f0_condition: Optional override enabling Seed-VC singing mode.
             log_playback: Whether playback timing and length info should be logged.
-            reset_ready_announcement: Whether this audio input should allow a later ready message once
-                playback completes.
+            reset_ready_announcement: Whether this audio input should allow a later ready message once playback
+                completes.
 
         Returns:
             bool: ``True`` when the current mode accepted the audio input.

@@ -592,7 +592,14 @@ class UIStartupTests(TestCase):
             "#progress": SimpleNamespace(update=lambda **_: None),
             "#header": Label(),
         }
-        ui.celune = cast(Celune, SimpleNamespace(config={}, close=lambda: None))
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={},
+                close=lambda: None,
+                backend=FakeBackend,
+            ),
+        )
 
         original_stdout = sys.stdout
         original_stderr = sys.stderr
@@ -623,6 +630,98 @@ class UIStartupTests(TestCase):
             self.assertIs(sys.stderr, ui._log_stderr)
             self.assertTrue(ui._runtime_log_capture_enabled)
             set_focus.assert_called_once_with(None)
+        finally:
+            ui.disable_runtime_log_capture()
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+
+    def test_textual_ui_mount_binds_callbacks_for_attached_runtime(self) -> None:
+        """Verify an attached runtime adopts the Textual UI callbacks on mount."""
+        ui = CeluneUI()
+        fake_widgets = {
+            "#logs": RichLog(),
+            "#input": TextArea(),
+            "#status": Label(),
+            "#resources": Label(),
+            "#style": Button(),
+            "#vc-mode": Button(),
+            "#vc-pitch": Button(),
+            "#progress": SimpleNamespace(update=lambda **_: None),
+            "#header": Label(),
+        }
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={},
+                close=lambda: None,
+                backend=FakeBackend,
+                log_callback=None,
+                status_callback=None,
+                error_callback=None,
+                idle_callback=None,
+                queue_avail_callback=None,
+                voice_changed_callback=None,
+                change_input_state_callback=None,
+                change_voice_lock_state_callback=None,
+                progress_callback=None,
+                glow=SimpleNamespace(fatal=lambda: None),
+            ),
+        )
+
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+
+        try:
+            with (
+                mock.patch("celune.ui.app.colors.configure_theme"),
+                mock.patch("celune.ui.app.default_loader", return_value=None),
+                mock.patch("celune.ui.app.ui_resources.prime_usage"),
+                mock.patch.object(
+                    ui,
+                    "query_one",
+                    side_effect=lambda selector, *_args: fake_widgets[selector],
+                ),
+                mock.patch.object(ui, "query", return_value=[]),
+                mock.patch.object(ui, "set_interval"),
+                mock.patch.object(ui, "set_focus"),
+                mock.patch.object(ui, "call_after_refresh"),
+                mock.patch.object(ui, "update_resources"),
+                mock.patch.object(ui, "_refresh_status"),
+                mock.patch.object(ui, "_refresh_theme_text"),
+                mock.patch.object(ui, "_refresh_logs"),
+            ):
+                ui.on_mount()
+
+            self.assertIs(ui.celune.log_callback.__self__, ui)
+            self.assertIs(ui.celune.log_callback.__func__, CeluneUI.tts_log)
+            self.assertIs(ui.celune.status_callback.__self__, ui)
+            self.assertIs(ui.celune.status_callback.__func__, CeluneUI.safe_status)
+            self.assertIs(ui.celune.error_callback.__self__, ui)
+            self.assertIs(ui.celune.error_callback.__func__, CeluneUI.error)
+            self.assertIs(ui.celune.idle_callback.__self__, ui)
+            self.assertIs(ui.celune.idle_callback.__func__, CeluneUI.tts_idle)
+            self.assertIs(ui.celune.queue_avail_callback.__self__, ui)
+            self.assertIs(
+                ui.celune.queue_avail_callback.__func__,
+                CeluneUI.tts_queue_avail,
+            )
+            self.assertIs(ui.celune.voice_changed_callback.__self__, ui)
+            self.assertIs(
+                ui.celune.voice_changed_callback.__func__,
+                CeluneUI.tts_voice_changed,
+            )
+            self.assertIs(ui.celune.change_input_state_callback.__self__, ui)
+            self.assertIs(
+                ui.celune.change_input_state_callback.__func__,
+                CeluneUI.change_input_state,
+            )
+            self.assertIs(ui.celune.change_voice_lock_state_callback.__self__, ui)
+            self.assertIs(
+                ui.celune.change_voice_lock_state_callback.__func__,
+                CeluneUI.change_voice_lock_state,
+            )
+            self.assertIs(ui.celune.progress_callback.__self__, ui)
+            self.assertIs(ui.celune.progress_callback.__func__, CeluneUI.safe_progress)
         finally:
             ui.disable_runtime_log_capture()
             sys.stdout = original_stdout
@@ -784,6 +883,7 @@ class UIStartupTests(TestCase):
                 use_normalization=False,
                 dev=False,
                 glow=SimpleNamespace(fatal=lambda: None),
+                try_play_signal=mock.Mock(return_value=True),
             ),
         )
         terminal = mock.Mock()
@@ -855,6 +955,72 @@ class UIStartupTests(TestCase):
         self.assertEqual(ui.input_box.placeholder, "Please wait")
         self.assertEqual(ui.style_button.disabled, True)
         self.assertFalse(ui._fatal_error_active)
+
+    def test_load_tts_enters_ui_test_mode_without_error_for_fake_backend(self) -> None:
+        """Verify fake-backend UI test mode does not present as a startup failure."""
+        ui = CeluneUI()
+        ui.safe_status = mock.Mock()
+        ui.safe_progress = mock.Mock()
+        ui.change_input_state = mock.Mock()
+        ui.change_voice_lock_state = mock.Mock()
+        ui.error = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                load=lambda: True,
+                voices=(),
+                current_voice=None,
+                use_normalization=False,
+                backend=SimpleNamespace(is_fake=True),
+                dev=False,
+                glow=SimpleNamespace(fatal=lambda: None),
+                try_play_signal=mock.Mock(return_value=True),
+            ),
+        )
+
+        load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
+        patched_modules = dict(sys.modules)
+        patched_modules.pop("pytest", None)
+        with mock.patch("celune.ui.app.sys.modules", patched_modules):
+            load_tts(ui)
+
+        ui.safe_status.assert_called_once_with(string("ui.test_mode_active"))
+        ui.safe_progress.assert_called_once_with(1, 1)
+        ui.change_input_state.assert_called_once_with(locked=True)
+        ui.change_voice_lock_state.assert_called_once_with(locked=True)
+        ui.error.assert_not_called()
+        self.assertNotEqual(ui.cur_state, "error")
+
+    def test_submit_text_is_noop_in_ui_test_mode(self) -> None:
+        """Verify interactive fake-backend UI test mode ignores submitted input."""
+        ui = CeluneUI()
+        ui.input_box = TextArea()
+        ui.input_box.load_text("hello world")
+        ui.safe_status = mock.Mock()
+        ui.process_command = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                backend=SimpleNamespace(is_fake=True),
+                cur_state="idle",
+                sleeping=False,
+                config={},
+                think=mock.Mock(),
+                say=mock.Mock(),
+            ),
+        )
+
+        patched_modules = dict(sys.modules)
+        patched_modules.pop("pytest", None)
+        with mock.patch("celune.ui.app.sys.modules", patched_modules):
+            handled = ui._submit_text(ui.input_box.text)
+
+        self.assertTrue(handled)
+        self.assertEqual(ui.input_box.text, "")
+        ui.safe_status.assert_called_once_with(string("ui.test_mode_active"))
+        ui.process_command.assert_not_called()
+        ui.celune.think.assert_not_called()
+        ui.celune.say.assert_not_called()
 
     def test_tts_idle_does_not_recover_error_state_before_runtime_ready(self) -> None:
         """Verify signal callbacks cannot revert a failed startup back to idle."""

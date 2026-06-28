@@ -504,7 +504,14 @@ def _authenticated(request: Request) -> bool:
 
 
 def is_browser_ui_request(request: Request) -> bool:
-    """Return whether the request targets the mounted browser UI."""
+    """Return whether the request targets the mounted browser UI.
+
+    Args:
+        request: Incoming HTTP request to classify.
+
+    Returns:
+        bool: ``True`` when the request path points at the mounted WebUI.
+    """
     path = request.url.path.rstrip("/")
     return path == "/ui" or path.startswith("/ui/")
 
