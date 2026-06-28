@@ -42,6 +42,7 @@ class FakeBackend(CeluneBackend):
     supported_languages = ("en",)
     voice_models = {"balanced": "fake/balanced", "bold": "fake/bold"}
     default_voice = "balanced"
+    is_fake = True
 
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None

@@ -13,6 +13,7 @@ class CeluneVCBackend(ABC):
     """Base class for Celune voice-conversion backends."""
 
     name: str = "unknown"
+    is_fake: bool = False
 
     def __init__(self, log: Callable[[str, str], None]) -> None:
         self.log = log

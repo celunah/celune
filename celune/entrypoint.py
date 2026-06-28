@@ -46,6 +46,12 @@ EXIT_CODES = ExitCodes
 _RUNTIME: Optional[SimpleNamespace] = None
 
 
+def _load_ui_test_backend() -> type:
+    """Load the lightweight fake backend used by the explicit UI test mode."""
+    support = importlib.import_module("tests.support")
+    return support.FakeBackend
+
+
 def normalize_argv0(argv: Optional[list[str]] = None) -> list[str]:
     """Return argv with the launcher-facing program name normalized when applicable.
 
@@ -959,17 +965,25 @@ def handle_config(command_args: list[str], prog_name: str) -> None:
         sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
 
 
-def start(verbose: bool = False) -> None:
+def start(verbose: bool = False, testing: bool = False) -> None:
     """Instantiate and start the app.
 
     Args:
         verbose: Whether the app should be started in verbose (developer) mode.
+        testing: Whether the app should be started in UI test mode.
 
     Raises:
         No: Raised on Celune's name day unless explicitly overridden.
         Exception: Re-raised after printing a traceback in developer mode.
     """
     runtime = _load_runtime()
+    if testing:
+        ui = runtime.CeluneUI()
+        celune = runtime.Celune(config={}, backend=_load_ui_test_backend())
+        ui.celune = celune
+        ui.run()
+        sys.exit(EXIT_CODES.EXIT_SUCCESS.value)
+
     try:
         if runtime.supports_ansi():
             sys.stdout.write(f"\x1b]2;{string('osc.starting', app_name=APP_NAME)}\x07")
@@ -1258,7 +1272,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         start()
     elif args[0] in {"start", "run"}:
         if len(args) > 1:
-            if args[1] not in {"--verbose", "-v"}:
+            if args[1] not in {"--verbose", "-v", "--test", "-t"}:
                 print(string("cli.invalid_argument"))
                 print()
                 print(
@@ -1267,7 +1281,8 @@ def main(argv: Optional[list[str]] = None) -> None:
                 print(string("cli.start_description", app_name=APP_NAME))
                 sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
         verbose = any(arg in {"--verbose", "-v"} for arg in args[1:])
-        start(verbose=verbose)
+        testing = any(arg in {"--test", "-t"} for arg in args[1:])
+        start(verbose=verbose, testing=testing)
     elif args[0] == "config":
         handle_config(args[1:], resolved_argv[0])
     elif args[0] == "doctor":

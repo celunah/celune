@@ -250,6 +250,7 @@ class CeluneBackend(ABC, Generic[ModelT]):
     default_voice: Optional[str] = None
     uses_voice_bundles: bool = False
     max_new_tokens: int = 512
+    is_fake: bool = False
 
     def __init__(
         self, log: Callable[[str, str], None], model_name: Optional[str] = None

@@ -7,25 +7,33 @@ from typing import Callable, Union
 
 import torch
 
+from .i18n import string
 from .constants import APP_NAME
+from .backends.tts import CeluneBackend
+from .backends.vc import CeluneVCBackend
 from .utils import cuda_architecture, format_number
 from . import __codename__, __comment__, __version__
 
 
-def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> None:
+def log_runtime_banner(
+    log: Callable[[str, str], None], backend: Union[CeluneBackend, CeluneVCBackend]
+) -> None:
     """Log high-level version and environment information.
 
     Args:
         log: Logging callback that receives the generated banner lines.
-        backend_name: Optional backend name shown in the runtime banner.
+        backend: The backend with which Celune was started.
     """
     cuda_version = torch.version.cuda
 
     cuda_line = f", CUDA {cuda_version}" if cuda_version else ""
+    backend_line = (
+        f"on backend {backend.name}, " if not backend.is_fake else "in UI test mode, "
+    )
 
     log(
         f"{APP_NAME} {__version__} "
-        f"on backend {backend_name}, "
+        f"{backend_line}"
         f"Python {platform.python_version()}, "
         f"PyTorch {torch.__version__}"
         f"{cuda_line}",  # NOTE: may concatenate an empty string if CUDA support is not present
@@ -36,7 +44,8 @@ def log_runtime_banner(log: Callable[[str, str], None], backend_name: str) -> No
         "info",
     )
 
-    log("Environment test...", "info")
+    if not backend.is_fake:
+        log(string("celune.testing_environment"), "info")
 
 
 def check_supported_backends() -> tuple[str, bool]:
