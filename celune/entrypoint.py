@@ -977,14 +977,14 @@ def start(verbose: bool = False, testing: bool = False) -> None:
         Exception: Re-raised after printing a traceback in developer mode.
     """
     runtime = _load_runtime()
-    if testing:
-        ui = runtime.CeluneUI()
-        celune = runtime.Celune(config={}, backend=_load_ui_test_backend())
-        ui.celune = celune
-        ui.run()
-        sys.exit(EXIT_CODES.EXIT_SUCCESS.value)
 
     try:
+        if testing:
+            ui = runtime.CeluneUI()
+            celune = runtime.Celune(config={}, backend=_load_ui_test_backend())
+            ui.celune = celune
+            ui.run()
+            sys.exit(EXIT_CODES.EXIT_SUCCESS.value)
         if runtime.supports_ansi():
             sys.stdout.write(f"\x1b]2;{string('osc.starting', app_name=APP_NAME)}\x07")
             sys.stdout.flush()
@@ -1271,15 +1271,13 @@ def main(argv: Optional[list[str]] = None) -> None:
     if not args:
         start()
     elif args[0] in {"start", "run"}:
-        if len(args) > 1:
-            if args[1] not in {"--verbose", "-v", "--test", "-t"}:
-                print(string("cli.invalid_argument"))
-                print()
-                print(
-                    string("cli.start_usage", program=resolved_argv[0], command=args[0])
-                )
-                print(string("cli.start_description", app_name=APP_NAME))
-                sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+        allowed_args = {"--verbose", "-v", "--test", "-t"}
+        if any(arg not in allowed_args for arg in args[1:]):
+            print(string("cli.invalid_argument"))
+            print()
+            print(string("cli.start_usage", program=resolved_argv[0], command=args[0]))
+            print(string("cli.start_description", app_name=APP_NAME))
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
         verbose = any(arg in {"--verbose", "-v"} for arg in args[1:])
         testing = any(arg in {"--test", "-t"} for arg in args[1:])
         start(verbose=verbose, testing=testing)
