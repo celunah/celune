@@ -1393,11 +1393,7 @@ class CeluneUI(App):
                 else self._normal_input_placeholder()
             )
             self.style_button.disabled = locked
-            if self._is_voice_conversion_mode():
-                if self.vc_mode_button is not None:
-                    self.vc_mode_button.disabled = locked
-                if self.vc_pitch_button is not None:
-                    self.vc_pitch_button.disabled = locked
+            self.refresh_vc_controls()
             self.update_resources()
 
         self._run_on_ui_thread(update)
@@ -1482,6 +1478,13 @@ class CeluneUI(App):
         """Return one signed semitone label for the VC pitch control."""
         return f"{value:+d}"
 
+    def _set_vc_controls_visibility(self, visible: bool) -> None:
+        """Show or hide the VC-only controls in the bottom input row."""
+        if self.vc_mode_button is not None:
+            self.vc_mode_button.display = visible
+        if self.vc_pitch_button is not None:
+            self.vc_pitch_button.display = visible
+
     def refresh_vc_controls(self) -> None:
         """Refresh VC control labels and enabled state from the current engine state."""
         if (
@@ -1492,6 +1495,7 @@ class CeluneUI(App):
             return
 
         is_vc_mode = self._is_voice_conversion_mode()
+        self._set_vc_controls_visibility(is_vc_mode)
         if not is_vc_mode:
             self._cancel_vc_recording(announce=False)
         f0_condition = bool(getattr(self.celune, "vc_f0_condition", False))

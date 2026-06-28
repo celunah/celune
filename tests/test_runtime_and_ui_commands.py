@@ -1432,6 +1432,36 @@ class UIStartupTests(TestCase):
         available.assert_called_once_with()
         thread_cls.return_value.start.assert_called_once()
 
+    def test_change_input_state_reveals_vc_buttons_after_backend_switch(self) -> None:
+        """Verify VC controls appear when the UI unlocks into voice conversion mode."""
+        ui = CeluneUI()
+        ui.input_box = TextArea()
+        ui.style_button = Button("Voice")
+        ui.vc_mode_button = Button(string("ui.vc_mode_talk"))
+        ui.vc_pitch_button = Button(string("ui.vc_pitch_button", value="+0"))
+        ui.resources = cast(Label, None)
+        ui._input_locked = True
+        ui.vc_mode_button.display = False
+        ui.vc_pitch_button.display = False
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={},
+                vc_backend=SimpleNamespace(),
+                vc_f0_condition=False,
+                vc_pitch_shift=0,
+            ),
+        )
+
+        with mock.patch("celune.ui.app.threading.Thread") as thread_cls:
+            ui.change_input_state(locked=False)
+
+        self.assertEqual(ui.vc_mode_button.display, True)
+        self.assertEqual(ui.vc_pitch_button.display, True)
+        self.assertEqual(ui.vc_mode_button.disabled, False)
+        self.assertEqual(ui.vc_pitch_button.disabled, False)
+        thread_cls.return_value.start.assert_called_once()
+
     def test_placeholder_uses_loaded_persona_not_runtime_capability(self) -> None:
         """Verify the input placeholder reflects whether Persona actually loaded."""
         ui = CeluneUI()
@@ -1487,6 +1517,62 @@ class UIStartupTests(TestCase):
             ui.normal_input_placeholder(),
             string("ui.voice_changer_placeholder"),
         )
+
+    def test_refresh_vc_controls_hides_buttons_outside_voice_conversion_mode(
+        self,
+    ) -> None:
+        """Verify VC-only buttons collapse away while the UI is in TTS mode."""
+        ui = CeluneUI()
+        ui.vc_mode_button = Button(string("ui.vc_mode_talk"))
+        ui.vc_pitch_button = Button(string("ui.vc_pitch_button", value="+0"))
+        ui._cancel_vc_recording = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                vc_backend=None,
+                vc_f0_condition=False,
+                vc_pitch_shift=0,
+            ),
+        )
+
+        ui.refresh_vc_controls()
+
+        self.assertEqual(ui.vc_mode_button.display, False)
+        self.assertEqual(ui.vc_pitch_button.display, False)
+        self.assertEqual(ui.vc_mode_button.disabled, True)
+        self.assertEqual(ui.vc_pitch_button.disabled, True)
+        ui._cancel_vc_recording.assert_called_once_with(announce=False)
+
+    def test_refresh_vc_controls_shows_buttons_in_voice_conversion_mode(
+        self,
+    ) -> None:
+        """Verify VC-only buttons return when a VC backend is active."""
+        ui = CeluneUI()
+        ui._input_locked = False
+        ui.vc_mode_button = Button(string("ui.vc_mode_talk"))
+        ui.vc_pitch_button = Button(string("ui.vc_pitch_button", value="+0"))
+        ui._cancel_vc_recording = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                vc_backend=SimpleNamespace(),
+                vc_f0_condition=True,
+                vc_pitch_shift=3,
+            ),
+        )
+
+        ui.refresh_vc_controls()
+
+        self.assertEqual(ui.vc_mode_button.display, True)
+        self.assertEqual(ui.vc_pitch_button.display, True)
+        self.assertEqual(ui.vc_mode_button.label, string("ui.vc_mode_sing"))
+        self.assertEqual(
+            ui.vc_pitch_button.label,
+            string("ui.vc_pitch_button", value="+3"),
+        )
+        self.assertEqual(ui.vc_mode_button.disabled, False)
+        self.assertEqual(ui.vc_pitch_button.disabled, False)
+        ui._cancel_vc_recording.assert_not_called()
 
     def test_runtime_logger_warning_is_routed_into_ui_logs(self) -> None:
         """Verify external Python logger warnings are routed into the UI logs."""
