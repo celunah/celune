@@ -760,7 +760,7 @@ def _flush_buffered_speech_chunks(
 
     buffer.clear()
     if not pushed_audio:
-        _set_playback_source_status(engine, source_id, "Speaking")
+        _set_playback_source_status(engine, source_id, string("status.speaking"))
         engine.cur_state = "speaking"
         engine.queue_avail_callback()
         return True
@@ -2403,6 +2403,12 @@ def generation_worker(engine: Celune) -> None:
 
                     if is_silent and silence_tier == 2:
                         engine.regenerate = True
+                        _queue_playback_done(
+                            engine,
+                            source_id,
+                            release_pipeline_when_finished=False,
+                            notify_idle_when_finished=False,
+                        )
                         # push recently processed item back so Celune can process it again
                         engine.text_queue.put(item)
                         engine.log(
