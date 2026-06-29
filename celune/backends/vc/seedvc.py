@@ -18,7 +18,7 @@ import soundfile as sf
 from .base import CeluneVCBackend
 from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from ...i18n import string
-from ...paths import app_data_dir
+from ...paths import huggingface_hub_cache_dir
 
 __all__ = ["CeluneSeedVCBackend"]
 
@@ -85,12 +85,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         self._wrapper_lock = threading.Lock()
 
     @staticmethod
-    def _seedvc_checkpoints_dir(create: bool = False) -> Path:
-        """Return the persistent Celune cache directory used for Seed-VC assets."""
-        path = app_data_dir(create=create) / "checkpoints"
-        if create:
-            path.mkdir(parents=True, exist_ok=True)
-        return path
+    def _seedvc_huggingface_cache_dir(create: bool = False) -> Path:
+        """Return the shared Hugging Face cache directory used for Seed-VC assets."""
+        return huggingface_hub_cache_dir(create=create)
 
     @classmethod
     def _configure_seedvc_downloads(
@@ -99,7 +96,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         wrapper_module: ModuleType,
     ) -> None:
         """Redirect Seed-VC's hardcoded checkpoint downloads into Celune's cache."""
-        cache_dir = cls._seedvc_checkpoints_dir(create=True)
+        cache_dir = cls._seedvc_huggingface_cache_dir(create=True)
         hf_hub_download = getattr(hf_utils_module, "hf_hub_download")
 
         def load_custom_model_from_hf(

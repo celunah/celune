@@ -376,10 +376,10 @@ class BackendTests(TestCase):
         self.assertEqual(captured["f0_condition"], True)
         self.assertEqual(output.sample_rate, 44100)
 
-    def test_seedvc_backend_redirects_package_checkpoint_downloads_into_app_data(
+    def test_seedvc_backend_redirects_package_checkpoint_downloads_into_hf_cache(
         self,
     ) -> None:
-        """Verify Celune overrides Seed-VC's repo-local checkpoint cache path."""
+        """Verify Celune redirects Seed-VC downloads into the shared Hugging Face cache."""
         backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
         captured: list[tuple[str, str, str]] = []
 
@@ -409,12 +409,12 @@ class BackendTests(TestCase):
             return importlib.import_module(name)
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            expected_cache_dir = Path(temp_dir) / "checkpoints"
+            expected_cache_dir = Path(temp_dir) / "huggingface" / "hub"
 
             with (
                 mock.patch(
-                    "celune.backends.vc.seedvc.app_data_dir",
-                    return_value=Path(temp_dir),
+                    "celune.backends.vc.seedvc.huggingface_hub_cache_dir",
+                    return_value=expected_cache_dir,
                 ),
                 mock.patch(
                     "celune.backends.vc.seedvc.importlib.import_module",
