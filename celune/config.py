@@ -15,6 +15,7 @@ from .typing.common import Config, JSONSerializable
 ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
 AudioDeviceConfig = Optional[Union[int, str]]
 AudioDeviceDirection = Literal["input", "output"]
+AudioDeviceInfoValue = Union[bool, int, float, str]
 
 
 def env_bool(name: str, fallback: bool = False) -> bool:
@@ -121,7 +122,7 @@ def resolve_audio_device_with_info(
     config: Optional[Mapping[str, JSONSerializable]],
     key: str,
     direction: AudioDeviceDirection,
-) -> tuple[AudioDeviceConfig, Optional[Mapping[str, object]]]:
+) -> tuple[AudioDeviceConfig, Optional[Mapping[str, AudioDeviceInfoValue]]]:
     """Resolve one configured audio device into an exact PortAudio selector.
 
     Args:
@@ -130,7 +131,8 @@ def resolve_audio_device_with_info(
         direction: Whether the device must support ``"input"`` or ``"output"``.
 
     Returns:
-        tuple[AudioDeviceConfig, Optional[Mapping[str, object]]]: The resolved selector and optional direct device info.
+        tuple[AudioDeviceConfig, Optional[Mapping[str, AudioDeviceInfoValue]]]: The resolved selector and optional
+        direct device info.
 
     Raises:
         ValueError: The configured device name matches multiple devices.

@@ -733,6 +733,41 @@ def _queue_playback_done(
     )
 
 
+def _flush_buffered_speech_chunks(
+    engine: Celune,
+    source_id: int,
+    buffer: list[npt.NDArray[np.float32]],
+    speech_timing: SpeechTiming,
+    pushed_audio: bool,
+    stream_queue: Optional[SpeechStreamQueue],
+) -> bool:
+    """Queue buffered speech chunks without merging them into a larger copy."""
+    if not buffer:
+        return pushed_audio
+
+    first_buffer_chunk = True
+    for queued_audio in buffer:
+        _queue_playback_chunk(
+            engine,
+            source_id,
+            queued_audio,
+            BASE_SR,
+            speech_timing if not pushed_audio and first_buffer_chunk else None,
+        )
+        if stream_queue is not None:
+            stream_queue.put(queued_audio.copy())
+        first_buffer_chunk = False
+
+    buffer.clear()
+    if not pushed_audio:
+        _set_playback_source_status(engine, source_id, "Speaking")
+        engine.cur_state = "speaking"
+        engine.queue_avail_callback()
+        return True
+
+    return pushed_audio
+
+
 def _youtube_sfx_temp_path() -> pathlib.Path:
     """Return the fixed temporary WAV path used for URL-backed SFX playback."""
     return app_data_dir(create=True) / "temp" / "temporary_audio.wav"
@@ -2267,26 +2302,15 @@ def generation_worker(engine: Celune) -> None:
                                 smart_buffer_target_seconds <= 0.0
                                 or buffered_speech_len >= smart_buffer_target_seconds
                             ):
-                                queued_audio = np.concatenate(buffer)
-                                _queue_playback_chunk(
+                                pushed_audio = _flush_buffered_speech_chunks(
                                     engine,
                                     source_id,
-                                    queued_audio,
-                                    BASE_SR,
-                                    speech_timing if not pushed_audio else None,
+                                    buffer,
+                                    speech_timing,
+                                    pushed_audio,
+                                    stream_queue,
                                 )
-                                if stream_queue is not None:
-                                    stream_queue.put(queued_audio.copy())
-                                buffer = []
                                 buffered_speech_len = 0.0
-
-                                if not pushed_audio:
-                                    pushed_audio = True
-                                    _set_playback_source_status(
-                                        engine, source_id, "Speaking"
-                                    )
-                                    engine.cur_state = "speaking"
-                                    engine.queue_avail_callback()
 
                         if (
                             not engine.exit_requested
@@ -2345,21 +2369,14 @@ def generation_worker(engine: Celune) -> None:
                 )
 
                 if buffer:
-                    queued_audio = np.concatenate(buffer)
-                    _queue_playback_chunk(
+                    pushed_audio = _flush_buffered_speech_chunks(
                         engine,
                         source_id,
-                        queued_audio,
-                        BASE_SR,
-                        speech_timing if not pushed_audio else None,
+                        buffer,
+                        speech_timing,
+                        pushed_audio,
+                        stream_queue,
                     )
-                    if stream_queue is not None:
-                        stream_queue.put(queued_audio.copy())
-                    if not pushed_audio:
-                        pushed_audio = True
-                        _set_playback_source_status(engine, source_id, "Speaking")
-                        engine.cur_state = "speaking"
-                        engine.queue_avail_callback()
 
                 engine.log(string("pipeline.generation_done"))
 
@@ -2496,13 +2513,11 @@ def _playback_blocks(
 ) -> deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]:
     """Split one queued source chunk into short blocks for the mixer."""
     blocks = deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]()
-    pieces = split(chunk.audio, chunk.sample_rate, block_seconds)
-    if not pieces:
-        pieces = [np.asarray(chunk.audio, dtype=np.float32)]
-    for index, piece in enumerate(pieces):
-        blocks.append(
-            (np.asarray(piece, dtype=np.float32), chunk.timing if index == 0 else None)
-        )
+    audio = np.asarray(chunk.audio, dtype=np.float32)
+    frames_per_block = max(1, int(round(chunk.sample_rate * block_seconds)))
+    for start in range(0, len(audio), frames_per_block):
+        piece = np.asarray(audio[start : start + frames_per_block], dtype=np.float32)
+        blocks.append((piece, chunk.timing if start == 0 else None))
     return blocks
 
 
