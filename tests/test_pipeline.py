@@ -749,8 +749,9 @@ class PipelineTests(TestCase):
             pipeline.playback_worker(cast(Celune, engine))
 
         self.assertEqual(fake_stream.started, True)
-        self.assertGreater(len(fake_stream.written), 1)
+        self.assertEqual(len(fake_stream.written), 1)
         mixed_audio = np.concatenate(fake_stream.written)
+        self.assertEqual(mixed_audio.shape, (2400, 2))
         np.testing.assert_allclose(mixed_audio, 0.5, atol=1e-6)
         self.assertEqual(len(glow_calls), len(fake_stream.written))
         np.testing.assert_allclose(np.concatenate(glow_calls), 0.5, atol=1e-6)
@@ -2287,7 +2288,7 @@ class PipelineTests(TestCase):
         ):
             pipeline.generation_worker(cast(Celune, engine))
 
-        self.assertEqual(queued_lengths, [48000, 96000])
+        self.assertEqual(queued_lengths, [48000, 48000, 48000])
         self.assertGreater(engine.smart_buffer_generation_speed, 0.5)
         self.assertLess(engine.smart_buffer_generation_speed, 1.3)
         self.assertGreater(engine.smart_buffer_target_seconds, 0.0)
@@ -2349,8 +2350,28 @@ class PipelineTests(TestCase):
         ):
             pipeline.generation_worker(cast(Celune, engine))
 
-        self.assertEqual(queued_lengths, [144000])
+        self.assertEqual(queued_lengths, [48000, 48000, 48000])
         self.assertEqual(engine.smart_buffer_target_seconds, float("inf"))
+
+    def test_playback_blocks_uses_true_50ms_chunks(self) -> None:
+        """Verify mixer block splitting uses real wall-clock block lengths."""
+        timing = pipeline.SpeechTiming(start_time=0.0)
+        chunk = pipeline.PlaybackChunk(
+            source_id=1,
+            audio=np.zeros((4800, 2), dtype=np.float32),
+            sample_rate=48000,
+            timing=timing,
+        )
+
+        blocks = pipeline._playback_blocks(chunk)
+
+        self.assertEqual(len(blocks), 2)
+        first_block, first_timing = blocks[0]
+        second_block, second_timing = blocks[1]
+        self.assertEqual(first_block.shape, (2400, 2))
+        self.assertEqual(second_block.shape, (2400, 2))
+        self.assertIs(first_timing, timing)
+        self.assertIsNone(second_timing)
 
     def test_generation_worker_handles_save_false_without_concatenate_error(
         self,

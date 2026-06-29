@@ -17,7 +17,7 @@ import contextlib
 from pathlib import Path
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Optional, Callable, Protocol, Union, TextIO, cast
+from typing import Optional, Callable, Union, TextIO, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -64,7 +64,8 @@ from ..utils import (
 
 _VC_PITCH_SHIFT_MIN = -12
 _VC_PITCH_SHIFT_MAX = 12
-_VC_LIVE_STREAM_CHUNK_SECONDS = 1.0
+_VC_LIVE_STREAM_CHUNK_SECONDS = 0.32
+_VC_LIVE_STREAM_OVERLAP_SECONDS = 0.12
 _VC_FEEDBACK_RMS_MIN_PREVIOUS = 0.05
 _VC_FEEDBACK_RMS_MIN_CURRENT = 0.18
 _VC_FEEDBACK_RMS_RISE_RATIO = 2.0
@@ -83,9 +84,19 @@ _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
         "s/it]",
     }
 )
+_AudioDeviceScalar = Union[bool, int, float, str]
+_VCAudioCallback = Callable[
+    [
+        npt.NDArray[np.float32],
+        int,
+        Optional[tuple[float, float, float]],
+        Optional[sd.CallbackFlags],
+    ],
+    None,
+]
 
 
-def _device_scalar_int(value: object, default: int) -> int:
+def _device_scalar_int(value: Optional[_AudioDeviceScalar], default: int) -> int:
     """Return one audio-device metadata value as an integer when possible."""
     if isinstance(value, bool):
         return default
@@ -185,7 +196,7 @@ class CeluneUIInteractionState:
     vc_recording_previous_rms: float = 0.0
     vc_recording_sample_rate: int = 0
     vc_recording_submission_queue: Optional[
-        queue_module.Queue[Optional[tuple[npt.NDArray[np.float32], int, str]]]
+        queue_module.Queue[Optional[tuple[npt.NDArray[np.float32], int, str, bool]]]
     ] = None
     vc_recording_stream: Optional[sd.InputStream] = None
     vc_recording_stop_thread: Optional[threading.Thread] = None
@@ -475,16 +486,7 @@ class CeluneUI(App):
     def _refresh_theme_text(self) -> None:
         """Refresh widgets after a runtime theme change."""
 
-        class _RefreshableWidget(Protocol):
-            def refresh(self, *args, **kwargs) -> object:
-                """Refresh one widget in place.
-
-                Args:
-                    args: Positional refresh arguments accepted by the widget.
-                    kwargs: Keyword refresh arguments accepted by the widget.
-                """
-
-        def repaint(widget: _RefreshableWidget) -> None:
+        def repaint(widget: Widget) -> None:
             refresh = getattr(widget, "refresh", None)
             if refresh is None:
                 return
@@ -1599,6 +1601,49 @@ class CeluneUI(App):
         self._vc_recording_buffered_frames = 0
         return audio
 
+    @staticmethod
+    def _vc_live_overlap_frames(sample_rate: int) -> int:
+        """Return the live VC overlap size for one input sample rate."""
+        return max(1, int(sample_rate * _VC_LIVE_STREAM_OVERLAP_SECONDS))
+
+    def _flush_vc_recording_chunk_locked(
+        self,
+        keep_tail_frames: int = 0,
+    ) -> Optional[npt.NDArray[np.float32]]:
+        """Return one buffered VC chunk while optionally retaining a tail overlap."""
+        audio = self._flush_vc_recording_buffer_locked()
+        if audio is None or keep_tail_frames <= 0:
+            return audio
+
+        if len(audio) <= keep_tail_frames:
+            self._vc_recording_chunks = [audio]
+            self._vc_recording_buffered_frames = len(audio)
+            return None
+
+        retained = np.asarray(audio[-keep_tail_frames:], dtype=np.float32).copy()
+        flushed = np.asarray(audio[:-keep_tail_frames], dtype=np.float32).copy()
+        self._vc_recording_chunks = [retained]
+        self._vc_recording_buffered_frames = len(retained)
+        return flushed
+
+    @staticmethod
+    def _crossfade_vc_overlap(
+        previous_tail: npt.NDArray[np.float32],
+        current_head: npt.NDArray[np.float32],
+    ) -> npt.NDArray[np.float32]:
+        """Crossfade two same-rate VC overlap regions into one seamless bridge."""
+        overlap_frames = min(len(previous_tail), len(current_head))
+        if overlap_frames <= 0:
+            return np.zeros((0, 2), dtype=np.float32)
+
+        previous = np.asarray(previous_tail[-overlap_frames:], dtype=np.float32)
+        current = np.asarray(current_head[:overlap_frames], dtype=np.float32)
+        fade = np.linspace(0.0, 1.0, overlap_frames, dtype=np.float32)[:, None]
+        return np.asarray(
+            (previous * (1.0 - fade)) + (current * fade),
+            dtype=np.float32,
+        )
+
     def _clear_vc_recording_state(self) -> None:
         """Clear transient VC recording buffers after stop or cancel."""
         self._vc_recording_stream = None
@@ -1621,7 +1666,7 @@ class CeluneUI(App):
         int,
         str,
         Optional[
-            queue_module.Queue[Optional[tuple[npt.NDArray[np.float32], int, str]]]
+            queue_module.Queue[Optional[tuple[npt.NDArray[np.float32], int, str, bool]]]
         ],
         int,
     ]:
@@ -1685,7 +1730,7 @@ class CeluneUI(App):
                 _captured_frames,
             ) = self._stop_vc_recording_stream()
             if submission_queue is not None and buffered_audio is not None:
-                submission_queue.put((buffered_audio, sample_rate, label))
+                submission_queue.put((buffered_audio, sample_rate, label, True))
             if submission_queue is not None:
                 submission_queue.put(None)
         self._shutdown_vc_stream(stream)
@@ -1726,10 +1771,10 @@ class CeluneUI(App):
 
         try:
             device_info = (
-                cast(dict[str, object], dict(direct_device_info))
+                cast(dict[str, _AudioDeviceScalar], dict(direct_device_info))
                 if direct_device_info is not None
                 else cast(
-                    dict[str, object],
+                    dict[str, _AudioDeviceScalar],
                     sd.query_devices(device=input_device, kind="input"),
                 )
             )
@@ -1758,31 +1803,156 @@ class CeluneUI(App):
             int(sample_rate * _VC_LIVE_STREAM_CHUNK_SECONDS),
             1,
         )
+        overlap_frames = min(
+            self._vc_live_overlap_frames(sample_rate),
+            max(stream_chunk_frames - 1, 1),
+        )
         submission_queue: queue_module.Queue[
-            Optional[tuple[npt.NDArray[np.float32], int, str]]
+            Optional[tuple[npt.NDArray[np.float32], int, str, bool]]
         ] = queue_module.Queue()
 
         def submit_live_audio() -> None:
+            pending_tail: Optional[npt.NDArray[np.float32]] = None
+            pending_sample_rate = 0
+            pending_label = string("ui.audio_input_label")
+
+            def queue_playback_segment(
+                audio: npt.NDArray[np.float32],
+                playback_sample_rate: int,
+                playback_label: str,
+            ) -> None:
+                if len(audio) <= 0 or self.celune is None:
+                    return
+                if not self.celune.play_audio(
+                    np.asarray(audio, dtype=np.float32),
+                    playback_sample_rate,
+                    label=playback_label,
+                ):
+                    self.safe_log(
+                        string("ui.recording_stream_submit_failed"),
+                        "warning",
+                    )
+
             while True:
                 item = submission_queue.get()
                 if item is None:
+                    if pending_tail is not None and len(pending_tail) > 0:
+                        queue_playback_segment(
+                            pending_tail,
+                            pending_sample_rate,
+                            pending_label,
+                        )
                     return
 
-                audio, queued_sample_rate, queued_label = item
+                audio, queued_sample_rate, queued_label, is_final_chunk = item
                 try:
                     if self.celune is None:
                         continue
-                    if not self.celune.submit_audio(
+                    converted = self.celune.convert_audio(
                         audio,
                         queued_sample_rate,
                         label=queued_label,
-                        log_playback=False,
-                        reset_ready_announcement=False,
-                    ):
+                    )
+                    if converted is None:
                         self.safe_log(
                             string("ui.recording_stream_submit_failed"),
                             "warning",
                         )
+                        continue
+
+                    converted_audio = np.asarray(converted.audio, dtype=np.float32)
+                    playback_sample_rate = converted.sample_rate
+                    playback_label = converted.label
+                    playback_overlap_frames = min(
+                        self._vc_live_overlap_frames(playback_sample_rate),
+                        max(len(converted_audio) - 1, 0),
+                    )
+
+                    if (
+                        pending_tail is not None
+                        and pending_sample_rate != playback_sample_rate
+                    ):
+                        queue_playback_segment(
+                            pending_tail,
+                            pending_sample_rate,
+                            pending_label,
+                        )
+                        pending_tail = None
+                        pending_sample_rate = 0
+                        pending_label = playback_label
+
+                    if pending_tail is None:
+                        if is_final_chunk or playback_overlap_frames <= 0:
+                            queue_playback_segment(
+                                converted_audio,
+                                playback_sample_rate,
+                                playback_label,
+                            )
+                            continue
+
+                        if len(converted_audio) <= playback_overlap_frames:
+                            pending_tail = converted_audio.copy()
+                            pending_sample_rate = playback_sample_rate
+                            pending_label = playback_label
+                            continue
+
+                        queue_playback_segment(
+                            converted_audio[:-playback_overlap_frames],
+                            playback_sample_rate,
+                            playback_label,
+                        )
+                        pending_tail = converted_audio[-playback_overlap_frames:].copy()
+                        pending_sample_rate = playback_sample_rate
+                        pending_label = playback_label
+                        continue
+
+                    overlap_bridge = self._crossfade_vc_overlap(
+                        pending_tail,
+                        converted_audio[:playback_overlap_frames],
+                    )
+                    crossfade_frames = len(overlap_bridge)
+                    converted_remainder = converted_audio[
+                        min(len(converted_audio), crossfade_frames) :
+                    ]
+
+                    if is_final_chunk or playback_overlap_frames <= 0:
+                        segment_parts = [overlap_bridge]
+                        if len(converted_remainder) > 0:
+                            segment_parts.append(converted_remainder)
+                        if segment_parts:
+                            queue_playback_segment(
+                                np.concatenate(segment_parts),
+                                playback_sample_rate,
+                                playback_label,
+                            )
+                        pending_tail = None
+                        pending_sample_rate = 0
+                        continue
+
+                    if len(converted_remainder) <= playback_overlap_frames:
+                        if len(overlap_bridge) > 0:
+                            queue_playback_segment(
+                                overlap_bridge,
+                                playback_sample_rate,
+                                playback_label,
+                            )
+                        pending_tail = converted_remainder.copy()
+                        pending_sample_rate = playback_sample_rate
+                        pending_label = playback_label
+                        continue
+
+                    segment_parts = [overlap_bridge]
+                    body = converted_remainder[:-playback_overlap_frames]
+                    if len(body) > 0:
+                        segment_parts.append(body)
+                    queue_playback_segment(
+                        np.concatenate(segment_parts),
+                        playback_sample_rate,
+                        playback_label,
+                    )
+                    pending_tail = converted_remainder[-playback_overlap_frames:].copy()
+                    pending_sample_rate = playback_sample_rate
+                    pending_label = playback_label
                 except Exception as e:
                     if self.celune is None:
                         continue
@@ -1800,8 +1970,8 @@ class CeluneUI(App):
         def callback(
             indata: npt.NDArray[np.float32],
             frames: int,
-            time_info: object,
-            status: object,
+            time_info: Optional[tuple[float, float, float]],
+            status: Optional[sd.CallbackFlags],
         ) -> None:
             discard(frames)
             discard(time_info)
@@ -1831,10 +2001,12 @@ class CeluneUI(App):
                         self._vc_recording_buffered_frames >= stream_chunk_frames
                         and self._vc_recording_submission_queue is not None
                     ):
-                        buffered_audio = self._flush_vc_recording_buffer_locked()
+                        buffered_audio = self._flush_vc_recording_chunk_locked(
+                            keep_tail_frames=overlap_frames,
+                        )
                         if buffered_audio is not None:
                             self._vc_recording_submission_queue.put(
-                                (buffered_audio, sample_rate, label)
+                                (buffered_audio, sample_rate, label, False)
                             )
 
             if should_stop_for_feedback:
@@ -1895,7 +2067,7 @@ class CeluneUI(App):
                     captured_frames,
                 ) = self._stop_vc_recording_stream()
                 if submission_queue is not None and buffered_audio is not None:
-                    submission_queue.put((buffered_audio, sample_rate, label))
+                    submission_queue.put((buffered_audio, sample_rate, label, True))
                 if submission_queue is not None:
                     submission_queue.put(None)
             self._shutdown_vc_stream(stream)

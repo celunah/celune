@@ -6,12 +6,13 @@ import time
 import logging
 import tempfile
 import warnings
-from typing import Callable, Optional, cast
+from typing import Optional, cast
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock, TestCase
 
 import numpy as np
+import sounddevice as sd
 from textual import events
 from textual.widgets import Button, Label, RichLog, TextArea
 
@@ -22,6 +23,7 @@ from celune.celune import Celune
 from celune.backends.tts.qwen3 import Qwen3
 from celune.constants import APP_NAME, JSONSerializable
 from celune.i18n import string
+from celune.ui import app as ui_app
 from celune.ui.app import CeluneUI
 from celune.ui.headless import CeluneHeadlessUI
 from celune.ui import resources as ui_resources
@@ -1143,7 +1145,16 @@ class UIStartupTests(TestCase):
             SimpleNamespace(
                 input_mode="voice_conversion",
                 vc_backend=SimpleNamespace(),
-                submit_audio=mock.Mock(return_value=True),
+                convert_audio=mock.Mock(
+                    side_effect=lambda audio, sample_rate, label=None, **_kwargs: (
+                        SimpleNamespace(
+                            audio=np.asarray(audio, dtype=np.float32).copy(),
+                            sample_rate=sample_rate,
+                            label=label or "Stereo Mix",
+                        )
+                    )
+                ),
+                play_audio=mock.Mock(return_value=True),
                 is_in_tutorial=False,
                 dev=False,
                 config={"input_device": "Stereo Mix (Realtek)"},
@@ -1151,12 +1162,10 @@ class UIStartupTests(TestCase):
         )
         ui.safe_log = mock.Mock()
         ui.update_resources = mock.Mock()
-        captured_callback: Optional[
-            Callable[[np.ndarray, int, object, object], None]
-        ] = None
+        captured_callback: Optional[ui_app._VCAudioCallback] = None
 
         def invoke_captured_callback(
-            callback: Callable[[np.ndarray, int, object, object], None],
+            callback: ui_app._VCAudioCallback,
             audio: np.ndarray,
         ) -> None:
             callback(
@@ -1202,18 +1211,18 @@ class UIStartupTests(TestCase):
             else:
                 invoke_captured_callback(
                     cast(
-                        Callable[[np.ndarray, int, object, object], None],
+                        ui_app._VCAudioCallback,
                         captured_callback,
                     ),
-                    np.ones((48000, 2), dtype=np.float32),
+                    np.ones((20000, 2), dtype=np.float32),
                 )
                 for _ in range(50):
-                    if cast(mock.Mock, ui.celune.submit_audio).call_count >= 1:
+                    if cast(mock.Mock, ui.celune.convert_audio).call_count >= 1:
                         break
                     time.sleep(0.01)
                 invoke_captured_callback(
                     cast(
-                        Callable[[np.ndarray, int, object, object], None],
+                        ui_app._VCAudioCallback,
                         captured_callback,
                     ),
                     np.ones((8, 2), dtype=np.float32),
@@ -1235,32 +1244,32 @@ class UIStartupTests(TestCase):
             "Stereo Mix (Realtek)",
         )
         for _ in range(50):
-            if cast(mock.Mock, ui.celune.submit_audio).call_count >= 2:
+            if cast(mock.Mock, ui.celune.convert_audio).call_count >= 2:
                 break
             time.sleep(0.01)
 
-        self.assertGreaterEqual(cast(mock.Mock, ui.celune.submit_audio).call_count, 2)
-        submit_calls = cast(mock.Mock, ui.celune.submit_audio).call_args_list
-        first_submit_args = submit_calls[0].args
-        final_submit_args = submit_calls[-1].args
-        self.assertEqual(first_submit_args[1], 48000)
-        self.assertEqual(final_submit_args[1], 48000)
+        self.assertGreaterEqual(cast(mock.Mock, ui.celune.convert_audio).call_count, 2)
+        convert_calls = cast(mock.Mock, ui.celune.convert_audio).call_args_list
+        play_calls = cast(mock.Mock, ui.celune.play_audio).call_args_list
+        first_convert_args = convert_calls[0].args
+        final_convert_args = convert_calls[-1].args
+        expected_first_chunk_frames = 20000 - int(
+            48000 * ui_app._VC_LIVE_STREAM_OVERLAP_SECONDS
+        )
+        self.assertEqual(first_convert_args[1], 48000)
+        self.assertEqual(final_convert_args[1], 48000)
         self.assertEqual(
-            submit_calls[-1].kwargs["label"],
+            convert_calls[-1].kwargs["label"],
             "Stereo Mix",
         )
-        self.assertEqual(submit_calls[0].kwargs["log_playback"], False)
-        self.assertEqual(submit_calls[-1].kwargs["log_playback"], False)
-        self.assertEqual(
-            submit_calls[0].kwargs["reset_ready_announcement"],
-            False,
-        )
-        self.assertEqual(
-            submit_calls[-1].kwargs["reset_ready_announcement"],
-            False,
-        )
-        self.assertGreaterEqual(len(first_submit_args[0]), 36000)
-        self.assertEqual(len(final_submit_args[0]), 8)
+        self.assertEqual(len(first_convert_args[0]), expected_first_chunk_frames)
+        self.assertGreater(len(final_convert_args[0]), 8)
+        self.assertGreaterEqual(len(play_calls), 2)
+        first_play_args = play_calls[0].args
+        final_play_args = play_calls[-1].args
+        self.assertLess(len(first_play_args[0]), len(first_convert_args[0]))
+        self.assertEqual(first_play_args[1], 48000)
+        self.assertEqual(final_play_args[1], 48000)
 
     def test_vc_recording_feedback_spike_stops_live_stream(self) -> None:
         """Verify a sudden microphone RMS spike stops live VC capture automatically."""
@@ -1271,16 +1280,23 @@ class UIStartupTests(TestCase):
             SimpleNamespace(
                 input_mode="voice_conversion",
                 vc_backend=SimpleNamespace(),
-                submit_audio=mock.Mock(return_value=True),
+                convert_audio=mock.Mock(
+                    side_effect=lambda audio, sample_rate, label=None, **_kwargs: (
+                        SimpleNamespace(
+                            audio=np.asarray(audio, dtype=np.float32).copy(),
+                            sample_rate=sample_rate,
+                            label=label or "Stereo Mix",
+                        )
+                    )
+                ),
+                play_audio=mock.Mock(return_value=True),
                 is_in_tutorial=False,
                 dev=False,
             ),
         )
         ui.safe_log = mock.Mock()
         ui.update_resources = mock.Mock()
-        captured_callback: Optional[
-            Callable[[np.ndarray, int, object, object], None]
-        ] = None
+        captured_callback: Optional[ui_app._VCAudioCallback] = None
 
         class FakeInputStream:
             """Tiny input-stream fake for VC feedback-stop tests."""
@@ -1313,8 +1329,8 @@ class UIStartupTests(TestCase):
             def missing_callback(
                 _audio: np.ndarray,
                 _frames: int,
-                _time_info: object,
-                _status: object,
+                _time_info: Optional[tuple[float, float, float]],
+                _status: Optional[sd.CallbackFlags],
             ) -> None:
                 raise AssertionError("recording callback was not registered")
 
@@ -1490,7 +1506,7 @@ class UIStartupTests(TestCase):
                     "vram": "high",
                     "persona": cast(JSONSerializable, persona_config),
                 },
-                vision=object(),
+                vision=SimpleNamespace(),
             ),
         )
         ui._persona_available = ui.persona_loaded()
@@ -1509,7 +1525,7 @@ class UIStartupTests(TestCase):
             SimpleNamespace(
                 config={},
                 vc_backend=SimpleNamespace(),
-                vision=object(),
+                vision=SimpleNamespace(),
             ),
         )
 
