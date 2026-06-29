@@ -571,6 +571,33 @@ class UIStartupTests(TestCase):
         CeluneUI._instance = None
         CeluneHeadlessUI._instance = None
 
+    def test_crossfade_vc_overlap_keeps_mono_audio_one_dimensional(self) -> None:
+        """Verify mono live VC overlap crossfades stay valid 1D audio."""
+        ui = CeluneUI()
+        previous = np.linspace(-1.0, -0.25, 4, dtype=np.float32)
+        current = np.linspace(0.25, 1.0, 4, dtype=np.float32)
+
+        blended = ui._crossfade_vc_overlap(previous, current)
+
+        self.assertEqual(blended.shape, (4,))
+        self.assertEqual(blended.dtype, np.float32)
+
+    def test_crossfade_vc_overlap_upmixes_mixed_channel_shapes_to_stereo(self) -> None:
+        """Verify mixed mono/stereo live VC overlap crossfades return stereo audio."""
+        ui = CeluneUI()
+        previous = np.linspace(-1.0, 1.0, 4, dtype=np.float32)
+        current = np.column_stack(
+            (
+                np.linspace(1.0, 0.25, 4, dtype=np.float32),
+                np.linspace(-1.0, -0.25, 4, dtype=np.float32),
+            )
+        )
+
+        blended = ui._crossfade_vc_overlap(previous, current)
+
+        self.assertEqual(blended.shape, (4, 2))
+        self.assertEqual(blended.dtype, np.float32)
+
     def test_textual_ui_requires_attached_celune_on_mount(self) -> None:
         """Verify the Textual UI fails clearly without an attached Celune."""
         ui = CeluneUI()

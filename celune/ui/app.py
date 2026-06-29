@@ -1627,6 +1627,26 @@ class CeluneUI(App):
         return flushed
 
     @staticmethod
+    def _normalize_vc_overlap_audio(
+        audio: npt.NDArray[np.float32],
+    ) -> npt.NDArray[np.float32]:
+        """Normalize one VC overlap chunk into valid mono or stereo time-first audio."""
+        normalized = np.asarray(audio, dtype=np.float32)
+        if normalized.ndim == 1:
+            return normalized
+        if normalized.ndim != 2:
+            raise ValueError(
+                f"expected 1D or 2D VC overlap audio, got {normalized.shape}"
+            )
+        if normalized.shape[1] == 1:
+            return normalized[:, 0]
+        if normalized.shape[1] == 2:
+            return normalized
+        raise ValueError(
+            f"expected mono or stereo VC overlap audio, got {normalized.shape}"
+        )
+
+    @staticmethod
     def _crossfade_vc_overlap(
         previous_tail: npt.NDArray[np.float32],
         current_head: npt.NDArray[np.float32],
@@ -1636,9 +1656,19 @@ class CeluneUI(App):
         if overlap_frames <= 0:
             return np.zeros((0, 2), dtype=np.float32)
 
-        previous = np.asarray(previous_tail[-overlap_frames:], dtype=np.float32)
-        current = np.asarray(current_head[:overlap_frames], dtype=np.float32)
-        fade = np.linspace(0.0, 1.0, overlap_frames, dtype=np.float32)[:, None]
+        previous = CeluneUI._normalize_vc_overlap_audio(previous_tail[-overlap_frames:])
+        current = CeluneUI._normalize_vc_overlap_audio(current_head[:overlap_frames])
+
+        if previous.ndim != current.ndim:
+            if previous.ndim == 1:
+                previous = np.column_stack((previous, previous))
+            if current.ndim == 1:
+                current = np.column_stack((current, current))
+
+        fade = np.linspace(0.0, 1.0, overlap_frames, dtype=np.float32)
+        if previous.ndim == 2:
+            fade = fade[:, None]
+
         return np.asarray(
             (previous * (1.0 - fade)) + (current * fade),
             dtype=np.float32,
