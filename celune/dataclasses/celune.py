@@ -2,8 +2,8 @@
 
 import queue
 import threading
-from dataclasses import dataclass, field
 from typing import Optional, Union
+from dataclasses import dataclass, field
 
 import numpy as np
 import numpy.typing as npt
@@ -11,15 +11,17 @@ import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from ..backends import CeluneBackend
-from ..cevoice import CEVoicePersona
-from ..chroma import AudioRGBGlow
 from ..config import Config
-from ..constants import JSONSerializable, PipelineStates
+from ..chroma import AudioRGBGlow
+from ..cevoice import CEVoicePersona
+from ..backends.tts import CeluneBackend
+from ..persona.impl import PersonaClient
+from ..backends.vc import CeluneVCBackend
+from ..typing.backends import BackendModel
 from ..dsp import StreamingPedalboardReverb
 from ..extensions.manager import CeluneExtensionManager
-from ..persona.impl import PersonaClient
-from ..typing.backends import BackendModel
+from ..constants import JSONSerializable, PipelineStates
+from .properties import ConstantPropertySpec, ForwardedPropertySpec
 from ..typing.celune import (
     ErrorCallback,
     IdleCallback,
@@ -27,10 +29,11 @@ from ..typing.celune import (
     MessageCallback,
     ProgressCallback,
     QueueAvailableCallback,
+    TTSBackendRecipe,
+    VCBackendRecipe,
     VoiceChangedCallback,
     VoiceLockStateCallback,
 )
-from .properties import ConstantPropertySpec, ForwardedPropertySpec
 
 
 @dataclass
@@ -53,10 +56,16 @@ class CeluneBackendState:
     """Backend selection and configuration state."""
 
     config: Config
-    backend_spec: Optional[Union[str, type[CeluneBackend]]] = None
+    backend_spec: Optional[TTSBackendRecipe] = None
     backend_kwargs: dict[str, JSONSerializable] = field(default_factory=dict)
     backend: Optional[CeluneBackend] = None
     tts_backend: str = ""
+    vc_backend_spec: Optional[VCBackendRecipe] = None
+    vc_backend: Optional[CeluneVCBackend] = None
+    voice_conversion_backend: str = ""
+    vc_pitch_shift: int = 0
+    vc_f0_condition: bool = False
+    input_mode: str = "text_to_speech"
     chunk_size: int = 0
     language: str = "Auto"
     dev: bool = False
@@ -139,6 +148,7 @@ class CeluneRuntimeState:
     regenerate: bool = False
     locked: bool = True
     loaded: bool = False
+    reload_pending: bool = False
     sleeping: bool = False
     last_flavor: Optional[str] = None
     ready_announced: bool = False
@@ -174,6 +184,16 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("_backend_kwargs", "_backend_state", "backend_kwargs"),
     ForwardedPropertySpec("backend", "_backend_state", "backend"),
     ForwardedPropertySpec("tts_backend", "_backend_state", "tts_backend"),
+    ForwardedPropertySpec("_vc_backend_spec", "_backend_state", "vc_backend_spec"),
+    ForwardedPropertySpec("vc_backend", "_backend_state", "vc_backend"),
+    ForwardedPropertySpec(
+        "voice_conversion_backend",
+        "_backend_state",
+        "voice_conversion_backend",
+    ),
+    ForwardedPropertySpec("vc_pitch_shift", "_backend_state", "vc_pitch_shift"),
+    ForwardedPropertySpec("vc_f0_condition", "_backend_state", "vc_f0_condition"),
+    ForwardedPropertySpec("input_mode", "_backend_state", "input_mode"),
     ForwardedPropertySpec("chunk_size", "_backend_state", "chunk_size"),
     ForwardedPropertySpec("language", "_backend_state", "language"),
     ForwardedPropertySpec("dev", "_backend_state", "dev"),
@@ -269,6 +289,7 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("sleeping", "_runtime_state", "sleeping"),
     ForwardedPropertySpec("_last_flavor", "_runtime_state", "last_flavor"),
     ForwardedPropertySpec("_ready_announced", "_runtime_state", "ready_announced"),
+    ForwardedPropertySpec("_reload_pending", "_runtime_state", "reload_pending"),
     ForwardedPropertySpec("cur_state", "_runtime_state", "cur_state"),
     ForwardedPropertySpec("is_in_tutorial", "_runtime_state", "is_in_tutorial"),
     ForwardedPropertySpec("extension_manager", "_runtime_state", "extension_manager"),

@@ -3,9 +3,10 @@
 
 import tempfile
 import contextlib
+import time
 from pathlib import Path
-from collections.abc import Iterator, Mapping
 from typing import Callable, Optional, cast
+from collections.abc import Iterator, Mapping
 
 import yaml
 import numpy as np
@@ -13,11 +14,10 @@ import numpy.typing as npt
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
-from ..paths import temp_data_dir
-from ..utils import custom_assert
-from ..exceptions import BackendError
-from ..cevoice import default_loader, CEVoiceLoader
-from ..typing.backends import MiniModel, MiniPromptState
+from ...paths import temp_data_dir
+from ...utils import custom_assert
+from ...cevoice import default_loader, CEVoiceLoader
+from ...typing.backends import MiniModel, MiniPromptState
 from .base import CeluneBackend, cached_hf_snapshot_path
 
 
@@ -44,12 +44,13 @@ class Mini(CeluneBackend[TTSModel]):
         self._generated_config_path: Optional[Path] = None
         self._loaded_language = "en"
 
-    def _require_compatible_bundle(self) -> tuple[CEVoiceLoader, tuple[str, ...]]:
+    @staticmethod
+    def _require_compatible_bundle() -> tuple[CEVoiceLoader, tuple[str, ...]]:
         """Return the active CEVOICE/CECHAR loader and its usable voice names."""
         loader = default_loader()
         custom_assert(
             loader is not None,
-            BackendError(
+            FileNotFoundError(
                 "backend 'mini' requires a compatible CEVOICE/CECHAR package "
                 "with at least one valid voice identifier"
             ),
@@ -69,7 +70,7 @@ class Mini(CeluneBackend[TTSModel]):
         )
         custom_assert(
             bool(voice_names),
-            BackendError(
+            FileNotFoundError(
                 "backend 'mini' requires a compatible CEVOICE/CECHAR package "
                 "with at least one valid voice identifier"
             ),
@@ -176,11 +177,11 @@ class Mini(CeluneBackend[TTSModel]):
                 return language_dir
 
         if not languages_dir.is_dir():
-            raise BackendError(
+            raise FileNotFoundError(
                 "invalid Pocket TTS snapshot: languages directory not found"
             )
         available = ", ".join(sorted(path.name for path in languages_dir.iterdir()))
-        raise BackendError(
+        raise FileNotFoundError(
             f"invalid Pocket TTS snapshot: languages/{language_name} not found"
             + (f" (available: {available})" if available else "")
         )
@@ -207,7 +208,7 @@ class Mini(CeluneBackend[TTSModel]):
         if code_matches:
             return code_matches[0]
 
-        raise BackendError(
+        raise FileNotFoundError(
             f"invalid Pocket TTS snapshot: template config for {language_name} not found"
         )
 
@@ -226,11 +227,11 @@ class Mini(CeluneBackend[TTSModel]):
         tokenizer_path = language_dir / "tokenizer.model"
 
         if not model_path.exists():
-            raise BackendError(
+            raise FileNotFoundError(
                 f"invalid Pocket TTS snapshot: {model_path.relative_to(snapshot_path)} not found"
             )
         if not tokenizer_path.exists():
-            raise BackendError(
+            raise FileNotFoundError(
                 f"invalid Pocket TTS snapshot: {tokenizer_path.relative_to(snapshot_path)} not found"
             )
 
@@ -380,8 +381,11 @@ class Mini(CeluneBackend[TTSModel]):
         pending_steps = 0
         chunk_index = 0
         total_steps = 0
+        first_chunk_time: Optional[float] = None
 
         for chunk in mini_model.generate_audio_stream(voice_state, text):
+            if first_chunk_time is None:
+                first_chunk_time = time.monotonic()
             chunk_array = chunk.detach().cpu().float().numpy()
             batch.append(chunk_array)
 
@@ -398,6 +402,7 @@ class Mini(CeluneBackend[TTSModel]):
                         "chunk_index": chunk_index,
                         "chunk_steps": pending_steps,
                         "total_steps_so_far": total_steps,
+                        "first_chunk_time": first_chunk_time,
                         "is_final": False,
                     },
                 )
@@ -418,6 +423,7 @@ class Mini(CeluneBackend[TTSModel]):
                         "chunk_index": chunk_index,
                         "chunk_steps": pending_steps,
                         "total_steps_so_far": total_steps,
+                        "first_chunk_time": first_chunk_time,
                         "is_final": False,
                     },
                 )
@@ -432,6 +438,7 @@ class Mini(CeluneBackend[TTSModel]):
                     "chunk_index": chunk_index,
                     "chunk_steps": len(batch),
                     "total_steps_so_far": total_steps,
+                    "first_chunk_time": first_chunk_time,
                     "is_final": True,
                 },
             )
@@ -445,6 +452,7 @@ class Mini(CeluneBackend[TTSModel]):
                     "chunk_index": chunk_index,
                     "chunk_steps": pending_steps,
                     "total_steps_so_far": total_steps,
+                    "first_chunk_time": first_chunk_time,
                     "is_final": True,
                 },
             )

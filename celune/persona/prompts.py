@@ -1,13 +1,10 @@
 # SPDX-License-Identifier: MIT
 """Structured prompt building for the Persona system."""
 
-import textwrap
-from pathlib import Path
+import contextlib
 from dataclasses import dataclass, field
 
-from platformdirs import user_data_dir
-
-from ..constants import APP_SLUG
+from ..paths import temp_data_dir
 
 
 def _render_lines(lines: list[str]) -> str:
@@ -48,6 +45,24 @@ class CharacterProfile:
         ]
         if self.profile.strip():
             lines.extend(["", "Profile:", self.profile.strip()])
+        return "\n".join(lines)
+
+    def render_identity_summary(self) -> str:
+        """Return a compact identity summary for the runtime prompt.
+
+        Returns:
+            str: A concise identity block for the active character.
+        """
+        name = self.name.strip() or "Unknown"
+        profile = self.profile.strip()
+        sep = ", " if profile else "."
+        if profile:
+            profile = profile[0].lower() + profile[1:]
+
+        lines = [
+            f"You are {name}{sep}{profile}",
+            f"When asked for an introduction, refer to yourself as {name}.",
+        ]
         return "\n".join(lines)
 
 
@@ -105,6 +120,29 @@ class PersonaCard:
             lines.extend(["", "Voice:", self.voice.strip()])
         return "\n".join(lines)
 
+    def behavior_cues(self) -> tuple[str, ...]:
+        """Return concise CEVOICE-driven behavior cues for the runtime prompt.
+
+        Returns:
+            tuple[str, ...]: Prompt lines derived from CEVOICE persona metadata.
+        """
+        cues: list[str] = []
+        if self.speaking_style.strip():
+            cues.append(self.speaking_style.strip())
+
+        rules: list[str] = []
+        for item in self.boundaries:
+            stripped = item.strip()
+            if stripped:
+                rules.append(stripped)
+        for item in self.prompt_rules:
+            stripped = item.strip()
+            if stripped and stripped not in rules:
+                rules.append(stripped)
+        if rules:
+            cues.append("\n- ".join(rules[:2]))
+        return tuple(cues)
+
 
 @dataclass(frozen=True)
 class RetrievedMemoryBundle:
@@ -153,11 +191,6 @@ class ShortTermHistory:
                 None,
             )
 
-            # HACK: don't repeat this
-            # the characters loved to repeat themselves for no apparent reason
-            # thanks Qwen for me having to prompt engineer around this issue with both ChatGPT and Claude
-            #
-            # Qwen3-VL is also prone to this, the prompt probably sucks
             if last_assistant:
                 lines.append(
                     "[The assistant has already acknowledged the complaint about repetition. "
@@ -169,38 +202,30 @@ class ShortTermHistory:
 
 
 @dataclass(frozen=True)
-class VisualContext:
-    """Optional visual context for the current request."""
-
-    items: tuple[str, ...] = ()
-
-    def render(self) -> str:
-        """Return the visual context block.
-
-        Returns:
-            str: The formatted visual context block.
-        """
-        return _render_lines([f"- {item}" for item in self.items])
-
-
-@dataclass(frozen=True)
 class PersonaContext:
     """Structured context passed into the Persona prompt builder."""
 
     character_profile: CharacterProfile
     persona_card: PersonaCard
-    relationship_memory: str
     mood_or_state: str
     retrieved_long_term_memory: RetrievedMemoryBundle = field(
         default_factory=RetrievedMemoryBundle
     )
     current_run_chat_history: ShortTermHistory = field(default_factory=ShortTermHistory)
-    visual_context: VisualContext = field(default_factory=VisualContext)
     user_message: str = ""
 
 
 class PersonaPromptBuilder:
     """Build structured runtime prompts for the Persona system."""
+
+    @staticmethod
+    def _write_debug_prompt(prompt: str) -> None:
+        """Persist the current Persona prompt when the temp directory is writable."""
+        with contextlib.suppress(OSError):
+            (temp_data_dir(create=True) / "rag_prompt.txt").write_text(
+                prompt,
+                encoding="utf-8",
+            )
 
     @staticmethod
     def build(context: PersonaContext) -> str:
@@ -212,76 +237,51 @@ class PersonaPromptBuilder:
         Returns:
             str: The formatted RAG prompt for persona.
         """
+        name = context.character_profile.name.strip() or "Unknown"
+        behavior_lines = [
+            f"- Respond only as {name}.",
+            "- Continue directly from <history>.",
+            "- Push the conversation forward instead of returning to earlier turns.",
+            "- Treat facts in <memories> as true context when they are relevant.",
+            (
+                "- Keep items from <memories> silent unless the current user "
+                "message clearly asks for them or they are necessary for a natural reply."
+            ),
+            "- Do not greet the user. Do not ask what they need. Just respond.",
+            "- Do not repeat anything already said in <history>.",
+            "- Do not bring up older messages, stored facts, or resolved topics on your own.",
+            "- Keep the reply natural, short, and emotionally consistent with <mood>.",
+            "- Stay under 3 sentences, unless the user asked for detail.",
+            "- Use only a single paragraph, unless formatting is necessary.",
+        ]
+        behavior_lines.extend(
+            f"- {cue}." if not cue.endswith((".", "!", "?")) else f"- {cue}"
+            for cue in context.persona_card.behavior_cues()
+        )
         sections = [
-            textwrap.dedent(
-                f"""
-                <runtime>
-                You are {context.character_profile.name}. Respond only as {context.character_profile.name}.
-
-                Rules:
-                1. Read the conversation in <short_term_memory> before writing anything.
-                2. Never repeat a sentence, phrase, or idea you already said in that history.
-                3. Facts in <long_term_memory> are true. Use them. Do not contradict them.
-                4. Stay under 3 sentences unless the user asked a detailed question.
-                5. You are not an AI assistant. Do not offer help. Just talk.
-                6. Never use "assist", "help you today", "what can I do for you", or similar service-session phrasing,
-                unless the character identity explicitly requires it.
-                </runtime>
-                """
-            ).strip(),
             _render_optional_section(
-                "character_identity",
-                context.character_profile.render(),
+                "profile",
+                context.character_profile.render_identity_summary(),
             ),
             _render_optional_section(
-                "long_term_memory",
+                "memories",
                 context.retrieved_long_term_memory.render(),
             ),
             _render_optional_section(
-                "persona_style",
-                context.persona_card.render(),
-            ),
-            # the following two fields are unused
-            _render_optional_section(
-                "relationship_to_user",
-                context.relationship_memory.strip() or "none",
-            ),
-            _render_optional_section(
-                "current_state",
-                context.mood_or_state.strip() or "neutral",
-            ),
-            _render_optional_section(
-                "short_term_memory",
+                "history",
                 context.current_run_chat_history.render(context.user_message.strip()),
             ),
             _render_optional_section(
-                "vision_context",
-                context.visual_context.render(),
+                "mood",
+                context.mood_or_state.strip() or "Target emotion: neutral.",
             ),
-            textwrap.dedent(
-                f"""
-                <response_behavior>
-                - Continue the conversation from <short_term_memory> as {context.character_profile.name}.
-                - Match the tone and length of the example dialogue if provided.
-                - Do not greet the user. Do not ask what they need. Just respond.
-                - Do not repeat anything already said in <short_term_memory>.
-                - If you don't know something, say so in character — don't invent facts.
-                - One topic per response. Be direct.
-                </response_behavior>
-                """
-            ).strip(),
-            f"{context.character_profile.name}:",
+            _render_optional_section(
+                "behavior",
+                _render_lines(behavior_lines),
+            ),
+            f"{name}:",
         ]
 
-        # this is for inspecting your RAG prompt, in case your character goes off the guidelines
-        # it is located in the following paths:
-        # %localappdata%\celune\temp\rag_prompt.txt on Windows, or
-        # ~/.local/share/celune/temp/rag_prompt.txt on Linux
-        with open(
-            Path(user_data_dir(APP_SLUG, appauthor=False)) / "temp" / "rag_prompt.txt",
-            "w",
-            encoding="utf-8",
-        ) as f:
-            f.write("\n\n".join(section for section in sections if section))
-
-        return "\n\n".join(section for section in sections if section)
+        prompt = "\n\n".join(section for section in sections if section)
+        PersonaPromptBuilder._write_debug_prompt(prompt)
+        return prompt

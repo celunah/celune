@@ -9,7 +9,7 @@ from unittest import mock, TestCase
 
 from pocket_tts import TTSModel
 
-from celune.backends.mini import Mini
+from celune.backends.tts.mini import Mini
 
 
 class MiniBackendTests(TestCase):

@@ -79,6 +79,31 @@ def _pitch_shift_ui_signal(
     return np.ascontiguousarray(shifted, dtype=np.float32)
 
 
+def pitch_shift_audio(
+    audio: npt.NDArray[np.float32],
+    sample_rate: int,
+    n_steps: float,
+) -> npt.NDArray[np.float32]:
+    """Shift audio pitch while preserving tempo at the given sample rate.
+
+    Args:
+        audio: Input waveform to shift, provided as a float32 NumPy array.
+        sample_rate: Sample rate associated with ``audio``.
+        n_steps: Number of semitones to shift the signal up or down.
+
+    Returns:
+        npt.NDArray[np.float32]: A contiguous float32 waveform with pitch shifted and tempo preserved.
+    """
+    if n_steps == 0:
+        return np.ascontiguousarray(audio, dtype=np.float32)
+
+    shifted = Pedalboard([PitchShift(semitones=n_steps)])(
+        np.asarray(audio, dtype=np.float32),
+        sample_rate,
+    )
+    return np.ascontiguousarray(shifted, dtype=np.float32)
+
+
 def _freeze_signal(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
     """Return one shared read-only buffer for a cached UI signal."""
     frozen = np.ascontiguousarray(audio, dtype=np.float32)

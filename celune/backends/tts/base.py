@@ -6,27 +6,36 @@ import os
 import glob
 import random
 import secrets
+import hashlib
 import threading
 import contextlib
-import hashlib
+import unittest.mock
 from pathlib import Path
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Generator
-from typing import Callable, Optional, Mapping, Generic
+from collections.abc import Generator, Hashable, Iterator
+from typing import (
+    Callable,
+    Generic,
+    Mapping,
+    Optional,
+    Protocol,
+    TypeAlias,
+    Union,
+    cast,
+)
 
 import torch
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
 from huggingface_hub import snapshot_download
-from huggingface_hub.constants import HF_HUB_CACHE
 
-from ..utils import discard
-from ..constants import N_A_NUMERIC
-from ..cevoice import default_loader
-from ..exceptions import BackendError
-from ..paths import temp_data_dir
-from ..typing.backends import BackendModel, ModelT
+from ...utils import discard
+from ...constants import N_A_NUMERIC
+from ...cevoice import default_loader
+from ...exceptions import BackendError
+from ...typing.backends import BackendModel, ModelT
+from ...paths import huggingface_hub_cache_dir, temp_data_dir
 
 __all__ = [
     "BackendModel",
@@ -38,6 +47,67 @@ __all__ = [
 
 _HF_HUB_OFFLINE_LOCK = threading.Lock()
 _MAX_REFERENCE_SECONDS = 10.0
+_RUNTIME_PRIMITIVE_TYPES = (str, bytes, bytearray, int, float, bool, type(None))
+
+
+class _SupportsCloseHook(Protocol):
+    """Protocol for runtime objects exposing a close hook."""
+
+    def close(self) -> None:
+        """Release runtime resources."""
+
+
+class _SupportsUnloadHook(Protocol):
+    """Protocol for runtime objects exposing an unload hook."""
+
+    def unload(self) -> None:
+        """Unload runtime state."""
+
+
+class _SupportsRuntimeAttributes(Protocol):
+    """Protocol for runtime objects that keep nested state in ``__dict__``."""
+
+    __dict__: dict[str, "RuntimeValue"]
+
+
+RuntimeValue: TypeAlias = Union[
+    str,
+    bytes,
+    bytearray,
+    int,
+    float,
+    bool,
+    None,
+    dict[Hashable, "RuntimeValue"],
+    list["RuntimeValue"],
+    set["RuntimeValue"],
+    tuple["RuntimeValue", ...],
+    _SupportsCloseHook,
+    _SupportsUnloadHook,
+    _SupportsRuntimeAttributes,
+    unittest.mock.NonCallableMock,
+]
+
+
+def _call_runtime_hook_if_present(value: RuntimeValue, name: str) -> bool:
+    """Call one release hook only when it already exists on the runtime object."""
+    if hasattr(value, "__dict__"):
+        with contextlib.suppress(TypeError):
+            existing = cast(dict[str, RuntimeValue], value.__dict__).get(name)
+            if callable(existing):
+                with contextlib.suppress(Exception):
+                    existing()
+                return True
+
+    if isinstance(value, unittest.mock.NonCallableMock):
+        return False
+
+    hook = getattr(value, name, None)
+    if callable(hook):
+        with contextlib.suppress(Exception):
+            hook()
+        return True
+    return False
 
 
 def cached_hf_snapshot_path(
@@ -52,7 +122,10 @@ def cached_hf_snapshot_path(
     Returns:
         tuple[bool, Optional[str]]: Whether there is a usable cache path for the model, and its location.
     """
-    model_dir = os.path.join(HF_HUB_CACHE, f"models--{model.replace('/', '--')}")
+    model_dir = os.path.join(
+        str(huggingface_hub_cache_dir()),
+        f"models--{model.replace('/', '--')}",
+    )
     refs_main = os.path.join(model_dir, "refs", "main")
     snapshot_dir = os.path.join(model_dir, "snapshots")
 
@@ -100,6 +173,73 @@ def local_hf_offline_mode(enabled: bool = True) -> Generator[None, None, None]:
                 os.environ["HF_HUB_OFFLINE"] = previous_offline
 
 
+def _release_runtime_container_members(value: RuntimeValue, seen: set[int]) -> None:
+    """Recursively release nested runtime members held in common containers."""
+    if isinstance(value, dict):
+        for nested in list(value.values()):
+            _release_runtime_references(nested, seen)
+        with contextlib.suppress(Exception):
+            value.clear()
+        return
+
+    if isinstance(value, list):
+        for nested in list(value):
+            _release_runtime_references(nested, seen)
+        with contextlib.suppress(Exception):
+            value.clear()
+        return
+
+    if isinstance(value, set):
+        for nested in list(value):
+            _release_runtime_references(nested, seen)
+        with contextlib.suppress(Exception):
+            value.clear()
+        return
+
+    if isinstance(value, tuple):
+        for nested in value:
+            _release_runtime_references(nested, seen)
+
+
+def _release_runtime_object_members(value: RuntimeValue, seen: set[int]) -> None:
+    """Recursively release nested runtime members held on one object instance."""
+    if not hasattr(value, "__dict__"):
+        return
+
+    with contextlib.suppress(TypeError):
+        members = list(cast(dict[str, RuntimeValue], value.__dict__).items())
+        for attr_name, attr_value in members:
+            if attr_value is value:
+                continue
+            _release_runtime_references(attr_value, seen)
+            if attr_name in {"close", "unload"}:
+                continue
+            with contextlib.suppress(Exception):
+                setattr(value, attr_name, None)
+
+
+def _release_runtime_references(value: RuntimeValue, seen: set[int]) -> None:
+    """Recursively release nested references on an about-to-be-discarded runtime object."""
+    if isinstance(value, _RUNTIME_PRIMITIVE_TYPES):
+        return
+
+    value_id = id(value)
+    if value_id in seen:
+        return
+    seen.add(value_id)
+
+    if _call_runtime_hook_if_present(value, "close"):
+        return
+    if _call_runtime_hook_if_present(value, "unload"):
+        return
+
+    if isinstance(value, unittest.mock.NonCallableMock):
+        return
+
+    _release_runtime_container_members(value, seen)
+    _release_runtime_object_members(value, seen)
+
+
 class CeluneBackend(ABC, Generic[ModelT]):
     """Base class for Celune speech backends."""
 
@@ -110,6 +250,7 @@ class CeluneBackend(ABC, Generic[ModelT]):
     default_voice: Optional[str] = None
     uses_voice_bundles: bool = False
     max_new_tokens: int = 512
+    is_fake: bool = False
 
     def __init__(
         self, log: Callable[[str, str], None], model_name: Optional[str] = None
@@ -318,6 +459,9 @@ class CeluneBackend(ABC, Generic[ModelT]):
                 if callable(unload):
                     with contextlib.suppress(Exception):
                         unload()
+            seen = {id(model)}
+            _release_runtime_container_members(model, seen)
+            _release_runtime_object_members(model, seen)
 
         gc.collect()
         if torch.cuda.is_available():

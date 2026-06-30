@@ -457,7 +457,7 @@ int run_unix(int argc, char **argv) {
                 int exit_code = WEXITSTATUS(status);
                 if (exit_code == EXIT_PENDING_UPDATE) {
                     if (!spawn_update_helper_unix(python, main_py, launcher, repo_root, argc, argv)) {
-                        printfe("Celune could not start its update helper.\n");
+                        printfe("Celune could not start her update helper.\n");
                         return 1;
                     }
                     return 0;
@@ -482,7 +482,7 @@ int run_unix(int argc, char **argv) {
 
         if (access(setup_py, R_OK) != 0) {
             printfe("Python virtual environment and/or interpreter was not found or isn't working.\n");
-            printfe("Celune needs setup.py to create its virtual environment.\n");
+            printfe("Celune needs setup.py to create her virtual environment.\n");
             return 1;
         }
 
@@ -615,7 +615,7 @@ int run_windows(int argc, char **argv) {
     }
 
     if (!file_exists(target)) {
-        printfe("Celune could not find its compiled runtime binary.\n");
+        printfe("Celune could not find her compiled runtime binary.\n");
         printfe("Expected file: %s\n", target);
         return 1;
     }
@@ -672,7 +672,7 @@ int run_windows(int argc, char **argv) {
         setuptools_vendor
     );
     if (nuitka_pythonpath_len < 0 || (size_t)nuitka_pythonpath_len >= sizeof(nuitka_pythonpath)) {
-        printfe("Celune cannot set up its Python path, the path is too long.\n");
+        printfe("Celune cannot set up her Python path, the path is too long.\n");
         return 1;
     }
 
@@ -684,14 +684,14 @@ int run_windows(int argc, char **argv) {
     char path_value[5200];
     int updated_path_len = snprintf(path_value, sizeof(path_value), "%s;%s", python_home, updated_path);
     if (updated_path_len < 0 || (size_t)updated_path_len >= sizeof(path_value)) {
-        printfe("Celune cannot set up PATH, the path is too long.\n");
+        printfe("Celune cannot set up %%PATH%%, the path is too long.\n");
         return 1;
     }
 
     if (!SetEnvironmentVariableA("PATH", path_value) ||
         !SetEnvironmentVariableA("PYTHONHOME", python_home) ||
         !SetEnvironmentVariableA("NUITKA_PYTHONPATH", nuitka_pythonpath)) {
-        printfe("Celune could not configure its Python runtime environment.\n");
+        printfe("Celune could not configure her Python runtime environment.\n");
         return 1;
     }
 
@@ -733,7 +733,7 @@ int run_windows(int argc, char **argv) {
     );
 
     if (!ok) {
-        printfe("Celune could not launch its compiled runtime.\n%lu\n", GetLastError());
+        printfe("Celune could not launch her compiled runtime.\nExit code: %lu\n", GetLastError());
         return 1;
     }
 
@@ -751,7 +751,7 @@ int run_windows(int argc, char **argv) {
             return 1;
         }
         if (!spawn_update_helper_windows(venv_python, main_py, launcher, repo_root, argc, argv)) {
-            printfe("Celune could not start its update helper.\n");
+            printfe("Celune could not start her update helper.\n");
             return 1;
         }
         return 0;

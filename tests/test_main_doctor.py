@@ -14,6 +14,20 @@ entrypoint = main.load_entrypoint_module()
 class DoctorCommandTests(TestCase):
     """Verify `celune doctor` works without booting the full app."""
 
+    def test_ui_test_backend_is_loaded_lazily(self) -> None:
+        """Verify normal entrypoint imports do not require the test suite package."""
+        fake_support = mock.Mock(FakeBackend=object())
+
+        with mock.patch.object(
+            entrypoint.importlib,
+            "import_module",
+            return_value=fake_support,
+        ) as import_module:
+            backend = entrypoint._load_ui_test_backend()
+
+        self.assertIs(backend, fake_support.FakeBackend)
+        import_module.assert_called_once_with("tests.support")
+
     def test_main_reports_unsupported_python_before_loading_entrypoint(self) -> None:
         """Verify doctor on Python 3.11 exits cleanly before importing 3.12-only modules."""
         with (

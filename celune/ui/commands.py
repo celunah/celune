@@ -13,9 +13,11 @@ import soundfile as sf
 
 from ..paths import project_root
 from ..constants import APP_NAME
-from ..backends.qwen3 import Qwen3
+from ..backends.tts.qwen3 import Qwen3
 from ..exceptions import InvalidExtensionError
 from ..utils import format_error, replace_ipa, format_number
+from ..cevoice import active_bundle_path, resolve_bundle_path
+from ..i18n import string
 
 if TYPE_CHECKING:
     from .app import CeluneUI
@@ -69,7 +71,7 @@ def tutorial(ui: CeluneUI) -> None:
     if not assets.exists():
         assets = project_root() / "assets"
     if not assets.exists():
-        ui.safe_log("No tutorial assets found.", "warning")
+        ui.safe_log(string("commands.no_tutorial_assets"), "warning")
         return
 
     clips = (
@@ -99,7 +101,10 @@ def tutorial(ui: CeluneUI) -> None:
                     ui.celune.play(str(pth))
                 except Exception as exc:
                     ui.safe_log(
-                        f"Tutorial playback failed: {format_error(exc, ui.celune.dev)}",
+                        string(
+                            "commands.tutorial_playback_failed",
+                            error=format_error(exc, ui.celune.dev),
+                        ),
                         "warning",
                     )
                     ui.call_from_thread(ui.cancel_tutorial, True)
@@ -112,7 +117,10 @@ def tutorial(ui: CeluneUI) -> None:
             )
         except Exception as e:
             ui.safe_log(
-                f"Tutorial failed: {format_error(e, ui.celune.dev)}",
+                string(
+                    "commands.tutorial_failed",
+                    error=format_error(e, ui.celune.dev),
+                ),
                 "warning",
             )
             ui.call_from_thread(ui.cancel_tutorial, True)
@@ -150,61 +158,83 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
     """
 
     ui.input_box.load_text("")
+
+    def refresh_vc_controls() -> None:
+        refresh = getattr(ui, "refresh_vc_controls", None)
+        if callable(refresh):
+            refresh()
+
+    def set_vc_f0_condition(enabled: bool) -> None:
+        setter = getattr(ui, "set_vc_f0_condition", None)
+        if callable(setter):
+            setter(enabled)
+            return
+
+        ui.celune.vc_f0_condition = enabled
+        backend = getattr(ui.celune, "vc_backend", None)
+        if backend is not None and hasattr(backend, "f0_condition"):
+            setattr(backend, "f0_condition", enabled)
+        refresh_vc_controls()
+        ui.safe_log(
+            string(
+                "commands.vcmode_set",
+                mode=string("ui.vc_mode_sing" if enabled else "ui.vc_mode_talk"),
+            )
+        )
+
+    def set_vc_pitch_shift(value: int) -> None:
+        setter = getattr(ui, "set_vc_pitch_shift", None)
+        if callable(setter):
+            setter(value)
+            return
+
+        ui.celune.vc_pitch_shift = value
+        backend = getattr(ui.celune, "vc_backend", None)
+        if backend is not None and hasattr(backend, "pitch_shift"):
+            setattr(backend, "pitch_shift", value)
+        refresh_vc_controls()
+        ui.safe_log(string("commands.vcpitch_set", value=value))
+
     if command == "help":
-        ui.safe_log(f"--- {APP_NAME} help topics ---")
-        ui.safe_log("Available commands:")
-        ui.safe_log(
-            "Arguments marked in <> are required, those marked in [] are optional."
-        )
-        ui.safe_log(
-            f"/consumebuffer <true/false> - Make {APP_NAME} consume text from the live buffer without "
-            "pressing CTRL+ENTER."
-        )
-        ui.safe_log("Caution: This feature may interfere with typing '...'.", "warning")
-        ui.safe_log(
-            f"/invoke <extension> [args] - Invoke a {APP_NAME} extension by its name."
-        )
-        ui.safe_log(f"/extensions - List currently available {APP_NAME} extensions.")
+        ui.safe_log(string("commands.help_header", app_name=APP_NAME))
+        ui.safe_log(string("commands.help_available"))
+        ui.safe_log(string("commands.help_arguments"))
+        ui.safe_log(string("commands.help_consumebuffer", app_name=APP_NAME))
+        ui.safe_log(string("commands.help_consumebuffer_caution"), "warning")
+        ui.safe_log(string("commands.help_invoke", app_name=APP_NAME))
+        ui.safe_log(string("commands.help_extensions", app_name=APP_NAME))
 
         if ui.celune.backend.name != "mini":
-            ui.safe_log(
-                f"/voiceprompt <prompt> - Change {APP_NAME}'s voice prompt. This will allow you to steer her voice."
-            )
-            ui.safe_log(
-                "Caution: Some prompts may cause adverse effects. Choose prompts that enhance personality, "
-                "rather than replace it.",
-                "warning",
-            )
+            ui.safe_log(string("commands.help_voiceprompt", app_name=APP_NAME))
+            ui.safe_log(string("commands.help_voiceprompt_caution"), "warning")
 
-        ui.safe_log("/speed <speed> - Change speaking speed.")
-        ui.safe_log("/reverb <strength> - Change reverb strength.")
+        ui.safe_log(string("commands.help_speed"))
+        ui.safe_log(string("commands.help_reverb"))
+        ui.safe_log(string("commands.help_backend"))
+        ui.safe_log(string("commands.help_cevoice"))
+        if getattr(ui.celune, "input_mode", "text_to_speech") == "voice_conversion":
+            ui.safe_log(string("commands.help_vc"))
+            ui.safe_log(string("commands.help_vcmode"))
+            ui.safe_log(string("commands.help_vcpitch"))
 
         if ui.celune.backend.name == "qwen3":
-            ui.safe_log(
-                "/xvectoronly <true/false> - Toggle Qwen3 identity-only cloning."
-            )
+            ui.safe_log(string("commands.help_xvectoronly"))
 
-        ui.safe_log("/play <file> - Play a sound effect by path.")
+        ui.safe_log(string("commands.help_play"))
 
         if ui.celune.vision is not None:
-            ui.safe_log(
-                "/attach <file> [file...] - Attach one or more images or videos to the next persona reply."
-            )
-            ui.safe_log(
-                "/say <text> - Speak text directly and bypass Persona for this one message."
-            )
+            ui.safe_log(string("commands.help_attach"))
+            ui.safe_log(string("commands.help_say"))
 
-        ui.safe_log(
-            "/seed [seed|random] - Set or clear the seed for speech outputs, affecting pronunciation and/or prosody."
-        )
-        ui.safe_log(f"/tutorial - Run {APP_NAME}'s tutorial.")
-        ui.safe_log("/stop - Terminate ongoing speech.")
-        ui.safe_log(f"/exit - Exit {APP_NAME}.")
-        ui.safe_log("/help - Display this help message.")
+        ui.safe_log(string("commands.help_seed"))
+        ui.safe_log(string("commands.help_tutorial", app_name=APP_NAME))
+        ui.safe_log(string("commands.help_stop"))
+        ui.safe_log(string("commands.help_exit", app_name=APP_NAME))
+        ui.safe_log(string("commands.help_help"))
         return
     if command == "consumebuffer":
         if not args:
-            ui.safe_log("Usage: /consumebuffer <true/false>", "warning")
+            ui.safe_log(string("commands.usage_consumebuffer"), "warning")
             return
 
         if args[0].lower() in ["true", "false"]:
@@ -212,19 +242,21 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.consume_on_boundary = boolean
 
             if boolean:
-                ui.safe_log("Now consuming from live input")
+                ui.safe_log(string("commands.consuming_live_input"))
             else:
-                ui.safe_log("No longer consuming from live input")
+                ui.safe_log(string("commands.not_consuming_live_input"))
             return
-        ui.safe_log(f"Invalid argument for '{command}', must be true/false.", "warning")
+        ui.safe_log(
+            string("commands.invalid_true_false_argument", command=command), "warning"
+        )
         return
     if command == "invoke":
         if not args:
-            ui.safe_log("Usage: /invoke <extension> [args]")
+            ui.safe_log(string("commands.usage_invoke"))
             return
 
         if not ui.celune.extension_manager:
-            ui.safe_log("Extension system not initialized.", "warning")
+            ui.safe_log(string("commands.extension_system_not_initialized"), "warning")
             return
 
         name = args[0]
@@ -233,34 +265,34 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         try:
             ui.celune.extension_manager.invoke(name, *invoke_args)
         except InvalidExtensionError:
-            ui.safe_log(f"Extension not found: {name}", "warning")
+            ui.safe_log(string("commands.extension_not_found", name=name), "warning")
         except Exception as e:
-            ui.safe_log(f"[EXT ERROR] {e}", "error")
+            ui.safe_log(string("commands.extension_error", error=e), "error")
 
         return
     if command == "extensions":
         if not ui.celune.extension_manager:
-            ui.safe_log("Extension system not initialized.", "warning")
+            ui.safe_log(string("commands.extension_system_not_initialized"), "warning")
             return
 
         names = ui.celune.extension_manager.list_extensions()
         if not names:
-            ui.safe_log("No extensions loaded.", "warning")
+            ui.safe_log(string("commands.no_extensions_loaded"), "warning")
         else:
-            ui.safe_log("Extensions: " + ", ".join(names))
+            ui.safe_log(string("commands.extensions_list", names=", ".join(names)))
         return
     if command == "voiceprompt":
         voice_prompt_supported = getattr(ui.celune, "voice_prompt_supported", None)
         if callable(voice_prompt_supported) and not voice_prompt_supported():
             ui.celune.voice_prompt = None
             ui.safe_log(
-                "Voice prompts are unavailable with the currently loaded model.",
+                string("commands.voice_prompts_unavailable"),
                 "warning",
             )
             return
 
         if not args:
-            ui.safe_log("Usage: /voiceprompt <prompt>", "warning")
+            ui.safe_log(string("commands.usage_voiceprompt"), "warning")
             return
 
         new_prompt = " ".join(args).strip()
@@ -268,18 +300,21 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         if not new_prompt or new_prompt.lower() == "clear":
             ui.celune.voice_prompt = None
-            ui.safe_log("Voice prompt cleared.")
+            ui.safe_log(string("commands.voice_prompt_cleared"))
             return
 
-        ui.safe_log(f"Voice prompt set to '{new_prompt}'.")
+        ui.safe_log(string("commands.voice_prompt_set", prompt=new_prompt))
         return
     if command == "speed":
         if not ui.celune.can_use_rubberband:
-            ui.safe_log(f"{APP_NAME} cannot currently use Rubber Band.", "warning")
+            ui.safe_log(
+                string("commands.rubber_band_unavailable", app_name=APP_NAME),
+                "warning",
+            )
             return
 
         if not args:
-            ui.safe_log("Usage: /speed <speed>", "warning")
+            ui.safe_log(string("commands.usage_speed"), "warning")
             return
 
         try:
@@ -289,17 +324,17 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             speed = float(args[0])
             float_speed = speed / 100.0
             if not 0.8 <= float_speed <= 1.2:
-                ui.safe_log("Value out of range. Expected 80-120%.", "warning")
+                ui.safe_log(string("commands.value_out_of_range_speed"), "warning")
                 return
             ui.celune.speed = float_speed
         except ValueError:
-            ui.safe_log(f"Invalid argument: {args[0]}", "warning")
+            ui.safe_log(string("commands.invalid_argument", value=args[0]), "warning")
         else:
-            ui.safe_log(f"Speaking speed set to {args[0]}%.")
+            ui.safe_log(string("commands.speed_set", value=args[0]))
         return
     if command == "reverb":
         if not args:
-            ui.safe_log("Usage: /reverb <strength>", "warning")
+            ui.safe_log(string("commands.usage_reverb"), "warning")
             return
 
         try:
@@ -309,41 +344,209 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             strength = float(args[0])
             float_strength = strength / 100.0
             if not 0.0 <= float_strength <= 1.0:
-                ui.safe_log("Value out of range. Expected 0-100%.", "warning")
+                ui.safe_log(string("commands.value_out_of_range_reverb"), "warning")
                 return
             ui.celune.reverb.strength = float_strength
         except ValueError:
-            ui.safe_log(f"Invalid argument: {args[0]}", "warning")
+            ui.safe_log(string("commands.invalid_argument", value=args[0]), "warning")
         else:
-            ui.safe_log(f"Reverb strength set to {args[0]}%.")
+            ui.safe_log(string("commands.reverb_set", value=args[0]))
+        return
+    if command == "backend":
+        if not args:
+            ui.safe_log(string("commands.usage_backend"), "warning")
+            return
+
+        backend_name = args[0]
+
+        active_backend = getattr(ui.celune, "_active_runtime_backend_name", None)
+        if callable(active_backend):
+            active_backend_name = active_backend()
+        elif getattr(ui.celune, "input_mode", "text_to_speech") == "voice_conversion":
+            backend = getattr(ui.celune, "vc_backend", None)
+            active_backend_name = getattr(backend, "name", "")
+        else:
+            backend = getattr(ui.celune, "backend", None)
+            active_backend_name = getattr(backend, "name", "")
+        if backend_name == active_backend_name:
+            ui.safe_log(string("commands.backend_already_loaded"), "warning")
+            return
+
+        def backend_worker() -> None:
+            try:
+                if ui.celune.set_backend_and_wait(backend_name):
+                    ui.celune.try_play_signal("readiness")
+                    ui.safe_log(
+                        string("commands.backend_switched", backend_name=backend_name)
+                    )
+                else:
+                    ui.safe_log(string("commands.backend_not_switched"), "warning")
+            except Exception as exc:
+                ui.safe_log(
+                    string(
+                        "commands.backend_switch_failed",
+                        error=format_error(exc, ui.celune.dev),
+                    ),
+                    "error",
+                )
+
+        threading.Thread(target=backend_worker, daemon=True).start()
+        return
+    if command == "cevoice":
+        if not args:
+            ui.safe_log(string("commands.usage_cevoice"), "warning")
+            return
+
+        bundle = args[0]
+        if resolve_bundle_path(bundle) == active_bundle_path():
+            ui.safe_log(string("commands.character_already_loaded"), "warning")
+            return
+
+        def cevoice_worker() -> None:
+            try:
+                if ui.celune.set_cevoice_and_wait(bundle):
+                    ui.safe_log(string("commands.character_changed", bundle=bundle))
+                else:
+                    ui.safe_log(
+                        string("commands.character_not_switched", bundle=bundle),
+                        "warning",
+                    )
+            except Exception as exc:
+                ui.safe_log(
+                    string(
+                        "commands.character_switch_failed",
+                        error=format_error(exc, ui.celune.dev),
+                    ),
+                    "error",
+                )
+
+        threading.Thread(target=cevoice_worker, daemon=True).start()
+        return
+    if command == "vc":
+        if getattr(ui.celune, "input_mode", "text_to_speech") != "voice_conversion":
+            ui.safe_log(string("commands.voice_conversion_only"), "warning")
+            return
+
+        if not args:
+            ui.safe_log(string("commands.usage_vc"), "warning")
+            return
+
+        source_path = Path(args[0]).expanduser()
+        if not source_path.exists() or not source_path.is_file():
+            ui.safe_log(
+                string("commands.vc_file_not_found", path=args[0]),
+                "warning",
+            )
+            return
+
+        def vc_worker() -> None:
+            try:
+                audio, sample_rate = sf.read(
+                    str(source_path),
+                    dtype="float32",
+                    always_2d=False,
+                )
+            except Exception as exc:
+                ui.safe_log(
+                    string(
+                        "commands.vc_decode_failed",
+                        error=format_error(exc, ui.celune.dev),
+                    ),
+                    "error",
+                )
+                return
+
+            if ui.celune.submit_audio(
+                audio,
+                sample_rate,
+                label=source_path.name,
+            ):
+                ui.safe_log(
+                    string("commands.vc_submitted", path=str(source_path)),
+                )
+                return
+
+            ui.safe_log(
+                string("commands.vc_submission_failed", path=str(source_path)),
+                "warning",
+            )
+
+        threading.Thread(target=vc_worker, daemon=True).start()
+        return
+    if command == "vcmode":
+        if getattr(ui.celune, "input_mode", "text_to_speech") != "voice_conversion":
+            ui.safe_log(string("commands.voice_conversion_only"), "warning")
+            return
+
+        if not args:
+            ui.safe_log(string("commands.usage_vcmode"), "warning")
+            return
+
+        mode = args[0].lower()
+        if mode == "talk":
+            set_vc_f0_condition(False)
+            return
+        if mode == "sing":
+            set_vc_f0_condition(True)
+            return
+
+        ui.safe_log(string("commands.usage_vcmode"), "warning")
+        return
+    if command == "vcpitch":
+        if getattr(ui.celune, "input_mode", "text_to_speech") != "voice_conversion":
+            ui.safe_log(string("commands.voice_conversion_only"), "warning")
+            return
+
+        if not args:
+            ui.safe_log(string("commands.usage_vcpitch"), "warning")
+            return
+
+        raw_value = args[0].lower()
+        if raw_value == "clear":
+            set_vc_pitch_shift(0)
+            return
+
+        try:
+            semitones = int(raw_value)
+        except ValueError:
+            ui.safe_log(string("commands.usage_vcpitch"), "warning")
+            return
+
+        if not -12 <= semitones <= 12:
+            ui.safe_log(string("commands.vcpitch_range"), "warning")
+            return
+
+        set_vc_pitch_shift(semitones)
         return
     if command == "xvectoronly":
         backend = ui.celune.backend
         if not isinstance(backend, Qwen3):
-            ui.safe_log(
-                "This setting is only available on the Qwen3 backend.", "warning"
-            )
+            ui.safe_log(string("commands.xvectoronly_qwen3_only"), "warning")
             return
 
         if not args:
-            ui.safe_log("Usage: /xvectoronly <true/false>", "warning")
+            ui.safe_log(string("commands.usage_xvectoronly"), "warning")
             return
 
         value = args[0].lower()
         if value not in {"true", "false"}:
             ui.safe_log(
-                f"Invalid argument for '{command}', must be true/false.",
+                string("commands.invalid_true_false_argument", command=command),
                 "warning",
             )
             return
 
         backend.x_vector_only = value == "true"
-        state = "enabled" if backend.x_vector_only else "disabled"
-        ui.safe_log(f"Qwen3 identity-only cloning {state}.")
+        state = string(
+            "commands.state_enabled"
+            if backend.x_vector_only
+            else "commands.state_disabled"
+        )
+        ui.safe_log(string("commands.qwen3_identity_only_cloning", state=state))
         return
     if command == "play":
         if not args:
-            ui.safe_log("Usage: /play <path> [volume]", "warning")
+            ui.safe_log(string("commands.usage_play"), "warning")
             return
 
         try:
@@ -353,7 +556,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     volume = float(args[1])
                 except ValueError:
                     ui.safe_log(
-                        f"Invalid volume for '{command}', must be numeric.",
+                        string("commands.invalid_volume", command=command),
                         "warning",
                     )
                     return
@@ -364,40 +567,53 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                         return
                     if args[0].startswith("https://"):
                         ui.safe_log(
-                            f"Playing YouTube audio at {format_number(volume * 100)}% volume"
+                            string(
+                                "commands.playing_youtube_audio",
+                                volume=format_number(volume * 100),
+                            )
                         )
                     else:
                         ui.safe_log(
-                            f"Playing {args[0]} at {format_number(volume * 100)}% volume"
+                            string(
+                                "commands.playing_audio",
+                                path=args[0],
+                                volume=format_number(volume * 100),
+                            )
                         )
                 except Exception as exc:
                     ui.safe_log(
-                        f"Cannot play this audio: {format_error(exc, ui.celune.dev)}",
+                        string(
+                            "commands.cannot_play_audio",
+                            error=format_error(exc, ui.celune.dev),
+                        ),
                         "error",
                     )
 
             threading.Thread(target=worker, daemon=True).start()
         except Exception as e:
             ui.safe_log(
-                f"Cannot play this file: {format_error(e, ui.celune.dev)}",
+                string(
+                    "commands.cannot_play_file",
+                    error=format_error(e, ui.celune.dev),
+                ),
                 "error",
             )
             return
         return
     if command == "attach":
         if not args:
-            ui.safe_log("Usage: /attach <file> [file...]", "warning")
+            ui.safe_log(string("commands.usage_attach"), "warning")
             return
 
         if len(args) == 1 and args[0].lower() in {"clear", "reset", "none"}:
             ui.celune.persona_attachments.clear()
-            ui.safe_log("Attachments cleared.")
+            ui.safe_log(string("commands.attachments_cleared"))
             return
 
         vision = getattr(ui.celune, "vision", "available")
         if vision is None:
             ui.safe_log(
-                f"Cannot add attachments while {APP_NAME} is running in speech-only mode.",
+                string("commands.attachments_speech_only_mode", app_name=APP_NAME),
                 "warning",
             )
             return
@@ -416,7 +632,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
             path = Path(raw_path).expanduser()
             if not path.exists() or not path.is_file():
-                ui.safe_log(f"Attachment not found: {raw_path}", "warning")
+                ui.safe_log(
+                    string("commands.attachment_not_found", path=raw_path), "warning"
+                )
                 continue
 
             suffix = path.suffix.lower()
@@ -425,7 +643,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             elif suffix in VIDEO_EXTENSIONS:
                 kind = "video"
             else:
-                ui.safe_log(f"Unsupported attachment type: {raw_path}", "warning")
+                ui.safe_log(
+                    string("commands.unsupported_attachment_type", path=raw_path),
+                    "warning",
+                )
                 continue
 
             resolved = path.resolve()
@@ -443,22 +664,26 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         count = len(ui.celune.persona_attachments)
         ui.safe_log(
-            f"Attached {', '.join(added)}. {count} attachments will be sent in the next pass."
+            string(
+                "commands.attachments_added",
+                names=", ".join(added),
+                count=count,
+            )
         )
         return
     if command == "say":
         if not args:
-            ui.safe_log("Usage: /say <text>", "warning")
+            ui.safe_log(string("commands.usage_say"), "warning")
             return
 
         raw_text = " ".join(args).strip()
         if not raw_text:
-            ui.safe_log("Usage: /say <text>", "warning")
+            ui.safe_log(string("commands.usage_say"), "warning")
             return
 
         if not ui.celune.vision:
-            ui.safe_log("This command is redundant in the current operation mode.")
-            ui.safe_log("Submit inputs normally instead.")
+            ui.safe_log(string("commands.say_redundant"))
+            ui.safe_log(string("commands.say_submit_normally"))
             return
 
         if ui.celune.config.get("ipa") is False:
@@ -467,12 +692,12 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 safe_log_dev = getattr(ui, "safe_log_dev", None)
                 if callable(safe_log_dev):
                     safe_log_dev(
-                        f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
+                        string("commands.unmatched_ipa", count=unmatched),
                         "warning",
                     )
                 else:
                     ui.safe_log(
-                        f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
+                        string("commands.unmatched_ipa", count=unmatched),
                         "warning",
                     )
 
@@ -485,38 +710,36 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         if not args:
             ui.celune.backend.current_seed = None
             ui.celune.backend.random_seed = True
-            ui.safe_log("Custom seed removed.")
+            ui.safe_log(string("commands.custom_seed_removed"))
             return
 
         if args[0].lower() in ["random", "unset", "none", "off"]:
             ui.celune.backend.current_seed = None
             ui.celune.backend.random_seed = True
-            ui.safe_log("Custom seed removed.")
+            ui.safe_log(string("commands.custom_seed_removed"))
             return
 
         try:
             value = int(args[0])
         except ValueError:
-            ui.safe_log(f"Invalid argument: {args[0]}", "warning")
+            ui.safe_log(string("commands.invalid_argument", value=args[0]), "warning")
             return
 
         if not 0 <= value < 2**32:
-            ui.safe_log(f"Seed must be between 0 and {2**32 - 1}.", "warning")
+            ui.safe_log(string("commands.seed_range", max_value=2**32 - 1), "warning")
             return
 
         ui.celune.backend.current_seed = value
         ui.celune.backend.random_seed = False
-        ui.safe_log(f"Seed set to {value}.")
+        ui.safe_log(string("commands.seed_set", value=value))
         return
     if command == "tutorial":
-        ui.safe_log(
-            f"Tutorial activated. Listen to what's said to learn how to use {APP_NAME}."
-        )
+        ui.safe_log(string("commands.tutorial_activated", app_name=APP_NAME))
         tutorial(ui)
         return
     if command == "stop":
         if not ui.celune.force_stop_speech():
-            ui.safe_log("Nothing to stop.")
+            ui.safe_log(string("commands.nothing_to_stop"))
             return
 
         return
@@ -524,6 +747,4 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.graceful_exit()
         return
 
-    ui.safe_log(
-        f"Unknown command: {command}. Run /help for a list of commands.", "warning"
-    )
+    ui.safe_log(string("commands.unknown_command", command=command), "warning")

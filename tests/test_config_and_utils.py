@@ -50,6 +50,110 @@ class ConfigTests(TestCase):
                 True,
             )
 
+    def test_config_audio_device_supports_null_name_and_index(self) -> None:
+        """Verify audio-device config accepts null, trimmed names, and indices."""
+        self.assertIsNone(config.config_audio_device({}, "missing"))
+        self.assertIsNone(config.config_audio_device({"device": None}, "device"))
+        self.assertIsNone(config.config_audio_device({"device": "   "}, "device"))
+        self.assertEqual(
+            config.config_audio_device({"device": "  Stereo Mix  "}, "device"),
+            "Stereo Mix",
+        )
+        self.assertEqual(config.config_audio_device({"device": 3}, "device"), 3)
+        self.assertIsNone(config.config_audio_device({"device": True}, "device"))
+
+    def test_resolve_audio_device_formats_friendly_multiple_input_matches(self) -> None:
+        """Verify ambiguous input device names raise a friendly localized message."""
+        devices = [
+            {
+                "name": "CABLE-A Output (VB-Audio Cable A)",
+                "max_input_channels": 2,
+                "max_output_channels": 0,
+                "hostapi": 0,
+            },
+            {
+                "name": "CABLE-A Output (VB-Audio Cable A)",
+                "max_input_channels": 8,
+                "max_output_channels": 0,
+                "hostapi": 1,
+            },
+        ]
+        hostapis = [{"name": "MME"}, {"name": "Windows WASAPI"}]
+
+        with (
+            mock.patch("celune.config.sd.query_devices", return_value=devices),
+            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "The specified input device name has multiple matches",
+            ) as caught:
+                config.resolve_audio_device(
+                    {"input_device": "CABLE-A Output"},
+                    "input_device",
+                    "input",
+                )
+
+        message = str(caught.exception)
+        self.assertIn("- [0] CABLE-A Output (VB-Audio Cable A), MME", message)
+        self.assertIn(
+            "- [1] CABLE-A Output (VB-Audio Cable A), Windows WASAPI",
+            message,
+        )
+        self.assertIn("Please specify one of the above devices", message)
+
+    def test_resolve_audio_device_prefers_exact_single_output_index(self) -> None:
+        """Verify one matching output device is resolved to its exact index."""
+        devices = [
+            {
+                "name": "Speakers",
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+                "hostapi": 0,
+            },
+            {
+                "name": "CABLE-B Input (VB-Audio Cable B)",
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+                "hostapi": 1,
+            },
+        ]
+        hostapis = [{"name": "MME"}, {"name": "Windows WASAPI"}]
+
+        with (
+            mock.patch("celune.config.sd.query_devices", return_value=devices),
+            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+        ):
+            resolved = config.resolve_audio_device(
+                {"output_device": "CABLE-B Input"},
+                "output_device",
+                "output",
+            )
+
+        self.assertEqual(resolved, 1)
+
+    def test_resolve_audio_device_accepts_single_device_mapping_shape(self) -> None:
+        """Verify resolver tolerates a direct device-info mapping from mocks."""
+        device_info = {
+            "name": "Stereo Mix (Realtek)",
+            "max_input_channels": 2,
+            "max_output_channels": 0,
+            "hostapi": 0,
+        }
+        hostapis = [{"name": "Windows WASAPI"}]
+
+        with (
+            mock.patch("celune.config.sd.query_devices", return_value=device_info),
+            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+        ):
+            resolved = config.resolve_audio_device(
+                {"input_device": "Stereo Mix (Realtek)"},
+                "input_device",
+                "input",
+            )
+
+        self.assertEqual(resolved, "Stereo Mix (Realtek)")
+
     def test_merge_missing_defaults_preserves_user_values_and_adds_nested_keys(
         self,
     ) -> None:

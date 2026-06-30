@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Optional
 import torch
 import psutil
 
+from ..i18n import string
 from ..utils import celune_day_status, lunar_info, lunar_phase
 
 if TYPE_CHECKING:
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
 _NVIDIA_SMI: Optional[str] = shutil.which("nvidia-smi")
 _NVIDIA_SMI_PROC: Optional[subprocess.Popen[str]] = None
 _NVIDIA_SMI_USAGE: Optional[int] = None
+FOOTER_ROTATE_SECONDS = 2.06
 
 
 def format_vram() -> str:
@@ -154,6 +156,9 @@ def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[st
 
     pages.append("/help commands")
     if celune is not None:
+        if getattr(celune, "input_mode", "text_to_speech") == "voice_conversion":
+            pages.append(string("ui.footer_toggle_recording"))
+
         active_theme = theme_name
         enter_action = "skip" if celune.is_in_tutorial else "say"
 

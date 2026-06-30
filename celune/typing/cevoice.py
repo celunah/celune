@@ -4,6 +4,6 @@ from typing import Union
 
 from .common import JSONSerializable
 
-ManifestValue = Union[JSONSerializable, "Manifest"]
-Manifest = dict[str, ManifestValue]
-VoiceManifest = dict[str, Manifest]
+type ManifestValue = Union[JSONSerializable, "Manifest"]
+type Manifest = dict[str, ManifestValue]
+type VoiceManifest = dict[str, Manifest]

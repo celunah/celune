@@ -73,15 +73,15 @@ Do not modify the execution environment to work around failures.
 
 Before CI, format the repository with `uv run ruff format .`.
 
-Expected CI runtime is 3-5 minutes.
+Expected CI runtime is around 5 minutes.
 
 If CI runtime exceeds 5 minutes:
 - Assume it may have stalled.
 - Stop it from running any further.
 - Report that the CI has taken too long.
 - Do not try to extend any timeouts.
-- Do not try to work around the problem.
-- Wait for any further guidance.
+- Attempt to run again only the relevant CI steps in isolation.
+- If the isolated CI attempts also fail or time out, report it back.
 
 After each task, run `scripts/update_docstrings.py` and then replace placeholders in docstrings like:
 
@@ -100,15 +100,25 @@ Returns:
 
 with proper documentation, while preserving the docstring format.
 
+If this process updates typing or dataclass related docstrings, remove the placeholders instead of completing them.
+
 This process may leave some formatting inaccuracies, run `uv run ruff format .` again after completing docstrings.
 
-If CI fails or times out, report the actual failure clearly. Do not claim success.
+## Localization
+
+Celune does not use hardcoded strings in English. Define each new string you add into Celune's localization string database.
+
+Do not use raw string literals in the code. Always use `string("key_name", **kwargs)` in string literals to populate them from the global localization string database.
+
+If you find any raw strings in the code, add them to the localization string database, and remove the hardcoded string.
+
+Make sure to only modify user-facing strings (both normal and dev mode strings), don't change anything internal.
 
 ## Python and Environment
 
 * Supported Python versions are 3.12 and 3.13.
 * Use `uv` for environment management.
-* Do not use `pip` directly unless explicitly required.
+* Do not use `pip` directly unless explicitly required. If you need to run `pip` alone, do it so with `uv pip` instead.
 * Do not assume CPU-only mode supports all features. CPU-only execution is only supported with Celune Mini.
 * Be aware that many features require an RTX 30 series GPU or newer.
 

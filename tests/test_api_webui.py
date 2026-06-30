@@ -3,14 +3,17 @@
 
 from types import SimpleNamespace
 from queue import Queue
+import asyncio
 from typing import cast
 from unittest import TestCase, mock
 
 import numpy as np
 from starlette.requests import Request
+from starlette.responses import Response
 
 from celune import api
 from celune.celune import Celune
+from celune.i18n import string
 from celune.pipeline import SpeechStreamQueue
 
 
@@ -31,8 +34,10 @@ class ApiWebUITests(TestCase):
         self.previous_theme_style = api.webui_theme_style
         self.previous_status_source = api.webui_status_source
         self.previous_status_updated_at = api.webui_status_updated_at
+        self.previous_auth_token = api.auth_token
         self.previous_logs = list(api.webui_log_lines)
         api.bound_celune = None
+        api.auth_token = None
         api.webui_log_lines.clear()
         api.webui_logs_seeded = True
         api.webui_resource_page = 0
@@ -59,8 +64,30 @@ class ApiWebUITests(TestCase):
         api.webui_theme_style = self.previous_theme_style
         api.webui_status_source = self.previous_status_source
         api.webui_status_updated_at = self.previous_status_updated_at
+        api.auth_token = self.previous_auth_token
         api.webui_log_lines.clear()
         api.webui_log_lines.extend(self.previous_logs)
+
+    @staticmethod
+    async def _passthrough_response(_request: Request) -> Response:
+        """Return a simple response for middleware pass-through tests."""
+        return Response("ok")
+
+    @staticmethod
+    def _request(path: str, method: str = "GET") -> Request:
+        """Build one lightweight test request."""
+        return Request(
+            {
+                "type": "http",
+                "method": method,
+                "path": path,
+                "headers": [],
+                "query_string": b"",
+                "client": ("127.0.0.1", 2060),
+                "scheme": "http",
+                "server": ("127.0.0.1", 2060),
+            }
+        )
 
     def test_root_redirects_to_browser_ui(self) -> None:
         """Verify the fallback root now forwards users to the browser UI."""
@@ -70,33 +97,38 @@ class ApiWebUITests(TestCase):
 
     def test_browser_ui_requests_bypass_api_security_detection(self) -> None:
         """Verify mounted browser UI paths are recognized by the API middleware."""
-        ui_request = Request(
-            {
-                "type": "http",
-                "method": "GET",
-                "path": "/ui/assets/index.js",
-                "headers": [],
-                "query_string": b"",
-                "client": ("127.0.0.1", 2060),
-                "scheme": "http",
-                "server": ("127.0.0.1", 2060),
-            }
-        )
-        api_request = Request(
-            {
-                "type": "http",
-                "method": "GET",
-                "path": "/v1/version",
-                "headers": [],
-                "query_string": b"",
-                "client": ("127.0.0.1", 2060),
-                "scheme": "http",
-                "server": ("127.0.0.1", 2060),
-            }
-        )
+        ui_request = self._request("/ui/assets/index.js")
+        api_request = self._request("/v1/version")
 
         self.assertEqual(api.is_browser_ui_request(ui_request), True)
         self.assertEqual(api.is_browser_ui_request(api_request), False)
+
+    def test_api_security_allows_public_read_only_routes_without_token(self) -> None:
+        """Verify safe read-only routes stay reachable even when API auth is enabled."""
+        api.auth_token = "secret"
+
+        for path in ("/", "/favicon.ico", "/v1", "/v1/version", "/ui"):
+            response = asyncio.run(
+                api.api_security(
+                    self._request(path),
+                    self._passthrough_response,
+                )
+            )
+            self.assertEqual(response.status_code, 200, path)
+
+    def test_api_security_requires_token_for_generating_routes(self) -> None:
+        """Verify protected API routes still reject unauthenticated requests."""
+        api.auth_token = "secret"
+
+        response = asyncio.run(
+            api.api_security(
+                self._request("/v1/speak", method="POST"),
+                self._passthrough_response,
+            )
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
 
     def test_webui_snapshot_uses_bound_celune_state(self) -> None:
         """Verify the browser snapshot mirrors current logs, status, and voice state."""
@@ -184,7 +216,9 @@ class ApiWebUITests(TestCase):
                 input_update2,
             ) = api.webui_snapshot()
         self.assertEqual(input_update2["interactive"], True)
-        self.assertEqual(input_update2["placeholder"], "Enter text to speak here")
+        self.assertEqual(
+            input_update2["placeholder"], string("webui.input_placeholder")
+        )
         self.assertEqual(send_update2["interactive"], True)
         self.assertEqual(voice_update2["interactive"], True)
 
@@ -201,7 +235,7 @@ class ApiWebUITests(TestCase):
             ),
         )
         api.webui_input_locked = True
-        api.webui_input_placeholder = "Currently in tutorial mode"
+        api.webui_input_placeholder = string("webui.tutorial_placeholder")
         api.webui_voice_locked = True
 
         with mock.patch(
@@ -212,9 +246,74 @@ class ApiWebUITests(TestCase):
                 api.webui_snapshot()
             )
         self.assertEqual(input_update["interactive"], False)
-        self.assertEqual(input_update["placeholder"], "Currently in tutorial mode")
+        self.assertEqual(
+            input_update["placeholder"], string("webui.tutorial_placeholder")
+        )
         self.assertEqual(send_update["interactive"], False)
         self.assertEqual(voice_update["interactive"], False)
+
+    def test_webui_snapshot_uses_voice_changer_placeholder_in_vc_mode(self) -> None:
+        """Verify VC mode uses the same voice-changer placeholder as the TUI."""
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                input_mode="voice_conversion",
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+            ),
+        )
+        api.webui_input_locked = False
+
+        with mock.patch(
+            "celune.api.ui_resources.resource_pages",
+            return_value=("VRAM: 10.66/11.94 GB available",),
+        ):
+            _logs, _status, _resources, _voice, _send, input_update = (
+                api.webui_snapshot()
+            )
+
+        self.assertEqual(
+            input_update["placeholder"], string("webui.voice_changer_placeholder")
+        )
+
+    def test_webui_vc_controls_disable_outside_voice_conversion_mode(self) -> None:
+        """Verify VC controls are disabled while Celune is in the normal TTS mode."""
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                input_mode="text_to_speech",
+            ),
+        )
+
+        source_update, pitch_update, mode_update, button_update = (
+            api._webui_vc_controls_update()
+        )
+
+        self.assertEqual(source_update["interactive"], False)
+        self.assertEqual(pitch_update["interactive"], False)
+        self.assertEqual(mode_update["interactive"], False)
+        self.assertEqual(button_update["interactive"], False)
+
+    def test_webui_vc_controls_enable_in_voice_conversion_mode(self) -> None:
+        """Verify VC controls become interactive when the engine is in VC mode."""
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                input_mode="voice_conversion",
+            ),
+        )
+
+        source_update, pitch_update, mode_update, button_update = (
+            api._webui_vc_controls_update()
+        )
+
+        self.assertEqual(source_update["interactive"], True)
+        self.assertEqual(pitch_update["interactive"], True)
+        self.assertEqual(mode_update["interactive"], True)
+        self.assertEqual(button_update["interactive"], True)
 
     def test_webui_snapshot_keeps_failed_no_voice_runtime_locked(self) -> None:
         """Verify a failed no-voice runtime stays in an error/locked browser state."""
@@ -229,7 +328,7 @@ class ApiWebUITests(TestCase):
             ),
         )
         api.webui_input_locked = False
-        api.webui_input_placeholder = "Enter text to speak here"
+        api.webui_input_placeholder = string("webui.input_placeholder")
         api.webui_voice_locked = False
 
         with mock.patch(
@@ -448,6 +547,143 @@ class ApiWebUITests(TestCase):
         self.assertIsInstance(final_audio, tuple)
         self.assertEqual(cast(tuple[int, np.ndarray], final_audio)[0], 48000)
 
+    def test_webui_convert_audio_returns_browser_audio_after_conversion(self) -> None:
+        """Verify browser audio conversion returns one playable Celune-format payload."""
+        converted_audio = np.ones((10, 2), dtype=np.float32) * 0.5
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                input_mode="voice_conversion",
+                convert_audio=mock.Mock(
+                    return_value=SimpleNamespace(
+                        audio=converted_audio,
+                        sample_rate=24000,
+                        label="browser audio input",
+                    )
+                ),
+                dev=False,
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+            ),
+        )
+
+        with mock.patch(
+            "celune.api.ui_resources.resource_pages",
+            return_value=("VRAM: 10.66/11.94 GB available",),
+        ):
+            source_value, browser_audio, *_rest = api._webui_convert_audio(
+                (44100, np.zeros((16, 2), dtype=np.float32)),
+                6.0,
+                "sing",
+            )
+
+        self.assertIsNone(source_value)
+        self.assertIsInstance(browser_audio, tuple)
+        sample_rate, array = cast(tuple[int, np.ndarray], browser_audio)
+        self.assertEqual(sample_rate, 48000)
+        self.assertEqual(array.shape, (20, 2))
+        self.assertEqual(browser_audio[0], 48000)
+        celune_convert_audio = cast(mock.Mock, api.bound_celune.convert_audio)
+        celune_convert_audio.assert_called_once_with(
+            mock.ANY,
+            44100,
+            label="browser audio input",
+            pitch_shift=6,
+            f0_condition=True,
+        )
+
+    def test_webui_convert_audio_normalizes_integer_browser_audio(self) -> None:
+        """Verify browser-side PCM arrays are normalized before VC conversion."""
+        captured_audio: dict[str, np.ndarray] = {}
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                input_mode="voice_conversion",
+                convert_audio=mock.Mock(
+                    side_effect=lambda audio, sample_rate, **_kwargs: (
+                        captured_audio.setdefault("audio", np.asarray(audio)),
+                        SimpleNamespace(
+                            audio=np.zeros((4, 2), dtype=np.float32),
+                            sample_rate=sample_rate,
+                            label="browser audio input",
+                        ),
+                    )[1]
+                ),
+                dev=False,
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+            ),
+        )
+
+        source_pcm = np.array(
+            [[32767, -32768], [16384, -16384]],
+            dtype=np.int16,
+        )
+
+        with mock.patch(
+            "celune.api.ui_resources.resource_pages",
+            return_value=("VRAM: 10.66/11.94 GB available",),
+        ):
+            _source_value, browser_audio, *_rest = api._webui_convert_audio(
+                (44100, source_pcm)
+            )
+
+        self.assertIsInstance(browser_audio, tuple)
+        normalized = captured_audio["audio"]
+        self.assertEqual(normalized.dtype, np.float32)
+        self.assertTrue(np.max(np.abs(normalized)) <= 1.0)
+        self.assertAlmostEqual(float(normalized[0, 0]), 32767 / 32768, places=5)
+        self.assertEqual(float(normalized[0, 1]), -1.0)
+
+    def test_webui_convert_audio_rejects_text_to_speech_mode(self) -> None:
+        """Verify browser audio conversion is unavailable outside VC mode."""
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                input_mode="text_to_speech",
+                dev=False,
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+            ),
+        )
+
+        with mock.patch(
+            "celune.api.ui_resources.resource_pages",
+            return_value=("VRAM: 10.66/11.94 GB available",),
+        ):
+            source_value, browser_audio, logs_html, *_rest = api._webui_convert_audio(
+                (44100, np.zeros((8, 2), dtype=np.float32))
+            )
+
+        self.assertIsNotNone(source_value)
+        self.assertEqual(source_value[0], 44100)
+        self.assertIsNone(browser_audio)
+        self.assertIn(string("webui.conversion_only_in_vc_mode"), logs_html)
+
+    def test_build_webui_exposes_tts_and_vc_tabs(self) -> None:
+        """Verify the browser UI separates TTS and VC into distinct tabs."""
+        demo = api._build_webui()
+        config = demo.config
+        tab_labels = [
+            component.get("label") or component.get("props", {}).get("label")
+            for component in config.get("components", [])
+            if component.get("type") == "tabitem"
+        ]
+
+        self.assertEqual(
+            tab_labels,
+            [string("webui.tts_tab_label"), string("webui.vc_tab_label")],
+        )
+
     def test_webui_snapshot_probes_runtime_status_and_rotates_resources(self) -> None:
         """Verify footer polling refreshes status and rotates the resource page."""
         api.bound_celune = cast(
@@ -475,6 +711,14 @@ class ApiWebUITests(TestCase):
         self.assertIn("Speaking", status2)
         self.assertIn("VRAM: first", resources1)
         self.assertIn("Friday, June 11, 2026", resources2)
+
+    def test_webui_shortcuts_html_registers_ctrl_r_recording_toggle(self) -> None:
+        """Verify the WebUI shortcut script exposes the VC recording hotkey."""
+        shortcuts_html = api._webui_shortcuts_html()
+
+        self.assertIn(string("ui.footer_toggle_recording"), shortcuts_html)
+        self.assertIn("#celune-source-audio", shortcuts_html)
+        self.assertIn("keydown", shortcuts_html)
 
     def test_webui_runtime_theme_keeps_normal_palette_for_error_status(self) -> None:
         """Verify browser error statuses no longer switch the full UI palette."""

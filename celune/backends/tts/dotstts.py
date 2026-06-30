@@ -3,6 +3,7 @@
 
 import os
 import contextlib
+import time
 from collections.abc import Iterator
 from typing import Callable, Optional, Mapping, Generator, Protocol, cast
 
@@ -12,9 +13,9 @@ import numpy as np
 import numpy.typing as npt
 from dots_tts.runtime import DotsTtsRuntime
 
-from ..utils import custom_assert
-from ..exceptions import BackendError
-from ..cevoice import default_loader, CEVoiceLoader
+from ...utils import custom_assert, discard
+from ...cevoice import default_loader, CEVoiceLoader
+from ...i18n import string
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
@@ -94,9 +95,11 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         loader = default_loader()
         custom_assert(
             loader is not None,
-            BackendError(
-                "backend 'dotstts' requires a compatible CEVOICE/CECHAR package "
-                "with at least one valid voice identifier"
+            FileNotFoundError(
+                string(
+                    "celune.compatible_bundle_required",
+                    backend="dotstts",
+                )
             ),
         )
         assert loader is not None
@@ -114,9 +117,11 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         )
         custom_assert(
             bool(voice_names),
-            BackendError(
-                "backend 'dotstts' requires a compatible CEVOICE/CECHAR package "
-                "with at least one valid voice identifier"
+            FileNotFoundError(
+                string(
+                    "celune.compatible_bundle_required",
+                    backend="dotstts",
+                )
             ),
         )
         assert bool(voice_names)
@@ -213,7 +218,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         Returns:
             tuple[bool, Optional[str]]: A cache availability flag and the resolved snapshot path when present.
         """
-        del lang
+        discard(lang)
         return cached_hf_snapshot_path(
             model,
             [
@@ -330,8 +335,11 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                 total_steps = 0
                 pending_audio: Optional[npt.NDArray[np.float32]] = None
                 pending_steps = 0
+                first_chunk_time: Optional[float] = None
 
                 for chunk in stream:
+                    if first_chunk_time is None:
+                        first_chunk_time = time.monotonic()
                     batch.append(self._to_numpy_audio(chunk))
                     if len(batch) < chunk_size:
                         continue
@@ -346,6 +354,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                                 "chunk_index": chunk_index,
                                 "chunk_steps": pending_steps,
                                 "total_steps_so_far": total_steps,
+                                "first_chunk_time": first_chunk_time,
                                 "is_final": False,
                             },
                         )
@@ -366,6 +375,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                                 "chunk_index": chunk_index,
                                 "chunk_steps": pending_steps,
                                 "total_steps_so_far": total_steps,
+                                "first_chunk_time": first_chunk_time,
                                 "is_final": False,
                             },
                         )
@@ -380,6 +390,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                             "chunk_index": chunk_index,
                             "chunk_steps": len(batch),
                             "total_steps_so_far": total_steps,
+                            "first_chunk_time": first_chunk_time,
                             "is_final": True,
                         },
                     )
@@ -393,6 +404,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                             "chunk_index": chunk_index,
                             "chunk_steps": pending_steps,
                             "total_steps_so_far": total_steps,
+                            "first_chunk_time": first_chunk_time,
                             "is_final": True,
                         },
                     )

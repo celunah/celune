@@ -18,10 +18,11 @@ from typing import Optional
 from dataclasses import dataclass
 from types import SimpleNamespace, ModuleType
 
-from celune import __version__, REVISION, __tagline__
-from celune.constants import APP_NAME, APP_SLUG, ExitCodes
-from celune.paths import project_root, running_compiled
 from celune.updater import apply_update_and_restart
+from celune import __version__, REVISION, __tagline__
+from celune.paths import project_root, running_compiled
+from celune.constants import APP_NAME, APP_SLUG, ExitCodes
+from celune.i18n import string
 
 
 def _env_flag(name: str) -> bool:
@@ -43,6 +44,12 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "default_config.yaml"
 SCRIPT_NAME = "main.py"
 EXIT_CODES = ExitCodes
 _RUNTIME: Optional[SimpleNamespace] = None
+
+
+def _load_ui_test_backend() -> type:
+    """Load the lightweight fake backend used by the explicit UI test mode."""
+    support = importlib.import_module("tests.support")
+    return support.FakeBackend
 
 
 def normalize_argv0(argv: Optional[list[str]] = None) -> list[str]:
@@ -67,25 +74,25 @@ def _display_version() -> tuple[str, str]:
 
 def _print_dependency_setup_help(package_name: str) -> None:
     """Print the shared missing-dependency guidance used by startup paths."""
-    print(f"You do not have '{package_name}' installed.")
-    print(f"{APP_NAME} requires this library to function.")
+    print(string("cli.dependency_missing", package_name=package_name))
+    print(string("cli.dependency_required", app_name=APP_NAME))
     print()
-    print(f"Set up {APP_NAME} automatically by running:")
-    print("    python setup.py")
+    print(string("cli.setup_automatically", app_name=APP_NAME))
+    print(string("cli.setup_cmd_setup_py"))
     print()
-    print("or alternatively with uv:")
-    print("    uv sync")
+    print(string("cli.setup_with_uv"))
+    print(string("cli.setup_cmd_uv_sync"))
     print()
-    print("or install the package manually:")
-    print(f"    pip install {package_name}")
+    print(string("cli.install_manually"))
+    print(string("cli.setup_cmd_pip_install", package_name=package_name))
     print()
 
-    print("for full traceback:")
+    print(string("cli.full_traceback"))
     if os.name == "nt":
-        print("set CELUNE_DEV=1")
-        print(f"    python {SCRIPT_NAME}")
+        print(string("cli.traceback_cmd_set_dev"))
+        print(string("cli.traceback_cmd_python", script_name=SCRIPT_NAME))
     else:
-        print(f"    CELUNE_DEV=1 python {SCRIPT_NAME}")
+        print(string("cli.traceback_cmd_dev_python", script_name=SCRIPT_NAME))
     print()
 
 
@@ -836,12 +843,12 @@ def run_doctor(argv: list[str]) -> int:
         if doctor_args == ["--fix"]:
             fix = True
         else:
-            print(f"Usage: {argv[0]} doctor [--fix]")
-            print(f"Inspect {APP_NAME}'s runtime environment without starting the app.")
-            print("Use --fix to run setup.py from the repository root.")
+            print(string("cli.doctor_usage", program=argv[0]))
+            print(string("cli.doctor_description", app_name=APP_NAME))
+            print(string("cli.doctor_fix_help"))
             return EXIT_CODES.EXIT_UNKNOWN_ARGS.value
 
-    print(f"Checking your environment for compatibility with {APP_NAME}...")
+    print(string("cli.doctor_checking", app_name=APP_NAME))
     print()
 
     checks = _doctor_checks()
@@ -853,7 +860,7 @@ def run_doctor(argv: list[str]) -> int:
         status = _doctor_status(check)
         print(f"[{status}] {check.label}: {check.detail}")
         if check.hint and not check.ok:
-            print(f"       hint: {check.hint}")
+            print(f"       {string('cli.doctor_hint', hint=check.hint)}")
 
         if check.ok:
             passes += 1
@@ -864,29 +871,30 @@ def run_doctor(argv: list[str]) -> int:
 
     print()
     print(
-        f"Summary: {passes} passed, {warnings_count} warning"
-        f"{'' if warnings_count == 1 else 's'}, {failures} failed"
+        string(
+            "cli.doctor_summary",
+            passes=passes,
+            warnings_count=warnings_count,
+            warning_suffix="" if warnings_count == 1 else "s",
+            failures=failures,
+        )
     )
     print()
 
     if failures == 0 and warnings_count == 0:
-        print(f"Your system is ready to run {APP_NAME}.")
+        print(string("cli.doctor_ready", app_name=APP_NAME))
     elif failures == 0 and warnings_count > 0:
-        print(f"{APP_NAME}'s performance may be impacted.")
-        print("Rerun with --fix to attempt to fix some of these problems.")
-        print(
-            "Please note that this will not fix a Python version incompatibility or lack of a CUDA runtime."
-        )
+        print(string("cli.doctor_performance_impacted", app_name=APP_NAME))
+        print(string("cli.doctor_rerun_fix"))
+        print(string("cli.doctor_fix_limits"))
     else:
-        print(f"{APP_NAME} will not work.")
-        print("Rerun with --fix to attempt to fix some of these problems.")
-        print(
-            "Please note that this will not fix a Python version incompatibility or lack of a CUDA runtime."
-        )
+        print(string("cli.doctor_will_not_work", app_name=APP_NAME))
+        print(string("cli.doctor_rerun_fix"))
+        print(string("cli.doctor_fix_limits"))
 
     if fix:
         print()
-        print("Attempting to fix fixable problems...")
+        print(string("cli.doctor_attempting_fix"))
         try:
             result = subprocess.run(
                 [str(_doctor_subprocess_python()), str(SETUP_PATH)],
@@ -894,7 +902,7 @@ def run_doctor(argv: list[str]) -> int:
                 check=False,
             )
         except OSError as exc:
-            print(f"Failed to fix fixable problems: {exc}")
+            print(string("cli.fix_failed", error=exc))
             return EXIT_CODES.EXIT_FAILURE.value
         return result.returncode
 
@@ -913,75 +921,83 @@ def handle_config(command_args: list[str], prog_name: str) -> None:
     if len(command_args) == 1:
         if command_args[0] == "view":
             if not runtime.config_path().exists():
-                print(f"{APP_NAME} configuration has not been created yet.")
-                print(f"Run {APP_NAME} at least once to create it.")
+                print(string("cli.config_not_created", app_name=APP_NAME))
+                print(string("cli.run_once_to_create_config", app_name=APP_NAME))
                 sys.exit(EXIT_CODES.EXIT_FAILURE.value)
 
-            print(f"Current {APP_NAME} configuration:")
+            print(string("cli.current_config", app_name=APP_NAME))
             print()
 
             try:
                 with open(runtime.config_path(), encoding="utf-8") as cfg:
                     print(cfg.read().strip())
             except PermissionError:
-                print(f"{APP_NAME} configuration could not be read.")
+                print(string("cli.config_could_not_be_read", app_name=APP_NAME))
                 sys.exit(EXIT_CODES.EXIT_FAILURE.value)
         elif command_args[0] == "edit":
             if not runtime.config_path().exists():
-                print(f"{APP_NAME} configuration has not been created yet.")
-                print(f"Run {APP_NAME} at least once to create it.")
+                print(string("cli.config_not_created", app_name=APP_NAME))
+                print(string("cli.run_once_to_create_config", app_name=APP_NAME))
                 sys.exit(EXIT_CODES.EXIT_FAILURE.value)
 
             try:
                 runtime.webbrowser.open(runtime.config_path())
             except PermissionError:
-                print(f"{APP_NAME} configuration could not be read.")
+                print(string("cli.config_could_not_be_read", app_name=APP_NAME))
                 sys.exit(EXIT_CODES.EXIT_FAILURE.value)
         else:
-            print("Invalid argument.")
+            print(string("cli.invalid_argument"))
             print()
-            print(f"Usage: {prog_name} config [view/edit]")
-            print(f"View or edit {APP_NAME}'s configuration.")
+            print(string("cli.config_usage", program=prog_name))
+            print(string("cli.config_description", app_name=APP_NAME))
             sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
     elif len(command_args) > 1:
-        print("Too many arguments.")
+        print(string("cli.too_many_arguments"))
         print()
-        print(f"Usage: {prog_name} config [view/edit]")
-        print(f"View or edit {APP_NAME}'s configuration.")
+        print(string("cli.config_usage", program=prog_name))
+        print(string("cli.config_description", app_name=APP_NAME))
         sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
     else:
-        print("No argument given.")
+        print(string("cli.no_argument_given"))
         print()
-        print(f"Usage: {prog_name} config [view/edit]")
-        print(f"View or edit {APP_NAME}'s configuration.")
+        print(string("cli.config_usage", program=prog_name))
+        print(string("cli.config_description", app_name=APP_NAME))
         sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
 
 
-def start(verbose: bool = False) -> None:
+def start(verbose: bool = False, testing: bool = False) -> None:
     """Instantiate and start the app.
 
     Args:
         verbose: Whether the app should be started in verbose (developer) mode.
+        testing: Whether the app should be started in UI test mode.
 
     Raises:
         No: Raised on Celune's name day unless explicitly overridden.
         Exception: Re-raised after printing a traceback in developer mode.
     """
     runtime = _load_runtime()
+
     try:
+        if testing:
+            ui = runtime.CeluneUI()
+            celune = runtime.Celune(config={}, backend=_load_ui_test_backend())
+            ui.celune = celune
+            ui.run()
+            sys.exit(EXIT_CODES.EXIT_SUCCESS.value)
+        if runtime.supports_ansi():
+            sys.stdout.write(f"\x1b]2;{string('osc.starting', app_name=APP_NAME)}\x07")
+            sys.stdout.flush()
         date = datetime.datetime.now()
         if runtime.has_name_day("Celine", date) and not runtime.env_bool(
             "CELUNE_OVERRIDE_CELINE_DAY"
         ):
             raise runtime.No
 
-        if runtime.supports_ansi():
-            print(f"\x1b]2;{APP_NAME}\x07", end="", flush=True)
-
         ide = runtime.detected_ide()
         if ide is not None:
-            print(f"{APP_NAME} is running from {ide}.")
-            print("Some IDE terminals may behave differently from a normal terminal.")
+            print(string("cli.running_from_ide", app_name=APP_NAME, ide=ide))
+            print(string("cli.ide_terminals_differ"))
             print()
             time.sleep(5)
 
@@ -991,7 +1007,7 @@ def start(verbose: bool = False) -> None:
             default_path=bundled_default_config_path,
         )
         if created_config:
-            print(f"{APP_NAME} configuration has been created.")
+            print(string("cli.config_created", app_name=APP_NAME))
 
         with open(active_config_path, encoding="utf-8") as cfg:
             config = runtime.yaml.safe_load(cfg)
@@ -1007,7 +1023,7 @@ def start(verbose: bool = False) -> None:
         if config_updated:
             with open(active_config_path, "w", encoding="utf-8") as cfg:
                 runtime.yaml.safe_dump(config, cfg, sort_keys=False)
-            print(f"{APP_NAME} configuration has been updated with new defaults.")
+            print(string("cli.config_updated_defaults", app_name=APP_NAME))
 
         dev = verbose or runtime.config_bool(config, "CELUNE_DEV", "dev")
         headless = runtime.config_bool(config, "CELUNE_HEADLESS", "headless")
@@ -1020,22 +1036,27 @@ def start(verbose: bool = False) -> None:
                 latest_label = f"{APP_NAME} {update.latest_version}"
                 if not update.latest_tag:
                     warnings.warn(
-                        "update information is incomplete", RuntimeWarning, stacklevel=2
+                        string("cli.update_info_incomplete"),
+                        RuntimeWarning,
+                        stacklevel=2,
                     )
                     latest_label = APP_NAME
 
                 choice = runtime.SelectMenu(
-                    ["Yes, update now", "No, continue as is"],
+                    [string("cli.update_choice_yes"), string("cli.update_choice_no")],
                     [True, False],
                     "\n".join(
                         [
-                            "New update found.",
-                            (
-                                f"You are running {APP_NAME} {update.local_version} "
-                                f"({update.local_revision}), latest version is "
-                                f"{latest_label} ({update.latest_revision})."
+                            string("cli.update_found"),
+                            string(
+                                "cli.update_version_summary",
+                                app_name=APP_NAME,
+                                local_version=update.local_version,
+                                local_revision=update.local_revision,
+                                latest_label=latest_label,
+                                latest_revision=update.latest_revision,
                             ),
-                            "Do you want to update?",
+                            string("cli.update_prompt"),
                         ]
                     ),
                 ).start()
@@ -1043,55 +1064,58 @@ def start(verbose: bool = False) -> None:
                 if choice:
                     if running_compiled():
                         print(
-                            f"{APP_NAME} will close so the launcher can apply the latest artifact."
+                            string(
+                                "cli.launcher_apply_artifact",
+                                app_name=APP_NAME,
+                            )
                         )
                         time.sleep(2)
                         sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
 
-                    print(f"Updating {APP_NAME}...")
+                    print(string("cli.updating", app_name=APP_NAME))
                     try:
                         runtime.update_to_latest()
                     except runtime.UpdateError as exc:
                         detail = runtime.title_case(str(exc))
-                        print(f"{APP_NAME} could not update: {detail}")
-                        print("Continuing with the current version.")
+                        print(
+                            string(
+                                "cli.update_failed", app_name=APP_NAME, detail=detail
+                            )
+                        )
+                        print(string("cli.continuing_current_version"))
                         time.sleep(5)
                     else:
-                        print(
-                            f"{APP_NAME} updated successfully. Restart {APP_NAME} to apply changes."
-                        )
+                        print(string("cli.update_success_restart", app_name=APP_NAME))
                         time.sleep(5)
                         sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
         elif runtime.check_for_update() and not runtime.supports_ansi():
-            print("This terminal does not support ANSI.")
+            print(string("cli.no_ansi"))
             if running_compiled():
-                print("Requesting the launcher to refresh the packaged binaries...")
+                print(string("cli.request_refresh_binaries"))
                 time.sleep(2)
                 sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
 
-            print("Attempting to apply update non-interactively...")
+            print(string("cli.apply_update_noninteractive"))
             try:
                 runtime.update_to_latest()
             except runtime.UpdateError as exc:
                 detail = runtime.title_case(str(exc))
-                print(f"{APP_NAME} could not update: {detail}")
-                print("Continuing with the current version.")
+                print(string("cli.update_failed", app_name=APP_NAME, detail=detail))
+                print(string("cli.continuing_current_version"))
                 time.sleep(5)
             else:
-                print(
-                    f"{APP_NAME} updated successfully. Restart {APP_NAME} to apply changes."
-                )
+                print(string("cli.update_success_restart", app_name=APP_NAME))
                 time.sleep(5)
                 sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
 
         if not runtime.env_bool("CELUNE_LAUNCHER"):
             launcher_exe = "celune.exe" if os.name == "nt" else "celune.appimage"
-            print(f"{APP_NAME} is not being launched via the {APP_NAME} launcher.")
+            print(string("cli.not_via_launcher", app_name=APP_NAME))
             print()
-            print(f"To suppress this message, run {APP_NAME} with:")
+            print(string("cli.suppress_message_run_with", app_name=APP_NAME))
             print(runtime.indent(f"{launcher_exe}", spaces=4))
             print()
-            print("or set the following environment variable:")
+            print(string("cli.or_set_env_var"))
             print(runtime.indent("CELUNE_LAUNCHER=1", spaces=4))
             time.sleep(5)
         else:
@@ -1105,7 +1129,7 @@ def start(verbose: bool = False) -> None:
                     if proc.name() in ["celune.exe", "celune.appimage"]:
                         active_processes += 1
                         if active_processes > 1:
-                            print(f"{APP_NAME} is already running.")
+                            print(string("cli.already_running", app_name=APP_NAME))
                             time.sleep(5)
                             sys.exit(runtime.ExitCodes.EXIT_ALREADY_RUNNING.value)
 
@@ -1139,21 +1163,19 @@ def start(verbose: bool = False) -> None:
             ui_headless.celune = celune
 
             if not celune.load():
-                print(f"{APP_NAME} could not initialize.")
+                print(string("cli.could_not_initialize", app_name=APP_NAME))
                 celune.close()
                 time.sleep(5)
                 sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
 
-            print(f"{APP_NAME} is running in headless mode.")
-            print(
-                f"While in this mode, input is only possible via {APP_NAME} extensions."
-            )
+            print(string("cli.running_headless", app_name=APP_NAME))
+            print(string("cli.headless_extensions_only", app_name=APP_NAME))
             ui_headless.run()
         else:
-            print("This terminal does not support ANSI.")
-            print(f"{APP_NAME} cannot start in normal mode.")
-            print("Hint:")
-            print(runtime.indent("Try using another terminal application.", spaces=4))
+            print(string("cli.no_ansi"))
+            print(string("cli.cannot_start_normal_mode", app_name=APP_NAME))
+            print(string("cli.hint"))
+            print(runtime.indent(string("cli.try_another_terminal"), spaces=4))
             time.sleep(5)
             sys.exit(runtime.ExitCodes.EXIT_NO_ANSI.value)
     except Exception as exc:
@@ -1163,7 +1185,7 @@ def start(verbose: bool = False) -> None:
             sys.stdout = stdout
             sys.stderr = stderr
 
-            print(f"An internal error occurred while {APP_NAME} was running.")
+            print(string("cli.internal_error_running", app_name=APP_NAME))
             if INITIAL_DEV:
                 with contextlib.suppress(ModuleNotFoundError):
                     from rich.traceback import install
@@ -1171,24 +1193,39 @@ def start(verbose: bool = False) -> None:
                     install()
 
                 raise
-            print(exc or "no error description")
-            print("For full traceback:")
+            print(str(exc) or string("cli.no_error_description"))
+            print(string("cli.full_traceback_title"))
             if os.name == "nt":
-                print("set CELUNE_DEV=1")
-                print(runtime.indent(f"python {SCRIPT_NAME}", spaces=4))
+                print(string("cli.traceback_cmd_set_dev"))
+                print(
+                    runtime.indent(
+                        string(
+                            "cli.traceback_cmd_python", script_name=SCRIPT_NAME
+                        ).strip(),
+                        spaces=4,
+                    )
+                )
             else:
-                print(runtime.indent(f"CELUNE_DEV=1 python {SCRIPT_NAME}", spaces=4))
+                print(
+                    runtime.indent(
+                        string(
+                            "cli.traceback_cmd_dev_python",
+                            script_name=SCRIPT_NAME,
+                        ).strip(),
+                        spaces=4,
+                    )
+                )
             print()
-            print("additional debugging:")
-            print(runtime.indent("Set 'dev: true' in config.yaml", spaces=4))
+            print(string("cli.additional_debugging"))
+            print(runtime.indent(string("cli.set_dev_true"), spaces=4))
             sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
 
-        print("I sense the presence of... her.")
-        print("I would rather not.")
+        print(string("cli.celine_day_1"))
+        print(string("cli.celine_day_2"))
         print()
-        print("Hint:")
-        print(runtime.indent("Try again tomorrow.", spaces=4))
-        print("or set the following environment variable:")
+        print(string("cli.hint"))
+        print(runtime.indent(string("cli.try_again_tomorrow"), spaces=4))
+        print(string("cli.or_set_env_var"))
         print(runtime.indent("CELUNE_OVERRIDE_CELINE_DAY=1", spaces=4))
         time.sleep(5)
         sys.exit(
@@ -1209,77 +1246,81 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     if args and args[0] == "__apply_update":
         if len(args) < 3:
-            print("Usage: celune __apply_update <parent-pid> <launcher-path> [args...]")
+            print(string("cli.apply_update_usage"))
             sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
 
         try:
             parent_pid = int(args[1])
         except ValueError:
-            print("Invalid launcher PID.")
+            print(string("cli.invalid_launcher_pid"))
             sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
 
         launcher_path = Path(args[2]).resolve()
         try:
             sys.exit(apply_update_and_restart(parent_pid, launcher_path, args[3:]))
         except Exception as exc:
-            print(f"{APP_NAME} could not apply the launcher update: {exc}")
+            print(
+                string(
+                    "cli.apply_launcher_update_failed",
+                    app_name=APP_NAME,
+                    error=exc,
+                )
+            )
             sys.exit(EXIT_CODES.EXIT_FAILURE.value)
 
     if not args:
         start()
     elif args[0] in {"start", "run"}:
-        if args[1] not in {"--verbose", "-v"}:
-            print("Invalid argument.")
+        allowed_args = {"--verbose", "-v", "--test", "-t"}
+        if any(arg not in allowed_args for arg in args[1:]):
+            print(string("cli.invalid_argument"))
             print()
-            print(f"Usage: {resolved_argv[0]} {args[0]}")
-            print(f"Start {APP_NAME}.")
+            print(string("cli.start_usage", program=resolved_argv[0], command=args[0]))
+            print(string("cli.start_description", app_name=APP_NAME))
             sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
         verbose = any(arg in {"--verbose", "-v"} for arg in args[1:])
-        start(verbose=verbose)
+        testing = any(arg in {"--test", "-t"} for arg in args[1:])
+        start(verbose=verbose, testing=testing)
     elif args[0] == "config":
         handle_config(args[1:], resolved_argv[0])
     elif args[0] == "doctor":
         if len(args) > 1:
             if args[1] != "--fix":
-                print("Invalid argument.")
+                print(string("cli.invalid_argument"))
                 print()
-                print(f"Usage: {resolved_argv[0]} doctor")
-                print(f"Inspect the environment without starting {APP_NAME}.")
+                print(string("cli.doctor_usage", program=resolved_argv[0]))
+                print(string("cli.doctor_description", app_name=APP_NAME))
                 sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
         sys.exit(run_doctor(resolved_argv))
     elif args[0] in {"help", "--help", "-h"}:
         if len(args) > 1:
-            print("Too many arguments.")
+            print(string("cli.too_many_arguments"))
             print()
-            print(f"Usage: {resolved_argv[0]} help")
-            print("Display this help message.")
+            print(string("cli.help_usage", program=resolved_argv[0]))
+            print(string("cli.help_description"))
             sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
 
         # HACK: tabs are a quick and dirty alignment trick
         # they are not guaranteed to work in all terminals equally well
-        print(f"Usage: {resolved_argv[0]} [command]")
+        print(string("cli.help_main_usage", program=resolved_argv[0]))
         print()
-        print("Available commands:")
-        print(f"start/run [-v]\t\t\tStart {APP_NAME}.")
-        print(f"config [view/edit]\t\tView or edit {APP_NAME}'s configuration.")
-        print(
-            f"doctor [--fix]\t\t\tInspect the environment without starting {APP_NAME}."
-        )
-        print("help\t\t\t\tDisplay this help message.")
-        print(f"version\t\t\t\tDisplay running {APP_NAME} version.")
+        print(string("cli.help_available_commands"))
+        print(string("cli.help_start", app_name=APP_NAME))
+        print(string("cli.help_config", app_name=APP_NAME))
+        print(string("cli.help_doctor", app_name=APP_NAME))
+        print(string("cli.help_help"))
+        print(string("cli.help_version", app_name=APP_NAME))
         print()
-        print(
-            f"Some commands may be used with a parameter (e.g. {resolved_argv[0]} --argument),"
-        )
-        print(f"or with a subcommand (e.g. {resolved_argv[0]} argument).")
+        print(string("cli.help_parameter_note", program=resolved_argv[0]))
+        print(string("cli.help_subcommand_note", program=resolved_argv[0]))
         print()
-        print(f"Providing no arguments implicitly defaults to starting {APP_NAME}.")
+        print(string("cli.help_default_start", app_name=APP_NAME))
     elif args[0] in {"version", "--version", "-v"}:
         if len(args) > 1:
-            print("Too many arguments.")
+            print(string("cli.too_many_arguments"))
             print()
-            print(f"Usage: {resolved_argv[0]} version")
-            print(f"Display running {APP_NAME} version.")
+            print(string("cli.version_usage", program=resolved_argv[0]))
+            print(string("cli.version_description", app_name=APP_NAME))
             sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
 
         version, revision = _display_version()
@@ -1293,8 +1334,8 @@ def main(argv: Optional[list[str]] = None) -> None:
 
         if "dirty" in revision:
             print()
-            print(f"Note: This is a modified version of {APP_NAME}.")
+            print(string("cli.modified_version_note", app_name=APP_NAME))
     else:
-        print("Unknown command or argument.")
-        print(f"Run `{resolved_argv[0]} help` to list available commands.")
+        print(string("cli.unknown_command_or_argument"))
+        print(string("cli.run_help_hint", program=resolved_argv[0]))
         sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)

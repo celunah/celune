@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "4.1.0"
+version = "4.2.0"
 description = "Real-time AI TTS character engine with expressive voices and high-quality playback"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -16,19 +16,6 @@ dependencies = [
     # This package is not required if you want to use Persona in text-only mode,
     # or Celune operates in speech-only mode.
     "torchvision==0.26.0+cu128",
-    # Celune sounds best with faster-qwen3-tts 0.2.4.
-    # To match this version's behavior in 0.2.5 or newer, you may need to set non_streaming_mode=True.
-    # This parameter is ambiguously named, it doesn't actually disable streaming mode.
-    # If it did, Celune would have a problem operating.
-    "faster-qwen3-tts>=0.2.4",
-    # If you want Celune to use the alternative VoxCPM2-based backend, install this package.
-    # This backend may not be available on some VRAM presets. Refer to Celune's default configuration for details.
-    "voxcpm>=2.0.2",
-    # dots.tts is installed from Celunah's Windows-safe fork at this time.
-    "dots.tts @ git+https://github.com/celunah/dots.tts",
-    # Pocket TTS is a new backend added in version 4.0.0, that allows Celune to sound the part and use up very little
-    # memory, just under 200 MB!
-    "pocket-tts>=2.1.0",
     # If not installed, Hugging Face falls back to the older Git LFS way of downloading models.
     "hf-xet",
     "accelerate",
@@ -81,7 +68,7 @@ Issues = "https://github.com/celunah/celune/issues"
 # Why does CodeRabbit think I'm uploading Celune to PyPI?
 # Her package is not standalone.
 [tool.setuptools.package-data]
-celune = ["assets/*.wav"]
+celune = ["assets/*.wav", "lang/*.json"]
 
 [tool.setuptools.data-files]
 voices = ["voices/*.cevoice"]
@@ -100,16 +87,20 @@ explicit = true
 [dependency-groups]
 # Install to run CI workflows.
 dev = [
+    # Is there any faster unit test-specific library to use here?
     "pytest",
+    # "I really hate pyright." - she says.
     "pyrefly",
     "pylint",
+    # Docstrings matter, so everyone can read the code more easily.
     "docstr-coverage",
     "ruff",
+    # This package is required to compile Celune into a properly packaged binary, bypassing the need to run Python.
+    "nuitka>=4.1.2",
     # If not installed, type checkers may complain.
     "types-pyyaml",
     "types-psutil",
     "types-tqdm",
-    "nuitka>=4.1.2",
 ]
 
 [project.optional-dependencies]
@@ -121,9 +112,57 @@ api = [
     "pydantic",
 ]
 
+# Which backend do you want to choose? Choose and install any of the following optional dependency groups.
+# You need at least one of these to start Celune.
+# Try `uv sync --extra <your-backend-name>` or `uv sync --all-extras` to install all backends.
+#
+# The original Qwen-based classic Celune backend. Balanced sound quality and speed.
+qwen3 = [
+    # Celune sounds best with faster-qwen3-tts 0.2.4.
+    # To match this version's behavior in 0.2.5 or newer, you may need to set non_streaming_mode=True.
+    # This parameter is ambiguously named, it doesn't actually disable streaming mode.
+    # If it did, Celune would have a problem operating.
+    "faster-qwen3-tts>=0.2.4",
+
+]
+
+# A high-end diffusion based Celune backend with high fidelity and expressiveness. Slower, but way more expressive.
+voxcpm2 = [
+    # Celune requires a streaming-capable version of the voxcpm library. Versions newer than 1.5.0 support it, however
+    # VoxCPM2 may require at least version 2.0.0.
+    "voxcpm>=2.0.0",
+]
+
+# An alternative diffusion based Celune backend with high fidelity and speaker similarity.
+# Slowest, but very speaker accurate.
+dotstts = [
+    # Celune's dots.tts backend uses a forked version that removes an unnecessary requirement that may
+    # fail to build on Windows systems. Do not try to use the upstream package.
+    "dots.tts @ git+https://github.com/celunah/dots.tts",
+]
+
+# A cheap on compute Celune backend providing an exceptional sound quality. Fastest, with an exceptional sound quality
+# to size ratio.
+mini = [
+    "pocket-tts>=2.1.0",
+]
+
+# A voice conversion backend allowing you to speak in your character voices directly. It does not use TTS, using it
+# will disable TTS features.
+seed-vc = [
+    # Celune's SeedVC backend uses a forked version that turns hard pins into "this or newer", allowing Celune
+    # to resolve it under NumPy v2. Do not try to use the upstream package, it uses an unsupported version of NumPy.
+    "seed-vc @ git+https://github.com/celunah/seed-vc.git",
+]
+
 [tool.pytest.ini_options]
 filterwarnings = [
-    "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
-    "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
-    "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
+     # 'sentencepiece' imports cause these warnings, this package is used by Celune Mini.
+     "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
+     "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
+     "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
+     # Celune's deprecated extension syntax is being exercised in the test suite, causing these warnings.
+     # This syntax will be removed soon.
+     "ignore:CeluneExtension\\.autostart\\(\\) is deprecated, please use @celune\\.subscribe\\('ready'\\) instead:DeprecationWarning",
+     "ignore:CeluneExtensionManager\\.autostart_all\\(\\) is deprecated, please use @celune\\.subscribe\\('ready'\\) in your extensions instead:DeprecationWarning",
 ]

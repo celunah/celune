@@ -22,6 +22,7 @@ class PackageApiTests(TestCase):
                 "__comment__",
                 "__tagline__",
                 "__version__",
+                "subscribe",
             ],
         )
 
