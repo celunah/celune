@@ -332,7 +332,7 @@ class UICommandTests(TestCase):
             ):
                 self._process_command("vc", [str(source_path)])
 
-        cast(mock.Mock, self.ui.celune.submit_audio).assert_called_once_with(
+        self.ui.celune.submit_audio.assert_called_once_with(
             audio,
             48000,
             label="source.wav",
@@ -1359,10 +1359,7 @@ class UIStartupTests(TestCase):
                 self.fail("recording callback was not registered")
             else:
                 invoke_captured_callback(
-                    cast(
-                        ui_app._VCAudioCallback,
-                        captured_callback,
-                    ),
+                    captured_callback,
                     np.ones((60000, 2), dtype=np.float32),
                 )
                 for _ in range(50):
@@ -1370,10 +1367,7 @@ class UIStartupTests(TestCase):
                         break
                     time.sleep(0.01)
                 invoke_captured_callback(
-                    cast(
-                        ui_app._VCAudioCallback,
-                        captured_callback,
-                    ),
+                    captured_callback,
                     np.ones((60000, 2), dtype=np.float32),
                 )
 
@@ -1519,7 +1513,7 @@ class UIStartupTests(TestCase):
         for _ in range(50):
             if any(
                 "feedback" in call.args[0].lower()
-                for call in cast(mock.Mock, ui.safe_log).call_args_list
+                for call in ui.safe_log.call_args_list
                 if call.args
             ):
                 break
@@ -1527,7 +1521,7 @@ class UIStartupTests(TestCase):
         self.assertTrue(
             any(
                 "feedback" in call.args[0].lower()
-                for call in cast(mock.Mock, ui.safe_log).call_args_list
+                for call in ui.safe_log.call_args_list
                 if call.args
             )
         )

@@ -42,6 +42,7 @@ voice_conversion_f0_condition: false
 #
 # on Windows, set audio_api to wasapi or directsound to disambiguate devices that
 # appear more than once under different host APIs
+# set it to "null" to use Celune's default: "wasapi"
 audio_api: null
 #
 # if the specified device name has several matches, Celune will list the possible device
@@ -51,7 +52,7 @@ output_device: null
 
 # headless mode / Celune embedded framework
 #
-# this will disable the UI and only API and extensions can make
+# this will disable the UI and only API/WebUI and extensions can make
 # Celune perform any actions
 headless: false
 # don't use ANSI colors in headless interface (defaulting to white)
@@ -66,6 +67,7 @@ theme: dark
 # CeluneNorm settings
 #
 # CeluneNorm is Celune's normalizer that cleans up your text to be more TTS friendly
+# it may however lose a letter occasionally or mix up short sequences
 use_normalizer: false
 
 # smart speech buffering
@@ -94,7 +96,7 @@ ipa: false
 # we recommend choosing medium as a safe baseline for low VRAM users
 # the sane choice for users wanting to use Persona is the high preset
 #
-# low (CPU/6GB) - Celune Mini (Pocket TTS) / Qwen3 0.6B+ normalizer CPU (caution: choosing Qwen may harm outputs)
+# low (CPU/6GB) - Celune Mini (Pocket TTS) or SeedVC (GPU only) / Qwen3 0.6B+ normalizer CPU (caution: choosing Qwen may harm outputs)
 # medium (8GB) - Qwen3 1.7B + normalizer CPU
 # high (12GB) - Qwen3 1.7B / dots.tts MF / VoxCPM2 + Persona 4-bit + normalizer CPU
 # xhigh (16GB+) - everything allowed, including dots.tts MF and VoxCPM2 + Persona 8-bit + normalizer GPU

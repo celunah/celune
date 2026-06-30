@@ -2593,7 +2593,7 @@ def _playback_blocks(
     """Split one queued source chunk into short blocks for the mixer."""
     blocks = deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]()
     audio = np.asarray(chunk.audio, dtype=np.float32)
-    frames_per_block = max(1, int(round(chunk.sample_rate * block_seconds)))
+    frames_per_block = max(1, round(chunk.sample_rate * block_seconds))
     for start in range(0, len(audio), frames_per_block):
         piece = np.asarray(audio[start : start + frames_per_block], dtype=np.float32)
         blocks.append((piece, chunk.timing if start == 0 else None))

@@ -80,8 +80,8 @@ If CI runtime exceeds 5 minutes:
 - Stop it from running any further.
 - Report that the CI has taken too long.
 - Do not try to extend any timeouts.
-- Attempt to run again only the relevant CI steps in isolation.
-- If the isolated CI attempts also fail or time out, report it back.
+- Attempt to run again only the relevant CI steps without a sandbox.
+- If non-sandboxed CI attempts also fail or time out, report it back.
 
 After each task, run `scripts/update_docstrings.py` and then replace placeholders in docstrings like:
 
@@ -118,6 +118,7 @@ Make sure to only modify user-facing strings (both normal and dev mode strings),
 
 * Supported Python versions are 3.12 and 3.13.
 * Use `uv` for environment management.
+* Ensure the environment was set up with `--all-extras --dev` to prevent any missing packages from causing issues later on.
 * Do not use `pip` directly unless explicitly required. If you need to run `pip` alone, do it so with `uv pip` instead.
 * Do not assume CPU-only mode supports all features. CPU-only execution is only supported with Celune Mini.
 * Be aware that many features require an RTX 30 series GPU or newer.
@@ -136,6 +137,7 @@ When modifying UI code:
 * Keep mobile/touch support in mind.
 * Do not rely only on screen width for mobile behavior. Prefer pointer/hover media queries when the issue is input method.
 * Desktop keyboard shortcuts must have visible button alternatives for touch devices.
+* Try to write CSS, override page variables, etc. to keep Celune's canonical page colors.
 
 ## API
 
