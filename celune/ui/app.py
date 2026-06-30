@@ -6,6 +6,7 @@ import sys
 import time
 import types
 import shlex
+import queue as queue_module
 import signal
 import ctypes
 import logging
@@ -13,32 +14,38 @@ import datetime
 import itertools
 import threading
 import contextlib
-from dataclasses import dataclass, field
 from pathlib import Path
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from typing import Optional, Callable, Union, TextIO, cast
 
+import numpy as np
+import numpy.typing as npt
+import sounddevice as sd
 import yaml
 from rich.text import Text
 from textual.color import Color
 from textual.timer import Timer
+from textual.theme import Theme
 from textual import work, events
 from textual.widget import Widget
-from textual.theme import Theme
-from textual.app import ScreenStackError
 from textual.css.types import EdgeStyle
+from textual.app import ScreenStackError
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 
 from .. import colors
 from ..celune import Celune
-from ..constants import APP_NAME, SIGTSTP
 from ..cevoice import default_loader
+from ..config import resolve_audio_device_with_info
 from . import resources as ui_resources
+from .resources import FOOTER_ROTATE_SECONDS
 from .theme import CELUNE_CSS, severity_color
-from .terminal import LogRedirect, UILogHandler
+from .terminal import LogRedirect, UILogHandler, is_celune_log_record
 from ..paths import config_path, main_window_log_path
+from ..constants import APP_NAME, SIGTSTP, CRASH_LINES
+from ..i18n import string
 from .commands import process_command as process_ui_command
 from ..persona.impl import (
     persona_talkback_enabled,
@@ -55,6 +62,48 @@ from ..utils import (
     discard,
 )
 
+_VC_PITCH_SHIFT_MIN = -12
+_VC_PITCH_SHIFT_MAX = 12
+_VC_LIVE_STREAM_CHUNK_SECONDS = 0.32
+_VC_LIVE_STREAM_OVERLAP_SECONDS = 0.12
+_VC_FEEDBACK_RMS_MIN_PREVIOUS = 0.05
+_VC_FEEDBACK_RMS_MIN_CURRENT = 0.18
+_VC_FEEDBACK_RMS_RISE_RATIO = 2.0
+_VC_FEEDBACK_RMS_RISE_DELTA = 0.08
+_RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
+    {
+        "`torch_dtype` is deprecated! Use `dtype` instead!",
+        "Skipped loading some keys due to shape mismatch:",
+        "cfm loaded",
+        "length_regulator loaded",
+        "Removing weight norm...",
+        "Loading weights from",
+        "min value is",
+        "max value is",
+        "it/s]",
+        "s/it]",
+    }
+)
+_AudioDeviceScalar = Union[bool, int, float, str]
+_VCAudioCallback = Callable[
+    [
+        npt.NDArray[np.float32],
+        int,
+        Optional[tuple[float, float, float]],
+        Optional[sd.CallbackFlags],
+    ],
+    None,
+]
+
+
+def _device_scalar_int(value: Optional[_AudioDeviceScalar], default: int) -> int:
+    """Return one audio-device metadata value as an integer when possible."""
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float, str)):
+        return int(value)
+    return default
+
 
 @dataclass
 class CeluneUIWidgetState:
@@ -63,6 +112,8 @@ class CeluneUIWidgetState:
     logs: Optional[RichLog] = None
     input_box: Optional[TextArea] = None
     style_button: Optional[Button] = None
+    vc_mode_button: Optional[Button] = None
+    vc_pitch_button: Optional[Button] = None
     status: Optional[Label] = None
     resources: Optional[Label] = None
     progress_bar: Optional[ProgressBar] = None
@@ -112,12 +163,18 @@ class CeluneUILogCaptureState:
     log_stdout: Optional[LogRedirect] = None
     log_stderr: Optional[LogRedirect] = None
     runtime_log_capture_enabled: bool = False
-    runtime_redirect_loggers: Optional[dict[str, logging.Logger]] = None
-    runtime_redirect_handlers: Optional[dict[str, UILogHandler]] = None
-    runtime_redirect_original_handlers: Optional[dict[str, list[logging.Handler]]] = (
-        None
-    )
-    runtime_redirect_original_propagate: Optional[dict[str, bool]] = None
+    runtime_redirect_handler: Optional[UILogHandler] = None
+    runtime_redirect_original_call_handlers: Optional[
+        Callable[[logging.Logger, logging.LogRecord], None]
+    ] = None
+    runtime_redirect_original_last_resort: Optional[logging.Handler] = None
+    runtime_redirect_original_raise_exceptions: Optional[bool] = None
+    original_dunder_stdout: Optional[TextIO] = None
+    original_dunder_stderr: Optional[TextIO] = None
+    stderr_pipe_read_fd: Optional[int] = None
+    stderr_pipe_write_fd: Optional[int] = None
+    stderr_original_fd_dup: Optional[int] = None
+    stderr_forward_thread: Optional[threading.Thread] = None
     warnings_capture_enabled: bool = False
     log_file_path: Path = field(default_factory=Path)
     log_file_initialized: bool = False
@@ -130,6 +187,20 @@ class CeluneUIInteractionState:
     border_pulse_tokens: dict[int, int] = field(default_factory=dict)
     border_pulse_widgets: dict[int, Widget] = field(default_factory=dict)
     tutorial_timers: list[Timer] = field(default_factory=list)
+    vc_recording_buffered_frames: int = 0
+    vc_recording_chunks: list[npt.NDArray[np.float32]] = field(default_factory=list)
+    vc_recording_captured_frames: int = 0
+    vc_recording_feedback_detected: bool = False
+    vc_recording_label: str = ""
+    vc_recording_lock: threading.Lock = field(default_factory=threading.Lock)
+    vc_recording_previous_rms: float = 0.0
+    vc_recording_sample_rate: int = 0
+    vc_recording_submission_queue: Optional[
+        queue_module.Queue[Optional[tuple[npt.NDArray[np.float32], int, str, bool]]]
+    ] = None
+    vc_recording_stream: Optional[sd.InputStream] = None
+    vc_recording_stop_thread: Optional[threading.Thread] = None
+    vc_recording_worker: Optional[threading.Thread] = None
     sleep_timer: Optional[Timer] = None
     tutorial_token: int = 0
     tutorial_active: bool = False
@@ -191,6 +262,8 @@ class CeluneUI(App):
     logs = _forward_ui_property("_widgets", "logs")
     input_box = _forward_ui_property("_widgets", "input_box")
     style_button = _forward_ui_property("_widgets", "style_button")
+    vc_mode_button = _forward_ui_property("_widgets", "vc_mode_button")
+    vc_pitch_button = _forward_ui_property("_widgets", "vc_pitch_button")
     status = _forward_ui_property("_widgets", "status")
     resources = _forward_ui_property("_widgets", "resources")
     progress_bar = _forward_ui_property("_widgets", "progress_bar")
@@ -233,17 +306,35 @@ class CeluneUI(App):
     _runtime_log_capture_enabled = _forward_ui_property(
         "_log_capture_state", "runtime_log_capture_enabled"
     )
-    _runtime_redirect_loggers = _forward_ui_property(
-        "_log_capture_state", "runtime_redirect_loggers"
+    _runtime_redirect_handler = _forward_ui_property(
+        "_log_capture_state", "runtime_redirect_handler"
     )
-    _runtime_redirect_handlers = _forward_ui_property(
-        "_log_capture_state", "runtime_redirect_handlers"
+    _runtime_redirect_original_call_handlers = _forward_ui_property(
+        "_log_capture_state", "runtime_redirect_original_call_handlers"
     )
-    _runtime_redirect_original_handlers = _forward_ui_property(
-        "_log_capture_state", "runtime_redirect_original_handlers"
+    _runtime_redirect_original_last_resort = _forward_ui_property(
+        "_log_capture_state", "runtime_redirect_original_last_resort"
     )
-    _runtime_redirect_original_propagate = _forward_ui_property(
-        "_log_capture_state", "runtime_redirect_original_propagate"
+    _runtime_redirect_original_raise_exceptions = _forward_ui_property(
+        "_log_capture_state", "runtime_redirect_original_raise_exceptions"
+    )
+    _original_dunder_stdout = _forward_ui_property(
+        "_log_capture_state", "original_dunder_stdout"
+    )
+    _original_dunder_stderr = _forward_ui_property(
+        "_log_capture_state", "original_dunder_stderr"
+    )
+    _stderr_pipe_read_fd = _forward_ui_property(
+        "_log_capture_state", "stderr_pipe_read_fd"
+    )
+    _stderr_pipe_write_fd = _forward_ui_property(
+        "_log_capture_state", "stderr_pipe_write_fd"
+    )
+    _stderr_original_fd_dup = _forward_ui_property(
+        "_log_capture_state", "stderr_original_fd_dup"
+    )
+    _stderr_forward_thread = _forward_ui_property(
+        "_log_capture_state", "stderr_forward_thread"
     )
     _warnings_capture_enabled = _forward_ui_property(
         "_log_capture_state", "warnings_capture_enabled"
@@ -260,6 +351,40 @@ class CeluneUI(App):
         "_interaction_state", "border_pulse_widgets"
     )
     _tutorial_timers = _forward_ui_property("_interaction_state", "tutorial_timers")
+    _vc_recording_chunks = _forward_ui_property(
+        "_interaction_state", "vc_recording_chunks"
+    )
+    _vc_recording_buffered_frames = _forward_ui_property(
+        "_interaction_state", "vc_recording_buffered_frames"
+    )
+    _vc_recording_label = _forward_ui_property(
+        "_interaction_state", "vc_recording_label"
+    )
+    _vc_recording_captured_frames = _forward_ui_property(
+        "_interaction_state", "vc_recording_captured_frames"
+    )
+    _vc_recording_feedback_detected = _forward_ui_property(
+        "_interaction_state", "vc_recording_feedback_detected"
+    )
+    _vc_recording_lock = _forward_ui_property("_interaction_state", "vc_recording_lock")
+    _vc_recording_previous_rms = _forward_ui_property(
+        "_interaction_state", "vc_recording_previous_rms"
+    )
+    _vc_recording_sample_rate = _forward_ui_property(
+        "_interaction_state", "vc_recording_sample_rate"
+    )
+    _vc_recording_submission_queue = _forward_ui_property(
+        "_interaction_state", "vc_recording_submission_queue"
+    )
+    _vc_recording_stream = _forward_ui_property(
+        "_interaction_state", "vc_recording_stream"
+    )
+    _vc_recording_stop_thread = _forward_ui_property(
+        "_interaction_state", "vc_recording_stop_thread"
+    )
+    _vc_recording_worker = _forward_ui_property(
+        "_interaction_state", "vc_recording_worker"
+    )
     _sleep_timer = _forward_ui_property("_interaction_state", "sleep_timer")
     _tutorial_token = _forward_ui_property("_interaction_state", "tutorial_token")
     _tutorial_active = _forward_ui_property("_interaction_state", "tutorial_active")
@@ -361,7 +486,7 @@ class CeluneUI(App):
     def _refresh_theme_text(self) -> None:
         """Refresh widgets after a runtime theme change."""
 
-        def repaint(widget: object) -> None:
+        def repaint(widget: Widget) -> None:
             refresh = getattr(widget, "refresh", None)
             if refresh is None:
                 return
@@ -439,6 +564,29 @@ class CeluneUI(App):
 
         glow.fatal = wrapped_fatal
         setattr(self.celune, "_ui_fatal_glow_wrapped", True)
+
+    def _bind_runtime_callbacks(self) -> None:
+        """Bind one attached Celune instance back into this UI."""
+        if self.celune is None:
+            return
+
+        self.celune.log_callback = self.tts_log
+        self.celune.status_callback = self.safe_status
+        self.celune.error_callback = self.error
+        self.celune.idle_callback = self.tts_idle
+        self.celune.queue_avail_callback = self.tts_queue_avail
+        self.celune.voice_changed_callback = self.tts_voice_changed
+        self.celune.change_input_state_callback = self.change_input_state
+        self.celune.change_voice_lock_state_callback = self.change_voice_lock_state
+        self.celune.progress_callback = self.safe_progress
+
+    def _is_ui_test_mode(self) -> bool:
+        """Return whether the attached runtime is the interactive fake-backend UI test mode."""
+        if self.celune is None:
+            return False
+
+        backend = getattr(self.celune, "backend", None)
+        return bool(getattr(backend, "is_fake", False)) and "pytest" not in sys.modules
 
     def _refresh_status(self) -> None:
         """Refresh the status color for the active theme."""
@@ -549,8 +697,14 @@ class CeluneUI(App):
                 id="progress", show_percentage=False, show_eta=False, total=1
             )
             with Horizontal(id="controls"):
-                yield TextArea(id="input", placeholder="Please wait")
-                yield Button("No Voice Set", id="style", disabled=True)
+                yield TextArea(id="input", placeholder=string("ui.wait_placeholder"))
+                yield Button(string("ui.no_voice_set"), id="style", disabled=True)
+                yield Button(string("ui.vc_mode_talk"), id="vc-mode", disabled=True)
+                yield Button(
+                    string("ui.vc_pitch_button", value="+0"),
+                    id="vc-pitch",
+                    disabled=True,
+                )
             with Horizontal(id="bottom"):
                 yield Label("", id="status")
                 yield Label("", id="resources")
@@ -596,6 +750,7 @@ class CeluneUI(App):
                     )
 
         self._ensure_themes_registered()
+        self._bind_runtime_callbacks()
         self._wrap_runtime_fatal_glow()
 
         if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
@@ -615,7 +770,7 @@ class CeluneUI(App):
                 self.active_theme_name = "celune_light"
             else:
                 self.active_theme_name = "celune"
-                self.safe_log("Invalid theme, defaulting to dark", "warning")
+                self.safe_log(string("ui.invalid_theme_defaulting_dark"), "warning")
 
         self.theme = self.active_theme_name
 
@@ -624,22 +779,26 @@ class CeluneUI(App):
         self.status = self.query_one("#status", Label)
         self.resources = self.query_one("#resources", Label)
         self.style_button = self.query_one("#style", Button)
+        self.vc_mode_button = self.query_one("#vc-mode", Button)
+        self.vc_pitch_button = self.query_one("#vc-pitch", Button)
         self.progress_bar = self.query_one("#progress", ProgressBar)
         self.header = self.query_one("#header", Label)
         self.header_lines = tuple(cast(Label, widget) for widget in self.query(".line"))
         self.set_focus(None)
         self._refresh_status()
+        self.refresh_vc_controls()
         self._refresh_theme_text()
         self._refresh_logs()
-        self._install_runtime_log_redirects()
+        if not self.celune.backend.is_fake or "pytest" in sys.modules:
+            self._enable_runtime_log_capture()
         ui_resources.prime_usage()
-        self.set_interval(2.06, self.advance_resources)
+        self.set_interval(FOOTER_ROTATE_SECONDS, self.advance_resources)
         self._status_marquee_timer = self.set_interval(
             0.18, self._advance_status_marquee
         )
 
         self.call_after_refresh(self.start_background_init)
-        self.safe_status("Initializing")
+        self.safe_status(string("status.initializing"))
         self.update_resources()
 
     def update_resources(self) -> None:
@@ -652,10 +811,7 @@ class CeluneUI(App):
             text = pages[self._resource_page % len(pages)]
 
             if supports_ansi() and self.celune.cur_state == "error":
-                if self._resource_page % 2:
-                    self._old_stdout.write(f"\x1b]2;{APP_NAME}\x07")
-                else:
-                    self._old_stdout.write("\x1b]2;has crashed\x07")
+                self._write_terminal_escape(f"\x1b]2;{next(CRASH_LINES)}\x07")
 
             self.resources.update(indent(text, spaces=2, direction="right"))
 
@@ -666,78 +822,211 @@ class CeluneUI(App):
         if self._runtime_log_capture_enabled:
             return
 
-        self._old_stdout = sys.stdout
-        self._old_stderr = sys.stderr
         self._log_stdout = LogRedirect(
             write_callback=self.safe_log,
             default_severity="info",
             stdout=self._old_stdout,
             stderr=self._old_stderr,
-            filter_messages={"`torch_dtype` is deprecated! Use `dtype` instead!"},
+            filter_messages=_RUNTIME_LOG_REDIRECT_FILTER_MESSAGES,
         )
         self._log_stderr = LogRedirect(
             write_callback=self.safe_log,
             default_severity="warning",
             stdout=self._old_stdout,
             stderr=self._old_stderr,
-            filter_messages={"`torch_dtype` is deprecated! Use `dtype` instead!"},
+            filter_messages=_RUNTIME_LOG_REDIRECT_FILTER_MESSAGES,
         )
 
         sys.stdout = self._log_stdout
         sys.stderr = self._log_stderr
+        self._redirect_dunder_stdio()
         self._install_runtime_log_redirects()
+        self._install_low_level_stderr_capture()
         self._runtime_log_capture_enabled = True
 
-    def _install_runtime_log_redirects(self) -> None:
-        """Route known runtime logger output into Celune's UI log widget."""
-        if self._runtime_redirect_loggers is not None:
+    def _write_terminal_escape(self, escape: str) -> None:
+        """Write one ANSI escape sequence to the real terminal when available."""
+        if self._log_stdout is not None:
+            self._log_stdout.ansi(escape)
             return
 
-        self._runtime_redirect_loggers = {}
-        self._runtime_redirect_handlers = {}
-        self._runtime_redirect_original_handlers = {}
-        self._runtime_redirect_original_propagate = {}
+        if self._old_stdout is not None:
+            self._old_stdout.write(escape)
+            self._old_stdout.flush()
 
-        for logger_name in ("torch.utils.flop_counter", "py.warnings"):
-            logger = logging.getLogger(logger_name)
-            handler = UILogHandler(self.safe_log)
-            self._runtime_redirect_loggers[logger_name] = logger
-            self._runtime_redirect_handlers[logger_name] = handler
-            self._runtime_redirect_original_handlers[logger_name] = list(
-                logger.handlers
-            )
-            self._runtime_redirect_original_propagate[logger_name] = logger.propagate
-            logger.handlers = [handler]
-            logger.propagate = False
+    def _install_runtime_log_redirects(self) -> None:
+        """Route non-Celune Python logging output into Celune's UI log widget."""
+        if self._runtime_redirect_handler is not None:
+            return
+
+        handler = UILogHandler(
+            self.safe_log,
+            filter_messages=_RUNTIME_LOG_REDIRECT_FILTER_MESSAGES,
+        )
+        original_call_handlers = logging.Logger.callHandlers
+
+        def call_handlers(self: logging.Logger, record: logging.LogRecord) -> None:
+            if is_celune_log_record(record):
+                original_call_handlers(self, record)
+                return
+
+            handler.handle(record)
+
+        self._runtime_redirect_handler = handler
+        self._runtime_redirect_original_call_handlers = original_call_handlers
+        self._runtime_redirect_original_last_resort = logging.lastResort
+        self._runtime_redirect_original_raise_exceptions = logging.raiseExceptions
+        logging.Logger.callHandlers = call_handlers
+        logging.lastResort = None
+        logging.raiseExceptions = False
 
         logging.captureWarnings(True)
         self._warnings_capture_enabled = True
 
-    def _remove_runtime_log_redirects(self) -> None:
-        """Restore Python logger output handlers replaced by the UI."""
-        loggers = self._runtime_redirect_loggers
-        handlers = self._runtime_redirect_handlers
-        original_handlers = self._runtime_redirect_original_handlers
-        original_propagate = self._runtime_redirect_original_propagate
+    def _redirect_dunder_stdio(self) -> None:
+        """Redirect ``sys.__stdout__`` and ``sys.__stderr__`` when possible."""
+        if self._original_dunder_stdout is None:
+            self._original_dunder_stdout = sys.__stdout__
+        if self._original_dunder_stderr is None:
+            self._original_dunder_stderr = sys.__stderr__
+
+        if self._log_stdout is not None:
+            sys.__stdout__ = self._log_stdout
+        if self._log_stderr is not None:
+            sys.__stderr__ = self._log_stderr
+
+    def _restore_dunder_stdio(self) -> None:
+        """Restore ``sys.__stdout__`` and ``sys.__stderr__`` after capture ends."""
+        if self._original_dunder_stdout is not None:
+            sys.__stdout__ = self._original_dunder_stdout
+        if self._original_dunder_stderr is not None:
+            sys.__stderr__ = self._original_dunder_stderr
+
+        self._original_dunder_stdout = None
+        self._original_dunder_stderr = None
+
+    def _install_low_level_stderr_capture(self) -> None:
+        """Capture writes that bypass Python and go straight to stderr."""
+        if self._stderr_forward_thread is not None:
+            return
+
+        stderr_stream = self._old_stderr
+        if stderr_stream is None or not hasattr(stderr_stream, "fileno"):
+            return
+
+        original_fd_dup: Optional[int] = None
+        pipe_read_fd: Optional[int] = None
+        pipe_write_fd: Optional[int] = None
+
+        try:
+            stderr_fd = stderr_stream.fileno()
+            if not isinstance(stderr_fd, int):
+                return
+            original_fd_dup = os.dup(stderr_fd)
+            pipe_read_fd, pipe_write_fd = os.pipe()
+            os.dup2(pipe_write_fd, stderr_fd)
+        except (AttributeError, OSError, TypeError, ValueError):
+            with contextlib.suppress(OSError):
+                if original_fd_dup is not None:
+                    os.close(original_fd_dup)
+            with contextlib.suppress(OSError):
+                if pipe_read_fd is not None:
+                    os.close(pipe_read_fd)
+            with contextlib.suppress(OSError):
+                if pipe_write_fd is not None:
+                    os.close(pipe_write_fd)
+            return
+
+        self._stderr_original_fd_dup = original_fd_dup
+        self._stderr_pipe_read_fd = pipe_read_fd
+        self._stderr_pipe_write_fd = pipe_write_fd
+
+        forward_thread = threading.Thread(
+            target=self._forward_low_level_stderr,
+            name="celune-stderr-capture",
+            daemon=True,
+        )
+        self._stderr_forward_thread = forward_thread
+        forward_thread.start()
+
+    def _forward_low_level_stderr(self) -> None:
+        """Forward low-level stderr bytes back to the terminal and UI log."""
+        read_fd = self._stderr_pipe_read_fd
+        original_fd_dup = self._stderr_original_fd_dup
+        redirect = self._log_stderr
+
+        if read_fd is None or original_fd_dup is None or redirect is None:
+            return
+
+        encoding = getattr(self._old_stderr, "encoding", None) or "utf-8"
+        errors = getattr(self._old_stderr, "errors", None) or "replace"
+
+        while True:
+            try:
+                payload = os.read(read_fd, 4096)
+            except OSError:
+                break
+
+            if not payload:
+                break
+
+            redirect.write(payload.decode(encoding, errors=errors))
+
+        redirect.flush()
+
+    def _remove_low_level_stderr_capture(self) -> None:
+        """Restore stderr after low-level capture was installed."""
+        stderr_stream = self._old_stderr
+        original_fd_dup = self._stderr_original_fd_dup
+        pipe_write_fd = self._stderr_pipe_write_fd
+        pipe_read_fd = self._stderr_pipe_read_fd
+
         if (
-            loggers is not None
-            and handlers is not None
-            and original_handlers is not None
-            and original_propagate is not None
+            stderr_stream is not None
+            and hasattr(stderr_stream, "fileno")
+            and original_fd_dup is not None
         ):
-            for logger_name, logger in loggers.items():
-                logger.handlers = original_handlers[logger_name]
-                logger.propagate = original_propagate[logger_name]
-                handlers[logger_name].close()
+            with contextlib.suppress(OSError, ValueError):
+                stderr_stream.flush()
+            with contextlib.suppress(OSError, ValueError):
+                os.dup2(original_fd_dup, stderr_stream.fileno())
+
+        if pipe_write_fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(pipe_write_fd)
+        if pipe_read_fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(pipe_read_fd)
+        if original_fd_dup is not None:
+            with contextlib.suppress(OSError):
+                os.close(original_fd_dup)
+
+        self._stderr_pipe_read_fd = None
+        self._stderr_pipe_write_fd = None
+        self._stderr_original_fd_dup = None
+        self._stderr_forward_thread = None
+
+    def _remove_runtime_log_redirects(self) -> None:
+        """Restore Python logging dispatch after UI shutdown."""
+        handler = self._runtime_redirect_handler
+        original_call_handlers = self._runtime_redirect_original_call_handlers
+        if handler is not None and original_call_handlers is not None:
+            logging.Logger.callHandlers = original_call_handlers
+            logging.lastResort = self._runtime_redirect_original_last_resort
+            if self._runtime_redirect_original_raise_exceptions is not None:
+                logging.raiseExceptions = (
+                    self._runtime_redirect_original_raise_exceptions
+                )
+            handler.close()
 
         if self._warnings_capture_enabled:
             logging.captureWarnings(False)
             self._warnings_capture_enabled = False
 
-        self._runtime_redirect_loggers = None
-        self._runtime_redirect_handlers = None
-        self._runtime_redirect_original_handlers = None
-        self._runtime_redirect_original_propagate = None
+        self._runtime_redirect_handler = None
+        self._runtime_redirect_original_call_handlers = None
+        self._runtime_redirect_original_last_resort = None
+        self._runtime_redirect_original_raise_exceptions = None
 
     def _disable_runtime_log_capture(self) -> None:
         """Restore global stdio once the UI is shutting down."""
@@ -746,7 +1035,9 @@ class CeluneUI(App):
         if self._log_stderr is not None:
             self._log_stderr.flush()
 
+        self._remove_low_level_stderr_capture()
         self._remove_runtime_log_redirects()
+        self._restore_dunder_stdio()
 
         sys.stdout = self._old_stdout
         sys.stderr = self._old_stderr
@@ -802,10 +1093,10 @@ class CeluneUI(App):
 
         if self.celune.enter_sleep_mode():
             self.safe_log(
-                f"{APP_NAME} is currently sleeping. Type anything to wake up.",
+                string("ui.sleeping_log", app_name=APP_NAME),
                 "sleeping",
             )
-            self.safe_status("Sleeping", "sleeping")
+            self.safe_status(string("ui.sleeping_status"), "sleeping")
             self.change_voice_lock_state(locked=True)
 
     @work(thread=True, exclusive=True)
@@ -816,7 +1107,7 @@ class CeluneUI(App):
                 self._schedule_sleep_timer()
         finally:
             if self.celune.sleeping:
-                self.safe_status("Sleeping", "sleeping")
+                self.safe_status(string("ui.sleeping_status"), "sleeping")
 
     def start_background_init(self) -> None:
         """Run the initialization function."""
@@ -829,9 +1120,17 @@ class CeluneUI(App):
             if self.celune.load():
                 self.celune_styles = self.celune.voices
                 if not self.celune_styles:
+                    if self._is_ui_test_mode():
+                        if not self.celune.use_normalization:
+                            self.safe_progress(1, 1)
+                        self.change_input_state(locked=True)
+                        self.change_voice_lock_state(locked=True)
+                        self.safe_status(string("ui.test_mode_active"))
+                        return
+
                     self.change_input_state(locked=True)
                     self.change_voice_lock_state(locked=True)
-                    self.error(f"{APP_NAME} could not start")
+                    self.error(string("ui.app_could_not_start", app_name=APP_NAME))
                     self.cur_state = "error"
                     return
                 self.celune_voices = itertools.cycle(self.celune_styles)
@@ -842,7 +1141,7 @@ class CeluneUI(App):
                 else:
                     self.style_index = 0
                 self.celune_ready = True
-                self.safe_status("Idle")
+                self.safe_status(string("ui.idle_status"))
                 self.tts_voice_changed(
                     self.celune.current_voice or self.celune.voices[0]
                 )
@@ -850,25 +1149,32 @@ class CeluneUI(App):
                     self.safe_progress(1, 1)
                 self.change_input_state(locked=False)
                 self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
-                self.call_from_thread(self._enable_runtime_log_capture)
-                self.safe_log(
-                    f"New to {APP_NAME}? Type /tutorial to begin the tutorial."
-                )
+                self.safe_log(string("ui.tutorial_prompt", app_name=APP_NAME))
                 self._schedule_sleep_timer()
+                if supports_ansi(self._old_stdout):
+                    self.call_from_thread(
+                        lambda: self._write_terminal_escape(f"\x1b]2;{APP_NAME}\x07")
+                    )
             else:
                 self.cur_state = "error"
                 self.change_input_state(locked=True)
                 self.change_voice_lock_state(locked=True)
-                self.error(f"{APP_NAME} could not start")
+                self.error(string("ui.app_could_not_start", app_name=APP_NAME))
         except Exception as e:
             self.cur_state = "error"
-            self.safe_log(f"[INIT ERROR] {format_error(e, self.celune.dev)}", "error")
+            self.safe_log(
+                string(
+                    "ui.init_error",
+                    error=format_error(e, self.celune.dev),
+                ),
+                "error",
+            )
             self.celune.glow.fatal()
             if not self.celune.try_play_signal("error"):
-                self.safe_log_dev("Could not play the error signal.", "warning")
+                self.safe_log_dev(string("ui.error_signal_unavailable"), "warning")
             self.change_input_state(locked=True)
             self.change_voice_lock_state(locked=True)
-            self.error(f"{APP_NAME} could not start")
+            self.error(string("ui.app_could_not_start", app_name=APP_NAME))
 
     def safe_progress(
         self, progress: Optional[float], total: Optional[float] = None
@@ -917,7 +1223,7 @@ class CeluneUI(App):
             target: Widget or Textual selector for the target widget.
         """
         if threading.current_thread() is not threading.main_thread():
-            self.call_from_thread(self.pulse_border, target)
+            self.call_from_thread(lambda: self.pulse_border(target))
             return
 
         duration = 2.06
@@ -1030,15 +1336,18 @@ class CeluneUI(App):
 
     def _normal_input_placeholder(self) -> str:
         """Return the unlocked input placeholder without blocking the UI."""
+        if self._is_voice_conversion_mode():
+            return string("ui.voice_changer_placeholder")
+
         if (
             self._persona_loaded()
             and self._persona_available
             and persona_enabled(self.celune.config)
             and persona_talkback_enabled(self.celune.config)
         ):
-            return "Say something..."
+            return string("ui.say_placeholder")
 
-        return "Enter text to speak here"
+        return string("ui.input_placeholder")
 
     def _persona_loaded(self) -> bool:
         """Return whether the attached Celune instance currently has Persona."""
@@ -1081,9 +1390,12 @@ class CeluneUI(App):
         def update() -> None:
             self._input_locked = locked
             self.input_box.placeholder = (
-                "Please wait" if locked else self._normal_input_placeholder()
+                string("ui.wait_placeholder")
+                if locked
+                else self._normal_input_placeholder()
             )
             self.style_button.disabled = locked
+            self.refresh_vc_controls()
             self.update_resources()
 
         self._run_on_ui_thread(update)
@@ -1107,8 +1419,9 @@ class CeluneUI(App):
             )
             severity = "info"
 
-        if severity != "error":
-            self._fatal_error_active = False
+        if self._fatal_error_active and severity != "error":
+            return
+
         self.status_severity = severity
 
         def update() -> None:
@@ -1143,7 +1456,7 @@ class CeluneUI(App):
         if threading.current_thread() is threading.main_thread():
             self.logs.write(entry)
         else:
-            self.call_from_thread(self.logs.write, entry)
+            self.call_from_thread(lambda: self.logs.write(entry))
 
     def safe_log_dev(self, msg: str, severity: str = "info") -> None:
         """Log a message.
@@ -1154,6 +1467,649 @@ class CeluneUI(App):
         """
         if self.celune.dev:
             self.safe_log(msg, severity)
+
+    def _is_voice_conversion_mode(self) -> bool:
+        """Return whether the attached Celune instance is running in VC mode."""
+        return bool(
+            self.celune is not None
+            and getattr(self.celune, "vc_backend", None) is not None
+        )
+
+    @staticmethod
+    def _format_vc_pitch_shift(value: int) -> str:
+        """Return one signed semitone label for the VC pitch control."""
+        return f"{value:+d}"
+
+    def _set_vc_controls_visibility(self, visible: bool) -> None:
+        """Show or hide the VC-only controls in the bottom input row."""
+        if self.vc_mode_button is not None:
+            self.vc_mode_button.display = visible
+        if self.vc_pitch_button is not None:
+            self.vc_pitch_button.display = visible
+
+    def refresh_vc_controls(self) -> None:
+        """Refresh VC control labels and enabled state from the current engine state."""
+        if (
+            self.vc_mode_button is None
+            or self.vc_pitch_button is None
+            or self.celune is None
+        ):
+            return
+
+        is_vc_mode = self._is_voice_conversion_mode()
+        self._set_vc_controls_visibility(is_vc_mode)
+        if not is_vc_mode:
+            self._cancel_vc_recording(announce=False)
+        f0_condition = bool(getattr(self.celune, "vc_f0_condition", False))
+        pitch_shift = int(getattr(self.celune, "vc_pitch_shift", 0))
+        self.vc_mode_button.label = string(
+            "ui.vc_mode_sing" if f0_condition else "ui.vc_mode_talk"
+        )
+        self.vc_pitch_button.label = string(
+            "ui.vc_pitch_button",
+            value=self._format_vc_pitch_shift(pitch_shift),
+        )
+        self.vc_mode_button.disabled = (not is_vc_mode) or self._input_locked
+        self.vc_pitch_button.disabled = (not is_vc_mode) or self._input_locked
+
+    def set_vc_f0_condition(self, enabled: bool, announce: bool = True) -> None:
+        """Update the active VC talk-vs-sing mode in the UI and backend state.
+
+        Args:
+            enabled: Whether to enable sing-mode F0 conditioning.
+            announce: Whether to log the new mode to the user.
+        """
+        if self.celune is None:
+            return
+
+        self.celune.vc_f0_condition = enabled
+        backend = getattr(self.celune, "vc_backend", None)
+        if backend is not None and hasattr(backend, "f0_condition"):
+            setattr(backend, "f0_condition", enabled)
+        self.refresh_vc_controls()
+
+        if announce:
+            self.safe_log(
+                string(
+                    "ui.vc_mode_changed",
+                    mode=string("ui.vc_mode_sing" if enabled else "ui.vc_mode_talk"),
+                )
+            )
+
+    def set_vc_pitch_shift(self, value: int, announce: bool = True) -> None:
+        """Update the active VC pitch-shift value in the UI and backend state.
+
+        Args:
+            value: The requested pitch shift in semitones before clamping.
+            announce: Whether to log the new pitch shift to the user.
+        """
+        if self.celune is None:
+            return
+
+        clamped = max(_VC_PITCH_SHIFT_MIN, min(_VC_PITCH_SHIFT_MAX, value))
+        self.celune.vc_pitch_shift = clamped
+        backend = getattr(self.celune, "vc_backend", None)
+        if backend is not None and hasattr(backend, "pitch_shift"):
+            setattr(backend, "pitch_shift", clamped)
+        self.refresh_vc_controls()
+
+        if announce:
+            self.safe_log(
+                string(
+                    "ui.vc_pitch_changed",
+                    value=self._format_vc_pitch_shift(clamped),
+                )
+            )
+
+    def _vc_recording_active(self) -> bool:
+        """Return whether live VC recording is active in the TUI."""
+        return self._vc_recording_stream is not None
+
+    @staticmethod
+    def _vc_input_rms(audio: npt.NDArray[np.float32]) -> float:
+        """Return RMS energy for one microphone callback buffer."""
+        if audio.size == 0:
+            return 0.0
+        return float(np.sqrt(np.mean(np.square(audio), dtype=np.float64)))
+
+    @staticmethod
+    def _vc_feedback_rise_detected(previous_rms: float, current_rms: float) -> bool:
+        """Return whether the latest RMS jump looks like runaway feedback."""
+        if previous_rms < _VC_FEEDBACK_RMS_MIN_PREVIOUS:
+            return False
+        if current_rms < _VC_FEEDBACK_RMS_MIN_CURRENT:
+            return False
+        if current_rms < previous_rms * _VC_FEEDBACK_RMS_RISE_RATIO:
+            return False
+        return (current_rms - previous_rms) >= _VC_FEEDBACK_RMS_RISE_DELTA
+
+    def _request_vc_recording_feedback_stop(self) -> None:
+        """Request a feedback-triggered recording stop on a dedicated thread."""
+        stop_thread = threading.Thread(
+            target=self._stop_vc_recording_for_feedback,
+            daemon=True,
+        )
+        self._vc_recording_stop_thread = stop_thread
+        stop_thread.start()
+
+    def _flush_vc_recording_buffer_locked(self) -> Optional[npt.NDArray[np.float32]]:
+        """Return and clear the buffered microphone chunk accumulator."""
+        if not self._vc_recording_chunks:
+            return None
+        audio = np.concatenate(self._vc_recording_chunks, axis=0)
+        self._vc_recording_chunks = []
+        self._vc_recording_buffered_frames = 0
+        return audio
+
+    @staticmethod
+    def _vc_live_overlap_frames(sample_rate: int) -> int:
+        """Return the live VC overlap size for one input sample rate."""
+        return max(1, int(sample_rate * _VC_LIVE_STREAM_OVERLAP_SECONDS))
+
+    def _flush_vc_recording_chunk_locked(
+        self,
+        keep_tail_frames: int = 0,
+    ) -> Optional[npt.NDArray[np.float32]]:
+        """Return one buffered VC chunk while optionally retaining a tail overlap."""
+        audio = self._flush_vc_recording_buffer_locked()
+        if audio is None or keep_tail_frames <= 0:
+            return audio
+
+        if len(audio) <= keep_tail_frames:
+            self._vc_recording_chunks = [audio]
+            self._vc_recording_buffered_frames = len(audio)
+            return None
+
+        retained = np.asarray(audio[-keep_tail_frames:], dtype=np.float32).copy()
+        flushed = np.asarray(audio[:-keep_tail_frames], dtype=np.float32).copy()
+        self._vc_recording_chunks = [retained]
+        self._vc_recording_buffered_frames = len(retained)
+        return flushed
+
+    @staticmethod
+    def _normalize_vc_overlap_audio(
+        audio: npt.NDArray[np.float32],
+    ) -> npt.NDArray[np.float32]:
+        """Normalize one VC overlap chunk into valid mono or stereo time-first audio."""
+        normalized = np.asarray(audio, dtype=np.float32)
+        if normalized.ndim == 1:
+            return normalized
+        if normalized.ndim != 2:
+            raise ValueError(
+                f"expected 1D or 2D VC overlap audio, got {normalized.shape}"
+            )
+        if normalized.shape[1] == 1:
+            return normalized[:, 0]
+        if normalized.shape[1] == 2:
+            return normalized
+        raise ValueError(
+            f"expected mono or stereo VC overlap audio, got {normalized.shape}"
+        )
+
+    @staticmethod
+    def _crossfade_vc_overlap(
+        previous_tail: npt.NDArray[np.float32],
+        current_head: npt.NDArray[np.float32],
+    ) -> npt.NDArray[np.float32]:
+        """Crossfade two same-rate VC overlap regions into one seamless bridge."""
+        overlap_frames = min(len(previous_tail), len(current_head))
+        if overlap_frames <= 0:
+            return np.zeros((0, 2), dtype=np.float32)
+
+        previous = CeluneUI._normalize_vc_overlap_audio(previous_tail[-overlap_frames:])
+        current = CeluneUI._normalize_vc_overlap_audio(current_head[:overlap_frames])
+
+        if previous.ndim != current.ndim:
+            if previous.ndim == 1:
+                previous = np.column_stack((previous, previous))
+            if current.ndim == 1:
+                current = np.column_stack((current, current))
+
+        fade = np.linspace(0.0, 1.0, overlap_frames, dtype=np.float32)
+        if previous.ndim == 2:
+            fade = fade[:, None]
+
+        return np.asarray(
+            (previous * (1.0 - fade)) + (current * fade),
+            dtype=np.float32,
+        )
+
+    def _clear_vc_recording_state(self) -> None:
+        """Clear transient VC recording buffers after stop or cancel."""
+        self._vc_recording_stream = None
+        self._vc_recording_chunks = []
+        self._vc_recording_buffered_frames = 0
+        self._vc_recording_captured_frames = 0
+        self._vc_recording_feedback_detected = False
+        self._vc_recording_sample_rate = 0
+        self._vc_recording_label = string("ui.audio_input_label")
+        self._vc_recording_previous_rms = 0.0
+        self._vc_recording_submission_queue = None
+        self._vc_recording_stop_thread = None
+        self._vc_recording_worker = None
+
+    def _stop_vc_recording_stream(
+        self,
+    ) -> tuple[
+        Optional[sd.InputStream],
+        Optional[npt.NDArray[np.float32]],
+        int,
+        str,
+        Optional[
+            queue_module.Queue[Optional[tuple[npt.NDArray[np.float32], int, str, bool]]]
+        ],
+        int,
+    ]:
+        """Stop the active VC recording stream and return any pending live-state data."""
+        stream = self._vc_recording_stream
+        buffered_audio = self._flush_vc_recording_buffer_locked()
+        sample_rate = self._vc_recording_sample_rate
+        label = self._vc_recording_label
+        submission_queue = self._vc_recording_submission_queue
+        captured_frames = self._vc_recording_captured_frames
+        self._clear_vc_recording_state()
+        return (
+            stream,
+            buffered_audio,
+            sample_rate,
+            label,
+            submission_queue,
+            captured_frames,
+        )
+
+    @staticmethod
+    def _shutdown_vc_stream(stream: Optional[sd.InputStream]) -> None:
+        """Stop and close one VC input stream outside the recording lock."""
+        if stream is None:
+            return
+
+        with contextlib.suppress(Exception):
+            stream.stop()
+        with contextlib.suppress(Exception):
+            stream.close()
+
+    def _cancel_vc_recording(self, announce: bool = True) -> bool:
+        """Stop VC recording without submitting audio for conversion."""
+        if not self._vc_recording_active():
+            return False
+
+        with self._vc_recording_lock:
+            stream, _audio, _sample_rate, label, submission_queue, _captured_frames = (
+                self._stop_vc_recording_stream()
+            )
+            if submission_queue is not None:
+                submission_queue.put(None)
+        self._shutdown_vc_stream(stream)
+
+        if announce:
+            self.safe_log(string("ui.recording_stopped", label=label), "info")
+        return True
+
+    def _stop_vc_recording_for_feedback(self) -> None:
+        """Stop live VC recording after detecting a sudden feedback-like RMS spike."""
+        if not self._vc_recording_active():
+            return
+
+        with self._vc_recording_lock:
+            (
+                stream,
+                buffered_audio,
+                sample_rate,
+                label,
+                submission_queue,
+                _captured_frames,
+            ) = self._stop_vc_recording_stream()
+            if submission_queue is not None and buffered_audio is not None:
+                submission_queue.put((buffered_audio, sample_rate, label, True))
+            if submission_queue is not None:
+                submission_queue.put(None)
+        self._shutdown_vc_stream(stream)
+
+        self.safe_log(string("ui.recording_stopped_feedback", label=label), "warning")
+        self.update_resources()
+
+    def _start_vc_recording(self) -> bool:
+        """Start recording from the active system input device for VC."""
+        if self.celune is None or not self._is_voice_conversion_mode():
+            return False
+        if (
+            getattr(self.celune, "sleeping", False)
+            or getattr(
+                self.celune,
+                "cur_state",
+                "",
+            )
+            == "waking"
+        ):
+            return False
+
+        if self._vc_recording_active():
+            return True
+
+        input_config = getattr(self.celune, "config", None)
+        input_device_key = (
+            "input_recording_device"
+            if isinstance(input_config, dict)
+            and "input_recording_device" in input_config
+            else "input_device"
+        )
+        input_device, direct_device_info = resolve_audio_device_with_info(
+            input_config,
+            input_device_key,
+            "input",
+        )
+
+        try:
+            device_info = (
+                cast(dict[str, _AudioDeviceScalar], dict(direct_device_info))
+                if direct_device_info is not None
+                else cast(
+                    dict[str, _AudioDeviceScalar],
+                    sd.query_devices(device=input_device, kind="input"),
+                )
+            )
+        except Exception as e:
+            self.safe_log(
+                string(
+                    "ui.recording_open_input_failed",
+                    error=format_error(e, self.celune.dev),
+                ),
+                "error",
+            )
+            return False
+
+        channels = _device_scalar_int(device_info.get("max_input_channels"), 0)
+        if channels <= 0:
+            self.safe_log(string("pipeline.no_audio_device"), "warning")
+            return False
+
+        sample_rate = _device_scalar_int(
+            device_info.get("default_samplerate"),
+            48000,
+        )
+        label = str(device_info.get("name", string("ui.audio_input_label")))
+        channel_count = 2 if channels >= 2 else 1
+        stream_chunk_frames = max(
+            int(sample_rate * _VC_LIVE_STREAM_CHUNK_SECONDS),
+            1,
+        )
+        overlap_frames = min(
+            self._vc_live_overlap_frames(sample_rate),
+            max(stream_chunk_frames - 1, 1),
+        )
+        submission_queue: queue_module.Queue[
+            Optional[tuple[npt.NDArray[np.float32], int, str, bool]]
+        ] = queue_module.Queue()
+
+        def submit_live_audio() -> None:
+            pending_tail: Optional[npt.NDArray[np.float32]] = None
+            pending_sample_rate = 0
+            pending_label = string("ui.audio_input_label")
+
+            def queue_playback_segment(
+                audio: npt.NDArray[np.float32],
+                playback_sample_rate: int,
+                playback_label: str,
+            ) -> None:
+                if len(audio) <= 0 or self.celune is None:
+                    return
+                if not self.celune.play_audio(
+                    np.asarray(audio, dtype=np.float32),
+                    playback_sample_rate,
+                    label=playback_label,
+                ):
+                    self.safe_log(
+                        string("ui.recording_stream_submit_failed"),
+                        "warning",
+                    )
+
+            while True:
+                item = submission_queue.get()
+                if item is None:
+                    if pending_tail is not None and len(pending_tail) > 0:
+                        queue_playback_segment(
+                            pending_tail,
+                            pending_sample_rate,
+                            pending_label,
+                        )
+                    return
+
+                audio, queued_sample_rate, queued_label, is_final_chunk = item
+                try:
+                    if self.celune is None:
+                        continue
+                    converted = self.celune.convert_audio(
+                        audio,
+                        queued_sample_rate,
+                        label=queued_label,
+                    )
+                    if converted is None:
+                        self.safe_log(
+                            string("ui.recording_stream_submit_failed"),
+                            "warning",
+                        )
+                        continue
+
+                    converted_audio = np.asarray(converted.audio, dtype=np.float32)
+                    playback_sample_rate = converted.sample_rate
+                    playback_label = converted.label
+                    playback_overlap_frames = min(
+                        self._vc_live_overlap_frames(playback_sample_rate),
+                        max(len(converted_audio) - 1, 0),
+                    )
+
+                    if (
+                        pending_tail is not None
+                        and pending_sample_rate != playback_sample_rate
+                    ):
+                        queue_playback_segment(
+                            pending_tail,
+                            pending_sample_rate,
+                            pending_label,
+                        )
+                        pending_tail = None
+                        pending_sample_rate = 0
+                        pending_label = playback_label
+
+                    if pending_tail is None:
+                        if is_final_chunk or playback_overlap_frames <= 0:
+                            queue_playback_segment(
+                                converted_audio,
+                                playback_sample_rate,
+                                playback_label,
+                            )
+                            continue
+
+                        if len(converted_audio) <= playback_overlap_frames:
+                            pending_tail = converted_audio.copy()
+                            pending_sample_rate = playback_sample_rate
+                            pending_label = playback_label
+                            continue
+
+                        queue_playback_segment(
+                            converted_audio[:-playback_overlap_frames],
+                            playback_sample_rate,
+                            playback_label,
+                        )
+                        pending_tail = converted_audio[-playback_overlap_frames:].copy()
+                        pending_sample_rate = playback_sample_rate
+                        pending_label = playback_label
+                        continue
+
+                    overlap_bridge = self._crossfade_vc_overlap(
+                        pending_tail,
+                        converted_audio[:playback_overlap_frames],
+                    )
+                    crossfade_frames = len(overlap_bridge)
+                    converted_remainder = converted_audio[
+                        min(len(converted_audio), crossfade_frames) :
+                    ]
+
+                    if is_final_chunk or playback_overlap_frames <= 0:
+                        segment_parts = [overlap_bridge]
+                        if len(converted_remainder) > 0:
+                            segment_parts.append(converted_remainder)
+                        if segment_parts:
+                            queue_playback_segment(
+                                np.concatenate(segment_parts),
+                                playback_sample_rate,
+                                playback_label,
+                            )
+                        pending_tail = None
+                        pending_sample_rate = 0
+                        continue
+
+                    if len(converted_remainder) <= playback_overlap_frames:
+                        if len(overlap_bridge) > 0:
+                            queue_playback_segment(
+                                overlap_bridge,
+                                playback_sample_rate,
+                                playback_label,
+                            )
+                        pending_tail = converted_remainder.copy()
+                        pending_sample_rate = playback_sample_rate
+                        pending_label = playback_label
+                        continue
+
+                    segment_parts = [overlap_bridge]
+                    body = converted_remainder[:-playback_overlap_frames]
+                    if len(body) > 0:
+                        segment_parts.append(body)
+                    queue_playback_segment(
+                        np.concatenate(segment_parts),
+                        playback_sample_rate,
+                        playback_label,
+                    )
+                    pending_tail = converted_remainder[-playback_overlap_frames:].copy()
+                    pending_sample_rate = playback_sample_rate
+                    pending_label = playback_label
+                except Exception as e:
+                    if self.celune is None:
+                        continue
+                    self.safe_log(
+                        string(
+                            "ui.recording_stream_chunk_failed",
+                            label=queued_label,
+                            error=format_error(e, self.celune.dev),
+                        ),
+                        "warning",
+                    )
+
+        worker = threading.Thread(target=submit_live_audio, daemon=True)
+
+        def callback(
+            indata: npt.NDArray[np.float32],
+            frames: int,
+            time_info: Optional[tuple[float, float, float]],
+            status: Optional[sd.CallbackFlags],
+        ) -> None:
+            discard(frames)
+            discard(time_info)
+            discard(status)
+            callback_audio = np.asarray(indata, dtype=np.float32).copy()
+            current_rms = self._vc_input_rms(callback_audio)
+            should_stop_for_feedback = False
+            with self._vc_recording_lock:
+                if self._vc_recording_stream is None:
+                    return
+                if self._vc_recording_feedback_detected:
+                    return
+                previous_rms = self._vc_recording_previous_rms
+                self._vc_recording_previous_rms = current_rms
+                self._vc_recording_captured_frames += len(callback_audio)
+
+                if (
+                    not self._vc_recording_feedback_detected
+                    and self._vc_feedback_rise_detected(previous_rms, current_rms)
+                ):
+                    self._vc_recording_feedback_detected = True
+                    should_stop_for_feedback = True
+                else:
+                    self._vc_recording_chunks.append(callback_audio)
+                    self._vc_recording_buffered_frames += len(callback_audio)
+                    if (
+                        self._vc_recording_buffered_frames >= stream_chunk_frames
+                        and self._vc_recording_submission_queue is not None
+                    ):
+                        buffered_audio = self._flush_vc_recording_chunk_locked(
+                            keep_tail_frames=overlap_frames,
+                        )
+                        if buffered_audio is not None:
+                            self._vc_recording_submission_queue.put(
+                                (buffered_audio, sample_rate, label, False)
+                            )
+
+            if should_stop_for_feedback:
+                self._request_vc_recording_feedback_stop()
+
+        try:
+            stream = sd.InputStream(
+                samplerate=sample_rate,
+                channels=channel_count,
+                dtype="float32",
+                callback=callback,
+                device=input_device,
+            )
+            stream.start()
+        except Exception as e:
+            self.safe_log(
+                string(
+                    "ui.recording_start_failed",
+                    label=label,
+                    error=format_error(e, self.celune.dev),
+                ),
+                "error",
+            )
+            return False
+
+        with self._vc_recording_lock:
+            self._vc_recording_stream = stream
+            self._vc_recording_chunks = []
+            self._vc_recording_buffered_frames = 0
+            self._vc_recording_captured_frames = 0
+            self._vc_recording_feedback_detected = False
+            self._vc_recording_sample_rate = sample_rate
+            self._vc_recording_label = label
+            self._vc_recording_previous_rms = 0.0
+            self._vc_recording_submission_queue = submission_queue
+            self._vc_recording_stop_thread = None
+            self._vc_recording_worker = worker
+
+        worker.start()
+        self.safe_log(string("ui.recording_started", label=label), "info")
+        self.update_resources()
+        return True
+
+    def toggle_vc_recording(self) -> bool:
+        """Toggle live VC recording for the current input device.
+
+        Returns:
+            bool: ``True`` when recording started or stopped successfully.
+        """
+        if self._vc_recording_active():
+            with self._vc_recording_lock:
+                (
+                    stream,
+                    buffered_audio,
+                    sample_rate,
+                    label,
+                    submission_queue,
+                    captured_frames,
+                ) = self._stop_vc_recording_stream()
+                if submission_queue is not None and buffered_audio is not None:
+                    submission_queue.put((buffered_audio, sample_rate, label, True))
+                if submission_queue is not None:
+                    submission_queue.put(None)
+            self._shutdown_vc_stream(stream)
+
+            self.safe_log(string("ui.recording_stopped", label=label), "info")
+            self.update_resources()
+            if captured_frames <= 0:
+                self.safe_log(string("ui.recording_empty"), "warning")
+                return False
+            return True
+
+        return self._start_vc_recording()
 
     def tts_voice_changed(self, name: str) -> None:
         """Set UI state after changing Celune's voice.
@@ -1171,11 +2127,13 @@ class CeluneUI(App):
 
         if threading.current_thread() is threading.main_thread():
             self.style_button.label = label
+            self.refresh_vc_controls()
             self.update_resources()
         else:
 
             def update() -> None:
                 self.style_button.label = label
+                self.refresh_vc_controls()
                 self.update_resources()
 
             self.call_from_thread(update)
@@ -1242,15 +2200,24 @@ class CeluneUI(App):
         if not text:
             return False
 
+        if self._is_ui_test_mode():
+            self._suppress_input_change = True
+            try:
+                self.input_box.load_text("")
+            finally:
+                self._suppress_input_change = False
+            self.safe_status(string("ui.test_mode_active"))
+            return True
+
         if self.celune.cur_state == "waking":
             self._cancel_sleep_timer()
-            self.safe_status("Waking up")
+            self.safe_status(string("status.waking_up"))
             self.change_input_state(locked=True)
             return True
 
         if self.celune.sleeping:
             self._cancel_sleep_timer()
-            self.safe_status("Waking up")
+            self.safe_status(string("status.waking_up"))
             self._suppress_input_change = True
             try:
                 self.input_box.load_text("")
@@ -1264,7 +2231,10 @@ class CeluneUI(App):
             try:
                 parts = self.split_command_input(text[1:])
             except ValueError as e:
-                self.safe_log(f"Command parsing error: {e}", "error")
+                self.safe_log(
+                    string("ui.command_parsing_error", error=e),
+                    "error",
+                )
                 return False
 
             if not parts:
@@ -1294,7 +2264,7 @@ class CeluneUI(App):
 
         self._cancel_sleep_timer()
         self.style_button.disabled = True
-        self.input_box.placeholder = "Please wait"
+        self.input_box.placeholder = string("ui.wait_placeholder")
         self.input_box.load_text("")
         self.update_resources()
         return True
@@ -1395,7 +2365,7 @@ class CeluneUI(App):
                 finally:
                     self._suppress_input_change = False
 
-            self.call_from_thread(replace_input, "")
+            self.call_from_thread(lambda: replace_input(""))
 
             for char in typing_animation(text):
                 if cancellable and token != self._tutorial_token:
@@ -1403,7 +2373,7 @@ class CeluneUI(App):
                 if self.cur_state == "exiting":
                     return
                 typed += char
-                self.call_from_thread(replace_input, typed)
+                self.call_from_thread(lambda value=typed: replace_input(value))
 
             final_char = text[-1] if text else " "
             time.sleep(typing_delay(final_char))
@@ -1411,7 +2381,9 @@ class CeluneUI(App):
             if self.cur_state != "exiting" and (
                 not cancellable or token == self._tutorial_token
             ):
-                self.call_from_thread(self._submit_text, typed, process_commands)
+                self.call_from_thread(
+                    lambda value=typed: self._submit_text(value, process_commands)
+                )
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1458,6 +2430,24 @@ class CeluneUI(App):
                 event.prevent_default()
                 return
 
+            if event.key == "ctrl+r":
+                if getattr(self.celune, "sleeping", False):
+                    self._cancel_sleep_timer()
+                    self.safe_status(string("status.waking_up"))
+                    self.change_input_state(locked=True)
+                    self.wake_from_sleep()
+                    event.prevent_default()
+                    event.stop()
+                    return
+                if getattr(self.celune, "cur_state", "") == "waking":
+                    event.prevent_default()
+                    event.stop()
+                    return
+                if self.toggle_vc_recording():
+                    event.prevent_default()
+                    event.stop()
+                return
+
             if event.key == "ctrl+j":
                 if self._submit_text(self.input_box.text):
                     event.prevent_default()
@@ -1474,16 +2464,32 @@ class CeluneUI(App):
         if self.celune.is_in_tutorial:
             return
 
+        if event.button == self.vc_mode_button:
+            if self._is_voice_conversion_mode():
+                self.set_vc_f0_condition(
+                    not bool(getattr(self.celune, "vc_f0_condition", False))
+                )
+            return
+
+        if event.button == self.vc_pitch_button:
+            if self._is_voice_conversion_mode():
+                current_value = int(getattr(self.celune, "vc_pitch_shift", 0))
+                next_value = current_value + 1
+                if next_value > _VC_PITCH_SHIFT_MAX:
+                    next_value = _VC_PITCH_SHIFT_MIN
+                self.set_vc_pitch_shift(next_value)
+            return
+
         if event.button != self.style_button:
             return
 
         if len(self.celune.voices) == 0 or not self.celune_styles:
-            self.safe_log("No voices are loaded.", "warning")
+            self.safe_log(string("ui.no_voices_loaded"), "warning")
             self.change_voice_lock_state(locked=True)
             return
 
-        if not self.celune_ready:
-            self.safe_log("Core engine is not loaded.", "warning")
+        if not self.celune_ready and not self.celune.backend.is_fake:
+            self.safe_log(string("ui.core_engine_not_loaded"), "warning")
             self.change_voice_lock_state(locked=True)
             return
 
@@ -1497,6 +2503,10 @@ class CeluneUI(App):
 
     def on_unmount(self) -> None:
         """Unload Celune."""
+        self._write_terminal_escape(
+            f"\x1b]2;{string('osc.exiting', app_name=APP_NAME)}\x07"
+        )
+        self._cancel_vc_recording(announce=False)
         if self.celune is not None:
             self.celune.close()
 
@@ -1510,22 +2520,28 @@ class CeluneUI(App):
         """Reset UI state after Celune stops talking."""
         if self.cur_state in {"exiting", "error"} or not self.celune_ready:
             if self.input_box is not None:
-                self.input_box.placeholder = "Please wait"
+                self.input_box.placeholder = string("ui.wait_placeholder")
             if self.style_button is not None:
                 self.style_button.disabled = True
             return
+        if self.celune.cur_state in {"reloading", "waking"}:
+            self.change_input_state(locked=True)
+            self.change_voice_lock_state(locked=True)
+            if self.celune.cur_state == "waking":
+                self.safe_status(string("status.waking_up"))
+            return
         self.celune.locked = False
         if self.celune.sleeping:
-            self.safe_status("Sleeping", "sleeping")
+            self.safe_status(string("status.sleeping"), "sleeping")
             return
         self.celune.cur_state = "idle"
         if self.celune.is_in_tutorial:
-            self.input_box.placeholder = "Currently in tutorial mode"
+            self.input_box.placeholder = string("ui.tutorial_placeholder")
             self.style_button.disabled = True
         else:
             self.change_input_state(locked=False)
             self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
-        self.safe_status("Idle")
+        self.safe_status(string("status.idle"))
         self._schedule_sleep_timer()
 
     def tts_queue_avail(
@@ -1536,9 +2552,9 @@ class CeluneUI(App):
             return
         self.celune.locked = False
         self._cancel_sleep_timer()
-        self.safe_status("Speaking")
+        self.safe_status(string("status.speaking"))
         if self.celune.is_in_tutorial:
-            self.input_box.placeholder = "Currently in tutorial mode"
+            self.input_box.placeholder = string("ui.tutorial_placeholder")
             self.style_button.disabled = True
         else:
             self.change_input_state(locked=False)
@@ -1623,6 +2639,7 @@ class CeluneUI(App):
         """Exit from Celune gracefully."""
         # while Python cleanup would tear down the core, we'd rather explicitly tell Celune to shut down
         # before we tell Textual to exit its main loop
+        self._cancel_vc_recording(announce=False)
         self.celune.close()
         self.exit()
 

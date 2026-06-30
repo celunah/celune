@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: MIT
+"""Celune voice-conversion backend initialization manager."""
+
+from importlib import import_module
+from typing import Callable, Optional, Union
+
+from .base import CeluneVCBackend
+
+__all__ = ["CeluneVCBackend", "resolve_vc_backend"]
+
+VC_BACKENDS = {
+    "passthrough": (
+        "celune.backends.vc.passthrough",
+        "CelunePassthroughVCBackend",
+    ),
+    "seed-vc": (
+        "celune.backends.vc.seedvc",
+        "CeluneSeedVCBackend",
+    ),
+}
+
+
+def _default_log(_msg: str, _severity: str = "info") -> None:
+    """Default log signature for type checking."""
+
+
+def resolve_vc_backend(
+    backend_name: Union[str, type[CeluneVCBackend], CeluneVCBackend],
+    log: Optional[Callable[[str, str], None]] = None,
+) -> CeluneVCBackend:
+    """Resolve a voice-conversion backend specification into an instance.
+
+    Args:
+        backend_name: A backend name, backend class, or backend instance.
+        log: Optional log callback to expose during backend construction.
+
+    Returns:
+        CeluneVCBackend: The resolved voice-conversion backend instance.
+
+    Raises:
+        ValueError: The named backend is unknown.
+        TypeError: The backend specification is not a supported type.
+    """
+    log = log or _default_log
+
+    if isinstance(backend_name, CeluneVCBackend):
+        return backend_name
+
+    if isinstance(backend_name, type) and issubclass(backend_name, CeluneVCBackend):
+        return backend_name(log=log)
+
+    if isinstance(backend_name, str):
+        key = backend_name.strip().lower()
+
+        try:
+            module_name, class_name = VC_BACKENDS[key]
+        except KeyError as e:
+            raise ValueError(
+                "unknown voice-conversion backend: "
+                f"'{backend_name}' (available: {', '.join(VC_BACKENDS.keys())})"
+            ) from e
+
+        module = import_module(module_name)
+        backend_cls = getattr(module, class_name)
+        return backend_cls(log=log)
+
+    raise TypeError(
+        "'backend_name' must be a voice-conversion backend instance, "
+        "voice-conversion backend type, or backend name string"
+    )

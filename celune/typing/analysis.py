@@ -7,9 +7,9 @@ import torch
 import numpy as np
 import numpy.typing as npt
 
-TextConfigValue = Union[str, dict[str, "TextConfigValue"]]
-TextConfig = dict[str, TextConfigValue]
-EmbeddingPayload = Union[
+type TextConfigValue = Union[str, dict[str, "TextConfigValue"]]
+type TextConfig = dict[str, TextConfigValue]
+type EmbeddingPayload = Union[
     torch.Tensor,
     npt.NDArray[np.float32],
     list[float],

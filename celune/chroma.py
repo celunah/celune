@@ -19,7 +19,7 @@ from openrgb.utils import RGBColor
 from .dsp import split
 from .colors import RGB, ERROR
 from .constants import BASE_SR
-from .utils import to_rgb, lunar_info, range_interpolated, is_celune_day
+from .utils import to_rgb, lunar_info, range_interpolated, is_celune_day, discard
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -262,7 +262,7 @@ class AudioRGBGlow:
 
     def _process_glow_chunk(self, audio: npt.NDArray[np.float32], now: float) -> None:
         """Process one audio chunk and update audio-reactive brightness."""
-        del now
+        discard(now)
         level = self._speech_level(audio)
         smoothing = float(np.clip(self.smoothing_factor, 0.0, 0.98))
         self._smoothed_level = (self._smoothed_level * smoothing) + (

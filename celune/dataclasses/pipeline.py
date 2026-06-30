@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import queue
 import time
+import queue
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Union
 
@@ -25,6 +26,42 @@ class SpeechRequest:
         "queue.Queue[Optional[Union[npt.NDArray[np.float32], Exception]]]"
     ] = None
     normalize: bool = False
+
+
+@dataclass(frozen=True)
+class AudioInputRequest:
+    """Engine-level audio input accepted for future non-TTS modes."""
+
+    audio: npt.NDArray[np.float32]
+    sample_rate: int
+    label: str = "audio input"
+    pitch_shift: Optional[int] = None
+    f0_condition: Optional[bool] = None
+    log_playback: bool = True
+    reset_ready_announcement: bool = True
+
+
+@dataclass(frozen=True)
+class VoiceConversionRequest:
+    """Audio input plus target voice metadata for voice conversion backends."""
+
+    source_audio: npt.NDArray[np.float32]
+    sample_rate: int
+    target_voice: Optional[str] = None
+    target_character: Optional[str] = None
+    target_references: tuple[Path, ...] = ()
+    label: str = "audio input"
+    pitch_shift: Optional[int] = None
+    f0_condition: Optional[bool] = None
+
+
+@dataclass(frozen=True)
+class AudioOutput:
+    """Decoded playable audio returned by speech or conversion pipelines."""
+
+    audio: npt.NDArray[np.float32]
+    sample_rate: int
+    label: str = "audio output"
 
 
 @dataclass(frozen=True)
@@ -51,6 +88,7 @@ class PlaybackSourceDone:
 
     source_id: int
     release_pipeline: bool = False
+    notify_idle: bool = True
     saved_path: Optional[str] = None
     analysis_audio: Optional[npt.NDArray[np.float32]] = None
 
@@ -63,10 +101,16 @@ class SpeechTiming:
     first_chunk_time: Optional[float] = None
     first_playback_time: Optional[float] = None
 
-    def mark_first_chunk(self) -> None:
-        """Record when the backend yields its first audio chunk."""
+    def mark_first_chunk(self, chunk_time: Optional[float] = None) -> None:
+        """Record when the backend produces its first audio chunk.
+
+        Args:
+            chunk_time: Optional backend-provided monotonic timestamp to use.
+        """
         if self.first_chunk_time is None:
-            self.first_chunk_time = time.monotonic()
+            self.first_chunk_time = (
+                chunk_time if isinstance(chunk_time, float) else time.monotonic()
+            )
 
     def mark_first_playback(self) -> None:
         """Record when the first audio chunk is sent to the output stream."""

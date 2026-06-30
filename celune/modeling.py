@@ -9,7 +9,7 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from .backends import CeluneBackend
+from .backends.tts import CeluneBackend
 from .vram import resolve_vram_preset
 from .constants import JSONSerializable, NORMALIZER_MODEL_ID
 

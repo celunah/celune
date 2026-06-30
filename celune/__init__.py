@@ -17,13 +17,21 @@ instances can exhaust GPU resources and is not a supported usage pattern.
 import sys as _sys
 import inspect as _inspect
 import subprocess as _subprocess
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Callable, Union
 
 from .constants import APP_NAME
+from .paths import (
+    configure_huggingface_cache_environment,
+    configure_huggingface_runtime,
+)
+
+configure_huggingface_cache_environment()
+configure_huggingface_runtime()
 
 if TYPE_CHECKING:
     from .celune import Celune
     from .extensions.base import CeluneContext, CeluneExtension
+    from .extensions.events import subscribe
 
 
 def _get_revision() -> str:
@@ -60,7 +68,7 @@ def _caller_is_repl() -> bool:
 
 
 REVISION = _get_revision()
-VERSION = "4.1.2"
+VERSION = "4.2.0"
 
 if REVISION:
     _local = REVISION.rstrip("*")
@@ -84,7 +92,12 @@ if hasattr(_sys, "ps1"):
 
 def __getattr__(
     name: str,
-) -> Union[type["Celune"], type["CeluneContext"], type["CeluneExtension"]]:
+) -> Union[
+    type["Celune"],
+    type["CeluneContext"],
+    type["CeluneExtension"],
+    Callable[..., Callable[..., None]],
+]:
     if name == "Celune":
         from .celune import Celune
 
@@ -100,6 +113,11 @@ def __getattr__(
 
         return CeluneExtension
 
+    if name == "subscribe":
+        from .extensions.events import subscribe
+
+        return subscribe
+
     raise AttributeError(f"module '{__name__!r}' has no attribute '{name!r}'")
 
 
@@ -108,6 +126,7 @@ __all__ = [
     "CeluneContext",
     "CeluneExtension",
     "REVISION",
+    "subscribe",
     "__version__",
     "__tagline__",
     "__codename__",

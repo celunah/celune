@@ -125,7 +125,7 @@ def _load_transformer_text_embedder(model_name: str) -> Optional[_EmbeddingBacke
         model = AutoModel.from_pretrained(model_name, local_files_only=True)
         model.eval()
         model.to(torch.device("cpu"))
-    except (RuntimeError, AssertionError, ValueError):
+    except (RuntimeError, AssertionError, ValueError, OSError):
         _FAILED_EMBEDDING_MODELS.add(model_name)
         return None
 
@@ -160,7 +160,7 @@ def _compute_text_embeddings(
         normalized = f.normalize(pooled, p=2, dim=1)
         array = normalized.cpu().numpy().astype(np.float32)
         return [cast(EmbeddingVector, row) for row in array]
-    except (RuntimeError, AssertionError, ValueError):
+    except (RuntimeError, AssertionError, ValueError, OSError):
         _FAILED_EMBEDDING_MODELS.add(model_name)
         _EMBEDDING_BACKENDS.pop(model_name, None)
         return None

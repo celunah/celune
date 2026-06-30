@@ -1,16 +1,22 @@
 # SPDX-License-Identifier: MIT
-"""Runtime filesystem paths for Celune user data."""
+"""Runtime filesystem paths and global Hugging Face runtime setup for Celune."""
 
+import os
 import sys
 import shutil
 from pathlib import Path
 from typing import Optional
 
 from platformdirs import user_data_dir
+from huggingface_hub.utils import disable_progress_bars
+from transformers.utils.logging import disable_progress_bar
 
-from .constants import APP_SLUG
+from .constants import APP_NAME, APP_SLUG
 
 _REPO_MARKERS = ("celune", "default_config.yaml", "pyproject.toml")
+_HF_HOME_ENV = "HF_HOME"
+_HF_HUB_CACHE_ENV = "HF_HUB_CACHE"
+_HF_HUB_DISABLE_PROGRESS_BARS_ENV = "HF_HUB_DISABLE_PROGRESS_BARS"
 
 
 def running_compiled() -> bool:
@@ -48,10 +54,72 @@ def app_data_dir(create: bool = False) -> Path:
     Returns:
         Path: Celune's user data directory.
     """
-    path = Path(user_data_dir(APP_SLUG, appauthor=False))
+    path = Path(user_data_dir(APP_NAME, appauthor=False))
     if create:
         path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def huggingface_home_dir(create: bool = False) -> Path:
+    """Return Celune's default Hugging Face home directory.
+
+    Args:
+        create: Whether this directory should be created before being returned.
+
+    Returns:
+        Path: Celune's Hugging Face home directory inside the user data folder.
+    """
+    path = app_data_dir(create=create) / "huggingface"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def huggingface_hub_cache_dir(create: bool = False) -> Path:
+    """Return Celune's default Hugging Face Hub snapshot cache directory.
+
+    Args:
+        create: Whether this directory should be created before being returned.
+
+    Returns:
+        Path: Celune's Hugging Face Hub cache directory.
+    """
+    path = huggingface_home_dir(create=create) / "hub"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def configure_huggingface_cache_environment(force: bool = False) -> None:
+    """Point Hugging Face caches at Celune's user data directory in portable mode.
+
+    Args:
+        force: Whether to apply the portable cache defaults even outside compiled builds.
+    """
+    default_hf_home = str(huggingface_home_dir())
+    default_hf_hub_cache = str(huggingface_hub_cache_dir())
+
+    if not force and not running_compiled():
+        # If this process previously enabled Celune's portable defaults,
+        # clear them again for source-tree runs so local development and tests
+        # continue to use the host Hugging Face cache.
+        if os.environ.get(_HF_HOME_ENV) == default_hf_home:
+            os.environ.pop(_HF_HOME_ENV, None)
+        if os.environ.get(_HF_HUB_CACHE_ENV) == default_hf_hub_cache:
+            os.environ.pop(_HF_HUB_CACHE_ENV, None)
+        return
+
+    if _HF_HOME_ENV not in os.environ:
+        os.environ[_HF_HOME_ENV] = default_hf_home
+    if _HF_HUB_CACHE_ENV not in os.environ:
+        os.environ[_HF_HUB_CACHE_ENV] = default_hf_hub_cache
+
+
+def configure_huggingface_runtime() -> None:
+    """Apply Celune's process-wide Hugging Face progress suppression."""
+    os.environ.setdefault(_HF_HUB_DISABLE_PROGRESS_BARS_ENV, "1")
+    disable_progress_bar()
+    disable_progress_bars()
 
 
 def memory_data_dir(create: bool = False) -> Path:

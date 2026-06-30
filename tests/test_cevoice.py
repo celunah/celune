@@ -146,6 +146,22 @@ class CEVoiceTests(TestCase):
         self.assertEqual(magic, cevoice.MAGIC)
         self.assertEqual(version, cevoice.VERSION)
 
+    def test_materialize_recreates_missing_cached_asset_after_cleanup(self) -> None:
+        """Verify cached CEVOICE temp assets are rebuilt if cleanup removed them."""
+        bundle = self._write_bundle()
+        loader = cevoice.CEVoiceLoader(bundle)
+        self.addCleanup(loader.close)
+
+        first_path = loader.materialize("balanced", "wav")
+        self.assertEqual(first_path.read_bytes(), b"wav")
+
+        shutil.rmtree(first_path.parent)
+        rebuilt_path = loader.materialize("balanced", "wav")
+
+        self.assertEqual(rebuilt_path, first_path)
+        self.assertTrue(rebuilt_path.is_file())
+        self.assertEqual(rebuilt_path.read_bytes(), b"wav")
+
     def test_legacy_cevoice_v1_bundle_remains_loadable(self) -> None:
         """Verify legacy CEVOICE v1 bundles still open after the schema rename."""
         bundle = self._write_bundle()

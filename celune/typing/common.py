@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from typing import Literal, Optional, Union
 
-JSONSerializable = Union[
+type JSONSerializable = Union[
     None,
     bool,
     int,
@@ -12,11 +12,11 @@ JSONSerializable = Union[
     list["JSONSerializable"],
     dict[str, "JSONSerializable"],
 ]
-JSON = dict[str, JSONSerializable]
-RGB = tuple[int, int, int]
-Config = dict[str, JSONSerializable]
-TerminalConfig = Mapping[str, JSONSerializable]
-ColorMode = Literal["auto", "truecolor", "terminal-default", "ansi", "none"]
-ResolvedColorMode = Literal["truecolor", "terminal-default", "ansi", "none"]
-VramTier = Literal["low", "medium", "high", "xhigh"]
-VideoMetadataScalar = Optional[Union[bool, int, float, str]]
+type JSON = dict[str, JSONSerializable]
+type RGB = tuple[int, int, int]
+type Config = dict[str, JSONSerializable]
+type TerminalConfig = Mapping[str, JSONSerializable]
+type ColorMode = Literal["auto", "truecolor", "terminal-default", "ansi", "none"]
+type ResolvedColorMode = Literal["truecolor", "terminal-default", "ansi", "none"]
+type VramTier = Literal["low", "medium", "high", "xhigh"]
+type VideoMetadataScalar = Optional[Union[bool, int, float, str]]

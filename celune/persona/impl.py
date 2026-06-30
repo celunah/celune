@@ -249,7 +249,7 @@ def uses_default_celune_identity(engine: PersonaEngineView) -> bool:
     """
     if not bool(getattr(engine, "voice_bundle_is_default", False)):
         return False
-    return persona_active_character_name(engine).strip().lower() == "celune"
+    return persona_active_character_name(engine).strip().casefold() == "celune"
 
 
 def default_persona_persona() -> str:

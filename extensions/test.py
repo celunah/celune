@@ -4,17 +4,26 @@
 import time
 from pathlib import Path
 
+import celune
 from celune import CeluneExtension
+from celune.dataclasses.events import ReadyEvent, VoiceChangedEvent
+from celune.utils import discard
 
 
 class TestExtension(CeluneExtension):
     """A sample Celune extension showcasing all features available in Celune's extension context."""
 
     EXTENSION_NAME = "Test"
-    AUTOSTART = False  # if you want Celune to load this demo, set it to True
 
-    def autostart(self) -> None:
-        """Demonstrate extension behavior during autostart."""
+    @celune.subscribe("ready", enabled=False)
+    def on_ready(self, event: ReadyEvent) -> None:
+        """Demonstrate extension behavior when Celune becomes ready.
+
+        Args:
+            event: Ready event emitted after Celune finishes startup.
+        """
+        discard(event)
+
         self.log("Log test")
         time.sleep(1)  # due to threading, this does not block
         self.status("Status test")
@@ -39,6 +48,15 @@ class TestExtension(CeluneExtension):
         time.sleep(1)
         # Celune can ignore saving artifacts from self.say()
         self.say("You will only hear this once.", save=False)
+
+    @celune.subscribe("voice_changed")
+    def on_voice_changed(self, event: VoiceChangedEvent) -> None:
+        """Demonstrate access to typed voice-change event payloads.
+
+        Args:
+            event: Voice-change event carrying the previous and new voice names.
+        """
+        self.log(f"Voice changed from {event.old_voice} to {event.new_voice}.")
 
     def invoke(self) -> None:
         """Demonstrate manual extension invocation behavior."""

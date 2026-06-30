@@ -14,15 +14,15 @@ import subprocess
 import multiprocessing
 from pathlib import Path
 from collections.abc import Iterator
-from typing import Union, Callable, Optional, Literal, Any, overload
+from typing import Union, Callable, Optional, Literal, Any, TextIO, overload
 
 import psutil
 import langdetect
 
 from .paths import traceback_path
 from .constants import REFERENCE_NEW_MOON
-from .terminal import supports_ansi as terminal_supports_ansi
 from .typing.utils import CallerInfo, LanguageResult
+from .terminal import supports_ansi as terminal_supports_ansi
 
 
 def get_revision() -> str:
@@ -255,13 +255,16 @@ def run_async(
     return proc
 
 
-def supports_ansi() -> bool:
+def supports_ansi(stream: Optional[TextIO] = None) -> bool:
     """Does the terminal support ANSI color codes?
 
+    Args:
+        stream: The stream to check ANSI capabilities of.
+
     Returns:
-        bool: Whether the terminal supports ANSI color codes.
+        bool: Whether the current terminal or specified stream supports ANSI color codes.
     """
-    return terminal_supports_ansi()
+    return terminal_supports_ansi(stream)
 
 
 def format_error(e: Exception, dev: bool) -> str:
@@ -831,10 +834,11 @@ def normalize_special_characters(text: str) -> str:
             "\u201e": '"',  # double low quote
             "\u2018": "'",  # left single quote
             "\u2019": "'",  # right single quote
-            "\u2013": "-",  # en dash
-            "\u2014": "-",  # em dash
+            "\u2013": " - ",  # en dash
+            "\u2014": " - ",  # em dash
             "\u2026": "...",  # ellipsis
         }
     )
 
-    return text.translate(special_char_mappings)
+    normalized = text.translate(special_char_mappings)
+    return re.sub(r"\s{2,}", " ", normalized)

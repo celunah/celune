@@ -331,6 +331,33 @@ Without this, Celune may require elevated permissions or fall back to slower beh
 See [API.md](./API.md) for REST API configuration, authentication, endpoints, and cURL examples.
 The API allows programmatic usage of all Celune features. It can be used both as a public and local interface.
 
+## Extensions
+
+Celune comes with extension support, allowing custom code to run with the engine.
+
+Extensions may subscribe at will to certain core events with `@celune.subscribe(...)`.
+
+Celune exposes the following core events to extensions:
+
+- `ready`
+- `shutdown`
+- `fatal`
+- `error`
+- `voice_changed`
+- `state_changed`
+- `generation_start`
+- `generation_end`
+- `generation_error`
+- `audio_start`
+- `audio_end`
+- `character_changed`
+- `character_loaded`
+- `character_unloaded`
+
+For example extension usage, check the [example extension](./extensions/test.py).
+
+The aforementioned extension defines a basic usage case for Celune extensions.
+
 ## Web UI
 
 Celune exposes a web interface for remote access to Celune. It reuses the Celune API commands to provide an interface for control.

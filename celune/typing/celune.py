@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol, Union
+from typing import TYPE_CHECKING, Callable, Optional, Protocol, Union
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
@@ -19,13 +19,17 @@ if TYPE_CHECKING:
     import numpy.typing as npt
     import sounddevice as sd
 
-    from ..backends import BackendModel, CeluneBackend
+    from ..backends.tts import BackendModel, CeluneBackend
     from ..cevoice import CEVoicePersona
     from ..chroma import AudioRGBGlow
     from ..constants import PipelineStates
     from ..dsp import StreamingPedalboardReverb
     from ..extensions.manager import CeluneExtensionManager
     from ..persona.impl import PersonaClient
+    from ..backends.vc import CeluneVCBackend
+
+
+type GenerationKwarg = Union[torch.Tensor, int, bool, None]
 
 
 class SupportsClose(Protocol):
@@ -55,7 +59,7 @@ class SupportsUnload(Protocol):
 class Generative(Protocol):
     """Protocol for normalization-capable language models."""
 
-    def generate(self, **kwargs: Any) -> torch.Tensor:
+    def generate(self, **kwargs: GenerationKwarg) -> torch.Tensor:
         """Generate token IDs from the provided model inputs.
 
         Args:
@@ -83,7 +87,7 @@ class Generative(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
-ReleasableObject = Union[
+type ReleasableObject = Union[
     SupportsClose,
     SupportsUnload,
     PreTrainedModel,
@@ -169,10 +173,15 @@ class ProgressCallback(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
-ErrorCallback = Callable[[str], None]
-IdleCallback = Callable[[], None]
-QueueAvailableCallback = Callable[[], None]
-VoiceChangedCallback = Callable[[str], None]
+type ErrorCallback = Callable[[str], None]
+type IdleCallback = Callable[[], None]
+type QueueAvailableCallback = Callable[[], None]
+type VoiceChangedCallback = Callable[[str], None]
+type TTSBackendRecipe = Union[str, type["CeluneBackend"]]
+type VCBackendRecipe = Union[str, type["CeluneVCBackend"]]
+type TTSBackendSpec = Union[TTSBackendRecipe, "CeluneBackend"]
+type VCBackendSpec = Union[VCBackendRecipe, "CeluneVCBackend"]
+type CoreBackendSpec = Union[TTSBackendSpec, VCBackendSpec]
 
 
 class CeluneStateAccessors:
@@ -188,10 +197,16 @@ class CeluneStateAccessors:
     change_voice_lock_state_callback: VoiceLockStateCallback
     progress_callback: ProgressCallback
     config: Config
-    _backend_spec: Optional[Union[str, type["CeluneBackend"]]]
+    _backend_spec: Optional[TTSBackendRecipe]
     _backend_kwargs: dict[str, JSONSerializable]
     backend: "CeluneBackend"
     tts_backend: str
+    _vc_backend_spec: Optional[VCBackendRecipe]
+    vc_backend: Optional["CeluneVCBackend"]
+    voice_conversion_backend: str
+    vc_pitch_shift: int
+    vc_f0_condition: bool
+    input_mode: str
     chunk_size: int
     language: str
     dev: bool
@@ -242,10 +257,10 @@ class CeluneStateAccessors:
     regenerate: bool
     locked: bool
     loaded: bool
+    _reload_pending: bool
     sleeping: bool
     _last_flavor: Optional[str]
     _ready_announced: bool
-    cur_state: str
     is_in_tutorial: bool
     extension_manager: Optional["CeluneExtensionManager"]
     glow: "AudioRGBGlow"
@@ -265,3 +280,24 @@ class CeluneStateAccessors:
     model_lock: "threading.RLock"
     audio_unavailable: bool
     current_sr: Optional[int]
+
+    @property
+    def cur_state(self) -> str:
+        """Return the current runtime-state label.
+
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
+        """
+        raise NotImplementedError("typing surface only")
+
+    @cur_state.setter
+    def cur_state(self, value: str) -> None:
+        """Store the current runtime-state label.
+
+        Args:
+            value: The new runtime-state label.
+
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
+        """
+        raise NotImplementedError("typing surface only")

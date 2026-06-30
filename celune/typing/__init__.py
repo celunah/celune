@@ -1,7 +1,7 @@
 """Unified Celune type package with lazy re-exports."""
 
-from importlib import import_module
 from typing import TYPE_CHECKING
+from importlib import import_module
 
 if TYPE_CHECKING:
     from .analysis import (

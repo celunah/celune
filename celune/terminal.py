@@ -4,7 +4,7 @@
 import os
 import sys
 import ctypes
-from typing import IO, Final, Optional, Callable, Any, cast
+from typing import IO, Final, Optional, Callable, cast
 
 from .config import config_value
 from .typing.common import ColorMode, Config, JSONSerializable, ResolvedColorMode
@@ -92,7 +92,7 @@ def supports_ansi(stream: Optional[IO[str]] = None) -> bool:
     if not callable(windll):
         return False
 
-    windll = cast(Callable[..., Any], windll)
+    windll = cast(Callable[..., ctypes.CDLL], windll)
 
     kernel32 = windll("kernel32", use_last_error=True)
     handle_id = -12 if output is sys.stderr else -11

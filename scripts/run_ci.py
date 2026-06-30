@@ -3,6 +3,7 @@
 
 import sys
 import subprocess
+from typing import Optional
 
 from tqdm.contrib import tzip
 
@@ -18,11 +19,20 @@ CI_PATHS = ((".",), ("celune", "tests"), ("celune", "tests"), ("tests",))
 cmds_failed = 0
 total_errors = []
 
-_CACHE_PERMISSION_MARKERS = (
-    "Access is denied.",
+_AGENT_ERROR_MARKERS = (
     "Access is denied",
     "Permission denied",
+    "Operation not permitted",
 )
+
+
+def _agent_permission_marker(output: str) -> Optional[str]:
+    """Return the first permission marker found in command output."""
+    normalized_output = output.lower()
+    for marker in _AGENT_ERROR_MARKERS:
+        if marker.lower() in normalized_output:
+            return marker
+    return None
 
 
 def _run_uv_command(*cmd: str) -> None:
@@ -40,17 +50,27 @@ def _run_uv_command(*cmd: str) -> None:
         return
     except subprocess.CalledProcessError as failed:
         combined_output = f"{failed.stdout}\n{failed.stderr}"
-        if not any(marker in combined_output for marker in _CACHE_PERMISSION_MARKERS):
+        marker = _agent_permission_marker(combined_output)
+        if marker is None:
             raise
 
-    subprocess.run(
-        ["uv", "--no-cache", "run", *cmd],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=True,
-        text=True,
-        timeout=300,
-    )
+    try:
+        subprocess.run(
+            ["uv", "--no-cache", "run", *cmd],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.CalledProcessError as failed:
+        combined_output = f"{failed.stdout}\n{failed.stderr}"
+        marker = _agent_permission_marker(combined_output)
+        if marker is not None:
+            raise RuntimeError(
+                f"agent has no permissions to run CI: {marker}"
+            ) from failed
+        raise
 
 
 if len(CI_COMMANDS) != len(CI_PATHS):

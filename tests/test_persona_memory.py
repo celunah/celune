@@ -3,7 +3,7 @@
 
 import tempfile
 from pathlib import Path
-from unittest import TestCase
+from unittest import TestCase, mock
 from typing import Union, Optional
 from collections.abc import Sequence
 
@@ -185,6 +185,26 @@ class PersonaMemoryTests(TestCase):
             store.remember("Celune", "my project is the lighthouse refactor")
 
             retrieved = store.retrieve("Celune", "tell me about my project")
+
+            self.assertEqual(len(retrieved), 1)
+            self.assertEqual(
+                retrieved[0].content,
+                "my project is the lighthouse refactor",
+            )
+
+    def test_fallback_retrieval_survives_missing_offline_embedding_cache(
+        self,
+    ) -> None:
+        """Verify Hugging Face offline cache misses fall back to token overlap."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PersonaMemoryStore(storage_dir=temp_dir)
+            store.remember("Celune", "my project is the lighthouse refactor")
+
+            with mock.patch(
+                "celune.persona.memory.AutoTokenizer.from_pretrained",
+                side_effect=OSError("offline cache missing"),
+            ):
+                retrieved = store.retrieve("Celune", "tell me about my project")
 
             self.assertEqual(len(retrieved), 1)
             self.assertEqual(

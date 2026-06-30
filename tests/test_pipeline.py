@@ -19,11 +19,12 @@ import soundfile as sf
 
 from celune import pipeline
 from celune.celune import Celune
+from celune.dataclasses.pipeline import AudioInputRequest
 from celune.utils import discard
 from celune.persona.prompts import PersonaPromptBuilder
 from celune.constants import JSON, JSONSerializable, PipelineStates
 from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
-from .support import FakeStream, make_pipeline_engine
+from .support import FakeStream, FakeVCBackend, make_pipeline_engine, make_voice_loader
 from .test_persona_memory import StubEmbeddingMemoryStore
 
 
@@ -128,6 +129,65 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.text_queue.empty(), True)
         self.assertIs(engine.audio_queue.get_nowait(), engine.force_stop_marker)
 
+    def test_working_signal_completion_does_not_notify_idle(self) -> None:
+        """Verify the transitional working cue is not treated as a readiness idle event."""
+        engine = make_pipeline_engine()
+        engine.cur_state = "reloading"
+
+        self.assertEqual(pipeline.play_signal(cast(Celune, engine), "working"), True)
+
+        queued = list(engine.audio_queue.queue)
+        done_markers = [
+            item for item in queued if isinstance(item, pipeline.PlaybackSourceDone)
+        ]
+        self.assertEqual(len(done_markers), 1)
+        self.assertEqual(done_markers[0].notify_idle, False)
+        self.assertEqual(engine.cur_state, "reloading")
+
+    def test_readiness_signal_does_not_block_concurrent_speech_queueing(self) -> None:
+        """Verify the readiness cue does not briefly reject speech as busy."""
+        engine = make_pipeline_engine()
+        queued_during_signal: list[bool] = []
+        original_register = pipeline.register_playback_source
+
+        def register_and_queue(
+            engine_arg: Celune,
+            source_id: int,
+            *,
+            kind: str,
+            base_gain: float = 1.0,
+        ) -> None:
+            with mock.patch(
+                "celune.pipeline.detect_language",
+                return_value={
+                    "language": "en",
+                    "languages": ["en"],
+                    "supported": True,
+                    "probabilities": {"en": 1.0},
+                },
+            ):
+                queued_during_signal.append(
+                    pipeline.queue_speech(cast(Celune, engine), "hello")
+                )
+            original_register(
+                engine_arg,
+                source_id,
+                kind=kind,
+                base_gain=base_gain,
+            )
+
+        with mock.patch(
+            "celune.pipeline._register_playback_source",
+            side_effect=register_and_queue,
+        ):
+            self.assertEqual(
+                pipeline.play_signal(cast(Celune, engine), "readiness"), True
+            )
+
+        self.assertEqual(queued_during_signal, [True])
+        request = engine.text_queue.get_nowait()
+        self.assertEqual(request.text, "hello")
+
     def test_queue_speech_handles_success_and_failure_paths(self) -> None:
         """Verify speech queueing success and rejection paths.
 
@@ -213,6 +273,181 @@ class PipelineTests(TestCase):
         engine.loaded = False
         self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), False)
         self.assertEqual(engine.errors, ["Celune is not currently ready"])
+
+    def test_handle_audio_input_accepts_and_ignores_audio_by_default(self) -> None:
+        """Verify engine-level audio input is a safe explicit no-op in TTS mode."""
+        engine = make_pipeline_engine()
+        engine.log = mock.Mock()
+        engine.log_dev = mock.Mock()
+        engine.loaded = True
+        engine.locked = False
+        engine.cur_state = "idle"
+        audio = np.ones((16, 2), dtype=np.float32)
+        request = AudioInputRequest(audio=audio, sample_rate=48000, label="mic test")
+
+        result = pipeline.handle_audio_input(cast(Celune, engine), request)
+
+        self.assertEqual(result, True)
+        self.assertEqual(engine.text_queue.empty(), True)
+        self.assertEqual(engine.audio_queue.empty(), True)
+        self.assertEqual(engine.cur_state, "idle")
+        engine.log.assert_not_called()
+        engine.log_dev.assert_called_once()
+
+    def test_handle_audio_input_routes_to_vc_backend_in_voice_conversion_mode(
+        self,
+    ) -> None:
+        """Verify VC mode sends audio input through the configured VC backend."""
+        engine = make_pipeline_engine()
+        engine.input_mode = "voice_conversion"
+        engine.vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
+        engine.current_voice = "balanced"
+        engine.current_character = "Celune"
+        audio = np.ones((16, 2), dtype=np.float32)
+        request = AudioInputRequest(audio=audio, sample_rate=48000, label="mic test")
+
+        convert_mock = mock.Mock(
+            return_value=SimpleNamespace(
+                audio=np.asarray(audio, dtype=np.float32).copy(),
+                sample_rate=48000,
+                label="mic test",
+            )
+        )
+        engine.vc_backend.convert = convert_mock
+        loader = make_voice_loader("balanced", {"reference_text": "Pack reference."})
+
+        with (
+            mock.patch("celune.pipeline.default_loader", return_value=loader),
+            mock.patch("celune.pipeline.queue_sfx_audio", return_value=True) as queue,
+        ):
+            result = pipeline.handle_audio_input(cast(Celune, engine), request)
+
+        self.assertEqual(result, True)
+        convert_mock.assert_called_once()
+        vc_request = convert_mock.call_args.args[0]
+        self.assertEqual(vc_request.target_references, (Path("balanced.wav"),))
+        self.assertEqual(vc_request.pitch_shift, 0)
+        self.assertEqual(vc_request.f0_condition, False)
+        queue.assert_called_once()
+        queued_audio = queue.call_args.args[1]
+        self.assertEqual(queue.call_args.args[2], 48000)
+        self.assertEqual(queue.call_args.args[3], "mic test")
+        self.assertEqual(queued_audio.shape, (16, 2))
+        self.assertIsNot(queued_audio, audio)
+        self.assertEqual(np.array_equal(queued_audio, audio), True)
+        self.assertEqual(engine.text_queue.empty(), True)
+
+    def test_handle_audio_input_reports_missing_vc_backend_cleanly(self) -> None:
+        """Verify VC mode surfaces a clean error when no VC backend is configured."""
+        engine = make_pipeline_engine()
+        engine.input_mode = "voice_conversion"
+        engine.vc_backend = None
+        engine.log = mock.Mock()
+        audio = np.ones((8, 2), dtype=np.float32)
+
+        result = pipeline.handle_audio_input(
+            cast(Celune, engine),
+            AudioInputRequest(audio=audio, sample_rate=24000, label="fixture"),
+        )
+
+        self.assertEqual(result, False)
+        engine.log.assert_called_once()
+        self.assertEqual(
+            engine.errors,
+            ["Voice conversion backend is not configured."],
+        )
+        self.assertEqual(engine.audio_queue.empty(), True)
+
+    def test_handle_audio_input_applies_engine_vc_pitch_shift_to_output(
+        self,
+    ) -> None:
+        """Verify VC routing applies the configured pitch shift to converted output."""
+        engine = make_pipeline_engine()
+        engine.input_mode = "voice_conversion"
+        engine.vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
+        engine.current_voice = "balanced"
+        engine.current_character = "Celune"
+        engine.vc_pitch_shift = -5
+        request = AudioInputRequest(
+            audio=np.ones((12, 2), dtype=np.float32),
+            sample_rate=48000,
+            label="mic test",
+        )
+        convert_mock = mock.Mock(
+            return_value=SimpleNamespace(
+                audio=np.ones((12, 2), dtype=np.float32),
+                sample_rate=48000,
+                label="mic test",
+            )
+        )
+        engine.vc_backend.convert = convert_mock
+        loader = make_voice_loader("balanced", {"reference_text": "Pack reference."})
+
+        with (
+            mock.patch("celune.pipeline.default_loader", return_value=loader),
+            mock.patch("celune.pipeline.queue_sfx_audio", return_value=True),
+            mock.patch(
+                "celune.pipeline.pitch_shift_audio",
+                return_value=np.ones((12, 2), dtype=np.float32) * 0.25,
+            ) as shift_audio,
+        ):
+            result = pipeline.handle_audio_input(cast(Celune, engine), request)
+
+        self.assertEqual(result, True)
+        self.assertEqual(convert_mock.call_args.args[0].pitch_shift, 0)
+        shift_audio.assert_called_once_with(mock.ANY, 48000, -5)
+
+    def test_handle_audio_input_passes_engine_vc_f0_condition_to_vc_backend(
+        self,
+    ) -> None:
+        """Verify VC routing carries the configured engine conversion mode."""
+        engine = make_pipeline_engine()
+        engine.input_mode = "voice_conversion"
+        engine.vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
+        engine.current_voice = "balanced"
+        engine.current_character = "Celune"
+        engine.vc_f0_condition = True
+        request = AudioInputRequest(
+            audio=np.ones((12, 2), dtype=np.float32),
+            sample_rate=48000,
+            label="mic test",
+        )
+        convert_mock = mock.Mock(
+            return_value=SimpleNamespace(
+                audio=np.ones((12, 2), dtype=np.float32),
+                sample_rate=48000,
+                label="mic test",
+            )
+        )
+        engine.vc_backend.convert = convert_mock
+        loader = make_voice_loader("balanced", {"reference_text": "Pack reference."})
+
+        with (
+            mock.patch("celune.pipeline.default_loader", return_value=loader),
+            mock.patch("celune.pipeline.queue_sfx_audio", return_value=True),
+        ):
+            result = pipeline.handle_audio_input(cast(Celune, engine), request)
+
+        self.assertEqual(result, True)
+        self.assertEqual(convert_mock.call_args.args[0].f0_condition, True)
+
+    def test_tts_mode_does_not_route_audio_to_vc_backend(self) -> None:
+        """Verify the default TTS mode ignores audio instead of invoking VC routing."""
+        engine = make_pipeline_engine()
+        engine.input_mode = "text_to_speech"
+        engine.vc_backend = mock.Mock()
+
+        result = pipeline.handle_audio_input(
+            cast(Celune, engine),
+            AudioInputRequest(
+                audio=np.ones((4, 2), dtype=np.float32),
+                sample_rate=16000,
+                label="fixture",
+            ),
+        )
+
+        self.assertEqual(result, True)
+        engine.vc_backend.convert.assert_not_called()
 
     def test_download_youtube_sfx_writes_expected_temp_wav(self) -> None:
         """Verify yt-dlp downloads to Celune's fixed temporary WAV path."""
@@ -514,11 +749,134 @@ class PipelineTests(TestCase):
             pipeline.playback_worker(cast(Celune, engine))
 
         self.assertEqual(fake_stream.started, True)
-        self.assertGreater(len(fake_stream.written), 1)
+        self.assertEqual(len(fake_stream.written), 1)
         mixed_audio = np.concatenate(fake_stream.written)
+        self.assertEqual(mixed_audio.shape, (2400, 2))
         np.testing.assert_allclose(mixed_audio, 0.5, atol=1e-6)
         self.assertEqual(len(glow_calls), len(fake_stream.written))
         np.testing.assert_allclose(np.concatenate(glow_calls), 0.5, atol=1e-6)
+        self.assertEqual(engine.playback_done.is_set(), True)
+
+    def test_playback_worker_uses_configured_output_device(self) -> None:
+        """Verify playback streams honor the configured output device override."""
+        engine = make_pipeline_engine()
+        engine.config = {"output_recording_device": "VB-Cable Output"}
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.current_voice = "balanced"
+        engine.idle_callback = mock.Mock()
+        engine.glow = SimpleNamespace(schedule=mock.Mock())
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+        fake_stream = FakeStream()
+
+        pipeline.queue_playback_chunk(
+            cast(Celune, engine),
+            1,
+            np.full((2400, 2), 0.2, dtype=np.float32),
+            48000,
+        )
+        pipeline.queue_playback_done(cast(Celune, engine), 1)
+        engine.audio_queue.put(engine.sentinel)
+
+        with mock.patch(
+            "celune.pipeline.sd.OutputStream",
+            return_value=fake_stream,
+        ) as mock_stream:
+            pipeline.playback_worker(cast(Celune, engine))
+
+        self.assertEqual(mock_stream.call_args.kwargs["device"], "VB-Cable Output")
+
+    def test_playback_worker_logs_friendly_output_device_match_errors(self) -> None:
+        """Verify ambiguous output devices are logged without surfacing a traceback."""
+        engine = make_pipeline_engine()
+        engine.config = {"output_recording_device": "CABLE-B Input"}
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.current_voice = "balanced"
+        engine.idle_callback = mock.Mock()
+        engine.glow = SimpleNamespace(schedule=mock.Mock())
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+
+        pipeline.queue_playback_chunk(
+            cast(Celune, engine),
+            1,
+            np.full((2400, 2), 0.2, dtype=np.float32),
+            48000,
+        )
+        pipeline.queue_playback_done(cast(Celune, engine), 1)
+        engine.audio_queue.put(engine.sentinel)
+
+        with mock.patch(
+            "celune.pipeline.resolve_audio_device",
+            side_effect=ValueError(
+                "The specified output device name has multiple matches for "
+                "'CABLE-B Input (VB-Audio Cable B)':\n"
+                "- [22] CABLE-B Input (VB-Audio Cable B), Windows DirectSound\n"
+                "- [28] CABLE-B Input (VB-Audio Cable B), Windows WASAPI\n\n"
+                "Please specify one of the above devices, then restart Celune."
+            ),
+        ):
+            pipeline.playback_worker(cast(Celune, engine))
+
+        self.assertEqual(engine.errors[-1], "No suitable audio devices")
+        error_messages = [
+            msg for msg, severity in engine.messages if severity == "error"
+        ]
+        self.assertTrue(error_messages)
+        self.assertIn(
+            "The specified output device name has multiple matches",
+            error_messages[-1],
+        )
+
+    def test_playback_worker_does_not_emit_idle_for_non_idle_completion_marker(
+        self,
+    ) -> None:
+        """Verify non-readiness completion markers cannot snap the runtime back to idle."""
+        engine = make_pipeline_engine()
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.cur_state = "reloading"
+        engine.idle_callback = mock.Mock()
+        engine.glow = SimpleNamespace(schedule=mock.Mock())
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+        fake_stream = FakeStream()
+
+        pipeline.queue_playback_chunk(
+            cast(Celune, engine),
+            1,
+            np.full((2400, 2), 0.2, dtype=np.float32),
+            48000,
+        )
+        pipeline.queue_playback_done(
+            cast(Celune, engine),
+            1,
+            notify_idle_when_finished=False,
+        )
+        engine.audio_queue.put(engine.sentinel)
+
+        with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
+            pipeline.playback_worker(cast(Celune, engine))
+
+        engine.idle_callback.assert_not_called()
+        self.assertEqual(engine.cur_state, "reloading")
         self.assertEqual(engine.playback_done.is_set(), True)
 
     def test_playback_worker_reports_live_audio_progress(self) -> None:
@@ -808,6 +1166,36 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.cur_state, "idle")
         engine.idle_callback.assert_called_once_with()
 
+    def test_finalize_playback_idle_does_not_announce_readiness_while_reloading(
+        self,
+    ) -> None:
+        """Verify transitional playback does not announce readiness mid-reload."""
+        engine = make_pipeline_engine()
+        engine.locked = True
+        engine.loaded = False
+        engine.cur_state = "reloading"
+
+        pipeline.finalize_playback_idle(cast(Celune, engine))
+
+        self.assertNotIn(("Ready to speak.", "info"), engine.messages)
+        self.assertEqual(getattr(engine, "_ready_announced", False), False)
+        self.assertEqual(engine.cur_state, "reloading")
+
+    def test_finalize_playback_idle_does_not_emit_idle_callback_while_locked(
+        self,
+    ) -> None:
+        """Verify locked non-readiness playback cannot unlock the UI through idle callbacks."""
+        engine = make_pipeline_engine()
+        engine.locked = True
+        engine.loaded = False
+        engine.cur_state = "reloading"
+
+        pipeline.finalize_playback_idle(cast(Celune, engine))
+
+        engine.idle_callback.assert_not_called()
+        self.assertEqual(engine.playback_done.is_set(), True)
+        self.assertEqual(engine.cur_state, "reloading")
+
     def test_think_builds_persona_payload_and_queues_response(self) -> None:
         """Verify Persona request formatting without loading a Persona model.
 
@@ -919,23 +1307,18 @@ class PipelineTests(TestCase):
         self.assertIn("Soft-spoken, intimate, and reflective", character_card)
         self.assertIn("Prompt Rules:", character_card)
         self.assertIn("Example Dialogue:", character_card)
-        self.assertIn("<runtime>", system_prompt)
-        self.assertIn("<character_identity>", system_prompt)
-        self.assertIn("<persona_style>", system_prompt)
-        self.assertIn("<short_term_memory>", system_prompt)
-        self.assertIn("Read the conversation in <short_term_memory>", system_prompt)
+        self.assertIn("<history>", system_prompt)
+        self.assertIn("<profile>", system_prompt)
+        self.assertIn("<behavior>", system_prompt)
         self.assertIn("Earlier reply.", system_prompt)
         self.assertIn("user: What now?", system_prompt)
         self.assertIn("The assistant has already acknowledged", system_prompt)
+        self.assertIn("You are Celune", system_prompt)
+        self.assertIn("refer to yourself as Celune", system_prompt)
         self.assertIn("Celune:", system_prompt)
-        self.assertNotIn("<vision_context>", system_prompt)
-        self.assertNotIn("<request>", system_prompt)
         self.assertEqual(messages[0], {"role": "system", "content": system_prompt})
         self.assertEqual(messages[-1], {"role": "user", "content": "What now?"})
         self.assertEqual(len(messages), 2)
-        self.assertIn("small pauses", messages[0]["content"])
-        self.assertNotIn("User Request", character_card)
-        self.assertNotIn("Assistant Response", character_card)
         self.assertEqual(
             engine.persona_history[-2:],
             [
@@ -1010,7 +1393,6 @@ class PipelineTests(TestCase):
         engine = make_pipeline_engine()
         engine.config = {
             "persona_character_profile": "A careful archivist with a dry wit.",
-            "persona_relationship_memory": "The user trusts the character with private notes.",
             "persona_state": "Thoughtful and slightly tired.",
             "persona_long_term_memory": [
                 "The user prefers concise answers.",
@@ -1037,58 +1419,46 @@ class PipelineTests(TestCase):
         )
         prompt = PersonaPromptBuilder.build(context)
 
-        self.assertIn("<runtime>", prompt)
-        self.assertIn("<character_identity>", prompt)
-        self.assertIn("Name: Fixture", prompt)
-        self.assertIn("A careful archivist with a dry wit.", prompt)
-        self.assertIn("<relationship_to_user>", prompt)
-        self.assertIn("The user trusts the character with private notes.", prompt)
-        self.assertIn("<current_state>", prompt)
+        self.assertIn("<profile>", prompt)
+        self.assertIn("<memories>", prompt)
+        self.assertIn("- The user prefers concise answers.", prompt)
+        self.assertIn(
+            "- The character once helped recover a lost journal.",
+            prompt,
+        )
+        self.assertIn("<mood>", prompt)
         self.assertIn("Thoughtful and slightly tired.", prompt)
-        self.assertIn("<long_term_memory>", prompt)
-        self.assertIn("The user prefers concise answers.", prompt)
-        self.assertIn("<short_term_memory>", prompt)
+        self.assertIn("<history>", prompt)
         self.assertIn("assistant: Yes, we catalogued the letters.", prompt)
         self.assertIn("user: What do you notice?", prompt)
+        self.assertIn("You are Fixture", prompt)
+        self.assertIn(
+            "Push the conversation forward instead of returning to earlier turns.",
+            prompt,
+        )
+        self.assertIn(
+            "Treat facts in <memories> as true context when they are relevant.",
+            prompt,
+        )
+        self.assertIn(
+            "Keep items from <memories> silent unless the current user message clearly asks for them",
+            prompt,
+        )
         self.assertIn(
             "The assistant has already acknowledged",
             prompt,
         )
-        self.assertIn("<vision_context>", prompt)
-        self.assertIn("image: archive.png", prompt)
         self.assertIn(
             "Do not greet the user. Do not ask what they need. Just respond.",
+            prompt,
+        )
+        self.assertIn(
+            "Do not bring up older messages, stored facts, or resolved topics on your own.",
             prompt,
         )
         self.assertIn("Fixture:", prompt)
         self.assertIn("What do you notice?", prompt)
         self.assertNotIn("<request>", prompt)
-
-    def test_persona_context_retrieves_persisted_long_term_memory(self) -> None:
-        """Verify Persona prompts pull relevant persisted memory for the character."""
-        engine = make_pipeline_engine()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            engine.config = {
-                "persona": {"memory": {"storage_dir": temp_dir}},
-            }
-            engine.current_character = "Fixture"
-            engine.current_voice = "balanced"
-            store = StubEmbeddingMemoryStore(storage_dir=temp_dir)
-            store.return_none = True
-            engine.persona_memory_store = store
-            store.remember(
-                "Fixture",
-                "my test word is moonlight",
-                explicit=True,
-            )
-
-            context = pipeline.build_persona_context(
-                cast(Celune, engine), "what is my test word?"
-            )
-            prompt = PersonaPromptBuilder.build(context)
-
-        self.assertIn("my test word is moonlight", prompt)
-        self.assertIn("<long_term_memory>", prompt)
 
     def test_cevoice_persona_metadata_populates_persona_card(self) -> None:
         """Verify CEVOICE persona metadata becomes the active Persona card."""
@@ -1133,6 +1503,15 @@ class PipelineTests(TestCase):
             "A precise investigator who notices tiny shifts in tone.",
             context.character_profile.render(),
         )
+        self.assertEqual(
+            context.character_profile.render_identity_summary(),
+            "\n".join(
+                (
+                    "You are Mirelle, a precise investigator who notices tiny shifts in tone.",
+                    "When asked for an introduction, refer to yourself as Mirelle.",
+                )
+            ),
+        )
         self.assertIn("Style Notes:", card)
         self.assertIn("Elegant, steady, and mildly teasing.", card)
         self.assertIn("Boundaries:", card)
@@ -1140,6 +1519,13 @@ class PipelineTests(TestCase):
         self.assertIn("Example Dialogue:", card)
         self.assertIn("- Formality: high", card)
         self.assertIn("- Enthusiasm: low", card)
+        self.assertEqual(
+            context.persona_card.behavior_cues(),
+            (
+                "Elegant, steady, and mildly teasing.",
+                "Do not use sterile assistant framing.\n- Do not sound detached.",
+            ),
+        )
 
     def test_different_cevoice_personas_produce_distinct_prompts(self) -> None:
         """Verify different CEVOICE persona packs shape different Persona prompts."""
@@ -1171,10 +1557,8 @@ class PipelineTests(TestCase):
         )
 
         self.assertNotEqual(first_prompt, second_prompt)
-        self.assertIn("A precise investigator.", first_prompt)
-        self.assertIn("A mischievous mechanic.", second_prompt)
-        self.assertIn("Elegant and steady.", first_prompt)
-        self.assertIn("Fast, playful, and sharp.", second_prompt)
+        self.assertIn("Mirelle:", first_prompt)
+        self.assertIn("Rho:", second_prompt)
 
     def test_persona_prompt_does_not_hardcode_celune_identity(self) -> None:
         """Verify Persona prompts stay character-agnostic without pack metadata."""
@@ -1187,8 +1571,9 @@ class PipelineTests(TestCase):
             pipeline.build_persona_context(cast(Celune, engine), "Hello.")
         )
 
-        self.assertIn("Name: Fixture", prompt)
+        self.assertIn("Fixture:", prompt)
         self.assertNotIn("Name: Celune", prompt)
+        self.assertIn("You are Fixture", prompt)
 
     def test_default_celune_prompt_uses_canonical_age_and_gender(self) -> None:
         """Verify default Celune prompts expose the intended identity fields."""
@@ -1202,9 +1587,107 @@ class PipelineTests(TestCase):
             pipeline.build_persona_context(cast(Celune, engine), "Hello.")
         )
 
-        self.assertIn("Name: Celune", prompt)
-        self.assertIn("Age: 28", prompt)
-        self.assertIn("Gender: female", prompt)
+        self.assertIn("Celune:", prompt)
+        self.assertIn("You are Celune", prompt)
+        self.assertNotIn("Gender: female", prompt)
+        self.assertNotIn("The speaker uses a more confident", prompt)
+
+    def test_named_celune_custom_pack_does_not_use_default_identity(self) -> None:
+        """Verify custom packs named Celune do not inherit default identity fields."""
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Celune"
+        engine.current_voice = "balanced"
+        engine.voice_bundle_is_default = False
+
+        prompt = PersonaPromptBuilder.build(
+            pipeline.build_persona_context(cast(Celune, engine), "Hello.")
+        )
+
+        self.assertIn("Celune:", prompt)
+        self.assertIn("You are Celune", prompt)
+
+    def test_persona_context_uses_weighted_emotion_state_when_unconfigured(
+        self,
+    ) -> None:
+        """Verify Persona state can come from weighted conversation emotion."""
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+        engine.persona_history = [
+            {"role": "user", "content": "I feel awful."},
+            {"role": "assistant", "content": "I am staying steady."},
+        ]
+
+        fake_analyzer = SimpleNamespace(
+            summarize_history=mock.Mock(
+                return_value=SimpleNamespace(
+                    target_state=(
+                        "Target emotion: gently reassuring. "
+                        "The user's recent mood leans toward sadness."
+                    )
+                )
+            )
+        )
+
+        with mock.patch(
+            "celune.pipeline._persona_emotion_analyzer",
+            return_value=fake_analyzer,
+        ):
+            context = pipeline.build_persona_context(
+                cast(Celune, engine), "Please stay with me."
+            )
+
+        self.assertIn("Target emotion: gently reassuring.", context.mood_or_state)
+        fake_analyzer.summarize_history.assert_called_once()
+
+    def test_persona_context_prefers_configured_state_over_emotion_analysis(
+        self,
+    ) -> None:
+        """Verify an explicit persona_state still overrides automatic emotion blending."""
+        engine = make_pipeline_engine()
+        engine.config = {"persona_state": "Thoughtful and slightly tired."}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+
+        with mock.patch("celune.pipeline._persona_emotion_analyzer") as analyzer:
+            context = pipeline.build_persona_context(cast(Celune, engine), "Hello.")
+
+        self.assertEqual(context.mood_or_state, "Thoughtful and slightly tired.")
+        analyzer.assert_not_called()
+
+    def test_persona_context_logs_emotion_fallback_reason(self) -> None:
+        """Verify emotion-analysis failures are surfaced in developer logs."""
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+        captured: list[tuple[str, str]] = []
+        engine.log_dev = lambda msg, severity="info": captured.append((msg, severity))
+
+        fake_analyzer = SimpleNamespace(
+            last_error="lunahr/emotispace-128 could not be loaded",
+            summarize_history=mock.Mock(return_value=None),
+        )
+
+        with mock.patch(
+            "celune.pipeline._persona_emotion_analyzer",
+            return_value=fake_analyzer,
+        ):
+            context = pipeline.build_persona_context(cast(Celune, engine), "Hello.")
+
+        self.assertEqual(context.mood_or_state, "Neutral.")
+        self.assertEqual(
+            captured,
+            [
+                (
+                    "Persona emotion analysis fell back to Neutral: "
+                    "lunahr/emotispace-128 could not be loaded",
+                    "warning",
+                )
+            ],
+        )
 
     def test_persona_prompt_builder_omits_vision_context_without_attachments(
         self,
@@ -1223,7 +1706,7 @@ class PipelineTests(TestCase):
         prompt = PersonaPromptBuilder.build(context)
 
         self.assertNotIn("<vision_context>", prompt)
-        self.assertIn("<short_term_memory>", prompt)
+        self.assertIn("<history>", prompt)
         self.assertIn("assistant: hi", prompt)
 
     def test_persona_messages_keep_only_recent_history(self) -> None:
@@ -1245,7 +1728,7 @@ class PipelineTests(TestCase):
         self.assertEqual(messages[-1], {"role": "user", "content": "current"})
         self.assertEqual(len(messages), 2)
         system_prompt = cast(str, messages[0]["content"])
-        self.assertIn("<short_term_memory>", system_prompt)
+        self.assertIn("<history>", system_prompt)
         self.assertIn("user: old user 6", system_prompt)
         self.assertIn("assistant: old reply 11", system_prompt)
         self.assertNotIn("old user 4", system_prompt)
@@ -1377,14 +1860,11 @@ class PipelineTests(TestCase):
                 )
 
             retrieved = store.retrieve("Celune", "what is my test word?")
-            payload = cast(JSON, engine.vision.payload)
-            system_prompt = cast(str, payload["system"])
 
         self.assertEqual(
             [record.content for record in retrieved],
             ["my test word is moonlight"],
         )
-        self.assertIn("my test word is moonlight", system_prompt)
 
     def test_persona_prompt_builder_includes_short_term_summary_when_present(
         self,
@@ -1406,7 +1886,7 @@ class PipelineTests(TestCase):
         context = pipeline.build_persona_context(cast(Celune, engine), "Continue.")
         prompt = PersonaPromptBuilder.build(context)
 
-        self.assertIn("<short_term_memory>", prompt)
+        self.assertIn("<history>", prompt)
         self.assertIn("Summary:", prompt)
         self.assertIn(
             "The user and character already discussed the archive.",
@@ -1414,7 +1894,6 @@ class PipelineTests(TestCase):
         )
         self.assertIn("assistant: We reviewed the archive.", prompt)
         self.assertIn("user: And after that?", prompt)
-        self.assertNotIn("What did we cover?", prompt)
 
     def test_persona_messages_include_pending_attachments(self) -> None:
         """Verify visual attachments are sent in the next persona user turn."""
@@ -1562,9 +2041,7 @@ class PipelineTests(TestCase):
 
         self.assertEqual(engine.persona_attachments, [])
         first_payload = engine.vision.payloads[0]
-        first_system = cast(str, first_payload["system"])
         first_messages = cast(list[JSON], first_payload["messages"])
-        self.assertIn("<vision_context>", first_system)
         self.assertIsInstance(first_messages[-1]["content"], list)
 
         second_payload = pipeline.build_persona_request(
@@ -1572,58 +2049,8 @@ class PipelineTests(TestCase):
         )
         second_system = cast(str, second_payload["system"])
         second_messages = cast(list[JSON], second_payload["messages"])
-        self.assertIn("<vision_context>", second_system)
-        self.assertIn(
-            "Recent visual context from the last Persona request:",
-            second_system,
-        )
-        self.assertIn("image: frame.png", second_system)
-        self.assertIn("User request about that media: What is this?", second_system)
-        self.assertNotIn("Character response about that media:", second_system)
-        self.assertIn(
-            "If you don't know something, say so in character",
-            second_system,
-        )
+        self.assertIn("<behavior>", second_system)
         self.assertEqual(second_messages[-1], {"role": "user", "content": "And now?"})
-
-    def test_recent_visual_context_is_replaced_by_newer_visual_turn(self) -> None:
-        """Verify only the most recent visual turn is carried forward as text context."""
-        engine = make_pipeline_engine()
-        engine.config = {}
-        engine.current_character = "Fixture"
-        engine.current_voice = "balanced"
-
-        pipeline.remember_visual_context(
-            [
-                {
-                    "type": "image",
-                    "path": "file:///C:/Users/user/Pictures/old.png",
-                    "name": "old.png",
-                }
-            ],
-            cast(Celune, engine),
-            "What was in the old file?",
-        )
-        pipeline.remember_visual_context(
-            [
-                {
-                    "type": "video",
-                    "path": "https://example.com/clip.mp4",
-                    "name": "clip.mp4",
-                }
-            ],
-            cast(Celune, engine),
-            "And this clip?",
-        )
-
-        prompt = PersonaPromptBuilder.build(
-            pipeline.build_persona_context(cast(Celune, engine), "Continue.")
-        )
-
-        self.assertIn("video: clip.mp4", prompt)
-        self.assertIn("User request about that media: And this clip?", prompt)
-        self.assertNotIn("Character response about that media:", prompt)
-        self.assertNotIn("old.png", prompt)
 
     def test_generation_worker_normalizes_each_split_chunk(self) -> None:
         """Verify normalization happens after splitting and before generation.
@@ -1861,7 +2288,7 @@ class PipelineTests(TestCase):
         ):
             pipeline.generation_worker(cast(Celune, engine))
 
-        self.assertEqual(queued_lengths, [48000, 96000])
+        self.assertEqual(queued_lengths, [48000, 48000, 48000])
         self.assertGreater(engine.smart_buffer_generation_speed, 0.5)
         self.assertLess(engine.smart_buffer_generation_speed, 1.3)
         self.assertGreater(engine.smart_buffer_target_seconds, 0.0)
@@ -1923,8 +2350,73 @@ class PipelineTests(TestCase):
         ):
             pipeline.generation_worker(cast(Celune, engine))
 
-        self.assertEqual(queued_lengths, [144000])
+        self.assertEqual(queued_lengths, [48000, 48000, 48000])
         self.assertEqual(engine.smart_buffer_target_seconds, float("inf"))
+
+    def test_playback_blocks_uses_true_50ms_chunks(self) -> None:
+        """Verify mixer block splitting uses real wall-clock block lengths."""
+        timing = pipeline.SpeechTiming(start_time=0.0)
+        chunk = pipeline.PlaybackChunk(
+            source_id=1,
+            audio=np.zeros((4800, 2), dtype=np.float32),
+            sample_rate=48000,
+            timing=timing,
+        )
+
+        blocks = pipeline._playback_blocks(chunk)
+
+        self.assertEqual(len(blocks), 2)
+        first_block, first_timing = blocks[0]
+        second_block, second_timing = blocks[1]
+        self.assertEqual(first_block.shape, (2400, 2))
+        self.assertEqual(second_block.shape, (2400, 2))
+        self.assertIs(first_timing, timing)
+        self.assertIsNone(second_timing)
+
+    def test_generation_worker_handles_save_false_without_concatenate_error(
+        self,
+    ) -> None:
+        """Verify silence analysis does not crash when output saving is disabled."""
+        engine = make_pipeline_engine()
+        engine.backend = SimpleNamespace(
+            generate_stream=lambda _model, **_kwargs: iter(
+                [(np.zeros((8, 2), dtype=np.float32), 48000, None)]
+            )
+        )
+        engine.model_lock = threading.Lock()
+        engine.model = mock.Mock()
+        engine.language = "en"
+        engine.chunk_size = 8
+        engine.voice_prompt = None
+        engine.current_voice = "balanced"
+        engine.speed = 1.0
+        engine.can_use_rubberband = False
+        engine.reverb = SimpleNamespace(
+            strength=0.0,
+            reset=mock.Mock(),
+            flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
+        )
+        engine.queue_avail_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.exit_requested = False
+        engine.dev = False
+        engine.recently_saved = None
+
+        engine.text_queue.put(pipeline.SpeechRequest("hello", "hello", save=False))
+        engine.text_queue.put(engine.sentinel)
+
+        with (
+            mock.patch("celune.pipeline.split_text", return_value=["hello"]),
+            mock.patch(
+                "celune.pipeline.is_silent_utterance", return_value=(False, 0)
+            ) as silent_mock,
+            mock.patch("celune.pipeline._write_celune_flac") as write_mock,
+        ):
+            pipeline.generation_worker(cast(Celune, engine))
+
+        silent_mock.assert_called_once()
+        write_mock.assert_not_called()
+        self.assertIsNone(engine.recently_saved)
 
     def test_split_text_breaks_long_unpunctuated_lines(self) -> None:
         """Verify long prose without punctuation still splits into chunks.

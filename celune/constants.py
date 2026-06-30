@@ -3,8 +3,11 @@
 
 import signal
 import datetime
+import itertools
 from enum import auto, IntEnum, Enum
+from typing import Optional
 
+from .i18n import string
 from .typing.common import JSON as _JSON
 from .typing.common import JSONSerializable as _JSONSerializable
 
@@ -28,12 +31,34 @@ NORMALIZER_MODEL_ID = "lunahr/CeluneNorm-0.6B-v2.0-ctx2048"
 # this embedding model is used to extract a voice embedding vector out of the target utterance,
 # and analyze the voice automatically based on any given embeddings from your CEVOICE/CECHAR pack
 VOICE_EMBEDDING_MODEL = "marksverdhei/Qwen3-Voice-Embedding-12Hz-1.7B"
+VOICE_EMBEDDING_MODEL_REVISION = "7577f61c42737fc8064bba773e2a18602df92803"
 # this embedding model is used to retrieve long-term Persona memories semantically when available
 PERSONA_MEMORY_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+# this model is used to infer conversation emotion and derive Persona's target response mood
+PERSONA_EMOTION_MODEL = "lunahr/emotispace-128"
 
 # this model is loaded by Celune, and used to control the persona
 PERSONA_MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
+PERSONA_MODEL_REVISION = "ebb281ec70b05090aa6165b016eac8ec08e71b17"
 PERSONA_HISTORY_MESSAGES = 20
+
+REMOTE_CODE_MODEL_REVISIONS = {
+    VOICE_EMBEDDING_MODEL: VOICE_EMBEDDING_MODEL_REVISION,
+    PERSONA_MODEL_ID: PERSONA_MODEL_REVISION,
+}
+
+
+def remote_code_model_revision(model_id: str) -> Optional[str]:
+    """Return the pinned revision for a remote-code model when Celune knows one.
+
+    Args:
+        model_id: Hugging Face model ID to resolve.
+
+    Returns:
+        Optional[str]: The pinned commit revision, or ``None`` when unknown.
+    """
+    return REMOTE_CODE_MODEL_REVISIONS.get(model_id)
+
 
 # used to pre-calculate the next full moon for the glow boost
 REFERENCE_NEW_MOON = datetime.datetime(2000, 1, 6, 18, 14, tzinfo=datetime.timezone.utc)
@@ -139,3 +164,12 @@ VRAM_REQUIREMENTS = {
     "high": 12,
     "xhigh": 16,
 }
+
+CRASH_LINES = itertools.cycle(
+    [
+        string("osc.crash_1", app_name=APP_NAME),
+        string("osc.crash_2", app_name=APP_NAME),
+        string("osc.crash_3"),
+        string("osc.crash_4"),
+    ]
+)

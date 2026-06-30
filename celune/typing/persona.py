@@ -8,10 +8,10 @@ from transformers.tokenization_utils_base import BatchEncoding
 
 from .common import JSONSerializable, VideoMetadataScalar
 
-Role = Literal["system", "user", "assistant"]
-VisionInput = Union[JSONSerializable, torch.Tensor, bytes, memoryview]
-ProcessorKwargValue = Union[VideoMetadataScalar, Sequence[VideoMetadataScalar]]
-ModelGenerateKwargValue = Union[torch.Tensor, int, float, bool]
+type Role = Literal["system", "user", "assistant"]
+type VisionInput = Union[JSONSerializable, torch.Tensor, bytes, memoryview]
+type ProcessorKwargValue = Union[VideoMetadataScalar, Sequence[VideoMetadataScalar]]
+type ModelGenerateKwargValue = Union[torch.Tensor, int, float, bool]
 
 
 class TextContentItem(TypedDict):
@@ -35,15 +35,15 @@ class VideoContentItem(TypedDict):
     video: str
 
 
-ContentItem = Union[TextContentItem, ImageContentItem, VideoContentItem]
-VideoMetadata = dict[str, VideoMetadataScalar]
-VideoInputWithMetadata = tuple[VisionInput, VideoMetadata]
-VisionProcessorOutput = tuple[
+type ContentItem = Union[TextContentItem, ImageContentItem, VideoContentItem]
+type VideoMetadata = dict[str, VideoMetadataScalar]
+type VideoInputWithMetadata = tuple[VisionInput, VideoMetadata]
+type VisionProcessorOutput = tuple[
     Optional[list[VisionInput]],
     Optional[list[VideoInputWithMetadata]],
     dict[str, ProcessorKwargValue],
 ]
-MessageContent = Union[str, list[ContentItem]]
+type MessageContent = Union[str, list[ContentItem]]
 
 
 class ChatMessagePayload(TypedDict):
@@ -53,7 +53,7 @@ class ChatMessagePayload(TypedDict):
     content: MessageContent
 
 
-JSONDict = ChatMessagePayload
+type JSONDict = ChatMessagePayload
 
 
 class ChatTemplateRenderer(Protocol):

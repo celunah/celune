@@ -18,8 +18,10 @@ import numpy as np
 import numpy.typing as npt
 
 from celune.utils import discard
-from celune.backends.base import CeluneBackend
+from celune.backends.tts.base import CeluneBackend
+from celune.backends.vc.base import CeluneVCBackend
 from celune.constants import JSONSerializable, PipelineStates
+from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -40,6 +42,7 @@ class FakeBackend(CeluneBackend):
     supported_languages = ("en",)
     voice_models = {"balanced": "fake/balanced", "bold": "fake/bold"}
     default_voice = "balanced"
+    is_fake = True
 
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
@@ -84,8 +87,30 @@ class FakeBackend(CeluneBackend):
         Returns:
             Iterator[tuple[npt.NDArray[np.float32], int, dict[str, int]]]: An iterator yielding one fake audio chunk.
         """
-        del model, kwargs
+        discard(model)
+        discard(kwargs)
         yield np.zeros((8, 2), dtype=np.float32), 48000, {"chunk_steps": 2}
+
+
+class FakeVCBackend(CeluneVCBackend):
+    """Tiny VC backend implementation used by tests without model work."""
+
+    name = "fake-vc"
+
+    def convert(self, request: VoiceConversionRequest) -> AudioOutput:
+        """Return the source audio unchanged for one voice-conversion request.
+
+        Args:
+            request: The voice-conversion request under test.
+
+        Returns:
+            AudioOutput: Playable audio copied from the request payload.
+        """
+        return AudioOutput(
+            audio=np.asarray(request.source_audio, dtype=np.float32).copy(),
+            sample_rate=request.sample_rate,
+            label=request.label,
+        )
 
 
 class FakeGlow:
@@ -214,8 +239,12 @@ def make_pipeline_engine() -> SimpleNamespace:
     progress: list[tuple[Optional[float], Optional[float]]] = []
     engine = SimpleNamespace()
     engine.backend = SimpleNamespace(supported_languages=("en",))
+    engine.vc_backend = None
     engine.config = {}
+    engine.input_mode = "text_to_speech"
     engine.language = "Auto"
+    engine.current_voice = "balanced"
+    engine.current_character = None
     engine.persona_attachments = []
     engine.persona_recent_visual_context = ()
     engine.use_normalization = False
@@ -298,7 +327,7 @@ def mock_qwen3_backend():
             )
         },
     ):
-        qwen3 = importlib.import_module("celune.backends.qwen3")
+        qwen3 = importlib.import_module("celune.backends.tts.qwen3")
         yield qwen3.Qwen3
 
 
@@ -313,7 +342,7 @@ def mock_voxcpm_backend():
         sys.modules,
         {"voxcpm": SimpleNamespace(VoxCPM=StubVoxCPM)},
     ):
-        voxcpm2 = importlib.import_module("celune.backends.voxcpm2")
+        voxcpm2 = importlib.import_module("celune.backends.tts.voxcpm2")
         yield voxcpm2.VoxCPM2
 
 
@@ -337,7 +366,7 @@ def mock_dotstts_backend():
             "dots_tts.runtime": runtime_module,
         },
     ):
-        dotstts = importlib.import_module("celune.backends.dotstts")
+        dotstts = importlib.import_module("celune.backends.tts.dotstts")
         yield dotstts.DotsTtsMF
 
 
@@ -352,5 +381,5 @@ def mock_mini_backend():
         sys.modules,
         {"pocket_tts": SimpleNamespace(TTSModel=StubTTSModel)},
     ):
-        mini = importlib.import_module("celune.backends.mini")
+        mini = importlib.import_module("celune.backends.tts.mini")
         yield mini.Mini
