@@ -334,7 +334,11 @@ class Mini(CeluneBackend[TTSModel]):
             snapshot_path, requested_language
         )
         self._generated_config_path = generated_config_path
-        self.model = TTSModel.load_model(config=generated_config_path)
+        # too bad we can't change LSD steps for Pocket TTS per utterance since they fixed the value to be
+        # set during the initial load_model() call
+        self.model = TTSModel.load_model(
+            config=generated_config_path, temp=0.15, lsd_decode_steps=8
+        )
         self._loaded_language = requested_language
         self._voice_states.clear()
         return self.model

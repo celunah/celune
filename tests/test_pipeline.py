@@ -792,8 +792,8 @@ class PipelineTests(TestCase):
 
         self.assertEqual(mock_stream.call_args.kwargs["device"], "VB-Cable Output")
 
-    def test_playback_worker_logs_friendly_output_device_match_errors(self) -> None:
-        """Verify ambiguous output devices are logged without surfacing a traceback."""
+    def test_playback_worker_logs_friendly_output_device_match_warnings(self) -> None:
+        """Verify ambiguous output devices are downgraded to warnings."""
         engine = make_pipeline_engine()
         engine.config = {"output_recording_device": "CABLE-B Input"}
         engine.stream = None
@@ -831,13 +831,13 @@ class PipelineTests(TestCase):
             pipeline.playback_worker(cast(Celune, engine))
 
         self.assertEqual(engine.errors[-1], "No suitable audio devices")
-        error_messages = [
-            msg for msg, severity in engine.messages if severity == "error"
+        warning_messages = [
+            msg for msg, severity in engine.messages if severity == "warning"
         ]
-        self.assertTrue(error_messages)
+        self.assertTrue(warning_messages)
         self.assertIn(
             "The specified output device name has multiple matches",
-            error_messages[-1],
+            warning_messages[-1],
         )
 
     def test_playback_worker_does_not_emit_idle_for_non_idle_completion_marker(

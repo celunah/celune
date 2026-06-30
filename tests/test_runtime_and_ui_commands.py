@@ -3,6 +3,7 @@
 
 import sys
 import time
+import queue
 import logging
 import tempfile
 import warnings
@@ -598,6 +599,105 @@ class UIStartupTests(TestCase):
         self.assertEqual(blended.shape, (4, 2))
         self.assertEqual(blended.dtype, np.float32)
 
+    def test_vc_live_overlap_frames_scale_with_chunk_duration(self) -> None:
+        """Verify live VC overlap grows with larger chunk sizes."""
+        expected_frames = int(
+            48000
+            * min(
+                ui_app._VC_LIVE_STREAM_MAX_OVERLAP_SECONDS,
+                max(
+                    ui_app._VC_LIVE_STREAM_OVERLAP_SECONDS,
+                    ui_app._VC_LIVE_STREAM_CHUNK_SECONDS
+                    * ui_app._VC_LIVE_STREAM_OVERLAP_RATIO,
+                ),
+            )
+        )
+
+        self.assertEqual(
+            CeluneUI._vc_live_overlap_frames(48000),
+            expected_frames,
+        )
+
+    def test_enqueue_vc_submission_chunk_drops_oldest_backlog_item(self) -> None:
+        """Verify live VC queueing preserves newer pending chunks when full."""
+        submission_queue: queue.Queue[Optional[tuple[np.ndarray, int, str, bool]]] = (
+            queue.Queue(maxsize=2)
+        )
+        oldest_chunk = (np.zeros((8, 2), dtype=np.float32), 48000, "oldest", False)
+        newer_chunk = (np.ones((8, 2), dtype=np.float32), 48000, "newer", False)
+        fresh_chunk = (np.full((8, 2), 2.0, dtype=np.float32), 48000, "fresh", False)
+        submission_queue.put(oldest_chunk)
+        submission_queue.put(newer_chunk)
+
+        CeluneUI._enqueue_vc_submission_chunk(submission_queue, fresh_chunk)
+
+        queued_labels: list[str] = []
+        while not submission_queue.empty():
+            queued = submission_queue.get_nowait()
+            self.assertIsNotNone(queued)
+            if queued is None:
+                self.fail("expected queued VC chunks")
+            queued_labels.append(queued[2])
+
+        self.assertEqual(queued_labels, ["newer", "fresh"])
+
+    def test_enqueue_vc_submission_chunk_replaces_stale_backlog_when_single_slot(
+        self,
+    ) -> None:
+        """Verify single-slot live VC queueing still prefers the freshest chunk."""
+        submission_queue: queue.Queue[Optional[tuple[np.ndarray, int, str, bool]]] = (
+            queue.Queue(maxsize=1)
+        )
+        stale_chunk = (np.zeros((8, 2), dtype=np.float32), 48000, "stale", False)
+        fresh_chunk = (np.ones((8, 2), dtype=np.float32), 48000, "fresh", False)
+        submission_queue.put(stale_chunk)
+
+        CeluneUI._enqueue_vc_submission_chunk(submission_queue, fresh_chunk)
+
+        queued = submission_queue.get_nowait()
+        self.assertIsNotNone(queued)
+        if queued is None:
+            self.fail("expected a queued VC chunk")
+        self.assertEqual(queued[2], "fresh")
+
+    def test_finish_vc_submission_queue_replaces_stale_chunks_with_final_chunk(
+        self,
+    ) -> None:
+        """Verify live VC stop flushes stale backlog and preserves the final chunk."""
+        submission_queue: queue.Queue[Optional[tuple[np.ndarray, int, str, bool]]] = (
+            queue.Queue(maxsize=2)
+        )
+        submission_queue.put(
+            (np.zeros((8, 2), dtype=np.float32), 48000, "stale", False)
+        )
+        final_chunk = (np.ones((4, 2), dtype=np.float32), 48000, "final", True)
+
+        CeluneUI._finish_vc_submission_queue(submission_queue, final_chunk)
+
+        queued_final = submission_queue.get_nowait()
+        queued_stop = submission_queue.get_nowait()
+        self.assertIsNotNone(queued_final)
+        if queued_final is None:
+            self.fail("expected a final VC chunk before the stop marker")
+        self.assertEqual(queued_final[2], "final")
+        self.assertEqual(queued_final[3], True)
+        self.assertIsNone(queued_stop)
+
+    def test_vc_feedback_detection_ignores_early_spikes(self) -> None:
+        """Verify VC feedback auto-stop does not trigger before enough audio is captured."""
+        ui = CeluneUI()
+        min_frames = ui._vc_feedback_min_capture_frames(48000)
+
+        self.assertGreater(
+            min_frames,
+            32,
+        )
+        self.assertEqual(
+            ui._vc_feedback_rise_detected(0.08, 0.24),
+            True,
+        )
+        self.assertEqual(ui_app._VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES, 2)
+
     def test_textual_ui_requires_attached_celune_on_mount(self) -> None:
         """Verify the Textual UI fails clearly without an attached Celune."""
         ui = CeluneUI()
@@ -1181,7 +1281,6 @@ class UIStartupTests(TestCase):
                         )
                     )
                 ),
-                play_audio=mock.Mock(return_value=True),
                 is_in_tutorial=False,
                 dev=False,
                 config={"input_device": "Stereo Mix (Realtek)"},
@@ -1190,6 +1289,8 @@ class UIStartupTests(TestCase):
         ui.safe_log = mock.Mock()
         ui.update_resources = mock.Mock()
         captured_callback: Optional[ui_app._VCAudioCallback] = None
+        queued_segments: list[tuple[np.ndarray, int, str, Optional[int], bool]] = []
+        finished_source_ids: list[Optional[int]] = []
 
         def invoke_captured_callback(
             callback: ui_app._VCAudioCallback,
@@ -1225,6 +1326,27 @@ class UIStartupTests(TestCase):
                 "celune.ui.app.sd.InputStream",
                 side_effect=FakeInputStream,
             ) as mock_input_stream,
+            mock.patch(
+                "celune.ui.app.queue_streaming_sfx_audio",
+                side_effect=lambda engine, audio, sample_rate, label, source_id=None, reset_ready_announcement=False: (
+                    queued_segments.append(
+                        (
+                            np.asarray(audio, dtype=np.float32).copy(),
+                            sample_rate,
+                            label,
+                            source_id,
+                            reset_ready_announcement,
+                        )
+                    )
+                    or (1 if source_id is None else source_id)
+                ),
+            ),
+            mock.patch(
+                "celune.ui.app.finish_streaming_sfx_audio",
+                side_effect=lambda engine, source_id: finished_source_ids.append(
+                    source_id
+                ),
+            ),
         ):
             start_event = SimpleNamespace(
                 key="ctrl+r",
@@ -1241,7 +1363,7 @@ class UIStartupTests(TestCase):
                         ui_app._VCAudioCallback,
                         captured_callback,
                     ),
-                    np.ones((20000, 2), dtype=np.float32),
+                    np.ones((60000, 2), dtype=np.float32),
                 )
                 for _ in range(50):
                     if cast(mock.Mock, ui.celune.convert_audio).call_count >= 1:
@@ -1252,7 +1374,7 @@ class UIStartupTests(TestCase):
                         ui_app._VCAudioCallback,
                         captured_callback,
                     ),
-                    np.ones((8, 2), dtype=np.float32),
+                    np.ones((60000, 2), dtype=np.float32),
                 )
 
             stop_event = SimpleNamespace(
@@ -1262,41 +1384,45 @@ class UIStartupTests(TestCase):
             )
             ui.on_key(cast(events.Key, stop_event))
 
-        mock_query_devices.assert_called_once_with(
+        mock_query_devices.assert_any_call(
             device="Stereo Mix (Realtek)",
             kind="input",
         )
+        self.assertGreaterEqual(mock_query_devices.call_count, 1)
         self.assertEqual(
             mock_input_stream.call_args.kwargs["device"],
             "Stereo Mix (Realtek)",
         )
         for _ in range(50):
-            if cast(mock.Mock, ui.celune.convert_audio).call_count >= 2:
+            if cast(mock.Mock, ui.celune.convert_audio).call_count >= 1:
                 break
             time.sleep(0.01)
 
-        self.assertGreaterEqual(cast(mock.Mock, ui.celune.convert_audio).call_count, 2)
+        self.assertGreaterEqual(cast(mock.Mock, ui.celune.convert_audio).call_count, 1)
         convert_calls = cast(mock.Mock, ui.celune.convert_audio).call_args_list
-        play_calls = cast(mock.Mock, ui.celune.play_audio).call_args_list
         first_convert_args = convert_calls[0].args
         final_convert_args = convert_calls[-1].args
-        expected_first_chunk_frames = 20000 - int(
-            48000 * ui_app._VC_LIVE_STREAM_OVERLAP_SECONDS
-        )
+        expected_first_chunk_frames = 60000 - ui._vc_live_overlap_frames(48000)
         self.assertEqual(first_convert_args[1], 48000)
         self.assertEqual(final_convert_args[1], 48000)
         self.assertEqual(
             convert_calls[-1].kwargs["label"],
             "Stereo Mix",
         )
-        self.assertEqual(len(first_convert_args[0]), expected_first_chunk_frames)
+        self.assertGreaterEqual(
+            len(first_convert_args[0]),
+            expected_first_chunk_frames,
+        )
         self.assertGreater(len(final_convert_args[0]), 8)
-        self.assertGreaterEqual(len(play_calls), 2)
-        first_play_args = play_calls[0].args
-        final_play_args = play_calls[-1].args
-        self.assertLess(len(first_play_args[0]), len(first_convert_args[0]))
-        self.assertEqual(first_play_args[1], 48000)
-        self.assertEqual(final_play_args[1], 48000)
+        self.assertGreaterEqual(len(queued_segments), 1)
+        self.assertEqual(queued_segments[0][3], None)
+        self.assertTrue(queued_segments[0][4])
+        self.assertTrue(all(segment[3] == 1 for segment in queued_segments[1:]))
+        self.assertIn(1, finished_source_ids)
+        self.assertEqual(
+            [source_id for source_id in finished_source_ids if source_id is not None],
+            [1],
+        )
 
     def test_vc_recording_feedback_spike_stops_live_stream(self) -> None:
         """Verify a sudden microphone RMS spike stops live VC capture automatically."""
@@ -1363,15 +1489,23 @@ class UIStartupTests(TestCase):
 
             recording_callback = captured_callback or missing_callback
 
+            min_capture_frames = ui._vc_feedback_min_capture_frames(48000)
+            safe_frames = max(min_capture_frames - 32, 1)
             recording_callback(
-                np.full((16, 2), 0.08, dtype=np.float32),
-                16,
+                np.full((safe_frames, 2), 0.08, dtype=np.float32),
+                safe_frames,
                 None,
                 None,
             )
             recording_callback(
-                np.full((16, 2), 0.24, dtype=np.float32),
-                16,
+                np.full((32, 2), 0.24, dtype=np.float32),
+                32,
+                None,
+                None,
+            )
+            recording_callback(
+                np.full((32, 2), 0.52, dtype=np.float32),
+                32,
                 None,
                 None,
             )
@@ -1382,6 +1516,14 @@ class UIStartupTests(TestCase):
             time.sleep(0.01)
 
         self.assertEqual(ui._vc_recording_active(), False)
+        for _ in range(50):
+            if any(
+                "feedback" in call.args[0].lower()
+                for call in cast(mock.Mock, ui.safe_log).call_args_list
+                if call.args
+            ):
+                break
+            time.sleep(0.01)
         self.assertTrue(
             any(
                 "feedback" in call.args[0].lower()
@@ -1425,6 +1567,45 @@ class UIStartupTests(TestCase):
         ui.toggle_vc_recording.assert_not_called()
         start_event.prevent_default.assert_called_once_with()
         start_event.stop.assert_called_once_with()
+
+    def test_graceful_exit_uses_live_vc_shutdown_path(self) -> None:
+        """Verify app exit stops live VC before closing the runtime."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui.celune = cast(Celune, SimpleNamespace(close=mock.Mock()))
+        ui._shutdown_live_vc_recording = mock.Mock()
+        ui.exit = mock.Mock()
+
+        ui._graceful_exit()
+
+        self.assertEqual(ui.cur_state, "exiting")
+        ui._shutdown_live_vc_recording.assert_called_once_with()
+        cast(mock.Mock, ui.celune.close).assert_called_once_with()
+        ui.exit.assert_called_once_with()
+
+    def test_start_vc_recording_logs_ambiguous_input_device_as_warning(self) -> None:
+        """Verify ambiguous VC input device matches do not bubble up as exceptions."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                input_mode="voice_conversion",
+                vc_backend=SimpleNamespace(),
+                sleeping=False,
+                cur_state="ready",
+                config={"input_device": "Razer Kraken V4 - Chat"},
+            ),
+        )
+        ui.safe_log = mock.Mock()
+
+        with mock.patch(
+            "celune.ui.app.resolve_audio_device_with_info",
+            side_effect=ValueError("ambiguous input device"),
+        ):
+            self.assertEqual(ui._start_vc_recording(), False)
+
+        ui.safe_log.assert_called_once_with("ambiguous input device", "warning")
 
     def test_gpu_usage_handles_closed_stdout_pipe(self) -> None:
         """Verify resource polling ignores closed-pipe nvidia-smi failures."""

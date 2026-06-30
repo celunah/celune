@@ -8,6 +8,7 @@ $launcherSource = Join-Path $repoRoot "launcher.c"
 $launcherRes = Join-Path $repoRoot "resources\celune.res"
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 $projectVersion = Select-String -Path (Join-Path $repoRoot "pyproject.toml") -Pattern '^version = "([^"]+)"' | Select-Object -First 1
+$copyrightText = [char]0x00A9 + " celunah - Under MIT license."
 $existingProcesses = Get-Process -Name @("celune", "celune-bin") -ErrorAction SilentlyContinue
 
 $env:CL = "/O2 /GL /GS /guard:cf /DNDEBUG"
@@ -66,6 +67,8 @@ $arguments = @(
     "--file-description=Celune",
     "--product-version=$windowsVersion",
     "--file-version=$windowsVersion",
+    "--copyright=$copyrightText",
+    "--company-name=https://github.com/celunah",
     "--output-dir=$outputDir",
     "--output-filename=celune-bin.exe",
     "--lto=yes",

@@ -40,6 +40,10 @@ voice_conversion_f0_condition: false
 # set either key to a sounddevice device name or numeric index
 # null = use the current system default device
 #
+# on Windows, set audio_api to wasapi or directsound to disambiguate devices that
+# appear more than once under different host APIs
+audio_api: null
+#
 # if the specified device name has several matches, Celune will list the possible device
 # entries and request you to select one and restart the application after selecting it
 input_device: null
