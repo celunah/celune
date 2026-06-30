@@ -3,8 +3,8 @@
 
 import os
 from copy import deepcopy
-from typing import Optional, Union, Literal
-from collections.abc import Mapping
+from typing import Optional, Union, Literal, cast
+from collections.abc import Mapping, Sequence
 
 import sounddevice as sd
 
@@ -16,6 +16,11 @@ ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
 AudioDeviceConfig = Optional[Union[int, str]]
 AudioDeviceDirection = Literal["input", "output"]
 AudioDeviceInfoValue = Union[bool, int, float, str]
+AudioHostApi = Optional[Literal["wasapi", "directsound"]]
+WINDOWS_AUDIO_HOSTAPIS: dict[str, str] = {
+    "wasapi": "Windows WASAPI",
+    "directsound": "Windows DirectSound",
+}
 
 
 def env_bool(name: str, fallback: bool = False) -> bool:
@@ -95,7 +100,148 @@ def config_audio_device(
         return value
     if isinstance(value, str):
         stripped = value.strip()
-        return stripped or None
+        if not stripped:
+            return None
+        if os.name != "nt":
+            return stripped
+
+        configured_hostapi = config_audio_api(config)
+        if configured_hostapi is None:
+            return stripped
+
+        normalized_name, parsed_hostapi = _parse_audio_device_selector(
+            stripped,
+            configured_hostapi,
+        )
+        hostapi_key = (
+            parsed_hostapi if parsed_hostapi is not None else configured_hostapi
+        )
+        return f"{normalized_name}, {WINDOWS_AUDIO_HOSTAPIS[hostapi_key]}"
+    return None
+
+
+def config_audio_api(
+    config: Optional[Mapping[str, JSONSerializable]],
+) -> AudioHostApi:
+    """Resolve the optional Windows audio host API selector from config.
+
+    Args:
+        config: Loaded configuration dictionary, or ``None``.
+
+    Returns:
+        AudioHostApi: One supported Windows host API key, or ``None`` when unset or invalid.
+    """
+    value = config_value(config, "audio_api")
+    if not isinstance(value, str):
+        return None
+
+    normalized = value.strip().casefold()
+    if normalized in WINDOWS_AUDIO_HOSTAPIS:
+        return cast(AudioHostApi, normalized)
+    return None
+
+
+def format_audio_device_name(
+    info: Mapping[str, AudioDeviceInfoValue],
+    hostapis: Optional[list[Mapping[str, AudioDeviceInfoValue]]] = None,
+) -> str:
+    """Format one runtime-facing audio device label.
+
+    Args:
+        info: Sounddevice information for the resolved device.
+        hostapis: Optional host API list used to append the host API label on Windows.
+
+    Returns:
+        str: The formatted device label.
+    """
+    name = str(info.get("name", ""))
+    hostapi_name = _hostapi_name(info, hostapis)
+    if os.name == "nt" and hostapi_name:
+        return f"{name}, {hostapi_name}"
+    return name
+
+
+def _hostapi_name(
+    info: Mapping[str, AudioDeviceInfoValue],
+    hostapis: Optional[list[Mapping[str, AudioDeviceInfoValue]]] = None,
+) -> Optional[str]:
+    """Resolve one host API display name from sounddevice info."""
+    if hostapis is None:
+        try:
+            queried = sd.query_hostapis()
+        except Exception:
+            return None
+        if not isinstance(queried, Sequence) or isinstance(queried, (str, bytes)):
+            return None
+        hostapis = list(queried)
+
+    hostapi_index = info.get("hostapi")
+    if not isinstance(hostapi_index, int):
+        return None
+    if hostapi_index < 0 or hostapi_index >= len(hostapis):
+        return None
+    return str(hostapis[hostapi_index].get("name", ""))
+
+
+def _parse_audio_device_selector(
+    configured: str,
+    configured_hostapi: AudioHostApi,
+) -> tuple[str, AudioHostApi]:
+    """Split a configured device selector into name and optional host API."""
+    if "," not in configured:
+        return configured, configured_hostapi
+
+    device_name, suffix = configured.rsplit(",", 1)
+    normalized_suffix = suffix.strip().casefold()
+    for hostapi_key, hostapi_name in WINDOWS_AUDIO_HOSTAPIS.items():
+        if normalized_suffix in {hostapi_key, hostapi_name.casefold()}:
+            return device_name.strip(), cast(AudioHostApi, hostapi_key)
+    return configured, configured_hostapi
+
+
+def _find_matching_device_index(
+    all_devices: object,
+    configured_name: str,
+    channel_key: str,
+    configured_hostapi: AudioHostApi,
+    hostapis: Optional[list[Mapping[str, AudioDeviceInfoValue]]] = None,
+) -> Optional[int]:
+    """Return one exact device index when the configured selector identifies a single device."""
+    if isinstance(all_devices, Mapping):
+        if (
+            configured_name.casefold()
+            not in str(all_devices.get("name", "")).casefold()
+        ):
+            return None
+        if int(all_devices.get(channel_key, 0)) <= 0:
+            return None
+        hostapi_name = _hostapi_name(all_devices, hostapis)
+        if (
+            configured_hostapi is not None
+            and hostapi_name != WINDOWS_AUDIO_HOSTAPIS[configured_hostapi]
+        ):
+            return None
+        return 0
+
+    if not isinstance(all_devices, Sequence) or isinstance(all_devices, (str, bytes)):
+        return None
+
+    matches: list[int] = []
+    for index, info in enumerate(all_devices):
+        if configured_name.casefold() not in str(info.get("name", "")).casefold():
+            continue
+        if int(info.get(channel_key, 0)) <= 0:
+            continue
+        hostapi_name = _hostapi_name(info, hostapis)
+        if (
+            configured_hostapi is not None
+            and hostapi_name != WINDOWS_AUDIO_HOSTAPIS[configured_hostapi]
+        ):
+            continue
+        matches.append(index)
+
+    if len(matches) == 1:
+        return matches[0]
     return None
 
 
@@ -141,22 +287,46 @@ def resolve_audio_device_with_info(
     if configured is None or isinstance(configured, int):
         return configured, None
 
+    configured_hostapi = config_audio_api(config) if os.name == "nt" else None
+    configured_name, configured_hostapi = _parse_audio_device_selector(
+        configured,
+        configured_hostapi,
+    )
+
     channel_key = (
         "max_input_channels" if direction == "input" else "max_output_channels"
     )
     query_kind = "input" if direction == "input" else "output"
     try:
-        direct_info = sd.query_devices(device=configured, kind=query_kind)
+        direct_info = sd.query_devices(device=configured_name, kind=query_kind)
     except ValueError:
         direct_info = None
     else:
         if (
             isinstance(direct_info, Mapping)
             and int(direct_info.get(channel_key, 0)) > 0
+            and (
+                configured_hostapi is None
+                or _hostapi_name(direct_info)
+                == WINDOWS_AUDIO_HOSTAPIS[configured_hostapi]
+            )
         ):
+            all_devices = sd.query_devices()
+            resolved_index = _find_matching_device_index(
+                all_devices,
+                configured_name,
+                channel_key,
+                configured_hostapi,
+                hostapis=(
+                    sd.query_hostapis() if configured_hostapi is not None else None
+                ),
+            )
+            if resolved_index is not None:
+                return resolved_index, direct_info
+
             # PortAudio already resolved this selector successfully, so reuse the
             # returned device info and avoid a second global device scan.
-            return configured, direct_info
+            return configured_name, direct_info
 
     hostapis = sd.query_hostapis()
     matches: list[tuple[int, str]] = []
@@ -164,17 +334,40 @@ def resolve_audio_device_with_info(
 
     if isinstance(all_devices, Mapping):
         name = str(all_devices.get("name", ""))
-        if str(configured).casefold() in name.casefold():
+        if configured_name.casefold() in name.casefold():
             if int(all_devices.get(channel_key, 0)) > 0:
-                return configured, all_devices
-        return configured, None
+                hostapi_name = _hostapi_name(
+                    all_devices,
+                    list(hostapis)
+                    if isinstance(hostapis, Sequence)
+                    and not isinstance(hostapis, (str, bytes))
+                    else None,
+                )
+                if (
+                    configured_hostapi is None
+                    or hostapi_name == WINDOWS_AUDIO_HOSTAPIS[configured_hostapi]
+                ):
+                    return configured_name, all_devices
+        return configured_name, None
 
     for index, info in enumerate(all_devices):
-        if str(configured).casefold() not in str(info["name"]).casefold():
+        if configured_name.casefold() not in str(info["name"]).casefold():
             continue
         if int(info.get(channel_key, 0)) <= 0:
             continue
-        hostapi_name = str(hostapis[int(info["hostapi"])]["name"])
+        hostapi_name = _hostapi_name(
+            info,
+            list(hostapis)
+            if isinstance(hostapis, Sequence) and not isinstance(hostapis, (str, bytes))
+            else None,
+        )
+        if hostapi_name is None:
+            continue
+        if (
+            configured_hostapi is not None
+            and hostapi_name != WINDOWS_AUDIO_HOSTAPIS[configured_hostapi]
+        ):
+            continue
         matches.append((index, f"[{index}] {info['name']}, {hostapi_name}"))
 
     if len(matches) == 1:
@@ -186,13 +379,13 @@ def resolve_audio_device_with_info(
             string(
                 "config.audio_device_multiple_matches",
                 device_kind=string(f"config.audio_device_kind_{query_kind}"),
-                device_name=configured,
+                device_name=configured_name,
                 matches=matches_text,
                 app_name=APP_NAME,
             )
         )
 
-    return configured, None
+    return configured_name, None
 
 
 def merge_missing_defaults(

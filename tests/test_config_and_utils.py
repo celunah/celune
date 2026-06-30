@@ -62,6 +62,46 @@ class ConfigTests(TestCase):
         self.assertEqual(config.config_audio_device({"device": 3}, "device"), 3)
         self.assertIsNone(config.config_audio_device({"device": True}, "device"))
 
+    def test_config_audio_device_appends_windows_hostapi_from_audio_api(self) -> None:
+        """Verify Windows audio config auto-appends the selected host API."""
+        with mock.patch("celune.config.os.name", "nt"):
+            self.assertEqual(
+                config.config_audio_device(
+                    {"device": "Razer Kraken V4 - Chat", "audio_api": "wasapi"},
+                    "device",
+                ),
+                "Razer Kraken V4 - Chat, Windows WASAPI",
+            )
+
+    def test_config_audio_device_preserves_explicit_windows_hostapi_suffix(
+        self,
+    ) -> None:
+        """Verify an explicit Windows host API suffix is kept stable."""
+        with mock.patch("celune.config.os.name", "nt"):
+            self.assertEqual(
+                config.config_audio_device(
+                    {
+                        "device": "Razer Kraken V4 - Chat, Windows DirectSound",
+                        "audio_api": "wasapi",
+                    },
+                    "device",
+                ),
+                "Razer Kraken V4 - Chat, Windows DirectSound",
+            )
+
+    def test_config_audio_api_accepts_supported_windows_hostapis(self) -> None:
+        """Verify Windows host API config only accepts supported values."""
+        self.assertIsNone(config.config_audio_api({}))
+        self.assertEqual(
+            config.config_audio_api({"audio_api": " WASAPI "}),
+            "wasapi",
+        )
+        self.assertEqual(
+            config.config_audio_api({"audio_api": "directsound"}),
+            "directsound",
+        )
+        self.assertIsNone(config.config_audio_api({"audio_api": "wdm-ks"}))
+
     def test_resolve_audio_device_formats_friendly_multiple_input_matches(self) -> None:
         """Verify ambiguous input device names raise a friendly localized message."""
         devices = [
@@ -152,7 +192,171 @@ class ConfigTests(TestCase):
                 "input",
             )
 
-        self.assertEqual(resolved, "Stereo Mix (Realtek)")
+        self.assertEqual(resolved, 0)
+
+    def test_resolve_audio_device_filters_windows_hostapi_matches(self) -> None:
+        """Verify Windows host API config resolves ambiguous device names cleanly."""
+        devices = [
+            {
+                "name": "Microphone (Razer Kraken V4 - Chat)",
+                "max_input_channels": 2,
+                "max_output_channels": 0,
+                "hostapi": 0,
+            },
+            {
+                "name": "Microphone (Razer Kraken V4 - Chat)",
+                "max_input_channels": 2,
+                "max_output_channels": 0,
+                "hostapi": 1,
+            },
+        ]
+        hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}]
+
+        with (
+            mock.patch("celune.config.os.name", "nt"),
+            mock.patch("celune.config.sd.query_devices", return_value=devices),
+            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+        ):
+            resolved = config.resolve_audio_device(
+                {
+                    "input_device": "Microphone (Razer Kraken V4 - Chat)",
+                    "audio_api": "wasapi",
+                },
+                "input_device",
+                "input",
+            )
+
+        self.assertEqual(resolved, 1)
+
+    def test_resolve_audio_device_returns_exact_index_after_direct_query_on_windows(
+        self,
+    ) -> None:
+        """Verify Windows host API selection returns an exact index, not an ambiguous string."""
+        direct_info = {
+            "name": "CABLE-B Input (VB-Audio Cable B)",
+            "max_input_channels": 0,
+            "max_output_channels": 2,
+            "hostapi": 1,
+        }
+        devices = [
+            {
+                "name": "CABLE-B Input (VB-Audio Cable B)",
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+                "hostapi": 0,
+            },
+            direct_info,
+        ]
+        hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}]
+
+        with (
+            mock.patch("celune.config.os.name", "nt"),
+            mock.patch(
+                "celune.config.sd.query_devices",
+                side_effect=[direct_info, devices],
+            ),
+            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+        ):
+            resolved = config.resolve_audio_device(
+                {
+                    "output_device": "CABLE-B Input (VB-Audio Cable B)",
+                    "audio_api": "wasapi",
+                },
+                "output_device",
+                "output",
+            )
+
+        self.assertEqual(resolved, 1)
+
+    def test_resolve_audio_device_accepts_sequence_results_from_sounddevice(
+        self,
+    ) -> None:
+        """Verify exact-index recovery works when sounddevice returns non-list sequences."""
+        direct_info = {
+            "name": "CABLE-B Input (VB-Audio Cable B)",
+            "max_input_channels": 0,
+            "max_output_channels": 2,
+            "hostapi": 1,
+        }
+        devices = (
+            {
+                "name": "CABLE-B Input (VB-Audio Cable B)",
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+                "hostapi": 0,
+            },
+            direct_info,
+        )
+        hostapis = (
+            {"name": "Windows DirectSound"},
+            {"name": "Windows WASAPI"},
+        )
+
+        with (
+            mock.patch("celune.config.os.name", "nt"),
+            mock.patch(
+                "celune.config.sd.query_devices",
+                side_effect=[direct_info, devices],
+            ),
+            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+        ):
+            resolved = config.resolve_audio_device(
+                {
+                    "output_device": "CABLE-B Input (VB-Audio Cable B)",
+                    "audio_api": "wasapi",
+                },
+                "output_device",
+                "output",
+            )
+
+        self.assertEqual(resolved, 1)
+
+    def test_resolve_audio_device_accepts_appended_windows_hostapi_selector(
+        self,
+    ) -> None:
+        """Verify copied runtime labels can disambiguate Windows devices directly."""
+        devices = [
+            {
+                "name": "Microphone (Razer Kraken V4 - Chat)",
+                "max_input_channels": 2,
+                "max_output_channels": 0,
+                "hostapi": 0,
+            },
+            {
+                "name": "Microphone (Razer Kraken V4 - Chat)",
+                "max_input_channels": 2,
+                "max_output_channels": 0,
+                "hostapi": 1,
+            },
+        ]
+        hostapis = [{"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}]
+
+        with (
+            mock.patch("celune.config.os.name", "nt"),
+            mock.patch("celune.config.sd.query_devices", return_value=devices),
+            mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
+        ):
+            resolved = config.resolve_audio_device(
+                {
+                    "input_device": (
+                        "Microphone (Razer Kraken V4 - Chat), Windows WASAPI"
+                    ),
+                },
+                "input_device",
+                "input",
+            )
+
+        self.assertEqual(resolved, 1)
+
+    def test_format_audio_device_name_appends_windows_hostapi(self) -> None:
+        """Verify runtime labels show the Windows host API when available."""
+        with mock.patch("celune.config.os.name", "nt"):
+            label = config.format_audio_device_name(
+                {"name": "Microphone", "hostapi": 1},
+                [{"name": "MME"}, {"name": "Windows WASAPI"}],
+            )
+
+        self.assertEqual(label, "Microphone, Windows WASAPI")
 
     def test_merge_missing_defaults_preserves_user_values_and_adds_nested_keys(
         self,

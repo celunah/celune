@@ -44,12 +44,31 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "default_config.yaml"
 SCRIPT_NAME = "main.py"
 EXIT_CODES = ExitCodes
 _RUNTIME: Optional[SimpleNamespace] = None
+_FORCE_STARTUP_DIAGNOSTICS = False
 
 
 def _load_ui_test_backend() -> type:
     """Load the lightweight fake backend used by the explicit UI test mode."""
     support = importlib.import_module("tests.support")
     return support.FakeBackend
+
+
+def _startup_diagnostics_enabled(force: bool = False) -> bool:
+    """Return whether pre-UI startup diagnostics should be printed."""
+    return (
+        force
+        or _FORCE_STARTUP_DIAGNOSTICS
+        or INITIAL_DEV
+        or _env_flag("CELUNE_BOOT_DIAGNOSTICS")
+    )
+
+
+def _print_startup_diagnostic(message: str, force: bool = False) -> None:
+    """Print one early-startup diagnostic line before Textual takes over."""
+    if not _startup_diagnostics_enabled(force=force):
+        return
+
+    print(string("cli.startup_diagnostic_prefix", message=message), flush=True)
 
 
 def normalize_argv0(argv: Optional[list[str]] = None) -> list[str]:
@@ -101,6 +120,8 @@ def _load_runtime() -> SimpleNamespace:
     global _RUNTIME
     if _RUNTIME is not None:
         return _RUNTIME
+
+    _print_startup_diagnostic(string("cli.startup_loading_runtime"))
 
     try:
         import yaml
@@ -175,6 +196,7 @@ def _load_runtime() -> SimpleNamespace:
         title_case=title_case,
         ExitCodes=ExitCodes,
     )
+    _print_startup_diagnostic(string("cli.startup_runtime_ready"))
     return _RUNTIME
 
 
@@ -976,13 +998,20 @@ def start(verbose: bool = False, testing: bool = False) -> None:
         No: Raised on Celune's name day unless explicitly overridden.
         Exception: Re-raised after printing a traceback in developer mode.
     """
+    global _FORCE_STARTUP_DIAGNOSTICS
+
+    _FORCE_STARTUP_DIAGNOSTICS = verbose
+    _print_startup_diagnostic(string("cli.startup_begin", app_name=APP_NAME))
     runtime = _load_runtime()
 
     try:
         if testing:
+            _print_startup_diagnostic(string("cli.startup_creating_ui"))
             ui = runtime.CeluneUI()
+            _print_startup_diagnostic(string("cli.startup_preparing_core"))
             celune = runtime.Celune(config={}, backend=_load_ui_test_backend())
             ui.celune = celune
+            _print_startup_diagnostic(string("cli.startup_handing_off_ui"))
             ui.run()
             sys.exit(EXIT_CODES.EXIT_SUCCESS.value)
         if runtime.supports_ansi():
@@ -1134,7 +1163,9 @@ def start(verbose: bool = False, testing: bool = False) -> None:
                             sys.exit(runtime.ExitCodes.EXIT_ALREADY_RUNNING.value)
 
         if not headless and runtime.supports_ansi():
+            _print_startup_diagnostic(string("cli.startup_creating_ui"))
             ui = runtime.CeluneUI()
+            _print_startup_diagnostic(string("cli.startup_preparing_core"))
             celune = runtime.Celune(
                 tts_backend=backend,
                 log_callback=ui.tts_log,
@@ -1150,9 +1181,12 @@ def start(verbose: bool = False, testing: bool = False) -> None:
                 config=config,
             )
             ui.celune = celune
+            _print_startup_diagnostic(string("cli.startup_handing_off_ui"))
             ui.run()
         elif headless:
+            _print_startup_diagnostic(string("cli.startup_preparing_headless"))
             ui_headless = runtime.CeluneHeadlessUI(config)
+            _print_startup_diagnostic(string("cli.startup_preparing_core"))
             celune = runtime.Celune(
                 tts_backend=backend,
                 log_callback=ui_headless.headless_log,
@@ -1233,6 +1267,8 @@ def start(verbose: bool = False, testing: bool = False) -> None:
             if random.uniform(0, 1) < 0.5
             else runtime.ExitCodes.EXIT_CELINE_DAY_SIX_SEVEN.value
         )
+    finally:
+        _FORCE_STARTUP_DIAGNOSTICS = False
 
 
 def main(argv: Optional[list[str]] = None) -> None:

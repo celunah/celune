@@ -1760,6 +1760,79 @@ def queue_sfx_audio(
         raise
 
 
+def queue_streaming_sfx_audio(
+    engine: Celune,
+    audio: npt.NDArray[np.float32],
+    sample_rate: int,
+    label: str,
+    *,
+    source_id: Optional[int] = None,
+    volume: float = 1.0,
+    log_length: bool = False,
+    reset_ready_announcement: bool = False,
+) -> int:
+    """Queue one SFX segment onto a persistent playback source.
+
+    Args:
+        engine: The Celune engine that should play the sound.
+        audio: Decoded mono or stereo audio.
+        sample_rate: Source sample rate for the decoded audio.
+        label: Human-readable label for logs and status.
+        source_id: Existing playback source to append to, or ``None`` to create one.
+        volume: Gain multiplier applied before the clip is queued for playback.
+        log_length: Whether to log the prepared playback sample rate and length.
+        reset_ready_announcement: Whether a newly created source should reset readiness.
+
+    Returns:
+        int: The persistent playback source id that received the segment.
+    """
+    audio = prepare_playback_audio(audio, sample_rate)
+    playback_sample_rate = BASE_SR
+    audio_len = len(audio) / playback_sample_rate
+    if log_length:
+        engine.log(
+            string(
+                "pipeline.sample_rate_length",
+                sample_rate=playback_sample_rate,
+                seconds=format_number(audio_len, 2),
+            )
+        )
+
+    meta = _playback_source_meta(engine)
+    if source_id is None or source_id not in meta:
+        source_id = _next_playback_source_id(engine)
+        _register_overlay_playback_state(
+            engine,
+            reset_ready_announcement=reset_ready_announcement,
+        )
+        _register_playback_source(engine, source_id, kind="sfx", base_gain=volume)
+        engine.cur_state = "speaking"
+
+    if len(audio) > 0:
+        _queue_playback_chunk(engine, source_id, audio, playback_sample_rate)
+
+    _set_playback_source_status(
+        engine,
+        source_id,
+        string("pipeline.playing_label", label=label),
+    )
+    return source_id
+
+
+def finish_streaming_sfx_audio(engine: Celune, source_id: Optional[int]) -> None:
+    """Mark one persistent SFX playback source as complete.
+
+    Args:
+        engine: Value for `engine`.
+        source_id: Value for `source_id`.
+    """
+    if source_id is None:
+        return
+    if source_id not in _playback_source_meta(engine):
+        return
+    _queue_playback_done(engine, source_id)
+
+
 def prepare_playback_audio(
     audio: npt.NDArray[np.float32],
     sample_rate: int,
@@ -2546,6 +2619,10 @@ def _ensure_playback_stream(engine: Celune, sample_rate: int) -> bool:
             output_device_key,
             "output",
         )
+        engine.log_dev(
+            f"[PLAY] resolved {output_device_key}={engine.config.get(output_device_key)!r} "
+            f"audio_api={engine.config.get('audio_api')!r} -> {output_device!r}"
+        )
         engine.current_sr = sample_rate
         engine.stream = sd.OutputStream(
             samplerate=sample_rate,
@@ -2561,7 +2638,7 @@ def _ensure_playback_stream(engine: Celune, sample_rate: int) -> bool:
         return True
     except ValueError as error:
         if not getattr(engine, "audio_unavailable", False):
-            engine.log(str(error), "error")
+            engine.log(str(error), "warning")
             engine.error_callback(string("pipeline.no_audio_devices_short"))
         engine._audio_unavailable = True
         return False
