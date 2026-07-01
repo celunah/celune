@@ -113,9 +113,11 @@ def config_audio_device(
             stripped,
             configured_hostapi,
         )
+
         hostapi_key = (
             parsed_hostapi if parsed_hostapi is not None else configured_hostapi
-        )
+        ) or "wasapi"
+
         return f"{normalized_name}, {WINDOWS_AUDIO_HOSTAPIS[hostapi_key]}"
     return None
 
