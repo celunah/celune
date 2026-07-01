@@ -1,7 +1,7 @@
 [project]
 name = "celune"
 version = "4.2.1"
-description = "Real-time AI TTS character engine with expressive voices and high-quality playback"
+description = "Real-time AI TTS character engine for all use cases"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 authors = [
@@ -123,7 +123,6 @@ qwen3 = [
     # This parameter is ambiguously named, it doesn't actually disable streaming mode.
     # If it did, Celune would have a problem operating.
     "faster-qwen3-tts>=0.2.4",
-
 ]
 
 # A high-end diffusion based Celune backend with high fidelity and expressiveness. Slower, but way more expressive.
