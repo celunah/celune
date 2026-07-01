@@ -292,7 +292,7 @@ class UICommandTests(TestCase):
         self.ui.celune.vc_backend = SimpleNamespace(f0_condition=False, pitch_shift=0)
 
         self._process_command("vcmode", ["sing"])
-        self._process_command("vcpitch", ["-5"])
+        self._process_command("vcpitch", ["-2"])
         self._process_command("vcpitch", ["clear"])
 
         self.assertEqual(self.ui.celune.vc_f0_condition, True)
@@ -302,7 +302,7 @@ class UICommandTests(TestCase):
         self.assertEqual(self.logs[-3], ("Voice conversion mode set to Sing.", "info"))
         self.assertEqual(
             self.logs[-2],
-            ("Voice conversion pitch shift set to -5 semitones.", "info"),
+            ("Voice conversion pitch shift set to -2 semitones.", "info"),
         )
         self.assertEqual(
             self.logs[-1],
@@ -372,7 +372,7 @@ class UICommandTests(TestCase):
         self._process_command("vcpitch", ["13"])
         self.assertEqual(
             self.logs[-1],
-            ("Pitch shift must be between -12 and 12 semitones.", "warning"),
+            ("Pitch shift must be between -3 and 3 semitones.", "warning"),
         )
 
         self._process_command("vcpitch", ["high"])
@@ -1540,6 +1540,115 @@ class UIStartupTests(TestCase):
             )
             ui.on_key(cast(events.Key, stop_event))
 
+    def test_vc_recording_flushes_active_speech_before_end_of_phrase(self) -> None:
+        """Verify live VC can submit one mid-speech chunk before silence arrives."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        converted_chunks: list[np.ndarray] = []
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                input_mode="voice_conversion",
+                vc_backend=SimpleNamespace(),
+                convert_audio=mock.Mock(
+                    side_effect=lambda audio, sample_rate, label=None, **_kwargs: (
+                        converted_chunks.append(
+                            np.asarray(audio, dtype=np.float32).copy()
+                        )
+                        or SimpleNamespace(
+                            audio=np.asarray(audio, dtype=np.float32).copy(),
+                            sample_rate=sample_rate,
+                            label=label or "Stereo Mix",
+                        )
+                    )
+                ),
+                is_in_tutorial=False,
+                dev=False,
+                config={"input_device": "Stereo Mix (Realtek)"},
+            ),
+        )
+        ui.safe_log = mock.Mock()
+        ui.update_resources = mock.Mock()
+        captured_callback: Optional[ui_app._VCAudioCallback] = None
+
+        def invoke_captured_callback(
+            callback: ui_app._VCAudioCallback,
+            audio: np.ndarray,
+        ) -> None:
+            callback(
+                audio,
+                len(audio),
+                None,
+                None,
+            )
+
+        class FakeInputStream:
+            """Tiny input-stream fake for live VC mid-speech chunk flushing."""
+
+            def __init__(self, **kwargs) -> None:
+                nonlocal captured_callback
+                captured_callback = kwargs["callback"]
+                self.start = mock.Mock()
+                self.stop = mock.Mock()
+                self.close = mock.Mock()
+
+        with (
+            mock.patch(
+                "celune.ui.app.create_live_voice_activity_detector",
+                return_value=None,
+            ),
+            mock.patch(
+                "celune.ui.app.sd.query_devices",
+                return_value={
+                    "max_input_channels": 2,
+                    "default_samplerate": 48000,
+                    "name": "Stereo Mix",
+                },
+            ),
+            mock.patch("celune.ui.app.sd.InputStream", side_effect=FakeInputStream),
+            mock.patch(
+                "celune.ui.app.queue_streaming_sfx_audio", return_value=1
+            ) as queue_stream,
+            mock.patch("celune.ui.app.finish_streaming_sfx_audio"),
+        ):
+            start_event = SimpleNamespace(
+                key="ctrl+r",
+                prevent_default=mock.Mock(),
+                stop=mock.Mock(),
+            )
+            ui.on_key(cast(events.Key, start_event))
+
+            if captured_callback is None or not callable(captured_callback):
+                self.fail("recording callback was not registered")
+            else:
+                invoke_captured_callback(
+                    captured_callback,
+                    np.full((40000, 2), 0.05, dtype=np.float32),
+                )
+                invoke_captured_callback(
+                    captured_callback,
+                    np.full((40000, 2), 0.05, dtype=np.float32),
+                )
+                time.sleep(0.05)
+
+            self.assertGreaterEqual(
+                cast(mock.Mock, ui.celune.convert_audio).call_count, 1
+            )
+            self.assertEqual(
+                queue_stream.call_args.kwargs["status_label_key"],
+                "pipeline.revoicing_label",
+            )
+
+            stop_event = SimpleNamespace(
+                key="ctrl+r",
+                prevent_default=mock.Mock(),
+                stop=mock.Mock(),
+            )
+            ui.on_key(cast(events.Key, stop_event))
+
+        self.assertTrue(converted_chunks)
+        self.assertGreaterEqual(converted_chunks[0].shape[0], 17000)
+
     def test_vc_recording_prefers_ai_vad_when_available(self) -> None:
         """Verify live VC can use the optional AI VAD instead of the RMS fallback."""
         ui = CeluneUI()
@@ -1577,11 +1686,11 @@ class UIStartupTests(TestCase):
                 """Report every callback as non-speech.
 
                 Args:
-                    audio: Value for `audio`.
-                    sample_rate: Value for `sample_rate`.
+                    audio: Input audio block inspected by the fake detector.
+                    sample_rate: Input audio sample rate.
 
                 Returns:
-                    Result of this function.
+                    bool: Always ``False`` so no VC conversion is queued.
                 """
                 self.calls += 1
                 self.last_shape = audio.shape
@@ -1695,14 +1804,14 @@ class UIStartupTests(TestCase):
                 """Raise once, then report non-speech.
 
                 Args:
-                    audio: Value for `audio`.
-                    sample_rate: Value for `sample_rate`.
+                    audio: Input audio block inspected by the fake detector.
+                    sample_rate: Input audio sample rate.
 
                 Returns:
-                    Result of this function.
+                    bool: ``False`` after the first forced failure.
 
                 Raises:
-                    RuntimeError: Test failed.
+                    RuntimeError: The first detector call fails intentionally.
                 """
                 self.calls += 1
                 discard(audio)

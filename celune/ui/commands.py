@@ -18,6 +18,11 @@ from ..exceptions import InvalidExtensionError
 from ..utils import format_error, replace_ipa, format_number
 from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..i18n import string
+from ..vc_runtime import (
+    VC_PITCH_SHIFT_MAX,
+    VC_PITCH_SHIFT_MIN,
+    clamp_vc_pitch_shift,
+)
 
 if TYPE_CHECKING:
     from .app import CeluneUI
@@ -188,12 +193,13 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             setter(value)
             return
 
-        ui.celune.vc_pitch_shift = value
+        clamped = clamp_vc_pitch_shift(value)
+        ui.celune.vc_pitch_shift = clamped
         backend = getattr(ui.celune, "vc_backend", None)
         if backend is not None and hasattr(backend, "pitch_shift"):
-            setattr(backend, "pitch_shift", value)
+            setattr(backend, "pitch_shift", clamped)
         refresh_vc_controls()
-        ui.safe_log(string("commands.vcpitch_set", value=value))
+        ui.safe_log(string("commands.vcpitch_set", value=clamped))
 
     if command == "help":
         ui.safe_log(string("commands.help_header", app_name=APP_NAME))
@@ -512,8 +518,15 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.safe_log(string("commands.usage_vcpitch"), "warning")
             return
 
-        if not -12 <= semitones <= 12:
-            ui.safe_log(string("commands.vcpitch_range"), "warning")
+        if not VC_PITCH_SHIFT_MIN <= semitones <= VC_PITCH_SHIFT_MAX:
+            ui.safe_log(
+                string(
+                    "commands.vcpitch_range",
+                    min_value=VC_PITCH_SHIFT_MIN,
+                    max_value=VC_PITCH_SHIFT_MAX,
+                ),
+                "warning",
+            )
             return
 
         set_vc_pitch_shift(semitones)

@@ -332,6 +332,10 @@ class PipelineTests(TestCase):
         queued_audio = queue.call_args.args[1]
         self.assertEqual(queue.call_args.args[2], 48000)
         self.assertEqual(queue.call_args.args[3], "mic test")
+        self.assertEqual(
+            queue.call_args.kwargs["status_label_key"],
+            "pipeline.revoicing_label",
+        )
         self.assertEqual(queued_audio.shape, (16, 2))
         self.assertIsNot(queued_audio, audio)
         self.assertEqual(np.array_equal(queued_audio, audio), True)
