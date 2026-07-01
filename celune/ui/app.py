@@ -39,6 +39,7 @@ from .. import colors
 from ..celune import Celune
 from ..cevoice import default_loader
 from ..config import format_audio_device_name, resolve_audio_device_with_info
+from ..live_audio import create_live_voice_activity_detector
 from ..pipeline import finish_streaming_sfx_audio, queue_streaming_sfx_audio
 from . import resources as ui_resources
 from .resources import FOOTER_ROTATE_SECONDS
@@ -63,19 +64,12 @@ from ..utils import (
     discard,
 )
 
-_VC_PITCH_SHIFT_MIN = -12
-_VC_PITCH_SHIFT_MAX = 12
-_VC_LIVE_STREAM_CHUNK_SECONDS = 5.00
-_VC_LIVE_STREAM_OVERLAP_SECONDS = 0.05
-_VC_LIVE_STREAM_OVERLAP_RATIO = 0.35
-_VC_LIVE_STREAM_MAX_OVERLAP_SECONDS = 0.35
-_VC_LIVE_STREAM_QUEUE_SIZE = 2
-_VC_FEEDBACK_MIN_CAPTURE_SECONDS = 0.35
-_VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES = 2
-_VC_FEEDBACK_RMS_MIN_PREVIOUS = 0.05
-_VC_FEEDBACK_RMS_MIN_CURRENT = 0.18
-_VC_FEEDBACK_RMS_RISE_RATIO = 2.0
-_VC_FEEDBACK_RMS_RISE_DELTA = 0.08
+_VC_PITCH_SHIFT_MIN = -3
+_VC_PITCH_SHIFT_MAX = 3
+_VC_VAD_RMS_THRESHOLD = 0.005
+_VC_VAD_HANGOVER_SECONDS = 0.3
+_VC_VAD_PREROLL_SECONDS = 0.18
+
 _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
     {
         "`torch_dtype` is deprecated! Use `dtype` instead!",
@@ -200,8 +194,13 @@ class CeluneUIInteractionState:
     vc_recording_feedback_spike_count: int = 0
     vc_recording_label: str = ""
     vc_recording_lock: threading.Lock = field(default_factory=threading.Lock)
+    vc_recording_preroll_chunks: list[npt.NDArray[np.float32]] = field(
+        default_factory=list
+    )
+    vc_recording_preroll_frames: int = 0
     vc_recording_previous_rms: float = 0.0
     vc_recording_sample_rate: int = 0
+    vc_recording_silence_frames: int = 0
     vc_recording_submission_queue: Optional[
         queue_module.Queue[Optional[tuple[npt.NDArray[np.float32], int, str, bool]]]
     ] = None
@@ -377,11 +376,20 @@ class CeluneUI(App):
         "_interaction_state", "vc_recording_feedback_spike_count"
     )
     _vc_recording_lock = _forward_ui_property("_interaction_state", "vc_recording_lock")
+    _vc_recording_preroll_chunks = _forward_ui_property(
+        "_interaction_state", "vc_recording_preroll_chunks"
+    )
+    _vc_recording_preroll_frames = _forward_ui_property(
+        "_interaction_state", "vc_recording_preroll_frames"
+    )
     _vc_recording_previous_rms = _forward_ui_property(
         "_interaction_state", "vc_recording_previous_rms"
     )
     _vc_recording_sample_rate = _forward_ui_property(
         "_interaction_state", "vc_recording_sample_rate"
+    )
+    _vc_recording_silence_frames = _forward_ui_property(
+        "_interaction_state", "vc_recording_silence_frames"
     )
     _vc_recording_submission_queue = _forward_ui_property(
         "_interaction_state", "vc_recording_submission_queue"
@@ -1582,17 +1590,6 @@ class CeluneUI(App):
             return 0.0
         return float(np.sqrt(np.mean(np.square(audio), dtype=np.float64)))
 
-    @staticmethod
-    def _vc_feedback_rise_detected(previous_rms: float, current_rms: float) -> bool:
-        """Return whether the latest RMS jump looks like runaway feedback."""
-        if previous_rms < _VC_FEEDBACK_RMS_MIN_PREVIOUS:
-            return False
-        if current_rms < _VC_FEEDBACK_RMS_MIN_CURRENT:
-            return False
-        if current_rms < previous_rms * _VC_FEEDBACK_RMS_RISE_RATIO:
-            return False
-        return (current_rms - previous_rms) >= _VC_FEEDBACK_RMS_RISE_DELTA
-
     def _request_vc_recording_feedback_stop(self) -> None:
         """Request a feedback-triggered recording stop on a dedicated thread."""
         stop_thread = threading.Thread(
@@ -1610,23 +1607,6 @@ class CeluneUI(App):
         self._vc_recording_chunks = []
         self._vc_recording_buffered_frames = 0
         return audio
-
-    @staticmethod
-    def _vc_live_overlap_frames(sample_rate: int) -> int:
-        """Return the live VC overlap size for one input sample rate."""
-        overlap_seconds = max(
-            _VC_LIVE_STREAM_OVERLAP_SECONDS,
-            min(
-                _VC_LIVE_STREAM_CHUNK_SECONDS * _VC_LIVE_STREAM_OVERLAP_RATIO,
-                _VC_LIVE_STREAM_MAX_OVERLAP_SECONDS,
-            ),
-        )
-        return max(1, int(sample_rate * overlap_seconds))
-
-    @staticmethod
-    def _vc_feedback_min_capture_frames(sample_rate: int) -> int:
-        """Return the minimum captured frames required before feedback auto-stop is allowed."""
-        return max(1, int(sample_rate * _VC_FEEDBACK_MIN_CAPTURE_SECONDS))
 
     def _flush_vc_recording_chunk_locked(
         self,
@@ -1647,6 +1627,63 @@ class CeluneUI(App):
         self._vc_recording_chunks = [retained]
         self._vc_recording_buffered_frames = len(retained)
         return flushed
+
+    @staticmethod
+    def _vc_vad_hangover_frames(sample_rate: int) -> int:
+        """Return how many trailing silent frames to tolerate before flushing."""
+        return max(1, int(sample_rate * _VC_VAD_HANGOVER_SECONDS))
+
+    @staticmethod
+    def _vc_vad_preroll_frames(sample_rate: int) -> int:
+        """Return how much recent pre-speech audio to keep before VAD triggers."""
+        return max(1, int(sample_rate * _VC_VAD_PREROLL_SECONDS))
+
+    def _append_vc_preroll_audio_locked(
+        self,
+        audio: npt.NDArray[np.float32],
+        max_frames: int,
+    ) -> None:
+        """Retain only the newest pre-speech audio frames for VAD onset recovery."""
+        copied = np.asarray(audio, dtype=np.float32).copy()
+        self._vc_recording_preroll_chunks.append(copied)
+        self._vc_recording_preroll_frames += len(copied)
+
+        while (
+            self._vc_recording_preroll_chunks
+            and self._vc_recording_preroll_frames > max_frames
+        ):
+            overflow_frames = self._vc_recording_preroll_frames - max_frames
+            oldest = self._vc_recording_preroll_chunks[0]
+            if len(oldest) <= overflow_frames:
+                self._vc_recording_preroll_chunks.pop(0)
+                self._vc_recording_preroll_frames -= len(oldest)
+                continue
+            trimmed = np.asarray(oldest[overflow_frames:], dtype=np.float32).copy()
+            self._vc_recording_preroll_chunks[0] = trimmed
+            self._vc_recording_preroll_frames -= overflow_frames
+            break
+
+    def _prepend_vc_preroll_locked(self) -> None:
+        """Move retained pre-speech audio into the active VC speech buffer."""
+        if not self._vc_recording_preroll_chunks:
+            return
+        self._vc_recording_chunks = [
+            *self._vc_recording_preroll_chunks,
+            *self._vc_recording_chunks,
+        ]
+        self._vc_recording_buffered_frames += self._vc_recording_preroll_frames
+        self._vc_recording_preroll_chunks = []
+        self._vc_recording_preroll_frames = 0
+
+    def _clear_vc_preroll_locked(self) -> None:
+        """Discard any retained pre-speech VC audio."""
+        self._vc_recording_preroll_chunks = []
+        self._vc_recording_preroll_frames = 0
+
+    @staticmethod
+    def _vc_input_has_voice(audio: npt.NDArray[np.float32]) -> bool:
+        """Return whether one microphone callback likely contains voice activity."""
+        return CeluneUI._vc_input_rms(audio) >= _VC_VAD_RMS_THRESHOLD
 
     @staticmethod
     def _normalize_vc_overlap_audio(
@@ -1748,7 +1785,10 @@ class CeluneUI(App):
         self._vc_recording_feedback_spike_count = 0
         self._vc_recording_sample_rate = 0
         self._vc_recording_label = string("ui.audio_input_label")
+        self._vc_recording_preroll_chunks = []
+        self._vc_recording_preroll_frames = 0
         self._vc_recording_previous_rms = 0.0
+        self._vc_recording_silence_frames = 0
         self._vc_recording_submission_queue = None
         self._vc_recording_stop_thread = None
         self._vc_recording_worker = None
@@ -1936,22 +1976,15 @@ class CeluneUI(App):
             device_info.get("name", string("ui.audio_input_label"))
         )
         channel_count = 2 if channels >= 2 else 1
-        stream_chunk_frames = max(
-            int(sample_rate * _VC_LIVE_STREAM_CHUNK_SECONDS),
-            1,
-        )
-        overlap_frames = min(
-            self._vc_live_overlap_frames(sample_rate),
-            max(stream_chunk_frames - 1, 1),
-        )
+        vad_hangover_frames = self._vc_vad_hangover_frames(sample_rate)
+        vad_preroll_frames = self._vc_vad_preroll_frames(sample_rate)
+        ai_vad = create_live_voice_activity_detector(input_config)
         submission_queue: queue_module.Queue[
             Optional[tuple[npt.NDArray[np.float32], int, str, bool]]
-        ] = queue_module.Queue(maxsize=_VC_LIVE_STREAM_QUEUE_SIZE)
+        ] = queue_module.Queue(maxsize=1)
 
         def submit_live_audio() -> None:
             live_source_id: Optional[int] = None
-            previous_playback_sample_rate = 0
-            queued_live_segment = False
 
             def queue_playback_segment(
                 audio: npt.NDArray[np.float32],
@@ -2011,27 +2044,12 @@ class CeluneUI(App):
                     converted_audio = np.asarray(converted.audio, dtype=np.float32)
                     playback_sample_rate = converted.sample_rate
                     playback_label = converted.label
-                    playback_overlap_frames = 0
-                    if (
-                        queued_live_segment
-                        and previous_playback_sample_rate == playback_sample_rate
-                    ):
-                        playback_overlap_frames = min(
-                            self._vc_live_overlap_frames(playback_sample_rate),
-                            max(len(converted_audio) - 1, 0),
-                        )
-
-                    segment_audio = converted_audio[
-                        min(len(converted_audio), playback_overlap_frames) :
-                    ]
-                    if len(segment_audio) > 0:
+                    if len(converted_audio) > 0:
                         queue_playback_segment(
-                            segment_audio,
+                            converted_audio,
                             playback_sample_rate,
                             playback_label,
                         )
-                        queued_live_segment = True
-                        previous_playback_sample_rate = playback_sample_rate
 
                     if is_final_chunk:
                         finish_playback_segment()
@@ -2058,55 +2076,63 @@ class CeluneUI(App):
             discard(frames)
             discard(time_info)
             discard(status)
+
             callback_audio = np.asarray(indata, dtype=np.float32).copy()
             current_rms = self._vc_input_rms(callback_audio)
-            should_stop_for_feedback = False
-            feedback_min_capture_frames = self._vc_feedback_min_capture_frames(
-                sample_rate
-            )
+            if ai_vad is not None:
+                try:
+                    voice_detected = ai_vad.has_voice(callback_audio, sample_rate)
+                except (RuntimeError, AssertionError, ValueError):
+                    ai_vad.reset()
+                    voice_detected = self._vc_input_has_voice(callback_audio)
+            else:
+                voice_detected = self._vc_input_has_voice(callback_audio)
+
             with self._vc_recording_lock:
                 if self._vc_recording_stream is None:
                     return
                 if self._vc_recording_feedback_detected:
                     return
-                previous_rms = self._vc_recording_previous_rms
+
                 self._vc_recording_previous_rms = current_rms
                 self._vc_recording_captured_frames += len(callback_audio)
 
-                suspicious_feedback = (
-                    self._vc_recording_captured_frames >= feedback_min_capture_frames
-                    and self._vc_feedback_rise_detected(previous_rms, current_rms)
-                )
-                if suspicious_feedback:
-                    self._vc_recording_feedback_spike_count += 1
-                else:
-                    self._vc_recording_feedback_spike_count = 0
-
-                if (
-                    not self._vc_recording_feedback_detected
-                    and self._vc_recording_feedback_spike_count
-                    >= _VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES
-                ):
-                    self._vc_recording_feedback_detected = True
-                    should_stop_for_feedback = True
-                else:
+                buffered_audio: Optional[npt.NDArray[np.float32]] = None
+                if voice_detected:
+                    if self._vc_recording_buffered_frames <= 0:
+                        self._prepend_vc_preroll_locked()
+                    self._vc_recording_silence_frames = 0
                     self._vc_recording_chunks.append(callback_audio)
                     self._vc_recording_buffered_frames += len(callback_audio)
-                    if (
-                        self._vc_recording_buffered_frames >= stream_chunk_frames
-                        and self._vc_recording_submission_queue is not None
-                    ):
-                        buffered_audio = self._flush_vc_recording_chunk_locked(
-                            keep_tail_frames=overlap_frames,
+                    self._clear_vc_preroll_locked()
+                elif self._vc_recording_buffered_frames > 0:
+                    self._vc_recording_silence_frames += len(callback_audio)
+                    if self._vc_recording_silence_frames <= vad_hangover_frames:
+                        self._vc_recording_chunks.append(callback_audio)
+                        self._vc_recording_buffered_frames += len(callback_audio)
+                    else:
+                        buffered_audio = self._flush_vc_recording_chunk_locked()
+                        self._vc_recording_silence_frames = 0
+                        self._append_vc_preroll_audio_locked(
+                            callback_audio,
+                            vad_preroll_frames,
                         )
-                        if buffered_audio is not None:
-                            self._enqueue_vc_submission_chunk(
-                                self._vc_recording_submission_queue,
-                                (buffered_audio, sample_rate, label, False),
-                            )
+                        if ai_vad is not None:
+                            ai_vad.reset()
+                else:
+                    self._append_vc_preroll_audio_locked(
+                        callback_audio,
+                        vad_preroll_frames,
+                    )
 
-            if should_stop_for_feedback:
-                self._request_vc_recording_feedback_stop()
+                if (
+                    buffered_audio is not None
+                    and self._vc_recording_submission_queue is not None
+                ):
+                    self._enqueue_vc_submission_chunk(
+                        self._vc_recording_submission_queue,
+                        (buffered_audio, sample_rate, label, False),
+                    )
 
         try:
             stream = sd.InputStream(
@@ -2136,7 +2162,10 @@ class CeluneUI(App):
             self._vc_recording_feedback_detected = False
             self._vc_recording_sample_rate = sample_rate
             self._vc_recording_label = label
+            self._vc_recording_preroll_chunks = []
+            self._vc_recording_preroll_frames = 0
             self._vc_recording_previous_rms = 0.0
+            self._vc_recording_silence_frames = 0
             self._vc_recording_submission_queue = submission_queue
             self._vc_recording_stop_thread = None
             self._vc_recording_worker = worker
