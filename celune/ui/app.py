@@ -89,8 +89,8 @@ _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
         "s/it]",
     }
 )
-_AudioDeviceScalar = Union[bool, int, float, str]
-_VCAudioCallback = Callable[
+type _AudioDeviceScalar = Union[bool, int, float, str]
+type _VCAudioCallback = Callable[
     [
         npt.NDArray[np.float32],
         int,

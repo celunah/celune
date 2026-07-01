@@ -64,7 +64,7 @@ def clamp_vc_pitch_shift(value: int) -> int:
     Returns:
         int: The requested offset clamped to Celune's supported VC range.
     """
-    return max(VC_PITCH_SHIFT_MIN, min(VC_PITCH_SHIFT_MAX, int(value)))
+    return max(VC_PITCH_SHIFT_MIN, min(VC_PITCH_SHIFT_MAX, value))
 
 
 def vc_input_rms(audio: npt.NDArray[np.float32]) -> float:
