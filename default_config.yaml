@@ -34,6 +34,10 @@ dev: false
 voice_conversion_pitch_shift: 0
 # false = talk mode, true = sing mode
 voice_conversion_f0_condition: false
+# optional AI helpers for live voice conversion input
+#
+# silero-vad detects real speech more reliably than plain RMS gating
+voice_conversion_live_ai_vad: true
 
 # audio device settings
 #

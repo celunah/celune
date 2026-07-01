@@ -155,12 +155,19 @@ seed-vc = [
     "seed-vc @ git+https://github.com/celunah/seed-vc.git",
 ]
 
+# Optional AI VAD for live voice conversion capture.
+live-vc-ai = [
+    "silero-vad",
+]
+
 [tool.pytest.ini_options]
 filterwarnings = [
      # 'sentencepiece' imports cause these warnings, this package is used by Celune Mini.
      "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
      "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
      "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
+     # 'silero-vad' uses old legacy PyTorch JIT syntax.
+     "ignore:`torch.jit.load` is deprecated\\. Please switch to `torch.export`\\.:DeprecationWarning",
      # Celune's deprecated extension syntax is being exercised in the test suite, causing these warnings.
      # This syntax will be removed soon.
      "ignore:CeluneExtension\\.autostart\\(\\) is deprecated, please use @celune\\.subscribe\\('ready'\\) instead:DeprecationWarning",
