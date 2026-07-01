@@ -23,12 +23,13 @@ It was proudly made in 🇵🇱 for your listening pleasure.
 - Optimized GPU inference where possible
 - Configurable character voices via CEVOICE voice packs
 - Characters can respond back to you
+- Can voice change into character voices
 
 ## Note on development
 
 Celune is against the stance of "vibe coding" used in development.
 
-None of the 15,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
+None of the 30,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
 
 All decisions and implementations were reviewed, validated, and approved by human developers.
 
@@ -92,6 +93,8 @@ Browse the `demos` directory for demonstration content from the current version 
 > Do not mix multiple languages in one sentence.  
 > Keep language boundaries clear and explicit.
 >
+> Some models may tolerate badly formatted inputs differently, but it is advised to correctly format your text inputs.
+>
 > **Good:**
 >
 > ```text
@@ -149,6 +152,7 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 > This preset supports:
 >
 > - Qwen3-TTS 0.6B / Celune Mini
+> - SeedVC voice changer mode
 > - Normalization on CPU
 >
 > Medium (8GB VRAM required)
