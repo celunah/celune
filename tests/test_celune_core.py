@@ -904,13 +904,13 @@ class CeluneCoreTests(TestCase):
             celune = Celune(
                 config={
                     "mode": "voice_conversion",
-                    "voice_conversion_pitch_shift": -4,
+                    "voice_conversion_pitch_shift": -3,
                 },
                 tts_backend=FakeBackend,
             )
             self.addCleanup(self._close_celune, celune)
 
-        self.assertEqual(celune.vc_pitch_shift, -4)
+        self.assertEqual(celune.vc_pitch_shift, -3)
 
     def test_constructor_reads_configured_vc_f0_condition(self) -> None:
         """Verify VC talk-vs-sing mode is read from config during startup."""
@@ -1829,6 +1829,118 @@ class CeluneCoreTests(TestCase):
             "Qwen/Qwen3-VL-4B-Instruct",
             "4bit",
         )
+
+    def test_sleep_mode_can_unload_vc_without_unloading_tts(self) -> None:
+        """Verify sleep mode can explicitly unload and reload the active VC backend."""
+
+        class CountingVCBackend(FakeVCBackend):
+            """Fake VC backend that records sleep lifecycle calls."""
+
+            name = "counting-vc"
+
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                self.preload_calls = 0
+                self.unload_calls = 0
+
+            def preload_models(self) -> None:
+                self.preload_calls += 1
+
+            def unload_model(self) -> None:
+                self.unload_calls += 1
+
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+        ):
+            celune = Celune(
+                config={
+                    "mode": "voice_conversion",
+                    "sleep": {
+                        "enabled": True,
+                        "unload": {
+                            "persona": False,
+                            "normalizer": False,
+                            "tts": False,
+                            "vc": True,
+                        },
+                    },
+                },
+                tts_backend=FakeBackend,
+                vc_backend=CountingVCBackend,
+            )
+            self.addCleanup(self._close_celune, celune)
+
+        celune.locked = False
+        celune.loaded = True
+        celune.cur_state = "idle"
+        celune.backend.unload_model = mock.Mock()
+        original_vc_backend = cast(CountingVCBackend, celune.vc_backend)
+
+        with mock.patch("celune.celune.play_signal", return_value=False):
+            self.assertEqual(celune.enter_sleep_mode(), True)
+
+        self.assertEqual(original_vc_backend.unload_calls, 1)
+        celune.backend.unload_model.assert_not_called()
+
+        with mock.patch("celune.celune.play_signal", return_value=False):
+            self.assertEqual(celune.wake_from_sleep(), True)
+
+        restored_vc_backend = cast(CountingVCBackend, celune.vc_backend)
+        self.assertIsNot(restored_vc_backend, original_vc_backend)
+        self.assertEqual(restored_vc_backend.preload_calls, 1)
+
+    def test_sleep_tts_unload_can_keep_vc_loaded_when_explicitly_disabled(
+        self,
+    ) -> None:
+        """Verify ``sleep.unload.vc`` can opt out of the legacy TTS-coupled VC unload."""
+
+        class CountingVCBackend(FakeVCBackend):
+            """Fake VC backend that records unload requests."""
+
+            name = "counting-vc"
+
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                self.unload_calls = 0
+
+            def unload_model(self) -> None:
+                self.unload_calls += 1
+
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+        ):
+            celune = Celune(
+                config={
+                    "sleep": {
+                        "enabled": True,
+                        "unload": {
+                            "persona": False,
+                            "normalizer": False,
+                            "tts": True,
+                            "vc": False,
+                        },
+                    },
+                },
+                tts_backend=FakeBackend,
+                vc_backend=CountingVCBackend,
+            )
+            self.addCleanup(self._close_celune, celune)
+
+        celune.locked = False
+        celune.loaded = True
+        celune.cur_state = "idle"
+        celune.model = {"model_id": "fake/balanced", "kwargs": {}}
+        vc_backend = cast(CountingVCBackend, celune.vc_backend)
+
+        with mock.patch("celune.celune.play_signal", return_value=False):
+            self.assertEqual(celune.enter_sleep_mode(), True)
+
+        self.assertIs(celune.vc_backend, vc_backend)
+        self.assertEqual(vc_backend.unload_calls, 0)
 
     def test_sleep_mode_closes_persona_even_if_close_raises(self) -> None:
         """Verify sleep still clears Persona references when client shutdown fails."""

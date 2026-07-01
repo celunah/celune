@@ -39,7 +39,18 @@ from .. import colors
 from ..celune import Celune
 from ..cevoice import default_loader
 from ..config import format_audio_device_name, resolve_audio_device_with_info
-from ..live_audio import create_live_voice_activity_detector
+from ..vc_runtime import (
+    VC_PITCH_SHIFT_MAX,
+    VC_PITCH_SHIFT_MIN,
+    clamp_vc_pitch_shift,
+    create_live_voice_activity_detector,
+    vc_input_has_voice,
+    vc_input_rms,
+    vc_live_chunk_frames,
+    vc_live_chunk_overlap_frames,
+    vc_vad_hangover_frames,
+    vc_vad_preroll_frames,
+)
 from ..pipeline import finish_streaming_sfx_audio, queue_streaming_sfx_audio
 from . import resources as ui_resources
 from .resources import FOOTER_ROTATE_SECONDS
@@ -63,12 +74,6 @@ from ..utils import (
     supports_ansi,
     discard,
 )
-
-_VC_PITCH_SHIFT_MIN = -3
-_VC_PITCH_SHIFT_MAX = 3
-_VC_VAD_RMS_THRESHOLD = 0.005
-_VC_VAD_HANGOVER_SECONDS = 0.3
-_VC_VAD_PREROLL_SECONDS = 0.18
 
 _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
     {
@@ -1564,7 +1569,7 @@ class CeluneUI(App):
         if self.celune is None:
             return
 
-        clamped = max(_VC_PITCH_SHIFT_MIN, min(_VC_PITCH_SHIFT_MAX, value))
+        clamped = clamp_vc_pitch_shift(value)
         self.celune.vc_pitch_shift = clamped
         backend = getattr(self.celune, "vc_backend", None)
         if backend is not None and hasattr(backend, "pitch_shift"):
@@ -1586,9 +1591,7 @@ class CeluneUI(App):
     @staticmethod
     def _vc_input_rms(audio: npt.NDArray[np.float32]) -> float:
         """Return RMS energy for one microphone callback buffer."""
-        if audio.size == 0:
-            return 0.0
-        return float(np.sqrt(np.mean(np.square(audio), dtype=np.float64)))
+        return vc_input_rms(audio)
 
     def _request_vc_recording_feedback_stop(self) -> None:
         """Request a feedback-triggered recording stop on a dedicated thread."""
@@ -1631,12 +1634,22 @@ class CeluneUI(App):
     @staticmethod
     def _vc_vad_hangover_frames(sample_rate: int) -> int:
         """Return how many trailing silent frames to tolerate before flushing."""
-        return max(1, int(sample_rate * _VC_VAD_HANGOVER_SECONDS))
+        return vc_vad_hangover_frames(sample_rate)
 
     @staticmethod
     def _vc_vad_preroll_frames(sample_rate: int) -> int:
         """Return how much recent pre-speech audio to keep before VAD triggers."""
-        return max(1, int(sample_rate * _VC_VAD_PREROLL_SECONDS))
+        return vc_vad_preroll_frames(sample_rate)
+
+    @staticmethod
+    def _vc_live_chunk_frames(sample_rate: int) -> int:
+        """Return how much active speech to collect before a live VC flush."""
+        return vc_live_chunk_frames(sample_rate)
+
+    @staticmethod
+    def _vc_live_chunk_overlap_frames(sample_rate: int) -> int:
+        """Return how much tail audio to retain between live VC chunks."""
+        return vc_live_chunk_overlap_frames(sample_rate)
 
     def _append_vc_preroll_audio_locked(
         self,
@@ -1683,7 +1696,7 @@ class CeluneUI(App):
     @staticmethod
     def _vc_input_has_voice(audio: npt.NDArray[np.float32]) -> bool:
         """Return whether one microphone callback likely contains voice activity."""
-        return CeluneUI._vc_input_rms(audio) >= _VC_VAD_RMS_THRESHOLD
+        return vc_input_has_voice(audio)
 
     @staticmethod
     def _normalize_vc_overlap_audio(
@@ -1978,6 +1991,8 @@ class CeluneUI(App):
         channel_count = 2 if channels >= 2 else 1
         vad_hangover_frames = self._vc_vad_hangover_frames(sample_rate)
         vad_preroll_frames = self._vc_vad_preroll_frames(sample_rate)
+        live_chunk_frames = self._vc_live_chunk_frames(sample_rate)
+        live_chunk_overlap_frames = self._vc_live_chunk_overlap_frames(sample_rate)
         ai_vad = create_live_voice_activity_detector(input_config)
         submission_queue: queue_module.Queue[
             Optional[tuple[npt.NDArray[np.float32], int, str, bool]]
@@ -2001,6 +2016,7 @@ class CeluneUI(App):
                         playback_sample_rate,
                         playback_label,
                         source_id=live_source_id,
+                        status_label_key="pipeline.revoicing_label",
                         reset_ready_announcement=live_source_id is None,
                     )
                 except Exception:
@@ -2105,6 +2121,10 @@ class CeluneUI(App):
                     self._vc_recording_chunks.append(callback_audio)
                     self._vc_recording_buffered_frames += len(callback_audio)
                     self._clear_vc_preroll_locked()
+                    if self._vc_recording_buffered_frames >= live_chunk_frames:
+                        buffered_audio = self._flush_vc_recording_chunk_locked(
+                            keep_tail_frames=live_chunk_overlap_frames,
+                        )
                 elif self._vc_recording_buffered_frames > 0:
                     self._vc_recording_silence_frames += len(callback_audio)
                     if self._vc_recording_silence_frames <= vad_hangover_frames:
@@ -2603,8 +2623,8 @@ class CeluneUI(App):
             if self._is_voice_conversion_mode():
                 current_value = int(getattr(self.celune, "vc_pitch_shift", 0))
                 next_value = current_value + 1
-                if next_value > _VC_PITCH_SHIFT_MAX:
-                    next_value = _VC_PITCH_SHIFT_MIN
+                if next_value > VC_PITCH_SHIFT_MAX:
+                    next_value = VC_PITCH_SHIFT_MIN
                 self.set_vc_pitch_shift(next_value)
             return
 

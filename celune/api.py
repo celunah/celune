@@ -44,6 +44,7 @@ from .ui import resources as ui_resources
 from .paths import main_window_log_path, project_root
 from .constants import BASE_SR, APP_NAME, JSONSerializable
 from .i18n import string
+from .vc_runtime import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
 
 api = FastAPI(title=f"{APP_NAME}API")
 bound_celune: Optional[Celune] = None
@@ -1697,8 +1698,8 @@ def _build_webui() -> gr.Blocks:
                             elem_id="celune-source-audio",
                         )
                         vc_pitch_shift = gr.Slider(
-                            minimum=-12,
-                            maximum=12,
+                            minimum=VC_PITCH_SHIFT_MIN,
+                            maximum=VC_PITCH_SHIFT_MAX,
                             step=1,
                             value=0,
                             label=string("webui.pitch_shift_label"),

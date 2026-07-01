@@ -1493,6 +1493,7 @@ def handle_audio_input(engine: Celune, request: AudioInputRequest) -> bool:
             output.audio,
             output.sample_rate,
             output.label,
+            status_label_key="pipeline.revoicing_label",
             log_length=request.log_playback,
             reset_ready_announcement=request.reset_ready_announcement,
         )
@@ -1700,6 +1701,7 @@ def queue_sfx_audio(
     label: str,
     keep: bool = False,
     volume: float = 1.0,
+    status_label_key: str = "pipeline.playing_label",
     log_length: bool = True,
     reset_ready_announcement: bool = True,
 ) -> bool:
@@ -1712,6 +1714,7 @@ def queue_sfx_audio(
         label: Human-readable label for logs and status.
         keep: Whether to prepend this SFX to the next saved utterance.
         volume: Gain multiplier applied before the clip is queued for playback.
+        status_label_key: Localization key used for the surfaced playback status.
         log_length: Whether to log the prepared playback sample rate and length.
         reset_ready_announcement: Whether this source should trigger a later ready announcement.
 
@@ -1752,7 +1755,7 @@ def queue_sfx_audio(
         _set_playback_source_status(
             engine,
             source_id,
-            string("pipeline.playing_label", label=label),
+            string(status_label_key, label=label),
         )
         return True
     except Exception:
@@ -1768,6 +1771,7 @@ def queue_streaming_sfx_audio(
     *,
     source_id: Optional[int] = None,
     volume: float = 1.0,
+    status_label_key: str = "pipeline.playing_label",
     log_length: bool = False,
     reset_ready_announcement: bool = False,
 ) -> int:
@@ -1780,6 +1784,7 @@ def queue_streaming_sfx_audio(
         label: Human-readable label for logs and status.
         source_id: Existing playback source to append to, or ``None`` to create one.
         volume: Gain multiplier applied before the clip is queued for playback.
+        status_label_key: Localization key used for the surfaced playback status.
         log_length: Whether to log the prepared playback sample rate and length.
         reset_ready_announcement: Whether a newly created source should reset readiness.
 
@@ -1814,7 +1819,7 @@ def queue_streaming_sfx_audio(
     _set_playback_source_status(
         engine,
         source_id,
-        string("pipeline.playing_label", label=label),
+        string(status_label_key, label=label),
     )
     return source_id
 
@@ -1823,8 +1828,8 @@ def finish_streaming_sfx_audio(engine: Celune, source_id: Optional[int]) -> None
     """Mark one persistent SFX playback source as complete.
 
     Args:
-        engine: Value for `engine`.
-        source_id: Value for `source_id`.
+        engine: Runtime that owns the playback queues.
+        source_id: Persistent playback source to finish.
     """
     if source_id is None:
         return

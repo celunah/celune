@@ -55,6 +55,7 @@ from .paths import project_root, app_data_dir
 from .runtime import log_runtime_banner, validate_runtime
 from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
 from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
+from .vc_runtime import clamp_vc_pitch_shift
 from .exceptions import NotAvailableError, WarmupError, BackendError
 from .modeling import normalizer_device, load_normalizer_components
 from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID
@@ -153,12 +154,12 @@ def _configured_vc_pitch_shift(config: Config) -> int:
     """Return the configured default pitch shift for VC backends."""
     env_value = os.getenv("CELUNE_VC_PITCH_SHIFT")
     if env_value is not None and env_value.strip():
-        return _config_int(env_value.strip(), 0)
+        return clamp_vc_pitch_shift(_config_int(env_value.strip(), 0))
 
     configured_value = config_value(config, "voice_conversion_pitch_shift")
     if configured_value is None:
         configured_value = config_value(config, "vc_pitch_shift")
-    return _config_int(configured_value, 0)
+    return clamp_vc_pitch_shift(_config_int(configured_value, 0))
 
 
 def _configured_vc_f0_condition(config: Config) -> bool:
@@ -365,7 +366,7 @@ class Celune(CeluneStateAccessors):
         self.vc_pitch_shift = (
             _configured_vc_pitch_shift(config)
             if vc_pitch_shift is None
-            else _config_int(vc_pitch_shift, 0)
+            else clamp_vc_pitch_shift(_config_int(vc_pitch_shift, 0))
         )
         self.vc_f0_condition = (
             _configured_vc_f0_condition(config)
@@ -786,16 +787,19 @@ class Celune(CeluneStateAccessors):
         if tokenizer is not None:
             _release_loaded_object(tokenizer)
 
-    def unload_runtime_state(self, include_normalizer: bool = False) -> None:
+    def unload_runtime_state(
+        self, include_normalizer: bool = False, include_vc: bool = True
+    ) -> None:
         """Unload unused models to regain memory.
 
         Args:
             include_normalizer: Whether to also unload the normalization model and tokenizer.
+            include_vc: Whether to also unload the voice-conversion backend runtime.
         """
         discard(self, "model")
 
         self.backend.unload_model()
-        if self.vc_backend is not None:
+        if include_vc and self.vc_backend is not None:
             self.vc_backend.unload_model()
 
         if include_normalizer:
@@ -1404,6 +1408,7 @@ class Celune(CeluneStateAccessors):
                     "persona": True,
                     "normalizer": True,
                     "tts": False,
+                    "vc": False,
                 },
             )
 
@@ -1419,13 +1424,16 @@ class Celune(CeluneStateAccessors):
         except (TypeError, ValueError):
             timeout = 10
 
+        unload_tts = bool(unload_config.get("tts", False))
+
         return (
             bool(sleep_config.get("enabled", False)),
             max(1, timeout),
             {
                 "persona": bool(unload_config.get("persona", True)),
                 "normalizer": bool(unload_config.get("normalizer", True)),
-                "tts": bool(unload_config.get("tts", False)),
+                "tts": unload_tts,
+                "vc": bool(unload_config.get("vc", unload_tts)),
             },
         )
 
@@ -1477,10 +1485,16 @@ class Celune(CeluneStateAccessors):
                 self._unload_persona_state()
 
             if unload["tts"]:
-                self.unload_runtime_state(include_normalizer=unload["normalizer"])
+                self.unload_runtime_state(
+                    include_normalizer=unload["normalizer"],
+                    include_vc=unload["vc"],
+                )
                 self.model_name = ""
             elif unload["normalizer"]:
                 self.unload_normalizer_state()
+
+            if unload["vc"] and not unload["tts"] and self.vc_backend is not None:
+                self.vc_backend.unload_model()
 
         self.model_ready.set()
         return True
@@ -1512,7 +1526,7 @@ class Celune(CeluneStateAccessors):
                             raise NotAvailableError(
                                 "cannot wake without a configured voice conversion backend"
                             )
-                        if unload["tts"] and self._recreate_vc_backend():
+                        if unload["vc"] and self._recreate_vc_backend():
                             self.log_dev("[SLEEP] Recreated VC backend")
                         self.vc_backend.preload_models()
                     else:
@@ -1533,6 +1547,13 @@ class Celune(CeluneStateAccessors):
                             self.model_name = model_id
                             if not self._warmup():
                                 self._raise_warmup_error("warmup failed after sleep")
+
+                    if (
+                        unload["vc"]
+                        and not self._is_voice_conversion_mode()
+                        and self.vc_backend is not None
+                    ):
+                        self.vc_backend.preload_models()
 
                     if unload["normalizer"] and self.use_normalization:
                         self.load_normalizer()
