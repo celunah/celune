@@ -2,6 +2,7 @@
 """Celune internationalization helpers backed by JSON language files."""
 
 import os
+import sys
 import json
 import ctypes
 import contextlib
@@ -72,12 +73,27 @@ def _ensure_locale_loaded(locale_name: Optional[str]) -> None:
     STRINGS[normalized] = _load_locale_strings(normalized)
 
 
-def get_system_locale() -> str:
-    """Get the current system locale, falling back to English if unavailable.
+def _locale_has_strings(locale_name: Optional[str]) -> bool:
+    """Return whether one locale candidate resolves to a non-empty string table."""
+    normalized = _normalize_locale_name(locale_name)
+    _ensure_locale_loaded(normalized)
+    return bool(STRINGS.get(normalized))
 
-    Returns:
-        str: The detected locale code, or ``"en"`` when no locale can be found.
-    """
+
+def _resolve_loaded_locale(locale_name: Optional[str]) -> Optional[str]:
+    """Return the best loaded locale candidate for one requested locale label."""
+    normalized = _normalize_locale_name(locale_name)
+    for candidate in _locale_candidates(normalized):
+        if _locale_has_strings(candidate):
+            return candidate
+
+    if locale_name:
+        return normalized
+    return None
+
+
+def _detect_system_locale_name() -> Optional[str]:
+    """Return the raw system locale label without validating available files."""
     lang, _ = _locale.getlocale()
     if lang:
         return lang
@@ -86,11 +102,29 @@ def get_system_locale() -> str:
         with contextlib.suppress(Exception):
             windll = getattr(ctypes, "windll", SimpleNamespace()).kernel32
             lang_code = windll.GetUserDefaultUILanguage()
-            return _locale.windows_locale.get(lang_code, DEFAULT_LOCALE)
+            resolved = _locale.windows_locale.get(lang_code)
+            if resolved:
+                return resolved
 
-    lang = os.environ.get("LANG")
-    if lang:
-        return lang.split(".")[0]
+    return os.environ.get("LANG")
+
+
+def get_system_locale() -> str:
+    """Get the current system locale, trying localized candidates before English.
+
+    Returns:
+        str: The best matching locale code, or ``"en"`` when no locale can be found.
+    """
+    detected_locale = _detect_system_locale_name()
+    resolved_locale = _resolve_loaded_locale(detected_locale)
+    if resolved_locale is not None:
+        if (
+            detected_locale
+            and resolved_locale == _normalize_locale_name(detected_locale)
+            and not _locale_has_strings(resolved_locale)
+        ):
+            sys.stderr.write(string("celune.locale_not_found", locale=resolved_locale))
+        return resolved_locale
 
     return DEFAULT_LOCALE
 

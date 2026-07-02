@@ -73,6 +73,44 @@ class I18nTests(TestCase):
             i18n.STRINGS.clear()
             i18n.STRINGS.update(original)
 
+    def test_get_system_locale_prefers_loaded_base_language_candidate(self) -> None:
+        """Verify system locale detection tries specific and base candidates before English."""
+        original = dict(i18n.STRINGS)
+        try:
+            i18n.STRINGS.clear()
+            i18n.STRINGS["en"] = {"hello": "Hello"}
+            i18n.STRINGS["pl"] = {"hello": "Czesc"}
+            with mock.patch(
+                "celune.i18n._locale.getlocale", return_value=("pl_PL", None)
+            ):
+                self.assertEqual(i18n.get_system_locale(), "pl")
+        finally:
+            i18n.STRINGS.clear()
+            i18n.STRINGS.update(original)
+
+    def test_get_system_locale_returns_english_after_trying_missing_candidates(
+        self,
+    ) -> None:
+        """Verify missing locale files are tried before English fallback is used."""
+        original = dict(i18n.STRINGS)
+        try:
+            i18n.STRINGS.clear()
+            i18n.STRINGS["en"] = {
+                "hello": "Hello",
+                "celune.locale_not_found": "Missing locale: {locale}",
+            }
+            with (
+                mock.patch(
+                    "celune.i18n._locale.getlocale", return_value=("fr_CA", None)
+                ),
+                mock.patch("sys.stderr.write") as stderr_write,
+            ):
+                self.assertEqual(i18n.get_system_locale(), "en")
+            stderr_write.assert_not_called()
+        finally:
+            i18n.STRINGS.clear()
+            i18n.STRINGS.update(original)
+
 
 class UpdaterTests(TestCase):
     """Tests for pure updater decision logic."""

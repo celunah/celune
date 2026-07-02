@@ -59,7 +59,7 @@ from .vc_runtime import clamp_vc_pitch_shift
 from .exceptions import NotAvailableError, WarmupError, BackendError
 from .modeling import normalizer_device, load_normalizer_components
 from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID
-from .i18n import string
+from .i18n import get_system_locale, set_locale, string
 from .typing.celune import (
     CoreBackendSpec,
     CeluneStateAccessors,
@@ -137,6 +137,20 @@ class _BundleWithPath(Protocol):
 def _config_str(value: JSONSerializable) -> Optional[str]:
     """Return a config value only when it is a string."""
     return value if isinstance(value, str) else None
+
+
+def _configured_locale(config: Config) -> Optional[str]:
+    """Return one explicit locale override from env or config when provided."""
+    env_value = _config_str(os.getenv("CELUNE_LOCALE"))
+    configured_value = _config_str(config_value(config, "locale"))
+    candidate = env_value if env_value is not None else configured_value
+    if candidate is None:
+        return None
+
+    normalized = candidate.strip()
+    if not normalized or normalized.lower() in {"auto", "system", "default"}:
+        return None
+    return normalized
 
 
 def _config_int(value: JSONSerializable, default: int) -> int:
@@ -355,6 +369,7 @@ class Celune(CeluneStateAccessors):
         self._pipeline_state.playback_done.set()
 
         self.config = config
+        set_locale(_configured_locale(config) or get_system_locale())
         self.input_mode = _resolve_input_mode(config, input_mode)
         tts_backend, vc_backend = _resolve_core_backend_specs(
             self.log_callback,

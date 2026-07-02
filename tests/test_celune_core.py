@@ -15,7 +15,7 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from celune.celune import Celune
-from celune import cevoice
+from celune import cevoice, i18n
 from celune.config import Config
 from celune.backends.tts.qwen3 import Qwen3
 from celune.constants import JSONSerializable
@@ -160,6 +160,38 @@ class CeluneCoreTests(TestCase):
         self.assertIsNotNone(celune.vc_backend)
         assert celune.vc_backend is not None
         self.assertEqual(celune.vc_backend.name, "passthrough")
+
+    def test_constructor_uses_explicit_locale_override_from_config(self) -> None:
+        """Verify an explicit config locale wins over system auto-detection."""
+        previous_locale = i18n.get_locale()
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+            mock.patch("celune.celune.get_system_locale", return_value="pl"),
+        ):
+            celune = Celune(config={"locale": "en-US"}, tts_backend=FakeBackend)
+            self.addCleanup(self._close_celune, celune)
+
+        self.addCleanup(i18n.set_locale, previous_locale)
+        self.assertEqual(i18n.get_locale(), "en-US")
+
+    def test_constructor_uses_system_locale_when_no_override_is_configured(
+        self,
+    ) -> None:
+        """Verify locale auto-selection still uses the detected system locale by default."""
+        previous_locale = i18n.get_locale()
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+            mock.patch("celune.celune.get_system_locale", return_value="pl"),
+        ):
+            celune = Celune(config={"locale": None}, tts_backend=FakeBackend)
+            self.addCleanup(self._close_celune, celune)
+
+        self.addCleanup(i18n.set_locale, previous_locale)
+        self.assertEqual(i18n.get_locale(), "pl")
 
     def test_constructor_rejects_duplicate_backend_alias_for_tts(self) -> None:
         """Verify ``backend=`` cannot be combined with ``tts_backend=``."""

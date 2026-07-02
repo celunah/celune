@@ -27,6 +27,12 @@ voice_bundle: default
 # and auto-voice analysis upon end of utterance
 dev: false
 
+# locale
+#
+# null = auto-detect from the current system locale
+# set a language code like en, en-US, or pl to force a specific locale
+locale: null
+
 # voice conversion default settings
 #
 # positive values raise the converted voice, negative values lower it

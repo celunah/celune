@@ -39,6 +39,7 @@
     "celune.invalid_backend_type": "'backend_name' must be a backend instance, backend type, or backend name string",
     "celune.internal_error": "An internal error occurred: {error}",
     "celune.loading_normalizer": "Loading normalizer {model_id} on {device}...",
+    "celune.locale_not_found": "Could not find a locale file for the currently selected locale: {locale}",
     "celune.model_unloaded_while_waiting": "Model was unloaded while waiting to become ready.",
     "celune.no_api_token": "No API token set. {app_name} API will bind only to the local network.",
     "celune.no_valid_vc_backend": "No valid voice conversion backend",
