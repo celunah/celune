@@ -130,8 +130,7 @@ class PipelineTests(TestCase):
         self.assertIs(engine.audio_queue.get_nowait(), engine.force_stop_marker)
 
     def test_working_signal_completion_does_not_notify_idle(self) -> None:
-        """Verify the transitional working cue is not treated as a readiness idle event.
-        """
+        """Verify the transitional working cue is not treated as a readiness idle event."""
         engine = make_pipeline_engine()
         engine.cur_state = "reloading"
 
@@ -146,8 +145,7 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.cur_state, "reloading")
 
     def test_readiness_signal_does_not_block_concurrent_speech_queueing(self) -> None:
-        """Verify the readiness cue does not briefly reject speech as busy.
-        """
+        """Verify the readiness cue does not briefly reject speech as busy."""
         engine = make_pipeline_engine()
         queued_during_signal: list[bool] = []
         original_register = pipeline.register_playback_source
@@ -277,8 +275,7 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.errors, ["Celune is not currently ready"])
 
     def test_handle_audio_input_accepts_and_ignores_audio_by_default(self) -> None:
-        """Verify engine-level audio input is a safe explicit no-op in TTS mode.
-        """
+        """Verify engine-level audio input is a safe explicit no-op in TTS mode."""
         engine = make_pipeline_engine()
         engine.log = mock.Mock()
         engine.log_dev = mock.Mock()
@@ -300,8 +297,7 @@ class PipelineTests(TestCase):
     def test_handle_audio_input_routes_to_vc_backend_in_voice_conversion_mode(
         self,
     ) -> None:
-        """Verify VC mode sends audio input through the configured VC backend.
-        """
+        """Verify VC mode sends audio input through the configured VC backend."""
         engine = make_pipeline_engine()
         engine.input_mode = "voice_conversion"
         engine.vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
@@ -346,8 +342,7 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.text_queue.empty(), True)
 
     def test_handle_audio_input_reports_missing_vc_backend_cleanly(self) -> None:
-        """Verify VC mode surfaces a clean error when no VC backend is configured.
-        """
+        """Verify VC mode surfaces a clean error when no VC backend is configured."""
         engine = make_pipeline_engine()
         engine.input_mode = "voice_conversion"
         engine.vc_backend = None
@@ -370,8 +365,7 @@ class PipelineTests(TestCase):
     def test_handle_audio_input_applies_engine_vc_pitch_shift_to_output(
         self,
     ) -> None:
-        """Verify VC routing applies the configured pitch shift to converted output.
-        """
+        """Verify VC routing applies the configured pitch shift to converted output."""
         engine = make_pipeline_engine()
         engine.input_mode = "voice_conversion"
         engine.vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
@@ -410,8 +404,7 @@ class PipelineTests(TestCase):
     def test_handle_audio_input_passes_engine_vc_f0_condition_to_vc_backend(
         self,
     ) -> None:
-        """Verify VC routing carries the configured engine conversion mode.
-        """
+        """Verify VC routing carries the configured engine conversion mode."""
         engine = make_pipeline_engine()
         engine.input_mode = "voice_conversion"
         engine.vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
@@ -443,8 +436,7 @@ class PipelineTests(TestCase):
         self.assertEqual(convert_mock.call_args.args[0].f0_condition, True)
 
     def test_tts_mode_does_not_route_audio_to_vc_backend(self) -> None:
-        """Verify the default TTS mode ignores audio instead of invoking VC routing.
-        """
+        """Verify the default TTS mode ignores audio instead of invoking VC routing."""
         engine = make_pipeline_engine()
         engine.input_mode = "text_to_speech"
         engine.vc_backend = mock.Mock()
@@ -462,8 +454,7 @@ class PipelineTests(TestCase):
         engine.vc_backend.convert.assert_not_called()
 
     def test_download_youtube_sfx_writes_expected_temp_wav(self) -> None:
-        """Verify yt-dlp downloads to Celune's fixed temporary WAV path.
-        """
+        """Verify yt-dlp downloads to Celune's fixed temporary WAV path."""
         engine = make_pipeline_engine()
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -505,8 +496,7 @@ class PipelineTests(TestCase):
         self.assertIn(str(temp_root / "temp" / "temporary_audio.%(ext)s"), command)
 
     def test_download_youtube_sfx_uses_repo_venv_python_when_compiled(self) -> None:
-        """Verify compiled launches call yt-dlp through the repo venv Python.
-        """
+        """Verify compiled launches call yt-dlp through the repo venv Python."""
         engine = make_pipeline_engine()
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -549,8 +539,7 @@ class PipelineTests(TestCase):
         self.assertEqual(command[1:3], ["-m", "yt_dlp"])
 
     def test_download_youtube_sfx_logs_missing_file_state(self) -> None:
-        """Verify missing yt-dlp output uses the current no-file warning messages.
-        """
+        """Verify missing yt-dlp output uses the current no-file warning messages."""
         engine = make_pipeline_engine()
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -588,8 +577,7 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.errors[-1], "Could not download YouTube audio")
 
     def test_download_youtube_sfx_logs_download_failure_state(self) -> None:
-        """Verify yt-dlp failures use the current download-failed warning messages.
-        """
+        """Verify yt-dlp failures use the current download-failed warning messages."""
         engine = make_pipeline_engine()
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -625,8 +613,7 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.errors[-1], "Could not download YouTube audio")
 
     def test_youtube_sfx_title_reads_oembed_title(self) -> None:
-        """Verify YouTube titles can be resolved without yt-dlp title output.
-        """
+        """Verify YouTube titles can be resolved without yt-dlp title output."""
 
         class FakeResponse:
             """Minimal urlopen response stub."""
@@ -659,8 +646,7 @@ class PipelineTests(TestCase):
         self.assertEqual(title, "Fixture Video Title")
 
     def test_play_accepts_youtube_url_via_downloaded_wav(self) -> None:
-        """Verify YouTube URLs are resolved to a WAV and played as SFX.
-        """
+        """Verify YouTube URLs are resolved to a WAV and played as SFX."""
         engine = make_pipeline_engine()
         downloaded = Path("C:/Users/user/AppData/Local/Celune/temporary_audio.wav")
         audio = np.ones((8, 2), dtype=np.float32)
@@ -697,8 +683,7 @@ class PipelineTests(TestCase):
     def test_queue_sfx_audio_allows_overlay_while_speech_pipeline_is_locked(
         self,
     ) -> None:
-        """Verify SFX sources can be queued while speech already owns the pipeline.
-        """
+        """Verify SFX sources can be queued while speech already owns the pipeline."""
         engine = make_pipeline_engine()
         engine.locked = True
         engine.stream = None
@@ -729,8 +714,7 @@ class PipelineTests(TestCase):
         )
 
     def test_playback_worker_mixes_sources_and_glow_receives_mixed_audio(self) -> None:
-        """Verify the DSP mixer sums overlapping sources before playback/probing.
-        """
+        """Verify the DSP mixer sums overlapping sources before playback/probing."""
         engine = make_pipeline_engine()
         engine.stream = None
         engine._stream = None
@@ -778,8 +762,7 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.playback_done.is_set(), True)
 
     def test_playback_worker_uses_configured_output_device(self) -> None:
-        """Verify playback streams honor the configured output device override.
-        """
+        """Verify playback streams honor the configured output device override."""
         engine = make_pipeline_engine()
         engine.config = {"output_recording_device": "VB-Cable Output"}
         engine.stream = None
@@ -814,8 +797,7 @@ class PipelineTests(TestCase):
         self.assertEqual(mock_stream.call_args.kwargs["device"], "VB-Cable Output")
 
     def test_playback_worker_logs_friendly_output_device_match_warnings(self) -> None:
-        """Verify ambiguous output devices are downgraded to warnings.
-        """
+        """Verify ambiguous output devices are downgraded to warnings."""
         engine = make_pipeline_engine()
         engine.config = {"output_recording_device": "CABLE-B Input"}
         engine.stream = None
@@ -865,8 +847,7 @@ class PipelineTests(TestCase):
     def test_playback_worker_does_not_emit_idle_for_non_idle_completion_marker(
         self,
     ) -> None:
-        """Verify non-readiness completion markers cannot snap the runtime back to idle.
-        """
+        """Verify non-readiness completion markers cannot snap the runtime back to idle."""
         engine = make_pipeline_engine()
         engine.stream = None
         engine._stream = None
@@ -903,8 +884,7 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.playback_done.is_set(), True)
 
     def test_playback_worker_reports_live_audio_progress(self) -> None:
-        """Verify playback progress follows audio position without flooding updates.
-        """
+        """Verify playback progress follows audio position without flooding updates."""
         engine = make_pipeline_engine()
         engine.stream = None
         engine._stream = None
@@ -954,8 +934,7 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.progress[-1], (1, 1))
 
     def test_playback_worker_admits_speech_after_sfx_has_already_started(self) -> None:
-        """Verify late-arriving speech reaches the DSP while SFX is still active.
-        """
+        """Verify late-arriving speech reaches the DSP while SFX is still active."""
         engine = make_pipeline_engine()
         engine.stream = None
         engine._stream = None
@@ -1013,8 +992,7 @@ class PipelineTests(TestCase):
     def test_playback_status_restores_prior_sfx_label_after_speech_finishes(
         self,
     ) -> None:
-        """Verify mixed playback restores the prior SFX status after speech ends.
-        """
+        """Verify mixed playback restores the prior SFX status after speech ends."""
         engine = make_pipeline_engine()
         engine.stream = None
         engine._stream = None
@@ -1076,8 +1054,7 @@ class PipelineTests(TestCase):
         self.assertIn("Playing loop.wav", statuses[speaking_index + 1 :])
 
     def test_playback_worker_ducks_sfx_to_quarter_and_restores_with_fades(self) -> None:
-        """Verify speech ducks SFX to 25 percent, then fades it back up.
-        """
+        """Verify speech ducks SFX to 25 percent, then fades it back up."""
         engine = make_pipeline_engine()
         engine.stream = None
         engine._stream = None
@@ -1148,8 +1125,7 @@ class PipelineTests(TestCase):
         self.assertGreater(means[-1], 0.7)
 
     def test_force_stop_resets_glow_audio_reactivity(self) -> None:
-        """Verify forced playback stop clears the glow's audio-reactive state.
-        """
+        """Verify forced playback stop clears the glow's audio-reactive state."""
         engine = make_pipeline_engine()
         engine.stream = None
         engine._stream = None
@@ -1181,8 +1157,7 @@ class PipelineTests(TestCase):
         engine.idle_callback.assert_called_once_with()
 
     def test_finalize_playback_idle_resets_glow_audio_reactivity(self) -> None:
-        """Verify normal playback completion restores the resting glow.
-        """
+        """Verify normal playback completion restores the resting glow."""
         engine = make_pipeline_engine()
         engine.locked = False
         engine.cur_state = "speaking"
@@ -1198,8 +1173,7 @@ class PipelineTests(TestCase):
     def test_finalize_playback_idle_does_not_announce_readiness_while_reloading(
         self,
     ) -> None:
-        """Verify transitional playback does not announce readiness mid-reload.
-        """
+        """Verify transitional playback does not announce readiness mid-reload."""
         engine = make_pipeline_engine()
         engine.locked = True
         engine.loaded = False
@@ -1214,8 +1188,7 @@ class PipelineTests(TestCase):
     def test_finalize_playback_idle_does_not_emit_idle_callback_while_locked(
         self,
     ) -> None:
-        """Verify locked non-readiness playback cannot unlock the UI through idle callbacks.
-        """
+        """Verify locked non-readiness playback cannot unlock the UI through idle callbacks."""
         engine = make_pipeline_engine()
         engine.locked = True
         engine.loaded = False
@@ -1239,8 +1212,7 @@ class PipelineTests(TestCase):
 
             @staticmethod
             def raise_for_status() -> None:
-                """Fake return of raise_for_status().
-                """
+                """Fake return of raise_for_status()."""
 
             @staticmethod
             def json() -> JSONSerializable:
@@ -1360,8 +1332,7 @@ class PipelineTests(TestCase):
         )
 
     def test_persona_request_uses_xhigh_quantization(self) -> None:
-        """Verify xhigh VRAM presets request Persona in 8-bit mode.
-        """
+        """Verify xhigh VRAM presets request Persona in 8-bit mode."""
         engine = make_pipeline_engine()
         engine.config = {"vram": "xhigh", "persona": {"model_id": "fixture/persona"}}
         engine.current_character = "Celune"
@@ -1375,8 +1346,7 @@ class PipelineTests(TestCase):
         self.assertEqual(payload["quantization"], "8bit")
 
     def test_persona_context_omits_voice_prompt_when_unsupported(self) -> None:
-        """Verify unsupported voice prompts do not leak into Persona context.
-        """
+        """Verify unsupported voice prompts do not leak into Persona context."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Celune"
@@ -1423,8 +1393,7 @@ class PipelineTests(TestCase):
         self.assertNotIn("The speaker uses a more confident", character_card)
 
     def test_persona_prompt_builder_renders_structured_context_blocks(self) -> None:
-        """Verify Persona prompts include the requested structured RAG sections.
-        """
+        """Verify Persona prompts include the requested structured RAG sections."""
         engine = make_pipeline_engine()
         engine.config = {
             "persona_character_profile": "A careful archivist with a dry wit.",
@@ -1496,8 +1465,7 @@ class PipelineTests(TestCase):
         self.assertNotIn("<request>", prompt)
 
     def test_cevoice_persona_metadata_populates_persona_card(self) -> None:
-        """Verify CEVOICE persona metadata becomes the active Persona card.
-        """
+        """Verify CEVOICE persona metadata becomes the active Persona card."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Mirelle"
@@ -1564,8 +1532,7 @@ class PipelineTests(TestCase):
         )
 
     def test_different_cevoice_personas_produce_distinct_prompts(self) -> None:
-        """Verify different CEVOICE persona packs shape different Persona prompts.
-        """
+        """Verify different CEVOICE persona packs shape different Persona prompts."""
         first = make_pipeline_engine()
         first.config = {}
         first.current_character = "Mirelle"
@@ -1598,8 +1565,7 @@ class PipelineTests(TestCase):
         self.assertIn("Rho:", second_prompt)
 
     def test_persona_prompt_does_not_hardcode_celune_identity(self) -> None:
-        """Verify Persona prompts stay character-agnostic without pack metadata.
-        """
+        """Verify Persona prompts stay character-agnostic without pack metadata."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Fixture"
@@ -1614,8 +1580,7 @@ class PipelineTests(TestCase):
         self.assertIn("You are Fixture", prompt)
 
     def test_default_celune_prompt_uses_canonical_age_and_gender(self) -> None:
-        """Verify default Celune prompts expose the intended identity fields.
-        """
+        """Verify default Celune prompts expose the intended identity fields."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Celune"
@@ -1632,8 +1597,7 @@ class PipelineTests(TestCase):
         self.assertNotIn("The speaker uses a more confident", prompt)
 
     def test_named_celune_custom_pack_does_not_use_default_identity(self) -> None:
-        """Verify custom packs named Celune do not inherit default identity fields.
-        """
+        """Verify custom packs named Celune do not inherit default identity fields."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Celune"
@@ -1650,8 +1614,7 @@ class PipelineTests(TestCase):
     def test_persona_context_uses_weighted_emotion_state_when_unconfigured(
         self,
     ) -> None:
-        """Verify Persona state can come from weighted conversation emotion.
-        """
+        """Verify Persona state can come from weighted conversation emotion."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Fixture"
@@ -1686,8 +1649,7 @@ class PipelineTests(TestCase):
     def test_persona_context_prefers_configured_state_over_emotion_analysis(
         self,
     ) -> None:
-        """Verify an explicit persona_state still overrides automatic emotion blending.
-        """
+        """Verify an explicit persona_state still overrides automatic emotion blending."""
         engine = make_pipeline_engine()
         engine.config = {"persona_state": "Thoughtful and slightly tired."}
         engine.current_character = "Fixture"
@@ -1700,8 +1662,7 @@ class PipelineTests(TestCase):
         analyzer.assert_not_called()
 
     def test_persona_context_logs_emotion_fallback_reason(self) -> None:
-        """Verify emotion-analysis failures are surfaced in developer logs.
-        """
+        """Verify emotion-analysis failures are surfaced in developer logs."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Fixture"
@@ -1735,8 +1696,7 @@ class PipelineTests(TestCase):
     def test_persona_prompt_builder_omits_vision_context_without_attachments(
         self,
     ) -> None:
-        """Verify Persona prompts omit vision context when no media is attached.
-        """
+        """Verify Persona prompts omit vision context when no media is attached."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Fixture"
@@ -1754,8 +1714,7 @@ class PipelineTests(TestCase):
         self.assertIn("assistant: hi", prompt)
 
     def test_persona_messages_keep_only_recent_history(self) -> None:
-        """Verify stale Persona turns do not dilute the current character card.
-        """
+        """Verify stale Persona turns do not dilute the current character card."""
         engine = make_pipeline_engine()
         engine.config = {"persona": {"memory": {"max_short_term_messages": 6}}}
         engine.current_character = "Celune"
@@ -1779,8 +1738,7 @@ class PipelineTests(TestCase):
         self.assertNotIn("old user 4", system_prompt)
 
     def test_persona_history_uses_configured_short_term_message_limit(self) -> None:
-        """Verify Persona history rolls forward using the configured message limit.
-        """
+        """Verify Persona history rolls forward using the configured message limit."""
         engine = make_pipeline_engine()
         engine.config = {"persona": {"memory": {"max_short_term_messages": 4}}}
         engine.current_character = "Fixture"
@@ -1797,8 +1755,7 @@ class PipelineTests(TestCase):
 
             @staticmethod
             def raise_for_status() -> None:
-                """Fake return of raise_for_status().
-                """
+                """Fake return of raise_for_status()."""
 
             @staticmethod
             def json() -> JSONSerializable:
@@ -1836,16 +1793,14 @@ class PipelineTests(TestCase):
         )
 
     def test_think_persists_explicit_memory_before_persona_reply(self) -> None:
-        """Verify explicit memory requests are stored before Persona responds.
-        """
+        """Verify explicit memory requests are stored before Persona responds."""
 
         class FakeResponse:
             """Fake API response for explicit-memory persistence."""
 
             @staticmethod
             def raise_for_status() -> None:
-                """Fake return of raise_for_status().
-                """
+                """Fake return of raise_for_status()."""
 
             @staticmethod
             def json() -> JSONSerializable:
@@ -1918,8 +1873,7 @@ class PipelineTests(TestCase):
     def test_persona_prompt_builder_includes_short_term_summary_when_present(
         self,
     ) -> None:
-        """Verify short-term memory can include a session summary for later use.
-        """
+        """Verify short-term memory can include a session summary for later use."""
         engine = make_pipeline_engine()
         engine.config = {"persona": {"memory": {"max_short_term_messages": 2}}}
         engine.current_character = "Fixture"
@@ -1946,8 +1900,7 @@ class PipelineTests(TestCase):
         self.assertIn("user: And after that?", prompt)
 
     def test_persona_messages_include_pending_attachments(self) -> None:
-        """Verify visual attachments are sent in the next persona user turn.
-        """
+        """Verify visual attachments are sent in the next persona user turn."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Celune"
@@ -1996,8 +1949,7 @@ class PipelineTests(TestCase):
         )
 
     def test_persona_messages_preserve_remote_attachment_urls(self) -> None:
-        """Verify remote visual URLs are passed through to Persona unchanged.
-        """
+        """Verify remote visual URLs are passed through to Persona unchanged."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Celune"
@@ -2028,16 +1980,14 @@ class PipelineTests(TestCase):
         )
 
     def test_stale_attachment_does_not_leak_into_later_requests(self) -> None:
-        """Verify one-shot attachments do not persist after a Persona request.
-        """
+        """Verify one-shot attachments do not persist after a Persona request."""
 
         class FakeResponse:
             """Fake Persona API response."""
 
             @staticmethod
             def raise_for_status() -> None:
-                """Fake return of raise_for_status().
-                """
+                """Fake return of raise_for_status()."""
 
             @staticmethod
             def json() -> JSONSerializable:
@@ -2183,8 +2133,7 @@ class PipelineTests(TestCase):
     def test_generation_worker_reloads_language_specific_model_when_needed(
         self,
     ) -> None:
-        """Verify request-scoped language can trigger a backend model reload.
-        """
+        """Verify request-scoped language can trigger a backend model reload."""
         engine = make_pipeline_engine()
         backend = self._LanguageAwareBackend()
         engine.backend = backend
@@ -2231,8 +2180,7 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.model.kwargs["lang"], "fr")
 
     def test_generation_worker_disables_smart_buffer_for_realtime_speed(self) -> None:
-        """Verify smart buffering gets out of the way when generation is realtime.
-        """
+        """Verify smart buffering gets out of the way when generation is realtime."""
         engine = make_pipeline_engine()
         queued_lengths: list[int] = []
 
@@ -2288,8 +2236,7 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.smart_buffer_target_seconds, 0.0)
 
     def test_generation_worker_expands_smart_buffer_when_speed_drops(self) -> None:
-        """Verify slower observed generation expands the smart buffer target.
-        """
+        """Verify slower observed generation expands the smart buffer target."""
         engine = make_pipeline_engine()
         queued_lengths: list[int] = []
 
@@ -2351,8 +2298,7 @@ class PipelineTests(TestCase):
         self.assertGreater(engine.smart_buffer_target_seconds, 0.0)
 
     def test_generation_worker_waits_for_completion_at_very_low_speed(self) -> None:
-        """Verify very slow generation fully buffers the utterance before playback.
-        """
+        """Verify very slow generation fully buffers the utterance before playback."""
         engine = make_pipeline_engine()
         queued_lengths: list[int] = []
 
@@ -2412,8 +2358,7 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.smart_buffer_target_seconds, float("inf"))
 
     def test_playback_blocks_uses_true_50ms_chunks(self) -> None:
-        """Verify mixer block splitting uses real wall-clock block lengths.
-        """
+        """Verify mixer block splitting uses real wall-clock block lengths."""
         timing = pipeline.SpeechTiming(start_time=0.0)
         chunk = pipeline.PlaybackChunk(
             source_id=1,
@@ -2435,8 +2380,7 @@ class PipelineTests(TestCase):
     def test_generation_worker_handles_save_false_without_concatenate_error(
         self,
     ) -> None:
-        """Verify silence analysis does not crash when output saving is disabled.
-        """
+        """Verify silence analysis does not crash when output saving is disabled."""
         engine = make_pipeline_engine()
         engine.backend = SimpleNamespace(
             generate_stream=lambda _model, **_kwargs: iter(
