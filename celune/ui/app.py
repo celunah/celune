@@ -6,6 +6,7 @@ import sys
 import time
 import types
 import shlex
+import asyncio
 import queue as queue_module
 import signal
 import ctypes
@@ -1114,7 +1115,12 @@ class CeluneUI(App):
         if self.cur_state == "exiting" or self.celune is None:
             return
 
-        if self.celune.enter_sleep_mode():
+        self.enter_sleep_mode()
+
+    @work(exclusive=True)
+    async def enter_sleep_mode(self) -> None:
+        """Put the app to sleep without blocking the UI event loop."""
+        if await self.celune.enter_sleep_mode_async():
             self.safe_log(
                 string("ui.sleeping_log", app_name=APP_NAME),
                 "sleeping",
@@ -1122,11 +1128,11 @@ class CeluneUI(App):
             self.safe_status(string("ui.sleeping_status"), "sleeping")
             self.change_voice_lock_state(locked=True)
 
-    @work(thread=True, exclusive=True)
-    def wake_from_sleep(self) -> None:
+    @work(exclusive=True)
+    async def wake_from_sleep(self) -> None:
         """Wake the app after the user types into the sleeping UI."""
         try:
-            if self.celune.wake_from_sleep():
+            if await self.celune.wake_from_sleep_async():
                 self._schedule_sleep_timer()
         finally:
             if self.celune.sleeping:
@@ -2476,7 +2482,10 @@ class CeluneUI(App):
         self._tutorial_timers.clear()
 
         if stop_audio and was_active and self.celune is not None:
-            self.celune.force_stop_speech()
+            threading.Thread(
+                target=lambda: asyncio.run(self.celune.force_stop_speech_async()),
+                daemon=True,
+            ).start()
 
         self._suppress_input_change = True
         try:

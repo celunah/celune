@@ -254,8 +254,8 @@ class UICommandTests(TestCase):
 
     def test_backend_and_cevoice_commands_request_hot_reloads(self) -> None:
         """Verify slash commands delegate backend and CEVOICE hot reloads into Celune."""
-        self.ui.celune.set_backend_and_wait = mock.Mock(return_value=True)
-        self.ui.celune.set_cevoice_and_wait = mock.Mock(return_value=True)
+        self.ui.celune.set_backend_async = mock.AsyncMock(return_value=True)
+        self.ui.celune.set_cevoice_async = mock.AsyncMock(return_value=True)
 
         with mock.patch(
             "celune.ui.commands.threading.Thread",
@@ -264,8 +264,8 @@ class UICommandTests(TestCase):
             self._process_command("backend", ["mini"])
             self._process_command("cevoice", ["nova"])
 
-        self.ui.celune.set_backend_and_wait.assert_called_once_with("mini")
-        self.ui.celune.set_cevoice_and_wait.assert_called_once_with("nova")
+        self.ui.celune.set_backend_async.assert_awaited_once_with("mini")
+        self.ui.celune.set_cevoice_async.assert_awaited_once_with("nova")
         self.assertEqual(self.logs[-2], ("Switched to backend: mini", "info"))
         self.assertEqual(self.logs[-1], ("Character changed: nova", "info"))
 
@@ -278,12 +278,12 @@ class UICommandTests(TestCase):
             log=lambda _msg, _severity="info": None
         )
         self.ui.celune._active_runtime_backend_name = mock.Mock(return_value="fake-vc")
-        self.ui.celune.set_backend_and_wait = mock.Mock(return_value=True)
+        self.ui.celune.set_backend_async = mock.AsyncMock(return_value=True)
 
         self._process_command("backend", ["fake-vc"])
 
         self.ui.celune._active_runtime_backend_name.assert_called_once_with()
-        self.ui.celune.set_backend_and_wait.assert_not_called()
+        self.ui.celune.set_backend_async.assert_not_called()
         self.assertEqual(self.logs[-1][1], "warning")
 
     def test_voice_conversion_commands_update_seedvc_state(self) -> None:
@@ -408,7 +408,7 @@ class UICommandTests(TestCase):
 
     def test_cevoice_command_reports_failed_character_switch(self) -> None:
         """Verify /cevoice warns when the requested pack cannot be loaded."""
-        self.ui.celune.set_cevoice_and_wait = mock.Mock(return_value=False)
+        self.ui.celune.set_cevoice_async = mock.AsyncMock(return_value=False)
 
         with mock.patch(
             "celune.ui.commands.threading.Thread",
@@ -416,7 +416,7 @@ class UICommandTests(TestCase):
         ):
             self._process_command("cevoice", ["invalid_character"])
 
-        self.ui.celune.set_cevoice_and_wait.assert_called_once_with("invalid_character")
+        self.ui.celune.set_cevoice_async.assert_awaited_once_with("invalid_character")
         self.assertEqual(
             self.logs[-1],
             ("Could not switch character to invalid_character.", "warning"),
@@ -424,7 +424,7 @@ class UICommandTests(TestCase):
 
     def test_cevoice_command_rejects_already_loaded_character(self) -> None:
         """Verify /cevoice warns instead of reloading the active pack."""
-        self.ui.celune.set_cevoice_and_wait = mock.Mock(return_value=True)
+        self.ui.celune.set_cevoice_async = mock.AsyncMock(return_value=True)
 
         with (
             mock.patch(
@@ -442,7 +442,7 @@ class UICommandTests(TestCase):
         ):
             self._process_command("cevoice", ["nova"])
 
-        self.ui.celune.set_cevoice_and_wait.assert_not_called()
+        self.ui.celune.set_cevoice_async.assert_not_called()
         self.assertEqual(
             self.logs[-1],
             ("This character is already loaded.", "warning"),

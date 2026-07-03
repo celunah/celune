@@ -6,6 +6,7 @@ import io
 import time
 import uuid
 import socket
+import asyncio
 import datetime
 import textwrap
 import threading
@@ -13,7 +14,7 @@ from html import escape
 from hmac import compare_digest
 from dataclasses import dataclass
 from collections import defaultdict, deque
-from typing import Callable, Iterator, Optional, Union
+from typing import Callable, Coroutine, Iterator, Optional, Union, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -78,6 +79,33 @@ WebUiUpdate = dict[str, JSONSerializable]
 WebUiAudioValue = Optional[tuple[int, npt.NDArray[np.float32]]]
 WebUiInputArray = Union[npt.NDArray[np.float32], npt.NDArray[np.int16]]
 WebUiInputAudioValue = Optional[tuple[int, WebUiInputArray]]
+
+
+def _run_async_runtime_call(
+    func: Callable[[], Coroutine[object, object, JSONSerializable]],
+) -> JSONSerializable:
+    """Run one async runtime call from a synchronous API or WebUI callback."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(func())
+
+    result: dict[str, JSONSerializable] = {}
+    error: list[BaseException] = []
+
+    def runner() -> None:
+        try:
+            result["value"] = asyncio.run(func())
+        except BaseException as exc:
+            error.append(exc)
+
+    worker = threading.Thread(target=runner, daemon=True)
+    worker.start()
+    worker.join()
+
+    if error:
+        raise error[0]
+    return result["value"]
 
 
 class _WebUiUnset:
@@ -1432,7 +1460,22 @@ def _webui_speak(
         _set_webui_status(string("status.waking_up"))
         snapshot = _webui_submit_snapshot(text)
         yield snapshot[0], None, *snapshot[1:]
-        if not celune.wake_from_sleep():
+        wake_async = cast(
+            Optional[Callable[[], Coroutine[object, object, bool]]],
+            getattr(celune, "wake_from_sleep_async", None),
+        )
+        if wake_async is not None:
+            woke = bool(
+                _run_async_runtime_call(
+                    lambda: cast(
+                        Coroutine[object, object, JSONSerializable],
+                        wake_async(),
+                    )
+                )
+            )
+        else:
+            woke = celune.wake_from_sleep()
+        if not woke:
             snapshot = _webui_submit_snapshot(text)
             yield snapshot[0], None, *snapshot[1:]
             return
@@ -1616,7 +1659,23 @@ def _webui_cycle_voice() -> tuple[
     next_voice = celune.voices[(current_index + 1) % len(celune.voices)]
     api_log("VOICE(WEBUI)", next_voice)
 
-    if not celune.set_voice_and_wait(next_voice):
+    set_voice_async = cast(
+        Optional[Callable[[str], Coroutine[object, object, bool]]],
+        getattr(celune, "set_voice_async", None),
+    )
+    if set_voice_async is not None:
+        switched = bool(
+            _run_async_runtime_call(
+                lambda: cast(
+                    Coroutine[object, object, JSONSerializable],
+                    set_voice_async(next_voice),
+                )
+            )
+        )
+    else:
+        switched = celune.set_voice_and_wait(next_voice)
+
+    if not switched:
         _append_webui_log(string("webui.cannot_change_voice_right_now"), "error")
 
     return _webui_snapshot()
@@ -2025,7 +2084,7 @@ def speak_job(job_id: str) -> Union[Response, JSONResponse]:
 
 
 @api.post("/v1/voice", response_model=ActionResponse)
-def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
+async def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
     """Change the active voice.
 
     Args:
@@ -2047,7 +2106,7 @@ def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
             },
         )
 
-    if not celune.set_voice_and_wait(body.voice_name):
+    if not await celune.set_voice_async(body.voice_name):
         return JSONResponse(
             status_code=500,
             content={

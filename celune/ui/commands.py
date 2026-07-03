@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import os
+import asyncio
 import threading
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import Optional, TYPE_CHECKING
+from typing import Coroutine, Optional, TYPE_CHECKING, cast
 
 import soundfile as sf
 
@@ -29,6 +30,24 @@ if TYPE_CHECKING:
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".webm"}
+
+
+def _run_runtime_async(
+    target: object,
+    async_name: str,
+    sync_name: str,
+    *method_args: object,
+) -> object:
+    """Run one Celune runtime action, preferring the async implementation."""
+    async_method = getattr(target, async_name, None)
+    if callable(async_method):
+        return asyncio.run(
+            cast(
+                Coroutine[object, object, object],
+                async_method(*method_args),
+            )
+        )
+    return getattr(target, sync_name)(*method_args)
 
 
 def _attachment_source(path: Path) -> str:
@@ -380,7 +399,12 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         def backend_worker() -> None:
             try:
-                if ui.celune.set_backend_and_wait(backend_name):
+                if _run_runtime_async(
+                    ui.celune,
+                    "set_backend_async",
+                    "set_backend_and_wait",
+                    backend_name,
+                ):
                     ui.celune.try_play_signal("readiness")
                     ui.safe_log(
                         string("commands.backend_switched", backend_name=backend_name)
@@ -410,7 +434,12 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         def cevoice_worker() -> None:
             try:
-                if ui.celune.set_cevoice_and_wait(bundle):
+                if _run_runtime_async(
+                    ui.celune,
+                    "set_cevoice_async",
+                    "set_cevoice_and_wait",
+                    bundle,
+                ):
                     ui.safe_log(string("commands.character_changed", bundle=bundle))
                 else:
                     ui.safe_log(
@@ -751,9 +780,16 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         tutorial(ui)
         return
     if command == "stop":
-        if not ui.celune.force_stop_speech():
-            ui.safe_log(string("commands.nothing_to_stop"))
-            return
+
+        def stop_worker() -> None:
+            if not _run_runtime_async(
+                ui.celune,
+                "force_stop_speech_async",
+                "force_stop_speech",
+            ):
+                ui.safe_log(string("commands.nothing_to_stop"))
+
+        threading.Thread(target=stop_worker, daemon=True).start()
 
         return
     if command == "exit":

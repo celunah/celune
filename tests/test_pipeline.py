@@ -10,7 +10,7 @@ import json as _json
 from pathlib import Path
 from types import SimpleNamespace, TracebackType
 from typing import cast, Optional
-from unittest import mock, TestCase
+from unittest import mock, IsolatedAsyncioTestCase, TestCase
 from collections.abc import Iterator
 
 import numpy as np
@@ -187,6 +187,48 @@ class PipelineTests(TestCase):
         self.assertEqual(queued_during_signal, [True])
         request = engine.text_queue.get_nowait()
         self.assertEqual(request.text, "hello")
+
+
+class PipelineAsyncTests(IsolatedAsyncioTestCase):
+    """Tests for async pipeline entry points."""
+
+    _LanguageAwareBackend = PipelineTests._LanguageAwareBackend
+
+    async def _run_generation_worker(self, engine: Celune) -> None:
+        """Run the async generation worker directly inside the test loop."""
+        await pipeline.generation_worker_job(engine)
+
+    async def _run_playback_worker(self, engine: Celune) -> None:
+        """Run the async playback worker directly inside the test loop."""
+        await pipeline.playback_worker_job(engine)
+
+    async def test_queue_speech_async_waits_for_model_readiness_via_to_thread(
+        self,
+    ) -> None:
+        """Verify async speech queueing offloads model-ready waits from the event loop."""
+        engine = make_pipeline_engine()
+        engine.model_ready.clear()
+
+        def mark_ready() -> bool:
+            engine.model_ready.set()
+            return True
+
+        engine.model_ready.wait = mock.Mock(side_effect=mark_ready)
+        to_thread = mock.AsyncMock(side_effect=lambda func, *args: func(*args))
+
+        with mock.patch("celune.pipeline.asyncio.to_thread", to_thread):
+            queued = await pipeline.queue_speech_async(
+                cast(Celune, engine),
+                "hello",
+                display_text="shown",
+            )
+
+        self.assertEqual(queued, True)
+        engine.model_ready.wait.assert_called_once_with()
+        self.assertEqual(to_thread.await_count, 1)
+        request = engine.text_queue.get_nowait()
+        self.assertEqual(request.text, "hello")
+        self.assertEqual(request.display_text, "shown")
 
     def test_queue_speech_handles_success_and_failure_paths(self) -> None:
         """Verify speech queueing success and rejection paths.
@@ -713,7 +755,9 @@ class PipelineTests(TestCase):
             any(isinstance(item, pipeline.PlaybackSourceDone) for item in queued)
         )
 
-    def test_playback_worker_mixes_sources_and_glow_receives_mixed_audio(self) -> None:
+    async def test_playback_worker_mixes_sources_and_glow_receives_mixed_audio(
+        self,
+    ) -> None:
         """Verify the DSP mixer sums overlapping sources before playback/probing."""
         engine = make_pipeline_engine()
         engine.stream = None
@@ -750,7 +794,7 @@ class PipelineTests(TestCase):
         engine.audio_queue.put(engine.sentinel)
 
         with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
-            pipeline.playback_worker(cast(Celune, engine))
+            await self._run_playback_worker(cast(Celune, engine))
 
         self.assertEqual(fake_stream.started, True)
         self.assertEqual(len(fake_stream.written), 1)
@@ -761,7 +805,7 @@ class PipelineTests(TestCase):
         np.testing.assert_allclose(np.concatenate(glow_calls), 0.5, atol=1e-6)
         self.assertEqual(engine.playback_done.is_set(), True)
 
-    def test_playback_worker_uses_configured_output_device(self) -> None:
+    async def test_playback_worker_uses_configured_output_device(self) -> None:
         """Verify playback streams honor the configured output device override."""
         engine = make_pipeline_engine()
         engine.config = {"output_recording_device": "VB-Cable Output"}
@@ -792,11 +836,13 @@ class PipelineTests(TestCase):
             "celune.pipeline.sd.OutputStream",
             return_value=fake_stream,
         ) as mock_stream:
-            pipeline.playback_worker(cast(Celune, engine))
+            await self._run_playback_worker(cast(Celune, engine))
 
         self.assertEqual(mock_stream.call_args.kwargs["device"], "VB-Cable Output")
 
-    def test_playback_worker_logs_friendly_output_device_match_warnings(self) -> None:
+    async def test_playback_worker_logs_friendly_output_device_match_warnings(
+        self,
+    ) -> None:
         """Verify ambiguous output devices are downgraded to warnings."""
         engine = make_pipeline_engine()
         engine.config = {"output_recording_device": "CABLE-B Input"}
@@ -832,7 +878,7 @@ class PipelineTests(TestCase):
                 "Please specify one of the above devices, then restart Celune."
             ),
         ):
-            pipeline.playback_worker(cast(Celune, engine))
+            await self._run_playback_worker(cast(Celune, engine))
 
         self.assertEqual(engine.errors[-1], "No suitable audio devices")
         warning_messages = [
@@ -844,7 +890,7 @@ class PipelineTests(TestCase):
             warning_messages[-1],
         )
 
-    def test_playback_worker_does_not_emit_idle_for_non_idle_completion_marker(
+    async def test_playback_worker_does_not_emit_idle_for_non_idle_completion_marker(
         self,
     ) -> None:
         """Verify non-readiness completion markers cannot snap the runtime back to idle."""
@@ -877,13 +923,13 @@ class PipelineTests(TestCase):
         engine.audio_queue.put(engine.sentinel)
 
         with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
-            pipeline.playback_worker(cast(Celune, engine))
+            await self._run_playback_worker(cast(Celune, engine))
 
         engine.idle_callback.assert_not_called()
         self.assertEqual(engine.cur_state, "reloading")
         self.assertEqual(engine.playback_done.is_set(), True)
 
-    def test_playback_worker_reports_live_audio_progress(self) -> None:
+    async def test_playback_worker_reports_live_audio_progress(self) -> None:
         """Verify playback progress follows audio position without flooding updates."""
         engine = make_pipeline_engine()
         engine.stream = None
@@ -915,11 +961,11 @@ class PipelineTests(TestCase):
         with (
             mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream),
             mock.patch(
-                "celune.pipeline.time.monotonic",
+                "celune.pipeline._monotonic_time",
                 side_effect=lambda: next(monotonic_values),
             ),
         ):
-            pipeline.playback_worker(cast(Celune, engine))
+            await self._run_playback_worker(cast(Celune, engine))
 
         in_flight = [
             (current, total)
@@ -933,7 +979,9 @@ class PipelineTests(TestCase):
         self.assertLess(len(in_flight), len(fake_stream.written))
         self.assertEqual(engine.progress[-1], (1, 1))
 
-    def test_playback_worker_admits_speech_after_sfx_has_already_started(self) -> None:
+    async def test_playback_worker_admits_speech_after_sfx_has_already_started(
+        self,
+    ) -> None:
         """Verify late-arriving speech reaches the DSP while SFX is still active."""
         engine = make_pipeline_engine()
         engine.stream = None
@@ -982,14 +1030,14 @@ class PipelineTests(TestCase):
         pipeline.queue_playback_done(cast(Celune, engine), 1)
 
         with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
-            pipeline.playback_worker(cast(Celune, engine))
+            await self._run_playback_worker(cast(Celune, engine))
 
         blocks = fake_stream.written
         self.assertGreaterEqual(len(blocks), 3)
         self.assertTrue(any(np.max(block) > 0.45 for block in blocks[1:]))
         self.assertEqual(engine.playback_done.is_set(), True)
 
-    def test_playback_status_restores_prior_sfx_label_after_speech_finishes(
+    async def test_playback_status_restores_prior_sfx_label_after_speech_finishes(
         self,
     ) -> None:
         """Verify mixed playback restores the prior SFX status after speech ends."""
@@ -1045,7 +1093,7 @@ class PipelineTests(TestCase):
         )
 
         with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
-            pipeline.playback_worker(cast(Celune, engine))
+            await self._run_playback_worker(cast(Celune, engine))
 
         statuses = [msg for msg, _ in engine.statuses]
         self.assertIn("Playing loop.wav", statuses)
@@ -1053,7 +1101,9 @@ class PipelineTests(TestCase):
         speaking_index = statuses.index("Speaking")
         self.assertIn("Playing loop.wav", statuses[speaking_index + 1 :])
 
-    def test_playback_worker_ducks_sfx_to_quarter_and_restores_with_fades(self) -> None:
+    async def test_playback_worker_ducks_sfx_to_quarter_and_restores_with_fades(
+        self,
+    ) -> None:
         """Verify speech ducks SFX to 25 percent, then fades it back up."""
         engine = make_pipeline_engine()
         engine.stream = None
@@ -1112,7 +1162,7 @@ class PipelineTests(TestCase):
         )
 
         with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
-            pipeline.playback_worker(cast(Celune, engine))
+            await self._run_playback_worker(cast(Celune, engine))
 
         means = [float(np.mean(block)) for block in fake_stream.written]
         self.assertGreaterEqual(len(means), 6)
@@ -1124,7 +1174,7 @@ class PipelineTests(TestCase):
         self.assertGreater(means[-1], means[min_index] + 0.25)
         self.assertGreater(means[-1], 0.7)
 
-    def test_force_stop_resets_glow_audio_reactivity(self) -> None:
+    async def test_force_stop_resets_glow_audio_reactivity(self) -> None:
         """Verify forced playback stop clears the glow's audio-reactive state."""
         engine = make_pipeline_engine()
         engine.stream = None
@@ -1150,7 +1200,7 @@ class PipelineTests(TestCase):
         engine.audio_queue.put(engine.sentinel)
 
         with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
-            pipeline.playback_worker(cast(Celune, engine))
+            await self._run_playback_worker(cast(Celune, engine))
 
         engine.glow.reset_audio_reactivity.assert_called_once_with()
         self.assertEqual(engine.playback_done.is_set(), True)
@@ -2056,7 +2106,7 @@ class PipelineTests(TestCase):
         self.assertIn("<behavior>", second_system)
         self.assertEqual(second_messages[-1], {"role": "user", "content": "And now?"})
 
-    def test_generation_worker_normalizes_each_split_chunk(self) -> None:
+    async def test_generation_worker_normalizes_each_split_chunk(self) -> None:
         """Verify normalization happens after splitting and before generation.
 
         Raises:
@@ -2113,7 +2163,7 @@ class PipelineTests(TestCase):
             mock.patch("celune.pipeline.os.path.exists", return_value=True),
             mock.patch("celune.pipeline._write_celune_flac"),
         ):
-            pipeline.generation_worker(cast(Celune, engine))
+            await self._run_generation_worker(cast(Celune, engine))
 
         self.assertEqual(
             engine.normalize.call_args_list,
@@ -2130,7 +2180,7 @@ class PipelineTests(TestCase):
             ],
         )
 
-    def test_generation_worker_reloads_language_specific_model_when_needed(
+    async def test_generation_worker_reloads_language_specific_model_when_needed(
         self,
     ) -> None:
         """Verify request-scoped language can trigger a backend model reload."""
@@ -2172,14 +2222,16 @@ class PipelineTests(TestCase):
             mock.patch("celune.pipeline.os.path.exists", return_value=True),
             mock.patch("celune.pipeline._write_celune_flac"),
         ):
-            pipeline.generation_worker(cast(Celune, engine))
+            await self._run_generation_worker(cast(Celune, engine))
 
         backend.unload_model.assert_called_once_with()
         backend.load_model.assert_called_once_with("fake/balanced", lang="fr")
         self.assertEqual(backend.current_language, "fr")
         self.assertEqual(engine.model.kwargs["lang"], "fr")
 
-    def test_generation_worker_disables_smart_buffer_for_realtime_speed(self) -> None:
+    async def test_generation_worker_disables_smart_buffer_for_realtime_speed(
+        self,
+    ) -> None:
         """Verify smart buffering gets out of the way when generation is realtime."""
         engine = make_pipeline_engine()
         queued_lengths: list[int] = []
@@ -2230,12 +2282,14 @@ class PipelineTests(TestCase):
                 ),
             ),
         ):
-            pipeline.generation_worker(cast(Celune, engine))
+            await self._run_generation_worker(cast(Celune, engine))
 
         self.assertEqual(queued_lengths, [48000, 48000, 48000])
         self.assertEqual(engine.smart_buffer_target_seconds, 0.0)
 
-    def test_generation_worker_expands_smart_buffer_when_speed_drops(self) -> None:
+    async def test_generation_worker_expands_smart_buffer_when_speed_drops(
+        self,
+    ) -> None:
         """Verify slower observed generation expands the smart buffer target."""
         engine = make_pipeline_engine()
         queued_lengths: list[int] = []
@@ -2286,18 +2340,20 @@ class PipelineTests(TestCase):
                 ),
             ),
             mock.patch(
-                "celune.pipeline.time.monotonic",
-                side_effect=[0.0, 0.1, 0.2, 2.8, 5.6, 8.4],
+                "celune.pipeline._monotonic_time",
+                side_effect=[0.0, 0.1, 0.2, 2.8, 5.6, 8.4] + [8.4] * 16,
             ),
         ):
-            pipeline.generation_worker(cast(Celune, engine))
+            await self._run_generation_worker(cast(Celune, engine))
 
         self.assertEqual(queued_lengths, [48000, 48000, 48000])
         self.assertGreater(engine.smart_buffer_generation_speed, 0.5)
         self.assertLess(engine.smart_buffer_generation_speed, 1.3)
         self.assertGreater(engine.smart_buffer_target_seconds, 0.0)
 
-    def test_generation_worker_waits_for_completion_at_very_low_speed(self) -> None:
+    async def test_generation_worker_waits_for_completion_at_very_low_speed(
+        self,
+    ) -> None:
         """Verify very slow generation fully buffers the utterance before playback."""
         engine = make_pipeline_engine()
         queued_lengths: list[int] = []
@@ -2348,11 +2404,11 @@ class PipelineTests(TestCase):
                 ),
             ),
             mock.patch(
-                "celune.pipeline.time.monotonic",
-                side_effect=[0.0, 0.5, 2.0, 4.0, 6.0, 6.0],
+                "celune.pipeline._monotonic_time",
+                side_effect=[0.0, 0.5, 2.0, 4.0, 6.0, 6.0] + [6.0] * 16,
             ),
         ):
-            pipeline.generation_worker(cast(Celune, engine))
+            await self._run_generation_worker(cast(Celune, engine))
 
         self.assertEqual(queued_lengths, [48000, 48000, 48000])
         self.assertEqual(engine.smart_buffer_target_seconds, float("inf"))
@@ -2377,7 +2433,7 @@ class PipelineTests(TestCase):
         self.assertIs(first_timing, timing)
         self.assertIsNone(second_timing)
 
-    def test_generation_worker_handles_save_false_without_concatenate_error(
+    async def test_generation_worker_handles_save_false_without_concatenate_error(
         self,
     ) -> None:
         """Verify silence analysis does not crash when output saving is disabled."""
@@ -2416,7 +2472,7 @@ class PipelineTests(TestCase):
             ) as silent_mock,
             mock.patch("celune.pipeline._write_celune_flac") as write_mock,
         ):
-            pipeline.generation_worker(cast(Celune, engine))
+            await self._run_generation_worker(cast(Celune, engine))
 
         silent_mock.assert_called_once()
         write_mock.assert_not_called()
@@ -2557,7 +2613,7 @@ class PipelineTests(TestCase):
         """
         engine = make_pipeline_engine()
         timing = pipeline.SpeechTiming(start_time=1.0, first_playback_time=1.25)
-        with mock.patch("celune.pipeline.time.monotonic", return_value=1.25):
+        with mock.patch("celune.pipeline._monotonic_time", return_value=1.25):
             pipeline.log_first_playback(cast(Celune, engine), timing)
         self.assertEqual(engine.messages[-1], ("TTFP: 0.25 seconds", "info"))
 
