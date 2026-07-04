@@ -13,9 +13,8 @@ import numpy as np
 import numpy.typing as npt
 from dots_tts.runtime import DotsTtsRuntime
 
-from ...utils import custom_assert, discard
 from ...cevoice import default_loader, CEVoiceLoader
-from ...i18n import string
+from ...utils import custom_assert, discard
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
@@ -85,52 +84,25 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
     }
     default_voice: Optional[str] = "balanced"
 
-    def __init__(self, log: Callable[[str, str], None]) -> None:
-        super().__init__(log=log)
+    def __init__(
+        self,
+        log: Callable[[str, str], None],
+        fatal: Optional[Callable[[], None]] = None,
+    ) -> None:
+        super().__init__(log=log, fatal=fatal)
         self._validate_refs()
 
     @staticmethod
-    def _require_compatible_bundle() -> tuple[CEVoiceLoader, tuple[str, ...]]:
-        """Return the active CEVOICE/CECHAR loader and its usable voice names."""
-        loader = default_loader()
-        custom_assert(
-            loader is not None,
-            FileNotFoundError(
-                string(
-                    "celune.compatible_bundle_required",
-                    backend="dotstts",
-                )
-            ),
-        )
-        assert loader is not None
-
-        voice_names = tuple(
-            voice
-            for voice in loader.bundle.voice_order
-            if (
-                isinstance(voice, str)
-                and voice.strip()
-                and voice in loader.bundle.voices
-                and isinstance(loader.bundle.voices[voice].get("reference_text"), str)
-                and bool(str(loader.bundle.voices[voice]["reference_text"]).strip())
-            )
-        )
-        custom_assert(
-            bool(voice_names),
-            FileNotFoundError(
-                string(
-                    "celune.compatible_bundle_required",
-                    backend="dotstts",
-                )
-            ),
-        )
-        assert bool(voice_names)
-
-        return loader, voice_names
+    def _get_default_loader() -> Optional[CEVoiceLoader]:
+        """Return the active CEVOICE/CECHAR loader for the dots.tts backend module."""
+        return default_loader()
 
     def _validate_refs(self) -> None:
         """Validate dots.tts reference audio files from the active CEVOICE/CECHAR pack."""
-        loader, voice_names = self._require_compatible_bundle()
+        compatible_bundle = self._require_compatible_bundle()
+        if compatible_bundle is None:
+            return
+        loader, voice_names = compatible_bundle
         for name in voice_names:
             loader.materialize(name, "wav")
 
@@ -141,7 +113,10 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         Returns:
             list[str]: The list of available voices to use from current CEVOICE/CECHAR pack.
         """
-        _, voice_names = self._require_compatible_bundle()
+        compatible_bundle = self._require_compatible_bundle()
+        if compatible_bundle is None:
+            return []
+        _, voice_names = compatible_bundle
         return list(voice_names)
 
     def model_id_for_voice(self, voice: str) -> str:
@@ -153,7 +128,10 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         Returns:
             str: A resolved model name for this voice.
         """
-        _, voice_names = self._require_compatible_bundle()
+        compatible_bundle = self._require_compatible_bundle()
+        if compatible_bundle is None:
+            return self.default_model_id
+        _, voice_names = compatible_bundle
         custom_assert(
             voice in voice_names,
             ValueError(f"{self.name} cannot resolve a model for voice '{voice}'"),
@@ -298,7 +276,10 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             raise ValueError("expected text to say")
 
         try:
-            loader, voice_names = self._require_compatible_bundle()
+            compatible_bundle = self._require_compatible_bundle()
+            if compatible_bundle is None:
+                return
+            loader, voice_names = compatible_bundle
             if voice not in loader.bundle.voices:
                 voice = voice_names[0]
             ref_wav = self._truncate_reference(loader.materialize(voice, "wav"))

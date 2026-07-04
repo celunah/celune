@@ -41,6 +41,7 @@ def get_version(package: str) -> str:
 def resolve_backend(
     backend_name: Union[str, type[CeluneBackend], CeluneBackend],
     log: Optional[Callable[[str, str], None]] = None,
+    fatal: Optional[Callable[[], None]] = None,
     **backend_kwargs,
 ) -> CeluneBackend:
     """Resolve a backend specification into a backend instance.
@@ -48,6 +49,7 @@ def resolve_backend(
     Args:
         backend_name: A backend name, backend class, or backend instance.
         log: Optional log callback to expose during backend construction.
+        fatal: Optional fatal callback to expose during backend construction.
         backend_kwargs: Backend-specific constructor options.
 
     Returns:
@@ -60,10 +62,11 @@ def resolve_backend(
     log = log or _default_log
 
     if isinstance(backend_name, CeluneBackend):
+        backend_name.bind_fatal(fatal)
         return backend_name
 
     if isinstance(backend_name, type) and issubclass(backend_name, CeluneBackend):
-        return backend_name(log=log, **backend_kwargs)
+        return backend_name(log=log, fatal=fatal, **backend_kwargs)
 
     if isinstance(backend_name, str):
         key = backend_name.strip().lower()
@@ -81,6 +84,6 @@ def resolve_backend(
 
         module = import_module(module_name)
         backend_cls = getattr(module, class_name)
-        return backend_cls(log=log, **backend_kwargs)
+        return backend_cls(log=log, fatal=fatal, **backend_kwargs)
 
     raise TypeError(string("celune.invalid_backend_type"))

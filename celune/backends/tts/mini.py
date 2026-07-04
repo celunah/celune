@@ -14,9 +14,9 @@ import numpy.typing as npt
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
+from ...cevoice import default_loader, CEVoiceLoader
 from ...paths import temp_data_dir
 from ...utils import custom_assert
-from ...cevoice import default_loader, CEVoiceLoader
 from ...typing.backends import MiniModel, MiniPromptState
 from .base import CeluneBackend, cached_hf_snapshot_path
 
@@ -37,51 +37,28 @@ class Mini(CeluneBackend[TTSModel]):
     }
     default_voice: Optional[str] = "balanced"
 
-    def __init__(self, log: Callable[[str, str], None]) -> None:
-        super().__init__(log=log)
+    def __init__(
+        self,
+        log: Callable[[str, str], None],
+        fatal: Optional[Callable[[], None]] = None,
+    ) -> None:
+        super().__init__(log=log, fatal=fatal)
         self._validate_refs()
         self._voice_states: dict[str, MiniPromptState] = {}
         self._generated_config_path: Optional[Path] = None
         self._loaded_language = "en"
 
     @staticmethod
-    def _require_compatible_bundle() -> tuple[CEVoiceLoader, tuple[str, ...]]:
-        """Return the active CEVOICE/CECHAR loader and its usable voice names."""
-        loader = default_loader()
-        custom_assert(
-            loader is not None,
-            FileNotFoundError(
-                "backend 'mini' requires a compatible CEVOICE/CECHAR package "
-                "with at least one valid voice identifier"
-            ),
-        )
-        assert loader is not None
-
-        voice_names = tuple(
-            voice
-            for voice in loader.bundle.voice_order
-            if (
-                isinstance(voice, str)
-                and voice.strip()
-                and voice in loader.bundle.voices
-                and isinstance(loader.bundle.voices[voice].get("reference_text"), str)
-                and bool(str(loader.bundle.voices[voice]["reference_text"]).strip())
-            )
-        )
-        custom_assert(
-            bool(voice_names),
-            FileNotFoundError(
-                "backend 'mini' requires a compatible CEVOICE/CECHAR package "
-                "with at least one valid voice identifier"
-            ),
-        )
-        assert bool(voice_names)
-
-        return loader, voice_names
+    def _get_default_loader() -> Optional[CEVoiceLoader]:
+        """Return the active CEVOICE/CECHAR loader for the Mini backend module."""
+        return default_loader()
 
     def _validate_refs(self) -> None:
         """Validate Mini reference audio files from the active CEVOICE/CECHAR pack."""
-        loader, voice_names = self._require_compatible_bundle()
+        compatible_bundle = self._require_compatible_bundle()
+        if compatible_bundle is None:
+            return
+        loader, voice_names = compatible_bundle
         for name in voice_names:
             loader.materialize(name, "wav")
 
@@ -92,7 +69,10 @@ class Mini(CeluneBackend[TTSModel]):
         Returns:
             list[str]: The list of available voices to use from current CEVOICE/CECHAR pack.
         """
-        _, voice_names = self._require_compatible_bundle()
+        compatible_bundle = self._require_compatible_bundle()
+        if compatible_bundle is None:
+            return []
+        _, voice_names = compatible_bundle
         return list(voice_names)
 
     def model_id_for_voice(self, voice: str) -> str:
@@ -104,7 +84,10 @@ class Mini(CeluneBackend[TTSModel]):
         Returns:
             str: A resolved model name for this voice.
         """
-        _, voice_names = self._require_compatible_bundle()
+        compatible_bundle = self._require_compatible_bundle()
+        if compatible_bundle is None:
+            return self.default_model_id
+        _, voice_names = compatible_bundle
         custom_assert(
             voice in voice_names,
             ValueError(f"{self.name} cannot resolve a model for voice '{voice}'"),
@@ -256,7 +239,10 @@ class Mini(CeluneBackend[TTSModel]):
 
     def _reference_voice_path(self, voice: str) -> Path:
         """Return the active reference WAV path for a Celune voice."""
-        loader, _ = self._require_compatible_bundle()
+        compatible_bundle = self._require_compatible_bundle()
+        if compatible_bundle is None:
+            raise ValueError(f"{self.name} requires a compatible CEVOICE/CECHAR pack")
+        loader, _ = compatible_bundle
         return loader.materialize(voice, "wav")
 
     def _get_voice_state(self, model: MiniModel, voice: str) -> MiniPromptState:

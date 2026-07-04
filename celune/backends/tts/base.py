@@ -30,10 +30,10 @@ import numpy.typing as npt
 import soundfile as sf
 from huggingface_hub import snapshot_download
 
+from ...i18n import string
 from ...utils import discard
 from ...constants import N_A_NUMERIC
-from ...cevoice import default_loader
-from ...exceptions import BackendError
+from ...cevoice import default_loader, CEVoiceLoader
 from ...typing.backends import BackendModel, ModelT
 from ...paths import huggingface_hub_cache_dir, temp_data_dir
 
@@ -253,7 +253,10 @@ class CeluneBackend(ABC, Generic[ModelT]):
     is_fake: bool = False
 
     def __init__(
-        self, log: Callable[[str, str], None], model_name: Optional[str] = None
+        self,
+        log: Callable[[str, str], None],
+        model_name: Optional[str] = None,
+        fatal: Optional[Callable[[], None]] = None,
     ) -> None:
         self.model_name: Optional[str]
         if model_name is not None:
@@ -265,19 +268,56 @@ class CeluneBackend(ABC, Generic[ModelT]):
 
         self.model: Optional[ModelT] = None
         self.log = log
+        self._fatal_callback = fatal
         self.current_seed: Optional[int] = None
         self.random_seed = True
         self._truncated_reference_paths: set[Path] = set()
 
+    def bind_fatal(self, fatal: Optional[Callable[[], None]]) -> None:
+        """Bind the active Celune fatal callback to this backend instance.
+
+        Args:
+            fatal: Callback invoked when the backend must transition Celune into a fatal state.
+        """
+        self._fatal_callback = fatal
+
     @staticmethod
-    def _reference_wave_path(name: str) -> Path:
-        """Return a materialized path for a reference WAV from the active CEVOICE/CECHAR pack."""
-        loader = default_loader()
+    def _get_default_loader() -> Optional[CEVoiceLoader]:
+        """Return the active CEVOICE/CECHAR loader for this backend module."""
+        return default_loader()
+
+    def _trigger_fatal_bundle_error(self) -> None:
+        """Report one incompatible CEVOICE/CECHAR pack and enter fatal state."""
+        message = string("celune.compatible_bundle_required", backend=self.name)
+        self.log(message, "error")
+        if self._fatal_callback is not None:
+            self._fatal_callback()
+
+    def _require_compatible_bundle(
+        self,
+    ) -> Optional[tuple[CEVoiceLoader, tuple[str, ...]]]:
+        """Return the active CEVOICE/CECHAR loader and its usable voice names."""
+        loader = self._get_default_loader()
         if loader is None:
-            raise BackendError(
-                "a compatible CEVOICE/CECHAR package must be loaded before resolving reference audio"
+            self._trigger_fatal_bundle_error()
+            return None
+
+        voice_names = tuple(
+            voice
+            for voice in loader.bundle.voice_order
+            if (
+                isinstance(voice, str)
+                and voice.strip()
+                and voice in loader.bundle.voices
+                and isinstance(loader.bundle.voices[voice].get("reference_text"), str)
+                and bool(str(loader.bundle.voices[voice]["reference_text"]).strip())
             )
-        return loader.materialize(name, "wav")
+        )
+        if not voice_names:
+            self._trigger_fatal_bundle_error()
+            return None
+
+        return loader, voice_names
 
     def _truncate_reference(self, reference_wav: Path) -> Path:
         """Return a reference WAV truncated to Celune's backend-safe duration."""
@@ -299,7 +339,7 @@ class CeluneBackend(ABC, Generic[ModelT]):
 
     def _validate_refs(self) -> None:
         """Validate reference audio files found in the current CEVOICE/CECHAR pack."""
-        loader = default_loader()
+        loader = self._get_default_loader()
         if loader is None:
             return
         for name in loader.bundle.voice_order:
