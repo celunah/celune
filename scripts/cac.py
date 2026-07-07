@@ -1,9 +1,17 @@
 # SPDX-License-Identifier: MIT
 """Create a character pack for use in Celune."""
 
+import argparse
+import io
 import sys
+from math import gcd
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TypedDict, Union, Optional, cast
+
+import numpy as np
+import soundfile as sf
+from scipy.signal import resample_poly
 
 try:
     from celune.cevoice import write_cevoice
@@ -75,7 +83,7 @@ class BundleMetadata(TypedDict, total=False):
 class VoiceAssets(TypedDict, total=False):
     """Voice asset sources accepted by ``write_cevoice``."""
 
-    wav: Path
+    wav: Union[Path, bytes]
     pt: Path
 
 
@@ -86,6 +94,10 @@ class CharacterData(TypedDict):
     voices: dict[str, VoiceAssets]
     metadata: BundleMetadata
     voice_metadata: dict[str, VoiceEntryMetadata]
+
+
+DEFAULT_SIMPLE_VOICE_NAME = "Standard"
+REFERENCE_SAMPLE_RATE = 24000
 
 
 def ask(prompt: str) -> str:
@@ -181,6 +193,79 @@ def ask_optional_existing_file(prompt: str) -> Optional[Path]:
 def build_output_path(bundle_name: str) -> Path:
     """Return the output bundle path for the current character."""
     return Path(f"{bundle_name}.cevoice")
+
+
+def normalize_reference_wav_asset(source_path: Path) -> Union[Path, bytes]:
+    """Return a CEVOICE-ready WAV asset, resampling to 24 kHz mono when required."""
+    audio, sample_rate = sf.read(source_path, dtype="float32")
+    source_info = sf.info(source_path)
+
+    if audio.ndim > 1:
+        audio = np.mean(audio, axis=1, dtype=np.float32)
+
+    audio = np.asarray(audio, dtype=np.float32)
+    needs_resample = sample_rate != REFERENCE_SAMPLE_RATE
+    needs_remix = source_info.channels != 1
+
+    if not needs_resample and not needs_remix:
+        return source_path
+
+    if needs_resample:
+        factor = gcd(sample_rate, REFERENCE_SAMPLE_RATE)
+        audio = np.asarray(
+            resample_poly(
+                audio,
+                up=REFERENCE_SAMPLE_RATE // factor,
+                down=sample_rate // factor,
+            ),
+            dtype=np.float32,
+        )
+
+    output_buffer = io.BytesIO()
+    sf.write(
+        output_buffer,
+        audio,
+        REFERENCE_SAMPLE_RATE,
+        format="WAV",
+        subtype="PCM_16",
+    )
+    normalized_bytes = output_buffer.getvalue()
+
+    print(f"Normalized reference WAV to 24 kHz mono: {source_path}")
+    return normalized_bytes
+
+
+def build_simple_character_data(
+    bundle_name: str,
+    wav_path: Union[str, Path],
+    reference_text: str,
+) -> CharacterData:
+    """Build a minimal single-voice CEVOICE payload from one name, WAV path, and transcript."""
+    normalized_name = bundle_name.strip()
+    if not normalized_name:
+        raise ValueError("A character or voice-pack name is required.")
+
+    resolved_wav = Path(wav_path).expanduser()
+    if not resolved_wav.is_file():
+        raise ValueError(f"File not found: {resolved_wav}")
+    normalized_reference_text = reference_text.strip()
+    if not normalized_reference_text:
+        raise ValueError("A reference transcript is required.")
+
+    return {
+        "output_path": build_output_path(normalized_name),
+        "voices": {DEFAULT_SIMPLE_VOICE_NAME: {"wav": resolved_wav}},
+        "metadata": {
+            "name": normalized_name,
+            "default_voice": DEFAULT_SIMPLE_VOICE_NAME,
+            "voice_order": [DEFAULT_SIMPLE_VOICE_NAME],
+        },
+        "voice_metadata": {
+            DEFAULT_SIMPLE_VOICE_NAME: {
+                "reference_text": normalized_reference_text,
+            }
+        },
+    }
 
 
 def collect_theme_metadata() -> Optional[ThemeMetadata]:
@@ -374,9 +459,17 @@ def collect_character_data() -> CharacterData:
 
 def create_cevoice(data: CharacterData) -> Path:
     """Create a CEVOICE bundle with the collected wizard data."""
+    normalized_voices: dict[str, dict[str, Union[bytes, str, Path]]] = {}
+    for voice_name, assets in data["voices"].items():
+        normalized_assets: dict[str, Union[bytes, str, Path]] = dict(assets)
+        wav_asset = normalized_assets.get("wav")
+        if isinstance(wav_asset, Path):
+            normalized_assets["wav"] = normalize_reference_wav_asset(wav_asset)
+        normalized_voices[voice_name] = normalized_assets
+
     voices = cast(
-        "Mapping[str, Mapping[str, Union[bytes, str, Path]]]",
-        data["voices"],
+        Mapping[str, Mapping[str, Union[bytes, str, Path]]],
+        normalized_voices,
     )
     metadata = cast("Mapping[str, ManifestValue]", data["metadata"])
     voice_metadata = cast(
@@ -404,5 +497,59 @@ def wizard() -> None:
     print(f"Saved voice pack to {output_path}")
 
 
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser for the CEVOICE creator script."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Create a CEVOICE pack. Run without arguments for the interactive wizard, "
+            "or provide NAME and WAV for simple mode."
+        )
+    )
+    parser.add_argument("bundle_name", nargs="?", help="Character or voice-pack name")
+    parser.add_argument(
+        "wav_path", nargs="?", help="Reference WAV file for simple mode"
+    )
+    parser.add_argument(
+        "reference_text",
+        nargs="?",
+        help="Reference transcript for the WAV file in simple mode",
+    )
+    return parser
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    """Run the CEVOICE creator script."""
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+
+    if args.bundle_name is None and args.wav_path is None:
+        wizard()
+        return 0
+
+    if args.bundle_name is None or args.wav_path is None:
+        parser.error("simple mode requires both NAME and WAV path")
+
+    try:
+        reference_text = args.reference_text
+        if reference_text is None:
+            reference_text = ask_required_text(
+                "Enter reference transcript for the WAV file",
+                "A reference transcript is required.",
+            )
+        char_data = build_simple_character_data(
+            args.bundle_name,
+            args.wav_path,
+            reference_text,
+        )
+        print("Saving package...")
+        output_path = create_cevoice(char_data)
+    except ValueError as error:
+        print(f"Error: {error}")
+        return 1
+
+    print(f"Saved voice pack to {output_path}")
+    return 0
+
+
 if __name__ == "__main__":
-    wizard()
+    raise SystemExit(main())

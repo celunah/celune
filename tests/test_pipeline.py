@@ -2478,6 +2478,120 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         write_mock.assert_not_called()
         self.assertIsNone(engine.recently_saved)
 
+    async def test_generation_worker_requeues_silent_utterance_until_retry_limit(
+        self,
+    ) -> None:
+        """Verify fully silent utterances are retried only up to the configured cap."""
+        engine = make_pipeline_engine()
+        generate_stream = mock.Mock(
+            side_effect=lambda _model, **_kwargs: iter(
+                [(np.zeros((8, 2), dtype=np.float32), 48000, None)]
+            )
+        )
+
+        engine.backend = SimpleNamespace(generate_stream=generate_stream)
+        engine.model_lock = threading.Lock()
+        engine.model = mock.Mock()
+        engine.language = "en"
+        engine.chunk_size = 8
+        engine.voice_prompt = None
+        engine.current_voice = "balanced"
+        engine.speed = 1.0
+        engine.can_use_rubberband = False
+        engine.reverb = SimpleNamespace(
+            strength=0.0,
+            reset=mock.Mock(),
+            flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
+        )
+        engine.queue_avail_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.exit_requested = False
+        engine.dev = False
+        engine.recently_saved = None
+
+        engine.text_queue.put(pipeline.SpeechRequest("hello", "hello", save=False))
+        engine.text_queue.put(engine.sentinel)
+
+        with (
+            mock.patch("celune.pipeline.split_text", return_value=["hello"]),
+            mock.patch("celune.pipeline.is_silent_utterance", return_value=(True, 2)),
+        ):
+            await self._run_generation_worker(cast(Celune, engine))
+
+        self.assertEqual(generate_stream.call_count, 4)
+        retry_logs = [
+            message
+            for message, severity in engine.messages
+            if severity == "warning" and "regenerating" in message
+        ]
+        self.assertEqual(len(retry_logs), 3)
+        self.assertIn("(1/3)", retry_logs[0])
+        self.assertIn("(2/3)", retry_logs[1])
+        self.assertIn("(3/3)", retry_logs[2])
+        self.assertTrue(
+            any(
+                "stayed silent after 3 retries" in message
+                for message, severity in engine.messages
+                if severity == "warning"
+            )
+        )
+        self.assertEqual(engine.text_queue.empty(), True)
+
+    async def test_generation_worker_skips_requeue_once_silent_retry_limit_is_reached(
+        self,
+    ) -> None:
+        """Verify capped silent requests are not put back into the queue."""
+        engine = make_pipeline_engine()
+        capped_request = pipeline.SpeechRequest(
+            "hello",
+            "hello",
+            save=False,
+            silent_retry_count=3,
+        )
+        generate_stream = mock.Mock(
+            side_effect=lambda _model, **_kwargs: iter(
+                [(np.zeros((8, 2), dtype=np.float32), 48000, None)]
+            )
+        )
+
+        engine.backend = SimpleNamespace(generate_stream=generate_stream)
+        engine.model_lock = threading.Lock()
+        engine.model = mock.Mock()
+        engine.language = "en"
+        engine.chunk_size = 8
+        engine.voice_prompt = None
+        engine.current_voice = "balanced"
+        engine.speed = 1.0
+        engine.can_use_rubberband = False
+        engine.reverb = SimpleNamespace(
+            strength=0.0,
+            reset=mock.Mock(),
+            flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
+        )
+        engine.queue_avail_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.exit_requested = False
+        engine.dev = False
+        engine.recently_saved = None
+        engine.text_queue.put(capped_request)
+        engine.text_queue.put(engine.sentinel)
+
+        with (
+            mock.patch("celune.pipeline.split_text", return_value=["hello"]),
+            mock.patch("celune.pipeline.is_silent_utterance", return_value=(True, 2)),
+        ):
+            await self._run_generation_worker(cast(Celune, engine))
+
+        self.assertEqual(generate_stream.call_count, 1)
+        self.assertTrue(
+            any(
+                "stayed silent after 3 retries" in message
+                for message, severity in engine.messages
+                if severity == "warning"
+            )
+        )
+        self.assertEqual(engine.text_queue.empty(), True)
+
     def test_split_text_breaks_long_unpunctuated_lines(self) -> None:
         """Verify long prose without punctuation still splits into chunks.
 

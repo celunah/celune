@@ -118,6 +118,72 @@ WEBUI_HEAD = textwrap.dedent(
     """
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico">
+    <script>
+    (() => {
+      if (window.__celuneLogAutoscrollInstalled) {
+        return;
+      }
+      window.__celuneLogAutoscrollInstalled = true;
+
+      function scrollLogToBottom() {
+        const logElement = document.querySelector("#celune-log-panel pre");
+        if (!logElement) {
+          return;
+        }
+        logElement.scrollTop = logElement.scrollHeight;
+      }
+
+      function installLogObserver() {
+        const logElement = document.querySelector("#celune-log-panel pre");
+        if (!logElement) {
+          return;
+        }
+
+        if (window.__celuneLogAutoscrollTarget === logElement) {
+          scrollLogToBottom();
+          return;
+        }
+
+        window.__celuneLogAutoscrollTarget = logElement;
+        scrollLogToBottom();
+
+        if (window.__celuneLogAutoscrollObserver) {
+          window.__celuneLogAutoscrollObserver.disconnect();
+        }
+
+        const observer = new MutationObserver(() => {
+          scrollLogToBottom();
+        });
+        observer.observe(logElement, {
+          childList: true,
+          characterData: true,
+          subtree: true,
+        });
+        window.__celuneLogAutoscrollObserver = observer;
+      }
+
+      const pageObserver = new MutationObserver(() => {
+        installLogObserver();
+      });
+
+      function startLogAutoscroll() {
+        installLogObserver();
+        pageObserver.observe(document.body, {
+          childList: true,
+          subtree: true,
+        });
+        window.setInterval(installLogObserver, 500);
+      }
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", startLogAutoscroll, {
+          once: true,
+        });
+      } else {
+        startLogAutoscroll();
+      }
+    })();
+    </script>
     """
 )
 
@@ -291,6 +357,37 @@ WEBUI_CSS = textwrap.dedent(
         background: var(--celune-ui-accent, var(--celune-primary, #cebaff));
         border-radius: 999px;
         border: 2px solid var(--celune-ui-bg, var(--celune-background, #1d1826));
+    }
+
+    .gradio-container .minimal-audio-player button:hover,
+    .gradio-container .minimal-audio-player button:focus,
+    .gradio-container .standard-player button:hover,
+    .gradio-container .standard-player button:focus,
+    .gradio-container .controls .icon:hover,
+    .gradio-container .controls .icon:focus,
+    .gradio-container .controls .action:hover,
+    .gradio-container .controls .action:focus,
+    .gradio-container .controls .playback:hover,
+    .gradio-container .controls .playback:focus,
+    .gradio-container .controls .text-button:hover,
+    .gradio-container .controls .text-button:focus {
+        color: var(--celune-primary, #cebaff) !important;
+        border-color: var(--celune-primary, #cebaff) !important;
+    }
+
+    .gradio-container .standard-player input[type="range"],
+    .gradio-container .minimal-audio-player input[type="range"] {
+        accent-color: var(--celune-primary, #cebaff) !important;
+    }
+
+    .gradio-container .standard-player input[type="range"]::-webkit-slider-thumb,
+    .gradio-container .minimal-audio-player input[type="range"]::-webkit-slider-thumb {
+        background-color: var(--celune-primary, #cebaff) !important;
+    }
+
+    .gradio-container .standard-player input[type="range"]::-moz-range-thumb,
+    .gradio-container .minimal-audio-player input[type="range"]::-moz-range-thumb {
+        background-color: var(--celune-primary, #cebaff) !important;
     }
 
     @media (max-width: 768px), (any-pointer: coarse), (hover: none) {
@@ -696,6 +793,17 @@ def _webui_log_line_html(message: str, severity: str = "info") -> str:
     """Render one browser log line with severity-aware coloring."""
     color = _webui_status_color(severity)
     return f'<span style="color: {color};">{escape(message)}</span>'
+
+
+def _webui_audio_waveform_options() -> gr.WaveformOptions:
+    """Return theme-bound waveform colors for Gradio audio components."""
+    primary = colors.SEVERITY_COLORS["celune"]["info"]
+    secondary = colors.THEME.secondary or colors.FADED_ACCENT
+    return gr.WaveformOptions(
+        waveform_color=secondary,
+        waveform_progress_color=primary,
+        trim_region_color=primary,
+    )
 
 
 def _strip_webui_log_prefix(line: str) -> str:
@@ -1754,6 +1862,7 @@ def _build_webui() -> gr.Blocks:
                             show_label=True,
                             label=string("webui.source_audio_label"),
                             interactive=False,
+                            waveform_options=_webui_audio_waveform_options(),
                             elem_id="celune-source-audio",
                         )
                         vc_pitch_shift = gr.Slider(
@@ -1787,6 +1896,7 @@ def _build_webui() -> gr.Blocks:
                             show_label=False,
                             interactive=False,
                             visible="hidden",
+                            waveform_options=_webui_audio_waveform_options(),
                             elem_id="celune-converted-audio",
                         )
             audio = gr.Audio(
@@ -1796,6 +1906,7 @@ def _build_webui() -> gr.Blocks:
                 show_label=False,
                 interactive=False,
                 visible="hidden",
+                waveform_options=_webui_audio_waveform_options(),
                 elem_id="celune-audio",
             )
             timer = gr.Timer(value=WEBUI_POLL_INTERVAL_SECONDS)

@@ -10,8 +10,8 @@ import numpy as np
 import numpy.typing as npt
 from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
 
-from ...utils import custom_assert
 from ...cevoice import default_loader, CEVoiceLoader
+from ...utils import custom_assert
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
@@ -50,51 +50,25 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         log: Callable[[str, str], None],
         x_vector_only: bool = False,
         clone_model_id: Optional[str] = None,
+        fatal: Optional[Callable[[], None]] = None,
     ) -> None:
-        super().__init__(log=log)
+        super().__init__(log=log, fatal=fatal)
         self.x_vector_only = x_vector_only
         self.model_name = clone_model_id or self.clone_model
         self._validate_refs()
         self.clone_model_id = clone_model_id or self.clone_model
 
     @staticmethod
-    def _require_compatible_bundle() -> tuple[CEVoiceLoader, tuple[str, ...]]:
-        """Return the active CEVOICE/CECHAR loader and its usable voice names."""
-        loader = default_loader()
-        custom_assert(
-            loader is not None,
-            FileNotFoundError(
-                "backend 'qwen3' requires a compatible CEVOICE/CECHAR package "
-                "with at least one valid voice identifier"
-            ),
-        )
-        assert loader is not None
-
-        voice_names = tuple(
-            voice
-            for voice in loader.bundle.voice_order
-            if (
-                isinstance(voice, str)
-                and voice.strip()
-                and voice in loader.bundle.voices
-                and isinstance(loader.bundle.voices[voice].get("reference_text"), str)
-                and bool(str(loader.bundle.voices[voice]["reference_text"]).strip())
-            )
-        )
-        custom_assert(
-            bool(voice_names),
-            FileNotFoundError(
-                "backend 'qwen3' requires a compatible CEVOICE/CECHAR package "
-                "with at least one valid voice identifier"
-            ),
-        )
-        assert bool(voice_names)
-
-        return loader, voice_names
+    def _get_default_loader() -> Optional[CEVoiceLoader]:
+        """Return the active CEVOICE/CECHAR loader for the Qwen3 backend module."""
+        return default_loader()
 
     def _validate_refs(self) -> None:
         """Validate Qwen3 reference audio files from the active CEVOICE/CECHAR pack."""
-        loader, voice_names = self._require_compatible_bundle()
+        compatible_bundle = self._require_compatible_bundle()
+        if compatible_bundle is None:
+            return
+        loader, voice_names = compatible_bundle
         for name in voice_names:
             loader.materialize(name, "wav")
 
@@ -123,7 +97,10 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         Returns:
             list[str]: The list of available voices to use from current CEVOICE/CECHAR pack.
         """
-        _, voice_names = self._require_compatible_bundle()
+        compatible_bundle = self._require_compatible_bundle()
+        if compatible_bundle is None:
+            return []
+        _, voice_names = compatible_bundle
         return list(voice_names)
 
     def model_id_for_voice(self, voice: str) -> str:
@@ -135,7 +112,10 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         Returns:
             str: A resolved model name for this voice.
         """
-        _, voice_names = self._require_compatible_bundle()
+        compatible_bundle = self._require_compatible_bundle()
+        if compatible_bundle is None:
+            return self.clone_model_id
+        _, voice_names = compatible_bundle
         custom_assert(
             voice in voice_names,
             ValueError(f"{self.name} cannot resolve a model for voice '{voice}'"),
@@ -215,7 +195,10 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         voice = kwargs.pop("voice", self.default_voice)
 
         try:
-            loader, _ = self._require_compatible_bundle()
+            compatible_bundle = self._require_compatible_bundle()
+            if compatible_bundle is None:
+                return
+            loader, _ = compatible_bundle
             ref_wav = self._truncate_reference(loader.materialize(voice, "wav"))
             configured_ref_text = loader.bundle.voices[voice].get("reference_text")
             ref_text = (

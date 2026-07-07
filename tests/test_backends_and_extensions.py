@@ -519,17 +519,17 @@ class BackendTests(TestCase):
             self.assertEqual(model.cfg_value, 4.2)
 
     def test_voxcpm2_requires_reference_text_for_valid_voice_identifiers(self) -> None:
-        """Verify VoxCPM2 rejects packs whose voices omit the required reference text."""
+        """Verify VoxCPM2 enters fatal state when pack voices omit reference text."""
 
         with mock_voxcpm_backend() as voxcpm2_cls:
             loader = make_voice_loader("calm", {})
+            fatal = mock.Mock()
             with mock.patch(
                 "celune.backends.tts.voxcpm2.default_loader", return_value=loader
             ):
-                with self.assertRaisesRegex(
-                    FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
-                ):
-                    voxcpm2_cls(log=lambda _msg, _severity="info": None)
+                voxcpm2_cls(log=lambda _msg, _severity="info": None, fatal=fatal)
+
+        fatal.assert_called_once_with()
 
     def test_voxcpm2_uses_truncated_reference_wav_when_present(self) -> None:
         """Verify VoxCPM2 passes reference audio through the shared truncation hook."""
@@ -580,29 +580,29 @@ class BackendTests(TestCase):
             self.assertEqual(model.reference_wav_path, Path("trimmed.wav"))
 
     def test_voxcpm2_requires_a_compatible_voice_pack(self) -> None:
-        """Verify VoxCPM2 refuses to initialize without a usable CEVOICE/CECHAR pack."""
+        """Verify VoxCPM2 enters fatal state without a usable CEVOICE/CECHAR pack."""
 
         with (
             mock_voxcpm_backend() as voxcpm2_cls,
             mock.patch("celune.backends.tts.voxcpm2.default_loader", return_value=None),
         ):
-            with self.assertRaisesRegex(
-                FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
-            ):
-                voxcpm2_cls(log=lambda _msg, _severity="info": None)
+            fatal = mock.Mock()
+            voxcpm2_cls(log=lambda _msg, _severity="info": None, fatal=fatal)
+
+        fatal.assert_called_once_with()
 
     def test_mini_requires_reference_text_for_valid_voice_identifiers(self) -> None:
-        """Verify Mini rejects packs whose voices omit the required reference text."""
+        """Verify Mini enters fatal state when pack voices omit reference text."""
 
         with mock_mini_backend() as mini_cls:
             loader = make_voice_loader("calm", {})
+            fatal = mock.Mock()
             with mock.patch(
                 "celune.backends.tts.mini.default_loader", return_value=loader
             ):
-                with self.assertRaisesRegex(
-                    FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
-                ):
-                    mini_cls(log=lambda _msg, _severity="info": None)
+                mini_cls(log=lambda _msg, _severity="info": None, fatal=fatal)
+
+        fatal.assert_called_once_with()
 
     def test_mini_uses_truncated_reference_wav_when_building_prompt_state(self) -> None:
         """Verify Mini builds prompt state from the shared truncated WAV path."""
@@ -679,16 +679,16 @@ class BackendTests(TestCase):
                 self.assertEqual(backend.voices, ["calm"])
 
     def test_mini_requires_a_compatible_voice_pack(self) -> None:
-        """Verify Mini refuses to initialize without a usable CEVOICE/CECHAR pack."""
+        """Verify Mini enters fatal state without a usable CEVOICE/CECHAR pack."""
 
         with (
             mock_mini_backend() as mini_cls,
             mock.patch("celune.backends.tts.mini.default_loader", return_value=None),
         ):
-            with self.assertRaisesRegex(
-                FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
-            ):
-                mini_cls(log=lambda _msg, _severity="info": None)
+            fatal = mock.Mock()
+            mini_cls(log=lambda _msg, _severity="info": None, fatal=fatal)
+
+        fatal.assert_called_once_with()
 
     def test_qwen3_uses_pack_reference_text_when_present(self) -> None:
         """Verify CEVOICE can override Qwen3's per-voice reference text."""
@@ -904,29 +904,29 @@ class BackendTests(TestCase):
             self.assertEqual(model.prompt_text, "Pack reference.")
 
     def test_dotstts_requires_reference_text_for_valid_voice_identifiers(self) -> None:
-        """Verify dots.tts rejects packs whose voices omit the required reference text."""
+        """Verify dots.tts enters fatal state when pack voices omit reference text."""
 
         with mock_dotstts_backend() as dotstts_cls:
             loader = make_voice_loader("calm", {})
+            fatal = mock.Mock()
             with mock.patch(
                 "celune.backends.tts.dotstts.default_loader", return_value=loader
             ):
-                with self.assertRaisesRegex(
-                    FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
-                ):
-                    dotstts_cls(log=lambda _msg, _severity="info": None)
+                dotstts_cls(log=lambda _msg, _severity="info": None, fatal=fatal)
+
+        fatal.assert_called_once_with()
 
     def test_dotstts_requires_a_compatible_voice_pack(self) -> None:
-        """Verify dots.tts refuses to initialize without a usable CEVOICE/CECHAR pack."""
+        """Verify dots.tts enters fatal state without a usable CEVOICE/CECHAR pack."""
 
         with (
             mock_dotstts_backend() as dotstts_cls,
             mock.patch("celune.backends.tts.dotstts.default_loader", return_value=None),
         ):
-            with self.assertRaisesRegex(
-                FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
-            ):
-                dotstts_cls(log=lambda _msg, _severity="info": None)
+            fatal = mock.Mock()
+            dotstts_cls(log=lambda _msg, _severity="info": None, fatal=fatal)
+
+        fatal.assert_called_once_with()
 
     def test_dotstts_manually_pumps_and_closes_backend_stream(self) -> None:
         """Verify dots.tts iterates and closes its backend stream explicitly."""
@@ -1011,32 +1011,32 @@ class BackendTests(TestCase):
         fake_loguru.enable.assert_called_once_with("dots_tts")
 
     def test_qwen3_requires_reference_text_for_valid_voice_identifiers(self) -> None:
-        """Verify Qwen3 rejects packs whose voices omit the required reference text."""
+        """Verify Qwen3 enters fatal state when pack voices omit reference text."""
 
         with mock_qwen3_backend() as qwen3_cls:
             loader = make_voice_loader("calm", {})
+            fatal = mock.Mock()
             with mock.patch(
                 "celune.backends.tts.qwen3.default_loader", return_value=loader
             ):
-                with self.assertRaisesRegex(
-                    FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
-                ):
-                    qwen3_cls(log=lambda _msg, _severity="info": None)
+                qwen3_cls(log=lambda _msg, _severity="info": None, fatal=fatal)
+
+        fatal.assert_called_once_with()
 
     def test_qwen3_requires_a_compatible_voice_pack(self) -> None:
-        """Verify Qwen3 refuses to initialize without a usable CEVOICE/CECHAR pack."""
+        """Verify Qwen3 enters fatal state without a usable CEVOICE/CECHAR pack."""
 
         with (
             mock_qwen3_backend() as qwen3_cls,
             mock.patch("celune.backends.tts.qwen3.default_loader", return_value=None),
         ):
-            with self.assertRaisesRegex(
-                FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
-            ):
-                qwen3_cls(log=lambda _msg, _severity="info": None)
+            fatal = mock.Mock()
+            qwen3_cls(log=lambda _msg, _severity="info": None, fatal=fatal)
+
+        fatal.assert_called_once_with()
 
     def test_qwen3_requires_at_least_one_valid_voice_identifier(self) -> None:
-        """Verify Qwen3 rejects packs that do not expose any usable voice names."""
+        """Verify Qwen3 enters fatal state when no usable voice names exist."""
 
         loader = SimpleNamespace(
             bundle=SimpleNamespace(
@@ -1050,10 +1050,10 @@ class BackendTests(TestCase):
             mock_qwen3_backend() as qwen3_cls,
             mock.patch("celune.backends.tts.qwen3.default_loader", return_value=loader),
         ):
-            with self.assertRaisesRegex(
-                FileNotFoundError, "requires a compatible CEVOICE/CECHAR package"
-            ):
-                qwen3_cls(log=lambda _msg, _severity="info": None)
+            fatal = mock.Mock()
+            qwen3_cls(log=lambda _msg, _severity="info": None, fatal=fatal)
+
+        fatal.assert_called_once_with()
 
     def test_qwen3_manually_pumps_and_closes_backend_stream(self) -> None:
         """Verify Qwen3 iterates and closes its backend stream explicitly."""

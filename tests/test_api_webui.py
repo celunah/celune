@@ -381,11 +381,32 @@ class ApiWebUITests(TestCase):
         self.assertIn("#celune-log-panel", api.WEBUI_CSS)
         self.assertIn("flex: 1 1 auto;", api.WEBUI_CSS)
         self.assertIn("min-height: 0;", api.WEBUI_CSS)
+        self.assertIn('.standard-player input[type="range"]', api.WEBUI_CSS)
+        self.assertIn(".minimal-audio-player button:hover", api.WEBUI_CSS)
         self.assertIn(
             "@media (max-width: 768px), (any-pointer: coarse), (hover: none)",
             api.WEBUI_CSS,
         )
         self.assertNotIn("margin-top: auto;", api.WEBUI_CSS)
+
+    def test_webui_audio_waveform_options_follow_primary_color(self) -> None:
+        """Verify Gradio audio waveform colors are driven by Celune's primary color."""
+        options = api._webui_audio_waveform_options()
+
+        self.assertEqual(
+            options.waveform_progress_color,
+            api.colors.SEVERITY_COLORS["celune"]["info"],
+        )
+        self.assertEqual(
+            options.trim_region_color,
+            api.colors.SEVERITY_COLORS["celune"]["info"],
+        )
+
+    def test_webui_head_installs_log_autoscroll(self) -> None:
+        """Verify the WebUI head installs auto-scroll behavior for the log pane."""
+        self.assertIn("#celune-log-panel pre", api.WEBUI_HEAD)
+        self.assertIn("MutationObserver", api.WEBUI_HEAD)
+        self.assertIn("scrollTop = logElement.scrollHeight", api.WEBUI_HEAD)
 
     def test_webui_probe_logs_sleep_transition(self) -> None:
         """Verify the browser log mirrors the sleep transition message."""

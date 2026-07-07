@@ -227,3 +227,5 @@ __marimo__/
 #   Executable files are meant to be downloaded separately from Actions artifacts.
 outputs/
 bin/
+voices/**/*.cevoice
+!voices/default.cevoice

@@ -15,6 +15,7 @@ import pathlib
 import datetime
 import subprocess
 import contextlib
+from dataclasses import replace
 from collections import deque
 from urllib.request import urlopen
 from urllib.parse import urlparse, urlencode
@@ -129,6 +130,7 @@ _SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS = 0.75
 _SMART_BUFFER_MAX_SECONDS = 20.0
 _SMART_BUFFER_COMPLETE_BELOW_SPEED = 0.5
 _SMART_BUFFER_SMOOTHING = 0.35
+_MAX_SILENT_UTTERANCE_RETRIES = 3
 
 
 def _json_value(value: JSONSerializable) -> JSONSerializable:
@@ -1485,7 +1487,17 @@ async def say_async(
     save: bool = True,
     display_text: Optional[str] = None,
 ) -> bool:
-    """Queue text for Celune to say without blocking an async caller."""
+    """Queue text for Celune to say without blocking an async caller.
+
+    Args:
+        engine: Runtime that owns the speech queues.
+        text: The text to synthesize.
+        save: Whether the generated utterance should be persisted to disk.
+        display_text: Optional UI-facing text to associate with the request.
+
+    Returns:
+        bool: ``True`` when the request was queued successfully, otherwise ``False``.
+    """
     return await queue_speech_async(
         engine,
         text,
@@ -1749,7 +1761,18 @@ async def queue_speech_async(
     stream_queue: Optional[SpeechStreamQueue] = None,
     display_text: Optional[str] = None,
 ) -> bool:
-    """Queue text for Celune to say without blocking the caller's event loop."""
+    """Queue text for Celune to say without blocking the caller's event loop.
+
+    Args:
+        engine: Runtime that owns the speech queues.
+        text: The text to synthesize.
+        save: Whether the generated utterance should be persisted to disk.
+        stream_queue: Optional queue receiving generated playback chunks.
+        display_text: Optional UI-facing text to associate with the request.
+
+    Returns:
+        bool: ``True`` when the request was queued successfully, otherwise ``False``.
+    """
     if engine.is_in_tutorial:
         engine.log(string("celune.speech_input_disabled_tutorial"), "warning")
         return False
@@ -2544,19 +2567,34 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                     )
 
                 if is_silent and silence_tier == 2:
-                    engine.regenerate = True
-                    _queue_playback_done(
-                        engine,
-                        source_id,
-                        release_pipeline_when_finished=False,
-                        notify_idle_when_finished=False,
-                    )
-                    engine.text_queue.put(item)
+                    if item.silent_retry_count < _MAX_SILENT_UTTERANCE_RETRIES:
+                        engine.regenerate = True
+                        _queue_playback_done(
+                            engine,
+                            source_id,
+                            release_pipeline_when_finished=False,
+                            notify_idle_when_finished=False,
+                        )
+                        item = replace(
+                            item,
+                            silent_retry_count=item.silent_retry_count + 1,
+                        )
+                        engine.log(
+                            string(
+                                "pipeline.silent_regenerating",
+                                retry_count=item.silent_retry_count,
+                                max_retries=_MAX_SILENT_UTTERANCE_RETRIES,
+                            ),
+                            "warning",
+                        )
+                        continue
                     engine.log(
-                        string("pipeline.silent_regenerating"),
+                        string(
+                            "pipeline.silent_regeneration_limit_reached",
+                            max_retries=_MAX_SILENT_UTTERANCE_RETRIES,
+                        ),
                         "warning",
                     )
-                    continue
                 if is_silent and silence_tier == 1:
                     engine.log(string("pipeline.may_be_silent"), "warning")
 
@@ -2654,7 +2692,11 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
 
 
 async def generation_worker_job(engine: Celune) -> None:
-    """Generate audio tokens and send them to the audio pipeline as an async job."""
+    """Generate audio tokens and send them to the audio pipeline as an async job.
+
+    Args:
+        engine: Runtime that owns the generation queue and playback state.
+    """
     while True:
         item = await asyncio.to_thread(engine.text_queue.get)
         engine.regenerate = False
@@ -2833,7 +2875,14 @@ finalize_playback_idle = _finalize_playback_idle
 
 
 async def playback_worker_job(engine: Celune) -> None:
-    """Receive audio chunks from multiple sources, mix them, and play them."""
+    """Receive audio chunks from multiple sources, mix them, and play them.
+
+    Args:
+        engine: Runtime that owns the playback queue and output stream.
+
+    Raises:
+        NotAvailableError: Raised when no suitable output audio device is available.
+    """
     source_buffers: dict[
         int, deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]
     ] = {}

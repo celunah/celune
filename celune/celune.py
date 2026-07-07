@@ -375,6 +375,23 @@ class Celune(CeluneStateAccessors):
         self.config = config
         set_locale(_configured_locale(config) or get_system_locale())
         self.input_mode = _resolve_input_mode(config, input_mode)
+        glow_color = "#cebaff"
+        loader = default_loader()
+        if loader is not None:
+            theme = loader.bundle.metadata.get("theme")
+            if isinstance(theme, dict):
+                accent = theme.get("accent")
+                if isinstance(accent, str):
+                    glow_color = accent
+
+                configured_glow = theme.get("glow_color")
+                if isinstance(configured_glow, str):
+                    glow_color = configured_glow
+
+        self.glow = AudioRGBGlow(celune=self, color=glow_color)
+        self._wrap_fatal_glow()
+        self.glow.start()
+
         tts_backend, vc_backend = _resolve_core_backend_specs(
             self.log_callback,
             self.input_mode,
@@ -445,8 +462,10 @@ class Celune(CeluneStateAccessors):
             self.backend = resolve_backend(
                 resolved_tts_backend,
                 log=self.log_callback,
+                fatal=self.fatal,
                 **backend_kwargs,
             )
+            self.backend.bind_fatal(self.fatal)
             self._validate_backend_against_preset(self.backend, preset)
             self.tts_backend = self.backend.name
         except ValueError as e:
@@ -532,23 +551,6 @@ class Celune(CeluneStateAccessors):
         self.use_normalization = config_bool(
             config, "CELUNE_NORMALIZE", "use_normalizer"
         )
-
-        glow_color = "#cebaff"
-        loader = default_loader()
-        if loader is not None:
-            theme = loader.bundle.metadata.get("theme")
-            if isinstance(theme, dict):
-                accent = theme.get("accent")
-                if isinstance(accent, str):
-                    glow_color = accent
-
-                configured_glow = theme.get("glow_color")
-                if isinstance(configured_glow, str):
-                    glow_color = configured_glow
-
-        self.glow = AudioRGBGlow(celune=self, color=glow_color)
-        self._wrap_fatal_glow()
-        self.glow.start()
 
         self.vision = self._persona_conn()
 
@@ -840,8 +842,10 @@ class Celune(CeluneStateAccessors):
         self.backend = resolve_backend(
             self._backend_spec,
             log=self.log_callback,
+            fatal=self.fatal,
             **self._backend_kwargs,
         )
+        self.backend.bind_fatal(self.fatal)
         self.tts_backend = self.backend.name
         return True
 
@@ -965,8 +969,10 @@ class Celune(CeluneStateAccessors):
         restored_backend = resolve_backend(
             snapshot.restorable_backend_spec,
             log=self.log_callback,
+            fatal=self.fatal,
             **snapshot.backend_kwargs,
         )
+        restored_backend.bind_fatal(self.fatal)
         if restored_backend.uses_voice_bundles:
             restored_backend.validate_refs()
 
@@ -1111,8 +1117,10 @@ class Celune(CeluneStateAccessors):
                 candidate_backend = resolve_backend(
                     cast(TTSBackendSpec, normalized_backend_spec),
                     log=self.log_callback,
+                    fatal=self.fatal,
                     **candidate_kwargs,
                 )
+                candidate_backend.bind_fatal(self.fatal)
                 self._validate_backend_against_preset(candidate_backend, preset)
                 if candidate_backend.uses_voice_bundles:
                     candidate_backend.validate_refs()
@@ -1606,21 +1614,16 @@ class Celune(CeluneStateAccessors):
                 self.change_voice_lock_state_callback(locked=len(self.voices) < 2)
                 return True
             except Exception as e:
-                self.cur_state = "error"
-                self.loaded = False
+                self.fatal()
                 self.log(
                     string("celune.wake_error", error=format_error(e, self.dev)),
                     "error",
                 )
-                self.glow.fatal()
-                if not self._try_play_signal("error"):
-                    self.log_dev(string("ui.error_signal_unavailable"), "warning")
-                self.cur_state = "error"
                 self.status_callback(
                     string("status.could_not_wake", app_name=APP_NAME), "error"
                 )
-                self.progress_callback(0, 1)
                 self.error_callback(string("status.could_not_wake", app_name=APP_NAME))
+                self.progress_callback(0, 1)
                 return False
             finally:
                 self.model_ready.set()
@@ -1783,7 +1786,15 @@ class Celune(CeluneStateAccessors):
         return self._voice_switch_succeeded(name)
 
     async def set_voice_async(self, name: str, timeout: float = 30.0) -> bool:
-        """Change Celune's voice without blocking the caller's event loop."""
+        """Change Celune's voice without blocking the caller's event loop.
+
+        Args:
+            name: Value for `name`.
+            timeout: Value for `timeout`.
+
+        Returns:
+            Result of this function.
+        """
         async with self._async_runtime_lock:
             if not await asyncio.to_thread(self._prepare_voice_change, name):
                 return False
@@ -1885,7 +1896,15 @@ class Celune(CeluneStateAccessors):
         backend_spec: CoreBackendSpec,
         timeout: Optional[float] = None,
     ) -> bool:
-        """Request a hot backend reload without blocking the caller's event loop."""
+        """Request a hot backend reload without blocking the caller's event loop.
+
+        Args:
+            backend_spec: Value for `backend_spec`.
+            timeout: Value for `timeout`.
+
+        Returns:
+            Result of this function.
+        """
         async with self._async_runtime_lock:
             if not await asyncio.to_thread(self._prepare_backend_reload, backend_spec):
                 return False
@@ -1983,7 +2002,15 @@ class Celune(CeluneStateAccessors):
         bundle: Optional[Union[str, Path]],
         timeout: Optional[float] = None,
     ) -> bool:
-        """Request a hot CEVOICE reload without blocking the caller's event loop."""
+        """Request a hot CEVOICE reload without blocking the caller's event loop.
+
+        Args:
+            bundle: Value for `bundle`.
+            timeout: Value for `timeout`.
+
+        Returns:
+            Result of this function.
+        """
         async with self._async_runtime_lock:
             if not await asyncio.to_thread(self._prepare_cevoice_reload, bundle):
                 return False
@@ -2092,7 +2119,14 @@ class Celune(CeluneStateAccessors):
     wait_until_idle = _wait_until_idle
 
     async def wait_until_idle_async(self, timeout: float = 30.0) -> bool:
-        """Wait until model reload and playback completion without blocking the event loop."""
+        """Wait until model reload and playback completion without blocking the event loop.
+
+        Args:
+            timeout: Value for `timeout`.
+
+        Returns:
+            Result of this function.
+        """
         ok = await asyncio.to_thread(self._model_ready.wait, timeout)
         if not ok:
             self.log(string("celune.ready_wait_timeout"), "warning")
@@ -2270,21 +2304,17 @@ class Celune(CeluneStateAccessors):
             self.cur_state = "idle"
             self.status_callback(string("status.idle"))
         except Exception as e:
-            self.cur_state = "error"
-            self.loaded = False
+            self.fatal()
             self.log(
                 string("celune.reload_error", error=format_error(e, self.dev)),
                 "error",
             )
-            self.glow.fatal()
-            if not self._try_play_signal("error"):
-                self.log_dev(string("ui.error_signal_unavailable"), "warning")
             self.status_callback(
                 string("status.could_not_reload", app_name=APP_NAME),
                 "error",
             )
-            self.progress_callback(0, 1)
             self.error_callback(string("status.could_not_reload", app_name=APP_NAME))
+            self.progress_callback(0, 1)
         finally:
             self._model_ready.set()
             self.change_input_state_callback(locked=False)
@@ -2299,16 +2329,28 @@ class Celune(CeluneStateAccessors):
         return force_stop_pipeline(self)
 
     async def force_stop_speech_async(self) -> bool:
-        """Forcefully stop Celune from speaking without blocking an async caller."""
+        """Forcefully stop Celune from speaking without blocking an async caller.
+
+        Returns:
+            Result of this function.
+        """
         return await asyncio.to_thread(force_stop_pipeline, self)
 
     async def enter_sleep_mode_async(self) -> bool:
-        """Put Celune to sleep without blocking the caller's event loop."""
+        """Put Celune to sleep without blocking the caller's event loop.
+
+        Returns:
+            Result of this function.
+        """
         async with self._async_runtime_lock:
             return await asyncio.to_thread(self.enter_sleep_mode)
 
     async def wake_from_sleep_async(self) -> bool:
-        """Wake Celune without blocking the caller's event loop."""
+        """Wake Celune without blocking the caller's event loop.
+
+        Returns:
+            Result of this function.
+        """
         async with self._async_runtime_lock:
             return await asyncio.to_thread(self.wake_from_sleep)
 
@@ -2326,13 +2368,10 @@ class Celune(CeluneStateAccessors):
 
         self._cleanup_residual_temp_data(app_data_dir() / "temp")
         if not self.load_available_voices():
-            self.cur_state = "error"
+            self.fatal()
             self.log(string("celune.no_voices_loaded"), "error")
-            self.glow.fatal()
-            if not self._try_play_signal("error"):
-                self.log_dev(string("ui.error_signal_unavailable"), "warning")
-            self.progress_callback(0, 1)
             self.error_callback(string("celune.no_voices_loaded_short"))
+            self.progress_callback(0, 1)
             return False
 
         if self.backend.uses_voice_bundles:
@@ -2363,13 +2402,10 @@ class Celune(CeluneStateAccessors):
         self.progress_callback(None, None)
         if self._is_voice_conversion_mode():
             if self.vc_backend is None:
-                self.cur_state = "error"
+                self.fatal()
                 self.log(string("celune.no_vc_backend"), "error")
-                self.glow.fatal()
-                if not self._try_play_signal("error"):
-                    self.log_dev(string("ui.error_signal_unavailable"), "warning")
-                self.progress_callback(0, 1)
                 self.error_callback(string("celune.no_valid_vc_backend"))
+                self.progress_callback(0, 1)
                 return False
 
             self.vc_backend.preload_models()
@@ -2385,17 +2421,14 @@ class Celune(CeluneStateAccessors):
                 active_voice = self.current_voice or self.voices[0]
                 self.model_name = self.backend.model_id_for_voice(active_voice)
             except Exception as e:
-                self.cur_state = "error"
+                self.fatal()
                 self.log(
                     string("celune.default_model_load_failed", app_name=APP_NAME),
                     "error",
                 )
                 self.log(format_error(e, self.dev), "error")
-                self.glow.fatal()
-                if not self._try_play_signal("error"):
-                    self.log_dev(string("ui.error_signal_unavailable"), "warning")
-                self.progress_callback(0, 1)
                 self.error_callback(string("celune.default_model_failed_short"))
+                self.progress_callback(0, 1)
                 return False
 
         if self.vision is not None:
@@ -2428,10 +2461,7 @@ class Celune(CeluneStateAccessors):
             dev=self.dev,
             backend_name=self._active_runtime_backend_name(),
         ):
-            self.cur_state = "error"
-            self.glow.fatal()
-            if not self._try_play_signal("error"):
-                self.log_dev(string("ui.error_signal_unavailable"), "warning")
+            self.fatal()
             return False
 
         warmup_ok = True
@@ -2444,11 +2474,8 @@ class Celune(CeluneStateAccessors):
             self._release_pipeline()
             self.glow.enter()  # Celune has entered your PC
         else:
-            self.cur_state = "error"
+            self.fatal()
             self.log(string("celune.warmup_failed"), "error")
-            self.glow.fatal()
-            if not self._try_play_signal("error"):
-                self.log(string("ui.error_signal_unavailable"), "warning")
             return False
 
         if self.use_normalization:
@@ -2701,10 +2728,7 @@ class Celune(CeluneStateAccessors):
             )
             self.progress_callback(0, 1)
             if fatal_on_failure:
-                self.cur_state = "error"
-                self.glow.fatal()
-                if not self._try_play_signal("error"):
-                    self.log_dev(string("ui.error_signal_unavailable"), "warning")
+                self.fatal()
                 self.error_callback(
                     string("celune.warmup_failed_app", app_name=APP_NAME)
                 )
@@ -2885,7 +2909,14 @@ class Celune(CeluneStateAccessors):
         return True
 
     async def think_async(self, text: str) -> bool:
-        """Let Celune reply to one input request without blocking an async caller."""
+        """Let Celune reply to one input request without blocking an async caller.
+
+        Args:
+            text: Value for `text`.
+
+        Returns:
+            Result of this function.
+        """
         return await asyncio.to_thread(self.think, text)
 
     def _think_worker(self, text: str) -> None:
@@ -2931,7 +2962,16 @@ class Celune(CeluneStateAccessors):
         save: bool = True,
         display_text: Optional[str] = None,
     ) -> bool:
-        """Queue text for Celune to say without blocking an async caller."""
+        """Queue text for Celune to say without blocking an async caller.
+
+        Args:
+            text: Value for `text`.
+            save: Value for `save`.
+            display_text: Value for `display_text`.
+
+        Returns:
+            Result of this function.
+        """
         if self.input_mode != "text_to_speech":
             self.log(string("celune.text_input_unavailable_vc"), "warning")
             self.error_callback(string("celune.not_possible"))
@@ -2963,7 +3003,15 @@ class Celune(CeluneStateAccessors):
         text: str,
         save: bool = True,
     ) -> Optional[SpeechStreamQueue]:
-        """Queue text for playback and mirror chunks without blocking an async caller."""
+        """Queue text for playback and mirror chunks without blocking an async caller.
+
+        Args:
+            text: Value for `text`.
+            save: Value for `save`.
+
+        Returns:
+            Result of this function.
+        """
         stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
         if not await queue_speech_async(
             self,
@@ -3095,6 +3143,14 @@ class Celune(CeluneStateAccessors):
                 self.unload_runtime_state(include_normalizer=True)
         finally:
             Celune._instance = None
+
+    def fatal(self) -> None:
+        """Mark Celune state as fatal and prevent further operations."""
+        self.loaded = False
+        self.cur_state = "error"
+        self.glow.fatal()
+        if not self._try_play_signal("error"):
+            self.log_dev(string("ui.error_signal_unavailable"), "warning")
 
     def _split_text(self, text: str) -> list[str]:
         """Split text into chunks."""

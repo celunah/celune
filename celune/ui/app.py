@@ -1198,9 +1198,7 @@ class CeluneUI(App):
                 ),
                 "error",
             )
-            self.celune.glow.fatal()
-            if not self.celune.try_play_signal("error"):
-                self.safe_log_dev(string("ui.error_signal_unavailable"), "warning")
+            self.celune.fatal()
             self.change_input_state(locked=True)
             self.change_voice_lock_state(locked=True)
             self.error(string("ui.app_could_not_start", app_name=APP_NAME))
