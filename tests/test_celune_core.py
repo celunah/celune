@@ -230,7 +230,7 @@ class CeluneCoreTests(TestCase):
             "celune.celune.saved_output_speech_seconds",
             return_value=42.5,
         ):
-            self.assertEqual(celune.load(), True)
+            self.assertEqual(celune.load(skip_runtime_check=True), True)
 
         self.assertEqual(celune.historical_generated_speech_seconds, 42.5)
 
