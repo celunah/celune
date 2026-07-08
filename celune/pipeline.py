@@ -46,7 +46,7 @@ from .config import resolve_audio_device
 from .persona.memory import PersonaMemoryStore
 from .persona.emotion import PersonaEmotionAnalyzer
 from .analysis import analyze_voice_audio
-from .paths import app_data_dir, project_root, running_compiled
+from .paths import app_data_dir, outputs_dir, project_root, running_compiled
 from .persona.impl import (
     default_persona_age,
     default_persona_context,
@@ -385,6 +385,23 @@ def _write_celune_flac(
         "date": datetime.datetime.now(datetime.timezone.utc).year,
     }
     _write_flac_metadata(path, tags)
+
+
+def _saved_output_speech_seconds() -> float:
+    """Return cumulative saved speech duration from Celune-generated output files."""
+    output_dir = outputs_dir()
+    if not output_dir.exists():
+        return 0.0
+
+    total_seconds = 0.0
+    pattern = f"{APP_SLUG}_speech_*.flac"
+    for path in output_dir.glob(pattern):
+        try:
+            total_seconds += float(sf.info(path).duration)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            continue
+
+    return total_seconds
 
 
 def clear_queue(q: queue.Queue) -> None:
@@ -2598,6 +2615,8 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 if is_silent and silence_tier == 1:
                     engine.log(string("pipeline.may_be_silent"), "warning")
 
+                engine.total_generated_speech_seconds += speech_len
+
                 if save_output and full_audio:
                     wav = np.concatenate(full_audio)
                     analysis_audio = wav.copy()
@@ -2608,10 +2627,11 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                     first_words = "_".join(text.split()[:3]).lower()
                     first_words = re.sub(r"[^a-zA-Z0-9_]", "", first_words)
 
-                    if not os.path.exists("outputs"):
+                    output_dir = outputs_dir()
+                    if not output_dir.exists():
                         engine.log(string("pipeline.outputs_path_creating"), "warning")
                         try:
-                            os.mkdir("outputs")
+                            output_dir.mkdir(parents=True)
                         except OSError as e:
                             engine.log(
                                 string(
@@ -2621,10 +2641,10 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                                 "warning",
                             )
 
-                    if os.path.exists("outputs"):
-                        saved_path = (
-                            f"outputs/{APP_SLUG}_speech_{timestamp}_{first_words}.flac"
-                        )
+                    if output_dir.exists():
+                        file_name = f"{APP_SLUG}_speech_{timestamp}_{first_words}.flac"
+                        saved_path = str(pathlib.Path("outputs") / file_name)
+                        actual_saved_path = str(output_dir / file_name)
                         sample_rate = BASE_SR
                         subtype = "PCM_24"
                         metadata = _celune_metadata_payload(
@@ -2639,7 +2659,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                         try:
                             _write_celune_flac(
                                 engine,
-                                saved_path,
+                                actual_saved_path,
                                 wav,
                                 sample_rate,
                                 subtype=subtype,
@@ -2865,6 +2885,7 @@ parse_vorbis_comment_block = _parse_vorbis_comment_block
 flac_metadata_blocks = _flac_metadata_blocks
 write_flac_metadata = _write_flac_metadata
 write_celune_flac = _write_celune_flac
+saved_output_speech_seconds = _saved_output_speech_seconds
 register_playback_source = _register_playback_source
 set_playback_source_status = _set_playback_source_status
 queue_playback_chunk = _queue_playback_chunk

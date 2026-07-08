@@ -222,6 +222,18 @@ class CeluneCoreTests(TestCase):
                 vc_backend=FakeVCBackend,
             )
 
+    def test_load_seeds_historical_generated_speech_seconds_from_outputs(self) -> None:
+        """Verify Celune seeds total savings history from existing outputs."""
+        celune = self._make_celune({})
+
+        with mock.patch(
+            "celune.celune.saved_output_speech_seconds",
+            return_value=42.5,
+        ):
+            self.assertEqual(celune.load(), True)
+
+        self.assertEqual(celune.historical_generated_speech_seconds, 42.5)
+
     def test_voice_loading_uses_backend_and_bundle_defaults(self) -> None:
         """Verify backend voices and bundle metadata determine defaults.
 

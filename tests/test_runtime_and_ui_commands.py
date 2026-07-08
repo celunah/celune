@@ -22,7 +22,7 @@ from celune.utils import discard
 from celune.config import Config
 from celune.celune import Celune
 from celune.backends.tts.qwen3 import Qwen3
-from celune.constants import APP_NAME, JSONSerializable
+from celune.constants import APP_NAME, COST_EQUIVALENTS, JSONSerializable
 from celune.i18n import string
 from celune.ui import app as ui_app
 from celune.ui.app import CeluneUI
@@ -1236,6 +1236,43 @@ class UIStartupTests(TestCase):
         pages = ui_resources.resource_pages(celune, "celune")
 
         self.assertIn("CTRL+R toggle recording", pages)
+
+    def test_textual_resource_footer_rotates_cost_equivalent_pages(self) -> None:
+        """Verify the resource footer includes saved-cost pages for each provider."""
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                is_in_tutorial=False,
+                config={"theme": "dark"},
+                backend=SimpleNamespace(current_seed=None),
+                input_mode="text_to_speech",
+                total_generated_speech_seconds=120.0,
+                historical_generated_speech_seconds=180.0,
+            ),
+        )
+
+        pages = ui_resources.resource_pages(celune, "celune")
+        cost_pages = [
+            page for page in pages if ": run $" in page or ": total $" in page
+        ]
+
+        self.assertEqual(len(cost_pages), len(COST_EQUIVALENTS) * 2)
+        self.assertIn(
+            "gemini-flash-tts: run $0.03",
+            cost_pages,
+        )
+        self.assertIn(
+            "openai-realtime: run $0.19",
+            cost_pages,
+        )
+        self.assertIn(
+            "gemini-flash-tts: total $0.08",
+            cost_pages,
+        )
+        self.assertIn(
+            "openai-realtime: total $0.48",
+            cost_pages,
+        )
 
     def test_ctrl_r_toggles_tui_vc_recording(self) -> None:
         """Verify CTRL+R streams VC audio live and flushes the final tail on stop."""

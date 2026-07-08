@@ -136,6 +136,8 @@ class CeluneAudioState:
     speed: float = 1.0
     smart_buffer_generation_speed: Optional[float] = None
     smart_buffer_target_seconds: float = 0.0
+    total_generated_speech_seconds: float = 0.0
+    historical_generated_speech_seconds: float = 0.0
     reverb: StreamingPedalboardReverb = field(default_factory=StreamingPedalboardReverb)
     recently_saved: Optional[str] = None
     kept_sfx_audio: Optional[npt.NDArray[np.float32]] = None
@@ -279,6 +281,16 @@ CELUNE_FORWARDED_PROPERTIES = (
         "smart_buffer_target_seconds",
         "_audio_state",
         "smart_buffer_target_seconds",
+    ),
+    ForwardedPropertySpec(
+        "total_generated_speech_seconds",
+        "_audio_state",
+        "total_generated_speech_seconds",
+    ),
+    ForwardedPropertySpec(
+        "historical_generated_speech_seconds",
+        "_audio_state",
+        "historical_generated_speech_seconds",
     ),
     ForwardedPropertySpec("reverb", "_audio_state", "reverb"),
     ForwardedPropertySpec("recently_saved", "_audio_state", "recently_saved"),

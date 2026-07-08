@@ -2478,6 +2478,48 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         write_mock.assert_not_called()
         self.assertIsNone(engine.recently_saved)
 
+    async def test_generation_worker_accumulates_total_generated_speech_seconds(
+        self,
+    ) -> None:
+        """Verify completed speech adds to the cumulative footer metric."""
+        engine = make_pipeline_engine()
+        engine.backend = SimpleNamespace(
+            generate_stream=lambda _model, **_kwargs: iter(
+                [(np.zeros((48000, 2), dtype=np.float32), 48000, None)]
+            )
+        )
+        engine.model_lock = threading.Lock()
+        engine.model = mock.Mock()
+        engine.language = "en"
+        engine.chunk_size = 8
+        engine.voice_prompt = None
+        engine.current_voice = "balanced"
+        engine.speed = 1.0
+        engine.can_use_rubberband = False
+        engine.reverb = SimpleNamespace(
+            strength=0.0,
+            reset=mock.Mock(),
+            flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
+        )
+        engine.queue_avail_callback = mock.Mock()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.exit_requested = False
+        engine.dev = False
+        engine.recently_saved = None
+        engine.total_generated_speech_seconds = 30.0
+
+        engine.text_queue.put(pipeline.SpeechRequest("hello", "hello", save=False))
+        engine.text_queue.put(engine.sentinel)
+
+        with (
+            mock.patch("celune.pipeline.split_text", return_value=["hello"]),
+            mock.patch("celune.pipeline.is_silent_utterance", return_value=(False, 0)),
+            mock.patch("celune.pipeline._write_celune_flac"),
+        ):
+            await self._run_generation_worker(cast(Celune, engine))
+
+        self.assertEqual(engine.total_generated_speech_seconds, 31.0)
+
     async def test_generation_worker_requeues_silent_utterance_until_retry_limit(
         self,
     ) -> None:
@@ -2663,6 +2705,34 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertIn(("artist", "Celune"), comments)
         self.assertIn(("date", "2026"), comments)
         self.assertNotIn(("invalid=key", "ignored"), comments)
+
+    def test_saved_output_speech_seconds_scans_existing_outputs_directory(self) -> None:
+        """Verify historical output duration is seeded from saved Celune FLACs."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            sf.write(
+                output_dir / "celune_speech_a.flac",
+                np.zeros((48000, 2), dtype=np.float32),
+                48000,
+                format="FLAC",
+            )
+            sf.write(
+                output_dir / "celune_speech_b.flac",
+                np.zeros((24000, 2), dtype=np.float32),
+                48000,
+                format="FLAC",
+            )
+            sf.write(
+                output_dir / "other.flac",
+                np.zeros((48000, 2), dtype=np.float32),
+                48000,
+                format="FLAC",
+            )
+
+            with mock.patch("celune.pipeline.outputs_dir", return_value=output_dir):
+                total_seconds = pipeline.saved_output_speech_seconds()
+
+        self.assertAlmostEqual(total_seconds, 1.5, places=2)
 
     def test_celune_metadata_and_flac_writer_create_expected_tags(self) -> None:
         """Verify Celune metadata payloads and saved FLAC tags.

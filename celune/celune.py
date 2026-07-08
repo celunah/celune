@@ -120,6 +120,7 @@ from .pipeline import (
     queue_speech,
     queue_speech_async,
     release_pipeline,
+    saved_output_speech_seconds,
     say as say_pipeline,
     say_async as say_pipeline_async,
     think as think_pipeline,
@@ -2361,6 +2362,7 @@ class Celune(CeluneStateAccessors):
             bool: ``True`` when initialization completed successfully, otherwise ``False``.
         """
         log_runtime_banner(self.log, self.vc_backend or self.backend)
+        self.historical_generated_speech_seconds = saved_output_speech_seconds()
 
         if self.backend.is_fake and "pytest" not in sys.modules:
             self.log(string("celune.test_mode_active", app_name=APP_NAME))

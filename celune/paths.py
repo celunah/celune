@@ -197,6 +197,21 @@ def main_window_log_path(create_parent: bool = False) -> Path:
     return path
 
 
+def outputs_dir(create: bool = False) -> Path:
+    """Return the repository-local generated outputs directory.
+
+    Args:
+        create: Whether the directory should be created before being returned.
+
+    Returns:
+        Path: Celune's generated outputs directory.
+    """
+    path = project_root() / "outputs"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def project_root() -> Path:
     """Return the repository root containing Celune's bundled defaults.
 

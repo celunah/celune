@@ -36,11 +36,7 @@ class SupportsClose(Protocol):
     """Protocol for objects that can be closed."""
 
     def close(self) -> None:
-        """Release any resources owned by the object.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Release any resources owned by the object."""
         raise NotImplementedError("protocol not defined")
 
 
@@ -48,11 +44,7 @@ class SupportsUnload(Protocol):
     """Protocol for objects that can unload their runtime state."""
 
     def unload(self) -> None:
-        """Unload any optional runtime state owned by the object.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Unload any optional runtime state owned by the object."""
         raise NotImplementedError("protocol not defined")
 
 
@@ -64,26 +56,15 @@ class Generative(Protocol):
 
         Args:
             kwargs: Backend-specific generation keyword arguments.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
     def device(self) -> Union[torch.device, str]:
-        """Return the device used by the generative model.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Return the device used by the generative model."""
         raise NotImplementedError("protocol not defined")
 
     def parameters(self) -> Iterator[torch.nn.Parameter]:
-        """Iterate over the model parameters.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Iterate over the model parameters."""
         raise NotImplementedError("protocol not defined")
 
 
@@ -107,9 +88,6 @@ class NormalizerTokenizer(Protocol):
 
         Args:
             tokens: Token text to resolve into an integer ID.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -134,9 +112,6 @@ class NormalizerTokenizer(Protocol):
         Args:
             token_ids: Generated token IDs to decode.
             skip_special_tokens: Whether special tokens should be omitted.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -251,6 +226,8 @@ class CeluneStateAccessors:
     speed: float
     smart_buffer_generation_speed: Optional[float]
     smart_buffer_target_seconds: float
+    total_generated_speech_seconds: float
+    historical_generated_speech_seconds: float
     reverb: "StreamingPedalboardReverb"
     recently_saved: Optional[str]
     kept_sfx_audio: Optional["npt.NDArray[np.float32]"]
@@ -283,21 +260,10 @@ class CeluneStateAccessors:
 
     @property
     def cur_state(self) -> str:
-        """Return the current runtime-state label.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Return the current runtime-state label."""
         raise NotImplementedError("typing surface only")
 
     @cur_state.setter
     def cur_state(self, value: str) -> None:
-        """Store the current runtime-state label.
-
-        Args:
-            value: The new runtime-state label.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Store the current runtime-state label."""
         raise NotImplementedError("typing surface only")

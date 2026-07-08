@@ -413,6 +413,8 @@
     "ui.recording_stopped_feedback": "Stopped recording from {label}. A sudden RMS spike suggested microphone feedback.",
     "ui.recording_stream_chunk_failed": "Could not stream microphone audio from {label}: {error}",
     "ui.recording_stream_submit_failed": "Could not stream the microphone conversion right now.",
+    "ui.footer_cost_equivalent": "{provider}: run ${cost}",
+    "ui.footer_total_cost_equivalent": "{provider}: total ${cost}",
     "ui.footer_toggle_recording": "CTRL+R toggle recording",
     "ui.say_placeholder": "Say something...",
     "ui.sleeping_log": "{app_name} is currently sleeping. Type anything to wake up.",
