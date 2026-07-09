@@ -1361,18 +1361,19 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertIn("Soft-spoken, intimate, and reflective", character_card)
         self.assertIn("Prompt Rules:", character_card)
         self.assertIn("Example Dialogue:", character_card)
-        self.assertIn("<history>", system_prompt)
         self.assertIn("<profile>", system_prompt)
         self.assertIn("<behavior>", system_prompt)
-        self.assertIn("Earlier reply.", system_prompt)
-        self.assertIn("user: What now?", system_prompt)
-        self.assertIn("The assistant has already acknowledged", system_prompt)
-        self.assertIn("You are Celune", system_prompt)
-        self.assertIn("refer to yourself as Celune", system_prompt)
-        self.assertIn("Celune:", system_prompt)
+        self.assertIn("## Identity", system_prompt)
+        self.assertIn("Name: Celune", system_prompt)
+        self.assertNotIn("<history>", system_prompt)
+        self.assertNotIn("Earlier reply.", system_prompt)
         self.assertEqual(messages[0], {"role": "system", "content": system_prompt})
         self.assertEqual(messages[-1], {"role": "user", "content": "What now?"})
-        self.assertEqual(len(messages), 2)
+        self.assertEqual(
+            messages[1],
+            {"role": "assistant", "content": "Earlier reply."},
+        )
+        self.assertEqual(len(messages), 3)
         self.assertEqual(
             engine.persona_history[-2:],
             [
@@ -1474,7 +1475,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         prompt = PersonaPromptBuilder.build(context)
 
         self.assertIn("<profile>", prompt)
-        self.assertIn("<memories>", prompt)
+        self.assertIn("## Identity", prompt)
+        self.assertIn("<memory>", prompt)
         self.assertIn("- The user prefers concise answers.", prompt)
         self.assertIn(
             "- The character once helped recover a lost journal.",
@@ -1482,36 +1484,25 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         )
         self.assertIn("<mood>", prompt)
         self.assertIn("Thoughtful and slightly tired.", prompt)
-        self.assertIn("<history>", prompt)
-        self.assertIn("assistant: Yes, we catalogued the letters.", prompt)
-        self.assertIn("user: What do you notice?", prompt)
-        self.assertIn("You are Fixture", prompt)
+        self.assertNotIn("<history>", prompt)
+        self.assertNotIn("assistant: Yes, we catalogued the letters.", prompt)
+        self.assertNotIn("user: What do you notice?", prompt)
+        self.assertIn("A careful archivist with a dry wit.", prompt)
         self.assertIn(
-            "Push the conversation forward instead of returning to earlier turns.",
+            "Push the conversation forward naturally.",
             prompt,
         )
         self.assertIn(
-            "Treat facts in <memories> as true context when they are relevant.",
+            "Treat facts in <memory> as true background context when they are relevant.",
             prompt,
         )
         self.assertIn(
-            "Keep items from <memories> silent unless the current user message clearly asks for them",
+            "Keep facts from <memory> silent unless the current user message clearly asks for them",
             prompt,
         )
-        self.assertIn(
-            "The assistant has already acknowledged",
-            prompt,
-        )
-        self.assertIn(
-            "Do not greet the user. Do not ask what they need. Just respond.",
-            prompt,
-        )
-        self.assertIn(
-            "Do not bring up older messages, stored facts, or resolved topics on your own.",
-            prompt,
-        )
-        self.assertIn("Fixture:", prompt)
-        self.assertIn("What do you notice?", prompt)
+        self.assertIn("## Runtime Guidance", prompt)
+        self.assertIn("Do not greet the user or restart the conversation.", prompt)
+        self.assertNotIn("What do you notice?", prompt)
         self.assertNotIn("<request>", prompt)
 
     def test_cevoice_persona_metadata_populates_persona_card(self) -> None:
@@ -1558,11 +1549,32 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             context.character_profile.render(),
         )
         self.assertEqual(
-            context.character_profile.render_identity_summary(),
+            context.persona_source_material.identity,
             "\n".join(
                 (
-                    "You are Mirelle, a precise investigator who notices tiny shifts in tone.",
-                    "When asked for an introduction, refer to yourself as Mirelle.",
+                    "Name: Mirelle",
+                    "Age: 27",
+                    "Gender: female",
+                    "",
+                    "A precise investigator who notices tiny shifts in tone.",
+                )
+            ),
+        )
+        self.assertEqual(
+            context.persona_source_material.speech_style,
+            "\n\n".join(
+                (
+                    "Elegant, steady, and mildly teasing.",
+                    "\n".join(
+                        (
+                            "- Warmth: mid",
+                            "- Directness: high",
+                            "- Humor: low",
+                            "- Detail: high",
+                            "- Formality: high",
+                            "- Enthusiasm: low",
+                        )
+                    ),
                 )
             ),
         )
@@ -1573,13 +1585,6 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertIn("Example Dialogue:", card)
         self.assertIn("- Formality: high", card)
         self.assertIn("- Enthusiasm: low", card)
-        self.assertEqual(
-            context.persona_card.behavior_cues(),
-            (
-                "Elegant, steady, and mildly teasing.",
-                "Do not use sterile assistant framing.\n- Do not sound detached.",
-            ),
-        )
 
     def test_different_cevoice_personas_produce_distinct_prompts(self) -> None:
         """Verify different CEVOICE persona packs shape different Persona prompts."""
@@ -1611,8 +1616,70 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         )
 
         self.assertNotEqual(first_prompt, second_prompt)
-        self.assertIn("Mirelle:", first_prompt)
-        self.assertIn("Rho:", second_prompt)
+        self.assertIn("A precise investigator.", first_prompt)
+        self.assertIn("A mischievous mechanic.", second_prompt)
+
+    def test_persona_prompt_prefers_manifest_markdown_files_when_available(
+        self,
+    ) -> None:
+        """Verify CECHAR v3 persona Markdown overrides legacy-derived prompt text."""
+        engine = make_pipeline_engine()
+        engine.config = {"persona_persona": "Legacy personality text."}
+        engine.current_character = "Mirelle"
+        engine.current_voice = "balanced"
+        engine.current_character_persona = CEVoicePersona(
+            identity=PersonaIdentity(
+                name="Mirelle",
+                profile="Legacy identity text.",
+            ),
+            speaking_style="Legacy speech style.",
+        )
+        fake_loader = SimpleNamespace(
+            bundle=SimpleNamespace(
+                metadata={
+                    "name": "Mirelle",
+                    "assets": {
+                        "identity.md": {
+                            "offset": 0,
+                            "length": 18,
+                            "sha256": "0" * 64,
+                        },
+                        "personality.md": {
+                            "offset": 18,
+                            "length": 21,
+                            "sha256": "1" * 64,
+                        },
+                        "speech_style.md": {
+                            "offset": 39,
+                            "length": 20,
+                            "sha256": "2" * 64,
+                        },
+                    },
+                },
+                assets={
+                    "identity.md": {},
+                    "personality.md": {},
+                    "speech_style.md": {},
+                },
+                read_bundle_asset=lambda name: {
+                    "identity.md": b"Manifest identity.",
+                    "personality.md": b"Manifest personality.",
+                    "speech_style.md": b"Manifest speech style.",
+                }[name],
+            ),
+        )
+
+        with mock.patch("celune.pipeline.default_loader", return_value=fake_loader):
+            prompt = PersonaPromptBuilder.build(
+                pipeline.build_persona_context(cast(Celune, engine), "Status?")
+            )
+
+        self.assertIn("Manifest identity.", prompt)
+        self.assertIn("Manifest personality.", prompt)
+        self.assertIn("Manifest speech style.", prompt)
+        self.assertNotIn("Legacy personality text.", prompt)
+        self.assertNotIn("Legacy identity text.", prompt)
+        self.assertNotIn("Ignored text.", prompt)
 
     def test_persona_prompt_does_not_hardcode_celune_identity(self) -> None:
         """Verify Persona prompts stay character-agnostic without pack metadata."""
@@ -1625,9 +1692,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             pipeline.build_persona_context(cast(Celune, engine), "Hello.")
         )
 
-        self.assertIn("Fixture:", prompt)
+        self.assertIn("Name: Fixture", prompt)
         self.assertNotIn("Name: Celune", prompt)
-        self.assertIn("You are Fixture", prompt)
 
     def test_default_celune_prompt_uses_canonical_age_and_gender(self) -> None:
         """Verify default Celune prompts expose the intended identity fields."""
@@ -1641,10 +1707,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             pipeline.build_persona_context(cast(Celune, engine), "Hello.")
         )
 
-        self.assertIn("Celune:", prompt)
-        self.assertIn("You are Celune", prompt)
-        self.assertNotIn("Gender: female", prompt)
-        self.assertNotIn("The speaker uses a more confident", prompt)
+        self.assertIn("Name: Celune", prompt)
+        self.assertIn("Gender: female", prompt)
 
     def test_named_celune_custom_pack_does_not_use_default_identity(self) -> None:
         """Verify custom packs named Celune do not inherit default identity fields."""
@@ -1658,8 +1722,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             pipeline.build_persona_context(cast(Celune, engine), "Hello.")
         )
 
-        self.assertIn("Celune:", prompt)
-        self.assertIn("You are Celune", prompt)
+        self.assertIn("Name: Celune", prompt)
 
     def test_persona_context_uses_weighted_emotion_state_when_unconfigured(
         self,
@@ -1746,7 +1809,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
     def test_persona_prompt_builder_omits_vision_context_without_attachments(
         self,
     ) -> None:
-        """Verify Persona prompts omit vision context when no media is attached."""
+        """Verify Persona prompts no longer serialize recent chat into the system prompt."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Fixture"
@@ -1760,8 +1823,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         prompt = PersonaPromptBuilder.build(context)
 
         self.assertNotIn("<vision_context>", prompt)
-        self.assertIn("<history>", prompt)
-        self.assertIn("assistant: hi", prompt)
+        self.assertNotIn("<history>", prompt)
+        self.assertNotIn("assistant: hi", prompt)
 
     def test_persona_messages_keep_only_recent_history(self) -> None:
         """Verify stale Persona turns do not dilute the current character card."""
@@ -1780,12 +1843,12 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(messages[0]["role"], "system")
         self.assertEqual(messages[-1], {"role": "user", "content": "current"})
-        self.assertEqual(len(messages), 2)
+        self.assertEqual(len(messages), 8)
+        self.assertEqual(messages[1], {"role": "user", "content": "old user 6"})
+        self.assertEqual(messages[-2], {"role": "assistant", "content": "old reply 11"})
         system_prompt = cast(str, messages[0]["content"])
-        self.assertIn("<history>", system_prompt)
-        self.assertIn("user: old user 6", system_prompt)
-        self.assertIn("assistant: old reply 11", system_prompt)
-        self.assertNotIn("old user 4", system_prompt)
+        self.assertNotIn("<history>", system_prompt)
+        self.assertNotIn("old user 4", str(messages))
 
     def test_persona_history_uses_configured_short_term_message_limit(self) -> None:
         """Verify Persona history rolls forward using the configured message limit."""
@@ -1920,10 +1983,10 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             ["my test word is moonlight"],
         )
 
-    def test_persona_prompt_builder_includes_short_term_summary_when_present(
+    def test_persona_prompt_builder_omits_short_term_summary_from_system_prompt_when_present(
         self,
     ) -> None:
-        """Verify short-term memory can include a session summary for later use."""
+        """Verify recent-summary text is not duplicated into the system prompt."""
         engine = make_pipeline_engine()
         engine.config = {"persona": {"memory": {"max_short_term_messages": 2}}}
         engine.current_character = "Fixture"
@@ -1940,14 +2003,12 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         context = pipeline.build_persona_context(cast(Celune, engine), "Continue.")
         prompt = PersonaPromptBuilder.build(context)
 
-        self.assertIn("<history>", prompt)
-        self.assertIn("Summary:", prompt)
-        self.assertIn(
+        self.assertNotIn("<history>", prompt)
+        self.assertNotIn("Summary:", prompt)
+        self.assertNotIn(
             "The user and character already discussed the archive.",
             prompt,
         )
-        self.assertIn("assistant: We reviewed the archive.", prompt)
-        self.assertIn("user: And after that?", prompt)
 
     def test_persona_messages_include_pending_attachments(self) -> None:
         """Verify visual attachments are sent in the next persona user turn."""

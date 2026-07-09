@@ -105,7 +105,7 @@ class CEVoiceTests(TestCase):
         """
         bundle = self._write_bundle()
         self.assertEqual(bundle.metadata["format"], "CECHAR")
-        self.assertEqual(bundle.metadata["version"], 2)
+        self.assertEqual(bundle.metadata["version"], 3)
         self.assertEqual(bundle.voice_order, ("bold", "balanced"))
         self.assertEqual(bundle.voices["balanced"]["cfg_scale"], 2.4)
         self.assertEqual(
@@ -128,6 +128,8 @@ class CEVoiceTests(TestCase):
                 "Fixture: Sounds like you finally wrestled it into behaving.",
             ),
         )
+        self.assertEqual(cevoice.persona_files_from_manifest(bundle.metadata), {})
+        self.assertEqual(cevoice.persona_files_from_bundle(bundle), {})
         self.assertEqual(persona.style.warmth, "high")
         self.assertEqual(
             cevoice.bundle_character_name(bundle),
@@ -161,6 +163,24 @@ class CEVoiceTests(TestCase):
         self.assertEqual(rebuilt_path, first_path)
         self.assertTrue(rebuilt_path.is_file())
         self.assertEqual(rebuilt_path.read_bytes(), b"wav")
+
+    def test_cechar_v2_bundle_remains_loadable(self) -> None:
+        """Verify CECHAR v2 bundles still open after the CECHAR v3 upgrade."""
+        bundle = self._write_bundle()
+        metadata = copy.deepcopy(bundle.metadata)
+        metadata["version"] = 2
+        self._rewrite_bundle_header_and_metadata(
+            cevoice.MAGIC,
+            2,
+            metadata,
+        )
+
+        reopened = cevoice.CEVoice.open(self.path)
+
+        self.assertEqual(reopened.metadata["format"], "CECHAR")
+        self.assertEqual(reopened.metadata["version"], 2)
+        self.assertEqual(reopened.voice_order, ("bold", "balanced"))
+        self.assertEqual(reopened.read_asset("balanced", "wav"), b"wav")
 
     def test_legacy_cevoice_v1_bundle_remains_loadable(self) -> None:
         """Verify legacy CEVOICE v1 bundles still open after the schema rename."""
@@ -217,6 +237,52 @@ class CEVoiceTests(TestCase):
         self.assertEqual(
             cast(dict[str, str], bundle.metadata["theme"])["faded_accent"],
             "#8866cc",
+        )
+
+    def test_persona_files_from_manifest_only_returns_supported_markdown(self) -> None:
+        """Verify CECHAR v3 persona files use the supported filename whitelist."""
+        bundle = self._write_bundle()
+        metadata = copy.deepcopy(bundle.metadata)
+        metadata["persona_files"] = {
+            "identity.md": "  Identity text.  ",
+            "soul.md": "Soul text.",
+            "notes.md": "Ignore this.",
+        }
+
+        files = cevoice.persona_files_from_manifest(metadata)
+
+        self.assertEqual(
+            files,
+            {
+                "identity.md": "Identity text.",
+                "soul.md": "Soul text.",
+            },
+        )
+
+    def test_bundle_assets_can_store_supported_persona_markdown(self) -> None:
+        """Verify CECHAR v3 persona Markdown is stored as top-level payload assets."""
+        cevoice.write_cevoice(
+            self.path,
+            {"balanced": {"wav": b"wav", "pt": b"pt"}},
+            {"name": "Fixture"},
+            {"balanced": {"reference_text": "Balanced reference."}},
+            bundle_assets={
+                "identity.md": b"Name: Fixture\n\nArchivist.",
+                "speech_style.md": b"Measured and steady.",
+            },
+        )
+
+        bundle = cevoice.CEVoice.open(self.path)
+
+        self.assertEqual(
+            bundle.read_bundle_asset("identity.md"), b"Name: Fixture\n\nArchivist."
+        )
+        self.assertEqual(
+            cevoice.persona_files_from_bundle(bundle),
+            {
+                "identity.md": "Name: Fixture\n\nArchivist.",
+                "speech_style.md": "Measured and steady.",
+            },
         )
 
         bundle = self._write_bundle()

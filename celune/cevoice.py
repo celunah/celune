@@ -20,10 +20,11 @@ from .paths import project_root, temp_data_dir
 from .typing.cevoice import Manifest, ManifestValue, VoiceManifest
 
 # Celune supports both of these specifications
-# CECHAR v2 spec (Celune v4 format)
+# CECHAR v3 spec (Celune v4 format)
 MAGIC: Final[bytes] = b"CECHAR\0\0"
-VERSION: Final[int] = 2
+VERSION: Final[int] = 3
 FORMAT_NAME: Final[str] = "CECHAR"
+COMPATIBLE_CECHAR_VERSIONS: Final[frozenset[int]] = frozenset({2, 3})
 
 # CEVOICE v1 spec (Celune v3.5 format)
 LEGACY_MAGIC: Final[bytes] = b"CEVOICE\0"
@@ -32,8 +33,16 @@ LEGACY_FORMAT_NAME: Final[str] = "CEVOICE"
 
 HEADER = struct.Struct("<8sHI")
 ALLOWED_ASSET_KINDS = {"wav", "pt"}
+SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
+    "identity.md",
+    "soul.md",
+    "personality.md",
+    "speech_style.md",
+    "boundaries.md",
+    "examples.md",
+)
 DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
-    "22ff70762e7f6f3e734cc62c81c286f7482de6155b2394e7a6ddec1a892f63e0"
+    "03d2dad05c2dffb420cdce08b4a90f421600fdee781cecf3701467bcfa9da069"
 )
 
 
@@ -72,10 +81,10 @@ class CEVoice:
             magic, version, metadata_length = _read_header(stream)
             if magic not in {MAGIC, LEGACY_MAGIC}:
                 raise CEVoiceError("invalid CEVOICE magic")
-            if (magic, version) not in {
-                (MAGIC, VERSION),
-                (LEGACY_MAGIC, LEGACY_VERSION),
-            }:
+            if not (
+                (magic == MAGIC and version in COMPATIBLE_CECHAR_VERSIONS)
+                or (magic == LEGACY_MAGIC and version == LEGACY_VERSION)
+            ):
                 raise CEVoiceError(f"unsupported CEVOICE version {version}")
 
             metadata_bytes = stream.read(metadata_length)
@@ -144,6 +153,42 @@ class CEVoice:
             sha256=cast(str, raw_asset["sha256"]),
         )
 
+    @property
+    def assets(self) -> Manifest:
+        """Return the top-level bundle asset manifest.
+
+        Returns:
+            Result of this function.
+        """
+        assets = self.metadata.get("assets")
+        if not isinstance(assets, dict):
+            return {}
+        return cast(Manifest, assets)
+
+    def bundle_asset(self, name: str) -> CEVoiceAsset:
+        """Return metadata for one top-level bundle asset.
+
+        Args:
+            name: The bundle asset filename to resolve.
+
+        Returns:
+            CEVoiceAsset: The parsed asset metadata for the requested bundle asset.
+
+        Raises:
+            KeyError: Raised when the named bundle asset does not exist.
+        """
+        try:
+            raw_asset = self.assets[name]
+        except KeyError as error:
+            raise KeyError(f"bundle asset '{name}' not found") from error
+        if not isinstance(raw_asset, dict):
+            raise KeyError(f"bundle asset '{name}' not found")
+        return CEVoiceAsset(
+            offset=cast(int, raw_asset["offset"]),
+            length=cast(int, raw_asset["length"]),
+            sha256=cast(str, raw_asset["sha256"]),
+        )
+
     def read_asset(self, voice: str, kind: str) -> bytes:
         """Read and checksum one asset payload.
 
@@ -168,6 +213,29 @@ class CEVoice:
             raise CEVoiceError(
                 f"checksum mismatch for asset '{kind}' of voice '{voice}'"
             )
+        return data
+
+    def read_bundle_asset(self, name: str) -> bytes:
+        """Read and checksum one top-level bundle asset payload.
+
+        Args:
+            name: The bundle asset filename to read.
+
+        Returns:
+            bytes: The decoded bundle asset payload bytes.
+
+        Raises:
+            CEVoiceError: Raised when the asset is truncated or fails checksum validation.
+        """
+        asset = self.bundle_asset(name)
+        with self.path.open("rb") as stream:
+            stream.seek(self.payload_offset + asset.offset)
+            data = stream.read(asset.length)
+
+        if len(data) != asset.length:
+            raise CEVoiceError(f"truncated bundle asset '{name}'")
+        if hashlib.sha256(data).hexdigest() != asset.sha256:
+            raise CEVoiceError(f"checksum mismatch for bundle asset '{name}'")
         return data
 
 
@@ -261,6 +329,7 @@ def write_cevoice(
     voices: Mapping[str, Mapping[str, Union[bytes, str, Path]]],
     metadata: Optional[Mapping[str, ManifestValue]] = None,
     voice_metadata: Optional[Mapping[str, Mapping[str, ManifestValue]]] = None,
+    bundle_assets: Optional[Mapping[str, Union[bytes, str, Path]]] = None,
 ) -> Path:
     """Write a CEVOICE/CECHAR package from per-voice binary assets.
 
@@ -269,6 +338,7 @@ def write_cevoice(
         voices: The voice files to bundle into this CEVOICE/CECHAR package.
         metadata: The metadata to bundle into this CEVOICE/CECHAR package.
         voice_metadata: Extra metadata stored beside each voice's assets.
+        bundle_assets: Extra top-level payload assets such as CECHAR v3 persona Markdown.
 
     Returns:
         Path: The path to the created CEVOICE/CECHAR package.
@@ -305,10 +375,28 @@ def write_cevoice(
         voice_entry["assets"] = cast(ManifestValue, manifest_assets)
         manifest_voices[voice] = voice_entry
 
+    manifest_bundle_assets: dict[str, Manifest] = {}
+    for name, source in (bundle_assets or {}).items():
+        if "/" in name or "\\" in name or name in {"", ".", ".."}:
+            raise CEVoiceError(f"invalid bundle asset name '{name}'")
+        if Path(name).suffix.lower() != ".md":
+            raise CEVoiceError(f"unsupported bundle asset '{name}'")
+        if Path(name).name not in SUPPORTED_PERSONA_FILENAMES:
+            raise CEVoiceError(f"unsupported bundle asset '{name}'")
+        data = _read_source(source)
+        manifest_bundle_assets[name] = {
+            "offset": len(payload),
+            "length": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+        payload.extend(data)
+
     manifest = dict(metadata or {})
     manifest["format"] = FORMAT_NAME
     manifest["version"] = VERSION
     manifest["voices"] = cast(ManifestValue, manifest_voices)
+    if manifest_bundle_assets:
+        manifest["assets"] = cast(ManifestValue, manifest_bundle_assets)
     metadata_bytes = json.dumps(
         manifest,
         ensure_ascii=True,
@@ -345,10 +433,14 @@ def _validate_metadata(
         raise CEVoiceError("metadata root must be an object")
     format_name = metadata.get("format")
     manifest_version = metadata.get("version")
-    if (format_name, manifest_version) not in {
-        (FORMAT_NAME, VERSION),
-        (LEGACY_FORMAT_NAME, LEGACY_VERSION),
-    }:
+    if not (
+        (
+            format_name == FORMAT_NAME
+            and isinstance(manifest_version, int)
+            and manifest_version in COMPATIBLE_CECHAR_VERSIONS
+        )
+        or (format_name, manifest_version) == (LEGACY_FORMAT_NAME, LEGACY_VERSION)
+    ):
         raise CEVoiceError("metadata format/version mismatch")
 
     voices = metadata.get("voices")
@@ -390,6 +482,9 @@ def _validate_metadata(
     persona = metadata.get("persona")
     if persona is not None:
         _validate_persona_metadata(persona)
+    bundle_assets = metadata.get("assets")
+    if bundle_assets is not None:
+        _validate_bundle_assets_metadata(bundle_assets)
 
     payload_length = path.stat().st_size - payload_offset
     for voice, voice_data in voices.items():
@@ -446,6 +541,8 @@ def _validate_metadata(
                 raise CEVoiceError(
                     f"asset '{kind}' for voice '{voice}' exceeds payload"
                 )
+    for name, asset in cast(Manifest, metadata.get("assets", {})).items():
+        _validate_bundle_asset_entry(name, asset, payload_length)
 
 
 def _is_hex_color(value: ManifestValue) -> bool:
@@ -476,6 +573,44 @@ def _validate_string_list_or_text(
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
         return
     raise CEVoiceError(f"{field_name} must be a string or list of strings")
+
+
+def _validate_bundle_asset_entry(
+    name: str,
+    asset: ManifestValue,
+    payload_length: int,
+) -> None:
+    """Validate one top-level bundle asset manifest entry."""
+    if "/" in name or "\\" in name or name in {"", ".", ".."}:
+        raise CEVoiceError(f"invalid bundle asset name '{name}'")
+    if (
+        Path(name).suffix.lower() != ".md"
+        or Path(name).name not in SUPPORTED_PERSONA_FILENAMES
+    ):
+        raise CEVoiceError(f"unsupported bundle asset '{name}'")
+    if not isinstance(asset, dict):
+        raise CEVoiceError(f"invalid bundle asset '{name}'")
+    offset = asset.get("offset")
+    length = asset.get("length")
+    digest = asset.get("sha256")
+    if (
+        not isinstance(offset, int)
+        or offset < 0
+        or not isinstance(length, int)
+        or length < 0
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdefABCDEF" for character in digest)
+    ):
+        raise CEVoiceError(f"invalid bundle asset '{name}'")
+    if offset + length > payload_length:
+        raise CEVoiceError(f"bundle asset '{name}' exceeds payload")
+
+
+def _validate_bundle_assets_metadata(value: ManifestValue) -> None:
+    """Validate the top-level bundle asset table."""
+    if not isinstance(value, dict):
+        raise CEVoiceError("metadata assets must be an object")
 
 
 def _validate_persona_metadata(persona: ManifestValue) -> None:
@@ -510,7 +645,6 @@ def _validate_persona_metadata(persona: ManifestValue) -> None:
         persona.get("example_dialogue"),
         "metadata persona 'example_dialogue'",
     )
-
     style = persona.get("style")
     if style is not None:
         if not isinstance(style, dict):
@@ -584,6 +718,59 @@ def persona_metadata_from_manifest(
             enthusiasm=_manifest_text(style.get("enthusiasm")),
         ),
     )
+
+
+def persona_files_from_manifest(
+    metadata: Mapping[str, ManifestValue],
+) -> dict[str, str]:
+    """Return legacy whitelisted persona Markdown content embedded in metadata.
+
+    Args:
+        metadata: The CEVOICE/CECHAR package manifest.
+
+    Returns:
+        dict[str, str]: Supported persona filenames mapped to trimmed content.
+    """
+    persona_files: ManifestValue = metadata.get("persona_files")
+    if not isinstance(persona_files, dict):
+        raw_persona = metadata.get("persona")
+        if isinstance(raw_persona, dict):
+            persona_files = cast(Manifest, raw_persona).get("files")
+
+    if not isinstance(persona_files, dict):
+        return {}
+
+    files = cast(Manifest, persona_files)
+    return {
+        filename: cast(str, files[filename]).strip()
+        for filename in SUPPORTED_PERSONA_FILENAMES
+        if isinstance(files.get(filename), str) and cast(str, files[filename]).strip()
+    }
+
+
+def persona_files_from_bundle(bundle: CEVoice) -> dict[str, str]:
+    """Return whitelisted CECHAR v3 persona Markdown stored as bundle assets.
+
+    Args:
+        bundle: The CEVOICE/CECHAR package to inspect.
+
+    Returns:
+        dict[str, str]: Supported persona filenames mapped to decoded UTF-8 text.
+    """
+    files: dict[str, str] = {}
+    for filename in SUPPORTED_PERSONA_FILENAMES:
+        if filename not in bundle.assets:
+            continue
+        try:
+            text = bundle.read_bundle_asset(filename).decode("utf-8").strip()
+        except (UnicodeDecodeError, CEVoiceError, KeyError):
+            continue
+        if text:
+            files[filename] = text
+
+    if files:
+        return files
+    return persona_files_from_manifest(bundle.metadata)
 
 
 def bundle_character_name(bundle: CEVoice) -> Optional[str]:

@@ -64,7 +64,12 @@ from .persona.impl import (
     persona_short_term_history_limit,
     persona_style_traits,
 )
-from .cevoice import default_loader
+from .cevoice import (
+    bundle_character_name,
+    default_loader,
+    persona_files_from_bundle,
+    persona_metadata_from_manifest,
+)
 from .dsp import (
     pitch_shift_audio,
     resample_audio,
@@ -90,8 +95,8 @@ from .persona.prompts import (
     PersonaCard,
     PersonaContext,
     PersonaPromptBuilder,
+    PersonaSourceMaterial,
     RetrievedMemoryBundle,
-    ShortTermHistory,
 )
 from .constants import (
     APP_NAME,
@@ -1075,23 +1080,6 @@ def build_persona_character_card(engine: Celune) -> str:
     return f"{context.character_profile.render()}\n\n{context.persona_card.render()}"
 
 
-def _build_short_term_history(engine: Celune) -> ShortTermHistory:
-    """Return the current-run chat history for the Persona prompt."""
-    messages = persona_history_messages(engine)
-    turns = [
-        (message["role"].strip(), message["content"].strip())
-        for message in messages
-        if isinstance(message, dict)
-        and isinstance(message.get("role"), str)
-        and isinstance(message.get("content"), str)
-    ]
-    session_summary = ""
-    raw_summary = getattr(engine, "persona_session_summary", None)
-    if isinstance(raw_summary, str) and raw_summary.strip():
-        session_summary = raw_summary.strip()
-    return ShortTermHistory(turns=tuple(turns), session_summary=session_summary)
-
-
 def _persona_emotion_analyzer(engine: Celune) -> Optional[PersonaEmotionAnalyzer]:
     """Return the configured Persona emotion analyzer for this engine."""
     existing = getattr(engine, "persona_emotion_analyzer", None)
@@ -1252,6 +1240,115 @@ def _build_retrieved_memory_bundle(
     )
 
 
+def _persona_manifest_files(engine: Celune) -> dict[str, str]:
+    """Return whitelisted persona Markdown files for the active engine persona."""
+    loader = default_loader()
+    if loader is None:
+        return {}
+    pack_persona = persona_metadata_from_manifest(loader.bundle.metadata)
+    current_persona = getattr(engine, "current_character_persona", None)
+    if pack_persona is not None:
+        if current_persona != pack_persona:
+            return {}
+    else:
+        current_character = getattr(engine, "current_character", None)
+        bundle_name = bundle_character_name(loader.bundle)
+        if not (
+            isinstance(current_character, str)
+            and isinstance(bundle_name, str)
+            and current_character.strip()
+            and current_character.strip() == bundle_name.strip()
+        ):
+            return {}
+    return persona_files_from_bundle(loader.bundle)
+
+
+def _legacy_identity_source(profile: CharacterProfile) -> str:
+    """Render legacy identity metadata into CECHAR v3-style source material."""
+    lines: list[str] = []
+    if profile.name.strip():
+        lines.append(f"Name: {profile.name.strip()}")
+    if profile.age.strip():
+        lines.append(f"Age: {profile.age.strip()}")
+    if profile.gender.strip():
+        lines.append(f"Gender: {profile.gender.strip()}")
+    if profile.profile.strip():
+        if lines:
+            lines.append("")
+        lines.append(profile.profile.strip())
+    return "\n".join(lines).strip()
+
+
+def _legacy_personality_source(engine: Celune) -> str:
+    """Render legacy persona settings into the v3 personality source slot."""
+    blocks: list[str] = []
+    persona_text = _config_text(
+        engine,
+        "persona_persona",
+        default_persona_persona(),
+    )
+    if persona_text:
+        blocks.append(persona_text)
+
+    prompt_rules = pack_persona_lines(engine, "prompt_rules")
+    if prompt_rules:
+        blocks.append("\n".join(f"- {line}" for line in prompt_rules))
+
+    return "\n\n".join(block for block in blocks if block.strip()).strip()
+
+
+def _legacy_speech_style_source(engine: Celune) -> str:
+    """Render legacy speech-style metadata into the v3 speech-style slot."""
+    blocks: list[str] = []
+    speaking_style = pack_persona_text(engine, "speaking_style")
+    if speaking_style:
+        blocks.append(speaking_style)
+
+    traits = persona_style_traits(engine)
+    trait_lines = [
+        f"- Warmth: {traits['warmth']}",
+        f"- Directness: {traits['directness']}",
+        f"- Humor: {traits['humor']}",
+        f"- Detail: {traits['detail']}",
+        f"- Formality: {traits['formality']}",
+        f"- Enthusiasm: {traits['enthusiasm']}",
+    ]
+    blocks.append("\n".join(trait_lines))
+    return "\n\n".join(block for block in blocks if block.strip()).strip()
+
+
+def _legacy_boundaries_source(engine: Celune) -> str:
+    """Render legacy boundary lines into the v3 boundaries source slot."""
+    lines = pack_persona_lines(engine, "boundaries")
+    return "\n".join(f"- {line}" for line in lines)
+
+
+def _legacy_examples_source(engine: Celune) -> str:
+    """Render legacy example dialogue into the v3 examples source slot."""
+    return "\n".join(pack_persona_lines(engine, "example_dialogue")).strip()
+
+
+def _build_persona_source_material(
+    engine: Celune,
+    character_profile: CharacterProfile,
+) -> PersonaSourceMaterial:
+    """Build v3 prompt source material from package files with legacy fallback."""
+    persona_files = _persona_manifest_files(engine)
+    return PersonaSourceMaterial(
+        identity=persona_files.get("identity.md", "")
+        or _legacy_identity_source(character_profile),
+        soul=persona_files.get("soul.md", ""),
+        personality=persona_files.get("personality.md", "")
+        or _legacy_personality_source(engine),
+        speech_style=persona_files.get("speech_style.md", "")
+        or _legacy_speech_style_source(engine),
+        boundaries=persona_files.get("boundaries.md", "")
+        or _legacy_boundaries_source(engine),
+        examples=persona_files.get("examples.md", "")
+        or _legacy_examples_source(engine),
+    )
+
+
 def build_persona_context(engine: Celune, request: str) -> PersonaContext:
     """Build structured Persona context for one user request.
 
@@ -1305,15 +1402,15 @@ def build_persona_context(engine: Celune, request: str) -> PersonaContext:
         prompt_rules=pack_persona_lines(engine, "prompt_rules"),
         example_dialogue=pack_persona_lines(engine, "example_dialogue"),
     )
+    persona_source_material = _build_persona_source_material(engine, character_profile)
     mood_or_state = _persona_mood_or_state(engine, request)
 
     return PersonaContext(
         character_profile=character_profile,
         persona_card=persona_card,
+        persona_source_material=persona_source_material,
         mood_or_state=mood_or_state,
         retrieved_long_term_memory=_build_retrieved_memory_bundle(engine, request),
-        current_run_chat_history=_build_short_term_history(engine),
-        user_message=request.strip(),
     )
 
 
@@ -1348,10 +1445,13 @@ def build_persona_messages(engine: Celune, request: str) -> list[JSON]:
             {"type": "text", "text": request.strip()},
         ]
 
-    return [
-        {"role": "system", "content": PersonaPromptBuilder.build(context)},
-        {"role": "user", "content": user_content},
+    messages: list[JSON] = [
+        cast(JSON, {"role": "system", "content": PersonaPromptBuilder.build(context)})
     ]
+    for message in persona_history_messages(engine):
+        messages.append(message)
+    messages.append(cast(JSON, {"role": "user", "content": user_content}))
+    return messages
 
 
 def build_persona_request(engine: Celune, request: str) -> JSON:

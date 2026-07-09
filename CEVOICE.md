@@ -1,7 +1,8 @@
 # CEVOICE
 
 `CEVOICE` is Celune's voice-pack container format. Current bundles are written with
-the `CECHAR` v2 schema, while legacy `CEVOICE` v1 bundles remain readable. A
+the `CECHAR` v3 schema, while older `CECHAR` v2 and legacy `CEVOICE` v1 bundles
+remain readable. A
 `.cevoice` file stores:
 
 - a small fixed-size binary header
@@ -30,7 +31,7 @@ The header fields for newly written bundles are:
 | Field | Type | Value |
 | --- | --- | --- |
 | `magic` | `8s` | `b"CECHAR\0\0"` |
-| `version` | `H` | `2` |
+| `version` | `H` | `3` |
 | `metadata_length` | `I` | byte length of the JSON metadata |
 
 Celune also accepts legacy bundles with:
@@ -49,7 +50,7 @@ Asset offsets are relative to the start of the payload, not the start of the fil
 ```json
 {
   "format": "CECHAR",
-  "version": 2,
+  "version": 3,
   "name": "My Pack",
   "default_voice": "balanced",
   "voice_order": ["balanced"],
@@ -131,9 +132,21 @@ Supported `persona` fields are:
 | `persona.example_dialogue` | Optional string or list of strings with example dialogue |
 | `persona.style.*` | Optional style values for `warmth`, `directness`, `humor`, `detail`, `formality`, `enthusiasm` |
 
+Supported top-level bundle Markdown assets are:
+
+- `identity.md`
+- `soul.md`
+- `personality.md`
+- `speech_style.md`
+- `boundaries.md`
+- `examples.md`
+
+In CECHAR v3, those `.md` files live in the payload alongside `wav` and `pt`
+data and are indexed from the top-level `assets` manifest table.
+
 Validation rules enforced by Celune:
 
-- `format`/`version` must be either `"CECHAR"` / `2` or legacy `"CEVOICE"` / `1`
+- `format`/`version` must be either `"CECHAR"` / `2` or `3`, or legacy `"CEVOICE"` / `1`
 - `voices` must be an object
 - `default_voice`, when present, must name a defined voice
 - `voice_order`, when present, must be a duplicate-free list of defined voice names
@@ -143,12 +156,14 @@ Validation rules enforced by Celune:
 - `theme.glow_color` and `theme.faded_accent` must be `#RRGGBB` hex colors when present
 - legacy `theme.sleeping_color` is still accepted and is normalized into `theme.faded_accent`
 - `persona` must be an object when present
+- `assets` must be an object when present
 - `persona.identity` and `persona.style` must be objects when present
 - Persona text fields must be strings, and list-capable Persona fields must be either a string or a list of strings
 - `voices.<name>.cfg_scale`, when present, must be a positive number
 - `voices.<name>.reference_text`, when present, must be a non-empty string
 - voice names and asset kinds may not contain path separators and may not be `""`, `"."`, or `".."`
 - only `wav` and `pt` asset kinds are supported
+- only supported persona `.md` filenames may appear in top-level `assets`
 - every asset entry needs a non-negative integer `offset`, a non-negative integer `length`, and a 64-character SHA-256 digest
 - each asset must fit inside the payload region
 
@@ -341,7 +356,7 @@ Celune's bundled `default.cevoice` uses:
 - `default_voice`: `balanced`
 - `voice_order`: `balanced`, `calm`, `bold`, `upbeat`
 - `theme`: `background`, `accent`, `glow_color`, and `faded_accent`
-- `persona`: identity and speaking-style metadata for the bundled character
+- top-level `assets`: CECHAR v3-style prompt source material for the bundled character
 - `cfg_scale`: `2.4` for `balanced`, `bold`, and `upbeat`; `3.0` for `calm`
 - `reference_text`: the transcript matching each bundled reference `wav`
 - both `wav` and `pt` assets for each voice
