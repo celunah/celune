@@ -57,7 +57,7 @@ from .runtime import log_runtime_banner, validate_runtime
 from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
 from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
 from .vc_runtime import clamp_vc_pitch_shift
-from .exceptions import NotAvailableError, WarmupError, BackendError
+from .exceptions import NotAvailableError, WarmupError, BackendError, RuntimeCheckError
 from .modeling import normalizer_device, load_normalizer_components
 from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID
 from .i18n import get_system_locale, set_locale, string
@@ -2355,8 +2355,14 @@ class Celune(CeluneStateAccessors):
         async with self._async_runtime_lock:
             return await asyncio.to_thread(self.wake_from_sleep)
 
-    def load(self) -> bool:
+    def load(
+        self, raise_on_error: bool = False, skip_runtime_check: bool = False
+    ) -> bool:
         """Load and initialize Celune.
+
+        Args:
+            raise_on_error: Whether Celune should raise for failures to load or signal fatal states.
+            skip_runtime_check: Whether Celune should skip runtime checks during startup.
 
         Returns:
             bool: ``True`` when initialization completed successfully, otherwise ``False``.
@@ -2374,6 +2380,8 @@ class Celune(CeluneStateAccessors):
             self.log(string("celune.no_voices_loaded"), "error")
             self.error_callback(string("celune.no_voices_loaded_short"))
             self.progress_callback(0, 1)
+            if raise_on_error:
+                raise NotAvailableError("no voices are available")
             return False
 
         if self.backend.uses_voice_bundles:
@@ -2408,6 +2416,10 @@ class Celune(CeluneStateAccessors):
                 self.log(string("celune.no_vc_backend"), "error")
                 self.error_callback(string("celune.no_valid_vc_backend"))
                 self.progress_callback(0, 1)
+                if raise_on_error:
+                    raise NotAvailableError(
+                        "requested VC mode, but no VC backend was loaded"
+                    )
                 return False
 
             self.vc_backend.preload_models()
@@ -2431,6 +2443,8 @@ class Celune(CeluneStateAccessors):
                 self.log(format_error(e, self.dev), "error")
                 self.error_callback(string("celune.default_model_failed_short"))
                 self.progress_callback(0, 1)
+                if raise_on_error:
+                    raise
                 return False
 
         if self.vision is not None:
@@ -2454,16 +2468,21 @@ class Celune(CeluneStateAccessors):
         self._playback_thread = pipeline_thread
         pipeline_thread.start()
 
-        if not validate_runtime(
-            log=self.log,
-            error=self.error_callback,
-            set_state=lambda state: setattr(self, "cur_state", state),
-            glow_connect_failed=self.glow.connect_failed,
-            format_error=format_error,
-            dev=self.dev,
-            backend_name=self._active_runtime_backend_name(),
+        if (
+            not validate_runtime(
+                log=self.log,
+                error=self.error_callback,
+                set_state=lambda state: setattr(self, "cur_state", state),
+                glow_connect_failed=self.glow.connect_failed,
+                format_error=format_error,
+                dev=self.dev,
+                backend_name=self._active_runtime_backend_name(),
+            )
+            and not skip_runtime_check
         ):
             self.fatal()
+            if raise_on_error:
+                raise RuntimeCheckError("runtime check failed")
             return False
 
         warmup_ok = True
@@ -2478,6 +2497,8 @@ class Celune(CeluneStateAccessors):
         else:
             self.fatal()
             self.log(string("celune.warmup_failed"), "error")
+            if raise_on_error:
+                raise BackendError("warmup failed")
             return False
 
         if self.use_normalization:
