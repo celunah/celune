@@ -168,6 +168,24 @@ def _config_int(value: JSONSerializable, default: int) -> int:
     raise TypeError("config value cannot be converted to int")
 
 
+def _configured_pipeline_queue_size(config: Config) -> int:
+    """Return the bounded audio-queue size configured for pipeline playback."""
+    value = config.get("pipeline_cpu", {})
+    if not isinstance(value, dict):
+        return 8
+    enabled = value.get("enabled", True)
+    if isinstance(enabled, bool) and not enabled:
+        return 0
+
+    queue_size = value.get("max_queue_items", 8)
+    if isinstance(queue_size, bool):
+        return 8
+    try:
+        return min(128, max(1, _config_int(queue_size, 8)))
+    except (TypeError, ValueError, OverflowError):
+        return 8
+
+
 def _configured_vc_pitch_shift(config: Config) -> int:
     """Return the configured default pitch shift for VC backends."""
     env_value = os.getenv("CELUNE_VC_PITCH_SHIFT")
@@ -366,7 +384,9 @@ class Celune(CeluneStateAccessors):
         self._backend_state = CeluneBackendState(config=config)
         self._model_state = CeluneModelState()
         self._voice_state = CeluneVoiceState()
-        self._pipeline_state = CelunePipelineState()
+        self._pipeline_state = CelunePipelineState(
+            audio_queue=queue.Queue(maxsize=_configured_pipeline_queue_size(config))
+        )
         self._audio_state = CeluneAudioState()
         self._runtime_state = CeluneRuntimeState()
         self._async_runtime_lock = asyncio.Lock()
@@ -2366,6 +2386,12 @@ class Celune(CeluneStateAccessors):
 
         Returns:
             bool: ``True`` when initialization completed successfully, otherwise ``False``.
+
+        Raises:
+            NotAvailableError: If `NotAvailableError` needs to be raised.
+            Exception: If `Exception` needs to be raised.
+            RuntimeCheckError: If `RuntimeCheckError` needs to be raised.
+            BackendError: If `BackendError` needs to be raised.
         """
         log_runtime_banner(self.log, self.vc_backend or self.backend)
         self.historical_generated_speech_seconds = saved_output_speech_seconds()

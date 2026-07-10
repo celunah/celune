@@ -76,6 +76,19 @@ class PersonaMemoryTests(TestCase):
             self.assertEqual(saved[0].explicit, False)
             self.assertEqual(saved[0].importance, 3)
 
+    def test_character_memory_layout_uses_persona_character_directory(self) -> None:
+        """Verify debug memory records live below the character memory directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PersonaMemoryStore(
+                storage_dir=temp_dir,
+                character_memory_layout=True,
+            )
+            store.remember("Celune", "my test word is moonlight", explicit=True)
+
+            self.assertTrue(
+                (Path(temp_dir) / "celune" / "memory" / "records.json").is_file()
+            )
+
     def test_automatic_memory_extracts_project_context(self) -> None:
         """Verify recurring project information can be stored automatically."""
         with tempfile.TemporaryDirectory() as temp_dir:

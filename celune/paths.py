@@ -60,6 +60,21 @@ def app_data_dir(create: bool = False) -> Path:
     return path
 
 
+def persona_data_dir(create: bool = False) -> Path:
+    """Return Celune's Persona character data directory.
+
+    Args:
+        create: Whether this directory should be created before being returned.
+
+    Returns:
+        Path: The Persona directory inside Celune's user data directory.
+    """
+    path = app_data_dir(create=create) / "persona"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def huggingface_home_dir(create: bool = False) -> Path:
     """Return Celune's default Hugging Face home directory.
 

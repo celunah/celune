@@ -20,6 +20,7 @@ from transformers import AutoModel, AutoTokenizer
 
 from ..paths import memory_data_dir
 from ..constants import JSONSerializable, PERSONA_MEMORY_EMBEDDING_MODEL
+from .paths import persona_character_slug
 
 if TYPE_CHECKING:
     from transformers.modeling_utils import PreTrainedModel
@@ -166,12 +167,6 @@ def _compute_text_embeddings(
         return None
 
 
-def _character_slug(name: str) -> str:
-    """Return a filesystem-safe identifier for one character name."""
-    cleaned = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")
-    return cleaned or "unknown"
-
-
 def default_memory_dir() -> Path:
     """Return the default on-disk directory for Persona memories.
 
@@ -236,6 +231,7 @@ class PersonaMemoryStore:
         semantic_similarity_threshold: float = 0.62,
         fallback_token_overlap_threshold: int = 1,
         embedding_model: str = PERSONA_MEMORY_EMBEDDING_MODEL,
+        character_memory_layout: bool = False,
     ) -> None:
         self.storage_dir = (
             Path(storage_dir) if storage_dir is not None else default_memory_dir()
@@ -247,12 +243,16 @@ class PersonaMemoryStore:
             fallback_token_overlap_threshold
         )
         self.embedding_model = embedding_model.strip() or PERSONA_MEMORY_EMBEDDING_MODEL
+        self.character_memory_layout = character_memory_layout
         self._embedding_cache: dict[str, EmbeddingVector] = {}
         self._embedding_cache_max = 2048
 
     def _path_for_character(self, character_name: str) -> Path:
         """Return the JSON file path for one active character."""
-        return self.storage_dir / f"{_character_slug(character_name)}.json"
+        slug = persona_character_slug(character_name)
+        if self.character_memory_layout:
+            return self.storage_dir / slug / "memory" / "records.json"
+        return self.storage_dir / f"{slug}.json"
 
     def load_records(self, character_name: str) -> list[MemoryRecord]:
         """Load all memory records for one character.

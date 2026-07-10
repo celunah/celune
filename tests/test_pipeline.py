@@ -21,7 +21,7 @@ from celune import pipeline
 from celune.celune import Celune
 from celune.dataclasses.pipeline import AudioInputRequest
 from celune.utils import discard
-from celune.persona.prompts import PersonaPromptBuilder
+from celune.persona.prompts import PersonaPromptBuilder, _render_markdown_subsection
 from celune.constants import JSON, JSONSerializable, PipelineStates
 from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
 from .support import FakeStream, FakeVCBackend, make_pipeline_engine, make_voice_loader
@@ -30,6 +30,38 @@ from .test_persona_memory import StubEmbeddingMemoryStore
 
 class PipelineTests(TestCase):
     """Tests for lightweight pipeline behavior."""
+
+    def test_pipeline_cpu_config_has_conservative_defaults(self) -> None:
+        """Verify playback pressure protection defaults to a small bounded window."""
+        engine = make_pipeline_engine()
+
+        self.assertEqual(
+            pipeline._pipeline_cpu_config(cast(Celune, engine)),
+            (True, 4.0, 1, 0.001),
+        )
+
+        engine.config = {
+            "pipeline_cpu": {
+                "enabled": True,
+                "max_buffer_seconds": 2,
+                "max_drain_items": 3,
+                "yield_seconds": 0,
+            }
+        }
+        self.assertEqual(
+            pipeline._pipeline_cpu_config(cast(Celune, engine)),
+            (True, 2.0, 3, 0.0),
+        )
+
+    def test_pipeline_cpu_config_can_be_disabled(self) -> None:
+        """Verify disabling the guard preserves the unbounded legacy drain behavior."""
+        engine = make_pipeline_engine()
+        engine.config = {"pipeline_cpu": {"enabled": False}}
+
+        self.assertEqual(
+            pipeline._pipeline_cpu_config(cast(Celune, engine)),
+            (False, float("inf"), 128, 0.0),
+        )
 
     class _LanguageAwareBackend:
         """Tiny backend fake that reloads when the requested language changes."""
@@ -1502,8 +1534,27 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         )
         self.assertIn("## Runtime Guidance", prompt)
         self.assertIn("Do not greet the user or restart the conversation.", prompt)
+        self.assertIn("## Reference Resolution", prompt)
+        self.assertIn("The active character is Fixture.", prompt)
+        self.assertIn(
+            "When the user refers to the active character by name, nickname, or matching third-person pronouns",
+            prompt,
+        )
+        self.assertIn("he, him, his, she, her, hers, they, them, their", prompt)
         self.assertNotIn("What do you notice?", prompt)
         self.assertNotIn("<request>", prompt)
+
+    def test_markdown_persona_headers_use_consistent_spacing(self) -> None:
+        """Verify generated and embedded Persona Markdown headers have one blank line after them."""
+        rendered = _render_markdown_subsection(
+            "Fixture",
+            "Intro\n## Nested\n\n- first\n## Another\n- second",
+        )
+
+        self.assertEqual(
+            rendered,
+            "## Fixture\n\nIntro\n## Nested\n\n- first\n## Another\n\n- second",
+        )
 
     def test_cevoice_persona_metadata_populates_persona_card(self) -> None:
         """Verify CEVOICE persona metadata becomes the active Persona card."""
@@ -1680,6 +1731,37 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertNotIn("Legacy personality text.", prompt)
         self.assertNotIn("Legacy identity text.", prompt)
         self.assertNotIn("Ignored text.", prompt)
+
+    def test_persona_debug_overrides_replace_manifest_markdown_files(self) -> None:
+        """Verify opt-in app-data Markdown replaces matching CECHAR source files."""
+        engine = make_pipeline_engine()
+        engine.config = {"persona": {"debug_overrides": True}}
+        engine.current_character = "Mirelle"
+        engine.current_character_persona = CEVoicePersona(
+            identity=PersonaIdentity(name="Mirelle")
+        )
+        fake_loader = SimpleNamespace(
+            bundle=SimpleNamespace(
+                metadata={
+                    "persona": {"identity": {"name": "Mirelle"}},
+                },
+            ),
+        )
+
+        with (
+            mock.patch("celune.pipeline.default_loader", return_value=fake_loader),
+            mock.patch(
+                "celune.pipeline.persona_files_from_bundle",
+                return_value={"personality.md": "Pack personality."},
+            ),
+            mock.patch(
+                "celune.pipeline.persona_override_files",
+                return_value={"personality.md": "Debug personality."},
+            ),
+        ):
+            files = pipeline._persona_manifest_files(cast(Celune, engine))
+
+        self.assertEqual(files, {"personality.md": "Debug personality."})
 
     def test_persona_prompt_does_not_hardcode_celune_identity(self) -> None:
         """Verify Persona prompts stay character-agnostic without pack metadata."""

@@ -185,6 +185,38 @@ The loader parses and validates the bundle, then lazily materializes assets into
 - `theme.accent` or `theme.glow_color` can affect Celune's UI glow color.
 - `persona.identity.name`, when present, becomes the bundle's character name ahead of top-level `name`.
 
+## Persona debug overrides
+
+Persona Markdown can be overridden during local character development without
+rebuilding the CECHAR bundle. Enable the opt-in setting in the active config:
+
+```yaml
+persona:
+  debug_overrides: true
+```
+
+Celune then checks the app-data directory for a character-specific folder. On
+Windows, the default location is:
+
+```text
+C:\Users\<user>\AppData\Local\Celune\persona\<character-slug>\
+```
+
+Supported non-empty UTF-8 files with the same names as CECHAR assets replace the
+matching files from the active bundle:
+
+- `identity.md`
+- `soul.md`
+- `personality.md`
+- `speech_style.md`
+- `boundaries.md`
+- `examples.md`
+
+When debug overrides are enabled, Persona memory is stored separately for each
+character at `<character-slug>\memory\records.json` under the same directory.
+With the setting disabled, Celune keeps using the normal memory directory and
+embedded CECHAR Markdown.
+
 If the configured bundle is missing or malformed, Celune simply has no compatible voice pack to load.
 
 ## Recommended way to make one

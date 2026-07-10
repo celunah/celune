@@ -45,8 +45,15 @@ from .exceptions import NotAvailableError
 from .config import resolve_audio_device
 from .persona.memory import PersonaMemoryStore
 from .persona.emotion import PersonaEmotionAnalyzer
+from .persona.paths import persona_override_files
 from .analysis import analyze_voice_audio
-from .paths import app_data_dir, outputs_dir, project_root, running_compiled
+from .paths import (
+    app_data_dir,
+    outputs_dir,
+    persona_data_dir,
+    project_root,
+    running_compiled,
+)
 from .persona.impl import (
     default_persona_age,
     default_persona_context,
@@ -57,6 +64,7 @@ from .persona.impl import (
     pack_persona_text,
     persona_active_character_name,
     persona_config,
+    persona_debug_overrides_enabled,
     persona_history_messages,
     persona_model_id,
     persona_pending_attachments,
@@ -103,6 +111,7 @@ from .constants import (
     APP_SLUG,
     BASE_SR,
     JSON,
+    PipelineStates,
     PERSONA_EMOTION_MODEL,
     JSONSerializable,
     PERSONA_MEMORY_EMBEDDING_MODEL,
@@ -136,6 +145,9 @@ _SMART_BUFFER_MAX_SECONDS = 20.0
 _SMART_BUFFER_COMPLETE_BELOW_SPEED = 0.5
 _SMART_BUFFER_SMOOTHING = 0.35
 _MAX_SILENT_UTTERANCE_RETRIES = 3
+_PIPELINE_CPU_MAX_BUFFER_SECONDS = 4.0
+_PIPELINE_CPU_MAX_DRAIN_ITEMS = 1
+_PIPELINE_CPU_YIELD_SECONDS = 0.001
 
 
 def _json_value(value: JSONSerializable) -> JSONSerializable:
@@ -658,6 +670,53 @@ def _queue_playback_chunk(
     )
 
 
+def _dequeue_playback_item(
+    engine: Celune,
+    prioritize_speech: bool = False,
+) -> Union[PlaybackChunk, PlaybackSourceDone, PipelineStates]:
+    """Remove one playback item, prioritizing speech overlays when requested."""
+    audio_queue = engine.audio_queue
+    if not prioritize_speech:
+        return audio_queue.get_nowait()
+
+    with audio_queue.mutex:
+        if not audio_queue.queue:
+            raise queue.Empty
+
+        speech_chunk_index: Optional[int] = None
+        speech_done_index: Optional[int] = None
+        for index, pending in enumerate(audio_queue.queue):
+            if isinstance(pending, PlaybackChunk):
+                source_meta = _playback_source_meta(engine).get(pending.source_id)
+                if (
+                    isinstance(source_meta, dict)
+                    and source_meta.get("kind") == "speech"
+                ):
+                    speech_chunk_index = index
+                    break
+            elif isinstance(pending, PlaybackSourceDone):
+                source_meta = _playback_source_meta(engine).get(pending.source_id)
+                if (
+                    speech_done_index is None
+                    and isinstance(source_meta, dict)
+                    and source_meta.get("kind") == "speech"
+                ):
+                    speech_done_index = index
+
+        selected_index = (
+            speech_chunk_index
+            if speech_chunk_index is not None
+            else speech_done_index
+            if speech_done_index is not None
+            else 0
+        )
+        audio_queue.queue.rotate(-selected_index)
+        pending = audio_queue.queue.popleft()
+        audio_queue.queue.rotate(selected_index)
+        audio_queue.not_full.notify()
+        return pending
+
+
 def _update_playback_progress(
     engine: Celune,
     source_buffers: dict[
@@ -945,6 +1004,17 @@ def _config_float(
     return default
 
 
+def _safe_config_int(
+    source: Mapping[str, JSONSerializable], key: str, default: int
+) -> int:
+    """Read a bounded integer configuration value without raising on bad input."""
+    value = _config_float(source, key, float(default))
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 def _smart_buffer_config(
     engine: Celune,
 ) -> tuple[bool, float, float, float, float, float, float]:
@@ -997,6 +1067,37 @@ def _smart_buffer_config(
         max_seconds,
         complete_below_speed,
     )
+
+
+def _pipeline_cpu_config(engine: Celune) -> tuple[bool, float, int, float]:
+    """Resolve cooperative CPU-pressure controls for the playback pipeline."""
+    value = engine.config.get("pipeline_cpu", {})
+    config = value if isinstance(value, dict) else {}
+    enabled = config.get("enabled", True)
+    if isinstance(enabled, bool) and not enabled:
+        return False, float("inf"), 128, 0.0
+
+    max_buffer_seconds = max(
+        0.25,
+        _config_float(
+            config,
+            "max_buffer_seconds",
+            _PIPELINE_CPU_MAX_BUFFER_SECONDS,
+        ),
+    )
+    max_drain_items = max(
+        1,
+        _safe_config_int(
+            config,
+            "max_drain_items",
+            _PIPELINE_CPU_MAX_DRAIN_ITEMS,
+        ),
+    )
+    yield_seconds = max(
+        0.0,
+        _config_float(config, "yield_seconds", _PIPELINE_CPU_YIELD_SECONDS),
+    )
+    return True, max_buffer_seconds, max_drain_items, yield_seconds
 
 
 def _smart_buffer_speed_estimate(
@@ -1153,46 +1254,41 @@ def _persona_memory_store(engine: Celune) -> Optional[PersonaMemoryStore]:
         return existing
 
     memory_config = persona_config(engine.config).get("memory")
-    if isinstance(memory_config, dict):
-        enabled = memory_config.get("enabled", True)
-        if isinstance(enabled, bool) and not enabled:
-            return None
-        storage_dir = memory_config.get("storage_dir")
-        similarity_threshold = memory_config.get("semantic_similarity_threshold", 0.62)
-        overlap_threshold = memory_config.get("fallback_token_overlap_threshold", 1)
-        embedding_model = memory_config.get("semantic_embedding_model")
-        embedding_model_name = (
-            embedding_model.strip()
-            if isinstance(embedding_model, str) and embedding_model.strip()
-            else None
-        )
-        if isinstance(storage_dir, str) and storage_dir.strip():
-            store = PersonaMemoryStore(
-                storage_dir=storage_dir.strip(),
-                semantic_similarity_threshold=float(similarity_threshold)
-                if isinstance(similarity_threshold, (int, float))
-                and not isinstance(similarity_threshold, bool)
-                else 0.62,
-                fallback_token_overlap_threshold=int(overlap_threshold)
-                if isinstance(overlap_threshold, (int, float))
-                and not isinstance(overlap_threshold, bool)
-                else 1,
-                embedding_model=embedding_model_name or PERSONA_MEMORY_EMBEDDING_MODEL,
-            )
-        else:
-            store = PersonaMemoryStore(
-                semantic_similarity_threshold=float(similarity_threshold)
-                if isinstance(similarity_threshold, (int, float))
-                and not isinstance(similarity_threshold, bool)
-                else 0.62,
-                fallback_token_overlap_threshold=int(overlap_threshold)
-                if isinstance(overlap_threshold, (int, float))
-                and not isinstance(overlap_threshold, bool)
-                else 1,
-                embedding_model=embedding_model_name or PERSONA_MEMORY_EMBEDDING_MODEL,
-            )
-    else:
-        store = PersonaMemoryStore()
+    normalized_memory = memory_config if isinstance(memory_config, dict) else {}
+    enabled = normalized_memory.get("enabled", True)
+    if isinstance(enabled, bool) and not enabled:
+        return None
+
+    similarity_threshold = normalized_memory.get("semantic_similarity_threshold", 0.62)
+    overlap_threshold = normalized_memory.get("fallback_token_overlap_threshold", 1)
+    embedding_model = normalized_memory.get("semantic_embedding_model")
+    embedding_model_name = (
+        embedding_model.strip()
+        if isinstance(embedding_model, str) and embedding_model.strip()
+        else None
+    )
+    debug_overrides = persona_debug_overrides_enabled(engine.config)
+    configured_storage = normalized_memory.get("storage_dir")
+    storage_dir = (
+        persona_data_dir()
+        if debug_overrides
+        else configured_storage.strip()
+        if isinstance(configured_storage, str) and configured_storage.strip()
+        else None
+    )
+    store = PersonaMemoryStore(
+        storage_dir=storage_dir,
+        semantic_similarity_threshold=float(similarity_threshold)
+        if isinstance(similarity_threshold, (int, float))
+        and not isinstance(similarity_threshold, bool)
+        else 0.62,
+        fallback_token_overlap_threshold=int(overlap_threshold)
+        if isinstance(overlap_threshold, (int, float))
+        and not isinstance(overlap_threshold, bool)
+        else 1,
+        embedding_model=embedding_model_name or PERSONA_MEMORY_EMBEDDING_MODEL,
+        character_memory_layout=debug_overrides,
+    )
 
     setattr(engine, "persona_memory_store", store)
     return store
@@ -1260,7 +1356,10 @@ def _persona_manifest_files(engine: Celune) -> dict[str, str]:
             and current_character.strip() == bundle_name.strip()
         ):
             return {}
-    return persona_files_from_bundle(loader.bundle)
+    files = persona_files_from_bundle(loader.bundle)
+    if persona_debug_overrides_enabled(engine.config):
+        files.update(persona_override_files(persona_active_character_name(engine)))
+    return files
 
 
 def _legacy_identity_source(profile: CharacterProfile) -> str:
@@ -3009,23 +3108,40 @@ async def playback_worker_job(engine: Celune) -> None:
     ] = {}
     source_done: dict[int, PlaybackSourceDone] = {}
     stop_requested = False
+    (
+        cpu_guard_enabled,
+        max_buffer_seconds,
+        max_drain_items,
+        yield_seconds,
+    ) = _pipeline_cpu_config(engine)
+    buffered_seconds = 0.0
 
     async def drain_pending_items() -> bool:
-        nonlocal stop_requested
+        nonlocal buffered_seconds, stop_requested
 
-        while True:
+        drained_items = 0
+        while drained_items < max_drain_items:
+            if (
+                cpu_guard_enabled
+                and buffered_seconds >= max_buffer_seconds
+                and not engine.utterance_force_stop.is_set()
+            ):
+                break
             try:
-                pending = engine.audio_queue.get_nowait()
+                pending = _dequeue_playback_item(engine, prioritize_speech=True)
             except queue.Empty:
-                return True
+                break
+
+            drained_items += 1
 
             if pending is engine.sentinel:
                 stop_requested = True
-                return True
+                break
 
             if pending is engine.force_stop_marker:
                 source_buffers.clear()
                 source_done.clear()
+                buffered_seconds = 0.0
                 _playback_source_statuses(engine).clear()
                 _playback_source_meta(engine).clear()
                 engine.utterance_force_stop.clear()
@@ -3038,11 +3154,16 @@ async def playback_worker_job(engine: Celune) -> None:
                 return False
 
             if isinstance(pending, PlaybackChunk):
-                source_buffers.setdefault(pending.source_id, deque()).extend(
-                    _playback_blocks(pending)
-                )
+                blocks = _playback_blocks(pending)
+                if blocks:
+                    source_buffers.setdefault(pending.source_id, deque()).extend(blocks)
+                    buffered_seconds += len(pending.audio) / max(1, pending.sample_rate)
             elif isinstance(pending, PlaybackSourceDone):
                 source_done[pending.source_id] = pending
+
+        if yield_seconds > 0.0 and not engine.audio_queue.empty():
+            await asyncio.sleep(yield_seconds)
+        return True
 
     while True:
         if engine.exit_requested:
@@ -3070,6 +3191,7 @@ async def playback_worker_job(engine: Celune) -> None:
         if item is engine.force_stop_marker:
             source_buffers.clear()
             source_done.clear()
+            buffered_seconds = 0.0
             _playback_source_statuses(engine).clear()
             _playback_source_meta(engine).clear()
             engine.utterance_force_stop.clear()
@@ -3082,9 +3204,10 @@ async def playback_worker_job(engine: Celune) -> None:
             continue
 
         if isinstance(item, PlaybackChunk):
-            source_buffers.setdefault(item.source_id, deque()).extend(
-                _playback_blocks(item)
-            )
+            blocks = _playback_blocks(item)
+            if blocks:
+                source_buffers.setdefault(item.source_id, deque()).extend(blocks)
+                buffered_seconds += len(item.audio) / max(1, item.sample_rate)
         elif isinstance(item, PlaybackSourceDone):
             source_done[item.source_id] = item
 
@@ -3101,6 +3224,7 @@ async def playback_worker_job(engine: Celune) -> None:
             if not await asyncio.to_thread(_ensure_playback_stream, engine, BASE_SR):
                 source_buffers.clear()
                 source_done.clear()
+                buffered_seconds = 0.0
                 _playback_source_statuses(engine).clear()
                 _playback_source_meta(engine).clear()
                 release_pipeline(engine)
@@ -3154,6 +3278,11 @@ async def playback_worker_job(engine: Celune) -> None:
                         completed_now.append(source_id)
                     del source_buffers[source_id]
 
+            buffered_seconds = max(
+                0.0,
+                buffered_seconds - (block_len / BASE_SR) * len(ready_ids),
+            )
+
             mixed = np.clip(mixed, -1.0, 1.0)
 
             try:
@@ -3172,6 +3301,7 @@ async def playback_worker_job(engine: Celune) -> None:
                 engine._current_sr = None
                 source_buffers.clear()
                 source_done.clear()
+                buffered_seconds = 0.0
                 _playback_source_statuses(engine).clear()
                 _playback_source_meta(engine).clear()
                 break

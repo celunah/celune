@@ -18,6 +18,7 @@ from celune.paths import (
     ensure_config_path,
     huggingface_home_dir,
     huggingface_hub_cache_dir,
+    persona_data_dir,
     project_root,
     running_compiled,
 )
@@ -64,6 +65,13 @@ class RuntimePathTests(TestCase):
 
         with mock.patch("celune.persona.memory.memory_data_dir", return_value=expected):
             self.assertEqual(default_memory_dir(), expected)
+
+    def test_persona_data_dir_uses_runtime_persona_directory(self) -> None:
+        """Verify Persona character data lives below the shared app-data directory."""
+        expected = Path("C:/runtime-data/persona")
+
+        with mock.patch("celune.paths.user_data_dir", return_value="C:/runtime-data"):
+            self.assertEqual(persona_data_dir(), expected)
 
     def test_huggingface_cache_dirs_live_in_runtime_data(self) -> None:
         """Verify Celune's default Hugging Face caches live under user data."""

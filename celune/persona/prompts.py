@@ -2,9 +2,13 @@
 """Structured prompt building for the Persona system."""
 
 import contextlib
+import re
 from dataclasses import dataclass, field
 
 from ..paths import temp_data_dir
+
+
+_MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}(?:\s|$)")
 
 
 def _render_lines(lines: list[str]) -> str:
@@ -24,11 +28,25 @@ def _render_optional_section(tag: str, content: str) -> str:
 
 
 def _render_markdown_subsection(heading: str, content: str) -> str:
-    """Return one Markdown subsection with trimmed content."""
-    stripped = content.strip()
+    """Return one Markdown subsection with consistent heading spacing."""
+    lines = content.strip().splitlines()
+    normalized_lines: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index].rstrip()
+        normalized_lines.append(line)
+        index += 1
+
+        if _MARKDOWN_HEADING.match(line):
+            while index < len(lines) and not lines[index].strip():
+                index += 1
+            if index < len(lines):
+                normalized_lines.append("")
+
+    stripped = "\n".join(normalized_lines).strip()
     if not stripped:
         return ""
-    return f"## {heading}\n{stripped}"
+    return f"## {heading}\n\n{stripped}"
 
 
 @dataclass(frozen=True)
@@ -219,6 +237,23 @@ class PersonaPromptBuilder:
             "- Push the conversation forward naturally.",
             "- Stay under 3 sentences unless the user asked for detail.",
             "- Use a single paragraph unless formatting is necessary.",
+            "- Prefer reacting to the current conversation over reinforcing the character's identity.",
+        ]
+        character_name = (
+            context.character_profile.name.strip() or "the active character"
+        )
+        reference_resolution_lines = [
+            f"- The active character is {character_name}.",
+            (
+                "- When the user refers to the active character by name, nickname, "
+                "or matching third-person pronouns (for example: he, him, his, "
+                "she, her, hers, they, them, their), while discussing the character, "
+                "voice, persona, or conversation, interpret those references as "
+                "referring to the active character unless another person is clearly "
+                "identified."
+            ),
+            '- The user\'s first-person pronouns ("I", "me", "my") always refer to the user.',
+            "- Do not reinterpret statements about the active character as statements about the user.",
         ]
         sections = [
             _render_optional_section(
@@ -242,6 +277,10 @@ class PersonaPromptBuilder:
                         _render_markdown_subsection(
                             "Runtime Guidance",
                             _render_lines(behavior_lines),
+                        ),
+                        _render_markdown_subsection(
+                            "Reference Resolution",
+                            _render_lines(reference_resolution_lines),
                         ),
                     )
                     if section

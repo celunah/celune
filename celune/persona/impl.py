@@ -134,6 +134,20 @@ def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
     return dict(raw)
 
 
+def persona_debug_overrides_enabled(
+    config: Mapping[str, JSONSerializable],
+) -> bool:
+    """Return whether app-data Persona Markdown overrides are enabled.
+
+    Args:
+        config: Celune's current configuration.
+
+    Returns:
+        bool: Whether Persona should load character files from app data.
+    """
+    return persona_config(config).get("debug_overrides") is True
+
+
 def _config_text(
     engine: PersonaEngineView,
     key: str,
