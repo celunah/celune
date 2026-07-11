@@ -504,6 +504,9 @@ def _validate_metadata(
             raise CEVoiceError(
                 f"voice '{voice}' reference_text must be a non-empty string"
             )
+        voice_persona = voice_data.get("persona")
+        if voice_persona is not None:
+            _validate_persona_metadata(voice_persona)
         assets = voice_data.get("assets")
         if not isinstance(assets, dict):
             raise CEVoiceError(f"voice '{voice}' assets must be an object")
@@ -690,6 +693,86 @@ def persona_metadata_from_manifest(
     raw_persona = metadata.get("persona")
     if not isinstance(raw_persona, dict):
         return None
+
+    return _persona_from_manifest(cast(Manifest, raw_persona))
+
+
+def persona_metadata_from_voice(
+    bundle: CEVoice,
+    voice: Optional[str],
+) -> Optional[CEVoicePersona]:
+    """Return optional Persona style metadata attached to one voice entry.
+
+    Args:
+        bundle: The active CEVOICE/CECHAR package.
+        voice: The active voice name.
+
+    Returns:
+        Optional[CEVoicePersona]: The voice-specific Persona metadata when present.
+    """
+    if not isinstance(voice, str) or not voice.strip():
+        return None
+    voice_data = bundle.voices.get(voice)
+    if not isinstance(voice_data, dict):
+        return None
+    raw_persona = voice_data.get("persona")
+    if not isinstance(raw_persona, dict):
+        return None
+    return _persona_from_manifest(cast(Manifest, raw_persona))
+
+
+def merge_persona_metadata(
+    base: Optional[CEVoicePersona],
+    voice_override: Optional[CEVoicePersona],
+) -> Optional[CEVoicePersona]:
+    """Layer one voice's Persona style metadata on top of the base persona.
+
+    Args:
+        base: The shared character Persona metadata.
+        voice_override: Optional voice-specific Persona metadata.
+
+    Returns:
+        Optional[CEVoicePersona]: The effective Persona metadata for the voice.
+    """
+    if base is None:
+        return voice_override
+    if voice_override is None:
+        return base
+
+    def merge_lines(first: tuple[str, ...], second: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((*first, *second)))
+
+    base_style = base.style
+    voice_style = voice_override.style
+    return CEVoicePersona(
+        identity=base.identity,
+        speaking_style="\n\n".join(
+            value
+            for value in (
+                base.speaking_style.strip(),
+                voice_override.speaking_style.strip(),
+            )
+            if value
+        ),
+        boundaries=merge_lines(base.boundaries, voice_override.boundaries),
+        prompt_rules=merge_lines(base.prompt_rules, voice_override.prompt_rules),
+        example_dialogue=merge_lines(
+            base.example_dialogue,
+            voice_override.example_dialogue,
+        ),
+        style=PersonaStyleValues(
+            warmth=voice_style.warmth or base_style.warmth,
+            directness=voice_style.directness or base_style.directness,
+            humor=voice_style.humor or base_style.humor,
+            detail=voice_style.detail or base_style.detail,
+            formality=voice_style.formality or base_style.formality,
+            enthusiasm=voice_style.enthusiasm or base_style.enthusiasm,
+        ),
+    )
+
+
+def _persona_from_manifest(raw_persona: Manifest) -> CEVoicePersona:
+    """Build typed Persona metadata from one validated manifest object."""
 
     raw_identity = raw_persona.get("identity")
     identity = cast(Manifest, raw_identity) if isinstance(raw_identity, dict) else {}

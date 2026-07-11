@@ -59,11 +59,13 @@ class RuntimePathTests(TestCase):
         """Reset singleton UI guards after each test."""
         CeluneUI._instance = None
 
-    def test_default_memory_dir_uses_runtime_memory_directory(self) -> None:
-        """Verify Persona memory now defaults to the shared runtime memory path."""
-        expected = Path("C:/runtime-data/memory")
+    def test_default_memory_dir_uses_persona_runtime_directory(self) -> None:
+        """Verify Persona memory defaults to the shared character app-data path."""
+        expected = Path("C:/runtime-data/persona")
 
-        with mock.patch("celune.persona.memory.memory_data_dir", return_value=expected):
+        with mock.patch(
+            "celune.persona.memory.persona_data_dir", return_value=expected
+        ):
             self.assertEqual(default_memory_dir(), expected)
 
     def test_persona_data_dir_uses_runtime_persona_directory(self) -> None:

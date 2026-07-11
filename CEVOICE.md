@@ -82,6 +82,10 @@ Asset offsets are relative to the start of the payload, not the start of the fil
     "balanced": {
       "cfg_scale": 2.4,
       "reference_text": "My name is Celune...",
+      "persona": {
+        "speaking_style": "Gentle and measured.",
+        "style": {"enthusiasm": "low"}
+      },
       "assets": {
         "wav": {
           "offset": 0,
@@ -116,6 +120,7 @@ Each voice entry may also include:
 | --- | --- |
 | `cfg_scale` | Optional positive VoxCPM2 classifier-free guidance scale for that voice |
 | `reference_text` | Optional non-empty transcript for the voice's reference audio |
+| `persona` | Optional style/rule additions layered on the shared Persona metadata |
 
 Supported `persona` fields are:
 
@@ -131,6 +136,13 @@ Supported `persona` fields are:
 | `persona.prompt_rules` | Optional string or list of strings with behavioral rules |
 | `persona.example_dialogue` | Optional string or list of strings with example dialogue |
 | `persona.style.*` | Optional style values for `warmth`, `directness`, `humor`, `detail`, `formality`, `enthusiasm` |
+
+Each voice may provide its own `persona` object using `speaking_style`,
+`boundaries`, `prompt_rules`, `example_dialogue`, and `style.*`. These values
+are layered on top of the shared top-level `persona`: the shared character
+identity remains active, text rules and examples are combined, and voice style
+values refine the shared trait values. Voices without this block use the base
+Persona unchanged.
 
 Supported top-level bundle Markdown assets are:
 
@@ -212,10 +224,10 @@ matching files from the active bundle:
 - `boundaries.md`
 - `examples.md`
 
-When debug overrides are enabled, Persona memory is stored separately for each
-character at `<character-slug>\memory\records.json` under the same directory.
-With the setting disabled, Celune keeps using the normal memory directory and
-embedded CECHAR Markdown.
+Persona memory is always stored separately for each character at
+`<character-slug>\memory\records.json` under the same app-data directory.
+The setting only controls whether local Markdown files replace the embedded
+CECHAR Markdown.
 
 If the configured bundle is missing or malformed, Celune simply has no compatible voice pack to load.
 
@@ -389,6 +401,8 @@ Celune's bundled `default.cevoice` uses:
 - `voice_order`: `balanced`, `calm`, `bold`, `upbeat`
 - `theme`: `background`, `accent`, `glow_color`, and `faded_accent`
 - top-level `assets`: CECHAR v3-style prompt source material for the bundled character
+- `soul.md`: shared character continuity and relationship guidance
+- per-voice `persona`: response-style refinements layered onto the shared character
 - `cfg_scale`: `2.4` for `balanced`, `bold`, and `upbeat`; `3.0` for `calm`
 - `reference_text`: the transcript matching each bundled reference `wav`
 - both `wav` and `pt` assets for each voice

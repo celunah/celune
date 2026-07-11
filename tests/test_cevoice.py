@@ -92,6 +92,11 @@ class CEVoiceTests(TestCase):
                 "bold": {
                     "cfg_scale": 3.0,
                     "reference_text": "Bold reference.",
+                    "persona": {
+                        "speaking_style": "More playful and energetic.",
+                        "prompt_rules": ["Use a brighter conversational rhythm."],
+                        "style": {"enthusiasm": "high"},
+                    },
                 },
             },
         )
@@ -131,6 +136,11 @@ class CEVoiceTests(TestCase):
         self.assertEqual(cevoice.persona_files_from_manifest(bundle.metadata), {})
         self.assertEqual(cevoice.persona_files_from_bundle(bundle), {})
         self.assertEqual(persona.style.warmth, "high")
+        voice_persona = cevoice.persona_metadata_from_voice(bundle, "bold")
+        self.assertIsNotNone(voice_persona)
+        assert voice_persona is not None
+        self.assertEqual(voice_persona.speaking_style, "More playful and energetic.")
+        self.assertEqual(voice_persona.style.enthusiasm, "high")
         self.assertEqual(
             cevoice.bundle_character_name(bundle),
             "Fixture",

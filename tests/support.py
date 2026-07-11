@@ -272,6 +272,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.queue_lock = threading.Lock()
     engine.playback_done = threading.Event()
     engine.playback_done.set()
+    engine._persona_queue = queue.Queue()
     engine.utterance_force_stop = threading.Event()
     engine.kept_sfx_audio = None
     engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END

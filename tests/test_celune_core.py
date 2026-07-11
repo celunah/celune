@@ -786,6 +786,37 @@ class CeluneCoreTests(TestCase):
         think.assert_called_once_with(celune, "hello")
         say.assert_not_called()
 
+    def test_think_queues_requests_while_persona_is_speaking(self) -> None:
+        """Verify Persona requests submitted during playback run after the active reply."""
+        celune = self._make_celune({})
+        celune.error_callback = mock.Mock()
+        celune.vision = mock.Mock()
+        celune.locked = True
+        celune.cur_state = "speaking"
+        celune.playback_done.clear()
+        calls: list[str] = []
+
+        def process_request(engine: Celune, text: str) -> bool:
+            del engine
+            calls.append(text)
+            return True
+
+        with mock.patch("celune.celune.think_pipeline", side_effect=process_request):
+            self.assertEqual(celune.think("first queued"), True)
+            self.assertEqual(celune.think("second queued"), True)
+            self.assertEqual(celune.error_callback.call_count, 0)
+
+            celune.locked = False
+            celune.cur_state = "idle"
+            celune.playback_done.set()
+            persona_thread = celune._persona_thread
+            self.assertIsNotNone(persona_thread)
+            assert persona_thread is not None
+            persona_thread.join(timeout=2)
+
+        self.assertEqual(calls, ["first queued", "second queued"])
+        self.assertEqual(celune._persona_queue.empty(), True)
+
     def test_setup_extensions_exposes_think_to_extension_context(self) -> None:
         """Verify extension context receives Celune's think entrypoint.
 

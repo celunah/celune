@@ -231,6 +231,7 @@ class CeluneStateAccessors:
     _generation_thread: Optional["threading.Thread"]
     _api_thread: Optional["threading.Thread"]
     _persona_thread: Optional["threading.Thread"]
+    _persona_queue: "queue.Queue"
     _queue_lock: "threading.Lock"
     _utterance_force_stop: "threading.Event"
     _next_playback_source_id: int

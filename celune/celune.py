@@ -2939,22 +2939,20 @@ class Celune(CeluneStateAccessors):
             return False
 
         with self.say_lock:
-            if self.locked or self.cur_state in {"generating", "speaking"}:
-                self.log(string("celune.busy_thinking", app_name=APP_NAME), "warning")
-                self.error_callback(string("celune.app_busy", app_name=APP_NAME))
-                return False
+            self._persona_queue.put(text)
+            thread = self._persona_thread
+            if thread is not None and thread.is_alive():
+                return True
 
-        self.status_callback(string("status.thinking"))
-        self.cur_state = "thinking"
-        self.progress_callback(None, None)
-        self._ready_announced = False
-        thread = threading.Thread(
-            target=self._think_worker,
-            args=(text,),
-            daemon=True,
-        )
-        self._persona_thread = thread
-        thread.start()
+            self.status_callback(string("status.thinking"))
+            self.progress_callback(None, None)
+            self._ready_announced = False
+            thread = threading.Thread(
+                target=self._think_worker,
+                daemon=True,
+            )
+            self._persona_thread = thread
+            thread.start()
         return True
 
     async def think_async(self, text: str) -> bool:
@@ -2968,18 +2966,51 @@ class Celune(CeluneStateAccessors):
         """
         return await asyncio.to_thread(self.think, text)
 
-    def _think_worker(self, text: str) -> None:
-        """Fetch a Persona response without blocking Celune's UI thread."""
+    def _think_worker(self) -> None:
+        """Fetch queued Persona responses without blocking Celune's UI thread."""
+        current_thread = threading.current_thread()
 
-        if not self.vision:
-            self.vision = self._persona_conn()
-            if not self.vision:
-                self.say(text)
-                return
+        try:
+            while not self.exit_requested:
+                try:
+                    text = self._persona_queue.get(timeout=0.1)
+                except queue.Empty:
+                    with self.say_lock:
+                        if not self._persona_queue.empty():
+                            continue
+                        if self._persona_thread is current_thread:
+                            self._persona_thread = None
+                        return
 
-        if not think_pipeline(self, text):
-            self.log(string("celune.say_instead"), "warning")
-            self.say(text)
+                if not self._wait_for_persona_playback():
+                    return
+
+                self.status_callback(string("status.thinking"))
+                self.cur_state = "thinking"
+                self.progress_callback(None, None)
+
+                if not self.vision:
+                    self.vision = self._persona_conn()
+                    if not self.vision:
+                        self.say(text)
+                        continue
+
+                if not think_pipeline(self, text):
+                    self.log(string("celune.say_instead"), "warning")
+                    self.say(text)
+        finally:
+            with self.say_lock:
+                if self._persona_thread is current_thread:
+                    self._persona_thread = None
+
+    def _wait_for_persona_playback(self) -> bool:
+        """Wait until the shared speech pipeline is available for the next Persona turn."""
+        while not self.exit_requested:
+            self.playback_done.wait(timeout=0.1)
+            with self.say_lock:
+                if not self.locked and self.cur_state not in {"generating", "speaking"}:
+                    return True
+        return False
 
     def say(
         self,

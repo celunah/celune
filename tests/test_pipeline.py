@@ -159,6 +159,7 @@ class PipelineTests(TestCase):
         engine.audio_queue.put("audio")
         self.assertEqual(pipeline.force_stop_speech(celune_engine), True)
         self.assertEqual(engine.text_queue.empty(), True)
+        self.assertEqual(engine._persona_queue.empty(), True)
         self.assertIs(engine.audio_queue.get_nowait(), engine.force_stop_marker)
 
     def test_working_signal_completion_does_not_notify_idle(self) -> None:
@@ -1373,6 +1374,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         request = engine.text_queue.get_nowait()
         self.assertEqual(request.text, "I can help with that.")
+        self.assertEqual(request.save, False)
 
         payload = cast(JSON, engine.vision.payload)
         self.assertEqual(payload["model"], "fixture/persona-test")
@@ -1636,6 +1638,57 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertIn("Example Dialogue:", card)
         self.assertIn("- Formality: high", card)
         self.assertIn("- Enthusiasm: low", card)
+
+    def test_voice_persona_style_extends_shared_persona(self) -> None:
+        """Verify a selected voice can refine the shared Persona response style."""
+        engine = make_pipeline_engine()
+        engine.backend.uses_voice_bundles = True
+        engine.current_voice = "bold"
+        engine.current_character = "Celune"
+        engine.current_character_persona = CEVoicePersona(
+            identity=PersonaIdentity(name="Celune", profile="A careful archivist."),
+            speaking_style="Measured and observant.",
+            style=PersonaStyleValues(
+                warmth="high",
+                directness="mid",
+                enthusiasm="low",
+            ),
+        )
+        engine.persona_history = []
+        engine.persona_attachments = []
+        engine.retrieved_long_term_memory = []
+        engine.config = {"persona_state": "Neutral."}
+        voice_persona = CEVoicePersona(
+            speaking_style="More playful and energetic.",
+            prompt_rules=("Use a brighter conversational rhythm.",),
+            style=PersonaStyleValues(directness="high", enthusiasm="high"),
+        )
+        fake_loader = SimpleNamespace(bundle=SimpleNamespace())
+
+        with (
+            mock.patch("celune.persona.impl.default_loader", return_value=fake_loader),
+            mock.patch("celune.pipeline.default_loader", return_value=None),
+            mock.patch(
+                "celune.persona.impl.persona_metadata_from_voice",
+                return_value=voice_persona,
+            ),
+        ):
+            context = pipeline.build_persona_context(
+                cast(Celune, engine),
+                "Hello.",
+            )
+
+        self.assertEqual(context.persona_card.directness, "high")
+        self.assertEqual(context.persona_card.enthusiasm, "high")
+        self.assertIn("Measured and observant.", context.persona_card.speaking_style)
+        self.assertIn(
+            "More playful and energetic.",
+            context.persona_card.speaking_style,
+        )
+        self.assertIn(
+            "Use a brighter conversational rhythm.",
+            context.persona_card.prompt_rules,
+        )
 
     def test_different_cevoice_personas_produce_distinct_prompts(self) -> None:
         """Verify different CEVOICE persona packs shape different Persona prompts."""
@@ -2063,6 +2116,53 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertEqual(
             [record.content for record in retrieved],
             ["my test word is moonlight"],
+        )
+
+    def test_persona_memory_path_is_independent_of_markdown_debug_overrides(
+        self,
+    ) -> None:
+        """Verify Markdown debug overrides do not change Persona memory storage."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for debug_overrides in (False, True):
+                engine = make_pipeline_engine()
+                engine.config = {
+                    "persona": {"debug_overrides": debug_overrides},
+                }
+                with mock.patch(
+                    "celune.persona.memory.persona_data_dir",
+                    return_value=Path(temp_dir),
+                ):
+                    store = pipeline._persona_memory_store(cast(Celune, engine))
+
+                assert store is not None
+                self.assertEqual(
+                    store._path_for_character("Celune"),
+                    Path(temp_dir) / "celune" / "memory" / "records.json",
+                )
+
+    def test_persona_response_speech_is_not_saved(self) -> None:
+        """Verify generated Persona replies skip saved utterance artifacts."""
+        engine = make_pipeline_engine()
+        engine.dev = False
+        response = mock.Mock()
+        response.json.return_value = {"response": "Generated reply."}
+        engine.vision = SimpleNamespace(post=mock.Mock(return_value=response))
+
+        with (
+            mock.patch("celune.pipeline._store_persona_memories"),
+            mock.patch("celune.pipeline.build_persona_request", return_value={}),
+            mock.patch("celune.pipeline.queue_speech", return_value=True) as queue,
+        ):
+            self.assertEqual(
+                pipeline.think(cast(Celune, engine), "User request."),
+                True,
+            )
+
+        queue.assert_called_once_with(
+            engine,
+            "Generated reply.",
+            save=False,
+            display_text="Generated reply.",
         )
 
     def test_persona_prompt_builder_omits_short_term_summary_from_system_prompt_when_present(

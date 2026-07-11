@@ -18,7 +18,7 @@ import numpy as np
 import numpy.typing as npt
 from transformers import AutoModel, AutoTokenizer
 
-from ..paths import memory_data_dir
+from ..paths import persona_data_dir
 from ..constants import JSONSerializable, PERSONA_MEMORY_EMBEDDING_MODEL
 from .paths import persona_character_slug
 
@@ -171,9 +171,9 @@ def default_memory_dir() -> Path:
     """Return the default on-disk directory for Persona memories.
 
     Returns:
-        Path: The current location of where Celune's Persona memories are stored.
+        Path: The Persona character app-data directory where memories are stored.
     """
-    return memory_data_dir()
+    return persona_data_dir()
 
 
 @dataclass(slots=True, frozen=True)
@@ -231,7 +231,6 @@ class PersonaMemoryStore:
         semantic_similarity_threshold: float = 0.62,
         fallback_token_overlap_threshold: int = 1,
         embedding_model: str = PERSONA_MEMORY_EMBEDDING_MODEL,
-        character_memory_layout: bool = False,
     ) -> None:
         self.storage_dir = (
             Path(storage_dir) if storage_dir is not None else default_memory_dir()
@@ -243,16 +242,13 @@ class PersonaMemoryStore:
             fallback_token_overlap_threshold
         )
         self.embedding_model = embedding_model.strip() or PERSONA_MEMORY_EMBEDDING_MODEL
-        self.character_memory_layout = character_memory_layout
         self._embedding_cache: dict[str, EmbeddingVector] = {}
         self._embedding_cache_max = 2048
 
     def _path_for_character(self, character_name: str) -> Path:
         """Return the JSON file path for one active character."""
         slug = persona_character_slug(character_name)
-        if self.character_memory_layout:
-            return self.storage_dir / slug / "memory" / "records.json"
-        return self.storage_dir / f"{slug}.json"
+        return self.storage_dir / slug / "memory" / "records.json"
 
     def load_records(self, character_name: str) -> list[MemoryRecord]:
         """Load all memory records for one character.

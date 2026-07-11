@@ -50,7 +50,6 @@ from .analysis import analyze_voice_audio
 from .paths import (
     app_data_dir,
     outputs_dir,
-    persona_data_dir,
     project_root,
     running_compiled,
 )
@@ -513,6 +512,7 @@ def force_stop_speech(engine: Celune) -> bool:
 
     with engine.queue_lock:
         clear_queue(engine.text_queue)
+        clear_queue(engine._persona_queue)
         clear_queue(engine.audio_queue)
         engine.kept_sfx_audio = None
         engine.audio_queue.put(engine.force_stop_marker)
@@ -1267,12 +1267,9 @@ def _persona_memory_store(engine: Celune) -> Optional[PersonaMemoryStore]:
         if isinstance(embedding_model, str) and embedding_model.strip()
         else None
     )
-    debug_overrides = persona_debug_overrides_enabled(engine.config)
     configured_storage = normalized_memory.get("storage_dir")
     storage_dir = (
-        persona_data_dir()
-        if debug_overrides
-        else configured_storage.strip()
+        configured_storage.strip()
         if isinstance(configured_storage, str) and configured_storage.strip()
         else None
     )
@@ -1287,7 +1284,6 @@ def _persona_memory_store(engine: Celune) -> Optional[PersonaMemoryStore]:
         and not isinstance(overlap_threshold, bool)
         else 1,
         embedding_model=embedding_model_name or PERSONA_MEMORY_EMBEDDING_MODEL,
-        character_memory_layout=debug_overrides,
     )
 
     setattr(engine, "persona_memory_store", store)
@@ -1669,7 +1665,12 @@ def think(engine: Celune, request: str) -> bool:
         elif len(history) > limit:
             del history[: len(history) - limit]
 
-    return queue_speech(engine, spoken_text, display_text=spoken_text)
+    return queue_speech(
+        engine,
+        spoken_text,
+        save=False,
+        display_text=spoken_text,
+    )
 
 
 def say(

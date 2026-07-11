@@ -40,7 +40,7 @@ def persona_character_dir(character_name: str, create: bool = False) -> Path:
 
 
 def persona_memory_dir(character_name: str, create: bool = False) -> Path:
-    """Return the debug memory directory for one Persona character.
+    """Return the memory directory for one Persona character.
 
     Args:
         character_name: The active character name.

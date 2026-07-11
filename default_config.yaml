@@ -172,7 +172,7 @@ persona:
   memory:
     # how much do you want Celune to remember
     max_short_term_messages: 20
-    # where semantic long-term memory retrieval should persist data
+    # optional root for character-scoped records at <character>/memory/records.json
     storage_dir: null
     # minimum cosine similarity for semantic long-term memory retrieval
     semantic_similarity_threshold: 0.62
