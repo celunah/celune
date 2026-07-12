@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import threading
 from typing import TYPE_CHECKING, Optional, Protocol, Union, cast
+from collections.abc import Iterator
 
 import numpy as np
 import numpy.typing as npt
 
-from celune.dsp import resample_audio
+from ..dsp import resample_audio
 
 if TYPE_CHECKING:
     import torch
@@ -60,6 +61,13 @@ class _WhisperModel(Protocol):
 
         Args:
             kwargs: Tensor and text inputs forwarded to Whisper generation.
+        """
+
+    def parameters(self) -> Iterator[torch.nn.Parameter]:
+        """Iterate over the model parameters.
+
+        Returns:
+            Iterator[torch.nn.Parameter]: An iterator of model parameters.
         """
 
 
