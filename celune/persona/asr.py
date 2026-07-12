@@ -97,6 +97,9 @@ class WhisperTranscriber:
                 BitsAndBytesConfig,
             )
 
+            if not torch.cuda.is_available():
+                raise RuntimeError("can't load Whisper without a CUDA device")
+
             bnb_config = BitsAndBytesConfig(
                 load_in_8bit=True,
             )
@@ -119,7 +122,7 @@ class WhisperTranscriber:
                 _WhisperProcessor, AutoProcessor.from_pretrained(self.model_id)
             )
             self._model = model
-            self._device = torch.device("cuda:0")
+            self._device = next(model.parameters()).device
             self._dtype = torch.bfloat16
 
     def _decode(
