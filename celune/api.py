@@ -10,11 +10,21 @@ import asyncio
 import datetime
 import textwrap
 import threading
+import contextlib
+import queue
 from html import escape
 from hmac import compare_digest
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections import defaultdict, deque
-from typing import Callable, Coroutine, Iterator, Optional, Union, cast
+from typing import (
+    Awaitable,
+    Callable,
+    Iterator,
+    Literal,
+    Optional,
+    Union,
+    cast,
+)
 
 import numpy as np
 import numpy.typing as npt
@@ -24,7 +34,16 @@ import soundfile as sf
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import RequestResponseEndpoint
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import (
     JSONResponse,
     Response,
@@ -45,7 +64,7 @@ from .ui import resources as ui_resources
 from .paths import main_window_log_path, project_root
 from .constants import BASE_SR, APP_NAME, JSONSerializable
 from .i18n import string
-from .vc_runtime import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
+from .vc import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
 
 api = FastAPI(title=f"{APP_NAME}API")
 bound_celune: Optional[Celune] = None
@@ -57,6 +76,7 @@ max_sfx_upload_bytes = 25 * 1024 * 1024
 speech_jobs_lock = threading.Lock()
 speech_jobs: dict[str, "SpeechJob"] = {}
 speech_job_ttl_seconds = 15 * 60
+active_speech_task_id: Optional[str] = None
 webui_log_lines: deque[tuple[str, str]] = deque(maxlen=240)
 webui_status_text = "Waiting for response"
 webui_status_severity = "info"
@@ -79,33 +99,115 @@ WebUiUpdate = dict[str, JSONSerializable]
 WebUiAudioValue = Optional[tuple[int, npt.NDArray[np.float32]]]
 WebUiInputArray = Union[npt.NDArray[np.float32], npt.NDArray[np.int16]]
 WebUiInputAudioValue = Optional[tuple[int, WebUiInputArray]]
+TaskEventName = Literal[
+    "started",
+    "progress",
+    "log",
+    "completed",
+    "failed",
+    "cancelled",
+]
+TaskStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
+
+
+class TaskEvent(BaseModel):
+    """Typed event mirrored to clients watching one API task."""
+
+    task_id: str
+    event: TaskEventName
+    status: TaskStatus
+    message: Optional[str] = None
+    severity: Optional[str] = None
+    current: Optional[float] = None
+    total: Optional[float] = None
+    location: Optional[str] = None
+    error: Optional[str] = None
+
+
+TaskCommandName = Literal["cancel"]
+
+
+class TaskCommand(BaseModel):
+    """Typed command accepted by a task WebSocket."""
+
+    command: TaskCommandName
+
+
+class TaskCommandResponse(BaseModel):
+    """Typed response for a command sent through a task WebSocket."""
+
+    type: Literal["command_result"] = "command_result"
+    task_id: str
+    command: Optional[TaskCommandName] = None
+    accepted: bool
+    status: str
+
+
+class TaskSubscriptionClosed(RuntimeError):
+    """Raised internally when an API task subscription is closed."""
+
+
+@dataclass
+class TaskSubscription:
+    """Thread-safe event queue owned by one WebSocket connection."""
+
+    events: queue.Queue[TaskEvent] = field(default_factory=queue.Queue)
+    closed: threading.Event = field(default_factory=threading.Event)
+
+    def put(self, event: TaskEvent) -> None:
+        """Queue one event for the subscribed WebSocket.
+
+        Args:
+            event: The typed event to deliver to the subscriber.
+        """
+        if not self.closed.is_set():
+            self.events.put(event)
+
+    def close(self) -> None:
+        """Stop waiting for events without affecting the underlying task."""
+        self.closed.set()
+
+    def get(self) -> Optional[TaskEvent]:
+        """Return the next event, or ``None`` while waiting for one.
+
+        Returns:
+            Optional[TaskEvent]: The next queued event, or ``None`` after a timed wait.
+
+        Raises:
+            TaskSubscriptionClosed: If the subscription was closed.
+        """
+        if self.closed.is_set():
+            raise TaskSubscriptionClosed
+        try:
+            return self.events.get(timeout=0.25)
+        except queue.Empty:
+            return None
+
+    async def next_event(self) -> TaskEvent:
+        """Wait asynchronously for the next event without blocking the API loop.
+
+        Returns:
+            TaskEvent: The next event published for this subscription.
+        """
+        while True:
+            event = await asyncio.to_thread(self.get)
+            if event is not None:
+                return event
 
 
 def _run_async_runtime_call(
-    func: Callable[[], Coroutine[object, object, JSONSerializable]],
+    awaitable: Awaitable[JSONSerializable],
 ) -> JSONSerializable:
     """Run one async runtime call from a synchronous API or WebUI callback."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(func())
 
-    result: dict[str, JSONSerializable] = {}
-    error: list[BaseException] = []
+        async def await_result() -> JSONSerializable:
+            return await awaitable
 
-    def runner() -> None:
-        try:
-            result["value"] = asyncio.run(func())
-        except BaseException as exc:
-            error.append(exc)
-
-    worker = threading.Thread(target=runner, daemon=True)
-    worker.start()
-    worker.join()
-
-    if error:
-        raise error[0]
-    return result["value"]
+        return asyncio.run(await_result())
+    raise RuntimeError("synchronous runtime calls cannot run on an active event loop")
 
 
 class _WebUiUnset:
@@ -473,10 +575,15 @@ WEBUI_CSS = textwrap.dedent(
 class SpeechJob:
     """In-memory state for an accepted speech request."""
 
-    status: str
+    status: TaskStatus
     created_at: float
     audio: Optional[bytes] = None
     error: Optional[str] = None
+    events: deque[TaskEvent] = field(
+        default_factory=lambda: deque(maxlen=256),
+        repr=False,
+    )
+    subscriptions: list[TaskSubscription] = field(default_factory=list, repr=False)
 
 
 def _configure_webui_theme() -> None:
@@ -938,17 +1045,41 @@ def _wrap_celune_callbacks(celune: Celune) -> None:
 
     original_log = celune.log_callback
     original_status = celune.status_callback
+    original_error = cast(
+        Callable[[str], None],
+        getattr(celune, "error_callback", lambda _message: None),
+    )
+    original_progress = cast(
+        Callable[[Optional[float], Optional[float]], None],
+        getattr(celune, "progress_callback", lambda _progress, _total: None),
+    )
     original_voice_changed = celune.voice_changed_callback
     original_input_state = celune.change_input_state_callback
     original_voice_lock_state = celune.change_voice_lock_state_callback
 
     def wrapped_log(msg: str, severity: str = "info") -> None:
+        _publish_active_task_log(msg, severity)
         _append_webui_log(msg, severity)
         original_log(msg, severity)
 
     def wrapped_status(msg: str, severity: str = "info") -> None:
+        _publish_active_task_log(msg, severity)
         _set_webui_status(msg, severity, source="callback")
         original_status(msg, severity)
+
+    def wrapped_error(msg: str) -> None:
+        _publish_active_task_log(
+            string("status.could_not_continue", app_name=APP_NAME),
+            "error",
+        )
+        original_error(msg)
+
+    def wrapped_progress(
+        progress: Optional[float],
+        total: Optional[float],
+    ) -> None:
+        _publish_active_task_progress(progress, total)
+        original_progress(progress, total)
 
     def wrapped_voice_changed(name: str) -> None:
         _append_webui_log(string("webui.voice_changed", voice=name))
@@ -986,6 +1117,8 @@ def _wrap_celune_callbacks(celune: Celune) -> None:
 
     celune.log_callback = wrapped_log
     celune.status_callback = wrapped_status
+    celune.error_callback = wrapped_error
+    celune.progress_callback = wrapped_progress
     celune.voice_changed_callback = wrapped_voice_changed
     celune.change_input_state_callback = wrapped_input_state
     celune.change_voice_lock_state_callback = wrapped_voice_lock_state
@@ -1050,11 +1183,15 @@ def _flac_bytes(audio: npt.NDArray[np.float32], sample_rate: int = BASE_SR) -> b
     return buffer.getvalue()
 
 
-def audio_bytes(chunks: SpeechStreamQueue) -> Iterator[bytes]:
+def audio_bytes(
+    chunks: SpeechStreamQueue,
+    on_chunk: Optional[Callable[[int], None]] = None,
+) -> Iterator[bytes]:
     """Yield one FLAC payload from queued 48 kHz stereo float32 chunks.
 
     Args:
         chunks: A queue of audio chunks.
+        on_chunk: Optional callback invoked after each audio chunk is received.
 
     Returns:
         Iterator[bytes]: The audio chunk from the queue as raw bytes.
@@ -1064,6 +1201,7 @@ def audio_bytes(chunks: SpeechStreamQueue) -> Iterator[bytes]:
         Exception: The stream was interrupted by Celune.
     """
     audio_chunks: list[npt.NDArray[np.float32]] = []
+    chunk_count = 0
     while True:
         item = chunks.get()
         if item is None:
@@ -1072,6 +1210,9 @@ def audio_bytes(chunks: SpeechStreamQueue) -> Iterator[bytes]:
             raise item
 
         audio_chunks.append(_normalized_audio(item))
+        chunk_count += 1
+        if on_chunk is not None:
+            on_chunk(chunk_count)
 
     if audio_chunks:
         yield _flac_bytes(np.concatenate(audio_chunks))
@@ -1119,6 +1260,16 @@ def _remember_speech_job(job_id: str, job: SpeechJob) -> None:
         speech_jobs[job_id] = job
 
 
+def _forget_speech_job(job_id: str) -> None:
+    """Remove one speech job that was rejected before it could be observed."""
+    with speech_jobs_lock:
+        job = speech_jobs.pop(job_id, None)
+        if job is not None:
+            for subscription in job.subscriptions:
+                subscription.close()
+            job.subscriptions.clear()
+
+
 def _delete_expired_speech_jobs(now: float) -> None:
     """Remove jobs older than the in-memory job TTL."""
     expired_ids = [
@@ -1133,7 +1284,7 @@ def _delete_expired_speech_jobs(now: float) -> None:
 def _update_speech_job(
     job_id: str,
     *,
-    status: str,
+    status: TaskStatus,
     audio: Optional[bytes] = None,
     error: Optional[str] = None,
 ) -> None:
@@ -1145,6 +1296,129 @@ def _update_speech_job(
         job.status = status
         job.audio = audio
         job.error = error
+
+
+def _publish_task_event(job_id: str, event: TaskEvent) -> None:
+    """Append one task event and fan it out to current subscriptions."""
+    with speech_jobs_lock:
+        job = speech_jobs.get(job_id)
+        if job is None:
+            return
+        job.events.append(event)
+        subscriptions = tuple(job.subscriptions)
+
+    for subscription in subscriptions:
+        subscription.put(event)
+
+
+def _task_status(job_id: str) -> Optional[TaskStatus]:
+    """Return the current task status for API event association."""
+    with speech_jobs_lock:
+        job = speech_jobs.get(job_id)
+        return None if job is None else job.status
+
+
+def _task_event_status(job_id: str) -> Optional[TaskStatus]:
+    """Return a non-terminal task status suitable for callback events."""
+    status = _task_status(job_id)
+    if status in {"completed", "failed", "cancelled"}:
+        return None
+    return status
+
+
+def _publish_task_progress(
+    job_id: str,
+    *,
+    current: Optional[float] = None,
+    total: Optional[float] = None,
+    message: Optional[str] = None,
+) -> None:
+    """Publish a safe progress or status update for one task."""
+    status = _task_event_status(job_id)
+    if status is None:
+        return
+    _publish_task_event(
+        job_id,
+        TaskEvent(
+            task_id=job_id,
+            event="progress",
+            status=status,
+            current=current,
+            total=total,
+            message=message,
+        ),
+    )
+
+
+def _publish_active_task_log(message: str, severity: str = "info") -> None:
+    """Mirror one safe Core status callback into the active speech task."""
+    task_id = active_speech_task_id
+    if task_id is None:
+        return
+    if severity != "error" and message.startswith("["):
+        return
+    status = _task_event_status(task_id)
+    if status is None:
+        return
+    safe_message = (
+        string("status.could_not_continue", app_name=APP_NAME)
+        if severity == "error"
+        else message
+    )
+    _publish_task_event(
+        task_id,
+        TaskEvent(
+            task_id=task_id,
+            event="log",
+            status=status,
+            message=safe_message,
+            severity=severity,
+        ),
+    )
+
+
+def _publish_active_task_progress(
+    current: Optional[float],
+    total: Optional[float],
+) -> None:
+    """Mirror one Core progress callback into the active speech task."""
+    task_id = active_speech_task_id
+    if task_id is not None:
+        _publish_task_progress(task_id, current=current, total=total)
+
+
+def _set_active_speech_task(task_id: Optional[str]) -> None:
+    """Set the API task receiving Core speech callbacks."""
+    global active_speech_task_id
+    active_speech_task_id = task_id
+
+
+def _subscribe_to_speech_job(job_id: str) -> Optional[TaskSubscription]:
+    """Subscribe to one speech job and replay its retained event history."""
+    subscription = TaskSubscription()
+    with speech_jobs_lock:
+        job = speech_jobs.get(job_id)
+        if job is None:
+            return None
+        for event in job.events:
+            subscription.put(event)
+        job.subscriptions.append(subscription)
+    return subscription
+
+
+def _unsubscribe_from_speech_job(
+    job_id: str,
+    subscription: TaskSubscription,
+) -> None:
+    """Detach one WebSocket subscription without changing task execution."""
+    with speech_jobs_lock:
+        job = speech_jobs.get(job_id)
+        if job is not None:
+            try:
+                job.subscriptions.remove(subscription)
+            except ValueError:
+                pass
+    subscription.close()
 
 
 def _speech_job_snapshot(job_id: str) -> Optional[SpeechJob]:
@@ -1164,14 +1438,48 @@ def _speech_job_snapshot(job_id: str) -> Optional[SpeechJob]:
 
 def _collect_speech_job(job_id: str, chunks: SpeechStreamQueue) -> None:
     """Consume a speech stream queue and store its final FLAC payload."""
-    _update_speech_job(job_id, status="running")
     try:
-        audio = b"".join(audio_bytes(chunks))
+        audio = b"".join(
+            audio_bytes(
+                chunks,
+                on_chunk=lambda count: _publish_task_progress(
+                    job_id,
+                    current=float(count),
+                ),
+            )
+        )
     except Exception as e:
+        if _task_status(job_id) == "cancelled":
+            _set_active_speech_task(None)
+            return
         _update_speech_job(job_id, status="failed", error=str(e))
+        _publish_task_event(
+            job_id,
+            TaskEvent(
+                task_id=job_id,
+                event="failed",
+                status="failed",
+                error="generation_failed",
+            ),
+        )
+        _set_active_speech_task(None)
+        return
+
+    if _task_status(job_id) == "cancelled":
+        _set_active_speech_task(None)
         return
 
     _update_speech_job(job_id, status="completed", audio=audio)
+    _publish_task_event(
+        job_id,
+        TaskEvent(
+            task_id=job_id,
+            event="completed",
+            status="completed",
+            location=f"/v1/speak/jobs/{job_id}",
+        ),
+    )
+    _set_active_speech_task(None)
 
 
 def _webui_logs_html() -> str:
@@ -1569,18 +1877,11 @@ def _webui_speak(
         snapshot = _webui_submit_snapshot(text)
         yield snapshot[0], None, *snapshot[1:]
         wake_async = cast(
-            Optional[Callable[[], Coroutine[object, object, bool]]],
+            Optional[Callable[[], Awaitable[bool]]],
             getattr(celune, "wake_from_sleep_async", None),
         )
         if wake_async is not None:
-            woke = bool(
-                _run_async_runtime_call(
-                    lambda: cast(
-                        Coroutine[object, object, JSONSerializable],
-                        wake_async(),
-                    )
-                )
-            )
+            woke = bool(_run_async_runtime_call(wake_async()))
         else:
             woke = celune.wake_from_sleep()
         if not woke:
@@ -1768,18 +2069,11 @@ def _webui_cycle_voice() -> tuple[
     api_log("VOICE(WEBUI)", next_voice)
 
     set_voice_async = cast(
-        Optional[Callable[[str], Coroutine[object, object, bool]]],
+        Optional[Callable[[str], Awaitable[bool]]],
         getattr(celune, "set_voice_async", None),
     )
     if set_voice_async is not None:
-        switched = bool(
-            _run_async_runtime_call(
-                lambda: cast(
-                    Coroutine[object, object, JSONSerializable],
-                    set_voice_async(next_voice),
-                )
-            )
-        )
+        switched = bool(_run_async_runtime_call(set_voice_async(next_voice)))
     else:
         switched = celune.set_voice_and_wait(next_voice)
 
@@ -2018,6 +2312,135 @@ class ActionResponse(BaseModel):
     status: str
 
 
+class TaskCancelResponse(BaseModel):
+    """Response returned after an explicit speech-task cancellation request."""
+
+    task_id: str
+    status: Literal["cancelled"] = "cancelled"
+
+
+async def _cancel_speech_job(job_id: str) -> bool:
+    """Ask Core to stop one active speech task and publish its terminal event."""
+    status = _task_status(job_id)
+    if status is None or status in {"completed", "failed", "cancelled"}:
+        return False
+
+    celune = require_celune()
+    try:
+        stopped = await celune.force_stop_speech_async()
+    except Exception:
+        return False
+    if not stopped:
+        return False
+
+    _update_speech_job(job_id, status="cancelled")
+    _publish_task_event(
+        job_id,
+        TaskEvent(
+            task_id=job_id,
+            event="cancelled",
+            status="cancelled",
+        ),
+    )
+    _set_active_speech_task(None)
+    return True
+
+
+def _websocket_authenticated(websocket: WebSocket) -> bool:
+    """Return whether a WebSocket carries the configured API token."""
+    if auth_token is None:
+        return True
+
+    auth_header = websocket.headers.get("authorization", "")
+    scheme, _, value = auth_header.partition(" ")
+    given = value.strip() if scheme.lower() == "bearer" and value else None
+    if given is None:
+        given = _clean_token(websocket.headers.get("x-celune-token"))
+    if given is None:
+        given = _clean_token(websocket.query_params.get("token"))
+    return given is not None and compare_digest(given, auth_token)
+
+
+async def _send_task_events(
+    websocket: WebSocket,
+    subscription: TaskSubscription,
+) -> None:
+    """Send retained and live task events until a terminal event is observed."""
+    try:
+        while True:
+            event = await subscription.next_event()
+            await websocket.send_json(event.model_dump(mode="json", exclude_none=True))
+            if event.event in {"completed", "failed", "cancelled"}:
+                return
+    except (WebSocketDisconnect, RuntimeError, TaskSubscriptionClosed):
+        return
+
+
+async def _receive_task_commands(websocket: WebSocket, job_id: str) -> None:
+    """Receive API-layer commands without taking ownership of task execution."""
+    try:
+        while True:
+            payload = await websocket.receive_json()
+            try:
+                command = TaskCommand.model_validate(payload)
+            except (TypeError, ValueError):
+                response = TaskCommandResponse(
+                    task_id=job_id,
+                    accepted=False,
+                    status="invalid_command",
+                )
+            else:
+                accepted = await _cancel_speech_job(job_id)
+                response = TaskCommandResponse(
+                    task_id=job_id,
+                    command=command.command,
+                    accepted=accepted,
+                    status="cancelled" if accepted else "not_cancelled",
+                )
+            await websocket.send_json(
+                response.model_dump(mode="json", exclude_none=True)
+            )
+    except (WebSocketDisconnect, RuntimeError):
+        return
+
+
+@api.websocket("/v1/ws/tasks/{job_id}")
+async def speech_task_websocket(websocket: WebSocket, job_id: str) -> None:
+    """Stream one accepted speech task without owning its Core execution.
+
+    Args:
+        websocket: The client WebSocket connection.
+        job_id: The speech task ID to stream.
+    """
+    if not _websocket_authenticated(websocket):
+        await websocket.close(code=4401)
+        return
+
+    subscription = _subscribe_to_speech_job(job_id)
+    if subscription is None:
+        await websocket.close(code=4404)
+        return
+
+    await websocket.accept()
+    sender = asyncio.create_task(_send_task_events(websocket, subscription))
+    receiver = asyncio.create_task(_receive_task_commands(websocket, job_id))
+    try:
+        done, pending = await asyncio.wait(
+            {sender, receiver},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        for task in done:
+            with contextlib.suppress(asyncio.CancelledError, RuntimeError):
+                await task
+    finally:
+        _unsubscribe_from_speech_job(job_id, subscription)
+        if websocket.client_state.name != "DISCONNECTED":
+            with contextlib.suppress(RuntimeError):
+                await websocket.close()
+
+
 @api.get("/favicon.ico", include_in_schema=False)
 def favicon() -> FileResponse:
     """Favicon endpoint.
@@ -2108,8 +2531,29 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
     """
     celune = require_celune()
     api_log("SPEAK(ASYNC)", body.content)
-    chunks = celune.say_stream(body.content, save=body.save)
+    job_id = uuid.uuid4().hex
+    location = f"/v1/speak/jobs/{job_id}"
+    _remember_speech_job(job_id, SpeechJob(status="queued", created_at=time.time()))
+    _set_active_speech_task(job_id)
+    _update_speech_job(job_id, status="running")
+    _publish_task_event(
+        job_id,
+        TaskEvent(
+            task_id=job_id,
+            event="started",
+            status="running",
+        ),
+    )
+
+    try:
+        chunks = celune.say_stream(body.content, save=body.save)
+    except Exception:
+        _set_active_speech_task(None)
+        _forget_speech_job(job_id)
+        raise
     if chunks is None:
+        _set_active_speech_task(None)
+        _forget_speech_job(job_id)
         return JSONResponse(
             status_code=409,
             content={
@@ -2118,9 +2562,6 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
             },
         )
 
-    job_id = uuid.uuid4().hex
-    location = f"/v1/speak/jobs/{job_id}"
-    _remember_speech_job(job_id, SpeechJob(status="queued", created_at=time.time()))
     threading.Thread(
         target=_collect_speech_job,
         args=(job_id, chunks),
@@ -2191,6 +2632,40 @@ def speak_job(job_id: str) -> Union[Response, JSONResponse]:
         content=job.audio or _flac_bytes(np.empty((0, 2), dtype=np.float32)),
         media_type="audio/flac",
         headers=stream_headers(),
+    )
+
+
+@api.post(
+    "/v1/speak/jobs/{job_id}/cancel",
+    response_model=None,
+)
+async def cancel_speech_job(job_id: str) -> Union[TaskCancelResponse, JSONResponse]:
+    """Request explicit cancellation of one accepted speech task.
+
+    Args:
+        job_id: The speech task ID returned by ``/v1/speak/async``.
+
+    Returns:
+        Union[TaskCancelResponse, JSONResponse]: The cancellation result or an API error payload.
+    """
+    if _task_status(job_id) is None:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": "not_found",
+                "message": string("api.speech_job_unknown"),
+            },
+        )
+
+    if await _cancel_speech_job(job_id):
+        return TaskCancelResponse(task_id=job_id)
+
+    return JSONResponse(
+        status_code=409,
+        content={
+            "error": "not_ready",
+            "message": string("webui.busy_try_again"),
+        },
     )
 
 

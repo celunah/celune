@@ -8,7 +8,7 @@ import contextlib
 import threading
 from pathlib import Path
 from types import ModuleType, TracebackType
-from typing import Optional, Callable
+from typing import Optional, Callable, Protocol, Union, cast
 from collections.abc import Generator
 
 import numpy as np
@@ -21,6 +21,25 @@ from ...i18n import string
 from ...paths import huggingface_hub_cache_dir
 
 __all__ = ["CeluneSeedVCBackend"]
+
+type SeedVCArgument = Union[str, int, float, bool]
+type SeedVCGenerator = Generator[
+    Optional[npt.NDArray[np.float32]], None, npt.NDArray[np.float32]
+]
+
+
+class _SeedVCWrapper(Protocol):
+    """Protocol for the dynamically loaded Seed-VC wrapper."""
+
+    def convert_voice(self, **kwargs: SeedVCArgument) -> SeedVCGenerator:
+        """Run Seed-VC and return its generator-style conversion result.
+
+        Args:
+            kwargs: String, numeric, and boolean conversion options accepted by Seed-VC.
+
+        Returns:
+            SeedVCGenerator: A generator whose return value is the converted waveform.
+        """
 
 
 class _TemporaryWaveFile:
@@ -81,7 +100,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         self.f0_condition = f0_condition
         self.auto_f0_adjust = auto_f0_adjust
         self.pitch_shift = pitch_shift
-        self._wrapper = None
+        self._wrapper: Optional[_SeedVCWrapper] = None
         self._wrapper_lock = threading.Lock()
 
     @staticmethod
@@ -124,7 +143,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         setattr(wrapper_module, "load_custom_model_from_hf", load_custom_model_from_hf)
 
     @classmethod
-    def _load_wrapper_type(cls) -> type:
+    def _load_wrapper_type(cls) -> type[_SeedVCWrapper]:
         """Import and return the Seed-VC wrapper class."""
         try:
             hf_utils_module = importlib.import_module("seed_vc.hf_utils")
@@ -135,9 +154,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             ) from e
 
         cls._configure_seedvc_downloads(hf_utils_module, wrapper_module)
-        return getattr(wrapper_module, "SeedVCWrapper")
+        return cast(type[_SeedVCWrapper], getattr(wrapper_module, "SeedVCWrapper"))
 
-    def _get_wrapper(self):
+    def _get_wrapper(self) -> _SeedVCWrapper:
         """Return a cached Seed-VC wrapper instance."""
         with self._wrapper_lock:
             if self._wrapper is None:
@@ -158,8 +177,8 @@ class CeluneSeedVCBackend(CeluneVCBackend):
 
     @staticmethod
     def _drain_generator_return_value(
-        generator: Generator[object, None, object],
-    ) -> object:
+        generator: SeedVCGenerator,
+    ) -> npt.NDArray[np.float32]:
         """Run a generator to completion and return its final value."""
         try:
             while True:

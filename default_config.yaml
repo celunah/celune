@@ -168,6 +168,12 @@ persona:
   # which Qwen model to use? (in case you want to use an FT or uncensored version)
   model_id: Qwen/Qwen3-VL-4B-Instruct
   # model_id: huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated
+  # Hugging Face Whisper model used by CTRL+R Persona voice input
+  speech_model_id: openai/whisper-large-v3-turbo
+  # Whisper language code/name, or auto to detect the spoken language
+  speech_language: auto
+  # Extra silence after VAD stops hearing speech before submitting voice input
+  speech_end_delay_seconds: 1.5
   # memory settings
   memory:
     # how much do you want Celune to remember

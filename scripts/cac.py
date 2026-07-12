@@ -18,10 +18,12 @@ if TYPE_CHECKING:
 
 try:
     from celune.cevoice import write_cevoice
+    from celune.i18n import string
 except ModuleNotFoundError:
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(PROJECT_ROOT))
     from celune.cevoice import write_cevoice
+    from celune.i18n import string
 
 
 class ThemeMetadata(TypedDict, total=False):
@@ -352,7 +354,7 @@ def collect_voice_persona_metadata(voice_name: str) -> Optional[PersonaMetadata]
     """Collect style overrides layered onto the shared Persona for one voice."""
     persona: PersonaMetadata = {}
     speaking_style = ask_optional_text(
-        f"Voice '{voice_name}' Persona speaking style override, leave empty to skip"
+        string("cac.voice_persona_speaking_style", voice_name=voice_name)
     )
     if speaking_style is not None:
         persona["speaking_style"] = speaking_style
@@ -367,7 +369,7 @@ def collect_voice_persona_metadata(voice_name: str) -> Optional[PersonaMetadata]
         "enthusiasm",
     ):
         value = ask_optional_text(
-            f"Voice '{voice_name}' Persona style {key}, leave empty to skip"
+            string("cac.voice_persona_style", voice_name=voice_name, key=key)
         )
         if value is not None:
             style[key] = value

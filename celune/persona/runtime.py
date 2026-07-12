@@ -178,7 +178,7 @@ class PersonaBackend:
                     trust_remote_code=True,
                     revision=revision,
                     device_map="auto",
-                    torch_dtype=torch.bfloat16,
+                    dtype=torch.bfloat16,
                 ),
             )
         else:

@@ -5,7 +5,7 @@ import tempfile
 import sys
 import os
 from pathlib import Path
-from typing import cast
+from typing import Optional, cast
 from unittest import TestCase, mock
 
 import yaml
@@ -206,6 +206,29 @@ class RuntimePathTests(TestCase):
                 self.assertIn(
                     "RuntimeError: boom", trace_path.read_text(encoding="utf-8")
                 )
+
+    def test_format_error_keeps_traceback_after_exception_handler_returns(self) -> None:
+        """Verify deferred UI error formatting does not report a blank traceback.
+
+        Raises:
+            RuntimeError: If `RuntimeError` needs to be raised.
+        """
+        captured: Optional[RuntimeError] = None
+        try:
+            raise RuntimeError("deferred boom")
+        except RuntimeError as exc:
+            captured = exc
+
+        if captured is None:
+            self.fail("The test exception was not captured")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trace_path = Path(temp_dir) / f"{APP_SLUG}_traceback.txt"
+            with mock.patch("celune.utils.traceback_path", return_value=trace_path):
+                output = format_error(captured, dev=True)
+
+        self.assertIn("RuntimeError: deferred boom", output)
+        self.assertNotIn("NoneType: None", output)
 
     def test_safe_log_persists_main_window_copy(self) -> None:
         """Verify UI log messages are mirrored into the runtime log file."""

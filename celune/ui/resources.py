@@ -14,6 +14,7 @@ import psutil
 
 from ..constants import APP_NAME, COST_EQUIVALENTS
 from ..i18n import string
+from ..persona.impl import persona_talkback_enabled
 from ..utils import celune_day_status, lunar_info, lunar_phase
 
 if TYPE_CHECKING:
@@ -219,6 +220,10 @@ def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[st
     if celune is not None:
         if getattr(celune, "input_mode", "text_to_speech") == "voice_conversion":
             pages.append(string("ui.footer_toggle_recording"))
+        elif getattr(celune, "vision", None) is not None and persona_talkback_enabled(
+            celune.config
+        ):
+            pages.append(string("ui.footer_voice_input"))
 
         active_theme = theme_name
         enter_action = "skip" if celune.is_in_tutorial else "say"

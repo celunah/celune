@@ -42,7 +42,7 @@ SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
     "examples.md",
 )
 DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
-    "228702fd544338391221e424db2ac374a5f83fd2c1f36d9753ecfb7b3efd9677"
+    "b5e9baeef964ec885577da4b45d356aa9ec84c37699870ea894c4ae0e884dfea"
 )
 
 
@@ -95,6 +95,9 @@ class CEVoice:
                 metadata = json.loads(metadata_bytes.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as error:
                 raise CEVoiceError("invalid CEVOICE metadata") from error
+
+            if metadata.get("version") != version:
+                raise CEVoiceError("metadata format/version mismatch")
 
             payload_offset = HEADER.size + metadata_length
             _validate_metadata(bundle_path, metadata, payload_offset)
@@ -209,7 +212,7 @@ class CEVoice:
 
         if len(data) != asset.length:
             raise CEVoiceError(f"truncated asset '{kind}' for voice '{voice}'")
-        if hashlib.sha256(data).hexdigest() != asset.sha256:
+        if hashlib.sha256(data).hexdigest().casefold() != asset.sha256.casefold():
             raise CEVoiceError(
                 f"checksum mismatch for asset '{kind}' of voice '{voice}'"
             )
@@ -234,7 +237,7 @@ class CEVoice:
 
         if len(data) != asset.length:
             raise CEVoiceError(f"truncated bundle asset '{name}'")
-        if hashlib.sha256(data).hexdigest() != asset.sha256:
+        if hashlib.sha256(data).hexdigest().casefold() != asset.sha256.casefold():
             raise CEVoiceError(f"checksum mismatch for bundle asset '{name}'")
         return data
 

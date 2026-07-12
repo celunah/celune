@@ -327,7 +327,6 @@ int launcher_run(int argc, char **argv) {
     char site_packages[1400];
     char setuptools_vendor[1600];
     char nuitka_pythonpath[5200];
-    char updated_path[5200];
 
     save_console_modes();
     SetConsoleCtrlHandler(ignore_console_interrupt, TRUE);
@@ -408,14 +407,46 @@ int launcher_run(int argc, char **argv) {
         return 1;
     }
 
-    DWORD path_len = GetEnvironmentVariableA("PATH", updated_path, (DWORD)sizeof(updated_path));
-    if (path_len == 0 || path_len >= sizeof(updated_path)) {
+    DWORD path_capacity = GetEnvironmentVariableA("PATH", NULL, 0);
+    char *updated_path = NULL;
+    if (path_capacity == 0) {
+        updated_path = (char *)malloc(1);
+        if (updated_path == NULL) {
+            printfe("Celune could not allocate memory for %%PATH%%.\n");
+            return 1;
+        }
         updated_path[0] = '\0';
+    } else {
+        updated_path = (char *)malloc(path_capacity);
+        if (updated_path == NULL) {
+            printfe("Celune could not allocate memory for %%PATH%%.\n");
+            return 1;
+        }
+
+        DWORD path_len = GetEnvironmentVariableA(
+            "PATH",
+            updated_path,
+            path_capacity
+        );
+        if (path_len >= path_capacity) {
+            free(updated_path);
+            printfe("Celune could not read %%PATH%%.\n");
+            return 1;
+        }
     }
 
-    char path_value[5200];
-    int updated_path_len = snprintf(path_value, sizeof(path_value), "%s;%s", python_home, updated_path);
-    if (updated_path_len < 0 || (size_t)updated_path_len >= sizeof(path_value)) {
+    size_t path_value_size = strlen(python_home) + strlen(updated_path) + 2;
+    char *path_value = (char *)malloc(path_value_size);
+    if (path_value == NULL) {
+        free(updated_path);
+        printfe("Celune could not allocate memory for %%PATH%%.\n");
+        return 1;
+    }
+
+    int updated_path_len = snprintf(path_value, path_value_size, "%s;%s", python_home, updated_path);
+    if (updated_path_len < 0 || (size_t)updated_path_len >= path_value_size) {
+        free(path_value);
+        free(updated_path);
         printfe("Celune cannot set up %%PATH%%, the path is too long.\n");
         return 1;
     }
@@ -423,9 +454,13 @@ int launcher_run(int argc, char **argv) {
     if (!SetEnvironmentVariableA("PATH", path_value) ||
         !SetEnvironmentVariableA("PYTHONHOME", python_home) ||
         !SetEnvironmentVariableA("NUITKA_PYTHONPATH", nuitka_pythonpath)) {
+        free(path_value);
+        free(updated_path);
         printfe("Celune could not configure her Python runtime environment.\n");
         return 1;
     }
+    free(path_value);
+    free(updated_path);
 
     STARTUPINFOA si = {0};
     PROCESS_INFORMATION pi = {0};

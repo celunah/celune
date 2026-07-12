@@ -40,7 +40,7 @@ from .. import colors
 from ..celune import Celune
 from ..cevoice import default_loader
 from ..config import format_audio_device_name, resolve_audio_device_with_info
-from ..vc_runtime import (
+from ..vc import (
     VC_PITCH_SHIFT_MAX,
     VC_PITCH_SHIFT_MIN,
     clamp_vc_pitch_shift,
@@ -53,6 +53,11 @@ from ..vc_runtime import (
     vc_vad_preroll_frames,
 )
 from ..pipeline import finish_streaming_sfx_audio, queue_streaming_sfx_audio
+from ..persona.asr import (
+    DEFAULT_PERSONA_SPEECH_MODEL_ID,
+    PERSONA_SPEECH_END_DELAY_SECONDS,
+    WhisperTranscriber,
+)
 from . import resources as ui_resources
 from .resources import FOOTER_ROTATE_SECONDS
 from .theme import CELUNE_CSS, severity_color
@@ -62,6 +67,7 @@ from ..constants import APP_NAME, SIGTSTP, CRASH_LINES
 from ..i18n import string
 from .commands import process_command as process_ui_command
 from ..persona.impl import (
+    persona_config,
     persona_talkback_enabled,
     persona_enabled,
 )
@@ -213,6 +219,22 @@ class CeluneUIInteractionState:
     vc_recording_stream: Optional[sd.InputStream] = None
     vc_recording_stop_thread: Optional[threading.Thread] = None
     vc_recording_worker: Optional[threading.Thread] = None
+    persona_recording_chunks: list[npt.NDArray[np.float32]] = field(
+        default_factory=list
+    )
+    persona_recording_lock: threading.Lock = field(default_factory=threading.Lock)
+    persona_recording_queue: Optional[
+        queue_module.Queue[tuple[npt.NDArray[np.float32], bool]]
+    ] = None
+    persona_recording_sample_rate: int = 0
+    persona_recording_silence_frames: int = 0
+    persona_recording_speech_started: bool = False
+    persona_recording_stop_requested: bool = False
+    persona_recording_stream: Optional[sd.InputStream] = None
+    persona_recording_text_prefix: str = ""
+    persona_recording_transcriber: Optional[WhisperTranscriber] = None
+    persona_recording_worker: Optional[threading.Thread] = None
+    persona_recording_last_partial_at: float = 0.0
     sleep_timer: Optional[Timer] = None
     tutorial_token: int = 0
     tutorial_active: bool = False
@@ -408,6 +430,42 @@ class CeluneUI(App):
     )
     _vc_recording_worker = _forward_ui_property(
         "_interaction_state", "vc_recording_worker"
+    )
+    _persona_recording_chunks = _forward_ui_property(
+        "_interaction_state", "persona_recording_chunks"
+    )
+    _persona_recording_lock = _forward_ui_property(
+        "_interaction_state", "persona_recording_lock"
+    )
+    _persona_recording_queue = _forward_ui_property(
+        "_interaction_state", "persona_recording_queue"
+    )
+    _persona_recording_sample_rate = _forward_ui_property(
+        "_interaction_state", "persona_recording_sample_rate"
+    )
+    _persona_recording_silence_frames = _forward_ui_property(
+        "_interaction_state", "persona_recording_silence_frames"
+    )
+    _persona_recording_speech_started = _forward_ui_property(
+        "_interaction_state", "persona_recording_speech_started"
+    )
+    _persona_recording_stop_requested = _forward_ui_property(
+        "_interaction_state", "persona_recording_stop_requested"
+    )
+    _persona_recording_stream = _forward_ui_property(
+        "_interaction_state", "persona_recording_stream"
+    )
+    _persona_recording_text_prefix = _forward_ui_property(
+        "_interaction_state", "persona_recording_text_prefix"
+    )
+    _persona_recording_transcriber = _forward_ui_property(
+        "_interaction_state", "persona_recording_transcriber"
+    )
+    _persona_recording_worker = _forward_ui_property(
+        "_interaction_state", "persona_recording_worker"
+    )
+    _persona_recording_last_partial_at = _forward_ui_property(
+        "_interaction_state", "persona_recording_last_partial_at"
     )
     _sleep_timer = _forward_ui_property("_interaction_state", "sleep_timer")
     _tutorial_token = _forward_ui_property("_interaction_state", "tutorial_token")
@@ -1588,6 +1646,402 @@ class CeluneUI(App):
                 )
             )
 
+    def _persona_recording_active(self) -> bool:
+        """Return whether Persona microphone capture is active."""
+        return self._persona_recording_stream is not None
+
+    def _persona_speech_model_id(self) -> str:
+        """Return the configured Hugging Face Whisper model ID."""
+        configured = persona_config(self.celune.config).get("speech_model_id")
+        if isinstance(configured, str) and configured.strip():
+            return configured.strip()
+        return DEFAULT_PERSONA_SPEECH_MODEL_ID
+
+    def _persona_speech_language(self) -> Optional[str]:
+        """Return a configured Whisper language, or ``None`` for auto-detection."""
+        configured = persona_config(self.celune.config).get("speech_language")
+        if not isinstance(configured, str) or configured.strip().lower() in {
+            "",
+            "auto",
+        }:
+            return None
+        return configured.strip()
+
+    def _persona_speech_end_delay_seconds(self) -> float:
+        """Return the extra VAD silence delay before Persona submission."""
+        configured = persona_config(self.celune.config).get("speech_end_delay_seconds")
+        if (
+            isinstance(configured, (int, float))
+            and not isinstance(configured, bool)
+            and configured >= 0
+        ):
+            return float(configured)
+        return PERSONA_SPEECH_END_DELAY_SECONDS
+
+    def _persona_recording_audio_locked(self) -> npt.NDArray[np.float32]:
+        """Return captured Persona audio while holding its lock."""
+        if not self._persona_recording_chunks:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(self._persona_recording_chunks, axis=0).astype(
+            np.float32,
+            copy=False,
+        )
+
+    def _queue_persona_recording_item_locked(self, final: bool) -> None:
+        """Queue a partial or final Persona transcription snapshot."""
+        recording_queue = self._persona_recording_queue
+        if recording_queue is None:
+            return
+
+        audio = self._persona_recording_audio_locked().copy()
+        if final:
+            while True:
+                try:
+                    recording_queue.get_nowait()
+                except queue_module.Empty:
+                    break
+            recording_queue.put_nowait((audio, True))
+            return
+
+        try:
+            recording_queue.put_nowait((audio, False))
+        except queue_module.Full:
+            with contextlib.suppress(queue_module.Empty):
+                recording_queue.get_nowait()
+            with contextlib.suppress(queue_module.Full):
+                recording_queue.put_nowait((audio, False))
+
+    def _set_persona_recording_text(self, transcript: str) -> None:
+        """Display a live Whisper transcript in the main input box."""
+        prefix = self._persona_recording_text_prefix
+        text = f"{prefix} {transcript}".strip() if prefix else transcript.strip()
+
+        def update() -> None:
+            if self.cur_state == "exiting" or self.input_box is None:
+                return
+            self._suppress_input_change = True
+            try:
+                self.input_box.load_text(text)
+            finally:
+                self._suppress_input_change = False
+
+        self._run_on_ui_thread(update)
+
+    def _complete_persona_transcription(
+        self,
+        transcript: str,
+        prefix: str,
+        error: Optional[Exception] = None,
+        error_already_reported: bool = False,
+    ) -> None:
+        """Submit the final Persona transcript or report its transcription error."""
+        if error is not None and not error_already_reported:
+            self.safe_log(
+                string(
+                    "ui.persona_transcription_failed",
+                    error=format_error(error, self.celune.dev),
+                ),
+                "error",
+            )
+        if error is not None or error_already_reported:
+            self.safe_status(string("ui.idle_status"))
+            if self.style_button is not None:
+                self.style_button.disabled = self._input_locked
+            self.update_resources()
+            return
+
+        text = f"{prefix} {transcript}".strip() if prefix else transcript.strip()
+        if text:
+            self._set_persona_recording_text(transcript)
+            self._submit_text(text, process_commands=False)
+        else:
+            self.safe_log(string("ui.recording_empty"), "warning")
+        self.safe_status(string("ui.idle_status"))
+        if self.style_button is not None:
+            self.style_button.disabled = self._input_locked
+        self.update_resources()
+
+    def _persona_transcription_worker(
+        self,
+        recording_queue: queue_module.Queue[tuple[npt.NDArray[np.float32], bool]],
+        transcriber: WhisperTranscriber,
+        sample_rate: int,
+        prefix: str,
+    ) -> None:
+        """Transcribe Persona microphone snapshots off the UI thread."""
+        partial_error_reported = False
+        while True:
+            audio, final = recording_queue.get()
+            transcript = ""
+            error: Optional[Exception] = None
+            try:
+                transcript = transcriber.transcribe(audio, sample_rate)
+            except Exception as exc:
+                error = exc
+
+            if transcript:
+                self._set_persona_recording_text(transcript)
+
+            if error is not None and (final or not partial_error_reported):
+                if not final:
+                    partial_error_reported = True
+                    self.safe_log(
+                        string(
+                            "ui.persona_transcription_failed",
+                            error=format_error(error, self.celune.dev),
+                        ),
+                        "warning",
+                    )
+
+            if not final:
+                continue
+
+            with self._persona_recording_lock:
+                stream = self._persona_recording_stream
+                self._persona_recording_stream = None
+                self._persona_recording_queue = None
+                self._persona_recording_worker = None
+                self._persona_recording_transcriber = None
+                self._persona_recording_chunks = []
+                self._persona_recording_stop_requested = False
+                self._persona_recording_speech_started = False
+                self._persona_recording_silence_frames = 0
+
+            self._shutdown_vc_stream(stream)
+            self._run_on_ui_thread(
+                lambda: self._complete_persona_transcription(
+                    transcript,
+                    prefix,
+                    error,
+                    error_already_reported=partial_error_reported and error is not None,
+                )
+            )
+            return
+
+    def _request_persona_recording_stop(self) -> bool:
+        """Queue final Persona audio for transcription and automatic submission."""
+        with self._persona_recording_lock:
+            if self._persona_recording_stream is None:
+                return False
+            if self._persona_recording_stop_requested:
+                return True
+            self._persona_recording_stop_requested = True
+            self._queue_persona_recording_item_locked(final=True)
+
+        self.safe_status(string("ui.persona_transcribing"))
+        return True
+
+    def _start_persona_recording(self) -> bool:
+        """Start push-to-talk microphone capture for the active Persona."""
+        if (
+            self.celune is None
+            or self._is_voice_conversion_mode()
+            or not self._persona_loaded()
+            or not persona_talkback_enabled(self.celune.config)
+        ):
+            return False
+        if self._persona_recording_active():
+            return True
+
+        input_config = getattr(self.celune, "config", None)
+        input_device_key = (
+            "input_recording_device"
+            if isinstance(input_config, dict)
+            and "input_recording_device" in input_config
+            else "input_device"
+        )
+        try:
+            input_device, direct_device_info = resolve_audio_device_with_info(
+                input_config,
+                input_device_key,
+                "input",
+            )
+            device_info = (
+                cast(dict[str, _AudioDeviceScalar], dict(direct_device_info))
+                if direct_device_info is not None
+                else cast(
+                    dict[str, _AudioDeviceScalar],
+                    sd.query_devices(device=input_device, kind="input"),
+                )
+            )
+        except Exception as exc:
+            self.safe_log(
+                string(
+                    "ui.recording_open_input_failed",
+                    error=format_error(exc, self.celune.dev),
+                ),
+                "error",
+            )
+            return False
+
+        channels = _device_scalar_int(device_info.get("max_input_channels"), 0)
+        if channels <= 0:
+            self.safe_log(string("pipeline.no_audio_device"), "warning")
+            return False
+
+        sample_rate = _device_scalar_int(
+            device_info.get("default_samplerate"),
+            48000,
+        )
+        channel_count = 2 if channels >= 2 else 1
+        vad_hangover_frames = self._vc_vad_hangover_frames(sample_rate) + int(
+            sample_rate * self._persona_speech_end_delay_seconds()
+        )
+        ai_vad = create_live_voice_activity_detector(input_config)
+        recording_queue: queue_module.Queue[tuple[npt.NDArray[np.float32], bool]] = (
+            queue_module.Queue(maxsize=1)
+        )
+        transcriber = WhisperTranscriber(
+            self._persona_speech_model_id(),
+            language=self._persona_speech_language(),
+        )
+        prefix = self.input_box.text.strip() if self.input_box is not None else ""
+        should_stop = False
+
+        def callback(
+            indata: npt.NDArray[np.float32],
+            frames: int,
+            time_info: Optional[tuple[float, float, float]],
+            status: Optional[sd.CallbackFlags],
+        ) -> None:
+            discard(frames)
+            discard(time_info)
+            discard(status)
+            nonlocal should_stop
+
+            callback_audio = np.asarray(indata, dtype=np.float32).copy()
+            if ai_vad is not None:
+                try:
+                    voice_detected = ai_vad.has_voice(callback_audio, sample_rate)
+                except (RuntimeError, AssertionError, ValueError):
+                    ai_vad.reset()
+                    voice_detected = self._vc_input_has_voice(callback_audio)
+            else:
+                voice_detected = self._vc_input_has_voice(callback_audio)
+
+            with self._persona_recording_lock:
+                if (
+                    self._persona_recording_stream is None
+                    or self._persona_recording_stop_requested
+                ):
+                    return
+
+                if voice_detected:
+                    self._persona_recording_speech_started = True
+                    self._persona_recording_silence_frames = 0
+                elif self._persona_recording_speech_started:
+                    self._persona_recording_silence_frames += len(callback_audio)
+
+                if self._persona_recording_speech_started:
+                    self._persona_recording_chunks.append(callback_audio)
+                    if (
+                        time.monotonic() - self._persona_recording_last_partial_at
+                        >= 0.8
+                    ):
+                        self._queue_persona_recording_item_locked(final=False)
+                        self._persona_recording_last_partial_at = time.monotonic()
+
+                if (
+                    self._persona_recording_speech_started
+                    and self._persona_recording_silence_frames >= vad_hangover_frames
+                ):
+                    self._persona_recording_stop_requested = True
+                    self._queue_persona_recording_item_locked(final=True)
+                    should_stop = True
+
+            if should_stop:
+                self.safe_status(string("ui.persona_transcribing"))
+
+        worker: Optional[threading.Thread] = None
+        stream: Optional[sd.InputStream] = None
+        try:
+            stream = sd.InputStream(
+                samplerate=sample_rate,
+                channels=channel_count,
+                dtype="float32",
+                callback=callback,
+                device=input_device,
+            )
+            worker = threading.Thread(
+                target=self._persona_transcription_worker,
+                args=(recording_queue, transcriber, sample_rate, prefix),
+                daemon=True,
+            )
+            with self._persona_recording_lock:
+                self._persona_recording_stream = stream
+                self._persona_recording_queue = recording_queue
+                self._persona_recording_worker = worker
+                self._persona_recording_transcriber = transcriber
+                self._persona_recording_sample_rate = sample_rate
+                self._persona_recording_chunks = []
+                self._persona_recording_silence_frames = 0
+                self._persona_recording_speech_started = False
+                self._persona_recording_stop_requested = False
+                self._persona_recording_text_prefix = prefix
+                self._persona_recording_last_partial_at = time.monotonic()
+            stream.start()
+            worker.start()
+        except Exception as exc:
+            with self._persona_recording_lock:
+                stream = self._persona_recording_stream
+                self._persona_recording_stream = None
+                self._persona_recording_queue = None
+                self._persona_recording_worker = None
+                self._persona_recording_transcriber = None
+                self._persona_recording_chunks = []
+                self._persona_recording_stop_requested = True
+            self._shutdown_vc_stream(stream)
+            if worker is not None and worker.is_alive():
+                worker.join(timeout=2.0)
+            self.safe_log(
+                string(
+                    "ui.recording_start_failed",
+                    label=string("ui.audio_input_label"),
+                    error=format_error(exc, self.celune.dev),
+                ),
+                "error",
+            )
+            return False
+
+        self.safe_log(string("ui.persona_recording_started"), "info")
+        self.safe_status(string("ui.persona_recording_listening"))
+        self.update_resources()
+        return True
+
+    def toggle_persona_recording(self) -> bool:
+        """Toggle Persona microphone capture and final transcription.
+
+        Returns:
+            Result of this function.
+        """
+        if self._persona_recording_active():
+            return self._request_persona_recording_stop()
+        return self._start_persona_recording()
+
+    def _shutdown_persona_recording(self) -> None:
+        """Stop Persona microphone capture without submitting a final utterance."""
+        with self._persona_recording_lock:
+            stream = self._persona_recording_stream
+            recording_queue = self._persona_recording_queue
+            worker = self._persona_recording_worker
+            self._persona_recording_stream = None
+            self._persona_recording_queue = None
+            self._persona_recording_worker = None
+            self._persona_recording_transcriber = None
+            self._persona_recording_chunks = []
+            self._persona_recording_stop_requested = True
+            if recording_queue is not None:
+                while True:
+                    try:
+                        recording_queue.get_nowait()
+                    except queue_module.Empty:
+                        break
+                with contextlib.suppress(queue_module.Full):
+                    recording_queue.put_nowait((np.zeros(0, dtype=np.float32), True))
+        self._shutdown_vc_stream(stream)
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(timeout=2.0)
+
     def _vc_recording_active(self) -> bool:
         """Return whether live VC recording is active in the TUI."""
         return self._vc_recording_stream is not None
@@ -2242,6 +2696,7 @@ class CeluneUI(App):
 
     def _shutdown_live_vc_recording(self) -> None:
         """Stop live VC recording immediately for application shutdown."""
+        self._shutdown_persona_recording()
         if self.celune is not None:
             setattr(self.celune, "_exit_requested", True)
 
@@ -2480,8 +2935,21 @@ class CeluneUI(App):
         self._tutorial_timers.clear()
 
         if stop_audio and was_active and self.celune is not None:
+
+            def stop_tutorial_audio() -> None:
+                try:
+                    asyncio.run(self.celune.force_stop_speech_async())
+                except Exception as exc:
+                    self.safe_log(
+                        string(
+                            "ui.tutorial_stop_failed",
+                            error=format_error(exc, self.celune.dev),
+                        ),
+                        "error",
+                    )
+
             threading.Thread(
-                target=lambda: asyncio.run(self.celune.force_stop_speech_async()),
+                target=stop_tutorial_audio,
                 daemon=True,
             ).start()
 
@@ -2598,7 +3066,11 @@ class CeluneUI(App):
                     event.prevent_default()
                     event.stop()
                     return
-                if self.toggle_vc_recording():
+                if self._is_voice_conversion_mode():
+                    recording_toggled = self.toggle_vc_recording()
+                else:
+                    recording_toggled = self.toggle_persona_recording()
+                if recording_toggled:
                     event.prevent_default()
                     event.stop()
                 return

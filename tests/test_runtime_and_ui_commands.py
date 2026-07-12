@@ -1253,24 +1253,26 @@ class UIStartupTests(TestCase):
 
         pages = ui_resources.resource_pages(celune, "celune")
         cost_pages = [
-            page for page in pages if ": run $" in page or ": total $" in page
+            page
+            for page in pages
+            if "(this session): $" in page or "(overall): $" in page
         ]
 
         self.assertEqual(len(cost_pages), len(COST_EQUIVALENTS) * 2)
         self.assertIn(
-            "gemini-flash-tts: run $0.03",
+            "gemini-flash-tts (this session): $0.03",
             cost_pages,
         )
         self.assertIn(
-            "openai-realtime: run $0.19",
+            "openai-realtime (this session): $0.19",
             cost_pages,
         )
         self.assertIn(
-            "gemini-flash-tts: total $0.08",
+            "gemini-flash-tts (overall): $0.08",
             cost_pages,
         )
         self.assertIn(
-            "openai-realtime: total $0.48",
+            "openai-realtime (overall): $0.48",
             cost_pages,
         )
 

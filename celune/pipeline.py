@@ -1849,7 +1849,11 @@ def queue_speech(
     Raises:
         Exception: An exception was caught and subsequently raised to propagate it to Celune.
     """
-    if not _wait_for_model_ready_for_speech(engine):
+    if not _prepare_speech_readiness(engine):
+        return False
+
+    engine.model_ready.wait()
+    if not _finish_speech_readiness(engine):
         return False
 
     return _queue_speech_after_ready(
@@ -1861,8 +1865,8 @@ def queue_speech(
     )
 
 
-def _wait_for_model_ready_for_speech(engine: Celune) -> bool:
-    """Wait for one model reload to complete before queueing speech."""
+def _prepare_speech_readiness(engine: Celune) -> bool:
+    """Run the pre-wait checks shared by synchronous and async speech queueing."""
     if engine.is_in_tutorial:
         engine.log(string("celune.speech_input_disabled_tutorial"), "warning")
         return False
@@ -1881,8 +1885,11 @@ def _wait_for_model_ready_for_speech(engine: Celune) -> bool:
         engine.progress_callback(None, None)
         engine.log(string("pipeline.speak_waiting_reload"), "info")
 
-    engine.model_ready.wait()
+    return True
 
+
+def _finish_speech_readiness(engine: Celune) -> bool:
+    """Run the post-wait model checks shared by speech queueing paths."""
     if not engine.loaded and not getattr(engine.backend, "is_fake", False):
         engine.log(string("ui.core_engine_not_loaded"), "warning")
         engine.error_callback(string("pipeline.not_ready_app", app_name=APP_NAME))
@@ -1990,30 +1997,12 @@ async def queue_speech_async(
     Returns:
         bool: ``True`` when the request was queued successfully, otherwise ``False``.
     """
-    if engine.is_in_tutorial:
-        engine.log(string("celune.speech_input_disabled_tutorial"), "warning")
+    if not _prepare_speech_readiness(engine):
         return False
-
-    if getattr(engine, "sleeping", False):
-        engine.log(
-            string("pipeline.cannot_speak_sleeping", app_name=APP_NAME),
-            "warning",
-        )
-        engine.error_callback(string("celune.app_sleeping", app_name=APP_NAME))
-        engine.progress_callback(0, 1)
-        return False
-
-    if not engine.model_ready.is_set():
-        engine.status_callback(string("status.waiting_for_model"))
-        engine.progress_callback(None, None)
-        engine.log(string("pipeline.speak_waiting_reload"), "info")
 
     await asyncio.to_thread(engine.model_ready.wait)
 
-    if not engine.loaded and not getattr(engine.backend, "is_fake", False):
-        engine.log(string("ui.core_engine_not_loaded"), "warning")
-        engine.error_callback(string("pipeline.not_ready_app", app_name=APP_NAME))
-        engine.progress_callback(0, 1)
+    if not _finish_speech_readiness(engine):
         return False
 
     return _queue_speech_after_ready(
@@ -2922,7 +2911,10 @@ async def generation_worker_job(engine: Celune) -> None:
         engine.regenerate = False
 
         if item is engine.sentinel:
-            engine.audio_queue.put(engine.sentinel)
+            try:
+                engine.audio_queue.put_nowait(engine.sentinel)
+            except queue.Full:
+                await asyncio.to_thread(engine.audio_queue.put, engine.sentinel)
             break
 
         await asyncio.to_thread(
@@ -3117,6 +3109,21 @@ async def playback_worker_job(engine: Celune) -> None:
     ) = _pipeline_cpu_config(engine)
     buffered_seconds = 0.0
 
+    async def force_stop_playback() -> None:
+        nonlocal buffered_seconds
+        source_buffers.clear()
+        source_done.clear()
+        buffered_seconds = 0.0
+        _playback_source_statuses(engine).clear()
+        _playback_source_meta(engine).clear()
+        engine.utterance_force_stop.clear()
+        _reset_glow_audio_reactivity(engine)
+        await asyncio.to_thread(close_stream, engine, True)
+        engine.playback_done.set()
+        release_pipeline(engine)
+        if engine.cur_state != "error":
+            engine.idle_callback()
+
     async def drain_pending_items() -> bool:
         nonlocal buffered_seconds, stop_requested
 
@@ -3140,18 +3147,7 @@ async def playback_worker_job(engine: Celune) -> None:
                 break
 
             if pending is engine.force_stop_marker:
-                source_buffers.clear()
-                source_done.clear()
-                buffered_seconds = 0.0
-                _playback_source_statuses(engine).clear()
-                _playback_source_meta(engine).clear()
-                engine.utterance_force_stop.clear()
-                _reset_glow_audio_reactivity(engine)
-                await asyncio.to_thread(close_stream, engine, True)
-                engine.playback_done.set()
-                release_pipeline(engine)
-                if engine.cur_state != "error":
-                    engine.idle_callback()
+                await force_stop_playback()
                 return False
 
             if isinstance(pending, PlaybackChunk):
@@ -3190,18 +3186,7 @@ async def playback_worker_job(engine: Celune) -> None:
             break
 
         if item is engine.force_stop_marker:
-            source_buffers.clear()
-            source_done.clear()
-            buffered_seconds = 0.0
-            _playback_source_statuses(engine).clear()
-            _playback_source_meta(engine).clear()
-            engine.utterance_force_stop.clear()
-            _reset_glow_audio_reactivity(engine)
-            await asyncio.to_thread(close_stream, engine, True)
-            engine.playback_done.set()
-            release_pipeline(engine)
-            if engine.cur_state != "error":
-                engine.idle_callback()
+            await force_stop_playback()
             continue
 
         if isinstance(item, PlaybackChunk):

@@ -146,7 +146,7 @@ class _FakeMultimodalProcessor:
 
     def __init__(self, tokenizer: Optional[_FakeTokenizer] = None) -> None:
         self.tokenizer = tokenizer
-        self.image_processor = object()
+        self.image_processor = SimpleNamespace()
         self.calls: list[dict[str, _RecordedKwargValue]] = []
 
     def __call__(self, **kwargs) -> _FakeEncoded:
@@ -346,7 +346,7 @@ class PersonaApiTests(TestCase):
                 "trust_remote_code": True,
                 "revision": PERSONA_MODEL_REVISION,
                 "device_map": "auto",
-                "torch_dtype": runtime.torch.bfloat16,
+                "dtype": runtime.torch.bfloat16,
             },
         )
         loaders["tokenizer_loader"].assert_not_called()

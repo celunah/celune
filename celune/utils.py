@@ -278,12 +278,13 @@ def format_error(e: Exception, dev: bool) -> str:
         str: Either the full traceback or the exception text.
     """
     if dev:
-        trace = traceback.format_exc()
+        trace = "".join(traceback.format_exception(type(e), e, e.__traceback__))
         with open(traceback_path(create_parent=True), "w", encoding="utf-8") as f:
             f.write(trace)
+        return trace
 
     details = str(e) or "no error description"
-    return traceback.format_exc() if dev else details
+    return details
 
 
 def indent(text: str, spaces: int, direction: Literal["left", "right"] = "left") -> str:

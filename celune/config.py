@@ -16,6 +16,8 @@ ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
 AudioDeviceConfig = Optional[Union[int, str]]
 AudioDeviceDirection = Literal["input", "output"]
 AudioDeviceInfoValue = Union[bool, int, float, str]
+type AudioDeviceInfo = Mapping[str, AudioDeviceInfoValue]
+type AudioDeviceQueryResult = Union[AudioDeviceInfo, Sequence[AudioDeviceInfo]]
 AudioHostApi = Optional[Literal["wasapi", "directsound"]]
 WINDOWS_AUDIO_HOSTAPIS: dict[str, str] = {
     "wasapi": "Windows WASAPI",
@@ -202,7 +204,7 @@ def _parse_audio_device_selector(
 
 
 def _find_matching_device_index(
-    all_devices: object,
+    all_devices: AudioDeviceQueryResult,
     configured_name: str,
     channel_key: str,
     configured_hostapi: AudioHostApi,

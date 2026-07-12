@@ -60,6 +60,6 @@ class ModelingTests(TestCase):
         )
         model_loader.assert_called_once_with(
             "local-model",
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             device_map={"": "cuda"},
         )

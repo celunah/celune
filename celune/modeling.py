@@ -70,7 +70,7 @@ def load_normalizer_components(
     device_map = device if device in supported_dispatch else {"": device}
     llm = AutoModelForCausalLM.from_pretrained(
         model_ref,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map=device_map,
     )
     return tokenizer, llm

@@ -9,7 +9,7 @@ import importlib
 import threading
 import contextlib
 from pathlib import Path
-from typing import Optional, cast
+from typing import Optional, Union, cast
 from types import ModuleType
 from types import SimpleNamespace
 from unittest import mock, TestCase
@@ -220,7 +220,7 @@ class BackendTests(TestCase):
     def test_seedvc_backend_converts_audio_with_cached_wrapper(self) -> None:
         """Verify Seed-VC wraps converted audio into Celune's VC output contract."""
         backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
-        captured: dict[str, object] = {}
+        captured: dict[str, Union[str, int, float, bool]] = {}
 
         class FakeWrapper:
             """Minimal Seed-VC wrapper stand-in for one backend test."""
@@ -281,7 +281,7 @@ class BackendTests(TestCase):
             log=lambda _msg, _severity="info": None,
             pitch_shift=-6,
         )
-        captured: dict[str, object] = {}
+        captured: dict[str, Union[str, int, float, bool]] = {}
 
         class FakeWrapper:
             """Minimal Seed-VC wrapper stand-in for request override coverage."""
@@ -332,7 +332,7 @@ class BackendTests(TestCase):
             log=lambda _msg, _severity="info": None,
             f0_condition=False,
         )
-        captured: dict[str, object] = {}
+        captured: dict[str, Union[str, int, float, bool]] = {}
 
         class FakeWrapper:
             """Minimal Seed-VC wrapper stand-in for f0 override coverage."""

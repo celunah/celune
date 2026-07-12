@@ -2201,7 +2201,7 @@ class CeluneAsyncRuntimeTests(IsolatedAsyncioTestCase):
         self.assertEqual(switched, True)
         celune._prepare_backend_reload.assert_called_once_with("mini")
         celune._hot_reload_backend.assert_called_once_with("mini", "nova")
-        self.assertEqual(to_thread.await_count, 2)
+        self.assertEqual(to_thread.await_count, 3)
 
     def test_set_backend_stops_active_speech_before_starting_reload(self) -> None:
         """Verify backend reload requests invalidate active speech before reloading."""
@@ -2232,4 +2232,4 @@ class CeluneAsyncRuntimeTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(woke, True)
         celune.wake_from_sleep.assert_called_once_with()
-        to_thread.assert_awaited_once_with(celune.wake_from_sleep)
+        self.assertEqual(to_thread.await_count, 2)

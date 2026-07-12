@@ -192,6 +192,31 @@ class CEVoiceTests(TestCase):
         self.assertEqual(reopened.voice_order, ("bold", "balanced"))
         self.assertEqual(reopened.read_asset("balanced", "wav"), b"wav")
 
+    def test_cechar_header_and_manifest_versions_must_match(self) -> None:
+        """Reject a CECHAR v2 header carrying a CECHAR v3 manifest."""
+        bundle = self._write_bundle()
+        metadata = copy.deepcopy(bundle.metadata)
+        metadata["version"] = 3
+        self._rewrite_bundle_header_and_metadata(cevoice.MAGIC, 2, metadata)
+
+        with self.assertRaisesRegex(CEVoiceError, "format/version mismatch"):
+            cevoice.CEVoice.open(self.path)
+
+    def test_asset_checksums_are_case_insensitive(self) -> None:
+        """Accept uppercase hexadecimal asset checksums in a valid manifest."""
+        bundle = self._write_bundle()
+        metadata = copy.deepcopy(bundle.metadata)
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])
+        voice_data = voices["balanced"]
+        assets = cast(cevoice.Manifest, voice_data["assets"])
+        wav_asset = cast(cevoice.Manifest, assets["wav"])
+        wav_asset["sha256"] = cast(str, wav_asset["sha256"]).upper()
+        self._rewrite_metadata(metadata)
+
+        reopened = cevoice.CEVoice.open(self.path)
+
+        self.assertEqual(reopened.read_asset("balanced", "wav"), b"wav")
+
     def test_legacy_cevoice_v1_bundle_remains_loadable(self) -> None:
         """Verify legacy CEVOICE v1 bundles still open after the schema rename."""
         bundle = self._write_bundle()

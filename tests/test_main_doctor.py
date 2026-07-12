@@ -3,6 +3,7 @@
 
 import io
 import contextlib
+from types import SimpleNamespace
 from unittest import TestCase, mock
 from pathlib import Path, PureWindowsPath
 
@@ -16,7 +17,7 @@ class DoctorCommandTests(TestCase):
 
     def test_ui_test_backend_is_loaded_lazily(self) -> None:
         """Verify normal entrypoint imports do not require the test suite package."""
-        fake_support = mock.Mock(FakeBackend=object())
+        fake_support = mock.Mock(FakeBackend=SimpleNamespace())
 
         with mock.patch.object(
             entrypoint.importlib,

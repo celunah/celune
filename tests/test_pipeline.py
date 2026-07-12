@@ -7,6 +7,7 @@ import queue
 import tempfile
 import threading
 import json as _json
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import SimpleNamespace, TracebackType
 from typing import cast, Optional
@@ -548,7 +549,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             with (
                 mock.patch("celune.pipeline.app_data_dir", return_value=temp_root),
                 mock.patch(
-                    "celune.pipeline.importlib_util.find_spec", return_value=object()
+                    "celune.pipeline.importlib_util.find_spec",
+                    return_value=ModuleSpec("yt_dlp", loader=None),
                 ),
                 mock.patch(
                     "celune.pipeline._youtube_sfx_title",
@@ -586,7 +588,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             with (
                 mock.patch("celune.pipeline.app_data_dir", return_value=temp_root),
                 mock.patch(
-                    "celune.pipeline.importlib_util.find_spec", return_value=object()
+                    "celune.pipeline.importlib_util.find_spec",
+                    return_value=ModuleSpec("yt_dlp", loader=None),
                 ),
                 mock.patch(
                     "celune.pipeline._youtube_sfx_title",
@@ -622,7 +625,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             with (
                 mock.patch("celune.pipeline.app_data_dir", return_value=temp_root),
                 mock.patch(
-                    "celune.pipeline.importlib_util.find_spec", return_value=object()
+                    "celune.pipeline.importlib_util.find_spec",
+                    return_value=ModuleSpec("yt_dlp", loader=None),
                 ),
                 mock.patch(
                     "celune.pipeline._youtube_sfx_title",
@@ -660,7 +664,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             with (
                 mock.patch("celune.pipeline.app_data_dir", return_value=temp_root),
                 mock.patch(
-                    "celune.pipeline.importlib_util.find_spec", return_value=object()
+                    "celune.pipeline.importlib_util.find_spec",
+                    return_value=ModuleSpec("yt_dlp", loader=None),
                 ),
                 mock.patch(
                     "celune.pipeline._youtube_sfx_title",
