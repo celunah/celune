@@ -610,6 +610,38 @@ class CeluneCoreTests(TestCase):
         celune._warmup.assert_not_called()
         celune.voice_changed_callback.assert_called_once_with("bold")
 
+    def test_voice_change_waits_for_playback_before_resetting_pipeline(self) -> None:
+        """Verify voice changes drain pending playback instead of force-stopping it."""
+        celune = self._make_celune({})
+        celune.voices = ("balanced", "bold")
+        celune.loaded = True
+        celune.locked = True
+        celune.model_ready.set()
+        celune.playback_done.clear()
+        prepare_started = threading.Event()
+        celune.change_input_state_callback = mock.Mock(
+            side_effect=lambda locked: prepare_started.set() if locked else None
+        )
+        celune.force_stop_speech = mock.Mock()
+        result: list[bool] = []
+
+        worker = threading.Thread(
+            target=lambda: result.append(celune._prepare_voice_change("bold"))
+        )
+        worker.start()
+        self.assertTrue(prepare_started.wait(timeout=1))
+        self.assertTrue(worker.is_alive())
+
+        celune.locked = False
+        celune.playback_done.set()
+        worker.join(timeout=1)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(result, [True])
+        celune.force_stop_speech.assert_not_called()
+        self.assertFalse(celune.loaded)
+        self.assertFalse(celune.model_ready.is_set())
+
     def test_fatal_glow_marks_runtime_error_state(self) -> None:
         """Verify fatal glow always stamps Celune into the error state."""
         celune = self._make_celune({})
@@ -1873,6 +1905,14 @@ class CeluneCoreTests(TestCase):
         celune.load_normalizer = mock.Mock()
         celune._persona_conn = mock.Mock(return_value=persona_client)
         old_backend = celune.backend
+        persona_load_started = threading.Event()
+        release_persona_load = threading.Event()
+
+        def load_persona(*_args, **_kwargs) -> None:
+            persona_load_started.set()
+            release_persona_load.wait(timeout=2)
+
+        persona_client.load.side_effect = load_persona
 
         with mock.patch("celune.celune.play_signal", return_value=False):
             self.assertEqual(celune.enter_sleep_mode(), True)
@@ -1888,8 +1928,19 @@ class CeluneCoreTests(TestCase):
         self.assertIsNone(celune.vision)
         persona_client.close.assert_called_once_with()
 
-        with mock.patch("celune.celune.play_signal", return_value=False):
-            self.assertEqual(celune.wake_from_sleep(), True)
+        wake_result: list[bool] = []
+        wake_thread = threading.Thread(
+            target=lambda: wake_result.append(celune.wake_from_sleep())
+        )
+        wake_thread.start()
+        wake_thread.join(timeout=1)
+        self.assertFalse(wake_thread.is_alive())
+        self.assertEqual(wake_result, [True])
+        self.assertTrue(persona_load_started.wait(timeout=2))
+        release_persona_load.set()
+        background_thread = celune._wake_background_thread
+        if background_thread is not None:
+            background_thread.join(timeout=2)
 
         self.assertIsNot(celune.backend, old_backend)
         self.assertEqual(celune.sleeping, False)

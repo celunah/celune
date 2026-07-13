@@ -116,7 +116,7 @@ def sort_statement_group(
 
     ordered_packages = sorted(
         grouped,
-        key=len,
+        key=lambda pkg: (len(pkg), pkg.lower()),
     )
     ordered: list[ImportStatement] = []
     for package in ordered_packages:

@@ -108,6 +108,8 @@ class CelunePipelineState:
     generation_thread: Optional[threading.Thread] = None
     api_thread: Optional[threading.Thread] = None
     persona_thread: Optional[threading.Thread] = None
+    wake_background_thread: Optional[threading.Thread] = None
+    wake_background_lock: threading.Lock = field(default_factory=threading.Lock)
     persona_queue: queue.Queue = field(default_factory=queue.Queue)
     queue_lock: threading.Lock = field(default_factory=threading.Lock)
     utterance_force_stop: threading.Event = field(default_factory=threading.Event)
@@ -233,6 +235,17 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("_generation_thread", "_pipeline_state", "generation_thread"),
     ForwardedPropertySpec("_api_thread", "_pipeline_state", "api_thread"),
     ForwardedPropertySpec("_persona_thread", "_pipeline_state", "persona_thread"),
+    ForwardedPropertySpec(
+        "_wake_background_thread",
+        "_pipeline_state",
+        "wake_background_thread",
+    ),
+    ForwardedPropertySpec(
+        "_wake_background_lock",
+        "_pipeline_state",
+        "wake_background_lock",
+        read_only=True,
+    ),
     ForwardedPropertySpec("_persona_queue", "_pipeline_state", "persona_queue"),
     ForwardedPropertySpec("_queue_lock", "_pipeline_state", "queue_lock"),
     ForwardedPropertySpec(

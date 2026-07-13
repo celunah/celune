@@ -1530,21 +1530,22 @@ class Celune(CeluneStateAccessors):
         self.model_ready.clear()
         self.progress_callback(0, 1)
 
-        with self._model_lock:
-            if unload["persona"]:
-                self._unload_persona_state()
+        with self._wake_background_lock:
+            with self._model_lock:
+                if unload["persona"]:
+                    self._unload_persona_state()
 
-            if unload["tts"]:
-                self.unload_runtime_state(
-                    include_normalizer=unload["normalizer"],
-                    include_vc=unload["vc"],
-                )
-                self.model_name = ""
-            elif unload["normalizer"]:
-                self.unload_normalizer_state()
+                if unload["tts"]:
+                    self.unload_runtime_state(
+                        include_normalizer=unload["normalizer"],
+                        include_vc=unload["vc"],
+                    )
+                    self.model_name = ""
+                elif unload["normalizer"]:
+                    self.unload_normalizer_state()
 
-            if unload["vc"] and not unload["tts"] and self.vc_backend is not None:
-                self.vc_backend.unload_model()
+                if unload["vc"] and not unload["tts"] and self.vc_backend is not None:
+                    self.vc_backend.unload_model()
 
         self.model_ready.set()
         return True
@@ -1598,33 +1599,13 @@ class Celune(CeluneStateAccessors):
                             if not self._warmup():
                                 self._raise_warmup_error("warmup failed after sleep")
 
+                    is_voice_conversion = self._is_voice_conversion_mode()
                     if (
-                        unload["vc"]
-                        and not self._is_voice_conversion_mode()
-                        and self.vc_backend is not None
+                        not is_voice_conversion
+                        and unload["persona"]
+                        and persona_enabled(self.config)
                     ):
-                        self.vc_backend.preload_models()
-
-                    if unload["normalizer"] and self.use_normalization:
-                        self.load_normalizer()
-
-                    if unload["persona"] and persona_enabled(self.config):
                         self.vision = self._persona_conn()
-                        if self.vision is not None:
-                            try:
-                                self.vision.load(
-                                    persona_model_id(self.config),
-                                    persona_quantization(self.config),
-                                )
-                            except Exception as e:
-                                self.log(
-                                    string("celune.persona_not_initialized"),
-                                    "warning",
-                                )
-                                self.log(string("celune.speech_only_mode"), "warning")
-                                self.log(format_error(e, self.dev), "warning")
-                                self.vision.close()
-                                self.vision = None
 
                     self.loaded = True
                     self.sleeping = False
@@ -1635,6 +1616,8 @@ class Celune(CeluneStateAccessors):
                 self.status_callback(string("status.idle"))
                 self.change_input_state_callback(locked=False)
                 self.change_voice_lock_state_callback(locked=len(self.voices) < 2)
+                if not is_voice_conversion:
+                    self._start_wake_background_jobs(unload)
                 return True
             except Exception as e:
                 self.fatal()
@@ -1650,6 +1633,66 @@ class Celune(CeluneStateAccessors):
                 return False
             finally:
                 self.model_ready.set()
+
+    def _start_wake_background_jobs(self, unload: dict[str, bool]) -> None:
+        """Start optional wake-up restoration after TTS becomes ready."""
+        existing = self._wake_background_thread
+        if existing is not None and existing.is_alive():
+            return
+
+        thread = threading.Thread(
+            target=self._run_wake_background_jobs,
+            args=(unload,),
+            daemon=True,
+        )
+        self._wake_background_thread = thread
+        thread.start()
+
+    def _run_wake_background_jobs(self, unload: dict[str, bool]) -> None:
+        """Restore optional wake-up resources without delaying TTS readiness."""
+        try:
+            with self._wake_background_lock:
+                if self.exit_requested or self.sleeping:
+                    return
+
+                if (
+                    unload["vc"]
+                    and self.vc_backend is not None
+                    and not self._is_voice_conversion_mode()
+                ):
+                    with self._model_lock:
+                        if self.exit_requested or self.sleeping:
+                            return
+                        self.vc_backend.preload_models()
+
+                if unload["normalizer"] and self.use_normalization:
+                    self.load_normalizer()
+
+                if not unload["persona"] or not persona_enabled(self.config):
+                    return
+
+                vision = self.vision
+                if vision is None:
+                    return
+
+                try:
+                    vision.load(
+                        persona_model_id(self.config),
+                        persona_quantization(self.config),
+                    )
+                except Exception as e:
+                    self.log(string("celune.persona_not_initialized"), "warning")
+                    self.log(string("celune.speech_only_mode"), "warning")
+                    self.log(format_error(e, self.dev), "warning")
+                    with self._model_lock:
+                        if self.vision is vision:
+                            self.vision = None
+                    vision.close()
+        except Exception as e:
+            self.log(format_error(e, self.dev), "error")
+        finally:
+            if self._wake_background_thread is threading.current_thread():
+                self._wake_background_thread = None
 
     def set_voices(self, voices: tuple[str, ...]) -> None:
         """Configure Celune's voice information.
@@ -1773,19 +1816,23 @@ class Celune(CeluneStateAccessors):
         return True
 
     def _prepare_voice_change(self, name: str) -> bool:
-        """Prepare runtime state for one voice switch before loading begins."""
+        """Wait for playback to drain before preparing one voice switch."""
         if name not in self.voices:
             # this voice was not found in the current CEVOICE/CECHAR pack
             self.log(string("celune.unknown_voice", voice=name), "warning")
             return False
 
         self.change_input_state_callback(locked=True)
+        previous_state = self.cur_state
+        self.cur_state = "reloading"
 
         if not self._model_ready.is_set():
             self.log(string("celune.waiting_for_models"))
-            self._model_ready.wait(timeout=5)
+        if not self._wait_until_idle():
+            self.cur_state = previous_state
+            self.change_input_state_callback(locked=False)
+            return False
 
-        self.force_stop_speech()
         self._model_ready.clear()
         self.loaded = False
         return True
@@ -1818,6 +1865,8 @@ class Celune(CeluneStateAccessors):
         Returns:
             ``True`` when the voice reload completed successfully.
 
+        Raises:
+            Exception: If the asynchronous reload worker raises unexpectedly.
         """
         await asyncio.to_thread(self._async_runtime_lock.acquire)
         try:
@@ -2428,6 +2477,7 @@ class Celune(CeluneStateAccessors):
 
         Raises:
             NotAvailableError: If no usable voice or backend is available.
+            Exception: If an unexpected loading failure occurs and `raise_on_error` is enabled.
             RuntimeCheckError: If the runtime environment is unsupported.
             BackendError: If backend initialization fails.
         """
@@ -3265,6 +3315,12 @@ class Celune(CeluneStateAccessors):
         self._emit_event("shutdown", ShutdownEvent(celune=self))
         try:
             close_pipeline(self)
+            wake_background_thread = self._wake_background_thread
+            if (
+                wake_background_thread is not None
+                and wake_background_thread is not threading.current_thread()
+            ):
+                wake_background_thread.join(timeout=2)
             self._unload_persona_state()
             with self._model_lock:
                 self.unload_runtime_state(include_normalizer=True)

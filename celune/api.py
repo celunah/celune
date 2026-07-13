@@ -2520,6 +2520,8 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
     Returns:
         JSONResponse: A 202 response with the created job ID, or an error payload.
 
+    Raises:
+        Exception: If speech-job setup or queueing fails unexpectedly.
     """
     celune = require_celune()
     api_log("SPEAK(ASYNC)", body.content)

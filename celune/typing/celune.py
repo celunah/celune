@@ -209,6 +209,8 @@ class CeluneStateAccessors:
     _generation_thread: Optional["threading.Thread"]
     _api_thread: Optional["threading.Thread"]
     _persona_thread: Optional["threading.Thread"]
+    _wake_background_thread: Optional["threading.Thread"]
+    _wake_background_lock: "threading.Lock"
     _persona_queue: "queue.Queue"
     _queue_lock: "threading.Lock"
     _utterance_force_stop: "threading.Event"
@@ -272,5 +274,6 @@ class CeluneStateAccessors:
         """Store the current runtime-state label.
 
         Args:
+            value: The runtime-state label to store.
         """
         raise NotImplementedError("typing surface only")

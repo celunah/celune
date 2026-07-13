@@ -3002,7 +3002,7 @@ def _finalize_playback_idle(
     engine.progress_callback(1, 1)
     engine.playback_done.set()
 
-    if engine.cur_state == "error":
+    if engine.cur_state in {"error", "reloading"}:
         return
 
     if getattr(engine, "locked", False):

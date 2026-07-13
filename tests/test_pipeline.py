@@ -1288,6 +1288,19 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertEqual(engine.playback_done.is_set(), True)
         self.assertEqual(engine.cur_state, "reloading")
 
+    def test_finalize_playback_idle_does_not_unlock_voice_reload(self) -> None:
+        """Verify a voice reload remains transitional after pending playback drains."""
+        engine = make_pipeline_engine()
+        engine.locked = False
+        engine.loaded = True
+        engine.cur_state = "reloading"
+
+        pipeline.finalize_playback_idle(cast(Celune, engine))
+
+        engine.idle_callback.assert_not_called()
+        self.assertEqual(engine.playback_done.is_set(), True)
+        self.assertEqual(engine.cur_state, "reloading")
+
     def test_think_builds_persona_payload_and_queues_response(self) -> None:
         """Verify Persona request formatting without loading a Persona model.
 

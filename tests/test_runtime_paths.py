@@ -208,7 +208,11 @@ class RuntimePathTests(TestCase):
                 )
 
     def test_format_error_keeps_traceback_after_exception_handler_returns(self) -> None:
-        """Verify deferred UI error formatting does not report a blank traceback."""
+        """Verify deferred UI error formatting does not report a blank traceback.
+
+        Raises:
+            RuntimeError: Raised by the test to verify deferred traceback formatting.
+        """
         captured: Optional[RuntimeError] = None
         try:
             raise RuntimeError("deferred boom")
