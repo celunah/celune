@@ -1,36 +1,36 @@
 # SPDX-License-Identifier: MIT
 """Tests for backend resolution and extension infrastructure."""
 
-import re
 import sys
+import re
 import tempfile
 import textwrap
 import importlib
 import threading
 import contextlib
 from pathlib import Path
-from typing import Optional, Union, cast
 from types import ModuleType
 from types import SimpleNamespace
 from unittest import mock, TestCase
 from collections.abc import Iterator, Generator
+from typing import Optional, Union, cast
 
+import torch
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
-import torch
 
-from celune.utils import discard
 from celune.celune import Celune
-from celune.backends.tts import resolve_backend
 from celune.i18n import string
+from celune.utils import discard
 from celune.typing.backends import BackendModel
+from celune.backends.tts import resolve_backend
 from celune.backends.vc import resolve_vc_backend
-from celune.backends.vc.passthrough import CelunePassthroughVCBackend
 from celune.backends.vc.seedvc import CeluneSeedVCBackend
 from celune.extensions.manager import CeluneExtensionManager
-from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.dataclasses.pipeline import VoiceConversionRequest
+from celune.backends.vc.passthrough import CelunePassthroughVCBackend
+from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.exceptions import (
     ExtensionAlreadyRegisteredError,
     InvalidExtensionError,

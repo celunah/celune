@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING, Optional
 import torch
 import psutil
 
-from ..constants import APP_NAME, COST_EQUIVALENTS
 from ..i18n import string
 from ..persona.impl import persona_talkback_enabled
+from ..constants import APP_NAME, COST_EQUIVALENTS
 from ..utils import celune_day_status, lunar_info, lunar_phase
 
 if TYPE_CHECKING:

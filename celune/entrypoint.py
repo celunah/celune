@@ -4,25 +4,25 @@
 import os
 import sys
 import time
-import shutil
 import random
-import platform
+import shutil
 import datetime
+import platform
 import warnings
-import subprocess
-import contextlib
 import importlib
 import importlib.util
+import contextlib
+import subprocess
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
 from types import SimpleNamespace, ModuleType
 
-from celune.updater import apply_update_and_restart
-from celune import __version__, REVISION, __tagline__
-from celune.paths import project_root, running_compiled
-from celune.constants import APP_NAME, APP_SLUG, ExitCodes
 from celune.i18n import string
+from celune.updater import apply_update_and_restart
+from celune.constants import APP_NAME, APP_SLUG, ExitCodes
+from celune.paths import project_root, running_compiled
+from celune import __version__, REVISION, __tagline__
 
 
 def _env_flag(name: str) -> bool:

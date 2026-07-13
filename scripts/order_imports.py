@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Recursively order imports by package name and line length automatically."""
 
-import ast
 import sys
+import ast
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Union, Optional
@@ -15,7 +15,9 @@ TARGETS = [
     ROOT / "celune",
     ROOT / "tests",
     ROOT / "extensions",
+    ROOT / "scripts",
     ROOT / "main.py",
+    ROOT / "nuitka_main.py",
     ROOT / "setup.py",
 ]
 
@@ -114,7 +116,7 @@ def sort_statement_group(
 
     ordered_packages = sorted(
         grouped,
-        key=lambda pkg: (len(pkg), pkg.lower()),
+        key=len,
     )
     ordered: list[ImportStatement] = []
     for package in ordered_packages:
@@ -175,15 +177,13 @@ def sorted_import_groups(section: list[ImportStatement]) -> list[list[ImportStat
     priority = sort_statement_group(
         [statement for statement in section if is_priority_import(statement)],
     )
-    plain = sort_statement_group(
+    plain_and_aliased = sort_statement_group(
         [
             statement
             for statement in section
-            if is_plain_import(statement) and not is_priority_import(statement)
+            if isinstance(statement.node, ast.Import)
+            and not is_priority_import(statement)
         ],
-    )
-    aliased = sort_statement_group(
-        [statement for statement in section if is_aliased_import(statement)],
     )
     from_imports = sort_from_statement_group(
         [
@@ -193,7 +193,7 @@ def sorted_import_groups(section: list[ImportStatement]) -> list[list[ImportStat
         ]
     )
 
-    return [group for group in (priority, plain + aliased, from_imports) if group]
+    return [group for group in (priority, plain_and_aliased, from_imports) if group]
 
 
 def collect_top_imports(tree: ast.Module, lines: list[str]) -> list[ImportStatement]:
@@ -272,8 +272,15 @@ def rewrite_file(path: Path) -> bool:
 
     start, end = bounds
 
-    covered = sum(statement.end - statement.start for statement in statements)
-    if covered != end - start:
+    import_lines = {
+        line_number
+        for statement in statements
+        for line_number in range(statement.start, statement.end)
+    }
+    if any(
+        line.strip() and line_number not in import_lines
+        for line_number, line in enumerate(lines[start:end], start)
+    ):
         return False
 
     updated_block = render_import_block(statements)

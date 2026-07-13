@@ -2,9 +2,9 @@
 """Tests for API task event streaming and cancellation."""
 
 import asyncio
+from unittest import TestCase
 from types import SimpleNamespace
 from typing import Literal, Optional, cast
-from unittest import TestCase
 
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect

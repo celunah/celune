@@ -2,8 +2,8 @@
 """Celune audio processing functions."""
 
 import math
-from typing import Iterable, Callable
 from importlib.resources import as_file, files
+from typing import Iterable, Callable
 
 import numpy as np
 import numpy.typing as npt

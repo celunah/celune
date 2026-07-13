@@ -13,12 +13,12 @@ from typing import Union, Optional, TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
-from openrgb import OpenRGBClient
 from openrgb.utils import RGBColor
+from openrgb import OpenRGBClient
 
 from .dsp import split
-from .colors import RGB, ERROR
 from .constants import BASE_SR
+from .colors import RGB, ERROR
 from .utils import to_rgb, lunar_info, range_interpolated, is_celune_day, discard
 
 if TYPE_CHECKING:

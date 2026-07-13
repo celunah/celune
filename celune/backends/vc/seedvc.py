@@ -2,30 +2,25 @@
 """Seed-VC backend for Celune voice conversion."""
 
 import gc
-import importlib
 import tempfile
-import contextlib
+import importlib
 import threading
+import contextlib
 from pathlib import Path
 from types import ModuleType, TracebackType
-from typing import Optional, Callable, Protocol, Union, cast
-from collections.abc import Generator
+from typing import Optional, Callable, Protocol, cast
 
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
 
-from .base import CeluneVCBackend
-from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from ...i18n import string
+from .base import CeluneVCBackend
 from ...paths import huggingface_hub_cache_dir
+from ...typing.aliases import SeedVCArgument, SeedVCGenerator
+from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["CeluneSeedVCBackend"]
-
-type SeedVCArgument = Union[str, int, float, bool]
-type SeedVCGenerator = Generator[
-    Optional[npt.NDArray[np.float32]], None, npt.NDArray[np.float32]
-]
 
 
 class _SeedVCWrapper(Protocol):

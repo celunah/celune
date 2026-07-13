@@ -7,11 +7,11 @@ import contextlib
 from pathlib import Path
 from typing import Optional, cast
 
+import numpy as np
+import numpy.typing as npt
 import torch
 import librosa
 import matplotlib
-import numpy as np
-import numpy.typing as npt
 from matplotlib.projections import PolarAxes
 from matplotlib import rcParams, font_manager, pyplot as plt, colors as mcolors
 from transformers import AutoModel, AutoProcessor

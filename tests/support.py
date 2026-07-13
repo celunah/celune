@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import sys
 import queue
-import threading
 import importlib
+import threading
 import contextlib
-from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace, ModuleType
+from pathlib import Path
 from collections.abc import Iterator
+from types import SimpleNamespace, ModuleType
 from typing import TYPE_CHECKING, Optional, TypedDict
 
 import numpy as np

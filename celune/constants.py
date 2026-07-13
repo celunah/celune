@@ -4,15 +4,11 @@
 import signal
 import datetime
 import itertools
-from enum import auto, IntEnum, Enum
 from typing import Optional
+from enum import auto, IntEnum, Enum
 
 from .i18n import string
-from .typing.common import JSON as _JSON
-from .typing.common import JSONSerializable as _JSONSerializable
-
-JSONSerializable = _JSONSerializable
-JSON = _JSON
+from .typing.common import JSON, JSONSerializable  # pylint: disable=unused-import
 
 # main app name
 # why would you rename her? she doesn't approve of it

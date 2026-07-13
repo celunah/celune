@@ -4,8 +4,8 @@
 import tempfile
 from typing import cast
 from pathlib import Path
-from types import SimpleNamespace
 from unittest import mock, TestCase
+from types import SimpleNamespace
 
 from pocket_tts import TTSModel
 

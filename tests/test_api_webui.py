@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MIT
 """Tests for Celune's browser-facing API UI."""
 
-from types import SimpleNamespace
-from queue import Queue
 import asyncio
 from typing import cast
+from queue import Queue
 from unittest import TestCase, mock
+from types import SimpleNamespace
 
 import numpy as np
 from starlette.requests import Request

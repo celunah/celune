@@ -1,81 +1,49 @@
 # SPDX-License-Identifier: MIT
 """Celune's backend layer."""
 
-import asyncio
 import os
-import gc
 import sys
+import gc
 import time
 import queue
 import shutil
+import asyncio
 import threading
 import contextlib
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Callable, Protocol, Union, cast
 
-import torch
 import numpy as np
 import numpy.typing as npt
+import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
+from .backends.tts.qwen3 import Qwen3
 from . import __version__
-from .dataclasses.celune import (
-    CELUNE_CONSTANT_PROPERTIES,
-    CELUNE_FORWARDED_PROPERTIES,
-    CeluneAudioState,
-    CeluneBackendState,
-    CeluneCallbackState,
-    CeluneModelState,
-    CelunePipelineState,
-    CeluneRuntimeState,
-    CeluneVoiceState,
-)
+from .chroma import AudioRGBGlow
+from .typing.backends import BackendModel
+from .extensions.base import CeluneContext
+from .extensions.events import EventDispatcher
+from .typing.pipeline import SpeechStreamQueue
+from .vc import clamp_vc_pitch_shift
+from .extensions.manager import CeluneExtensionManager
+from .typing.events import EventName, EventPayload
+from .paths import project_root, app_data_dir
 from .dataclasses.pipeline import AudioInputRequest, AudioOutput
+from .config import Config, config_bool, config_value
+from .runtime import log_runtime_banner, validate_runtime
+from .i18n import get_system_locale, set_locale, string
+from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
+from .modeling import normalizer_device, load_normalizer_components
+from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID
+from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
 from .dataclasses.properties import (
     bind_constant_properties,
     bind_forwarded_properties,
 )
-from .dataclasses.events import (
-    CharacterChangedEvent,
-    CharacterLoadedEvent,
-    CharacterUnloadedEvent,
-    ReadyEvent,
-    ShutdownEvent,
-    StateChangedEvent,
-    VoiceChangedEvent,
-)
-from .chroma import AudioRGBGlow
-from .backends.tts.qwen3 import Qwen3
-from .extensions.base import CeluneContext
-from .extensions.events import EventDispatcher
-from .extensions.manager import CeluneExtensionManager
-from .config import Config, config_bool, config_value
-from .paths import project_root, app_data_dir
-from .runtime import log_runtime_banner, validate_runtime
-from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
-from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
-from .vc import clamp_vc_pitch_shift
 from .exceptions import NotAvailableError, WarmupError, BackendError, RuntimeCheckError
-from .modeling import normalizer_device, load_normalizer_components
-from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID
-from .i18n import get_system_locale, set_locale, string
-from .typing.celune import (
-    CoreBackendSpec,
-    CeluneStateAccessors,
-    Generative,
-    InputStateCallback,
-    MessageCallback,
-    NormalizerTokenizer,
-    ProgressCallback,
-    ReleasableObject,
-    TTSBackendSpec,
-    VCBackendSpec,
-    VoiceLockStateCallback,
-)
-from .typing.backends import BackendModel
-from .typing.events import EventName, EventPayload
 from .utils import format_number, format_error, discard, is_port_usable, custom_assert
 from .vram import (
     QWEN3_0_6B_MODEL,
@@ -92,6 +60,39 @@ from .persona.impl import (
     persona_is_available,
     persona_model_id,
     persona_quantization,
+)
+from .dataclasses.events import (
+    CharacterChangedEvent,
+    CharacterLoadedEvent,
+    CharacterUnloadedEvent,
+    ReadyEvent,
+    ShutdownEvent,
+    StateChangedEvent,
+    VoiceChangedEvent,
+)
+from .dataclasses.celune import (
+    CELUNE_CONSTANT_PROPERTIES,
+    CELUNE_FORWARDED_PROPERTIES,
+    CeluneAudioState,
+    CeluneBackendState,
+    CeluneCallbackState,
+    CeluneModelState,
+    CelunePipelineState,
+    CeluneRuntimeState,
+    CeluneVoiceState,
+)
+from .typing.celune import (
+    CoreBackendSpec,
+    CeluneStateAccessors,
+    Generative,
+    InputStateCallback,
+    MessageCallback,
+    NormalizerTokenizer,
+    ProgressCallback,
+    ReleasableObject,
+    TTSBackendSpec,
+    VCBackendSpec,
+    VoiceLockStateCallback,
 )
 from .cevoice import (
     CEVoicePersona,
@@ -127,7 +128,6 @@ from .pipeline import (
     split_text,
     play_signal,
 )
-from .typing.pipeline import SpeechStreamQueue
 
 
 class _BundleWithPath(Protocol):
@@ -1812,14 +1812,12 @@ class Celune(CeluneStateAccessors):
         """Change Celune's voice without blocking the caller's event loop.
 
         Args:
-            name: Value for `name`.
-            timeout: Value for `timeout`.
+            name: Voice name to load.
+            timeout: Maximum time to wait for the reload.
 
         Returns:
-            Result of this function.
+            ``True`` when the voice reload completed successfully.
 
-        Raises:
-            Exception: If `Exception` needs to be raised.
         """
         await asyncio.to_thread(self._async_runtime_lock.acquire)
         try:
@@ -1949,11 +1947,11 @@ class Celune(CeluneStateAccessors):
         """Request a hot backend reload without blocking the caller's event loop.
 
         Args:
-            backend_spec: Value for `backend_spec`.
-            timeout: Value for `timeout`.
+            backend_spec: Backend specification to load.
+            timeout: Maximum time to wait for the reload.
 
         Returns:
-            Result of this function.
+            ``True`` when the backend reload completed successfully.
         """
         await asyncio.to_thread(self._async_runtime_lock.acquire)
         try:
@@ -2058,11 +2056,11 @@ class Celune(CeluneStateAccessors):
         """Request a hot CEVOICE reload without blocking the caller's event loop.
 
         Args:
-            bundle: Value for `bundle`.
-            timeout: Value for `timeout`.
+            bundle: CEVOICE bundle path or ``None`` for the default bundle.
+            timeout: Maximum time to wait for the reload.
 
         Returns:
-            Result of this function.
+            ``True`` when the CEVOICE reload completed successfully.
         """
         await asyncio.to_thread(self._async_runtime_lock.acquire)
         try:
@@ -2178,10 +2176,10 @@ class Celune(CeluneStateAccessors):
         """Wait until model reload and playback completion without blocking the event loop.
 
         Args:
-            timeout: Value for `timeout`.
+            timeout: Maximum time to wait for model and playback readiness.
 
         Returns:
-            Result of this function.
+            ``True`` when Celune becomes ready before the timeout.
         """
         ok = await asyncio.to_thread(self._model_ready.wait, timeout)
         if not ok:
@@ -2388,7 +2386,7 @@ class Celune(CeluneStateAccessors):
         """Forcefully stop Celune from speaking without blocking an async caller.
 
         Returns:
-            Result of this function.
+            ``True`` when an active utterance was interrupted.
         """
         return await asyncio.to_thread(force_stop_pipeline, self)
 
@@ -2396,7 +2394,7 @@ class Celune(CeluneStateAccessors):
         """Put Celune to sleep without blocking the caller's event loop.
 
         Returns:
-            Result of this function.
+            ``True`` when Celune enters sleep mode successfully.
         """
         await asyncio.to_thread(self._async_runtime_lock.acquire)
         try:
@@ -2408,7 +2406,7 @@ class Celune(CeluneStateAccessors):
         """Wake Celune without blocking the caller's event loop.
 
         Returns:
-            Result of this function.
+            ``True`` when Celune wakes successfully.
         """
         await asyncio.to_thread(self._async_runtime_lock.acquire)
         try:
@@ -2429,10 +2427,9 @@ class Celune(CeluneStateAccessors):
             bool: ``True`` when initialization completed successfully, otherwise ``False``.
 
         Raises:
-            NotAvailableError: If `NotAvailableError` needs to be raised.
-            Exception: If `Exception` needs to be raised.
-            RuntimeCheckError: If `RuntimeCheckError` needs to be raised.
-            BackendError: If `BackendError` needs to be raised.
+            NotAvailableError: If no usable voice or backend is available.
+            RuntimeCheckError: If the runtime environment is unsupported.
+            BackendError: If backend initialization fails.
         """
         log_runtime_banner(self.log, self.vc_backend or self.backend)
         self.historical_generated_speech_seconds = saved_output_speech_seconds()
@@ -3009,10 +3006,10 @@ class Celune(CeluneStateAccessors):
         """Let Celune reply to one input request without blocking an async caller.
 
         Args:
-            text: Value for `text`.
+            text: Input text for Persona to answer.
 
         Returns:
-            Result of this function.
+            ``True`` when the response was queued successfully.
         """
         return await asyncio.to_thread(self.think, text)
 
@@ -3095,12 +3092,12 @@ class Celune(CeluneStateAccessors):
         """Queue text for Celune to say without blocking an async caller.
 
         Args:
-            text: Value for `text`.
-            save: Value for `save`.
-            display_text: Value for `display_text`.
+            text: Text to synthesize.
+            save: Whether to save generated output artifacts.
+            display_text: Optional text to show instead of the synthesis text.
 
         Returns:
-            Result of this function.
+            ``True`` when the text was queued successfully.
         """
         if self.input_mode != "text_to_speech":
             self.log(string("celune.text_input_unavailable_vc"), "warning")
@@ -3136,11 +3133,11 @@ class Celune(CeluneStateAccessors):
         """Queue text for playback and mirror chunks without blocking an async caller.
 
         Args:
-            text: Value for `text`.
-            save: Value for `save`.
+            text: Text to synthesize.
+            save: Whether to save generated output artifacts.
 
         Returns:
-            Result of this function.
+            A queue receiving generated audio chunks, or ``None`` when queuing fails.
         """
         stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
         if not await queue_speech_async(

@@ -3,9 +3,9 @@
 
 import tempfile
 from pathlib import Path
+from collections.abc import Sequence
 from unittest import TestCase, mock
 from typing import Union, Optional
-from collections.abc import Sequence
 
 import numpy as np
 

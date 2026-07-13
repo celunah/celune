@@ -161,7 +161,7 @@ class CEVoice:
         """Return the top-level bundle asset manifest.
 
         Returns:
-            Result of this function.
+            Manifest containing the bundle's top-level assets.
         """
         assets = self.metadata.get("assets")
         if not isinstance(assets, dict):

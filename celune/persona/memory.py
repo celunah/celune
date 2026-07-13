@@ -10,22 +10,17 @@ import datetime
 from pathlib import Path
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Optional, Union, cast
+from typing import Optional, Union, cast
 
+import numpy as np
 import torch
 import torch.nn.functional as f
-import numpy as np
-import numpy.typing as npt
 from transformers import AutoModel, AutoTokenizer
 
 from ..paths import persona_data_dir
-from ..constants import JSONSerializable, PERSONA_MEMORY_EMBEDDING_MODEL
 from .paths import persona_character_slug
-
-if TYPE_CHECKING:
-    from transformers.modeling_utils import PreTrainedModel
-    from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-
+from ..typing.aliases import EmbeddingVector, _EmbeddingBackend
+from ..constants import JSONSerializable, PERSONA_MEMORY_EMBEDDING_MODEL
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
 _STOPWORDS = {
@@ -58,8 +53,6 @@ _STOPWORDS = {
     "what",
     "you",
 }
-type EmbeddingVector = npt.NDArray[np.float32]
-type _EmbeddingBackend = tuple[PreTrainedTokenizerBase, PreTrainedModel]
 
 _EMBEDDING_BACKENDS: dict[str, _EmbeddingBackend] = {}
 _FAILED_EMBEDDING_MODELS: set[str] = set()

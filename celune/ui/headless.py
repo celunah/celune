@@ -10,10 +10,10 @@ from types import FrameType
 from typing import Optional, cast
 
 from ..celune import Celune
-from ..utils import discard
-from ..config import Config, config_bool
-from ..constants import APP_NAME, SIGTSTP
 from ..i18n import string
+from ..utils import discard
+from ..constants import APP_NAME, SIGTSTP
+from ..config import Config, config_bool
 
 
 class CeluneHeadlessUI:

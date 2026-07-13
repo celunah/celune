@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Structured prompt building for the Persona system."""
 
-import contextlib
 import re
+import contextlib
 from dataclasses import dataclass, field
 
 from ..paths import temp_data_dir

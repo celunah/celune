@@ -2,8 +2,8 @@
 """Shared runtime helpers for Celune voice conversion."""
 
 import importlib
-from typing import Optional, Protocol, cast
 from collections.abc import Mapping
+from typing import Optional, Protocol, cast
 
 import torch
 import numpy as np

@@ -4,17 +4,17 @@
 from __future__ import annotations
 
 import os
-import re
 import sys
+import re
 import json
 import time
 import ctypes
 import shutil
+import urllib.request
 import hashlib
 import zipfile
 import tempfile
 import subprocess
-import urllib.request
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Union

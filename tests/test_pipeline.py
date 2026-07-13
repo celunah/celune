@@ -3,30 +3,30 @@
 
 import os
 import sys
+import json as _json
 import queue
 import tempfile
 import threading
-import json as _json
-from importlib.machinery import ModuleSpec
 from pathlib import Path
-from types import SimpleNamespace, TracebackType
-from typing import cast, Optional
-from unittest import mock, IsolatedAsyncioTestCase, TestCase
 from collections.abc import Iterator
+from importlib.machinery import ModuleSpec
+from typing import cast, Optional
+from types import SimpleNamespace, TracebackType
+from unittest import mock, IsolatedAsyncioTestCase, TestCase
 
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
 
-from celune import pipeline
 from celune.celune import Celune
-from celune.dataclasses.pipeline import AudioInputRequest
 from celune.utils import discard
-from celune.persona.prompts import PersonaPromptBuilder, _render_markdown_subsection
+from celune import pipeline
+from celune.dataclasses.pipeline import AudioInputRequest
 from celune.constants import JSON, JSONSerializable, PipelineStates
+from celune.persona.prompts import PersonaPromptBuilder, _render_markdown_subsection
 from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
-from .support import FakeStream, FakeVCBackend, make_pipeline_engine, make_voice_loader
 from .test_persona_memory import StubEmbeddingMemoryStore
+from .support import FakeStream, FakeVCBackend, make_pipeline_engine, make_voice_loader
 
 
 class PipelineTests(TestCase):

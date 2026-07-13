@@ -5,17 +5,18 @@ import os
 import io
 import contextlib
 from collections.abc import Mapping
-from typing import Callable, Optional, Generator, Protocol
+from typing import Optional, Generator, Protocol
 
 from ..config import Config
+from ..typing.aliases import DevLogCallback
+from ..vram import resolve_vram_preset
+from .runtime import PersonaRuntime, request_from_json, response_to_json
 from ..cevoice import (
     CEVoicePersona,
     default_loader,
     merge_persona_metadata,
     persona_metadata_from_voice,
 )
-from ..vram import resolve_vram_preset
-from .runtime import PersonaRuntime, request_from_json, response_to_json
 from ..constants import (
     DEFAULT_PERSONA_CONTEXT,
     DEFAULT_PERSONA_DESCRIPTION,
@@ -26,7 +27,6 @@ from ..constants import (
 )
 
 PERSONA_QUANTIZATION = "4bit"
-DevLogCallback = Callable[[str, str], None]
 
 
 class PersonaEngineView(Protocol):

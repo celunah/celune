@@ -5,13 +5,13 @@ import os
 import io
 import time
 import uuid
+import queue
 import socket
 import asyncio
 import datetime
 import textwrap
 import threading
 import contextlib
-import queue
 from html import escape
 from hmac import compare_digest
 from dataclasses import dataclass, field
@@ -28,12 +28,19 @@ from typing import (
 
 import numpy as np
 import numpy.typing as npt
-import uvicorn
 import gradio as gr
+import uvicorn
 import soundfile as sf
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import RequestResponseEndpoint
+from fastapi.responses import (
+    JSONResponse,
+    Response,
+    StreamingResponse,
+    FileResponse,
+    RedirectResponse,
+)
 from fastapi import (
     FastAPI,
     File,
@@ -44,27 +51,28 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import (
-    JSONResponse,
-    Response,
-    StreamingResponse,
-    FileResponse,
-    RedirectResponse,
-)
 
+from .celune import Celune
 from . import colors
 from . import __version__
-from .celune import Celune
+from .i18n import string
 from .ui.app import CeluneUI
 from .utils import format_error
-from .dsp import resample_audio
 from .cevoice import default_loader
-from .pipeline import SpeechStreamQueue, prepare_playback_audio
+from .dsp import resample_audio
 from .ui import resources as ui_resources
 from .paths import main_window_log_path, project_root
 from .constants import BASE_SR, APP_NAME, JSONSerializable
-from .i18n import string
 from .vc import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
+from .pipeline import SpeechStreamQueue, prepare_playback_audio
+from .typing.api import (
+    TaskCommandName,
+    TaskEventName,
+    TaskStatus,
+    WebUiAudioValue,
+    WebUiInputAudioValue,
+    WebUiUpdate,
+)
 
 api = FastAPI(title=f"{APP_NAME}API")
 bound_celune: Optional[Celune] = None
@@ -95,20 +103,6 @@ WEBUI_RESOURCE_ROTATE_SECONDS = 2.06
 WEBUI_POLL_INTERVAL_SECONDS = WEBUI_RESOURCE_ROTATE_SECONDS / 4
 WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS = 0.9
 
-WebUiUpdate = dict[str, JSONSerializable]
-WebUiAudioValue = Optional[tuple[int, npt.NDArray[np.float32]]]
-WebUiInputArray = Union[npt.NDArray[np.float32], npt.NDArray[np.int16]]
-WebUiInputAudioValue = Optional[tuple[int, WebUiInputArray]]
-TaskEventName = Literal[
-    "started",
-    "progress",
-    "log",
-    "completed",
-    "failed",
-    "cancelled",
-]
-TaskStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
-
 
 class TaskEvent(BaseModel):
     """Typed event mirrored to clients watching one API task."""
@@ -122,9 +116,6 @@ class TaskEvent(BaseModel):
     total: Optional[float] = None
     location: Optional[str] = None
     error: Optional[str] = None
-
-
-TaskCommandName = Literal["cancel"]
 
 
 class TaskCommand(BaseModel):
@@ -2528,6 +2519,7 @@ def speak_async(body: SpeakRequest) -> JSONResponse:
 
     Returns:
         JSONResponse: A 202 response with the created job ID, or an error payload.
+
     """
     celune = require_celune()
     api_log("SPEAK(ASYNC)", body.content)

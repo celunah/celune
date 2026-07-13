@@ -4,13 +4,18 @@
 import sys
 import tempfile
 import textwrap
-from pathlib import Path
-from types import SimpleNamespace
 from typing import cast
+from pathlib import Path
 from unittest import TestCase, mock
+from types import SimpleNamespace
 
-from celune import subscribe
 from celune.celune import Celune
+from celune import subscribe
+from celune.dataclasses.extensions import CeluneContext
+from celune.extensions.base import CeluneExtension
+from celune.typing.events import ReadyEventCallback
+from celune.extensions.manager import CeluneExtensionManager
+from celune.extensions.events import EventDispatcher, iter_subscriptions
 from celune.dataclasses.events import (
     AudioEndEvent,
     AudioStartEvent,
@@ -22,11 +27,6 @@ from celune.dataclasses.events import (
     StateChangedEvent,
     VoiceChangedEvent,
 )
-from celune.dataclasses.extensions import CeluneContext
-from celune.extensions.base import CeluneExtension
-from celune.extensions.events import EventDispatcher, iter_subscriptions
-from celune.extensions.manager import CeluneExtensionManager
-from celune.typing.events import ReadyEventCallback
 from .support import FakeBackend, FakeGlow
 
 

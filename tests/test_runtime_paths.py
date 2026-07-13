@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Tests for Celune runtime path handling."""
 
-import tempfile
-import sys
 import os
+import sys
+import tempfile
 from pathlib import Path
 from typing import Optional, cast
 from unittest import TestCase, mock
@@ -12,6 +12,10 @@ import yaml
 from textual.widgets import RichLog
 
 from celune.constants import APP_SLUG
+from celune.ui.app import CeluneUI
+from celune.utils import format_error
+from celune.persona.memory import default_memory_dir
+from celune.cevoice import bundled_voices_dir, default_bundle_path
 from celune.paths import (
     configure_huggingface_cache_environment,
     configure_huggingface_runtime,
@@ -22,10 +26,6 @@ from celune.paths import (
     project_root,
     running_compiled,
 )
-from celune.persona.memory import default_memory_dir
-from celune.cevoice import bundled_voices_dir, default_bundle_path
-from celune.ui.app import CeluneUI
-from celune.utils import format_error
 
 
 class RuntimePathTests(TestCase):
@@ -208,11 +208,7 @@ class RuntimePathTests(TestCase):
                 )
 
     def test_format_error_keeps_traceback_after_exception_handler_returns(self) -> None:
-        """Verify deferred UI error formatting does not report a blank traceback.
-
-        Raises:
-            RuntimeError: If `RuntimeError` needs to be raised.
-        """
+        """Verify deferred UI error formatting does not report a blank traceback."""
         captured: Optional[RuntimeError] = None
         try:
             raise RuntimeError("deferred boom")

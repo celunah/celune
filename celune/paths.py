@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Optional
 
 from platformdirs import user_data_dir
-from huggingface_hub.utils import disable_progress_bars
 from transformers.utils.logging import disable_progress_bar
+from huggingface_hub.utils import disable_progress_bars
 
 from .constants import APP_NAME, APP_SLUG
 

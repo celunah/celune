@@ -12,13 +12,13 @@ from typing import Awaitable, Callable, Optional, TYPE_CHECKING, cast
 
 import soundfile as sf
 
-from ..paths import project_root
-from ..constants import APP_NAME
 from ..backends.tts.qwen3 import Qwen3
-from ..exceptions import InvalidExtensionError
-from ..utils import format_error, replace_ipa, format_number
-from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..i18n import string
+from ..constants import APP_NAME
+from ..paths import project_root
+from ..exceptions import InvalidExtensionError
+from ..cevoice import active_bundle_path, resolve_bundle_path
+from ..utils import format_error, replace_ipa, format_number
 from ..vc import (
     VC_PITCH_SHIFT_MAX,
     VC_PITCH_SHIFT_MIN,

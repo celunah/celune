@@ -6,10 +6,10 @@ from unittest import mock, TestCase
 
 import numpy as np
 
-from celune import analysis
 from celune.colors import RGB
-from celune.chroma import AudioRGBGlow
+from celune import analysis
 from celune.constants import N_A_NUMERIC
+from celune.chroma import AudioRGBGlow
 
 
 class AnalysisTests(TestCase):

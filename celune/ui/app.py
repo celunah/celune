@@ -4,12 +4,12 @@
 import os
 import sys
 import time
-import types
 import shlex
-import asyncio
+import types
 import queue as queue_module
-import signal
 import ctypes
+import signal
+import asyncio
 import logging
 import datetime
 import itertools
@@ -20,26 +20,59 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Optional, Callable, Union, TextIO, cast
 
+import yaml
 import numpy as np
 import numpy.typing as npt
 import sounddevice as sd
-import yaml
 from rich.text import Text
 from textual.color import Color
-from textual.timer import Timer
 from textual.theme import Theme
-from textual import work, events
+from textual.timer import Timer
 from textual.widget import Widget
 from textual.css.types import EdgeStyle
+from textual import work, events
 from textual.app import ScreenStackError
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 
-from .. import colors
 from ..celune import Celune
+from .. import colors
+from ..i18n import string
 from ..cevoice import default_loader
+from .resources import FOOTER_ROTATE_SECONDS
+from . import resources as ui_resources
+from .theme import CELUNE_CSS, severity_color
+from ..constants import APP_NAME, SIGTSTP, CRASH_LINES
+from ..paths import config_path, main_window_log_path
+from ..typing.aliases import (  # pylint: disable=unused-import
+    _AudioDeviceScalar,
+    _VCAudioCallback,
+)
+from .commands import process_command as process_ui_command
+from .terminal import LogRedirect, UILogHandler, is_celune_log_record
+from ..pipeline import finish_streaming_sfx_audio, queue_streaming_sfx_audio
 from ..config import format_audio_device_name, resolve_audio_device_with_info
+from ..persona.impl import (
+    persona_config,
+    persona_talkback_enabled,
+    persona_enabled,
+)
+from ..persona.asr import (
+    DEFAULT_PERSONA_SPEECH_MODEL_ID,
+    PERSONA_SPEECH_END_DELAY_SECONDS,
+    WhisperTranscriber,
+)
+from ..utils import (
+    format_error,
+    indent,
+    replace_ipa,
+    typing_animation,
+    typing_delay,
+    is_april_fools,
+    supports_ansi,
+    discard,
+)
 from ..vc import (
     VC_PITCH_SHIFT_MAX,
     VC_PITCH_SHIFT_MIN,
@@ -51,35 +84,6 @@ from ..vc import (
     vc_live_chunk_overlap_frames,
     vc_vad_hangover_frames,
     vc_vad_preroll_frames,
-)
-from ..pipeline import finish_streaming_sfx_audio, queue_streaming_sfx_audio
-from ..persona.asr import (
-    DEFAULT_PERSONA_SPEECH_MODEL_ID,
-    PERSONA_SPEECH_END_DELAY_SECONDS,
-    WhisperTranscriber,
-)
-from . import resources as ui_resources
-from .resources import FOOTER_ROTATE_SECONDS
-from .theme import CELUNE_CSS, severity_color
-from .terminal import LogRedirect, UILogHandler, is_celune_log_record
-from ..paths import config_path, main_window_log_path
-from ..constants import APP_NAME, SIGTSTP, CRASH_LINES
-from ..i18n import string
-from .commands import process_command as process_ui_command
-from ..persona.impl import (
-    persona_config,
-    persona_talkback_enabled,
-    persona_enabled,
-)
-from ..utils import (
-    format_error,
-    indent,
-    replace_ipa,
-    typing_animation,
-    typing_delay,
-    is_april_fools,
-    supports_ansi,
-    discard,
 )
 
 _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
@@ -96,16 +100,6 @@ _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
         "s/it]",
     }
 )
-type _AudioDeviceScalar = Union[bool, int, float, str]
-type _VCAudioCallback = Callable[
-    [
-        npt.NDArray[np.float32],
-        int,
-        Optional[tuple[float, float, float]],
-        Optional[sd.CallbackFlags],
-    ],
-    None,
-]
 
 
 def _device_scalar_int(value: Optional[_AudioDeviceScalar], default: int) -> int:
@@ -2012,7 +2006,7 @@ class CeluneUI(App):
         """Toggle Persona microphone capture and final transcription.
 
         Returns:
-            Result of this function.
+            ``True`` when recording was stopped or started successfully.
         """
         if self._persona_recording_active():
             return self._request_persona_recording_stop()

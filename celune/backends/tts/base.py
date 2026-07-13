@@ -1,40 +1,38 @@
 # SPDX-License-Identifier: MIT
 """Unified backend abstractions for Celune."""
 
-import gc
 import os
+import gc
 import glob
 import random
-import secrets
 import hashlib
+import secrets
+import unittest.mock
 import threading
 import contextlib
-import unittest.mock
 from pathlib import Path
 from abc import ABC, abstractmethod
-from collections.abc import Generator, Hashable, Iterator
+from collections.abc import Generator, Iterator
 from typing import (
     Callable,
     Generic,
     Mapping,
     Optional,
-    Protocol,
-    TypeAlias,
-    Union,
     cast,
 )
 
-import torch
 import numpy as np
 import numpy.typing as npt
+import torch
 import soundfile as sf
 from huggingface_hub import snapshot_download
 
 from ...i18n import string
 from ...utils import discard
 from ...constants import N_A_NUMERIC
-from ...cevoice import default_loader, CEVoiceLoader
+from ...typing.aliases import RuntimeValue
 from ...typing.backends import BackendModel, ModelT
+from ...cevoice import default_loader, CEVoiceLoader
 from ...paths import huggingface_hub_cache_dir, temp_data_dir
 
 __all__ = [
@@ -48,45 +46,6 @@ __all__ = [
 _HF_HUB_OFFLINE_LOCK = threading.Lock()
 _MAX_REFERENCE_SECONDS = 10.0
 _RUNTIME_PRIMITIVE_TYPES = (str, bytes, bytearray, int, float, bool, type(None))
-
-
-class _SupportsCloseHook(Protocol):
-    """Protocol for runtime objects exposing a close hook."""
-
-    def close(self) -> None:
-        """Release runtime resources."""
-
-
-class _SupportsUnloadHook(Protocol):
-    """Protocol for runtime objects exposing an unload hook."""
-
-    def unload(self) -> None:
-        """Unload runtime state."""
-
-
-class _SupportsRuntimeAttributes(Protocol):
-    """Protocol for runtime objects that keep nested state in ``__dict__``."""
-
-    __dict__: dict[str, "RuntimeValue"]
-
-
-RuntimeValue: TypeAlias = Union[
-    str,
-    bytes,
-    bytearray,
-    int,
-    float,
-    bool,
-    None,
-    dict[Hashable, "RuntimeValue"],
-    list["RuntimeValue"],
-    set["RuntimeValue"],
-    tuple["RuntimeValue", ...],
-    _SupportsCloseHook,
-    _SupportsUnloadHook,
-    _SupportsRuntimeAttributes,
-    unittest.mock.NonCallableMock,
-]
 
 
 def _call_runtime_hook_if_present(value: RuntimeValue, name: str) -> bool:

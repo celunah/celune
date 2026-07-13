@@ -6,8 +6,8 @@ from typing import Callable, Union, Optional
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
-from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .backends.tts import CeluneBackend
 from .vram import resolve_vram_preset

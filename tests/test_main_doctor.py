@@ -3,8 +3,8 @@
 
 import io
 import contextlib
-from types import SimpleNamespace
 from unittest import TestCase, mock
+from types import SimpleNamespace
 from pathlib import Path, PureWindowsPath
 
 import main

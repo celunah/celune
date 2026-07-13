@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MIT
 """Terminal UI helpers."""
 
-import logging
-import re
 import sys
-from typing import Callable, Optional
+import re
+import logging
 from collections.abc import Collection
+from typing import Callable, Optional
 
 import readchar
 
