@@ -275,5 +275,6 @@ class CeluneStateAccessors:
 
         Args:
             value: The runtime-state label to store.
+
         """
         raise NotImplementedError("typing surface only")

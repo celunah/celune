@@ -72,9 +72,9 @@ import numpy.typing as npt
 
         self.assertEqual(
             rendered,
-            """import torch
-import numpy as np
+            """import numpy as np
 import numpy.typing as npt
+import torch
 import soundfile as sf
 import sounddevice as sd
 """,
