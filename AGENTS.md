@@ -129,7 +129,7 @@ from .local import (
 )
 ```
 
-Always ensure every source file adheres to this order.
+Always ensure every source file adheres to this order. Sort all imports by line length, shortest first, longest last. Prefer `.file` over `celune.file`.
 
 ## Localization
 
