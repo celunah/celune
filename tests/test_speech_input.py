@@ -30,8 +30,12 @@ class SpeechInputTests(TestCase):
         )
         fake_processor.batch_decode.return_value = [" hello "]
         fake_model = mock.Mock()
+        fake_parameter = mock.Mock()
+        fake_parameter.device = "cuda:0"
+        fake_model.parameters.side_effect = lambda: iter((fake_parameter,))
         fake_model.generate.return_value = [[1]]
         with (
+            mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch(
                 "transformers.AutoModelForSpeechSeq2Seq.from_pretrained",
                 return_value=fake_model,

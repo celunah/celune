@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import threading
 from typing import TYPE_CHECKING, Optional, Protocol, Union, cast
+from collections.abc import Iterator
 
 import numpy as np
 import numpy.typing as npt
 
-from celune.dsp import resample_audio
+from ..dsp import resample_audio
 
 if TYPE_CHECKING:
     import torch
@@ -62,6 +63,13 @@ class _WhisperModel(Protocol):
             kwargs: Tensor and text inputs forwarded to Whisper generation.
         """
 
+    def parameters(self) -> Iterator[torch.nn.Parameter]:
+        """Iterate over the model parameters.
+
+        Returns:
+            Iterator[torch.nn.Parameter]: An iterator of model parameters.
+        """
+
 
 DEFAULT_PERSONA_SPEECH_MODEL_ID = "openai/whisper-large-v3-turbo"
 PERSONA_SPEECH_END_DELAY_SECONDS = 1.5
@@ -97,6 +105,9 @@ class WhisperTranscriber:
                 BitsAndBytesConfig,
             )
 
+            if not torch.cuda.is_available():
+                raise RuntimeError("can't load Whisper without a CUDA device")
+
             bnb_config = BitsAndBytesConfig(
                 load_in_8bit=True,
             )
@@ -119,7 +130,7 @@ class WhisperTranscriber:
                 _WhisperProcessor, AutoProcessor.from_pretrained(self.model_id)
             )
             self._model = model
-            self._device = torch.device("cuda:0")
+            self._device = next(model.parameters()).device
             self._dtype = torch.bfloat16
 
     def _decode(

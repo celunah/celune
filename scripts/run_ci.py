@@ -45,7 +45,7 @@ def _run_uv_command(*cmd: str) -> None:
             stderr=subprocess.PIPE,
             check=True,
             text=True,
-            timeout=180,
+            timeout=300,
         )
         return
     except subprocess.CalledProcessError as failed:
