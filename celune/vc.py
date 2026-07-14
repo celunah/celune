@@ -245,7 +245,6 @@ class LiveVoiceActivityDetector:
             return self._speech_active
 
         had_speech = self._speech_active
-        torch = __import__("torch")
         for start in range(0, complete_frames, self.frame_samples):
             frame = np.asarray(
                 resampled[start : start + self.frame_samples],

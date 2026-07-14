@@ -104,6 +104,33 @@ If this process updates typing or dataclass related docstrings, remove the place
 
 This process may leave some formatting inaccuracies, run `uv run ruff format .` again after completing docstrings.
 
+## Import Ordering
+
+Celune code follows a specific import ordering strategy. Always order all imports after finishing a task, according to this example:
+
+```text
+import stdlib
+from stdlib import function
+
+import third_party
+from third_party import function
+from third_party import (
+	many,
+	functions,
+)
+
+from .local import function
+from ..local2 import function
+from ...local3 import function
+
+from .local import (
+	many,
+	functions,
+)
+```
+
+Always ensure every source file adheres to this order. Sort all imports by line length, shortest first, longest last. Prefer `.file` over `celune.file`.
+
 ## Localization
 
 Celune does not use hardcoded strings in English. Define each new string you add into Celune's localization string database.
