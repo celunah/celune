@@ -3,9 +3,9 @@
 from collections.abc import Mapping
 from typing import Protocol, TypedDict, Union
 
-import torch
 import numpy as np
 import numpy.typing as npt
+import torch
 
 type TextConfigValue = Union[str, dict[str, "TextConfigValue"]]
 type TextConfig = dict[str, TextConfigValue]

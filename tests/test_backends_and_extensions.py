@@ -15,9 +15,9 @@ from unittest import mock, TestCase
 from collections.abc import Iterator, Generator
 from typing import Optional, Union, cast
 
-import torch
 import numpy as np
 import numpy.typing as npt
+import torch
 import soundfile as sf
 
 from celune.celune import Celune

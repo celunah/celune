@@ -129,7 +129,7 @@ from .local import (
 )
 ```
 
-Always ensure every source file adheres to this order. Sort all imports by line length, shortest first, longest last. Prefer `.file` over `celune.file`.
+At the end of every task, always sort and verify imports in every modified Python source file. Imports must follow this order: standard-library imports, a blank line, third-party imports, a blank line, then local relative imports. Within each group, sort import statements by line length from shortest to longest. Preserve multiline import formatting, and prefer `.file` over `celune.file` for local imports.
 
 ## Localization
 

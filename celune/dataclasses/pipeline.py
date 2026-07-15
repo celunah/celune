@@ -27,6 +27,7 @@ class SpeechRequest:
     ] = None
     normalize: bool = False
     silent_retry_count: int = 0
+    generation: int = 0
 
 
 @dataclass(frozen=True)

@@ -511,6 +511,7 @@ def force_stop_speech(engine: Celune) -> bool:
     engine.utterance_force_stop.set()
 
     with engine.queue_lock:
+        engine._speech_generation = getattr(engine, "_speech_generation", 0) + 1
         clear_queue(engine.text_queue)
         clear_queue(engine._persona_queue)
         clear_queue(engine.audio_queue)
@@ -654,20 +655,32 @@ def _queue_playback_chunk(
     audio: npt.NDArray[np.float32],
     sample_rate: int,
     timing: Optional[SpeechTiming] = None,
-) -> None:
+) -> bool:
     """Queue one chunk for the shared DSP playback mixer."""
-    meta = _playback_source_meta(engine).get(source_id)
-    if isinstance(meta, dict):
-        meta["total_frames"] = float(meta.get("total_frames", 0.0)) + float(len(audio))
+    with engine.queue_lock:
+        active_generation = getattr(engine, "_active_speech_generation", None)
+        if active_generation is not None and (
+            active_generation
+            != getattr(engine, "_speech_generation", active_generation)
+            or engine.utterance_force_stop.is_set()
+        ):
+            return False
 
-    engine.audio_queue.put(
-        PlaybackChunk(
-            source_id=source_id,
-            audio=np.asarray(audio, dtype=np.float32),
-            sample_rate=sample_rate,
-            timing=timing,
+        meta = _playback_source_meta(engine).get(source_id)
+        if isinstance(meta, dict):
+            meta["total_frames"] = float(meta.get("total_frames", 0.0)) + float(
+                len(audio)
+            )
+
+        engine.audio_queue.put(
+            PlaybackChunk(
+                source_id=source_id,
+                audio=np.asarray(audio, dtype=np.float32),
+                sample_rate=sample_rate,
+                timing=timing,
+            )
         )
-    )
+    return True
 
 
 def _dequeue_playback_item(
@@ -809,17 +822,27 @@ def _queue_playback_done(
     notify_idle_when_finished: bool = True,
     saved_path: Optional[str] = None,
     analysis_audio: Optional[npt.NDArray[np.float32]] = None,
-) -> None:
+) -> bool:
     """Queue a completion marker for one playback source."""
-    engine.audio_queue.put(
-        PlaybackSourceDone(
-            source_id=source_id,
-            release_pipeline=release_pipeline_when_finished,
-            notify_idle=notify_idle_when_finished,
-            saved_path=saved_path,
-            analysis_audio=analysis_audio,
+    with engine.queue_lock:
+        active_generation = getattr(engine, "_active_speech_generation", None)
+        if active_generation is not None and (
+            active_generation
+            != getattr(engine, "_speech_generation", active_generation)
+            or engine.utterance_force_stop.is_set()
+        ):
+            return False
+
+        engine.audio_queue.put(
+            PlaybackSourceDone(
+                source_id=source_id,
+                release_pipeline=release_pipeline_when_finished,
+                notify_idle=notify_idle_when_finished,
+                saved_path=saved_path,
+                analysis_audio=analysis_audio,
+            )
         )
-    )
+    return True
 
 
 def _flush_buffered_speech_chunks(
@@ -836,13 +859,16 @@ def _flush_buffered_speech_chunks(
 
     first_buffer_chunk = True
     for queued_audio in buffer:
-        _queue_playback_chunk(
+        queued = _queue_playback_chunk(
             engine,
             source_id,
             queued_audio,
             BASE_SR,
             speech_timing if not pushed_audio and first_buffer_chunk else None,
         )
+        if queued is False:
+            buffer.clear()
+            return pushed_audio
         if stream_queue is not None:
             stream_queue.put(queued_audio.copy())
         first_buffer_chunk = False
@@ -1960,16 +1986,20 @@ def _queue_speech_after_ready(
             return False
 
         engine.cur_state = "generating"
-        engine.text_queue.put(
-            SpeechRequest(
-                text,
-                display_text=display_text if display_text is not None else text,
-                language=requested_language,
-                save=save,
-                stream_queue=stream_queue,
-                normalize=engine.use_normalization,
+        with engine.queue_lock:
+            engine._speech_generation = getattr(engine, "_speech_generation", 0) + 1
+            engine.utterance_force_stop.clear()
+            engine.text_queue.put(
+                SpeechRequest(
+                    text,
+                    display_text=display_text if display_text is not None else text,
+                    language=requested_language,
+                    save=save,
+                    stream_queue=stream_queue,
+                    normalize=engine.use_normalization,
+                    generation=engine._speech_generation,
+                )
             )
-        )
         engine.status_callback(string("status.generating"))
         engine.progress_callback(None, None)
         return True
@@ -2516,6 +2546,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
             buffer: list[npt.NDArray[np.float32]] = []
             full_audio: list[npt.NDArray[np.float32]] = []
             generated_text_parts: list[str] = []
+            request_generation = item.generation
             source_id = _next_playback_source_id(engine)
             _register_playback_source(engine, source_id, kind="speech")
 
@@ -2611,7 +2642,11 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                         if engine.exit_requested:
                             break
 
-                        if engine.utterance_force_stop.is_set():
+                        if (
+                            engine.utterance_force_stop.is_set()
+                            or request_generation
+                            != getattr(engine, "_speech_generation", request_generation)
+                        ):
                             break
 
                         first_chunk_time = None
@@ -2650,7 +2685,12 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                             audio_chunk = soften(audio_chunk, BASE_SR, end=False)
                             is_first_chunk = False
 
-                        if engine.exit_requested:
+                        if (
+                            engine.exit_requested
+                            or engine.utterance_force_stop.is_set()
+                            or request_generation
+                            != getattr(engine, "_speech_generation", request_generation)
+                        ):
                             break
 
                         buffer.append(audio_chunk)
@@ -2706,7 +2746,9 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 release_pipeline(engine)
                 break
 
-            if engine.utterance_force_stop.is_set():
+            if engine.utterance_force_stop.is_set() or request_generation != getattr(
+                engine, "_speech_generation", request_generation
+            ):
                 if stream_queue is not None:
                     stream_queue.put(None)
                 engine.reverb.reset()
@@ -2757,10 +2799,16 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 if engine.reverb.strength > 0.0:
                     tail = engine.reverb.flush()
                     if len(tail) > 0:
-                        _queue_playback_chunk(engine, source_id, tail, BASE_SR)
-                        if stream_queue is not None:
+                        queued_tail = _queue_playback_chunk(
+                            engine,
+                            source_id,
+                            tail,
+                            BASE_SR,
+                        )
+                        if queued_tail is not False and stream_queue is not None:
                             stream_queue.put(tail.copy())
-                        buffer.append(tail)
+                        if queued_tail is not False:
+                            buffer.append(tail)
                         if save_output:
                             full_audio.append(tail)
 
@@ -2917,11 +2965,13 @@ async def generation_worker_job(engine: Celune) -> None:
                 await asyncio.to_thread(engine.audio_queue.put, engine.sentinel)
             break
 
-        await asyncio.to_thread(
-            _process_generation_request,
-            engine,
-            cast(SpeechRequest, item),
-        )
+        engine.utterance_force_stop.clear()
+        request = cast(SpeechRequest, item)
+        setattr(engine, "_active_speech_generation", request.generation)
+        try:
+            await asyncio.to_thread(_process_generation_request, engine, request)
+        finally:
+            setattr(engine, "_active_speech_generation", None)
 
 
 def _playback_blocks(

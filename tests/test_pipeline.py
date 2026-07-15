@@ -159,9 +159,28 @@ class PipelineTests(TestCase):
         engine.text_queue.put("pending")
         engine.audio_queue.put("audio")
         self.assertEqual(pipeline.force_stop_speech(celune_engine), True)
+        self.assertEqual(engine._speech_generation, 1)
         self.assertEqual(engine.text_queue.empty(), True)
         self.assertEqual(engine._persona_queue.empty(), True)
         self.assertIs(engine.audio_queue.get_nowait(), engine.force_stop_marker)
+
+    def test_cancelled_speech_generation_cannot_queue_playback(self) -> None:
+        """Verify a backend chunk racing with stop is rejected atomically."""
+        engine = make_pipeline_engine()
+        pipeline.register_playback_source(cast(Celune, engine), 1, kind="speech")
+        engine._speech_generation = 2
+        engine._active_speech_generation = 1
+        engine.utterance_force_stop.set()
+
+        queued = pipeline._queue_playback_chunk(
+            cast(Celune, engine),
+            1,
+            np.zeros((8, 2), dtype=np.float32),
+            48000,
+        )
+
+        self.assertEqual(queued, False)
+        self.assertTrue(engine.audio_queue.empty())
 
     def test_working_signal_completion_does_not_notify_idle(self) -> None:
         """Verify the transitional working cue is not treated as a readiness idle event."""

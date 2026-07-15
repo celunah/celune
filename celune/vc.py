@@ -5,9 +5,9 @@ import importlib
 from collections.abc import Mapping
 from typing import Optional, Protocol, cast
 
-import torch
 import numpy as np
 import numpy.typing as npt
+import torch
 from scipy import signal
 
 from .config import config_bool

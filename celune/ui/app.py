@@ -4,9 +4,9 @@
 import os
 import sys
 import time
+import queue as queue_module
 import shlex
 import types
-import queue as queue_module
 import ctypes
 import signal
 import asyncio

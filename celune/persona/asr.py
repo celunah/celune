@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, Optional, Protocol, Union, cast
 from collections.abc import Iterator
+from typing import TYPE_CHECKING, Optional, Protocol, Union, cast
 
 import numpy as np
 import numpy.typing as npt

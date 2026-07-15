@@ -113,6 +113,7 @@ class CelunePipelineState:
     persona_queue: queue.Queue = field(default_factory=queue.Queue)
     queue_lock: threading.Lock = field(default_factory=threading.Lock)
     utterance_force_stop: threading.Event = field(default_factory=threading.Event)
+    speech_generation: int = 0
     next_playback_source_id: int = 0
     playback_source_statuses: dict[int, str] = field(default_factory=dict)
     playback_source_meta: dict[int, dict[str, Union[str, float]]] = field(
@@ -253,6 +254,7 @@ CELUNE_FORWARDED_PROPERTIES = (
         "_pipeline_state",
         "utterance_force_stop",
     ),
+    ForwardedPropertySpec("_speech_generation", "_pipeline_state", "speech_generation"),
     ForwardedPropertySpec(
         "_next_playback_source_id",
         "_pipeline_state",
