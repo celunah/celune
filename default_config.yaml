@@ -119,8 +119,8 @@ ipa: false
 #
 # low (CPU/6GB) - Celune Mini (Pocket TTS) or SeedVC (GPU only) / Qwen3 0.6B+ normalizer CPU (caution: choosing Qwen may harm outputs)
 # medium (8GB) - Qwen3 1.7B + normalizer CPU
-# high (12GB) - Qwen3 1.7B / dots.tts MF / VoxCPM2 + Persona 4-bit + normalizer CPU
-# xhigh (16GB+) - everything allowed, including dots.tts MF and VoxCPM2 + Persona 8-bit + normalizer GPU
+# high (12GB) - Qwen3 1.7B + Persona 4-bit + normalizer CPU; Mini and Qwen3 only when Persona is enabled
+# xhigh (16GB+) - everything allowed, including dots.tts MF and VoxCPM2 with Persona 8-bit + normalizer GPU
 vram: medium
 
 # sleep mode behavior

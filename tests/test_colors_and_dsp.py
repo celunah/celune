@@ -99,6 +99,50 @@ class DspTests(TestCase):
             (False, UtteranceLoudnessTier.NORMAL),
         )
 
+    def test_pad_generates_rms_normalized_stereo_with_silence(self) -> None:
+        """Verify soft pad synthesis, RMS normalization, and silence padding."""
+        sample_rate = 1000
+        leading_samples = 10
+        trailing_samples = 20
+        target_dbfs = -36.0
+
+        audio = dsp.pad_note(
+            (261.63, 329.63),
+            duration=0.25,
+            sample_rate=sample_rate,
+            target_rms_dbfs=target_dbfs,
+            attack_seconds=0.05,
+            release_seconds=0.05,
+            leading_silence_seconds=leading_samples / sample_rate,
+            trailing_silence_seconds=trailing_samples / sample_rate,
+        )
+
+        self.assertEqual(audio.shape, (280, 2))
+        self.assertEqual(audio.dtype, np.float32)
+        self.assertTrue(np.all(audio[:leading_samples] == 0))
+        self.assertTrue(np.all(audio[-trailing_samples:] == 0))
+
+        audible = audio[leading_samples:-trailing_samples]
+        rms = np.sqrt(np.mean(np.square(audible), dtype=np.float64))
+        expected_rms = 10 ** (target_dbfs / 20)
+        self.assertAlmostEqual(float(rms), expected_rms, places=6)
+        self.assertLessEqual(float(np.max(np.abs(audio))), 0.95)
+
+        with self.assertRaises(BadAudioError):
+            dsp.pad_note((), duration=0.25, sample_rate=sample_rate)
+
+    def test_transpose_frequencies_uses_equal_tempered_intervals(self) -> None:
+        """Verify semitone transposition without waveform pitch shifting."""
+        self.assertEqual(dsp._transpose_frequencies((440.0,), 0), (440.0,))
+        self.assertAlmostEqual(
+            dsp._transpose_frequencies((440.0,), 12)[0],
+            880.0,
+        )
+        self.assertAlmostEqual(
+            dsp._transpose_frequencies((440.0,), -12)[0],
+            220.0,
+        )
+
     def test_ui_signal_helpers_reuse_cached_audio(self) -> None:
         """Verify UI signal helpers reuse immutable cached buffers."""
         base = np.ones((4, 2), dtype=np.float32)
@@ -106,9 +150,9 @@ class DspTests(TestCase):
         with (
             mock.patch("celune.dsp._load_readiness_signal", return_value=base) as load,
             mock.patch(
-                "celune.dsp._pitch_shift_ui_signal",
-                side_effect=lambda audio, n_steps: audio + np.float32(n_steps),
-            ) as shift,
+                "celune.dsp.pad_note",
+                return_value=base,
+            ) as generate,
         ):
             readiness_first = dsp.readiness_signal()
             readiness_second = dsp.readiness_signal()
@@ -127,7 +171,7 @@ class DspTests(TestCase):
         self.assertEqual(error_first.shape, (4, 2))
         self.assertAlmostEqual(float(np.max(np.abs(error_first))), 1.0)
         self.assertEqual(load.call_count, 1)
-        self.assertEqual(shift.call_count, 3)
+        self.assertEqual(generate.call_count, 3)
 
     def test_reverb_strength_reduces_dry_level_to_preserve_headroom(self) -> None:
         """Verify stronger reverb keeps the combined dry/wet gain under control."""

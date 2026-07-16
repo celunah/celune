@@ -2,13 +2,11 @@
 """Celune audio processing functions."""
 
 import math
-from importlib.resources import as_file, files
-from typing import Iterable, Callable
+from typing import Callable, Iterable
 
 import numpy as np
 import numpy.typing as npt
-import soundfile as sf
-from scipy.signal import resample_poly
+from scipy.signal import butter, resample_poly, sosfilt
 from pedalboard import Pedalboard, PitchShift, Reverb
 
 from .constants import UtteranceLoudnessTier, BASE_SR
@@ -16,6 +14,7 @@ from .exceptions import AudioMismatchError, BadAudioError
 
 
 _SIGNAL_CACHE: dict[str, npt.NDArray[np.float32]] = {}
+_READINESS_FREQUENCIES = (261.63, 329.63, 369.99, 440.0, 493.88, 739.99)
 
 
 def _resample_audio(
@@ -71,14 +70,6 @@ def _to_48khz(
     return _resample_audio(audio, source_sr, BASE_SR)
 
 
-def _pitch_shift_ui_signal(
-    audio: npt.NDArray[np.float32], n_steps: float
-) -> npt.NDArray[np.float32]:
-    """Shift pitch while preserving tempo for short deterministic UI signals."""
-    shifted = Pedalboard([PitchShift(semitones=n_steps)])(audio, BASE_SR)
-    return np.ascontiguousarray(shifted, dtype=np.float32)
-
-
 def pitch_shift_audio(
     audio: npt.NDArray[np.float32],
     sample_rate: int,
@@ -121,18 +112,130 @@ def _cached_signal(
     return _SIGNAL_CACHE[name]
 
 
+def _transpose_frequencies(
+    frequencies: Iterable[float], semitones: float
+) -> tuple[float, ...]:
+    """Transpose frequencies by an equal-tempered semitone interval."""
+    multiplier = 2 ** (semitones / 12)
+    return tuple(frequency * multiplier for frequency in frequencies)
+
+
+def pad_note(
+    frequencies: Iterable[float],
+    duration: float = 3.0,
+    sample_rate: int = BASE_SR,
+    target_rms_dbfs: float = -36.0,
+    attack_seconds: float = 3.0,
+    release_seconds: float = 3.0,
+    detune_cents: float = 1.0,
+    leading_silence_seconds: float = 1.0,
+    trailing_silence_seconds: float = 1.0,
+) -> npt.NDArray[np.float32]:
+    """Generate a softly blended, normalized stereo chord pad.
+
+    Args:
+        frequencies: Frequencies in hertz for the simultaneously played notes.
+        duration: Duration of the audible pad in seconds, excluding silence.
+        sample_rate: Output sample rate in hertz.
+        target_rms_dbfs: RMS level for the audible pad in dBFS.
+        attack_seconds: Fade-in duration in seconds.
+        release_seconds: Fade-out duration in seconds.
+        detune_cents: Maximum detuning of the quiet unison voices in cents.
+        leading_silence_seconds: Silence added before the audible pad.
+        trailing_silence_seconds: Silence added after the audible pad.
+
+    Returns:
+        npt.NDArray[np.float32]: Stereo float32 audio with shape ``(samples, 2)``.
+
+    Raises:
+        BadAudioError: If the frequencies, duration, or sample rate are invalid.
+    """
+    note_frequencies = tuple(frequencies)
+
+    if not note_frequencies or any(frequency <= 0 for frequency in note_frequencies):
+        raise BadAudioError("all notes must be positive frequency")
+    if duration <= 0:
+        raise BadAudioError("duration must be positive")
+    if sample_rate <= 0:
+        raise BadAudioError("sample rate must be positive")
+    if (
+        min(
+            attack_seconds,
+            release_seconds,
+            leading_silence_seconds,
+            trailing_silence_seconds,
+        )
+        < 0
+    ):
+        raise BadAudioError("timing values must be positive")
+
+    sample_count = max(1, int(duration * sample_rate))
+    time = np.arange(sample_count, dtype=np.float64) / sample_rate
+    signal = np.zeros(sample_count, dtype=np.float64)
+
+    for frequency in note_frequencies:
+        for cents, gain in (
+            (-detune_cents, 0.1),
+            (0.0, 0.6),
+            (detune_cents, 0.1),
+        ):
+            detuned_frequency = frequency * 2 ** (cents / 1200)
+            signal += gain * np.sin(2 * np.pi * detuned_frequency * time)
+
+    signal /= len(note_frequencies)
+
+    attack_samples = min(int(attack_seconds * sample_rate), sample_count)
+    release_samples = min(int(release_seconds * sample_rate), sample_count)
+    envelope = np.ones(sample_count, dtype=np.float64)
+
+    if attack_samples:
+        envelope[:attack_samples] *= (
+            np.sin(np.linspace(0, np.pi / 2, attack_samples)) ** 2
+        )
+    if release_samples:
+        envelope[-release_samples:] *= (
+            np.cos(np.linspace(0, np.pi / 2, release_samples)) ** 2
+        )
+
+    signal *= envelope
+
+    cutoff = 206.0
+    sos = butter(
+        3,
+        cutoff,
+        btype="lowpass",
+        fs=sample_rate,
+        output="sos",
+    )
+    filtered = np.asarray(sosfilt(sos, signal), dtype=np.float64)
+
+    stereo = np.column_stack((filtered * 0.96, filtered * 1.04))
+    target_rms = 10 ** (target_rms_dbfs / 20)
+    rms = np.sqrt(np.mean(np.square(stereo), dtype=np.float64))
+
+    if rms > 0:
+        stereo *= target_rms / rms
+
+    peak = np.max(np.abs(stereo))
+    if peak > 0.95:
+        stereo *= 0.95 / peak
+
+    leading_silence = np.zeros(
+        (int(leading_silence_seconds * sample_rate), 2), dtype=np.float64
+    )
+    trailing_silence = np.zeros(
+        (int(trailing_silence_seconds * sample_rate), 2), dtype=np.float64
+    )
+
+    return np.ascontiguousarray(
+        np.vstack((leading_silence, stereo, trailing_silence)),
+        dtype=np.float32,
+    )
+
+
 def _load_readiness_signal() -> npt.NDArray[np.float32]:
-    """Load Celune's startup readiness sound."""
-    readiness_wav = files("celune").joinpath("assets", "chord.wav")
-
-    # we did not find the Celune chord, return silence instead
-    if not readiness_wav.is_file():
-        return _to_48khz(np.zeros((BASE_SR, 2), dtype=np.float32), BASE_SR)
-
-    with as_file(readiness_wav) as path:
-        audio, sr = sf.read(path, dtype="float32")
-
-    return _to_48khz(np.asarray(audio, dtype=np.float32), sr)
+    """Generate Celune's startup readiness sound."""
+    return pad_note(_READINESS_FREQUENCIES)
 
 
 def readiness_signal() -> npt.NDArray[np.float32]:
@@ -155,9 +258,8 @@ def sleeping_signal() -> npt.NDArray[np.float32]:
 
     return _cached_signal(
         "sleeping",
-        lambda: _pitch_shift_ui_signal(
-            readiness_signal(),
-            n_steps=-1,
+        lambda: pad_note(
+            _transpose_frequencies(_READINESS_FREQUENCIES, -1),
         ),
     )
 
@@ -172,9 +274,8 @@ def working_signal() -> npt.NDArray[np.float32]:
 
     return _cached_signal(
         "working",
-        lambda: _pitch_shift_ui_signal(
-            readiness_signal(),
-            n_steps=4,
+        lambda: pad_note(
+            _transpose_frequencies(_READINESS_FREQUENCIES, 4),
         ),
     )
 
@@ -188,16 +289,11 @@ def error_signal() -> npt.NDArray[np.float32]:
     """
 
     def factory() -> npt.NDArray[np.float32]:
-        base = readiness_signal()
-        high = _pitch_shift_ui_signal(base, n_steps=6)
-        tritone = base + high
-
-        base_peak = np.max(np.abs(base))
-        peak = np.max(np.abs(tritone))
-        if peak > 0 and base_peak > 0:
-            tritone = tritone * (base_peak / peak)
-
-        return tritone
+        stacked_frequencies = _READINESS_FREQUENCIES + _transpose_frequencies(
+            _READINESS_FREQUENCIES,
+            6,
+        )
+        return pad_note(stacked_frequencies)
 
     return _cached_signal("error", factory)
 
