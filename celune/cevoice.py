@@ -1089,6 +1089,22 @@ def default_loader() -> Optional[CEVoiceLoader]:
     return _DEFAULT_LOADER
 
 
+def close_default_loader() -> None:
+    """Close and reset the shared CEVOICE/CECHAR loader when one is active."""
+    global _DEFAULT_LOADER, _DEFAULT_LOADER_INITIALIZED
+    global _DEFAULT_LOADER_ANNOUNCED, _DEFAULT_LOADER_FAILED
+    global _DEFAULT_LOADER_FELL_BACK_FROM
+
+    loader = _DEFAULT_LOADER
+    _DEFAULT_LOADER = None
+    _DEFAULT_LOADER_INITIALIZED = False
+    _DEFAULT_LOADER_ANNOUNCED = False
+    _DEFAULT_LOADER_FAILED = False
+    _DEFAULT_LOADER_FELL_BACK_FROM = None
+    if loader is not None:
+        loader.close()
+
+
 def announce_default_bundle(log: Callable[[str, str], None]) -> Optional[str]:
     """Log the default bundle result once at the caller's chosen lifecycle point.
 

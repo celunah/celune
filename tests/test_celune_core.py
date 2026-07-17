@@ -282,8 +282,8 @@ class CeluneCoreTests(TestCase):
             "Measured and calm.",
         )
 
-    def test_cleanup_residual_temp_data_skips_core_cevoice_files(self) -> None:
-        """Verify startup temp cleanup removes only disposable Celune temp artifacts."""
+    def test_cleanup_residual_temp_data_removes_unprotected_temp_entries(self) -> None:
+        """Verify shutdown temp cleanup removes every unprotected temp entry."""
         celune = self._make_celune({})
         celune.log_callback = mock.Mock()
 
@@ -292,6 +292,12 @@ class CeluneCoreTests(TestCase):
             extracted_dir = temp_root / "celune-cevoice-fixture"
             extracted_dir.mkdir()
             (extracted_dir / "balanced.wav").write_bytes(b"wav")
+            pocket_dir = temp_root / "celune-pocket-tts-fixture"
+            pocket_dir.mkdir()
+            (pocket_dir / "english-fixture.yaml").write_text(
+                "weights_path: demo\n",
+                encoding="utf-8",
+            )
             rag_prompt = temp_root / "rag_prompt.txt"
             rag_prompt.write_text("prompt", encoding="utf-8")
             temporary_audio = temp_root / "temporary_audio.wav"
@@ -304,13 +310,14 @@ class CeluneCoreTests(TestCase):
             celune._cleanup_residual_temp_data(temp_root)
 
             self.assertFalse(extracted_dir.exists())
+            self.assertFalse(pocket_dir.exists())
             self.assertFalse(rag_prompt.exists())
             self.assertFalse(temporary_audio.exists())
-            self.assertTrue(bundle_file.exists())
-            self.assertTrue(memory_note.exists())
+            self.assertFalse(bundle_file.exists())
+            self.assertFalse(memory_note.exists())
 
         celune.log_callback.assert_any_call(
-            "Celune found 3 residual temporary items.",
+            "Celune found 6 residual temporary items.",
             "warning",
         )
         celune.log_callback.assert_any_call("Deleting...", "warning")
@@ -468,14 +475,17 @@ class CeluneCoreTests(TestCase):
             "4bit",
         )
 
-    def test_load_cleans_temp_before_loading_voice_bundle(self) -> None:
-        """Verify startup temp cleanup runs before any CEVOICE loader work begins."""
+    def test_load_defers_temp_cleanup_until_shutdown(self) -> None:
+        """Verify temp cleanup waits until runtime shutdown after initialization."""
         celune = self._make_celune({})
         celune.backend.uses_voice_bundles = True
         call_order: list[str] = []
 
         def cleanup(_temp_dir: Path) -> None:
             call_order.append("cleanup")
+
+        def close_loader() -> None:
+            call_order.append("loader")
 
         def load_voices() -> bool:
             call_order.append("voices")
@@ -488,12 +498,15 @@ class CeluneCoreTests(TestCase):
             mock.patch.object(
                 celune, "_cleanup_residual_temp_data", side_effect=cleanup
             ),
+            mock.patch("celune.celune.close_default_loader", side_effect=close_loader),
             mock.patch.object(celune, "load_available_voices", side_effect=load_voices),
             mock.patch("celune.celune.log_runtime_banner"),
         ):
             self.assertEqual(celune.load(), False)
+            self.assertEqual(call_order, ["voices"])
+            celune.close()
 
-        self.assertEqual(call_order, ["cleanup", "voices"])
+        self.assertEqual(call_order, ["voices", "loader", "cleanup"])
 
     def test_load_disables_persona_when_preload_fails(self) -> None:
         """Verify Persona preload failures fall back to speech-only mode."""

@@ -821,3 +821,17 @@ class ApiWebUITests(TestCase):
         self.assertIsNone(api.bound_celune)
         self.assertTrue(api.current_api_server.should_exit)
         self.assertTrue(api.current_api_server.force_exit)
+
+    def test_start_api_reports_when_port_is_already_in_use(self) -> None:
+        """Verify occupied API ports produce a direct warning instead of a runtime error."""
+        celune = SimpleNamespace(log=mock.Mock(), dev=False)
+        bind_error = OSError(10048, "only one usage of each socket address")
+
+        with mock.patch("celune.api.run_api", side_effect=bind_error):
+            thread = api.start_api(cast(Celune, celune), port=2060)
+            thread.join(timeout=1.0)
+
+        celune.log.assert_called_once_with(
+            string("api.port_in_use", port=2060),
+            "warning",
+        )

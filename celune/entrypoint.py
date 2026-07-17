@@ -727,9 +727,9 @@ def _doctor_checks() -> list[DoctorCheck]:
             f"{APP_NAME}'s selection menus depend on readchar.",
         ),
         (
-            "langdetect",
-            "langdetect",
-            f"{APP_NAME} uses langdetect to infer utterance language.",
+            "lingua",
+            "lingua-language-detector",
+            f"{APP_NAME} uses Lingua to infer utterance language.",
         ),
         ("torch", "PyTorch", f"{APP_NAME}'s speech backends require PyTorch."),
         (

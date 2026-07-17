@@ -5,6 +5,7 @@
     "api.could_not_start": "Could not start the API: {error}",
     "api.invalid_input": "I don't understand your input.",
     "api.invalid_voice": "I don't know how to speak in that voice.",
+    "api.port_in_use": "API port {port} is already in use. Choose another port or close the application using it.",
     "api.rate_limit": "Please wait until you make me speak again.",
     "api.runner_exit_code": "API runner has exited. Exit code {code}",
     "api.runner_started": "{app_name} API has started on http://{host}:{port}",

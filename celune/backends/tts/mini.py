@@ -280,8 +280,8 @@ class Mini(CeluneBackend[TTSModel]):
         return cached_hf_snapshot_path(
             model,
             [
-                f"languages/{model_name}/model.safetensors",
-                f"languages/{model_name}/tokenizer.model",
+                f"languages/{model_name}*/model.safetensors",
+                f"languages/{model_name}*/tokenizer.model",
             ],
         )
 

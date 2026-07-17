@@ -30,7 +30,7 @@ from .typing.pipeline import SpeechStreamQueue
 from .vc import clamp_vc_pitch_shift
 from .extensions.manager import CeluneExtensionManager
 from .typing.events import EventName, EventPayload
-from .paths import project_root, app_data_dir
+from .paths import project_root, temp_data_dir
 from .dataclasses.pipeline import AudioInputRequest, AudioOutput
 from .config import Config, config_bool, config_value
 from .runtime import log_runtime_banner, validate_runtime
@@ -100,6 +100,7 @@ from .cevoice import (
     announce_default_bundle,
     bundle_matches_default_pack_checksum,
     bundle_character_name,
+    close_default_loader,
     default_loader,
     is_protected_temp_path,
     persona_metadata_from_manifest,
@@ -297,16 +298,6 @@ def _release_loaded_object(value: ReleasableObject) -> None:
     if callable(unload):
         with contextlib.suppress(Exception):
             unload()
-
-
-_EPHEMERAL_TEMP_FILE_NAMES = frozenset(
-    {
-        "rag_prompt.txt",
-        "temporary_audio.wav",
-    }
-)
-_EPHEMERAL_TEMP_FILE_PREFIXES = ("temporary_audio.",)
-_EPHEMERAL_TEMP_DIR_PREFIXES = ("celune-cevoice-",)
 
 
 class Celune(CeluneStateAccessors):
@@ -652,26 +643,13 @@ class Celune(CeluneStateAccessors):
         """Dispatch one typed event through Celune's internal event bus."""
         self._event_dispatcher.emit(event_name, event)
 
-    @staticmethod
-    def _is_ephemeral_temp_path(path: Path) -> bool:
-        """Return whether one temp path is safe for residual cleanup."""
-        if path.is_dir():
-            return path.name.startswith(_EPHEMERAL_TEMP_DIR_PREFIXES)
-
-        if path.name in _EPHEMERAL_TEMP_FILE_NAMES:
-            return True
-
-        return path.name.startswith(_EPHEMERAL_TEMP_FILE_PREFIXES)
-
     def _cleanup_residual_temp_data(self, temp_dir: Path) -> None:
-        """Delete only Celune's disposable residual temp artifacts."""
+        """Delete residual Celune temp artifacts that are not currently protected."""
         if not temp_dir.is_dir():
             return
 
         disposable_paths = [
-            path
-            for path in temp_dir.iterdir()
-            if self._is_ephemeral_temp_path(path) and not is_protected_temp_path(path)
+            path for path in temp_dir.iterdir() if not is_protected_temp_path(path)
         ]
         trailing_files = len(disposable_paths)
 
@@ -2488,7 +2466,6 @@ class Celune(CeluneStateAccessors):
             self.log(string("celune.test_mode_active", app_name=APP_NAME))
             return True
 
-        self._cleanup_residual_temp_data(app_data_dir() / "temp")
         if not self.load_available_voices():
             self.fatal()
             self.log(string("celune.no_voices_loaded"), "error")
@@ -2702,7 +2679,7 @@ class Celune(CeluneStateAccessors):
             return
 
         if not is_port_usable(port):
-            self.log(string("celune.port_unavailable", port=port), "warning")
+            self.log(string("api.port_in_use", port=port), "warning")
             self.log(string("celune.api_unavailable", app_name=APP_NAME), "warning")
             return
 
@@ -3325,6 +3302,10 @@ class Celune(CeluneStateAccessors):
             with self._model_lock:
                 self.unload_runtime_state(include_normalizer=True)
         finally:
+            with contextlib.suppress(Exception):
+                close_default_loader()
+            with contextlib.suppress(Exception):
+                self._cleanup_residual_temp_data(temp_data_dir())
             Celune._instance = None
 
     def fatal(self) -> None:

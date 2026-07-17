@@ -1564,6 +1564,10 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             prompt,
         )
         self.assertIn(
+            "Never output emojis; use plain text suitable for speech synthesis.",
+            prompt,
+        )
+        self.assertIn(
             "Treat facts in <memory> as true background context when they are relevant.",
             prompt,
         )

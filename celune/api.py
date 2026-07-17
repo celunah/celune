@@ -3,6 +3,7 @@
 
 import os
 import io
+import errno
 import time
 import uuid
 import queue
@@ -650,6 +651,29 @@ class StartedServer(uvicorn.Server):
         await super().startup(sockets=sockets)
         if self.started and self.on_started is not None:
             self.on_started()
+
+
+def _is_port_in_use_error(error: OSError) -> bool:
+    """Return whether an operating-system error indicates an occupied port."""
+    return (
+        error.errno in {errno.EADDRINUSE, 10048}
+        or getattr(error, "winerror", None) == 10048
+    )
+
+
+def _bind_api_socket(host: str, port: int) -> socket.socket:
+    """Bind the API socket before handing it to Uvicorn."""
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    api_socket = socket.socket(family=family)
+    api_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        api_socket.bind((host, port))
+    except OSError:
+        api_socket.close()
+        raise
+
+    api_socket.set_inheritable(True)
+    return api_socket
 
 
 def _shutdown_api_for_fatal_error() -> None:
@@ -2905,11 +2929,13 @@ def run_api(
         config,
         on_started=lambda: started_callback(bind_host, port),
     )
+    api_socket = _bind_api_socket(bind_host, port)
     global current_api_server
     current_api_server = server
     try:
-        server.run()
+        server.run(sockets=[api_socket])
     finally:
+        api_socket.close()
         current_api_server = None
 
 
@@ -2969,10 +2995,13 @@ def start_api(
                 )
         except Exception as e:
             failed.set()
-            celune.log(
-                string("api.could_not_start", error=format_error(e, celune.dev)),
-                "warning",
-            )
+            if isinstance(e, OSError) and _is_port_in_use_error(e):
+                celune.log(string("api.port_in_use", port=port), "warning")
+            else:
+                celune.log(
+                    string("api.could_not_start", error=format_error(e, celune.dev)),
+                    "warning",
+                )
 
     thread = threading.Thread(target=_runner, daemon=True, name=f"{APP_NAME}API")
     thread.start()

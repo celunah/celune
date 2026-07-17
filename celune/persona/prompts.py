@@ -237,6 +237,7 @@ class PersonaPromptBuilder:
             "- Push the conversation forward naturally.",
             "- Stay under 3 sentences unless the user asked for detail.",
             "- Use a single paragraph unless formatting is necessary.",
+            "- Never output emojis; use plain text suitable for speech synthesis.",
             "- Prefer reacting to the current conversation over reinforcing the character's identity.",
         ]
         character_name = (

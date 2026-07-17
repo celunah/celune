@@ -55,6 +55,25 @@ class MiniBackendTests(TestCase):
 
         self.assertEqual(resolved.name, "french_24l")
 
+    def test_model_availability_accepts_variant_language_folders(self) -> None:
+        """Verify cached French 24-layer snapshots are not downloaded again."""
+        backend = Mini(log=lambda *_args, **_kwargs: None)
+
+        with mock.patch(
+            "celune.backends.tts.mini.cached_hf_snapshot_path",
+            return_value=(True, "cached-snapshot"),
+        ) as cached_snapshot:
+            available = backend.model_is_available_locally("example/model", "fr")
+
+        self.assertEqual(available, (True, "cached-snapshot"))
+        cached_snapshot.assert_called_once_with(
+            "example/model",
+            [
+                "languages/french*/model.safetensors",
+                "languages/french*/tokenizer.model",
+            ],
+        )
+
     def test_template_config_accepts_code_and_suffix_variants(self) -> None:
         """Verify Pocket TTS reloads can use non-plain template config names."""
         backend = Mini(log=lambda *_args, **_kwargs: None)

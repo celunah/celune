@@ -1943,7 +1943,7 @@ def _queue_speech_after_ready(
         or requested_language.strip().lower() == "auto"
     ):
         # Qwen3 handles automatic language selection internally, so keep the
-        # backend-facing value as "Auto" instead of passing a langdetect code.
+        # backend-facing value as "Auto" instead of passing a detected language code.
         requested_language = (
             "Auto" if backend_name == "qwen3" else language_meta["language"]
         )
