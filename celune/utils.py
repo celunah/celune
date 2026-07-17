@@ -588,11 +588,12 @@ def detect_language(text: str, supported: list[str]) -> LanguageResult:
 
     detected_language = _LANGUAGE_DETECTOR.detect_language_of(text)
     if detected_language is None:
+        fallback = _backend_language_code("en", supported)
         return {
-            "language": "en",
-            "languages": ["en"],
-            "supported": "en" in supported,
-            "probabilities": {"en": 1.0},
+            "language": fallback,
+            "languages": [fallback],
+            "supported": fallback in supported,
+            "probabilities": {fallback: 1.0},
         }
 
     probabilities = {
