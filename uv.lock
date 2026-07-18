@@ -825,8 +825,8 @@ wheels = [
 
 [[package]]
 name = "dots-tts"
-version = "0.1.0.post0"
-source = { git = "https://github.com/celunah/dots.tts#61af8dfdf62530c0d56684f1fe489d9a69902659" }
+version = "0.2.1.post0"
+source = { git = "https://github.com/celunah/dots.tts#3a19d44bf6bc51ee644e6dac1b6d57bc6aabb2ac" }
 dependencies = [
     { name = "einops" },
     { name = "gradio" },

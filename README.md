@@ -217,8 +217,15 @@ uv --version
 # uv 0.11.2 (02036a8ba 2026-03-26 x86_64-pc-windows-msvc) (or similar version)
 
 # Create environment
-# Celune expects Python 3.12 or 3.13
-uv sync
+# Celune expects Python 3.12 or 3.13.
+# Use --extra [backend names] to specify backend support groups to install,
+# or --all-extras to install all backend support groups.
+# You must specify at least one backend support group, or else Celune won't work.
+#
+# Install a single backend
+uv sync --extra qwen3
+# Install all backends
+uv sync --all-extras
 
 # Run
 # Command Prompt users
