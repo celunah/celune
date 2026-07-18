@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import Optional
 
 from platformdirs import user_data_dir
-from transformers.utils.logging import disable_progress_bar
-from huggingface_hub.utils import disable_progress_bars
 
 from .constants import APP_NAME, APP_SLUG
 
@@ -132,6 +130,9 @@ def configure_huggingface_cache_environment(force: bool = False) -> None:
 
 def configure_huggingface_runtime() -> None:
     """Apply Celune's process-wide Hugging Face progress suppression."""
+    from transformers.utils.logging import disable_progress_bar
+    from huggingface_hub.utils import disable_progress_bars
+
     os.environ.setdefault(_HF_HUB_DISABLE_PROGRESS_BARS_ENV, "1")
     disable_progress_bar()
     disable_progress_bars()

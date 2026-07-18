@@ -144,7 +144,7 @@
     "cli.help_help": "help\t\t\t\tDisplay this help message.",
     "cli.help_main_usage": "Usage: {program} [command]",
     "cli.help_parameter_note": "Some commands may be used with a parameter (e.g. {program} --argument),",
-    "cli.help_start": "start/run [-v/-t]\t\t\tStart {app_name}.",
+    "cli.help_start": "start/run [-v/-t]\t\tStart {app_name}.",
     "cli.help_subcommand_note": "or with a subcommand (e.g. {program} argument).",
     "cli.help_usage": "Usage: {program} help",
     "cli.help_version": "version\t\t\t\tDisplay running {app_name} version.",

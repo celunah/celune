@@ -17,6 +17,7 @@ instances can exhaust GPU resources and is not a supported usage pattern.
 import sys as _sys
 import inspect as _inspect
 import subprocess as _subprocess
+import contextlib as _contextlib
 from typing import TYPE_CHECKING, Callable, Union
 
 from .constants import APP_NAME
@@ -25,8 +26,9 @@ from .paths import (
     configure_huggingface_runtime,
 )
 
-configure_huggingface_cache_environment()
-configure_huggingface_runtime()
+with _contextlib.suppress(ModuleNotFoundError):
+    configure_huggingface_cache_environment()
+    configure_huggingface_runtime()
 
 if TYPE_CHECKING:
     from .celune import Celune

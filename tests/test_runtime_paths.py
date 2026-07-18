@@ -176,8 +176,10 @@ class RuntimePathTests(TestCase):
     def test_huggingface_runtime_disables_global_progress_bars(self) -> None:
         """Verify Celune suppresses Hugging Face progress bars without muting logs."""
         with (
-            mock.patch("celune.paths.disable_progress_bar") as disable_transformers,
-            mock.patch("celune.paths.disable_progress_bars") as disable_hub,
+            mock.patch(
+                "transformers.utils.logging.disable_progress_bar"
+            ) as disable_transformers,
+            mock.patch("huggingface_hub.utils.disable_progress_bars") as disable_hub,
             mock.patch.dict(os.environ, {}, clear=True),
         ):
             configure_huggingface_runtime()
