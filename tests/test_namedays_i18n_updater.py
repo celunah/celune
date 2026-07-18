@@ -311,6 +311,46 @@ class UpdaterTests(TestCase):
             ):
                 self.assertIsNone(updater.check_for_update())
 
+    def test_check_for_update_compiled_ignores_rebuilt_same_release(self) -> None:
+        """Verify a rebuilt artifact does not prompt for the same local release."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle_dir = Path(temp_dir)
+            (bundle_dir / "celune.exe").write_bytes(b"launcher")
+            (bundle_dir / "celune-bin.exe").write_bytes(b"runtime")
+            local_files = {
+                "celune.exe": updater.sha256_file(bundle_dir / "celune.exe"),
+                "celune-bin.exe": updater.sha256_file(bundle_dir / "celune-bin.exe"),
+            }
+            manifest = {
+                "version": "4.3.0",
+                "revision": "a" * 40,
+                "artifact": "Celune-win-x64",
+                "files": local_files,
+            }
+            (bundle_dir / updater.UPDATE_MANIFEST_NAME).write_text(
+                json.dumps(manifest),
+                encoding="utf-8",
+            )
+            remote = updater.BundleManifest(
+                version="4.3.0",
+                revision="a" * 40,
+                artifact="Celune-win-x64",
+                files={
+                    "celune.exe": "1" * 64,
+                    "celune-bin.exe": "2" * 64,
+                },
+            )
+
+            with (
+                mock.patch("celune.updater.running_compiled", return_value=True),
+                mock.patch("celune.updater._bundle_dir", return_value=bundle_dir),
+                mock.patch(
+                    "celune.updater._read_remote_bundle_manifest", return_value=remote
+                ),
+                mock.patch("celune.updater._is_git_checkout", return_value=False),
+            ):
+                self.assertIsNone(updater.check_for_update())
+
     def test_update_to_latest_rejects_unsafe_states(self) -> None:
         """Verify unsafe repository states reject automatic updates.
 

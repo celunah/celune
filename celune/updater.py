@@ -362,13 +362,29 @@ def _read_remote_bundle_manifest(branch: str) -> Optional[BundleManifest]:
         return _manifest_from_zip(zip_path)
 
 
-def _compiled_bundle_matches_remote(
+def _compiled_bundle_matches_manifest(
     bundle_dir: Path,
+    manifest: BundleManifest,
+) -> bool:
+    """Return whether the installed bundle matches the supplied manifest."""
+    local_files = _bundle_checksums(bundle_dir, list(manifest.files))
+    return bool(local_files) and local_files == manifest.files
+
+
+def _compiled_bundle_has_same_identity(
+    local_manifest: BundleManifest,
     remote_manifest: BundleManifest,
 ) -> bool:
-    """Return whether the installed bundle already matches the remote artifact."""
-    local_files = _bundle_checksums(bundle_dir, list(remote_manifest.files))
-    return bool(local_files) and local_files == remote_manifest.files
+    """Return whether manifests identify the same compiled source release."""
+    return (
+        bool(local_manifest.revision)
+        and bool(remote_manifest.revision)
+        and (
+            local_manifest.revision == remote_manifest.revision
+            and _base_version(local_manifest.version)
+            == _base_version(remote_manifest.version)
+        )
+    )
 
 
 def _check_for_compiled_update() -> Optional[UpdateInfo]:
@@ -402,7 +418,11 @@ def _check_for_compiled_update() -> Optional[UpdateInfo]:
     if remote_manifest is None:
         return None
 
-    if _compiled_bundle_matches_remote(_bundle_dir(), remote_manifest):
+    bundle_dir = _bundle_dir()
+    if (
+        _compiled_bundle_has_same_identity(local_manifest, remote_manifest)
+        and _compiled_bundle_matches_manifest(bundle_dir, local_manifest)
+    ) or _compiled_bundle_matches_manifest(bundle_dir, remote_manifest):
         return None
 
     latest_revision = remote_manifest.revision or remote_revision or latest_tag_revision

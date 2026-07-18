@@ -6,6 +6,7 @@ from __future__ import annotations
 import shutil
 import datetime
 import subprocess
+import threading
 from decimal import Decimal, ROUND_HALF_UP
 from typing import TYPE_CHECKING, Optional
 
@@ -21,8 +22,9 @@ if TYPE_CHECKING:
     from ..celune import Celune
 
 _NVIDIA_SMI: Optional[str] = shutil.which("nvidia-smi")
-_NVIDIA_SMI_PROC: Optional[subprocess.Popen[str]] = None
+_NVIDIA_SMI_THREAD: Optional[threading.Thread] = None
 _NVIDIA_SMI_USAGE: Optional[int] = None
+NVIDIA_SMI_TIMEOUT_SECONDS = 2.0
 FOOTER_ROTATE_SECONDS = 2.06
 
 
@@ -102,49 +104,13 @@ def format_vram() -> str:
     return f"VRAM: {avail / 1024**3:.2f}/{total / 1024**3:.2f} GB available"
 
 
-def gpu_usage() -> Optional[int]:
-    """Read GPU utilization from nvidia-smi when it is available.
-
-    Returns:
-        Optional[int]: The GPU utilization, or ``None`` if unavailable.
-    """
-    global _NVIDIA_SMI_PROC, _NVIDIA_SMI_USAGE
-
+def _query_gpu_usage() -> Optional[int]:
+    """Read one GPU utilization sample with a bounded subprocess lifetime."""
     if not _NVIDIA_SMI:
         return None
 
-    proc = _NVIDIA_SMI_PROC
-    if proc is not None:
-        if proc.poll() is None:
-            return _NVIDIA_SMI_USAGE
-
-        try:
-            stdout, _ = proc.communicate()
-        except (OSError, ValueError, subprocess.SubprocessError):
-            _NVIDIA_SMI_PROC = None
-            _NVIDIA_SMI_USAGE = None
-            return None
-
-        _NVIDIA_SMI_PROC = None
-
-        if proc.returncode != 0:
-            _NVIDIA_SMI_USAGE = None
-            return None
-
-        first_line = stdout.strip().splitlines()[0:1]
-        if not first_line:
-            _NVIDIA_SMI_USAGE = None
-            return None
-
-        try:
-            _NVIDIA_SMI_USAGE = int(first_line[0].strip())
-        except ValueError:
-            _NVIDIA_SMI_USAGE = None
-
-        return _NVIDIA_SMI_USAGE
-
     try:
-        _NVIDIA_SMI_PROC = subprocess.Popen(  # pylint: disable=R1732
+        result = subprocess.run(
             [
                 _NVIDIA_SMI,
                 "--query-gpu=utilization.gpu",
@@ -153,9 +119,52 @@ def gpu_usage() -> Optional[int]:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
+            check=False,
+            timeout=NVIDIA_SMI_TIMEOUT_SECONDS,
         )
-    except OSError:
-        _NVIDIA_SMI_USAGE = None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    first_line = result.stdout.strip().splitlines()[0:1]
+    if not first_line:
+        return None
+
+    try:
+        return int(first_line[0].strip())
+    except ValueError:
+        return None
+
+
+def _update_gpu_usage() -> None:
+    """Update the cached GPU utilization from a worker thread."""
+    global _NVIDIA_SMI_USAGE
+    _NVIDIA_SMI_USAGE = _query_gpu_usage()
+
+
+def gpu_usage() -> Optional[int]:
+    """Return cached GPU utilization while sampling asynchronously.
+
+    Returns:
+        Optional[int]: The GPU utilization, or ``None`` if unavailable.
+    """
+    global _NVIDIA_SMI_THREAD
+
+    if not _NVIDIA_SMI:
+        return None
+
+    thread = _NVIDIA_SMI_THREAD
+    if thread is not None and thread.is_alive():
+        return _NVIDIA_SMI_USAGE
+
+    _NVIDIA_SMI_THREAD = threading.Thread(
+        target=_update_gpu_usage,
+        name="celune-nvidia-smi",
+        daemon=True,
+    )
+    _NVIDIA_SMI_THREAD.start()
 
     return _NVIDIA_SMI_USAGE
 

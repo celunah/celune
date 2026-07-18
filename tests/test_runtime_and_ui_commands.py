@@ -5,6 +5,7 @@ import sys
 import time
 import queue
 import logging
+import subprocess
 import tempfile
 import warnings
 from pathlib import Path
@@ -2007,24 +2008,37 @@ class UIStartupTests(TestCase):
 
         ui.safe_log.assert_called_once_with("ambiguous input device", "warning")
 
-    def test_gpu_usage_handles_closed_stdout_pipe(self) -> None:
-        """Verify resource polling ignores closed-pipe nvidia-smi failures."""
-        proc = mock.Mock()
-        proc.poll.return_value = 0
-        proc.communicate.side_effect = ValueError("I/O operation on closed file.")
-
+    def test_gpu_usage_starts_background_query_without_blocking(self) -> None:
+        """Verify GPU polling starts asynchronously and returns the cached value."""
         with mock.patch("celune.ui.resources._NVIDIA_SMI", "nvidia-smi"):
-            previous_proc = ui_resources._NVIDIA_SMI_PROC
+            previous_thread = ui_resources._NVIDIA_SMI_THREAD
             previous_usage = ui_resources._NVIDIA_SMI_USAGE
-            ui_resources._NVIDIA_SMI_PROC = proc
+            thread = mock.Mock()
+            thread.is_alive.return_value = False
+            ui_resources._NVIDIA_SMI_THREAD = None
             ui_resources._NVIDIA_SMI_USAGE = 42
             try:
-                self.assertIsNone(ui_resources.gpu_usage())
-                self.assertIsNone(ui_resources._NVIDIA_SMI_PROC)
-                self.assertIsNone(ui_resources._NVIDIA_SMI_USAGE)
+                with mock.patch(
+                    "celune.ui.resources.threading.Thread", return_value=thread
+                ):
+                    self.assertEqual(ui_resources.gpu_usage(), 42)
+                thread.start.assert_called_once_with()
             finally:
-                ui_resources._NVIDIA_SMI_PROC = previous_proc
+                ui_resources._NVIDIA_SMI_THREAD = previous_thread
                 ui_resources._NVIDIA_SMI_USAGE = previous_usage
+
+    def test_gpu_usage_query_times_out(self) -> None:
+        """Verify a stuck nvidia-smi query becomes an unavailable sample."""
+        with (
+            mock.patch("celune.ui.resources._NVIDIA_SMI", "nvidia-smi"),
+            mock.patch(
+                "celune.ui.resources.subprocess.run",
+                side_effect=subprocess.TimeoutExpired("nvidia-smi", 2.0),
+            ) as run,
+        ):
+            self.assertIsNone(ui_resources._query_gpu_usage())
+
+        run.assert_called_once()
 
     def test_textual_input_lock_update_with_persona_on_ui_thread(self) -> None:
         """Verify input state updates update with Persona."""

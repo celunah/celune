@@ -1,0 +1,73 @@
+#define _POSIX_C_SOURCE 200809L
+
+#include "launcher_platform.h"
+
+#include <unistd.h>
+#include <termios.h>
+#include <signal.h>
+
+#include <stdio.h>
+
+static struct termios saved_terminal_state;
+static int saved_terminal_state_valid = 0;
+
+void launcher_setup_terminal(void) {
+    if (isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &saved_terminal_state) == 0) {
+        saved_terminal_state_valid = 1;
+    }
+
+    signal(SIGINT, SIG_IGN);
+#ifdef SIGQUIT
+    signal(SIGQUIT, SIG_IGN);
+#endif
+}
+
+void launcher_reset_terminal_state(void) {
+    static const char reset_sequences[] =
+        "\033[0m"
+        "\033[?25h"
+        "\033[?1000l"
+        "\033[?1002l"
+        "\033[?1003l"
+        "\033[?1006l"
+        "\033[?1015l"
+        "\033[?1049l"
+        "\033[?2004l";
+
+    if (!saved_terminal_state_valid) {
+        return;
+    }
+
+    if (isatty(STDOUT_FILENO)) {
+        (void)write(
+            STDOUT_FILENO,
+            reset_sequences,
+            sizeof(reset_sequences) - 1
+        );
+    }
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &saved_terminal_state);
+    tcflush(STDIN_FILENO, TCIFLUSH);
+}
+
+void launcher_wait_after_failure(void) {
+    struct termios oldt;
+    struct termios newt;
+
+    if (tcgetattr(STDIN_FILENO, &oldt) != 0) {
+        return;
+    }
+
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    getchar();
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+}
+
+void launcher_restore_child_terminal(void) {
+    signal(SIGINT, SIG_DFL);
+#ifdef SIGQUIT
+    signal(SIGQUIT, SIG_DFL);
+#endif
+}

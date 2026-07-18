@@ -4,82 +4,13 @@
 
 #include <unistd.h>
 #include <sys/wait.h>
-#include <termios.h>
-#include <signal.h>
 
-#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
 #define printfe(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
 #define EXIT_PENDING_UPDATE 7
-
-static struct termios saved_terminal_state;
-static int saved_terminal_state_valid = 0;
-
-static void save_terminal_state(void) {
-    if (isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &saved_terminal_state) == 0) {
-        saved_terminal_state_valid = 1;
-    }
-}
-
-void launcher_reset_terminal_state(void) {
-    static const char reset_sequences[] =
-        "\033[0m"
-        "\033[?25h"
-        "\033[?1000l"
-        "\033[?1002l"
-        "\033[?1003l"
-        "\033[?1006l"
-        "\033[?1015l"
-        "\033[?1049l"
-        "\033[?2004l";
-
-    if (!saved_terminal_state_valid) {
-        return;
-    }
-
-    if (isatty(STDOUT_FILENO)) {
-        (void)write(
-            STDOUT_FILENO,
-            reset_sequences,
-            sizeof(reset_sequences) - 1
-        );
-    }
-
-    tcsetattr(STDIN_FILENO, TCSANOW, &saved_terminal_state);
-    tcflush(STDIN_FILENO, TCIFLUSH);
-}
-
-static void ignore_console_interrupts(void) {
-    signal(SIGINT, SIG_IGN);
-#ifdef SIGQUIT
-    signal(SIGQUIT, SIG_IGN);
-#endif
-}
-
-static void restore_child_console_interrupts(void) {
-    signal(SIGINT, SIG_DFL);
-#ifdef SIGQUIT
-    signal(SIGQUIT, SIG_DFL);
-#endif
-}
-
-void launcher_wait_after_failure(void) {
-    struct termios oldt;
-    struct termios newt;
-
-    if (tcgetattr(STDIN_FILENO, &oldt) != 0) {
-        return;
-    }
-
-    newt = oldt;
-    newt.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-    getchar();
-    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-}
 
 static int file_exists(const char *path) {
     return access(path, F_OK) == 0;
@@ -173,7 +104,7 @@ static int spawn_update_helper_unix(
     }
 
     if (pid == 0) {
-        restore_child_console_interrupts();
+        launcher_restore_child_terminal();
         char pid_text[32];
         snprintf(pid_text, sizeof(pid_text), "%ld", (long)getppid());
 
@@ -215,8 +146,6 @@ int launcher_run(int argc, char **argv) {
     char main_py[1024];
     char setup_py[1024];
 
-    save_terminal_state();
-    ignore_console_interrupts();
     setenv("CELUNE_LAUNCHER", "1", 1);
 
     if (!get_exe_dir(base, sizeof(base))) {
@@ -252,7 +181,7 @@ int launcher_run(int argc, char **argv) {
         }
 
         if (pid == 0) {
-            restore_child_console_interrupts();
+            launcher_restore_child_terminal();
             char **args = malloc(((size_t)argc + 1U) * sizeof(char *));
             if (args == NULL) {
                 perror("malloc failed");
@@ -320,7 +249,7 @@ int launcher_run(int argc, char **argv) {
             }
 
             if (setup_pid == 0) {
-                restore_child_console_interrupts();
+                launcher_restore_child_terminal();
                 char *args[] = {(char *)system_python[i], setup_py, NULL};
                 if (chdir(repo_root) != 0) {
                     perror("chdir failed");
@@ -368,7 +297,7 @@ int launcher_run(int argc, char **argv) {
     }
 
     if (pid == 0) {
-        restore_child_console_interrupts();
+        launcher_restore_child_terminal();
         char **args = malloc(((size_t)argc + 2U) * sizeof(char *));
         if (args == NULL) {
             perror("malloc failed");
