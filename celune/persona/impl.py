@@ -5,12 +5,18 @@ import os
 import io
 import contextlib
 from collections.abc import Mapping
-from typing import Callable, Optional, Generator, Protocol
+from typing import Optional, Generator, Protocol
 
 from ..config import Config
-from ..cevoice import CEVoicePersona
+from ..typing.aliases import DevLogCallback
 from ..vram import resolve_vram_preset
 from .runtime import PersonaRuntime, request_from_json, response_to_json
+from ..cevoice import (
+    CEVoicePersona,
+    default_loader,
+    merge_persona_metadata,
+    persona_metadata_from_voice,
+)
 from ..constants import (
     DEFAULT_PERSONA_CONTEXT,
     DEFAULT_PERSONA_DESCRIPTION,
@@ -21,7 +27,6 @@ from ..constants import (
 )
 
 PERSONA_QUANTIZATION = "4bit"
-DevLogCallback = Callable[[str, str], None]
 
 
 class PersonaEngineView(Protocol):
@@ -134,6 +139,20 @@ def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
     return dict(raw)
 
 
+def persona_debug_overrides_enabled(
+    config: Mapping[str, JSONSerializable],
+) -> bool:
+    """Return whether app-data Persona Markdown overrides are enabled.
+
+    Args:
+        config: Celune's current configuration.
+
+    Returns:
+        bool: Whether Persona should load character files from app data.
+    """
+    return persona_config(config).get("debug_overrides") is True
+
+
 def _config_text(
     engine: PersonaEngineView,
     key: str,
@@ -159,8 +178,21 @@ def pack_persona(engine: PersonaEngineView) -> Optional[CEVoicePersona]:
     Returns:
         Optional[CEVoicePersona]: The active persona metadata when present and typed.
     """
-    persona = getattr(engine, "current_character_persona", None)
-    return persona if isinstance(persona, CEVoicePersona) else None
+    base_persona = getattr(engine, "current_character_persona", None)
+    base_persona = base_persona if isinstance(base_persona, CEVoicePersona) else None
+    backend = getattr(engine, "backend", None)
+    if getattr(backend, "uses_voice_bundles", False) is not True:
+        return base_persona
+
+    loader = default_loader()
+    current_voice = getattr(engine, "current_voice", None)
+    if loader is None:
+        return base_persona
+
+    return merge_persona_metadata(
+        base_persona,
+        persona_metadata_from_voice(loader.bundle, current_voice),
+    )
 
 
 def pack_identity_text(engine: PersonaEngineView, field_name: str) -> str:

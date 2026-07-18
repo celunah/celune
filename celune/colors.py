@@ -7,8 +7,8 @@ from typing import Final, Optional
 
 from textual.theme import Theme
 
-from .utils import to_rgb
 from .typing.common import RGB
+from .utils import to_rgb
 
 DEFAULT_BACKGROUND: Final[str] = "#1d1826"
 DEFAULT_ACCENT: Final[str] = "#cebaff"

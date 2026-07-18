@@ -94,6 +94,17 @@ smart_buffer:
   max_seconds: 20.0
   complete_below_speed: 0.5
 
+# playback CPU protection
+#
+# Keep fast generation from building an unbounded audio backlog. When the
+# queue or playback-ahead limit is reached, generation waits for playback.
+pipeline_cpu:
+  enabled: true
+  max_queue_items: 8
+  max_buffer_seconds: 4.0
+  max_drain_items: 1
+  yield_seconds: 0.001
+
 # IPA auto-conversion
 # Celune can auto-convert IPA strings into English-like approximations
 # if you want to try speaking the IPA raw, disable this feature
@@ -108,8 +119,8 @@ ipa: false
 #
 # low (CPU/6GB) - Celune Mini (Pocket TTS) or SeedVC (GPU only) / Qwen3 0.6B+ normalizer CPU (caution: choosing Qwen may harm outputs)
 # medium (8GB) - Qwen3 1.7B + normalizer CPU
-# high (12GB) - Qwen3 1.7B / dots.tts MF / VoxCPM2 + Persona 4-bit + normalizer CPU
-# xhigh (16GB+) - everything allowed, including dots.tts MF and VoxCPM2 + Persona 8-bit + normalizer GPU
+# high (12GB) - Qwen3 1.7B + Persona 4-bit + normalizer CPU; Mini and Qwen3 only when Persona is enabled
+# xhigh (16GB+) - everything allowed, including dots.tts MF and VoxCPM2 with Persona 8-bit + normalizer GPU
 vram: medium
 
 # sleep mode behavior
@@ -152,14 +163,22 @@ api:
 persona:
   # enabled?
   enabled: true
+  # load same-named Persona Markdown files from the Celune app-data character directory
+  debug_overrides: false
   # which Qwen model to use? (in case you want to use an FT or uncensored version)
   model_id: Qwen/Qwen3-VL-4B-Instruct
   # model_id: huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated
+  # Hugging Face Whisper model used by CTRL+R Persona voice input
+  speech_model_id: openai/whisper-large-v3-turbo
+  # Whisper language code/name, or auto to detect the spoken language
+  speech_language: auto
+  # Extra silence after VAD stops hearing speech before submitting voice input
+  speech_end_delay_seconds: 1.5
   # memory settings
   memory:
     # how much do you want Celune to remember
     max_short_term_messages: 20
-    # where semantic long-term memory retrieval should persist data
+    # optional root for character-scoped records at <character>/memory/records.json
     storage_dir: null
     # minimum cosine similarity for semantic long-term memory retrieval
     semantic_similarity_threshold: 0.62

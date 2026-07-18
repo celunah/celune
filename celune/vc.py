@@ -2,11 +2,12 @@
 """Shared runtime helpers for Celune voice conversion."""
 
 import importlib
-from typing import Optional, Protocol, cast
 from collections.abc import Mapping
+from typing import Optional, Protocol, cast
 
 import numpy as np
 import numpy.typing as npt
+import torch
 from scipy import signal
 
 from .config import config_bool
@@ -48,8 +49,8 @@ __all__ = [
 class _StreamingSpeechModel(Protocol):
     """Protocol for stateful streaming speech detectors."""
 
-    def __call__(self, audio: object, sample_rate: int) -> object:
-        """Return one speech probability tensor-like object."""
+    def __call__(self, audio: torch.Tensor, sample_rate: int) -> torch.Tensor:
+        """Return one speech probability tensor."""
 
     def reset_states(self) -> None:
         """Reset the detector's internal streaming state."""
@@ -174,20 +175,10 @@ def _resample_audio(
     )
 
 
-def _torch_probability(output: object) -> float:
-    """Convert one model output tensor-like object into a scalar probability."""
-    detached = getattr(output, "detach", None)
-    if callable(detached):
-        output = detached()
-
-    cpu = getattr(output, "cpu", None)
-    if callable(cpu):
-        output = cpu()
-
-    if hasattr(output, "numpy"):
-        output = output.numpy()
-
-    values = np.asarray(output, dtype=np.float32).reshape(-1)
+def _torch_probability(output: torch.Tensor) -> float:
+    """Convert one model output tensor into a scalar probability."""
+    values = output.detach().cpu().numpy()
+    values = np.asarray(values, dtype=np.float32).reshape(-1)
     if values.size <= 0:
         return 0.0
     return float(values[-1])
@@ -254,7 +245,6 @@ class LiveVoiceActivityDetector:
             return self._speech_active
 
         had_speech = self._speech_active
-        torch = __import__("torch")
         for start in range(0, complete_frames, self.frame_samples):
             frame = np.asarray(
                 resampled[start : start + self.frame_samples],

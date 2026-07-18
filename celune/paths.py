@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Optional
 
 from platformdirs import user_data_dir
-from huggingface_hub.utils import disable_progress_bars
 from transformers.utils.logging import disable_progress_bar
+from huggingface_hub.utils import disable_progress_bars
 
 from .constants import APP_NAME, APP_SLUG
 
@@ -55,6 +55,21 @@ def app_data_dir(create: bool = False) -> Path:
         Path: Celune's user data directory.
     """
     path = Path(user_data_dir(APP_NAME, appauthor=False))
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def persona_data_dir(create: bool = False) -> Path:
+    """Return Celune's Persona character data directory.
+
+    Args:
+        create: Whether this directory should be created before being returned.
+
+    Returns:
+        Path: The Persona directory inside Celune's user data directory.
+    """
+    path = app_data_dir(create=create) / "persona"
     if create:
         path.mkdir(parents=True, exist_ok=True)
     return path
@@ -194,6 +209,21 @@ def main_window_log_path(create_parent: bool = False) -> Path:
     path = app_data_dir(create=create_parent) / f"{APP_SLUG}.log"
     if create_parent:
         path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def outputs_dir(create: bool = False) -> Path:
+    """Return the repository-local generated outputs directory.
+
+    Args:
+        create: Whether the directory should be created before being returned.
+
+    Returns:
+        Path: Celune's generated outputs directory.
+    """
+    path = project_root() / "outputs"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
     return path
 
 

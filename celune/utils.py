@@ -17,12 +17,18 @@ from collections.abc import Iterator
 from typing import Union, Callable, Optional, Literal, Any, TextIO, overload
 
 import psutil
-import langdetect
+from lingua import (  # pylint: disable=no-name-in-module
+    Language,
+    LanguageDetectorBuilder,
+)
 
 from .paths import traceback_path
 from .constants import REFERENCE_NEW_MOON
 from .typing.utils import CallerInfo, LanguageResult
 from .terminal import supports_ansi as terminal_supports_ansi
+
+
+_LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_spoken_languages().build()
 
 
 def get_revision() -> str:
@@ -278,12 +284,13 @@ def format_error(e: Exception, dev: bool) -> str:
         str: Either the full traceback or the exception text.
     """
     if dev:
-        trace = traceback.format_exc()
+        trace = "".join(traceback.format_exception(type(e), e, e.__traceback__))
         with open(traceback_path(create_parent=True), "w", encoding="utf-8") as f:
             f.write(trace)
+        return trace
 
     details = str(e) or "no error description"
-    return traceback.format_exc() if dev else details
+    return details
 
 
 def indent(text: str, spaces: int, direction: Literal["left", "right"] = "left") -> str:
@@ -579,31 +586,49 @@ def detect_language(text: str, supported: list[str]) -> LanguageResult:
         LanguageResult: The language detection result metadata object.
     """
 
-    try:
-        main_lang = langdetect.detect(text)
-        possible_langs = langdetect.detect_langs(text)
-        probabilities = {}
-
-        for lang in possible_langs:
-            probabilities[lang.lang] = lang.prob
-
-        result: LanguageResult = {
-            "language": main_lang,
-            "languages": list(probabilities.keys()),
-            "supported": main_lang in supported,
-            "probabilities": probabilities,
+    detected_language = _LANGUAGE_DETECTOR.detect_language_of(text)
+    if detected_language is None:
+        fallback = _backend_language_code("en", supported)
+        return {
+            "language": fallback,
+            "languages": [fallback],
+            "supported": fallback in supported,
+            "probabilities": {fallback: 1.0},
         }
 
-        return result
-    except langdetect.LangDetectException:
-        result: LanguageResult = {
-            "language": "en",
-            "languages": ["en"],
-            "supported": "en" in supported,
-            "probabilities": {"en": 1.0},
-        }
+    probabilities = {
+        _language_code(confidence.language): confidence.value
+        for confidence in _LANGUAGE_DETECTOR.compute_language_confidence_values(text)
+    }
+    main_lang = _language_code(detected_language)
+    main_lang = _backend_language_code(main_lang, supported)
+    return {
+        "language": main_lang,
+        "languages": list(probabilities.keys()),
+        "supported": main_lang in supported,
+        "probabilities": probabilities,
+    }
 
-        return result
+
+def _language_code(language: Language) -> str:
+    """Return the ISO 639-1 code for a Lingua language."""
+    return language.iso_code_639_1.name.lower()
+
+
+def _backend_language_code(language: str, supported: list[str]) -> str:
+    """Return the backend's regional code when it represents the detected language."""
+    normalized_language = language.lower()
+    for supported_language in supported:
+        if supported_language.lower() == normalized_language:
+            return supported_language
+
+    base_language = normalized_language.split("-", 1)[0]
+    for supported_language in supported:
+        supported_base = supported_language.lower().split("-", 1)[0]
+        if supported_base == base_language:
+            return supported_language
+
+    return language
 
 
 def is_april_fools() -> bool:
@@ -837,6 +862,7 @@ def normalize_special_characters(text: str) -> str:
             "\u2013": " - ",  # en dash
             "\u2014": " - ",  # em dash
             "\u2026": "...",  # ellipsis
+            "*": "",  # emphasis asterisks
         }
     )
 

@@ -10,6 +10,10 @@ class ExtensionError(Exception):
     """General extension exception."""
 
 
+class RuntimeCheckError(RuntimeError, CeluneError):
+    """Celune's runtime checks have failed."""
+
+
 class NotAvailableError(RuntimeError, CeluneError):
     """Celune is currently unavailable."""
 
@@ -42,7 +46,7 @@ class InvalidExtensionError(TypeError, ExtensionError):
     """Extension is not properly formed."""
 
 
-class ExtensionAlreadyRegisteredError(ExtensionError):
+class ExtensionAlreadyRegisteredError(RuntimeError, ExtensionError):
     """Extension is already registered."""
 
 

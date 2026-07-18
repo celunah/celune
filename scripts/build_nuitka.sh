@@ -34,10 +34,16 @@ if [[ ! -f "$repo_root/nuitka_main.py" ]]; then
     exit 1
 fi
 
-if [[ ! -f "$repo_root/launcher.c" ]]; then
-    echo "launcher.c was not found." >&2
-    exit 1
-fi
+launcher_sources=(
+    "$repo_root/launcher.c"
+    "$repo_root/launcher_unix.c"
+)
+for launcher_source in "${launcher_sources[@]}"; do
+    if [[ ! -f "$launcher_source" ]]; then
+        echo "Launcher source was not found: $launcher_source" >&2
+        exit 1
+    fi
+done
 
 if [[ ! -f "$desktop_src" || ! -f "$icon_src" ]]; then
     echo "Celune.AppDir metadata files were not found." >&2
@@ -78,7 +84,7 @@ uv run python -m nuitka \
 
 gcc -O2 -s -Wall -Wextra -Wpedantic \
 	-DNDEBUG -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
-	-flto -Wl,-z,relro,-z,now -o "$output_dir/celune" "$repo_root/launcher.c"
+	-flto -Wl,-z,relro,-z,now -o "$output_dir/celune" "${launcher_sources[@]}"
 chmod +x "$output_dir/celune" "$output_dir/celune-bin"
 
 rm -rf "$output_dir/nuitka_main.build"

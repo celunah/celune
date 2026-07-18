@@ -10,21 +10,17 @@ import datetime
 from pathlib import Path
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Optional, Union, cast
+from typing import Optional, Union, cast
 
+import numpy as np
 import torch
 import torch.nn.functional as f
-import numpy as np
-import numpy.typing as npt
 from transformers import AutoModel, AutoTokenizer
 
-from ..paths import memory_data_dir
+from ..paths import persona_data_dir
+from .paths import persona_character_slug
+from ..typing.aliases import EmbeddingVector, _EmbeddingBackend
 from ..constants import JSONSerializable, PERSONA_MEMORY_EMBEDDING_MODEL
-
-if TYPE_CHECKING:
-    from transformers.modeling_utils import PreTrainedModel
-    from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
 _STOPWORDS = {
@@ -57,8 +53,6 @@ _STOPWORDS = {
     "what",
     "you",
 }
-type EmbeddingVector = npt.NDArray[np.float32]
-type _EmbeddingBackend = tuple[PreTrainedTokenizerBase, PreTrainedModel]
 
 _EMBEDDING_BACKENDS: dict[str, _EmbeddingBackend] = {}
 _FAILED_EMBEDDING_MODELS: set[str] = set()
@@ -166,19 +160,13 @@ def _compute_text_embeddings(
         return None
 
 
-def _character_slug(name: str) -> str:
-    """Return a filesystem-safe identifier for one character name."""
-    cleaned = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")
-    return cleaned or "unknown"
-
-
 def default_memory_dir() -> Path:
     """Return the default on-disk directory for Persona memories.
 
     Returns:
-        Path: The current location of where Celune's Persona memories are stored.
+        Path: The Persona character app-data directory where memories are stored.
     """
-    return memory_data_dir()
+    return persona_data_dir()
 
 
 @dataclass(slots=True, frozen=True)
@@ -252,7 +240,8 @@ class PersonaMemoryStore:
 
     def _path_for_character(self, character_name: str) -> Path:
         """Return the JSON file path for one active character."""
-        return self.storage_dir / f"{_character_slug(character_name)}.json"
+        slug = persona_character_slug(character_name)
+        return self.storage_dir / slug / "memory" / "records.json"
 
     def load_records(self, character_name: str) -> list[MemoryRecord]:
         """Load all memory records for one character.

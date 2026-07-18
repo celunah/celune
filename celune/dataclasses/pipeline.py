@@ -26,6 +26,8 @@ class SpeechRequest:
         "queue.Queue[Optional[Union[npt.NDArray[np.float32], Exception]]]"
     ] = None
     normalize: bool = False
+    silent_retry_count: int = 0
+    generation: int = 0
 
 
 @dataclass(frozen=True)

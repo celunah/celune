@@ -4,19 +4,19 @@
 import sys
 import inspect
 import warnings
+import importlib.util
 import threading
 import traceback
-import importlib.util
 from pathlib import Path
-from types import ModuleType
 from dataclasses import dataclass
+from types import ModuleType
 from typing import Callable, Optional, cast
 
+from ..i18n import string
 from ..typing.events import EventName
 from ..typing.events import EventPayload
-from ..utils import format_error, discard
 from ..dataclasses.events import ReadyEvent
-from ..i18n import string
+from ..utils import format_error, discard
 from .base import CeluneContext, CeluneExtension
 from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
 from .events import (

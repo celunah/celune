@@ -1,10 +1,14 @@
 # SPDX-License-Identifier: MIT
 """Structured prompt building for the Persona system."""
 
+import re
 import contextlib
 from dataclasses import dataclass, field
 
 from ..paths import temp_data_dir
+
+
+_MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}(?:\s|$)")
 
 
 def _render_lines(lines: list[str]) -> str:
@@ -21,6 +25,28 @@ def _render_optional_section(tag: str, content: str) -> str:
     if not stripped or stripped == "none":
         return ""
     return f"<{tag}>\n{stripped}\n</{tag}>"
+
+
+def _render_markdown_subsection(heading: str, content: str) -> str:
+    """Return one Markdown subsection with consistent heading spacing."""
+    lines = content.strip().splitlines()
+    normalized_lines: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index].rstrip()
+        normalized_lines.append(line)
+        index += 1
+
+        if _MARKDOWN_HEADING.match(line):
+            while index < len(lines) and not lines[index].strip():
+                index += 1
+            if index < len(lines):
+                normalized_lines.append("")
+
+    stripped = "\n".join(normalized_lines).strip()
+    if not stripped:
+        return ""
+    return f"## {heading}\n\n{stripped}"
 
 
 @dataclass(frozen=True)
@@ -45,24 +71,6 @@ class CharacterProfile:
         ]
         if self.profile.strip():
             lines.extend(["", "Profile:", self.profile.strip()])
-        return "\n".join(lines)
-
-    def render_identity_summary(self) -> str:
-        """Return a compact identity summary for the runtime prompt.
-
-        Returns:
-            str: A concise identity block for the active character.
-        """
-        name = self.name.strip() or "Unknown"
-        profile = self.profile.strip()
-        sep = ", " if profile else "."
-        if profile:
-            profile = profile[0].lower() + profile[1:]
-
-        lines = [
-            f"You are {name}{sep}{profile}",
-            f"When asked for an introduction, refer to yourself as {name}.",
-        ]
         return "\n".join(lines)
 
 
@@ -120,29 +128,6 @@ class PersonaCard:
             lines.extend(["", "Voice:", self.voice.strip()])
         return "\n".join(lines)
 
-    def behavior_cues(self) -> tuple[str, ...]:
-        """Return concise CEVOICE-driven behavior cues for the runtime prompt.
-
-        Returns:
-            tuple[str, ...]: Prompt lines derived from CEVOICE persona metadata.
-        """
-        cues: list[str] = []
-        if self.speaking_style.strip():
-            cues.append(self.speaking_style.strip())
-
-        rules: list[str] = []
-        for item in self.boundaries:
-            stripped = item.strip()
-            if stripped:
-                rules.append(stripped)
-        for item in self.prompt_rules:
-            stripped = item.strip()
-            if stripped and stripped not in rules:
-                rules.append(stripped)
-        if rules:
-            cues.append("\n- ".join(rules[:2]))
-        return tuple(cues)
-
 
 @dataclass(frozen=True)
 class RetrievedMemoryBundle:
@@ -160,45 +145,47 @@ class RetrievedMemoryBundle:
 
 
 @dataclass(frozen=True)
-class ShortTermHistory:
-    """Current-run chat history for the active conversation."""
+class PersonaSourceMaterial:
+    """Whitelisted character source material used to assemble the system prompt."""
 
-    turns: tuple[tuple[str, str], ...] = ()
-    session_summary: str = ""
+    identity: str = ""
+    soul: str = ""
+    personality: str = ""
+    speech_style: str = ""
+    boundaries: str = ""
+    examples: str = ""
 
-    def render(self, message: str) -> str:
-        """Return the short-term memory block.
-
-        Args:
-            message: The user's recent message.
+    def profile_section(self) -> str:
+        """Return the profile section assembled from static identity files.
 
         Returns:
-            str: The formatted short-term memory block.
+            str: The rendered profile section.
         """
-        lines: list[str] = []
-        if self.session_summary.strip():
-            lines.extend(["Summary:", self.session_summary.strip(), ""])
-
-        lines.extend(f"{role}: {content}" for role, content in self.turns)
-
-        if self.turns:
-            last_assistant = next(
-                (
-                    content
-                    for role, content in reversed(self.turns)
-                    if role == "assistant"
-                ),
-                None,
+        return "\n\n".join(
+            section
+            for section in (
+                _render_markdown_subsection("Identity", self.identity),
+                _render_markdown_subsection("Soul", self.soul),
             )
+            if section
+        )
 
-            if last_assistant:
-                lines.append(
-                    "[The assistant has already acknowledged the complaint about repetition. "
-                    "Do not acknowledge it again. Move the conversation forward.]"
-                )
+    def behavior_section(self) -> str:
+        """Return the behavior section assembled from persona behavior files.
 
-        lines.append(f"user: {message}")
-        return _render_lines(lines)
+        Returns:
+            str: The rendered behavior section.
+        """
+        return "\n\n".join(
+            section
+            for section in (
+                _render_markdown_subsection("Personality", self.personality),
+                _render_markdown_subsection("Speech Style", self.speech_style),
+                _render_markdown_subsection("Boundaries", self.boundaries),
+                _render_markdown_subsection("Examples", self.examples),
+            )
+            if section
+        )
 
 
 @dataclass(frozen=True)
@@ -207,12 +194,11 @@ class PersonaContext:
 
     character_profile: CharacterProfile
     persona_card: PersonaCard
+    persona_source_material: PersonaSourceMaterial
     mood_or_state: str
     retrieved_long_term_memory: RetrievedMemoryBundle = field(
         default_factory=RetrievedMemoryBundle
     )
-    current_run_chat_history: ShortTermHistory = field(default_factory=ShortTermHistory)
-    user_message: str = ""
 
 
 class PersonaPromptBuilder:
@@ -237,39 +223,47 @@ class PersonaPromptBuilder:
         Returns:
             str: The formatted RAG prompt for persona.
         """
-        name = context.character_profile.name.strip() or "Unknown"
         behavior_lines = [
-            f"- Respond only as {name}.",
-            "- Continue directly from <history>.",
-            "- Push the conversation forward instead of returning to earlier turns.",
-            "- Treat facts in <memories> as true context when they are relevant.",
+            "- Respond only as the active character.",
+            "- Use the native chat history in this request as the recent conversation context.",
+            "- Treat facts in <memory> as true background context when they are relevant.",
             (
-                "- Keep items from <memories> silent unless the current user "
-                "message clearly asks for them or they are necessary for a natural reply."
+                "- Keep facts from <memory> silent unless the current user message "
+                "clearly asks for them or they are necessary for a natural reply."
             ),
-            "- Do not greet the user. Do not ask what they need. Just respond.",
-            "- Do not repeat anything already said in <history>.",
-            "- Do not bring up older messages, stored facts, or resolved topics on your own.",
-            "- Keep the reply natural, short, and emotionally consistent with <mood>.",
-            "- Stay under 3 sentences, unless the user asked for detail.",
-            "- Use only a single paragraph, unless formatting is necessary.",
+            "- Match the emotional direction in <mood> naturally.",
+            "- Do not greet the user or restart the conversation.",
+            "- Do not repeat earlier turns unless the user asks for a recap.",
+            "- Push the conversation forward naturally.",
+            "- Stay under 3 sentences unless the user asked for detail.",
+            "- Use a single paragraph unless formatting is necessary.",
+            "- Never output emojis; use plain text suitable for speech synthesis.",
+            "- Prefer reacting to the current conversation over reinforcing the character's identity.",
         ]
-        behavior_lines.extend(
-            f"- {cue}." if not cue.endswith((".", "!", "?")) else f"- {cue}"
-            for cue in context.persona_card.behavior_cues()
+        character_name = (
+            context.character_profile.name.strip() or "the active character"
         )
+        reference_resolution_lines = [
+            f"- The active character is {character_name}.",
+            (
+                "- When the user refers to the active character by name, nickname, "
+                "or matching third-person pronouns (for example: he, him, his, "
+                "she, her, hers, they, them, their), while discussing the character, "
+                "voice, persona, or conversation, interpret those references as "
+                "referring to the active character unless another person is clearly "
+                "identified."
+            ),
+            '- The user\'s first-person pronouns ("I", "me", "my") always refer to the user.',
+            "- Do not reinterpret statements about the active character as statements about the user.",
+        ]
         sections = [
             _render_optional_section(
                 "profile",
-                context.character_profile.render_identity_summary(),
+                context.persona_source_material.profile_section(),
             ),
             _render_optional_section(
-                "memories",
+                "memory",
                 context.retrieved_long_term_memory.render(),
-            ),
-            _render_optional_section(
-                "history",
-                context.current_run_chat_history.render(context.user_message.strip()),
             ),
             _render_optional_section(
                 "mood",
@@ -277,9 +271,22 @@ class PersonaPromptBuilder:
             ),
             _render_optional_section(
                 "behavior",
-                _render_lines(behavior_lines),
+                "\n\n".join(
+                    section
+                    for section in (
+                        context.persona_source_material.behavior_section(),
+                        _render_markdown_subsection(
+                            "Runtime Guidance",
+                            _render_lines(behavior_lines),
+                        ),
+                        _render_markdown_subsection(
+                            "Reference Resolution",
+                            _render_lines(reference_resolution_lines),
+                        ),
+                    )
+                    if section
+                ),
             ),
-            f"{name}:",
         ]
 
         prompt = "\n\n".join(section for section in sections if section)

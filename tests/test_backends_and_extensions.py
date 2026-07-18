@@ -1,36 +1,36 @@
 # SPDX-License-Identifier: MIT
 """Tests for backend resolution and extension infrastructure."""
 
-import re
 import sys
+import re
 import tempfile
 import textwrap
 import importlib
 import threading
 import contextlib
 from pathlib import Path
-from typing import Optional, cast
 from types import ModuleType
 from types import SimpleNamespace
 from unittest import mock, TestCase
 from collections.abc import Iterator, Generator
+from typing import Optional, Union, cast
 
 import numpy as np
 import numpy.typing as npt
-import soundfile as sf
 import torch
+import soundfile as sf
 
-from celune.utils import discard
 from celune.celune import Celune
-from celune.backends.tts import resolve_backend
 from celune.i18n import string
+from celune.utils import discard
 from celune.typing.backends import BackendModel
+from celune.backends.tts import resolve_backend
 from celune.backends.vc import resolve_vc_backend
-from celune.backends.vc.passthrough import CelunePassthroughVCBackend
 from celune.backends.vc.seedvc import CeluneSeedVCBackend
 from celune.extensions.manager import CeluneExtensionManager
-from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.dataclasses.pipeline import VoiceConversionRequest
+from celune.backends.vc.passthrough import CelunePassthroughVCBackend
+from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.exceptions import (
     ExtensionAlreadyRegisteredError,
     InvalidExtensionError,
@@ -220,7 +220,7 @@ class BackendTests(TestCase):
     def test_seedvc_backend_converts_audio_with_cached_wrapper(self) -> None:
         """Verify Seed-VC wraps converted audio into Celune's VC output contract."""
         backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
-        captured: dict[str, object] = {}
+        captured: dict[str, Union[str, int, float, bool]] = {}
 
         class FakeWrapper:
             """Minimal Seed-VC wrapper stand-in for one backend test."""
@@ -281,7 +281,7 @@ class BackendTests(TestCase):
             log=lambda _msg, _severity="info": None,
             pitch_shift=-6,
         )
-        captured: dict[str, object] = {}
+        captured: dict[str, Union[str, int, float, bool]] = {}
 
         class FakeWrapper:
             """Minimal Seed-VC wrapper stand-in for request override coverage."""
@@ -332,7 +332,7 @@ class BackendTests(TestCase):
             log=lambda _msg, _severity="info": None,
             f0_condition=False,
         )
-        captured: dict[str, object] = {}
+        captured: dict[str, Union[str, int, float, bool]] = {}
 
         class FakeWrapper:
             """Minimal Seed-VC wrapper stand-in for f0 override coverage."""

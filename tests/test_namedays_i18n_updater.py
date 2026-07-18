@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT
 """Tests for lightweight data, localization, and update helpers."""
 
-import datetime
 import json
-import subprocess
+import datetime
 import tempfile
-from unittest import mock, TestCase
+import subprocess
 from pathlib import Path
+from unittest import mock, TestCase
 
 from celune import i18n, namedays, updater
 

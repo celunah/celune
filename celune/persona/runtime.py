@@ -5,8 +5,8 @@ import os
 import gc
 import threading
 import contextlib
-from typing import Optional, Union, cast
 from collections.abc import Mapping, Sequence
+from typing import Optional, Union, cast
 
 import torch
 from transformers.tokenization_utils_base import BatchEncoding
@@ -20,13 +20,13 @@ from transformers import (
 
 from ..vram import resolve_vram_preset
 from ..utils import discard, normalize_special_characters
+from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
 from ..constants import (
     JSONSerializable,
     PERSONA_MODEL_ID,
     N_A_STR,
     remote_code_model_revision,
 )
-from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
 from ..typing.persona import (
     ChatMessagePayload,
     ChatTemplateRenderer,
@@ -178,7 +178,7 @@ class PersonaBackend:
                     trust_remote_code=True,
                     revision=revision,
                     device_map="auto",
-                    torch_dtype=torch.bfloat16,
+                    dtype=torch.bfloat16,
                 ),
             )
         else:

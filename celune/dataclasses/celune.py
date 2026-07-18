@@ -13,13 +13,13 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from ..config import Config
 from ..chroma import AudioRGBGlow
-from ..cevoice import CEVoicePersona
+from ..typing.backends import BackendModel
 from ..backends.tts import CeluneBackend
 from ..persona.impl import PersonaClient
+from ..cevoice import CEVoicePersona
 from ..backends.vc import CeluneVCBackend
-from ..typing.backends import BackendModel
-from ..dsp import StreamingPedalboardReverb
 from ..extensions.manager import CeluneExtensionManager
+from ..dsp import StreamingPedalboardReverb
 from ..constants import JSONSerializable, PipelineStates
 from .properties import ConstantPropertySpec, ForwardedPropertySpec
 from ..typing.celune import (
@@ -108,8 +108,12 @@ class CelunePipelineState:
     generation_thread: Optional[threading.Thread] = None
     api_thread: Optional[threading.Thread] = None
     persona_thread: Optional[threading.Thread] = None
+    wake_background_thread: Optional[threading.Thread] = None
+    wake_background_lock: threading.Lock = field(default_factory=threading.Lock)
+    persona_queue: queue.Queue = field(default_factory=queue.Queue)
     queue_lock: threading.Lock = field(default_factory=threading.Lock)
     utterance_force_stop: threading.Event = field(default_factory=threading.Event)
+    speech_generation: int = 0
     next_playback_source_id: int = 0
     playback_source_statuses: dict[int, str] = field(default_factory=dict)
     playback_source_meta: dict[int, dict[str, Union[str, float]]] = field(
@@ -136,6 +140,8 @@ class CeluneAudioState:
     speed: float = 1.0
     smart_buffer_generation_speed: Optional[float] = None
     smart_buffer_target_seconds: float = 0.0
+    total_generated_speech_seconds: float = 0.0
+    historical_generated_speech_seconds: float = 0.0
     reverb: StreamingPedalboardReverb = field(default_factory=StreamingPedalboardReverb)
     recently_saved: Optional[str] = None
     kept_sfx_audio: Optional[npt.NDArray[np.float32]] = None
@@ -230,12 +236,25 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("_generation_thread", "_pipeline_state", "generation_thread"),
     ForwardedPropertySpec("_api_thread", "_pipeline_state", "api_thread"),
     ForwardedPropertySpec("_persona_thread", "_pipeline_state", "persona_thread"),
+    ForwardedPropertySpec(
+        "_wake_background_thread",
+        "_pipeline_state",
+        "wake_background_thread",
+    ),
+    ForwardedPropertySpec(
+        "_wake_background_lock",
+        "_pipeline_state",
+        "wake_background_lock",
+        read_only=True,
+    ),
+    ForwardedPropertySpec("_persona_queue", "_pipeline_state", "persona_queue"),
     ForwardedPropertySpec("_queue_lock", "_pipeline_state", "queue_lock"),
     ForwardedPropertySpec(
         "_utterance_force_stop",
         "_pipeline_state",
         "utterance_force_stop",
     ),
+    ForwardedPropertySpec("_speech_generation", "_pipeline_state", "speech_generation"),
     ForwardedPropertySpec(
         "_next_playback_source_id",
         "_pipeline_state",
@@ -279,6 +298,16 @@ CELUNE_FORWARDED_PROPERTIES = (
         "smart_buffer_target_seconds",
         "_audio_state",
         "smart_buffer_target_seconds",
+    ),
+    ForwardedPropertySpec(
+        "total_generated_speech_seconds",
+        "_audio_state",
+        "total_generated_speech_seconds",
+    ),
+    ForwardedPropertySpec(
+        "historical_generated_speech_seconds",
+        "_audio_state",
+        "historical_generated_speech_seconds",
     ),
     ForwardedPropertySpec("reverb", "_audio_state", "reverb"),
     ForwardedPropertySpec("recently_saved", "_audio_state", "recently_saved"),

@@ -501,22 +501,17 @@ class UtilsTests(TestCase):
             utils.custom_assert(False, "invalid")  # type: ignore[arg-type]
             assert False
 
-        with (
-            mock.patch("celune.utils.langdetect.detect", return_value="en"),
-            mock.patch(
-                "celune.utils.langdetect.detect_langs",
-                return_value=[mock.Mock(lang="en", prob=0.9)],
-            ),
-        ):
-            result = utils.detect_language("Hello", ["en"])
+        result = utils.detect_language("Hello, how are you today?", ["en"])
         self.assertEqual(result["language"], "en")
         self.assertEqual(result["supported"], True)
 
-        with mock.patch(
-            "celune.utils.langdetect.detect",
-            side_effect=utils.langdetect.LangDetectException(0, "missing"),
-        ):
-            result = utils.detect_language("", ["en"])
+        result = utils.detect_language(
+            "Bonjour, comment allez-vous aujourd'hui?", ["en"]
+        )
+        self.assertEqual(result["language"], "fr")
+        self.assertEqual(result["supported"], False)
+
+        result = utils.detect_language("", ["en"])
         self.assertEqual(result["probabilities"], {"en": 1.0})
 
         with (

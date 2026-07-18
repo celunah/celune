@@ -3,9 +3,9 @@
 
 import tempfile
 from pathlib import Path
+from collections.abc import Sequence
 from unittest import TestCase, mock
 from typing import Union, Optional
-from collections.abc import Sequence
 
 import numpy as np
 
@@ -75,6 +75,16 @@ class PersonaMemoryTests(TestCase):
             self.assertEqual(saved[0].content, "The user's favorite color is blue")
             self.assertEqual(saved[0].explicit, False)
             self.assertEqual(saved[0].importance, 3)
+
+    def test_memory_records_use_persona_character_directory_by_default(self) -> None:
+        """Verify memory records use the character-specific app-data directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PersonaMemoryStore(storage_dir=temp_dir)
+            store.remember("Celune", "my test word is moonlight", explicit=True)
+
+            self.assertTrue(
+                (Path(temp_dir) / "celune" / "memory" / "records.json").is_file()
+            )
 
     def test_automatic_memory_extracts_project_context(self) -> None:
         """Verify recurring project information can be stored automatically."""

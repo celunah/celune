@@ -2,79 +2,48 @@
 """Celune's backend layer."""
 
 import os
-import gc
 import sys
+import gc
 import time
 import queue
 import shutil
+import asyncio
 import threading
 import contextlib
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Callable, Protocol, Union, cast
 
-import torch
 import numpy as np
 import numpy.typing as npt
+import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
+from .backends.tts.qwen3 import Qwen3
 from . import __version__
-from .dataclasses.celune import (
-    CELUNE_CONSTANT_PROPERTIES,
-    CELUNE_FORWARDED_PROPERTIES,
-    CeluneAudioState,
-    CeluneBackendState,
-    CeluneCallbackState,
-    CeluneModelState,
-    CelunePipelineState,
-    CeluneRuntimeState,
-    CeluneVoiceState,
-)
+from .chroma import AudioRGBGlow
+from .typing.backends import BackendModel
+from .extensions.base import CeluneContext
+from .extensions.events import EventDispatcher
+from .typing.pipeline import SpeechStreamQueue
+from .vc import clamp_vc_pitch_shift
+from .extensions.manager import CeluneExtensionManager
+from .typing.events import EventName, EventPayload
+from .paths import project_root, temp_data_dir
 from .dataclasses.pipeline import AudioInputRequest, AudioOutput
+from .config import Config, config_bool, config_value
+from .runtime import log_runtime_banner, validate_runtime
+from .i18n import get_system_locale, set_locale, string
+from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
+from .modeling import normalizer_device, load_normalizer_components
+from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID
+from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
 from .dataclasses.properties import (
     bind_constant_properties,
     bind_forwarded_properties,
 )
-from .dataclasses.events import (
-    CharacterChangedEvent,
-    CharacterLoadedEvent,
-    CharacterUnloadedEvent,
-    ReadyEvent,
-    ShutdownEvent,
-    StateChangedEvent,
-    VoiceChangedEvent,
-)
-from .chroma import AudioRGBGlow
-from .backends.tts.qwen3 import Qwen3
-from .extensions.base import CeluneContext
-from .extensions.events import EventDispatcher
-from .extensions.manager import CeluneExtensionManager
-from .config import Config, config_bool, config_value
-from .paths import project_root, app_data_dir
-from .runtime import log_runtime_banner, validate_runtime
-from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
-from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
-from .vc_runtime import clamp_vc_pitch_shift
-from .exceptions import NotAvailableError, WarmupError, BackendError
-from .modeling import normalizer_device, load_normalizer_components
-from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID
-from .i18n import get_system_locale, set_locale, string
-from .typing.celune import (
-    CoreBackendSpec,
-    CeluneStateAccessors,
-    Generative,
-    InputStateCallback,
-    MessageCallback,
-    NormalizerTokenizer,
-    ProgressCallback,
-    ReleasableObject,
-    TTSBackendSpec,
-    VCBackendSpec,
-    VoiceLockStateCallback,
-)
-from .typing.backends import BackendModel
-from .typing.events import EventName, EventPayload
+from .exceptions import NotAvailableError, WarmupError, BackendError, RuntimeCheckError
 from .utils import format_number, format_error, discard, is_port_usable, custom_assert
 from .vram import (
     QWEN3_0_6B_MODEL,
@@ -92,12 +61,46 @@ from .persona.impl import (
     persona_model_id,
     persona_quantization,
 )
+from .dataclasses.events import (
+    CharacterChangedEvent,
+    CharacterLoadedEvent,
+    CharacterUnloadedEvent,
+    ReadyEvent,
+    ShutdownEvent,
+    StateChangedEvent,
+    VoiceChangedEvent,
+)
+from .dataclasses.celune import (
+    CELUNE_CONSTANT_PROPERTIES,
+    CELUNE_FORWARDED_PROPERTIES,
+    CeluneAudioState,
+    CeluneBackendState,
+    CeluneCallbackState,
+    CeluneModelState,
+    CelunePipelineState,
+    CeluneRuntimeState,
+    CeluneVoiceState,
+)
+from .typing.celune import (
+    CoreBackendSpec,
+    CeluneStateAccessors,
+    Generative,
+    InputStateCallback,
+    MessageCallback,
+    NormalizerTokenizer,
+    ProgressCallback,
+    ReleasableObject,
+    TTSBackendSpec,
+    VCBackendSpec,
+    VoiceLockStateCallback,
+)
 from .cevoice import (
     CEVoicePersona,
     active_bundle_path,
     announce_default_bundle,
     bundle_matches_default_pack_checksum,
     bundle_character_name,
+    close_default_loader,
     default_loader,
     is_protected_temp_path,
     persona_metadata_from_manifest,
@@ -110,20 +113,22 @@ from .pipeline import (
     close as close_pipeline,
     close_stream,
     force_stop_speech as force_stop_pipeline,
-    generation_worker,
+    generation_worker_job,
     queue_sfx_audio,
-    playback_worker,
+    playback_worker_job,
     play as play_pipeline,
     handle_audio_input,
     convert_audio_input,
     queue_speech,
+    queue_speech_async,
     release_pipeline,
+    saved_output_speech_seconds,
     say as say_pipeline,
+    say_async as say_pipeline_async,
     think as think_pipeline,
     split_text,
     play_signal,
 )
-from .typing.pipeline import SpeechStreamQueue
 
 
 class _BundleWithPath(Protocol):
@@ -162,6 +167,24 @@ def _config_int(value: JSONSerializable, default: int) -> int:
     if value is None:
         return default
     raise TypeError("config value cannot be converted to int")
+
+
+def _configured_pipeline_queue_size(config: Config) -> int:
+    """Return the bounded audio-queue size configured for pipeline playback."""
+    value = config.get("pipeline_cpu", {})
+    if not isinstance(value, dict):
+        return 8
+    enabled = value.get("enabled", True)
+    if isinstance(enabled, bool) and not enabled:
+        return 0
+
+    queue_size = value.get("max_queue_items", 8)
+    if isinstance(queue_size, bool):
+        return 8
+    try:
+        return min(128, max(1, _config_int(queue_size, 8)))
+    except (TypeError, ValueError, OverflowError):
+        return 8
 
 
 def _configured_vc_pitch_shift(config: Config) -> int:
@@ -277,16 +300,6 @@ def _release_loaded_object(value: ReleasableObject) -> None:
             unload()
 
 
-_EPHEMERAL_TEMP_FILE_NAMES = frozenset(
-    {
-        "rag_prompt.txt",
-        "temporary_audio.wav",
-    }
-)
-_EPHEMERAL_TEMP_FILE_PREFIXES = ("temporary_audio.",)
-_EPHEMERAL_TEMP_DIR_PREFIXES = ("celune-cevoice-",)
-
-
 class Celune(CeluneStateAccessors):
     """The character engine for Celune."""
 
@@ -362,9 +375,14 @@ class Celune(CeluneStateAccessors):
         self._backend_state = CeluneBackendState(config=config)
         self._model_state = CeluneModelState()
         self._voice_state = CeluneVoiceState()
-        self._pipeline_state = CelunePipelineState()
+        self._pipeline_state = CelunePipelineState(
+            audio_queue=queue.Queue(maxsize=_configured_pipeline_queue_size(config))
+        )
         self._audio_state = CeluneAudioState()
         self._runtime_state = CeluneRuntimeState()
+        self._async_runtime_lock = threading.Lock()
+        self._voice_reload_guard = threading.Lock()
+        self._voice_reload_active = False
         self._pipeline_state.model_ready.set()
         self._pipeline_state.playback_done.set()
 
@@ -625,26 +643,13 @@ class Celune(CeluneStateAccessors):
         """Dispatch one typed event through Celune's internal event bus."""
         self._event_dispatcher.emit(event_name, event)
 
-    @staticmethod
-    def _is_ephemeral_temp_path(path: Path) -> bool:
-        """Return whether one temp path is safe for residual cleanup."""
-        if path.is_dir():
-            return path.name.startswith(_EPHEMERAL_TEMP_DIR_PREFIXES)
-
-        if path.name in _EPHEMERAL_TEMP_FILE_NAMES:
-            return True
-
-        return path.name.startswith(_EPHEMERAL_TEMP_FILE_PREFIXES)
-
     def _cleanup_residual_temp_data(self, temp_dir: Path) -> None:
-        """Delete only Celune's disposable residual temp artifacts."""
+        """Delete residual Celune temp artifacts that are not currently protected."""
         if not temp_dir.is_dir():
             return
 
         disposable_paths = [
-            path
-            for path in temp_dir.iterdir()
-            if self._is_ephemeral_temp_path(path) and not is_protected_temp_path(path)
+            path for path in temp_dir.iterdir() if not is_protected_temp_path(path)
         ]
         trailing_files = len(disposable_paths)
 
@@ -1503,21 +1508,22 @@ class Celune(CeluneStateAccessors):
         self.model_ready.clear()
         self.progress_callback(0, 1)
 
-        with self._model_lock:
-            if unload["persona"]:
-                self._unload_persona_state()
+        with self._wake_background_lock:
+            with self._model_lock:
+                if unload["persona"]:
+                    self._unload_persona_state()
 
-            if unload["tts"]:
-                self.unload_runtime_state(
-                    include_normalizer=unload["normalizer"],
-                    include_vc=unload["vc"],
-                )
-                self.model_name = ""
-            elif unload["normalizer"]:
-                self.unload_normalizer_state()
+                if unload["tts"]:
+                    self.unload_runtime_state(
+                        include_normalizer=unload["normalizer"],
+                        include_vc=unload["vc"],
+                    )
+                    self.model_name = ""
+                elif unload["normalizer"]:
+                    self.unload_normalizer_state()
 
-            if unload["vc"] and not unload["tts"] and self.vc_backend is not None:
-                self.vc_backend.unload_model()
+                if unload["vc"] and not unload["tts"] and self.vc_backend is not None:
+                    self.vc_backend.unload_model()
 
         self.model_ready.set()
         return True
@@ -1571,33 +1577,13 @@ class Celune(CeluneStateAccessors):
                             if not self._warmup():
                                 self._raise_warmup_error("warmup failed after sleep")
 
+                    is_voice_conversion = self._is_voice_conversion_mode()
                     if (
-                        unload["vc"]
-                        and not self._is_voice_conversion_mode()
-                        and self.vc_backend is not None
+                        not is_voice_conversion
+                        and unload["persona"]
+                        and persona_enabled(self.config)
                     ):
-                        self.vc_backend.preload_models()
-
-                    if unload["normalizer"] and self.use_normalization:
-                        self.load_normalizer()
-
-                    if unload["persona"] and persona_enabled(self.config):
                         self.vision = self._persona_conn()
-                        if self.vision is not None:
-                            try:
-                                self.vision.load(
-                                    persona_model_id(self.config),
-                                    persona_quantization(self.config),
-                                )
-                            except Exception as e:
-                                self.log(
-                                    string("celune.persona_not_initialized"),
-                                    "warning",
-                                )
-                                self.log(string("celune.speech_only_mode"), "warning")
-                                self.log(format_error(e, self.dev), "warning")
-                                self.vision.close()
-                                self.vision = None
 
                     self.loaded = True
                     self.sleeping = False
@@ -1608,6 +1594,8 @@ class Celune(CeluneStateAccessors):
                 self.status_callback(string("status.idle"))
                 self.change_input_state_callback(locked=False)
                 self.change_voice_lock_state_callback(locked=len(self.voices) < 2)
+                if not is_voice_conversion:
+                    self._start_wake_background_jobs(unload)
                 return True
             except Exception as e:
                 self.fatal()
@@ -1623,6 +1611,66 @@ class Celune(CeluneStateAccessors):
                 return False
             finally:
                 self.model_ready.set()
+
+    def _start_wake_background_jobs(self, unload: dict[str, bool]) -> None:
+        """Start optional wake-up restoration after TTS becomes ready."""
+        existing = self._wake_background_thread
+        if existing is not None and existing.is_alive():
+            return
+
+        thread = threading.Thread(
+            target=self._run_wake_background_jobs,
+            args=(unload,),
+            daemon=True,
+        )
+        self._wake_background_thread = thread
+        thread.start()
+
+    def _run_wake_background_jobs(self, unload: dict[str, bool]) -> None:
+        """Restore optional wake-up resources without delaying TTS readiness."""
+        try:
+            with self._wake_background_lock:
+                if self.exit_requested or self.sleeping:
+                    return
+
+                if (
+                    unload["vc"]
+                    and self.vc_backend is not None
+                    and not self._is_voice_conversion_mode()
+                ):
+                    with self._model_lock:
+                        if self.exit_requested or self.sleeping:
+                            return
+                        self.vc_backend.preload_models()
+
+                if unload["normalizer"] and self.use_normalization:
+                    self.load_normalizer()
+
+                if not unload["persona"] or not persona_enabled(self.config):
+                    return
+
+                vision = self.vision
+                if vision is None:
+                    return
+
+                try:
+                    vision.load(
+                        persona_model_id(self.config),
+                        persona_quantization(self.config),
+                    )
+                except Exception as e:
+                    self.log(string("celune.persona_not_initialized"), "warning")
+                    self.log(string("celune.speech_only_mode"), "warning")
+                    self.log(format_error(e, self.dev), "warning")
+                    with self._model_lock:
+                        if self.vision is vision:
+                            self.vision = None
+                    vision.close()
+        except Exception as e:
+            self.log(format_error(e, self.dev), "error")
+        finally:
+            if self._wake_background_thread is threading.current_thread():
+                self._wake_background_thread = None
 
     def set_voices(self, voices: tuple[str, ...]) -> None:
         """Configure Celune's voice information.
@@ -1735,25 +1783,36 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when the reload thread was started, otherwise ``False``.
         """
-        if name not in self.voices:
-            # this voice was not found in the current CEVOICE/CECHAR pack
-            self.log(string("celune.unknown_voice", voice=name), "warning")
+        if not self._prepare_voice_change(name):
             return False
-
-        self.change_input_state_callback(locked=True)
-
-        if not self._model_ready.is_set():
-            self.log(string("celune.waiting_for_models"))
-            self._model_ready.wait(timeout=5)
-
-        self._model_ready.clear()
-        self.loaded = False
 
         threading.Thread(
             target=self.change_voice,
             args=(name,),
             daemon=True,
         ).start()
+        return True
+
+    def _prepare_voice_change(self, name: str) -> bool:
+        """Wait for playback to drain before preparing one voice switch."""
+        if name not in self.voices:
+            # this voice was not found in the current CEVOICE/CECHAR pack
+            self.log(string("celune.unknown_voice", voice=name), "warning")
+            return False
+
+        self.change_input_state_callback(locked=True)
+        previous_state = self.cur_state
+        self.cur_state = "reloading"
+
+        if not self._model_ready.is_set():
+            self.log(string("celune.waiting_for_models"))
+        if not self._wait_until_idle():
+            self.cur_state = previous_state
+            self.change_input_state_callback(locked=False)
+            return False
+
+        self._model_ready.clear()
+        self.loaded = False
         return True
 
     def set_voice_and_wait(self, name: str, timeout: float = 30.0) -> bool:
@@ -1772,6 +1831,60 @@ class Celune(CeluneStateAccessors):
         if not self._model_ready.wait(timeout=timeout):
             self.log(string("celune.voice_switch_timeout"), "warning")
             return False
+        return self._voice_switch_succeeded(name)
+
+    async def set_voice_async(self, name: str, timeout: float = 30.0) -> bool:
+        """Change Celune's voice without blocking the caller's event loop.
+
+        Args:
+            name: Voice name to load.
+            timeout: Maximum time to wait for the reload.
+
+        Returns:
+            ``True`` when the voice reload completed successfully.
+
+        Raises:
+            Exception: If the asynchronous reload worker raises unexpectedly.
+        """
+        await asyncio.to_thread(self._async_runtime_lock.acquire)
+        try:
+            with self._voice_reload_guard:
+                if self._voice_reload_active:
+                    self.log(string("celune.reload_already_in_progress"), "warning")
+                    return False
+                self._voice_reload_active = True
+            if not await asyncio.to_thread(self._prepare_voice_change, name):
+                self._clear_voice_reload_guard()
+                return False
+            worker = asyncio.create_task(
+                asyncio.to_thread(self._run_voice_reload, name)
+            )
+            try:
+                await asyncio.wait_for(asyncio.shield(worker), timeout=timeout)
+            except TimeoutError:
+                self.log(string("celune.voice_switch_timeout"), "warning")
+                return False
+        except BaseException:
+            self._clear_voice_reload_guard()
+            raise
+        finally:
+            self._async_runtime_lock.release()
+        return self._voice_switch_succeeded(name)
+
+    def _run_voice_reload(self, name: str) -> None:
+        """Run a voice reload and release its guard after the worker exits."""
+        try:
+            self.change_voice(name)
+        finally:
+            self._clear_voice_reload_guard()
+
+    def _clear_voice_reload_guard(self) -> None:
+        """Clear the active voice reload marker."""
+        with self._voice_reload_guard:
+            self._voice_reload_active = False
+
+    def _voice_switch_succeeded(self, name: str) -> bool:
+        """Return whether the requested voice is now the active loaded voice."""
         return self.loaded and self.current_voice == name
 
     def set_backend(
@@ -1786,6 +1899,21 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when the reload worker was started.
         """
+        if not self._prepare_backend_reload(backend_spec):
+            return False
+        preferred_voice = self.current_voice
+        threading.Thread(
+            target=self._hot_reload_backend,
+            args=(backend_spec, preferred_voice),
+            daemon=True,
+        ).start()
+        return True
+
+    def _prepare_backend_reload(
+        self,
+        backend_spec: CoreBackendSpec,
+    ) -> bool:
+        """Prepare runtime state for one backend reload before loading begins."""
         if self._reload_pending or self.cur_state == "reloading":
             self.log(string("celune.reload_already_in_progress"), "warning")
             return False
@@ -1809,16 +1937,10 @@ class Celune(CeluneStateAccessors):
 
         self.change_input_state_callback(locked=True)
         self.change_voice_lock_state_callback(locked=True)
-
+        self.force_stop_speech()
         self._model_ready.clear()
         self._reload_pending = True
         self._try_play_signal("working")
-        preferred_voice = self.current_voice
-        threading.Thread(
-            target=self._hot_reload_backend,
-            args=(backend_spec, preferred_voice),
-            daemon=True,
-        ).start()
         return True
 
     def set_backend_and_wait(
@@ -1842,7 +1964,45 @@ class Celune(CeluneStateAccessors):
         if not self._model_ready.wait(timeout=timeout):
             self.log(string("celune.backend_switch_timeout"), "warning")
             return False
+        return self._backend_reload_succeeded(backend_spec)
 
+    async def set_backend_async(
+        self,
+        backend_spec: CoreBackendSpec,
+        timeout: Optional[float] = None,
+    ) -> bool:
+        """Request a hot backend reload without blocking the caller's event loop.
+
+        Args:
+            backend_spec: Backend specification to load.
+            timeout: Maximum time to wait for the reload.
+
+        Returns:
+            ``True`` when the backend reload completed successfully.
+        """
+        await asyncio.to_thread(self._async_runtime_lock.acquire)
+        try:
+            if not await asyncio.to_thread(self._prepare_backend_reload, backend_spec):
+                return False
+            preferred_voice = self.current_voice
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self._hot_reload_backend,
+                        backend_spec,
+                        preferred_voice,
+                    ),
+                    timeout=timeout,
+                )
+            except TimeoutError:
+                self.log(string("celune.backend_switch_timeout"), "warning")
+                return False
+        finally:
+            self._async_runtime_lock.release()
+        return self._backend_reload_succeeded(backend_spec)
+
+    def _backend_reload_succeeded(self, backend_spec: CoreBackendSpec) -> bool:
+        """Return whether the requested backend is now the active loaded runtime."""
         target_name = (
             backend_spec.name
             if isinstance(backend_spec, (CeluneBackend, CeluneVCBackend))
@@ -1862,6 +2022,17 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when the reload worker was started.
         """
+        if not self._prepare_cevoice_reload(bundle):
+            return False
+        threading.Thread(
+            target=self._hot_reload_cevoice,
+            args=(bundle, None),
+            daemon=True,
+        ).start()
+        return True
+
+    def _prepare_cevoice_reload(self, bundle: Optional[Union[str, Path]]) -> bool:
+        """Prepare runtime state for one CEVOICE reload before loading begins."""
         if self._reload_pending or self.cur_state == "reloading":
             self.log(string("celune.reload_already_in_progress"), "warning")
             return False
@@ -1876,14 +2047,9 @@ class Celune(CeluneStateAccessors):
 
         self.change_input_state_callback(locked=True)
         self.change_voice_lock_state_callback(locked=True)
-
+        self.force_stop_speech()
         self._model_ready.clear()
         self._reload_pending = True
-        threading.Thread(
-            target=self._hot_reload_cevoice,
-            args=(bundle, None),
-            daemon=True,
-        ).start()
         return True
 
     def set_cevoice_and_wait(
@@ -1907,6 +2073,40 @@ class Celune(CeluneStateAccessors):
         if not self._model_ready.wait(timeout=timeout):
             self.log(string("celune.character_switch_timeout"), "warning")
             return False
+        return self._cevoice_reload_succeeded(bundle)
+
+    async def set_cevoice_async(
+        self,
+        bundle: Optional[Union[str, Path]],
+        timeout: Optional[float] = None,
+    ) -> bool:
+        """Request a hot CEVOICE reload without blocking the caller's event loop.
+
+        Args:
+            bundle: CEVOICE bundle path or ``None`` for the default bundle.
+            timeout: Maximum time to wait for the reload.
+
+        Returns:
+            ``True`` when the CEVOICE reload completed successfully.
+        """
+        await asyncio.to_thread(self._async_runtime_lock.acquire)
+        try:
+            if not await asyncio.to_thread(self._prepare_cevoice_reload, bundle):
+                return False
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(self._hot_reload_cevoice, bundle, None),
+                    timeout=timeout,
+                )
+            except TimeoutError:
+                self.log(string("celune.character_switch_timeout"), "warning")
+                return False
+        finally:
+            self._async_runtime_lock.release()
+        return self._cevoice_reload_succeeded(bundle)
+
+    def _cevoice_reload_succeeded(self, bundle: Optional[Union[str, Path]]) -> bool:
+        """Return whether the requested CEVOICE bundle is now the active loaded pack."""
         return self.loaded and active_bundle_path() == resolve_bundle_path(bundle)
 
     @contextlib.contextmanager
@@ -1998,6 +2198,34 @@ class Celune(CeluneStateAccessors):
             return (not self.locked) and self.loaded
 
     wait_until_idle = _wait_until_idle
+
+    async def wait_until_idle_async(self, timeout: float = 30.0) -> bool:
+        """Wait until model reload and playback completion without blocking the event loop.
+
+        Args:
+            timeout: Maximum time to wait for model and playback readiness.
+
+        Returns:
+            ``True`` when Celune becomes ready before the timeout.
+        """
+        ok = await asyncio.to_thread(self._model_ready.wait, timeout)
+        if not ok:
+            self.log(string("celune.ready_wait_timeout"), "warning")
+            self.log(string("celune.ready_wait_reason"), "warning")
+            self.log(string("celune.ready_wait_not_fatal"), "warning")
+            return False
+
+        if not self.loaded:
+            self.log(string("celune.model_unloaded_while_waiting"), "warning")
+            return False
+
+        ok = await asyncio.to_thread(self._playback_done.wait, timeout)
+        if not ok:
+            self.log(string("celune.playback_idle_timeout"), "warning")
+            return False
+
+        with self._say_lock:
+            return (not self.locked) and self.loaded
 
     def setup_extensions(self) -> None:
         """Configure Celune's extension manager."""
@@ -2181,24 +2409,70 @@ class Celune(CeluneStateAccessors):
         """
         return force_stop_pipeline(self)
 
-    def load(self) -> bool:
+    async def force_stop_speech_async(self) -> bool:
+        """Forcefully stop Celune from speaking without blocking an async caller.
+
+        Returns:
+            ``True`` when an active utterance was interrupted.
+        """
+        return await asyncio.to_thread(force_stop_pipeline, self)
+
+    async def enter_sleep_mode_async(self) -> bool:
+        """Put Celune to sleep without blocking the caller's event loop.
+
+        Returns:
+            ``True`` when Celune enters sleep mode successfully.
+        """
+        await asyncio.to_thread(self._async_runtime_lock.acquire)
+        try:
+            return await asyncio.to_thread(self.enter_sleep_mode)
+        finally:
+            self._async_runtime_lock.release()
+
+    async def wake_from_sleep_async(self) -> bool:
+        """Wake Celune without blocking the caller's event loop.
+
+        Returns:
+            ``True`` when Celune wakes successfully.
+        """
+        await asyncio.to_thread(self._async_runtime_lock.acquire)
+        try:
+            return await asyncio.to_thread(self.wake_from_sleep)
+        finally:
+            self._async_runtime_lock.release()
+
+    def load(
+        self, raise_on_error: bool = False, skip_runtime_check: bool = False
+    ) -> bool:
         """Load and initialize Celune.
+
+        Args:
+            raise_on_error: Whether Celune should raise for failures to load or signal fatal states.
+            skip_runtime_check: Whether Celune should skip runtime checks during startup.
 
         Returns:
             bool: ``True`` when initialization completed successfully, otherwise ``False``.
+
+        Raises:
+            NotAvailableError: If no usable voice or backend is available.
+            Exception: If an unexpected loading failure occurs and `raise_on_error` is enabled.
+            RuntimeCheckError: If the runtime environment is unsupported.
+            BackendError: If backend initialization fails.
         """
         log_runtime_banner(self.log, self.vc_backend or self.backend)
+        self.historical_generated_speech_seconds = saved_output_speech_seconds()
 
         if self.backend.is_fake and "pytest" not in sys.modules:
             self.log(string("celune.test_mode_active", app_name=APP_NAME))
             return True
 
-        self._cleanup_residual_temp_data(app_data_dir() / "temp")
         if not self.load_available_voices():
             self.fatal()
             self.log(string("celune.no_voices_loaded"), "error")
             self.error_callback(string("celune.no_voices_loaded_short"))
             self.progress_callback(0, 1)
+            if raise_on_error:
+                raise NotAvailableError("no voices are available")
             return False
 
         if self.backend.uses_voice_bundles:
@@ -2233,6 +2507,10 @@ class Celune(CeluneStateAccessors):
                 self.log(string("celune.no_vc_backend"), "error")
                 self.error_callback(string("celune.no_valid_vc_backend"))
                 self.progress_callback(0, 1)
+                if raise_on_error:
+                    raise NotAvailableError(
+                        "requested VC mode, but no VC backend was loaded"
+                    )
                 return False
 
             self.vc_backend.preload_models()
@@ -2256,6 +2534,8 @@ class Celune(CeluneStateAccessors):
                 self.log(format_error(e, self.dev), "error")
                 self.error_callback(string("celune.default_model_failed_short"))
                 self.progress_callback(0, 1)
+                if raise_on_error:
+                    raise
                 return False
 
         if self.vision is not None:
@@ -2274,22 +2554,12 @@ class Celune(CeluneStateAccessors):
             else:
                 self.log(string("celune.persona_initialized"))
 
-        playback_thread = threading.Thread(target=self._playback_worker, daemon=True)
+        pipeline_thread = threading.Thread(target=self._run_pipeline_jobs, daemon=True)
+        self._generation_thread = None
+        self._playback_thread = pipeline_thread
+        pipeline_thread.start()
 
-        generation_thread = None
-        if not self._is_voice_conversion_mode():
-            generation_thread = threading.Thread(
-                target=self._generation_worker, daemon=True
-            )
-
-        self._generation_thread = generation_thread
-        self._playback_thread = playback_thread
-
-        if generation_thread is not None:
-            generation_thread.start()
-        playback_thread.start()
-
-        if not validate_runtime(
+        if not skip_runtime_check and not validate_runtime(
             log=self.log,
             error=self.error_callback,
             set_state=lambda state: setattr(self, "cur_state", state),
@@ -2299,6 +2569,9 @@ class Celune(CeluneStateAccessors):
             backend_name=self._active_runtime_backend_name(),
         ):
             self.fatal()
+            self._stop_pipeline_jobs()
+            if raise_on_error:
+                raise RuntimeCheckError("runtime check failed")
             return False
 
         warmup_ok = True
@@ -2313,6 +2586,9 @@ class Celune(CeluneStateAccessors):
         else:
             self.fatal()
             self.log(string("celune.warmup_failed"), "error")
+            self._stop_pipeline_jobs()
+            if raise_on_error:
+                raise BackendError("warmup failed")
             return False
 
         if self.use_normalization:
@@ -2403,7 +2679,7 @@ class Celune(CeluneStateAccessors):
             return
 
         if not is_port_usable(port):
-            self.log(string("celune.port_unavailable", port=port), "warning")
+            self.log(string("api.port_in_use", port=port), "warning")
             self.log(string("celune.api_unavailable", app_name=APP_NAME), "warning")
             return
 
@@ -2697,6 +2973,16 @@ class Celune(CeluneStateAccessors):
         """Release Celune's shared playback pipeline."""
         release_pipeline(self)
 
+    def _stop_pipeline_jobs(self) -> None:
+        """Stop startup pipeline workers after an initialization failure."""
+        with self.queue_lock:
+            self.text_queue.put(self.sentinel)
+            if self._is_voice_conversion_mode():
+                self.audio_queue.put(self.sentinel)
+
+        if self._playback_thread is not None:
+            self._playback_thread.join()
+
     def think(
         self,
         text: str,
@@ -2727,36 +3013,78 @@ class Celune(CeluneStateAccessors):
             return False
 
         with self.say_lock:
-            if self.locked or self.cur_state in {"generating", "speaking"}:
-                self.log(string("celune.busy_thinking", app_name=APP_NAME), "warning")
-                self.error_callback(string("celune.app_busy", app_name=APP_NAME))
-                return False
+            self._persona_queue.put(text)
+            thread = self._persona_thread
+            if thread is not None and thread.is_alive():
+                return True
 
-        self.status_callback(string("status.thinking"))
-        self.cur_state = "thinking"
-        self.progress_callback(None, None)
-        self._ready_announced = False
-        thread = threading.Thread(
-            target=self._think_worker,
-            args=(text,),
-            daemon=True,
-        )
-        self._persona_thread = thread
-        thread.start()
+            self.status_callback(string("status.thinking"))
+            self.progress_callback(None, None)
+            self._ready_announced = False
+            thread = threading.Thread(
+                target=self._think_worker,
+                daemon=True,
+            )
+            self._persona_thread = thread
+            thread.start()
         return True
 
-    def _think_worker(self, text: str) -> None:
-        """Fetch a Persona response without blocking Celune's UI thread."""
+    async def think_async(self, text: str) -> bool:
+        """Let Celune reply to one input request without blocking an async caller.
 
-        if not self.vision:
-            self.vision = self._persona_conn()
-            if not self.vision:
-                self.say(text)
-                return
+        Args:
+            text: Input text for Persona to answer.
 
-        if not think_pipeline(self, text):
-            self.log(string("celune.say_instead"), "warning")
-            self.say(text)
+        Returns:
+            ``True`` when the response was queued successfully.
+        """
+        return await asyncio.to_thread(self.think, text)
+
+    def _think_worker(self) -> None:
+        """Fetch queued Persona responses without blocking Celune's UI thread."""
+        current_thread = threading.current_thread()
+
+        try:
+            while not self.exit_requested:
+                try:
+                    text = self._persona_queue.get(timeout=0.1)
+                except queue.Empty:
+                    with self.say_lock:
+                        if not self._persona_queue.empty():
+                            continue
+                        if self._persona_thread is current_thread:
+                            self._persona_thread = None
+                        return
+
+                if not self._wait_for_persona_playback():
+                    return
+
+                self.status_callback(string("status.thinking"))
+                self.cur_state = "thinking"
+                self.progress_callback(None, None)
+
+                if not self.vision:
+                    self.vision = self._persona_conn()
+                    if not self.vision:
+                        self.say(text)
+                        continue
+
+                if not think_pipeline(self, text):
+                    self.log(string("celune.say_instead"), "warning")
+                    self.say(text)
+        finally:
+            with self.say_lock:
+                if self._persona_thread is current_thread:
+                    self._persona_thread = None
+
+    def _wait_for_persona_playback(self) -> bool:
+        """Wait until the shared speech pipeline is available for the next Persona turn."""
+        while not self.exit_requested:
+            self.playback_done.wait(timeout=0.1)
+            with self.say_lock:
+                if not self.locked and self.cur_state not in {"generating", "speaking"}:
+                    return True
+        return False
 
     def say(
         self,
@@ -2782,6 +3110,32 @@ class Celune(CeluneStateAccessors):
 
         return say_pipeline(self, text, save=save, display_text=display_text)
 
+    async def say_async(
+        self,
+        text: str,
+        save: bool = True,
+        display_text: Optional[str] = None,
+    ) -> bool:
+        """Queue text for Celune to say without blocking an async caller.
+
+        Args:
+            text: Text to synthesize.
+            save: Whether to save generated output artifacts.
+            display_text: Optional text to show instead of the synthesis text.
+
+        Returns:
+            ``True`` when the text was queued successfully.
+        """
+        if self.input_mode != "text_to_speech":
+            self.log(string("celune.text_input_unavailable_vc"), "warning")
+            self.error_callback(string("celune.not_possible"))
+            self.progress_callback(0, 1)
+            return False
+
+        return await say_pipeline_async(
+            self, text, save=save, display_text=display_text
+        )
+
     def say_stream(self, text: str, save: bool = True) -> Optional[SpeechStreamQueue]:
         """Queue text for playback and mirror generated chunks to a queue.
 
@@ -2795,6 +3149,30 @@ class Celune(CeluneStateAccessors):
         """
         stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
         if not queue_speech(self, text, save=save, stream_queue=stream_queue):
+            return None
+        return stream_queue
+
+    async def say_stream_async(
+        self,
+        text: str,
+        save: bool = True,
+    ) -> Optional[SpeechStreamQueue]:
+        """Queue text for playback and mirror chunks without blocking an async caller.
+
+        Args:
+            text: Text to synthesize.
+            save: Whether to save generated output artifacts.
+
+        Returns:
+            A queue receiving generated audio chunks, or ``None`` when queuing fails.
+        """
+        stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
+        if not await queue_speech_async(
+            self,
+            text,
+            save=save,
+            stream_queue=stream_queue,
+        ):
             return None
         return stream_queue
 
@@ -2914,10 +3292,20 @@ class Celune(CeluneStateAccessors):
         self._emit_event("shutdown", ShutdownEvent(celune=self))
         try:
             close_pipeline(self)
+            wake_background_thread = self._wake_background_thread
+            if (
+                wake_background_thread is not None
+                and wake_background_thread is not threading.current_thread()
+            ):
+                wake_background_thread.join(timeout=2)
             self._unload_persona_state()
             with self._model_lock:
                 self.unload_runtime_state(include_normalizer=True)
         finally:
+            with contextlib.suppress(Exception):
+                close_default_loader()
+            with contextlib.suppress(Exception):
+                self._cleanup_residual_temp_data(temp_data_dir())
             Celune._instance = None
 
     def fatal(self) -> None:
@@ -2932,10 +3320,16 @@ class Celune(CeluneStateAccessors):
         """Split text into chunks."""
         return split_text(self, text)
 
-    def _generation_worker(self) -> None:
-        """Generate audio tokens and send them to the audio pipeline."""
-        generation_worker(self)
+    async def _pipeline_jobs(self) -> None:
+        """Run Celune's speech pipeline workers as async jobs."""
+        playback_task = asyncio.create_task(playback_worker_job(self))
+        if self._is_voice_conversion_mode():
+            await playback_task
+            return
 
-    def _playback_worker(self) -> None:
-        """Receive audio chunks and play them."""
-        playback_worker(self)
+        generation_task = asyncio.create_task(generation_worker_job(self))
+        await asyncio.gather(generation_task, playback_task)
+
+    def _run_pipeline_jobs(self) -> None:
+        """Start Celune's async speech pipeline inside one engine thread."""
+        asyncio.run(self._pipeline_jobs())

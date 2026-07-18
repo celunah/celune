@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from collections import defaultdict
 from typing import TYPE_CHECKING, Callable, Literal, Optional, TypeVar, cast, overload
 
+from ..utils import format_error
+from ..typing.aliases import _DispatcherCallback
 from ..typing.events import (
     AudioEndEventCallback,
     AudioStartEventCallback,
@@ -27,7 +29,6 @@ from ..typing.events import (
     StateChangedEventCallback,
     VoiceChangedEventCallback,
 )
-from ..utils import format_error
 
 if TYPE_CHECKING:
     from ..dataclasses.events import (
@@ -67,7 +68,6 @@ EVENT_NAMES: tuple[EventName, ...] = (
 _EVENT_NAME_SET = frozenset(EVENT_NAMES)
 EVENT_HANDLER_METADATA_ATTR = "__celune_event_subscriptions__"
 _DecoratedCallback = TypeVar("_DecoratedCallback", bound=Callable[..., None])
-_DispatcherCallback = Callable[[EventPayload], None]
 
 
 @dataclass(frozen=True)

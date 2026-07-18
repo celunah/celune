@@ -4,21 +4,22 @@
 from __future__ import annotations
 
 import os
+import asyncio
 import threading
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import Optional, TYPE_CHECKING
+from typing import Awaitable, Callable, Optional, TYPE_CHECKING, cast
 
 import soundfile as sf
 
-from ..paths import project_root
-from ..constants import APP_NAME
 from ..backends.tts.qwen3 import Qwen3
-from ..exceptions import InvalidExtensionError
-from ..utils import format_error, replace_ipa, format_number
-from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..i18n import string
-from ..vc_runtime import (
+from ..constants import APP_NAME
+from ..paths import project_root
+from ..exceptions import InvalidExtensionError
+from ..cevoice import active_bundle_path, resolve_bundle_path
+from ..utils import format_error, replace_ipa, format_number
+from ..vc import (
     VC_PITCH_SHIFT_MAX,
     VC_PITCH_SHIFT_MIN,
     clamp_vc_pitch_shift,
@@ -26,9 +27,42 @@ from ..vc_runtime import (
 
 if TYPE_CHECKING:
     from .app import CeluneUI
+    from ..celune import Celune
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".webm"}
+
+
+def _run_runtime_async(
+    target: "Celune",
+    async_name: str,
+    sync_name: str,
+    *method_args: str,
+) -> bool:
+    """Run one Celune runtime action, preferring the async implementation."""
+    async_method = getattr(target, async_name, None)
+    if callable(async_method):
+        method = cast(Callable[..., Awaitable[bool]], async_method)
+
+        async def run_method() -> bool:
+            return await method(*method_args)
+
+        return asyncio.run(run_method())
+    return bool(getattr(target, sync_name)(*method_args))
+
+
+async def _run_runtime_async_on_loop(
+    target: "Celune",
+    async_name: str,
+    sync_name: str,
+    *method_args: str,
+) -> bool:
+    """Run one runtime action on the caller's existing event loop."""
+    async_method = getattr(target, async_name, None)
+    if callable(async_method):
+        method = cast(Callable[..., Awaitable[bool]], async_method)
+        return await method(*method_args)
+    return bool(await asyncio.to_thread(getattr(target, sync_name), *method_args))
 
 
 def _attachment_source(path: Path) -> str:
@@ -380,7 +414,12 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         def backend_worker() -> None:
             try:
-                if ui.celune.set_backend_and_wait(backend_name):
+                if _run_runtime_async(
+                    ui.celune,
+                    "set_backend_async",
+                    "set_backend_and_wait",
+                    backend_name,
+                ):
                     ui.celune.try_play_signal("readiness")
                     ui.safe_log(
                         string("commands.backend_switched", backend_name=backend_name)
@@ -396,7 +435,35 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     "error",
                 )
 
-        threading.Thread(target=backend_worker, daemon=True).start()
+        async def backend_worker_async() -> None:
+            try:
+                if await _run_runtime_async_on_loop(
+                    ui.celune,
+                    "set_backend_async",
+                    "set_backend_and_wait",
+                    backend_name,
+                ):
+                    ui.celune.try_play_signal("readiness")
+                    ui.safe_log(
+                        string("commands.backend_switched", backend_name=backend_name)
+                    )
+                else:
+                    ui.safe_log(string("commands.backend_not_switched"), "warning")
+            except Exception as exc:
+                ui.safe_log(
+                    string(
+                        "commands.backend_switch_failed",
+                        error=format_error(exc, ui.celune.dev),
+                    ),
+                    "error",
+                )
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            threading.Thread(target=backend_worker, daemon=True).start()
+        else:
+            asyncio.create_task(backend_worker_async())
         return
     if command == "cevoice":
         if not args:
@@ -410,7 +477,12 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
         def cevoice_worker() -> None:
             try:
-                if ui.celune.set_cevoice_and_wait(bundle):
+                if _run_runtime_async(
+                    ui.celune,
+                    "set_cevoice_async",
+                    "set_cevoice_and_wait",
+                    bundle,
+                ):
                     ui.safe_log(string("commands.character_changed", bundle=bundle))
                 else:
                     ui.safe_log(
@@ -426,7 +498,35 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     "error",
                 )
 
-        threading.Thread(target=cevoice_worker, daemon=True).start()
+        async def cevoice_worker_async() -> None:
+            try:
+                if await _run_runtime_async_on_loop(
+                    ui.celune,
+                    "set_cevoice_async",
+                    "set_cevoice_and_wait",
+                    bundle,
+                ):
+                    ui.safe_log(string("commands.character_changed", bundle=bundle))
+                else:
+                    ui.safe_log(
+                        string("commands.character_not_switched", bundle=bundle),
+                        "warning",
+                    )
+            except Exception as exc:
+                ui.safe_log(
+                    string(
+                        "commands.character_switch_failed",
+                        error=format_error(exc, ui.celune.dev),
+                    ),
+                    "error",
+                )
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            threading.Thread(target=cevoice_worker, daemon=True).start()
+        else:
+            asyncio.create_task(cevoice_worker_async())
         return
     if command == "vc":
         if getattr(ui.celune, "input_mode", "text_to_speech") != "voice_conversion":
@@ -751,9 +851,47 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         tutorial(ui)
         return
     if command == "stop":
-        if not ui.celune.force_stop_speech():
-            ui.safe_log(string("commands.nothing_to_stop"))
-            return
+
+        def stop_worker() -> None:
+            try:
+                if not _run_runtime_async(
+                    ui.celune,
+                    "force_stop_speech_async",
+                    "force_stop_speech",
+                ):
+                    ui.safe_log(string("commands.nothing_to_stop"))
+            except Exception as exc:
+                ui.safe_log(
+                    string(
+                        "commands.stop_failed",
+                        error=format_error(exc, ui.celune.dev),
+                    ),
+                    "error",
+                )
+
+        async def stop_worker_async() -> None:
+            try:
+                if not await _run_runtime_async_on_loop(
+                    ui.celune,
+                    "force_stop_speech_async",
+                    "force_stop_speech",
+                ):
+                    ui.safe_log(string("commands.nothing_to_stop"))
+            except Exception as exc:
+                ui.safe_log(
+                    string(
+                        "commands.stop_failed",
+                        error=format_error(exc, ui.celune.dev),
+                    ),
+                    "error",
+                )
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            threading.Thread(target=stop_worker, daemon=True).start()
+        else:
+            asyncio.create_task(stop_worker_async())
 
         return
     if command == "exit":

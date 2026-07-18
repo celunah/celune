@@ -4,15 +4,11 @@
 import signal
 import datetime
 import itertools
-from enum import auto, IntEnum, Enum
 from typing import Optional
+from enum import auto, IntEnum, Enum
 
 from .i18n import string
-from .typing.common import JSON as _JSON
-from .typing.common import JSONSerializable as _JSONSerializable
-
-JSONSerializable = _JSONSerializable
-JSON = _JSON
+from .typing.common import JSON, JSONSerializable  # pylint: disable=unused-import
 
 # main app name
 # why would you rename her? she doesn't approve of it
@@ -173,3 +169,20 @@ CRASH_LINES = itertools.cycle(
         string("osc.crash_4"),
     ]
 )
+
+# equivalent service costs per minute grouped by popular TTS providers
+#
+# please note Celune does not use any of these providers, so this is only for
+# calculating equivalent API cost had you not been using Celune
+COST_EQUIVALENTS = {
+    "gemini-flash-tts": 0.015,
+    "gemini-pro-tts": 0.03,
+    "openai-realtime": 0.096,
+    "openai-realtime-mini": 0.03,
+    "elevenlabs-flash": 0.05,
+    "elevenlabs-turbo": 0.05,
+    "elevenlabs-multilingual-v2": 0.1,
+    "elevenlabs-multilingual-v3": 0.1,
+    "fishaudio-s2-pro": 0.021,
+    "fishaudio-s2.1-pro": 0.021,
+}

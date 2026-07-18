@@ -5,8 +5,8 @@ import os
 import sys
 import json
 import ctypes
-import contextlib
 import locale as _locale  # else it gets shadowed
+import contextlib
 from pathlib import Path
 from typing import Optional
 from types import SimpleNamespace

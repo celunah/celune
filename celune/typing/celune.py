@@ -36,11 +36,7 @@ class SupportsClose(Protocol):
     """Protocol for objects that can be closed."""
 
     def close(self) -> None:
-        """Release any resources owned by the object.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Release any resources owned by the object."""
         raise NotImplementedError("protocol not defined")
 
 
@@ -48,11 +44,7 @@ class SupportsUnload(Protocol):
     """Protocol for objects that can unload their runtime state."""
 
     def unload(self) -> None:
-        """Unload any optional runtime state owned by the object.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Unload any optional runtime state owned by the object."""
         raise NotImplementedError("protocol not defined")
 
 
@@ -65,25 +57,15 @@ class Generative(Protocol):
         Args:
             kwargs: Backend-specific generation keyword arguments.
 
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
     def device(self) -> Union[torch.device, str]:
-        """Return the device used by the generative model.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Return the device used by the generative model."""
         raise NotImplementedError("protocol not defined")
 
     def parameters(self) -> Iterator[torch.nn.Parameter]:
-        """Iterate over the model parameters.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Iterate over the model parameters."""
         raise NotImplementedError("protocol not defined")
 
 
@@ -108,8 +90,6 @@ class NormalizerTokenizer(Protocol):
         Args:
             tokens: Token text to resolve into an integer ID.
 
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -135,8 +115,6 @@ class NormalizerTokenizer(Protocol):
             token_ids: Generated token IDs to decode.
             skip_special_tokens: Whether special tokens should be omitted.
 
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -231,8 +209,12 @@ class CeluneStateAccessors:
     _generation_thread: Optional["threading.Thread"]
     _api_thread: Optional["threading.Thread"]
     _persona_thread: Optional["threading.Thread"]
+    _wake_background_thread: Optional["threading.Thread"]
+    _wake_background_lock: "threading.Lock"
+    _persona_queue: "queue.Queue"
     _queue_lock: "threading.Lock"
     _utterance_force_stop: "threading.Event"
+    _speech_generation: int
     _next_playback_source_id: int
     _playback_source_statuses: dict[int, str]
     _playback_source_meta: dict[int, dict[str, Union[str, float]]]
@@ -251,6 +233,8 @@ class CeluneStateAccessors:
     speed: float
     smart_buffer_generation_speed: Optional[float]
     smart_buffer_target_seconds: float
+    total_generated_speech_seconds: float
+    historical_generated_speech_seconds: float
     reverb: "StreamingPedalboardReverb"
     recently_saved: Optional[str]
     kept_sfx_audio: Optional["npt.NDArray[np.float32]"]
@@ -283,11 +267,7 @@ class CeluneStateAccessors:
 
     @property
     def cur_state(self) -> str:
-        """Return the current runtime-state label.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Return the current runtime-state label."""
         raise NotImplementedError("typing surface only")
 
     @cur_state.setter
@@ -295,9 +275,7 @@ class CeluneStateAccessors:
         """Store the current runtime-state label.
 
         Args:
-            value: The new runtime-state label.
+            value: The runtime-state label to store.
 
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("typing surface only")

@@ -3,9 +3,9 @@
 from collections.abc import Mapping
 from typing import Protocol, TypedDict, Union
 
-import torch
 import numpy as np
 import numpy.typing as npt
+import torch
 
 type TextConfigValue = Union[str, dict[str, "TextConfigValue"]]
 type TextConfig = dict[str, TextConfigValue]
@@ -40,11 +40,7 @@ class EmbeddingModel(Protocol):
     """Embedding model behavior used by Celune analysis."""
 
     def eval(self) -> None:
-        """Switch the model into evaluation mode.
-
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
-        """
+        """Switch the model into evaluation mode."""
         raise NotImplementedError("protocol not defined")
 
     def to(self, device: torch.device) -> torch.nn.Module:
@@ -53,8 +49,6 @@ class EmbeddingModel(Protocol):
         Args:
             device: Destination device for the embedding model.
 
-        Raises:
-            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 

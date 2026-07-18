@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import sys
 import queue
-import threading
 import importlib
+import threading
 import contextlib
-from pathlib import Path
 from unittest import mock
-from types import SimpleNamespace, ModuleType
+from pathlib import Path
 from collections.abc import Iterator
+from types import SimpleNamespace, ModuleType
 from typing import TYPE_CHECKING, Optional, TypedDict
 
 import numpy as np
@@ -264,13 +264,17 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine._audio_unavailable = False
     engine.smart_buffer_generation_speed = None
     engine.smart_buffer_target_seconds = 0.0
+    engine.total_generated_speech_seconds = 0.0
+    engine.historical_generated_speech_seconds = 0.0
     engine.text_queue = queue.Queue()
     engine.audio_queue = queue.Queue()
     engine.say_lock = threading.Lock()
     engine.queue_lock = threading.Lock()
     engine.playback_done = threading.Event()
     engine.playback_done.set()
+    engine._persona_queue = queue.Queue()
     engine.utterance_force_stop = threading.Event()
+    engine._speech_generation = 0
     engine.kept_sfx_audio = None
     engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
     engine.log = lambda msg, severity="info": messages.append((msg, severity))

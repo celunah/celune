@@ -4,7 +4,10 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $outputDir = Join-Path $repoRoot "bin"
 $templateExe = Join-Path $repoRoot "celune.exe"
 $iconIco = Join-Path $repoRoot "resources\celune.ico"
-$launcherSource = Join-Path $repoRoot "launcher.c"
+$launcherSources = @(
+    (Join-Path $repoRoot "launcher.c"),
+    (Join-Path $repoRoot "launcher_windows.c")
+)
 $launcherRes = Join-Path $repoRoot "resources\celune.res"
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 $projectVersion = Select-String -Path (Join-Path $repoRoot "pyproject.toml") -Pattern '^version = "([^"]+)"' | Select-Object -First 1
@@ -87,12 +90,17 @@ if ($LASTEXITCODE -ne 0) {
     throw "Nuitka build failed with exit code $LASTEXITCODE."
 }
 
-if (-not (Test-Path $launcherSource)) {
-    throw "launcher.c was not found."
+foreach ($launcherSource in $launcherSources) {
+    if (-not (Test-Path $launcherSource)) {
+        throw "Launcher source was not found: $launcherSource"
+    }
 }
 
 $launcherExe = Join-Path $outputDir "celune.exe"
-$launcherObj = Join-Path $outputDir "launcher.obj"
+$launcherObjects = @(
+    (Join-Path $outputDir "launcher.obj"),
+    (Join-Path $outputDir "launcher_windows.obj")
+)
 if (-not (Test-Path $vswhere)) {
     throw "vswhere.exe was not found."
 }
@@ -110,7 +118,12 @@ if (-not (Test-Path $vsDevCmd)) {
 $env:CL = $null
 $env:_CL_ = $null
 
-$compileCmd = "call `"$vsDevCmd`" -arch=amd64 -host_arch=amd64 >nul && cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /Fe:`"$launcherExe`" /Fo:`"$launcherObj`" `"$launcherSource`" `"$launcherRes`" /link /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT"
+$compileCommands = @(
+    "cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /c /Fo:`"$($launcherObjects[0])`" `"$($launcherSources[0])`"",
+    "cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /c /Fo:`"$($launcherObjects[1])`" `"$($launcherSources[1])`"",
+    "cl /nologo /O2 /GL /GS /guard:cf /W4 /DNDEBUG /Fe:`"$launcherExe`" `"$($launcherObjects[0])`" `"$($launcherObjects[1])`" `"$launcherRes`" /link /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT"
+)
+$compileCmd = "call `"$vsDevCmd`" -arch=amd64 -host_arch=amd64 >nul && " + ($compileCommands -join " && ")
 & cmd /c $compileCmd
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to compile the Windows launcher."
@@ -139,6 +152,8 @@ if (Test-Path $buildDir) {
     Remove-Item -LiteralPath $buildDir -Recurse -Force
 }
 
-if (Test-Path $launcherObj) {
-    Remove-Item -LiteralPath $launcherObj -Force
+foreach ($launcherObj in $launcherObjects) {
+    if (Test-Path $launcherObj) {
+        Remove-Item -LiteralPath $launcherObj -Force
+    }
 }

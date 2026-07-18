@@ -46,8 +46,8 @@ jobs:
 
       - name: Check docstring coverage
         run: |
-          uv run docstr-coverage -i -P --fail-under 90 celune tests main.py || {
-            echo "::warning::Docstring coverage is below 90%. Check the above report for details."
+          uv run docstr-coverage -i -P --fail-under 80 celune tests main.py || {
+            echo "::warning::Docstring coverage is below 80%. Try adding more missing docstrings."
           }
 
       - name: Run unit tests

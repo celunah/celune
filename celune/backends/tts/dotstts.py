@@ -2,19 +2,19 @@
 """dots.tts MeanFlow backend implementation for Celune."""
 
 import os
-import contextlib
 import time
+import contextlib
 from collections.abc import Iterator
 from typing import Callable, Optional, Mapping, Generator, Protocol, cast
 
-import torch
-import loguru
 import numpy as np
 import numpy.typing as npt
+import torch
+import loguru
 from dots_tts.runtime import DotsTtsRuntime
 
-from ...cevoice import default_loader, CEVoiceLoader
 from ...utils import custom_assert, discard
+from ...cevoice import default_loader, CEVoiceLoader
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 

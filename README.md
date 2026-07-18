@@ -37,7 +37,7 @@ Celune never was, and will never become an "AI slop" project.
 
 ## License note
 
-Celune is licensed under the [MIT license](https://opensource.org/license/mit), but the software may download certain models from [Hugging Face](https://huggingface.co) that are of varying licenses, such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.) or [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS). Users of Celune are expected to read and comply with any applicable license terms for the models they intend to use.
+Celune is licensed under the [MIT license](https://opensource.org/license/mit), but the software may download certain models from [Hugging Face](https://huggingface.co) that are of varying licenses, such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.), [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS), [GPL-3.0](https://opensource.org/license/gpl-3.0) (SeedVC), as well as Celune's own license: MIT (Whisper, Silero VAD, etc.). Users of Celune are expected to read and comply with any applicable license terms for the models they intend to use.
 
 ## Voices & samples
 
@@ -135,7 +135,7 @@ The terminal should support True Color, especially when using voice packs that d
 
 Terminals not supporting True Color may look incorrect, as Textual will fall back to a lower color mode.
 
-If Celune looks incorrect while your terminal supports True Color, run Celune with the following command:
+If Celune looks incorrect while your terminal supports True Color on Linux, run Celune with the following command:
 
 ```bash
 COLORTERM=truecolor celune
@@ -168,9 +168,9 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 >
 > - All of the above, and:
 > - VoxCPM2 or dots.tts MF
-> - Persona (4-bit) (cannot be used in conjunction with high-end TTS models reliably)
+> - Persona (4-bit) (certain TTS models may require 16GB of VRAM, use Pocket TTS if uncertain)
 >
-> Extra High (16GB+ VRAM recommended)
+> Extra High (16GB VRAM and beyond)
 >
 > This preset supports:
 >
@@ -188,13 +188,18 @@ Tested on: RTX 5070 (12 GB VRAM)
 
 ## Installation
 
-Download and extract the [latest binary artifact](https://nightly.link/celunah/celune/workflows/ci/main) prior to running the below commands.
+Download and extract the [latest binary artifact](https://nightly.link/celunah/celune/workflows/ci/main) prior to running the below commands in an already cloned copy of Celune.
+
+Don't have one yet? Run the following commands:
 
 ```bash
-# Download Celune
 git clone https://github.com/celunah/celune
 cd celune
+```
 
+Then, follow these steps:
+
+```bash
 # Quick setup
 python setup.py
 
@@ -212,8 +217,15 @@ uv --version
 # uv 0.11.2 (02036a8ba 2026-03-26 x86_64-pc-windows-msvc) (or similar version)
 
 # Create environment
-# Celune expects Python 3.12 or 3.13
-uv sync
+# Celune expects Python 3.12 or 3.13.
+# Use --extra [backend names] to specify backend support groups to install,
+# or --all-extras to install all backend support groups.
+# You must specify at least one backend support group, or else Celune won't work.
+#
+# Install a single backend
+uv sync --extra qwen3
+# Install all backends
+uv sync --all-extras
 
 # Run
 # Command Prompt users
@@ -230,7 +242,7 @@ Don't run `celune-bin` manually. The `celune` binary is Celune's main entrypoint
 
 Both binaries are required for correct operation, `celune-bin` contains core code, while `celune` is the outer launcher.
 
-Celune can also run from other working directories, provided the main binary is installed correctly.
+Celune can also run from other working directories, provided the main binary is installed correctly. The binary must always be located as part of the cloned repository, as it depends on files contained within it.
 
 ### SoX & Rubber Band installation
 

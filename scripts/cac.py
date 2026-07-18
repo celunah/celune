@@ -1,24 +1,29 @@
 # SPDX-License-Identifier: MIT
 """Create a character pack for use in Celune."""
 
-import argparse
-import io
 import sys
+import io
+import argparse
 from math import gcd
-from collections.abc import Mapping
 from pathlib import Path
-from typing import TypedDict, Union, Optional, cast
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, TypedDict, Union, Optional, cast
 
 import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
 
+if TYPE_CHECKING:
+    from celune.typing.cevoice import ManifestValue
+
 try:
     from celune.cevoice import write_cevoice
+    from celune.i18n import string
 except ModuleNotFoundError:
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(PROJECT_ROOT))
     from celune.cevoice import write_cevoice
+    from celune.i18n import string
 
 
 class ThemeMetadata(TypedDict, total=False):
@@ -67,6 +72,7 @@ class VoiceEntryMetadata(TypedDict, total=False):
 
     cfg_scale: float
     reference_text: str
+    persona: PersonaMetadata
 
 
 class BundleMetadata(TypedDict, total=False):
@@ -344,6 +350,35 @@ def collect_persona_metadata() -> Optional[PersonaMetadata]:
     return persona or None
 
 
+def collect_voice_persona_metadata(voice_name: str) -> Optional[PersonaMetadata]:
+    """Collect style overrides layered onto the shared Persona for one voice."""
+    persona: PersonaMetadata = {}
+    speaking_style = ask_optional_text(
+        string("cac.voice_persona_speaking_style", voice_name=voice_name)
+    )
+    if speaking_style is not None:
+        persona["speaking_style"] = speaking_style
+
+    style: PersonaStyleMetadata = {}
+    for key in (
+        "warmth",
+        "directness",
+        "humor",
+        "detail",
+        "formality",
+        "enthusiasm",
+    ):
+        value = ask_optional_text(
+            string("cac.voice_persona_style", voice_name=voice_name, key=key)
+        )
+        if value is not None:
+            style[key] = value
+    if style:
+        persona["style"] = style
+
+    return persona or None
+
+
 def collect_voice_assets(index: int) -> tuple[str, VoiceAssets, VoiceEntryMetadata]:
     """Collect one voice entry and its optional per-voice metadata."""
     voice_name = ask_required_text(
@@ -363,6 +398,7 @@ def collect_voice_assets(index: int) -> tuple[str, VoiceAssets, VoiceEntryMetada
     reference_text = ask_optional_text(
         f"Enter reference_text for entry #{index}, leave empty to skip"
     )
+    persona = collect_voice_persona_metadata(voice_name)
 
     assets: VoiceAssets = {"wav": wav_path}
     if pt_path is not None:
@@ -373,6 +409,8 @@ def collect_voice_assets(index: int) -> tuple[str, VoiceAssets, VoiceEntryMetada
         metadata["cfg_scale"] = cfg_scale
     if reference_text is not None:
         metadata["reference_text"] = reference_text
+    if persona is not None:
+        metadata["persona"] = persona
 
     return voice_name, assets, metadata
 
@@ -461,7 +499,10 @@ def create_cevoice(data: CharacterData) -> Path:
     """Create a CEVOICE bundle with the collected wizard data."""
     normalized_voices: dict[str, dict[str, Union[bytes, str, Path]]] = {}
     for voice_name, assets in data["voices"].items():
-        normalized_assets: dict[str, Union[bytes, str, Path]] = dict(assets)
+        normalized_assets = cast(
+            dict[str, Union[bytes, str, Path]],
+            dict(assets),
+        )
         wav_asset = normalized_assets.get("wav")
         if isinstance(wav_asset, Path):
             normalized_assets["wav"] = normalize_reference_wav_asset(wav_asset)

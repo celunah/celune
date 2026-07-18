@@ -4,32 +4,70 @@
 from __future__ import annotations
 
 import os
-import re
 import sys
+import re
 import json
 import time
 import queue
 import random
+import asyncio
 import pathlib
 import datetime
-import subprocess
 import contextlib
+import subprocess
 from collections import deque
+from dataclasses import replace
 from urllib.request import urlopen
 from urllib.parse import urlparse, urlencode
 from importlib import util as importlib_util
 from typing import TYPE_CHECKING, Optional, Mapping, Union, cast
 
-import torch
 import numpy as np
 import numpy.typing as npt
+import torch
 import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
+from .i18n import string
 from . import __version__
+from .exceptions import NotAvailableError
+from .typing.pipeline import SpeechStreamQueue
+from .persona.memory import PersonaMemoryStore
+from .analysis import analyze_voice_audio
+from .config import resolve_audio_device
+from .persona.paths import persona_override_files
+from .persona.emotion import PersonaEmotionAnalyzer
+from .paths import (
+    app_data_dir,
+    outputs_dir,
+    project_root,
+    running_compiled,
+)
+from .utils import (
+    format_number,
+    run_async,
+    format_error,
+    detect_language,
+    is_april_fools,
+    rng_replace,
+)
+from .cevoice import (
+    bundle_character_name,
+    default_loader,
+    persona_files_from_bundle,
+    persona_metadata_from_manifest,
+)
+from .persona.prompts import (
+    CharacterProfile,
+    PersonaCard,
+    PersonaContext,
+    PersonaPromptBuilder,
+    PersonaSourceMaterial,
+    RetrievedMemoryBundle,
+)
 from .dataclasses.pipeline import (
     AudioOutput,
     AudioInputRequest,
@@ -39,30 +77,16 @@ from .dataclasses.pipeline import (
     SpeechTiming,
     VoiceConversionRequest,
 )
-from .exceptions import NotAvailableError
-from .config import resolve_audio_device
-from .persona.memory import PersonaMemoryStore
-from .persona.emotion import PersonaEmotionAnalyzer
-from .analysis import analyze_voice_audio
-from .paths import app_data_dir, project_root, running_compiled
-from .persona.impl import (
-    default_persona_age,
-    default_persona_context,
-    default_persona_gender,
-    default_persona_persona,
-    pack_identity_text,
-    pack_persona_lines,
-    pack_persona_text,
-    persona_active_character_name,
-    persona_config,
-    persona_history_messages,
-    persona_model_id,
-    persona_pending_attachments,
-    persona_quantization,
-    persona_short_term_history_limit,
-    persona_style_traits,
+from .constants import (
+    APP_NAME,
+    APP_SLUG,
+    BASE_SR,
+    JSON,
+    PipelineStates,
+    PERSONA_EMOTION_MODEL,
+    JSONSerializable,
+    PERSONA_MEMORY_EMBEDDING_MODEL,
 )
-from .cevoice import default_loader
 from .dsp import (
     pitch_shift_audio,
     resample_audio,
@@ -75,33 +99,24 @@ from .dsp import (
     working_signal,
     error_signal,
 )
-from .utils import (
-    format_number,
-    run_async,
-    format_error,
-    detect_language,
-    is_april_fools,
-    rng_replace,
+from .persona.impl import (
+    default_persona_age,
+    default_persona_context,
+    default_persona_gender,
+    default_persona_persona,
+    pack_identity_text,
+    pack_persona_lines,
+    pack_persona_text,
+    persona_active_character_name,
+    persona_config,
+    persona_debug_overrides_enabled,
+    persona_history_messages,
+    persona_model_id,
+    persona_pending_attachments,
+    persona_quantization,
+    persona_short_term_history_limit,
+    persona_style_traits,
 )
-from .persona.prompts import (
-    CharacterProfile,
-    PersonaCard,
-    PersonaContext,
-    PersonaPromptBuilder,
-    RetrievedMemoryBundle,
-    ShortTermHistory,
-)
-from .constants import (
-    APP_NAME,
-    APP_SLUG,
-    BASE_SR,
-    JSON,
-    PERSONA_EMOTION_MODEL,
-    JSONSerializable,
-    PERSONA_MEMORY_EMBEDDING_MODEL,
-)
-from .i18n import string
-from .typing.pipeline import SpeechStreamQueue
 
 
 if TYPE_CHECKING:
@@ -117,12 +132,21 @@ _LEGACY_BUFFER_SECONDS = 10.0
 _SMART_BUFFER_REALTIME_SPEED = 1.05
 
 
+def _monotonic_time() -> float:
+    """Return the current monotonic clock value for pipeline timing."""
+    return time.monotonic()
+
+
 _SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS = 20.0
 _SMART_BUFFER_MIN_SECONDS = 0.35
 _SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS = 0.75
 _SMART_BUFFER_MAX_SECONDS = 20.0
 _SMART_BUFFER_COMPLETE_BELOW_SPEED = 0.5
 _SMART_BUFFER_SMOOTHING = 0.35
+_MAX_SILENT_UTTERANCE_RETRIES = 3
+_PIPELINE_CPU_MAX_BUFFER_SECONDS = 4.0
+_PIPELINE_CPU_MAX_DRAIN_ITEMS = 1
+_PIPELINE_CPU_YIELD_SECONDS = 0.001
 
 
 def _json_value(value: JSONSerializable) -> JSONSerializable:
@@ -379,6 +403,23 @@ def _write_celune_flac(
     _write_flac_metadata(path, tags)
 
 
+def _saved_output_speech_seconds() -> float:
+    """Return cumulative saved speech duration from Celune-generated output files."""
+    output_dir = outputs_dir()
+    if not output_dir.exists():
+        return 0.0
+
+    total_seconds = 0.0
+    pattern = f"{APP_SLUG}_speech_*.flac"
+    for path in output_dir.glob(pattern):
+        try:
+            total_seconds += float(sf.info(path).duration)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            continue
+
+    return total_seconds
+
+
 def clear_queue(q: queue.Queue) -> None:
     """Drain all pending items from a queue.
 
@@ -415,7 +456,7 @@ def log_first_playback(engine: Celune, timing: Optional[SpeechTiming]) -> None:
         if not isinstance(elapsed, float):
             return
     else:
-        elapsed = time.monotonic() - start_time
+        elapsed = _monotonic_time() - start_time
 
     engine.log(string("pipeline.ttfp_seconds", seconds=format_number(elapsed, 2)))
 
@@ -470,7 +511,9 @@ def force_stop_speech(engine: Celune) -> bool:
     engine.utterance_force_stop.set()
 
     with engine.queue_lock:
+        engine._speech_generation = getattr(engine, "_speech_generation", 0) + 1
         clear_queue(engine.text_queue)
+        clear_queue(engine._persona_queue)
         clear_queue(engine.audio_queue)
         engine.kept_sfx_audio = None
         engine.audio_queue.put(engine.force_stop_marker)
@@ -612,20 +655,79 @@ def _queue_playback_chunk(
     audio: npt.NDArray[np.float32],
     sample_rate: int,
     timing: Optional[SpeechTiming] = None,
-) -> None:
+) -> bool:
     """Queue one chunk for the shared DSP playback mixer."""
-    meta = _playback_source_meta(engine).get(source_id)
-    if isinstance(meta, dict):
-        meta["total_frames"] = float(meta.get("total_frames", 0.0)) + float(len(audio))
+    with engine.queue_lock:
+        active_generation = getattr(engine, "_active_speech_generation", None)
+        if active_generation is not None and (
+            active_generation
+            != getattr(engine, "_speech_generation", active_generation)
+            or engine.utterance_force_stop.is_set()
+        ):
+            return False
 
-    engine.audio_queue.put(
-        PlaybackChunk(
-            source_id=source_id,
-            audio=np.asarray(audio, dtype=np.float32),
-            sample_rate=sample_rate,
-            timing=timing,
+        meta = _playback_source_meta(engine).get(source_id)
+        if isinstance(meta, dict):
+            meta["total_frames"] = float(meta.get("total_frames", 0.0)) + float(
+                len(audio)
+            )
+
+        engine.audio_queue.put(
+            PlaybackChunk(
+                source_id=source_id,
+                audio=np.asarray(audio, dtype=np.float32),
+                sample_rate=sample_rate,
+                timing=timing,
+            )
         )
-    )
+    return True
+
+
+def _dequeue_playback_item(
+    engine: Celune,
+    prioritize_speech: bool = False,
+) -> Union[PlaybackChunk, PlaybackSourceDone, PipelineStates]:
+    """Remove one playback item, prioritizing speech overlays when requested."""
+    audio_queue = engine.audio_queue
+    if not prioritize_speech:
+        return audio_queue.get_nowait()
+
+    with audio_queue.mutex:
+        if not audio_queue.queue:
+            raise queue.Empty
+
+        speech_chunk_index: Optional[int] = None
+        speech_done_index: Optional[int] = None
+        for index, pending in enumerate(audio_queue.queue):
+            if isinstance(pending, PlaybackChunk):
+                source_meta = _playback_source_meta(engine).get(pending.source_id)
+                if (
+                    isinstance(source_meta, dict)
+                    and source_meta.get("kind") == "speech"
+                ):
+                    speech_chunk_index = index
+                    break
+            elif isinstance(pending, PlaybackSourceDone):
+                source_meta = _playback_source_meta(engine).get(pending.source_id)
+                if (
+                    speech_done_index is None
+                    and isinstance(source_meta, dict)
+                    and source_meta.get("kind") == "speech"
+                ):
+                    speech_done_index = index
+
+        selected_index = (
+            speech_chunk_index
+            if speech_chunk_index is not None
+            else speech_done_index
+            if speech_done_index is not None
+            else 0
+        )
+        audio_queue.queue.rotate(-selected_index)
+        pending = audio_queue.queue.popleft()
+        audio_queue.queue.rotate(selected_index)
+        audio_queue.not_full.notify()
+        return pending
 
 
 def _update_playback_progress(
@@ -653,7 +755,7 @@ def _update_playback_progress(
     if total_frames <= 0.0:
         return
 
-    now = time.monotonic()
+    now = _monotonic_time()
     last_emit_at = float(getattr(engine, "_playback_progress_last_emit_at", 0.0))
     last_source_id = getattr(engine, "_playback_progress_last_source_id", None)
     emit_interval = 0.08
@@ -720,17 +822,27 @@ def _queue_playback_done(
     notify_idle_when_finished: bool = True,
     saved_path: Optional[str] = None,
     analysis_audio: Optional[npt.NDArray[np.float32]] = None,
-) -> None:
+) -> bool:
     """Queue a completion marker for one playback source."""
-    engine.audio_queue.put(
-        PlaybackSourceDone(
-            source_id=source_id,
-            release_pipeline=release_pipeline_when_finished,
-            notify_idle=notify_idle_when_finished,
-            saved_path=saved_path,
-            analysis_audio=analysis_audio,
+    with engine.queue_lock:
+        active_generation = getattr(engine, "_active_speech_generation", None)
+        if active_generation is not None and (
+            active_generation
+            != getattr(engine, "_speech_generation", active_generation)
+            or engine.utterance_force_stop.is_set()
+        ):
+            return False
+
+        engine.audio_queue.put(
+            PlaybackSourceDone(
+                source_id=source_id,
+                release_pipeline=release_pipeline_when_finished,
+                notify_idle=notify_idle_when_finished,
+                saved_path=saved_path,
+                analysis_audio=analysis_audio,
+            )
         )
-    )
+    return True
 
 
 def _flush_buffered_speech_chunks(
@@ -747,13 +859,16 @@ def _flush_buffered_speech_chunks(
 
     first_buffer_chunk = True
     for queued_audio in buffer:
-        _queue_playback_chunk(
+        queued = _queue_playback_chunk(
             engine,
             source_id,
             queued_audio,
             BASE_SR,
             speech_timing if not pushed_audio and first_buffer_chunk else None,
         )
+        if queued is False:
+            buffer.clear()
+            return pushed_audio
         if stream_queue is not None:
             stream_queue.put(queued_audio.copy())
         first_buffer_chunk = False
@@ -915,6 +1030,17 @@ def _config_float(
     return default
 
 
+def _safe_config_int(
+    source: Mapping[str, JSONSerializable], key: str, default: int
+) -> int:
+    """Read a bounded integer configuration value without raising on bad input."""
+    value = _config_float(source, key, float(default))
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 def _smart_buffer_config(
     engine: Celune,
 ) -> tuple[bool, float, float, float, float, float, float]:
@@ -967,6 +1093,37 @@ def _smart_buffer_config(
         max_seconds,
         complete_below_speed,
     )
+
+
+def _pipeline_cpu_config(engine: Celune) -> tuple[bool, float, int, float]:
+    """Resolve cooperative CPU-pressure controls for the playback pipeline."""
+    value = engine.config.get("pipeline_cpu", {})
+    config = value if isinstance(value, dict) else {}
+    enabled = config.get("enabled", True)
+    if isinstance(enabled, bool) and not enabled:
+        return False, float("inf"), 128, 0.0
+
+    max_buffer_seconds = max(
+        0.25,
+        _config_float(
+            config,
+            "max_buffer_seconds",
+            _PIPELINE_CPU_MAX_BUFFER_SECONDS,
+        ),
+    )
+    max_drain_items = max(
+        1,
+        _safe_config_int(
+            config,
+            "max_drain_items",
+            _PIPELINE_CPU_MAX_DRAIN_ITEMS,
+        ),
+    )
+    yield_seconds = max(
+        0.0,
+        _config_float(config, "yield_seconds", _PIPELINE_CPU_YIELD_SECONDS),
+    )
+    return True, max_buffer_seconds, max_drain_items, yield_seconds
 
 
 def _smart_buffer_speed_estimate(
@@ -1050,23 +1207,6 @@ def build_persona_character_card(engine: Celune) -> str:
     return f"{context.character_profile.render()}\n\n{context.persona_card.render()}"
 
 
-def _build_short_term_history(engine: Celune) -> ShortTermHistory:
-    """Return the current-run chat history for the Persona prompt."""
-    messages = persona_history_messages(engine)
-    turns = [
-        (message["role"].strip(), message["content"].strip())
-        for message in messages
-        if isinstance(message, dict)
-        and isinstance(message.get("role"), str)
-        and isinstance(message.get("content"), str)
-    ]
-    session_summary = ""
-    raw_summary = getattr(engine, "persona_session_summary", None)
-    if isinstance(raw_summary, str) and raw_summary.strip():
-        session_summary = raw_summary.strip()
-    return ShortTermHistory(turns=tuple(turns), session_summary=session_summary)
-
-
 def _persona_emotion_analyzer(engine: Celune) -> Optional[PersonaEmotionAnalyzer]:
     """Return the configured Persona emotion analyzer for this engine."""
     existing = getattr(engine, "persona_emotion_analyzer", None)
@@ -1140,46 +1280,37 @@ def _persona_memory_store(engine: Celune) -> Optional[PersonaMemoryStore]:
         return existing
 
     memory_config = persona_config(engine.config).get("memory")
-    if isinstance(memory_config, dict):
-        enabled = memory_config.get("enabled", True)
-        if isinstance(enabled, bool) and not enabled:
-            return None
-        storage_dir = memory_config.get("storage_dir")
-        similarity_threshold = memory_config.get("semantic_similarity_threshold", 0.62)
-        overlap_threshold = memory_config.get("fallback_token_overlap_threshold", 1)
-        embedding_model = memory_config.get("semantic_embedding_model")
-        embedding_model_name = (
-            embedding_model.strip()
-            if isinstance(embedding_model, str) and embedding_model.strip()
-            else None
-        )
-        if isinstance(storage_dir, str) and storage_dir.strip():
-            store = PersonaMemoryStore(
-                storage_dir=storage_dir.strip(),
-                semantic_similarity_threshold=float(similarity_threshold)
-                if isinstance(similarity_threshold, (int, float))
-                and not isinstance(similarity_threshold, bool)
-                else 0.62,
-                fallback_token_overlap_threshold=int(overlap_threshold)
-                if isinstance(overlap_threshold, (int, float))
-                and not isinstance(overlap_threshold, bool)
-                else 1,
-                embedding_model=embedding_model_name or PERSONA_MEMORY_EMBEDDING_MODEL,
-            )
-        else:
-            store = PersonaMemoryStore(
-                semantic_similarity_threshold=float(similarity_threshold)
-                if isinstance(similarity_threshold, (int, float))
-                and not isinstance(similarity_threshold, bool)
-                else 0.62,
-                fallback_token_overlap_threshold=int(overlap_threshold)
-                if isinstance(overlap_threshold, (int, float))
-                and not isinstance(overlap_threshold, bool)
-                else 1,
-                embedding_model=embedding_model_name or PERSONA_MEMORY_EMBEDDING_MODEL,
-            )
-    else:
-        store = PersonaMemoryStore()
+    normalized_memory = memory_config if isinstance(memory_config, dict) else {}
+    enabled = normalized_memory.get("enabled", True)
+    if isinstance(enabled, bool) and not enabled:
+        return None
+
+    similarity_threshold = normalized_memory.get("semantic_similarity_threshold", 0.62)
+    overlap_threshold = normalized_memory.get("fallback_token_overlap_threshold", 1)
+    embedding_model = normalized_memory.get("semantic_embedding_model")
+    embedding_model_name = (
+        embedding_model.strip()
+        if isinstance(embedding_model, str) and embedding_model.strip()
+        else None
+    )
+    configured_storage = normalized_memory.get("storage_dir")
+    storage_dir = (
+        configured_storage.strip()
+        if isinstance(configured_storage, str) and configured_storage.strip()
+        else None
+    )
+    store = PersonaMemoryStore(
+        storage_dir=storage_dir,
+        semantic_similarity_threshold=float(similarity_threshold)
+        if isinstance(similarity_threshold, (int, float))
+        and not isinstance(similarity_threshold, bool)
+        else 0.62,
+        fallback_token_overlap_threshold=int(overlap_threshold)
+        if isinstance(overlap_threshold, (int, float))
+        and not isinstance(overlap_threshold, bool)
+        else 1,
+        embedding_model=embedding_model_name or PERSONA_MEMORY_EMBEDDING_MODEL,
+    )
 
     setattr(engine, "persona_memory_store", store)
     return store
@@ -1224,6 +1355,118 @@ def _build_retrieved_memory_bundle(
 
     return RetrievedMemoryBundle(
         memories=_config_lines(engine, "persona_long_term_memory")
+    )
+
+
+def _persona_manifest_files(engine: Celune) -> dict[str, str]:
+    """Return whitelisted persona Markdown files for the active engine persona."""
+    loader = default_loader()
+    if loader is None:
+        return {}
+    pack_persona = persona_metadata_from_manifest(loader.bundle.metadata)
+    current_persona = getattr(engine, "current_character_persona", None)
+    if pack_persona is not None:
+        if current_persona != pack_persona:
+            return {}
+    else:
+        current_character = getattr(engine, "current_character", None)
+        bundle_name = bundle_character_name(loader.bundle)
+        if not (
+            isinstance(current_character, str)
+            and isinstance(bundle_name, str)
+            and current_character.strip()
+            and current_character.strip() == bundle_name.strip()
+        ):
+            return {}
+    files = persona_files_from_bundle(loader.bundle)
+    if persona_debug_overrides_enabled(engine.config):
+        files.update(persona_override_files(persona_active_character_name(engine)))
+    return files
+
+
+def _legacy_identity_source(profile: CharacterProfile) -> str:
+    """Render legacy identity metadata into CECHAR v3-style source material."""
+    lines: list[str] = []
+    if profile.name.strip():
+        lines.append(f"Name: {profile.name.strip()}")
+    if profile.age.strip():
+        lines.append(f"Age: {profile.age.strip()}")
+    if profile.gender.strip():
+        lines.append(f"Gender: {profile.gender.strip()}")
+    if profile.profile.strip():
+        if lines:
+            lines.append("")
+        lines.append(profile.profile.strip())
+    return "\n".join(lines).strip()
+
+
+def _legacy_personality_source(engine: Celune) -> str:
+    """Render legacy persona settings into the v3 personality source slot."""
+    blocks: list[str] = []
+    persona_text = _config_text(
+        engine,
+        "persona_persona",
+        default_persona_persona(),
+    )
+    if persona_text:
+        blocks.append(persona_text)
+
+    prompt_rules = pack_persona_lines(engine, "prompt_rules")
+    if prompt_rules:
+        blocks.append("\n".join(f"- {line}" for line in prompt_rules))
+
+    return "\n\n".join(block for block in blocks if block.strip()).strip()
+
+
+def _legacy_speech_style_source(engine: Celune) -> str:
+    """Render legacy speech-style metadata into the v3 speech-style slot."""
+    blocks: list[str] = []
+    speaking_style = pack_persona_text(engine, "speaking_style")
+    if speaking_style:
+        blocks.append(speaking_style)
+
+    traits = persona_style_traits(engine)
+    trait_lines = [
+        f"- Warmth: {traits['warmth']}",
+        f"- Directness: {traits['directness']}",
+        f"- Humor: {traits['humor']}",
+        f"- Detail: {traits['detail']}",
+        f"- Formality: {traits['formality']}",
+        f"- Enthusiasm: {traits['enthusiasm']}",
+    ]
+    blocks.append("\n".join(trait_lines))
+    return "\n\n".join(block for block in blocks if block.strip()).strip()
+
+
+def _legacy_boundaries_source(engine: Celune) -> str:
+    """Render legacy boundary lines into the v3 boundaries source slot."""
+    lines = pack_persona_lines(engine, "boundaries")
+    return "\n".join(f"- {line}" for line in lines)
+
+
+def _legacy_examples_source(engine: Celune) -> str:
+    """Render legacy example dialogue into the v3 examples source slot."""
+    return "\n".join(pack_persona_lines(engine, "example_dialogue")).strip()
+
+
+def _build_persona_source_material(
+    engine: Celune,
+    character_profile: CharacterProfile,
+) -> PersonaSourceMaterial:
+    """Build v3 prompt source material from package files with legacy fallback."""
+    persona_files = _persona_manifest_files(engine)
+    return PersonaSourceMaterial(
+        identity=persona_files.get("identity.md", "")
+        or _legacy_identity_source(character_profile),
+        soul=persona_files.get("soul.md", ""),
+        personality=persona_files.get("personality.md", "")
+        or _legacy_personality_source(engine),
+        speech_style=persona_files.get("speech_style.md", "")
+        or _legacy_speech_style_source(engine),
+        boundaries=persona_files.get("boundaries.md", "")
+        or _legacy_boundaries_source(engine),
+        examples=persona_files.get("examples.md", "")
+        or _legacy_examples_source(engine),
     )
 
 
@@ -1280,15 +1523,15 @@ def build_persona_context(engine: Celune, request: str) -> PersonaContext:
         prompt_rules=pack_persona_lines(engine, "prompt_rules"),
         example_dialogue=pack_persona_lines(engine, "example_dialogue"),
     )
+    persona_source_material = _build_persona_source_material(engine, character_profile)
     mood_or_state = _persona_mood_or_state(engine, request)
 
     return PersonaContext(
         character_profile=character_profile,
         persona_card=persona_card,
+        persona_source_material=persona_source_material,
         mood_or_state=mood_or_state,
         retrieved_long_term_memory=_build_retrieved_memory_bundle(engine, request),
-        current_run_chat_history=_build_short_term_history(engine),
-        user_message=request.strip(),
     )
 
 
@@ -1323,10 +1566,13 @@ def build_persona_messages(engine: Celune, request: str) -> list[JSON]:
             {"type": "text", "text": request.strip()},
         ]
 
-    return [
-        {"role": "system", "content": PersonaPromptBuilder.build(context)},
-        {"role": "user", "content": user_content},
+    messages: list[JSON] = [
+        cast(JSON, {"role": "system", "content": PersonaPromptBuilder.build(context)})
     ]
+    for message in persona_history_messages(engine):
+        messages.append(message)
+    messages.append(cast(JSON, {"role": "user", "content": user_content}))
+    return messages
 
 
 def build_persona_request(engine: Celune, request: str) -> JSON:
@@ -1445,7 +1691,12 @@ def think(engine: Celune, request: str) -> bool:
         elif len(history) > limit:
             del history[: len(history) - limit]
 
-    return queue_speech(engine, spoken_text, display_text=spoken_text)
+    return queue_speech(
+        engine,
+        spoken_text,
+        save=False,
+        display_text=spoken_text,
+    )
 
 
 def say(
@@ -1470,6 +1721,32 @@ def say(
     """
     return queue_speech(
         engine, text, save=save, stream_queue=None, display_text=display_text
+    )
+
+
+async def say_async(
+    engine: Celune,
+    text: str,
+    save: bool = True,
+    display_text: Optional[str] = None,
+) -> bool:
+    """Queue text for Celune to say without blocking an async caller.
+
+    Args:
+        engine: Runtime that owns the speech queues.
+        text: The text to synthesize.
+        save: Whether the generated utterance should be persisted to disk.
+        display_text: Optional UI-facing text to associate with the request.
+
+    Returns:
+        bool: ``True`` when the request was queued successfully, otherwise ``False``.
+    """
+    return await queue_speech_async(
+        engine,
+        text,
+        save=save,
+        stream_queue=None,
+        display_text=display_text,
     )
 
 
@@ -1598,6 +1875,24 @@ def queue_speech(
     Raises:
         Exception: An exception was caught and subsequently raised to propagate it to Celune.
     """
+    if not _prepare_speech_readiness(engine):
+        return False
+
+    engine.model_ready.wait()
+    if not _finish_speech_readiness(engine):
+        return False
+
+    return _queue_speech_after_ready(
+        engine,
+        text,
+        save=save,
+        stream_queue=stream_queue,
+        display_text=display_text,
+    )
+
+
+def _prepare_speech_readiness(engine: Celune) -> bool:
+    """Run the pre-wait checks shared by synchronous and async speech queueing."""
     if engine.is_in_tutorial:
         engine.log(string("celune.speech_input_disabled_tutorial"), "warning")
         return False
@@ -1616,13 +1911,28 @@ def queue_speech(
         engine.progress_callback(None, None)
         engine.log(string("pipeline.speak_waiting_reload"), "info")
 
-    engine.model_ready.wait()
+    return True
 
+
+def _finish_speech_readiness(engine: Celune) -> bool:
+    """Run the post-wait model checks shared by speech queueing paths."""
     if not engine.loaded and not getattr(engine.backend, "is_fake", False):
         engine.log(string("ui.core_engine_not_loaded"), "warning")
         engine.error_callback(string("pipeline.not_ready_app", app_name=APP_NAME))
         engine.progress_callback(0, 1)
         return False
+
+    return True
+
+
+def _queue_speech_after_ready(
+    engine: Celune,
+    text: str,
+    save: bool = True,
+    stream_queue: Optional[SpeechStreamQueue] = None,
+    display_text: Optional[str] = None,
+) -> bool:
+    """Queue one speech request after reload readiness is satisfied."""
 
     language_meta = detect_language(text, list(engine.backend.supported_languages))
     requested_language = engine.language
@@ -1633,7 +1943,7 @@ def queue_speech(
         or requested_language.strip().lower() == "auto"
     ):
         # Qwen3 handles automatic language selection internally, so keep the
-        # backend-facing value as "Auto" instead of passing a langdetect code.
+        # backend-facing value as "Auto" instead of passing a detected language code.
         requested_language = (
             "Auto" if backend_name == "qwen3" else language_meta["language"]
         )
@@ -1676,22 +1986,62 @@ def queue_speech(
             return False
 
         engine.cur_state = "generating"
-        engine.text_queue.put(
-            SpeechRequest(
-                text,
-                display_text=display_text if display_text is not None else text,
-                language=requested_language,
-                save=save,
-                stream_queue=stream_queue,
-                normalize=engine.use_normalization,
+        with engine.queue_lock:
+            engine._speech_generation = getattr(engine, "_speech_generation", 0) + 1
+            engine.utterance_force_stop.clear()
+            engine.text_queue.put(
+                SpeechRequest(
+                    text,
+                    display_text=display_text if display_text is not None else text,
+                    language=requested_language,
+                    save=save,
+                    stream_queue=stream_queue,
+                    normalize=engine.use_normalization,
+                    generation=engine._speech_generation,
+                )
             )
-        )
         engine.status_callback(string("status.generating"))
         engine.progress_callback(None, None)
         return True
     except Exception:
         release_pipeline(engine)
         raise
+
+
+async def queue_speech_async(
+    engine: Celune,
+    text: str,
+    save: bool = True,
+    stream_queue: Optional[SpeechStreamQueue] = None,
+    display_text: Optional[str] = None,
+) -> bool:
+    """Queue text for Celune to say without blocking the caller's event loop.
+
+    Args:
+        engine: Runtime that owns the speech queues.
+        text: The text to synthesize.
+        save: Whether the generated utterance should be persisted to disk.
+        stream_queue: Optional queue receiving generated playback chunks.
+        display_text: Optional UI-facing text to associate with the request.
+
+    Returns:
+        bool: ``True`` when the request was queued successfully, otherwise ``False``.
+    """
+    if not _prepare_speech_readiness(engine):
+        return False
+
+    await asyncio.to_thread(engine.model_ready.wait)
+
+    if not _finish_speech_readiness(engine):
+        return False
+
+    return _queue_speech_after_ready(
+        engine,
+        text,
+        save=save,
+        stream_queue=stream_queue,
+        display_text=display_text,
+    )
 
 
 def queue_sfx_audio(
@@ -2131,355 +2481,347 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
     return False
 
 
-def generation_worker(engine: Celune) -> None:
-    """Generate audio tokens and send them to the audio pipeline.
+def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
+    """Process one queued speech request on a blocking worker thread."""
+    text = item.text
+    display_text = item.display_text
+    request_language = item.language
+    save_output = item.save
+    stream_queue = item.stream_queue
+    kept_sfx_audio = engine.kept_sfx_audio
+    engine.kept_sfx_audio = None
 
-    Args:
-        engine: The Celune engine whose generation queue should be processed.
+    if engine.exit_requested:
+        if stream_queue is not None:
+            stream_queue.put(NotAvailableError("stream queue interrupted"))
+            stream_queue.put(None)
+        release_pipeline(engine)
+        return
 
-    Raises:
-        NotAvailableError: The speech model is unavailable during generation.
-    """
     while True:
-        item = engine.text_queue.get()
-        engine.regenerate = False
+        try:
+            engine.model_ready.wait()
 
-        if item is engine.sentinel:
-            engine.audio_queue.put(engine.sentinel)
-            break
+            if not engine.loaded and not engine.backend.is_fake:
+                engine.log(string("ui.core_engine_not_loaded"), "warning")
+                engine.locked = False
+                if stream_queue is not None:
+                    stream_queue.put(NotAvailableError("model is not ready"))
+                    stream_queue.put(None)
+                release_pipeline(engine)
+                break
 
-        item = cast(SpeechRequest, item)
-        text = item.text
-        display_text = item.display_text
-        request_language = item.language
-        save_output = item.save
-        stream_queue = item.stream_queue
-        kept_sfx_audio = engine.kept_sfx_audio
-        engine.kept_sfx_audio = None
+            start_time = _monotonic_time()
+            engine.log(f"[GEN] {display_text}")
+            speech_len = 0.0
+            buffered_speech_len = 0.0
+            smart_buffer_target_seconds = _smart_buffer_target_seconds(
+                engine,
+                0.0,
+                0.0,
+            )
+            engine.smart_buffer_target_seconds = smart_buffer_target_seconds
+            speech_timing = SpeechTiming(start_time)
+            pushed_audio = False
 
-        if engine.exit_requested:
-            if stream_queue is not None:
-                stream_queue.put(NotAvailableError("stream queue interrupted"))
-                stream_queue.put(None)
-            release_pipeline(engine)
-            continue
+            # these generation parameters are fixed and do not change
+            # this only applies to Qwen3-TTS, other backends discard this
+            generation_params: Mapping[str, JSONSerializable] = {
+                "temperature": 0.15,
+                "top_k": 20,
+                "top_p": 0.7,
+                "repetition_penalty": 1.1,
+            }
 
-        while True:
-            try:
-                engine.model_ready.wait()
+            chunks = split_text(engine, text)
+            if not chunks:
+                engine.progress_callback(0, 1)
+                engine.error_callback(string("pipeline.nothing_to_say"))
+                release_pipeline(engine)
+                if stream_queue is not None:
+                    stream_queue.put(NotAvailableError("nothing to say"))
+                    stream_queue.put(None)
+                break
 
-                if not engine.loaded and not engine.backend.is_fake:
-                    engine.log(string("ui.core_engine_not_loaded"), "warning")
-                    engine.locked = False
-                    if stream_queue is not None:
-                        stream_queue.put(NotAvailableError("model is not ready"))
-                        stream_queue.put(None)
-                    release_pipeline(engine)
-                    break
+            buffer: list[npt.NDArray[np.float32]] = []
+            full_audio: list[npt.NDArray[np.float32]] = []
+            generated_text_parts: list[str] = []
+            request_generation = item.generation
+            source_id = _next_playback_source_id(engine)
+            _register_playback_source(engine, source_id, kind="speech")
 
-                start_time = time.monotonic()
-                engine.log(f"[GEN] {display_text}")
-                speech_len = 0.0
-                buffered_speech_len = 0.0
-                smart_buffer_target_seconds = _smart_buffer_target_seconds(
-                    engine,
-                    0.0,
-                    0.0,
-                )
-                engine.smart_buffer_target_seconds = smart_buffer_target_seconds
-                speech_timing = SpeechTiming(start_time)
-                pushed_audio = False
-
-                # these generation parameters are fixed and do not change
-                # this only applies to Qwen3-TTS, other backends discard this
-                generation_params: Mapping[str, JSONSerializable] = {
-                    "temperature": 0.15,
-                    "top_k": 20,
-                    "top_p": 0.7,
-                    "repetition_penalty": 1.1,
-                }
-
-                chunks = split_text(engine, text)
-                if not chunks:
-                    engine.progress_callback(0, 1)
-                    engine.error_callback(string("pipeline.nothing_to_say"))
-                    release_pipeline(engine)
-                    if stream_queue is not None:
-                        stream_queue.put(NotAvailableError("nothing to say"))
-                        stream_queue.put(None)
-                    break
-
-                buffer: list[npt.NDArray[np.float32]] = []
-                full_audio: list[npt.NDArray[np.float32]] = []
-                generated_text_parts: list[str] = []
-                source_id = _next_playback_source_id(engine)
-                _register_playback_source(engine, source_id, kind="speech")
-
-                for chunk_index, chunk_text in enumerate(chunks):
-                    if engine.exit_requested:
-                        break
-
-                    if engine.utterance_force_stop.is_set():
-                        break
-
-                    if item.normalize:
-                        engine.status_callback(string("status.normalizing"))
-                        engine.progress_callback(None, None)
-                        normalized = engine.normalize(chunk_text)
-                        if normalized is not None:
-                            if normalized == chunk_text:
-                                engine.log_dev(
-                                    "This input is already normalized.", "warning"
-                                )
-                            else:
-                                differences = sum(
-                                    x != y for x, y in zip(normalized, chunk_text)
-                                ) + abs(len(normalized) - len(chunk_text))
-
-                                if differences > max(5, int(len(chunk_text) * 0.05)):
-                                    chunk_text = normalized
-
-                    generated_text_parts.append(chunk_text)
-                    is_first_chunk = chunk_index == 0
-                    last_timing: Optional[dict] = None
-
-                    with engine.model_lock:
-                        if engine.model is None:
-                            raise NotAvailableError(
-                                "cannot generate without a model reference"
-                            )
-
-                        resolve_generation_language = getattr(
-                            engine.backend,
-                            "resolve_generation_language",
-                            None,
-                        )
-                        if callable(resolve_generation_language):
-                            target_language = resolve_generation_language(
-                                request_language
-                            )
-                        else:
-                            target_language = request_language
-
-                        should_reload_for_language = getattr(
-                            engine.backend,
-                            "should_reload_for_language",
-                            None,
-                        )
-                        if callable(should_reload_for_language) and (
-                            should_reload_for_language(target_language)
-                        ):
-                            active_voice = (
-                                engine.current_voice or engine.backend.default_voice
-                            )
-                            if active_voice is None:
-                                raise NotAvailableError(
-                                    "cannot switch language without an active voice"
-                                )
-
-                            model_id = engine.backend.model_id_for_voice(active_voice)
-                            engine.log_dev(
-                                f"[RELOAD] Loading {model_id} for language: {target_language}"
-                            )
-                            engine.backend.unload_model()
-                            engine.model = engine.backend.load_model(
-                                model_id,
-                                lang=target_language,
-                            )
-                            engine.model_name = model_id
-
-                        for (
-                            audio_chunk,
-                            sr,  # 24 kHz if Qwen3 or Celune Mini, 48 kHz if VoxCPM2
-                            timing,
-                        ) in engine.backend.generate_stream(  # some args will be discarded as needed
-                            engine.model,
-                            text=chunk_text,
-                            language=target_language,
-                            chunk_size=engine.chunk_size,
-                            instruct=_effective_voice_prompt(engine),
-                            voice=engine.current_voice,
-                            temperature=generation_params["temperature"],
-                            top_k=generation_params["top_k"],
-                            top_p=generation_params["top_p"],
-                            repetition_penalty=generation_params["repetition_penalty"],
-                        ):
-                            if timing is not None:
-                                last_timing = timing
-                            if engine.exit_requested:
-                                break
-
-                            if engine.utterance_force_stop.is_set():
-                                break
-
-                            first_chunk_time = None
-                            if timing is not None:
-                                raw_first_chunk_time = timing.get("first_chunk_time")
-                                if isinstance(raw_first_chunk_time, float):
-                                    first_chunk_time = raw_first_chunk_time
-
-                            speech_timing.mark_first_chunk(first_chunk_time)
-
-                            if isinstance(audio_chunk, torch.Tensor):
-                                audio_chunk = audio_chunk.cpu().numpy()
-
-                            audio_chunk = to_48khz(
-                                np.asarray(audio_chunk, dtype=np.float32), sr
-                            )
-
-                            if engine.speed != 1.0 and engine.can_use_rubberband:
-                                try:
-                                    audio_chunk = rb.time_stretch(
-                                        audio_chunk, BASE_SR, engine.speed
-                                    )
-                                except RuntimeError:
-                                    engine.log(
-                                        string("pipeline.rubber_band_unavailable"),
-                                        "warning",
-                                    )
-                                    engine.can_use_rubberband = False
-                                else:
-                                    audio_chunk = np.asarray(
-                                        audio_chunk, dtype=np.float32
-                                    )
-                            if engine.reverb.strength > 0.0:
-                                audio_chunk = engine.reverb.process(
-                                    audio_chunk, BASE_SR
-                                )
-                                audio_chunk = np.asarray(audio_chunk, dtype=np.float32)
-
-                            if is_first_chunk:
-                                audio_chunk = soften(audio_chunk, BASE_SR, end=False)
-                                is_first_chunk = False
-
-                            if engine.exit_requested:
-                                break
-
-                            buffer.append(audio_chunk)
-                            full_audio.append(audio_chunk)
-                            chunk_dur = len(audio_chunk) / BASE_SR
-                            speech_len += chunk_dur
-                            buffered_speech_len += chunk_dur
-                            generation_elapsed = max(
-                                time.monotonic() - start_time,
-                                1e-6,
-                            )
-                            smart_buffer_target_seconds = _smart_buffer_target_seconds(
-                                engine,
-                                speech_len,
-                                generation_elapsed,
-                            )
-                            engine.smart_buffer_target_seconds = (
-                                smart_buffer_target_seconds
-                            )
-
-                            # adaptive buffering builds more headroom when generation
-                            # falls behind realtime and gets out of the way when it
-                            # does not need to aid in your ability to hear the voice
-                            if (
-                                smart_buffer_target_seconds <= 0.0
-                                or buffered_speech_len >= smart_buffer_target_seconds
-                            ):
-                                pushed_audio = _flush_buffered_speech_chunks(
-                                    engine,
-                                    source_id,
-                                    buffer,
-                                    speech_timing,
-                                    pushed_audio,
-                                    stream_queue,
-                                )
-                                buffered_speech_len = 0.0
-
-                        if (
-                            not engine.exit_requested
-                            and not engine.utterance_force_stop.is_set()
-                            and last_timing is not None
-                            and last_timing.get("is_final")
-                            and bool(last_timing.get("missing_eos"))
-                        ):
-                            engine.log(
-                                string("pipeline.token_limit_reached"),
-                                "warning",
-                            )
-
-                if generated_text_parts:
-                    text = " ".join(generated_text_parts)
-
-                generation_time = time.monotonic() - start_time
-
+            for chunk_index, chunk_text in enumerate(chunks):
                 if engine.exit_requested:
-                    if stream_queue is not None:
-                        stream_queue.put(None)
-                    release_pipeline(engine)
                     break
 
                 if engine.utterance_force_stop.is_set():
-                    if stream_queue is not None:
-                        stream_queue.put(None)
-                    engine.reverb.reset()
                     break
 
-                engine.log(
-                    string(
-                        "pipeline.generation_summary",
-                        speech_seconds=format_number(speech_len, 2),
-                        generation_seconds=format_number(generation_time, 2),
-                    )
-                )
-                generation_speed = speech_len / generation_time
-                engine.log(
-                    string(
-                        "pipeline.generation_speed",
-                        speed=format_number(generation_speed, 2),
-                    )
-                )
-                _remember_smart_buffer_speed(engine, generation_speed)
-                engine.smart_buffer_target_seconds = _smart_buffer_target_seconds(
-                    engine,
-                    speech_len,
-                    generation_time,
-                )
-                engine.log(
-                    string(
-                        "pipeline.ttfc_ms",
-                        milliseconds=format_number(speech_timing.ttfc_ms(), 1),
-                    )
-                )
+                if item.normalize:
+                    engine.status_callback(string("status.normalizing"))
+                    engine.progress_callback(None, None)
+                    normalized = engine.normalize(chunk_text)
+                    if normalized is not None:
+                        if normalized == chunk_text:
+                            engine.log_dev(
+                                "This input is already normalized.", "warning"
+                            )
+                        else:
+                            differences = sum(
+                                x != y for x, y in zip(normalized, chunk_text)
+                            ) + abs(len(normalized) - len(chunk_text))
 
-                if buffer:
-                    pushed_audio = _flush_buffered_speech_chunks(
-                        engine,
-                        source_id,
-                        buffer,
-                        speech_timing,
-                        pushed_audio,
-                        stream_queue,
-                    )
+                            if differences > max(5, int(len(chunk_text) * 0.05)):
+                                chunk_text = normalized
 
-                engine.log(string("pipeline.generation_done"))
+                generated_text_parts.append(chunk_text)
+                is_first_chunk = chunk_index == 0
+                last_timing: Optional[dict] = None
 
-                saved_path = None
-                analysis_audio = None
-                if not engine.exit_requested:
-                    if engine.reverb.strength > 0.0:
-                        tail = engine.reverb.flush()
-                        if len(tail) > 0:
-                            _queue_playback_chunk(engine, source_id, tail, BASE_SR)
-                            if stream_queue is not None:
-                                stream_queue.put(tail.copy())
-                            buffer.append(tail)
-                            if save_output:
-                                full_audio.append(tail)
-
-                    engine.reverb.reset()
-                    is_silent = False
-                    silence_tier = 0
-                    if full_audio:
-                        is_silent, silence_tier = is_silent_utterance(
-                            np.concatenate(full_audio)
+                with engine.model_lock:
+                    if engine.model is None:
+                        raise NotAvailableError(
+                            "cannot generate without a model reference"
                         )
 
-                    if is_silent and silence_tier == 2:
+                    resolve_generation_language = getattr(
+                        engine.backend,
+                        "resolve_generation_language",
+                        None,
+                    )
+                    if callable(resolve_generation_language):
+                        target_language = resolve_generation_language(request_language)
+                    else:
+                        target_language = request_language
+
+                    should_reload_for_language = getattr(
+                        engine.backend,
+                        "should_reload_for_language",
+                        None,
+                    )
+                    if callable(should_reload_for_language) and (
+                        should_reload_for_language(target_language)
+                    ):
+                        active_voice = (
+                            engine.current_voice or engine.backend.default_voice
+                        )
+                        if active_voice is None:
+                            raise NotAvailableError(
+                                "cannot switch language without an active voice"
+                            )
+
+                        model_id = engine.backend.model_id_for_voice(active_voice)
+                        engine.log_dev(
+                            f"[RELOAD] Loading {model_id} for language: {target_language}"
+                        )
+                        engine.backend.unload_model()
+                        engine.model = engine.backend.load_model(
+                            model_id,
+                            lang=target_language,
+                        )
+                        engine.model_name = model_id
+
+                    for (
+                        audio_chunk,
+                        sr,  # 24 kHz if Qwen3 or Celune Mini, 48 kHz if VoxCPM2
+                        timing,
+                    ) in engine.backend.generate_stream(
+                        engine.model,
+                        text=chunk_text,
+                        language=target_language,
+                        chunk_size=engine.chunk_size,
+                        instruct=_effective_voice_prompt(engine),
+                        voice=engine.current_voice,
+                        temperature=generation_params["temperature"],
+                        top_k=generation_params["top_k"],
+                        top_p=generation_params["top_p"],
+                        repetition_penalty=generation_params["repetition_penalty"],
+                    ):
+                        if timing is not None:
+                            last_timing = timing
+                        if engine.exit_requested:
+                            break
+
+                        if (
+                            engine.utterance_force_stop.is_set()
+                            or request_generation
+                            != getattr(engine, "_speech_generation", request_generation)
+                        ):
+                            break
+
+                        first_chunk_time = None
+                        if timing is not None:
+                            raw_first_chunk_time = timing.get("first_chunk_time")
+                            if isinstance(raw_first_chunk_time, float):
+                                first_chunk_time = raw_first_chunk_time
+
+                        speech_timing.mark_first_chunk(first_chunk_time)
+
+                        if isinstance(audio_chunk, torch.Tensor):
+                            audio_chunk = audio_chunk.cpu().numpy()
+
+                        audio_chunk = to_48khz(
+                            np.asarray(audio_chunk, dtype=np.float32), sr
+                        )
+
+                        if engine.speed != 1.0 and engine.can_use_rubberband:
+                            try:
+                                audio_chunk = rb.time_stretch(
+                                    audio_chunk, BASE_SR, engine.speed
+                                )
+                            except RuntimeError:
+                                engine.log(
+                                    string("pipeline.rubber_band_unavailable"),
+                                    "warning",
+                                )
+                                engine.can_use_rubberband = False
+                            else:
+                                audio_chunk = np.asarray(audio_chunk, dtype=np.float32)
+                        if engine.reverb.strength > 0.0:
+                            audio_chunk = engine.reverb.process(audio_chunk, BASE_SR)
+                            audio_chunk = np.asarray(audio_chunk, dtype=np.float32)
+
+                        if is_first_chunk:
+                            audio_chunk = soften(audio_chunk, BASE_SR, end=False)
+                            is_first_chunk = False
+
+                        if (
+                            engine.exit_requested
+                            or engine.utterance_force_stop.is_set()
+                            or request_generation
+                            != getattr(engine, "_speech_generation", request_generation)
+                        ):
+                            break
+
+                        buffer.append(audio_chunk)
+                        full_audio.append(audio_chunk)
+                        chunk_dur = len(audio_chunk) / BASE_SR
+                        speech_len += chunk_dur
+                        buffered_speech_len += chunk_dur
+                        generation_elapsed = max(
+                            _monotonic_time() - start_time,
+                            1e-6,
+                        )
+                        smart_buffer_target_seconds = _smart_buffer_target_seconds(
+                            engine,
+                            speech_len,
+                            generation_elapsed,
+                        )
+                        engine.smart_buffer_target_seconds = smart_buffer_target_seconds
+
+                        if (
+                            smart_buffer_target_seconds <= 0.0
+                            or buffered_speech_len >= smart_buffer_target_seconds
+                        ):
+                            pushed_audio = _flush_buffered_speech_chunks(
+                                engine,
+                                source_id,
+                                buffer,
+                                speech_timing,
+                                pushed_audio,
+                                stream_queue,
+                            )
+                            buffered_speech_len = 0.0
+
+                    if (
+                        not engine.exit_requested
+                        and not engine.utterance_force_stop.is_set()
+                        and last_timing is not None
+                        and last_timing.get("is_final")
+                        and bool(last_timing.get("missing_eos"))
+                    ):
+                        engine.log(
+                            string("pipeline.token_limit_reached"),
+                            "warning",
+                        )
+
+            if generated_text_parts:
+                text = " ".join(generated_text_parts)
+
+            generation_time = _monotonic_time() - start_time
+
+            if engine.exit_requested:
+                if stream_queue is not None:
+                    stream_queue.put(None)
+                release_pipeline(engine)
+                break
+
+            if engine.utterance_force_stop.is_set() or request_generation != getattr(
+                engine, "_speech_generation", request_generation
+            ):
+                if stream_queue is not None:
+                    stream_queue.put(None)
+                engine.reverb.reset()
+                break
+
+            engine.log(
+                string(
+                    "pipeline.generation_summary",
+                    speech_seconds=format_number(speech_len, 2),
+                    generation_seconds=format_number(generation_time, 2),
+                )
+            )
+            generation_speed = speech_len / generation_time
+            engine.log(
+                string(
+                    "pipeline.generation_speed",
+                    speed=format_number(generation_speed, 2),
+                )
+            )
+            _remember_smart_buffer_speed(engine, generation_speed)
+            engine.smart_buffer_target_seconds = _smart_buffer_target_seconds(
+                engine,
+                speech_len,
+                generation_time,
+            )
+            engine.log(
+                string(
+                    "pipeline.ttfc_ms",
+                    milliseconds=format_number(speech_timing.ttfc_ms(), 1),
+                )
+            )
+
+            if buffer:
+                pushed_audio = _flush_buffered_speech_chunks(
+                    engine,
+                    source_id,
+                    buffer,
+                    speech_timing,
+                    pushed_audio,
+                    stream_queue,
+                )
+
+            engine.log(string("pipeline.generation_done"))
+
+            saved_path = None
+            analysis_audio = None
+            if not engine.exit_requested:
+                if engine.reverb.strength > 0.0:
+                    tail = engine.reverb.flush()
+                    if len(tail) > 0:
+                        queued_tail = _queue_playback_chunk(
+                            engine,
+                            source_id,
+                            tail,
+                            BASE_SR,
+                        )
+                        if queued_tail is not False and stream_queue is not None:
+                            stream_queue.put(tail.copy())
+                        if queued_tail is not False:
+                            buffer.append(tail)
+                        if save_output:
+                            full_audio.append(tail)
+
+                engine.reverb.reset()
+                is_silent = False
+                silence_tier = 0
+                if full_audio:
+                    is_silent, silence_tier = is_silent_utterance(
+                        np.concatenate(full_audio)
+                    )
+
+                if is_silent and silence_tier == 2:
+                    if item.silent_retry_count < _MAX_SILENT_UTTERANCE_RETRIES:
                         engine.regenerate = True
                         _queue_playback_done(
                             engine,
@@ -2487,108 +2829,149 @@ def generation_worker(engine: Celune) -> None:
                             release_pipeline_when_finished=False,
                             notify_idle_when_finished=False,
                         )
-                        # push recently processed item back so Celune can process it again
-                        engine.text_queue.put(item)
+                        item = replace(
+                            item,
+                            silent_retry_count=item.silent_retry_count + 1,
+                        )
                         engine.log(
-                            string("pipeline.silent_regenerating"),
+                            string(
+                                "pipeline.silent_regenerating",
+                                retry_count=item.silent_retry_count,
+                                max_retries=_MAX_SILENT_UTTERANCE_RETRIES,
+                            ),
                             "warning",
                         )
                         continue
-                    if is_silent and silence_tier == 1:
-                        engine.log(string("pipeline.may_be_silent"), "warning")
-
-                    if save_output and full_audio:
-                        wav = np.concatenate(full_audio)
-                        analysis_audio = wav.copy()
-                        if kept_sfx_audio is not None:
-                            wav = np.concatenate((kept_sfx_audio, wav))
-                        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-
-                        # get up to first three words of input and sanitize for use in a file name
-                        first_words = "_".join(text.split()[:3]).lower()
-                        first_words = re.sub(r"[^a-zA-Z0-9_]", "", first_words)
-
-                        if not os.path.exists("outputs"):
-                            engine.log(
-                                string("pipeline.outputs_path_creating"), "warning"
-                            )
-                            try:
-                                os.mkdir("outputs")
-                            except OSError as e:
-                                engine.log(
-                                    string(
-                                        "pipeline.outputs_create_failed",
-                                        error=format_error(e, engine.dev),
-                                    ),
-                                    "warning",
-                                )
-
-                        if os.path.exists("outputs"):
-                            saved_path = f"outputs/{APP_SLUG}_speech_{timestamp}_{first_words}.flac"
-                            sample_rate = BASE_SR
-                            subtype = "PCM_24"
-                            metadata = _celune_metadata_payload(
-                                engine,
-                                text=text,
-                                display_text=display_text,
-                                generation_params=generation_params,
-                                sample_rate=sample_rate,
-                                subtype=subtype,
-                                included_kept_sfx=kept_sfx_audio is not None,
-                            )
-                            try:
-                                _write_celune_flac(
-                                    engine,
-                                    saved_path,
-                                    wav,
-                                    sample_rate,
-                                    subtype=subtype,
-                                    metadata=metadata,
-                                )
-                            except Exception as e:
-                                engine.log(
-                                    string(
-                                        "pipeline.flac_save_failed",
-                                        error=format_error(e, engine.dev),
-                                    ),
-                                    "warning",
-                                )
-                                saved_path = None
-
-                    engine.recently_saved = saved_path
-                    _queue_playback_done(
-                        engine,
-                        source_id,
-                        release_pipeline_when_finished=True,
-                        saved_path=saved_path,
-                        analysis_audio=analysis_audio,
+                    engine.log(
+                        string(
+                            "pipeline.silent_regeneration_limit_reached",
+                            max_retries=_MAX_SILENT_UTTERANCE_RETRIES,
+                        ),
+                        "warning",
                     )
-                    if stream_queue is not None:
-                        stream_queue.put(None)
-                break
-            except Exception as e:
-                if engine.exit_requested:
-                    release_pipeline(engine)
-                    break
+                if is_silent and silence_tier == 1:
+                    engine.log(string("pipeline.may_be_silent"), "warning")
 
-                engine.log(
-                    string(
-                        "pipeline.gen_error",
-                        error=format_error(e, engine.dev),
-                    ),
-                    "error",
+                engine.total_generated_speech_seconds += speech_len
+
+                if save_output and full_audio:
+                    wav = np.concatenate(full_audio)
+                    analysis_audio = wav.copy()
+                    if kept_sfx_audio is not None:
+                        wav = np.concatenate((kept_sfx_audio, wav))
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+
+                    first_words = "_".join(text.split()[:3]).lower()
+                    first_words = re.sub(r"[^a-zA-Z0-9_]", "", first_words)
+
+                    output_dir = outputs_dir()
+                    if not output_dir.exists():
+                        engine.log(string("pipeline.outputs_path_creating"), "warning")
+                        try:
+                            output_dir.mkdir(parents=True)
+                        except OSError as e:
+                            engine.log(
+                                string(
+                                    "pipeline.outputs_create_failed",
+                                    error=format_error(e, engine.dev),
+                                ),
+                                "warning",
+                            )
+
+                    if output_dir.exists():
+                        file_name = f"{APP_SLUG}_speech_{timestamp}_{first_words}.flac"
+                        saved_path = str(pathlib.Path("outputs") / file_name)
+                        actual_saved_path = str(output_dir / file_name)
+                        sample_rate = BASE_SR
+                        subtype = "PCM_24"
+                        metadata = _celune_metadata_payload(
+                            engine,
+                            text=text,
+                            display_text=display_text,
+                            generation_params=generation_params,
+                            sample_rate=sample_rate,
+                            subtype=subtype,
+                            included_kept_sfx=kept_sfx_audio is not None,
+                        )
+                        try:
+                            _write_celune_flac(
+                                engine,
+                                actual_saved_path,
+                                wav,
+                                sample_rate,
+                                subtype=subtype,
+                                metadata=metadata,
+                            )
+                        except Exception as e:
+                            engine.log(
+                                string(
+                                    "pipeline.flac_save_failed",
+                                    error=format_error(e, engine.dev),
+                                ),
+                                "warning",
+                            )
+                            saved_path = None
+
+                engine.recently_saved = saved_path
+                _queue_playback_done(
+                    engine,
+                    source_id,
+                    release_pipeline_when_finished=True,
+                    saved_path=saved_path,
+                    analysis_audio=analysis_audio,
                 )
                 if stream_queue is not None:
-                    stream_queue.put(e)
                     stream_queue.put(None)
-                engine.cur_state = "error"
-                engine.locked = False
-                engine.playback_done.set()
-                engine.progress_callback(0, 1)
-                engine.error_callback(
-                    string("pipeline.could_not_generate", app_name=APP_NAME)
-                )
+            break
+        except Exception as e:
+            if engine.exit_requested:
+                release_pipeline(engine)
                 break
+
+            engine.log(
+                string(
+                    "pipeline.gen_error",
+                    error=format_error(e, engine.dev),
+                ),
+                "error",
+            )
+            if stream_queue is not None:
+                stream_queue.put(e)
+                stream_queue.put(None)
+            engine.cur_state = "error"
+            engine.locked = False
+            engine.playback_done.set()
+            engine.progress_callback(0, 1)
+            engine.error_callback(
+                string("pipeline.could_not_generate", app_name=APP_NAME)
+            )
+            break
+
+
+async def generation_worker_job(engine: Celune) -> None:
+    """Generate audio tokens and send them to the audio pipeline as an async job.
+
+    Args:
+        engine: Runtime that owns the generation queue and playback state.
+    """
+    while True:
+        item = await asyncio.to_thread(engine.text_queue.get)
+        engine.regenerate = False
+
+        if item is engine.sentinel:
+            try:
+                engine.audio_queue.put_nowait(engine.sentinel)
+            except queue.Full:
+                await asyncio.to_thread(engine.audio_queue.put, engine.sentinel)
+            break
+
+        engine.utterance_force_stop.clear()
+        request = cast(SpeechRequest, item)
+        setattr(engine, "_active_speech_generation", request.generation)
+        try:
+            await asyncio.to_thread(_process_generation_request, engine, request)
+        finally:
+            setattr(engine, "_active_speech_generation", None)
 
 
 def _playback_blocks(
@@ -2669,7 +3052,7 @@ def _finalize_playback_idle(
     engine.progress_callback(1, 1)
     engine.playback_done.set()
 
-    if engine.cur_state == "error":
+    if engine.cur_state in {"error", "reloading"}:
         return
 
     if getattr(engine, "locked", False):
@@ -2744,6 +3127,7 @@ parse_vorbis_comment_block = _parse_vorbis_comment_block
 flac_metadata_blocks = _flac_metadata_blocks
 write_flac_metadata = _write_flac_metadata
 write_celune_flac = _write_celune_flac
+saved_output_speech_seconds = _saved_output_speech_seconds
 register_playback_source = _register_playback_source
 set_playback_source_status = _set_playback_source_status
 queue_playback_chunk = _queue_playback_chunk
@@ -2753,61 +3137,87 @@ download_youtube_sfx = _download_youtube_sfx
 finalize_playback_idle = _finalize_playback_idle
 
 
-def playback_worker(engine: Celune) -> None:
+async def playback_worker_job(engine: Celune) -> None:
     """Receive audio chunks from multiple sources, mix them, and play them.
 
     Args:
-        engine: Celune runtime that owns playback queues, DSP state, and logs.
+        engine: Runtime that owns the playback queue and output stream.
 
     Raises:
-        NotAvailableError: Raised when no usable audio output backend is available.
+        NotAvailableError: Raised when no suitable output audio device is available.
     """
     source_buffers: dict[
         int, deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]
     ] = {}
     source_done: dict[int, PlaybackSourceDone] = {}
     stop_requested = False
+    (
+        cpu_guard_enabled,
+        max_buffer_seconds,
+        max_drain_items,
+        yield_seconds,
+    ) = _pipeline_cpu_config(engine)
+    buffered_seconds = 0.0
 
-    def drain_pending_items() -> bool:
-        nonlocal stop_requested
+    async def force_stop_playback() -> None:
+        nonlocal buffered_seconds
+        source_buffers.clear()
+        source_done.clear()
+        buffered_seconds = 0.0
+        _playback_source_statuses(engine).clear()
+        _playback_source_meta(engine).clear()
+        engine.utterance_force_stop.clear()
+        _reset_glow_audio_reactivity(engine)
+        await asyncio.to_thread(close_stream, engine, True)
+        engine.playback_done.set()
+        release_pipeline(engine)
+        if engine.cur_state != "error":
+            engine.idle_callback()
 
-        while True:
+    async def drain_pending_items() -> bool:
+        nonlocal buffered_seconds, stop_requested
+
+        drained_items = 0
+        while drained_items < max_drain_items:
+            if (
+                cpu_guard_enabled
+                and buffered_seconds >= max_buffer_seconds
+                and not engine.utterance_force_stop.is_set()
+            ):
+                break
             try:
-                pending = engine.audio_queue.get_nowait()
+                pending = _dequeue_playback_item(engine, prioritize_speech=True)
             except queue.Empty:
-                return True
+                break
+
+            drained_items += 1
 
             if pending is engine.sentinel:
                 stop_requested = True
-                return True
+                break
 
             if pending is engine.force_stop_marker:
-                source_buffers.clear()
-                source_done.clear()
-                _playback_source_statuses(engine).clear()
-                _playback_source_meta(engine).clear()
-                engine.utterance_force_stop.clear()
-                _reset_glow_audio_reactivity(engine)
-                close_stream(engine, abort=True)
-                engine.playback_done.set()
-                release_pipeline(engine)
-                if engine.cur_state != "error":
-                    engine.idle_callback()
+                await force_stop_playback()
                 return False
 
             if isinstance(pending, PlaybackChunk):
-                source_buffers.setdefault(pending.source_id, deque()).extend(
-                    _playback_blocks(pending)
-                )
+                blocks = _playback_blocks(pending)
+                if blocks:
+                    source_buffers.setdefault(pending.source_id, deque()).extend(blocks)
+                    buffered_seconds += len(pending.audio) / max(1, pending.sample_rate)
             elif isinstance(pending, PlaybackSourceDone):
                 source_done[pending.source_id] = pending
+
+        if yield_seconds > 0.0 and not engine.audio_queue.empty():
+            await asyncio.sleep(yield_seconds)
+        return True
 
     while True:
         if engine.exit_requested:
             with engine.queue_lock:
                 clear_queue(engine.audio_queue)
 
-            close_stream(engine, abort=True)
+            await asyncio.to_thread(close_stream, engine, True)
             release_pipeline(engine)
             if engine.cur_state != "error":
                 engine.idle_callback()
@@ -2815,7 +3225,10 @@ def playback_worker(engine: Celune) -> None:
 
         try:
             timeout = 0.01 if source_buffers else None
-            item = engine.audio_queue.get(timeout=timeout)
+            if timeout is None:
+                item = await asyncio.to_thread(engine.audio_queue.get)
+            else:
+                item = await asyncio.to_thread(engine.audio_queue.get, True, timeout)
         except queue.Empty:
             item = None
 
@@ -2823,39 +3236,31 @@ def playback_worker(engine: Celune) -> None:
             break
 
         if item is engine.force_stop_marker:
-            source_buffers.clear()
-            source_done.clear()
-            _playback_source_statuses(engine).clear()
-            _playback_source_meta(engine).clear()
-            engine.utterance_force_stop.clear()
-            _reset_glow_audio_reactivity(engine)
-            close_stream(engine, abort=True)
-            engine.playback_done.set()
-            release_pipeline(engine)
-            if engine.cur_state != "error":
-                engine.idle_callback()
+            await force_stop_playback()
             continue
 
         if isinstance(item, PlaybackChunk):
-            source_buffers.setdefault(item.source_id, deque()).extend(
-                _playback_blocks(item)
-            )
+            blocks = _playback_blocks(item)
+            if blocks:
+                source_buffers.setdefault(item.source_id, deque()).extend(blocks)
+                buffered_seconds += len(item.audio) / max(1, item.sample_rate)
         elif isinstance(item, PlaybackSourceDone):
             source_done[item.source_id] = item
 
-        if not drain_pending_items():
+        if not await drain_pending_items():
             continue
 
         if engine.exit_requested:
             continue
 
         while source_buffers:
-            if not drain_pending_items():
+            if not await drain_pending_items():
                 break
 
-            if not _ensure_playback_stream(engine, BASE_SR):
+            if not await asyncio.to_thread(_ensure_playback_stream, engine, BASE_SR):
                 source_buffers.clear()
                 source_done.clear()
+                buffered_seconds = 0.0
                 _playback_source_statuses(engine).clear()
                 _playback_source_meta(engine).clear()
                 release_pipeline(engine)
@@ -2909,6 +3314,11 @@ def playback_worker(engine: Celune) -> None:
                         completed_now.append(source_id)
                     del source_buffers[source_id]
 
+            buffered_seconds = max(
+                0.0,
+                buffered_seconds - (block_len / BASE_SR) * len(ready_ids),
+            )
+
             mixed = np.clip(mixed, -1.0, 1.0)
 
             try:
@@ -2917,16 +3327,17 @@ def playback_worker(engine: Celune) -> None:
                     raise NotAvailableError("audio stream is not available")
                 log_first_playback(engine, timing_to_log)
                 engine.glow.schedule(mixed)
-                stream.write(mixed)
+                await asyncio.to_thread(stream.write, mixed)
                 _update_playback_progress(engine, source_buffers)
             except Exception as e:
                 engine.log(f"[PLAY ERROR] {format_error(e, engine.dev)}", "error")
                 engine.error_callback(string("pipeline.playback_error"))
-                close_stream(engine, abort=True)
+                await asyncio.to_thread(close_stream, engine, True)
                 engine._stream = None
                 engine._current_sr = None
                 source_buffers.clear()
                 source_done.clear()
+                buffered_seconds = 0.0
                 _playback_source_statuses(engine).clear()
                 _playback_source_meta(engine).clear()
                 break

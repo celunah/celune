@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MIT
 """Tests for Celune's browser-facing API UI."""
 
-from types import SimpleNamespace
-from queue import Queue
 import asyncio
 from typing import cast
+from queue import Queue
 from unittest import TestCase, mock
+from types import SimpleNamespace
 
 import numpy as np
 from starlette.requests import Request
@@ -538,7 +538,7 @@ class ApiWebUITests(TestCase):
             sleeping=True,
         )
 
-        def wake_from_sleep() -> bool:
+        async def wake_from_sleep_async() -> bool:
             calls.append("wake")
             celune.sleeping = False
             celune.cur_state = "idle"
@@ -549,7 +549,7 @@ class ApiWebUITests(TestCase):
             calls.append(f"say:{content}")
             return chunks
 
-        celune.wake_from_sleep = wake_from_sleep
+        celune.wake_from_sleep_async = wake_from_sleep_async
         celune.say_stream = say_stream
         api.bound_celune = cast(Celune, celune)
 
@@ -567,6 +567,34 @@ class ApiWebUITests(TestCase):
         final_audio = updates[-1][1]
         self.assertIsInstance(final_audio, tuple)
         self.assertEqual(cast(tuple[int, np.ndarray], final_audio)[0], 48000)
+
+    def test_webui_cycle_voice_uses_async_runtime_switch(self) -> None:
+        """Verify browser voice cycling goes through the async runtime method."""
+        calls: list[str] = []
+
+        async def set_voice_async(name: str) -> bool:
+            calls.append(name)
+            return True
+
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                set_voice_async=set_voice_async,
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+            ),
+        )
+
+        with mock.patch(
+            "celune.api.ui_resources.resource_pages",
+            return_value=("VRAM: 10.66/11.94 GB available",),
+        ):
+            _snapshot = api._webui_cycle_voice()
+
+        self.assertEqual(calls, ["calm"])
 
     def test_webui_convert_audio_returns_browser_audio_after_conversion(self) -> None:
         """Verify browser audio conversion returns one playable Celune-format payload."""
@@ -793,3 +821,17 @@ class ApiWebUITests(TestCase):
         self.assertIsNone(api.bound_celune)
         self.assertTrue(api.current_api_server.should_exit)
         self.assertTrue(api.current_api_server.force_exit)
+
+    def test_start_api_reports_when_port_is_already_in_use(self) -> None:
+        """Verify occupied API ports produce a direct warning instead of a runtime error."""
+        celune = SimpleNamespace(log=mock.Mock(), dev=False)
+        bind_error = OSError(10048, "only one usage of each socket address")
+
+        with mock.patch("celune.api.run_api", side_effect=bind_error):
+            thread = api.start_api(cast(Celune, celune), port=2060)
+            thread.join(timeout=1.0)
+
+        celune.log.assert_called_once_with(
+            string("api.port_in_use", port=2060),
+            "warning",
+        )

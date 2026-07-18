@@ -7,17 +7,16 @@ from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
 from typing import Optional, Protocol, Union, cast
 
-import torch
 import numpy as np
 import numpy.typing as npt
+import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from transformers import AutoModel, AutoModelForSequenceClassification, AutoTokenizer
 
 from ..utils import discard
+from ..typing.aliases import EmbeddingVector
 from ..constants import JSONSerializable, PERSONA_EMOTION_MODEL
-
-type EmbeddingVector = npt.NDArray[np.float32]
 
 GOEMOTIONS_LABELS: tuple[str, ...] = (
     "admiration",

@@ -2,8 +2,8 @@
 """VoxCPM2 backend implementation for Celune."""
 
 import os
-import contextlib
 import time
+import contextlib
 from collections.abc import Iterator
 from typing import Callable, Optional, Mapping, Generator
 
@@ -11,10 +11,10 @@ import numpy as np
 import numpy.typing as npt
 from voxcpm import VoxCPM
 
-from . import get_version
-from ...cevoice import default_loader, CEVoiceLoader
 from ...constants import BASE_SR
+from . import get_version
 from ...utils import custom_assert
+from ...cevoice import default_loader, CEVoiceLoader
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 

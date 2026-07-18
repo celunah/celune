@@ -6,15 +6,15 @@ import json
 import time
 import queue
 import asyncio
+from typing import cast, Optional
 from unittest import TestCase, mock
 from types import SimpleNamespace
-from typing import cast, Optional
 
 import numpy as np
 import soundfile as sf
+from starlette.responses import Response
 from fastapi import UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
-from starlette.responses import Response
 
 from celune import api
 from celune.celune import Celune

@@ -32,8 +32,8 @@ class ApiThinkTests(TestCase):
         finally:
             api.bound_celune = previous_celune
 
-    def test_think_returns_not_ready_when_celune_is_busy(self) -> None:
-        """Verify the think endpoint reports a busy Celune instance."""
+    def test_think_returns_not_ready_when_celune_rejects_request(self) -> None:
+        """Verify the think endpoint reports when Celune rejects a request."""
         previous_celune = api.bound_celune
 
         try:

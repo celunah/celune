@@ -32,6 +32,8 @@ X-Celune-Token: YOUR_TOKEN
 | `POST` | `/v1/speak` | Queue speech and keep the HTTP request open until `audio/flac` is ready. |
 | `POST` | `/v1/speak/async` | Queue speech and return `202 Accepted` immediately with a job ID. |
 | `GET` | `/v1/speak/jobs/{job_id}` | Poll an async speech job; returns `202` while pending and `audio/flac` when complete. |
+| `POST` | `/v1/speak/jobs/{job_id}/cancel` | Explicitly request cancellation of an active async speech job. |
+| `WebSocket` | `/v1/ws/tasks/{job_id}` | Replay and stream typed lifecycle events for an async speech job. |
 | `POST` | `/v1/voice` | Change the active voice. |
 | `POST` | `/v1/sfx` | Upload and play a sound effect. |
 
@@ -159,6 +161,33 @@ Job responses:
 - `500 application/json` if the job failed.
 
 Async jobs are kept in memory for 15 minutes and are not persisted across Celune restarts.
+
+### Task WebSocket Events
+
+After receiving a job ID from `/v1/speak/async`, connect to
+`ws://127.0.0.1:2060/v1/ws/tasks/{job_id}`. The connection replays retained events
+so clients may connect after speech has already started, then streams live events:
+
+```json
+{"task_id":"...","event":"started","status":"running"}
+{"task_id":"...","event":"progress","status":"running","current":1.0}
+{"task_id":"...","event":"log","status":"running","message":"Generating"}
+{"task_id":"...","event":"completed","status":"completed","location":"/v1/speak/jobs/..."}
+```
+
+Every event includes its task ID. Terminal events are `completed`, `failed`, or
+`cancelled`. A disconnected WebSocket only removes that client subscription; it
+does not stop or alter the Celune task. Cancellation is explicit through
+`POST /v1/speak/jobs/{job_id}/cancel` or by sending this API-layer command through
+the WebSocket:
+
+```json
+{"command":"cancel"}
+```
+
+The WebSocket layer never runs speech generation itself and does not expose
+internal exception details. Existing polling and synchronous speech endpoints
+remain available unchanged.
 
 ## Voice
 

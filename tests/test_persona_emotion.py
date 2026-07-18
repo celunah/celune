@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Tests for Persona emotion blending."""
 
-from unittest import TestCase
 from collections.abc import Sequence
+from unittest import TestCase
 
 import numpy as np
 

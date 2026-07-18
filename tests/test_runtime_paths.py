@@ -1,30 +1,31 @@
 # SPDX-License-Identifier: MIT
 """Tests for Celune runtime path handling."""
 
-import tempfile
-import sys
 import os
+import sys
+import tempfile
 from pathlib import Path
-from typing import cast
+from typing import Optional, cast
 from unittest import TestCase, mock
 
 import yaml
 from textual.widgets import RichLog
 
 from celune.constants import APP_SLUG
+from celune.ui.app import CeluneUI
+from celune.utils import format_error
+from celune.persona.memory import default_memory_dir
+from celune.cevoice import bundled_voices_dir, default_bundle_path
 from celune.paths import (
     configure_huggingface_cache_environment,
     configure_huggingface_runtime,
     ensure_config_path,
     huggingface_home_dir,
     huggingface_hub_cache_dir,
+    persona_data_dir,
     project_root,
     running_compiled,
 )
-from celune.persona.memory import default_memory_dir
-from celune.cevoice import bundled_voices_dir, default_bundle_path
-from celune.ui.app import CeluneUI
-from celune.utils import format_error
 
 
 class RuntimePathTests(TestCase):
@@ -58,12 +59,21 @@ class RuntimePathTests(TestCase):
         """Reset singleton UI guards after each test."""
         CeluneUI._instance = None
 
-    def test_default_memory_dir_uses_runtime_memory_directory(self) -> None:
-        """Verify Persona memory now defaults to the shared runtime memory path."""
-        expected = Path("C:/runtime-data/memory")
+    def test_default_memory_dir_uses_persona_runtime_directory(self) -> None:
+        """Verify Persona memory defaults to the shared character app-data path."""
+        expected = Path("C:/runtime-data/persona")
 
-        with mock.patch("celune.persona.memory.memory_data_dir", return_value=expected):
+        with mock.patch(
+            "celune.persona.memory.persona_data_dir", return_value=expected
+        ):
             self.assertEqual(default_memory_dir(), expected)
+
+    def test_persona_data_dir_uses_runtime_persona_directory(self) -> None:
+        """Verify Persona character data lives below the shared app-data directory."""
+        expected = Path("C:/runtime-data/persona")
+
+        with mock.patch("celune.paths.user_data_dir", return_value="C:/runtime-data"):
+            self.assertEqual(persona_data_dir(), expected)
 
     def test_huggingface_cache_dirs_live_in_runtime_data(self) -> None:
         """Verify Celune's default Hugging Face caches live under user data."""
@@ -196,6 +206,29 @@ class RuntimePathTests(TestCase):
                 self.assertIn(
                     "RuntimeError: boom", trace_path.read_text(encoding="utf-8")
                 )
+
+    def test_format_error_keeps_traceback_after_exception_handler_returns(self) -> None:
+        """Verify deferred UI error formatting does not report a blank traceback.
+
+        Raises:
+            RuntimeError: Raised by the test to verify deferred traceback formatting.
+        """
+        captured: Optional[RuntimeError] = None
+        try:
+            raise RuntimeError("deferred boom")
+        except RuntimeError as exc:
+            captured = exc
+
+        if captured is None:
+            self.fail("The test exception was not captured")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trace_path = Path(temp_dir) / f"{APP_SLUG}_traceback.txt"
+            with mock.patch("celune.utils.traceback_path", return_value=trace_path):
+                output = format_error(captured, dev=True)
+
+        self.assertIn("RuntimeError: deferred boom", output)
+        self.assertNotIn("NoneType: None", output)
 
     def test_safe_log_persists_main_window_copy(self) -> None:
         """Verify UI log messages are mirrored into the runtime log file."""

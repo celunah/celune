@@ -2,9 +2,9 @@
 """VRAM preset resolution helpers for Celune."""
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Optional, cast
-from collections.abc import Mapping
 
 import torch
 
@@ -15,12 +15,29 @@ QWEN3_0_6B_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 QWEN3_1_7B_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
 
 TEST_BACKENDS = ("fake", "counting")
+PERSONA_HIGH_ALLOWED_BACKENDS = ("mini", "qwen3", *TEST_BACKENDS)
 BACKENDS_ALLOWED: Mapping[VramTier, list[str]] = {
     "low": ["mini", "qwen3", *TEST_BACKENDS],
     "medium": ["mini", "qwen3", *TEST_BACKENDS],
     "high": ["mini", "qwen3", "dotstts", "voxcpm2", *TEST_BACKENDS],
     "xhigh": ["mini", "qwen3", "dotstts", "voxcpm2", *TEST_BACKENDS],
 }
+
+
+def _persona_requested(
+    config: Optional[Mapping[str, JSONSerializable]],
+) -> bool:
+    """Return whether the configuration leaves Persona enabled."""
+    if config is None:
+        return False
+
+    raw_persona = config.get("persona", config.get("pyop", {}))
+    if isinstance(raw_persona, bool):
+        return raw_persona
+    if not isinstance(raw_persona, dict):
+        return True
+
+    return bool(raw_persona.get("enabled", True))
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +51,16 @@ class VramPreset:
     persona_enabled: bool
     persona_quantization: str
     normalizer_device: str
+
+
+def _allowed_backends(
+    config: Optional[Mapping[str, JSONSerializable]],
+    preset: VramPreset,
+) -> tuple[str, ...]:
+    """Return backend names allowed by the preset and Persona configuration."""
+    if preset.tier == "high" and preset.persona_enabled and _persona_requested(config):
+        return PERSONA_HIGH_ALLOWED_BACKENDS
+    return tuple(BACKENDS_ALLOWED[preset.tier])
 
 
 def vram_tier(config: Optional[Mapping[str, JSONSerializable]]) -> VramTier:
@@ -134,7 +161,9 @@ def resolve_vram_preset(
         return VramPreset(
             tier="high",
             default_backend="qwen3",
-            allow_voxcpm2="voxcpm2" in BACKENDS_ALLOWED["high"],
+            allow_voxcpm2=(
+                "voxcpm2" in BACKENDS_ALLOWED["high"] and not _persona_requested(config)
+            ),
             qwen3_clone_model_id=QWEN3_1_7B_MODEL,
             persona_enabled=True,
             persona_quantization="4bit",
@@ -170,7 +199,7 @@ def resolve_backend_name(
         return preset.default_backend
 
     normalized = requested_backend.strip().lower()
-    if normalized in BACKENDS_ALLOWED[preset.tier]:
+    if normalized in _allowed_backends(config, preset):
         return normalized
     return preset.default_backend
 
@@ -191,4 +220,4 @@ def backend_allowed(
     """
     normalized = backend_name.strip().lower()
     preset = resolve_vram_preset(config)
-    return normalized in BACKENDS_ALLOWED[preset.tier]
+    return normalized in _allowed_backends(config, preset)
