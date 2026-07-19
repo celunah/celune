@@ -73,15 +73,17 @@ Do not modify the execution environment to work around failures.
 
 Before CI, format the repository with `uv run ruff format .`.
 
-Expected CI runtime is around 5 minutes.
+Expected CI runtime is 5 minutes or less.
 
 If CI runtime exceeds 5 minutes:
-- Assume it may have stalled.
-- Stop it from running any further.
-- Report that the CI has taken too long.
-- Do not try to extend any timeouts.
-- Attempt to run again only the relevant CI steps without a sandbox.
-- If non-sandboxed CI attempts also fail or time out, report it back.
+
+* Assume it may have stalled.
+* Stop it from running any further.
+* Report that the CI has taken too long.
+* Extend the timeout one time to 10 minutes.
+* Do not extend the timeout again if the one-time extension fails.
+* Attempt to run again only the relevant CI steps directly, not using a sandbox.
+* If non-sandboxed CI attempts also fail or time out, report it back.
 
 After each task, run `scripts/update_docstrings.py` and then replace placeholders in docstrings like:
 
@@ -104,6 +106,10 @@ If this process updates typing or dataclass related docstrings, remove the place
 
 This process may leave some formatting inaccuracies, run `uv run ruff format .` again after completing docstrings.
 
+Additionally, perform all actions listed in the `Import Ordering` section below.
+
+Make sure to remove all `__pycache__` directories. Celune code is compiled and does not use said cache files.
+
 ## Import Ordering
 
 Celune code follows a specific import ordering strategy. Always order all imports after finishing a task, according to this example:
@@ -115,8 +121,8 @@ from stdlib import function
 import third_party
 from third_party import function
 from third_party import (
-	many,
-	functions,
+    many,
+    functions,
 )
 
 from .local import function
@@ -124,12 +130,14 @@ from ..local2 import function
 from ...local3 import function
 
 from .local import (
-	many,
-	functions,
+    many,
+    functions,
 )
 ```
 
 At the end of every task, always sort and verify imports in every modified Python source file. Imports must follow this order: standard-library imports, a blank line, third-party imports, a blank line, then local relative imports. Within each group, sort import statements by line length from shortest to longest. Preserve multiline import formatting, and prefer `.file` over `celune.file` for local imports.
+
+Code reviews should state mismatches in the import ordering.
 
 ## Localization
 
