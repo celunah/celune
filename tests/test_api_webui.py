@@ -446,15 +446,19 @@ class ApiWebUITests(TestCase):
             ),
         )
         api.webui_last_probed_state = "idle"
+        api.set_webui_status(
+            "Normalizing",
+            source="callback",
+            updated_at=10.0,
+        )
 
         with (
             mock.patch(
                 "celune.api.ui_resources.resource_pages",
                 return_value=("VRAM: 10.66/11.94 GB available",),
             ),
-            mock.patch("celune.api.time.monotonic", side_effect=[10.0, 10.1]),
+            mock.patch("celune.api.time.monotonic", return_value=10.1),
         ):
-            api.set_webui_status("Normalizing", source="callback")
             _logs, status_html, _resources, _voice, _send, _input = api.webui_snapshot()
 
         self.assertIn("Normalizing", status_html)

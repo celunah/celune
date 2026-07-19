@@ -15,6 +15,7 @@ import datetime
 import itertools
 import threading
 import contextlib
+from io import TextIOWrapper
 from pathlib import Path
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -31,8 +32,14 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.css.types import EdgeStyle
 from textual import work, events
-from textual.app import ScreenStackError
-from textual.app import App, ComposeResult
+from textual.message import Message
+from textual.app import (
+    App,
+    AutopilotCallbackType,
+    ComposeResult,
+    ReturnType,
+    ScreenStackError,
+)
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
 
@@ -111,6 +118,15 @@ def _device_scalar_int(value: Optional[_AudioDeviceScalar], default: int) -> int
     return default
 
 
+class UILogMessage(Message):
+    """Deliver one background log entry to the Textual application thread."""
+
+    def __init__(self, message: str, severity: str) -> None:
+        super().__init__()
+        self.message = message
+        self.severity = severity
+
+
 @dataclass
 class CeluneUIWidgetState:
     """Resolved widget references owned by the UI."""
@@ -177,6 +193,7 @@ class CeluneUILogCaptureState:
     runtime_redirect_original_raise_exceptions: Optional[bool] = None
     original_dunder_stdout: Optional[TextIO] = None
     original_dunder_stderr: Optional[TextIO] = None
+    terminal_output_stream: Optional[TextIOWrapper] = None
     stderr_pipe_read_fd: Optional[int] = None
     stderr_pipe_write_fd: Optional[int] = None
     stderr_original_fd_dup: Optional[int] = None
@@ -351,6 +368,9 @@ class CeluneUI(App):
     )
     _original_dunder_stderr = _forward_ui_property(
         "_log_capture_state", "original_dunder_stderr"
+    )
+    _terminal_output_stream = _forward_ui_property(
+        "_log_capture_state", "terminal_output_stream"
     )
     _stderr_pipe_read_fd = _forward_ui_property(
         "_log_capture_state", "stderr_pipe_read_fd"
@@ -757,6 +777,75 @@ class CeluneUI(App):
         except OSError:
             pass
 
+    def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
+        """Give Textual an independent terminal stream before stderr capture starts."""
+        if os.name == "nt" or self._terminal_output_stream is not None:
+            return self._terminal_output_stream
+
+        original_stderr = sys.__stderr__
+        if original_stderr is None:
+            return None
+
+        fileno = getattr(original_stderr, "fileno", None)
+        if not callable(fileno):
+            return None
+
+        output_fd: Optional[int] = None
+        output_stream: Optional[TextIOWrapper] = None
+        try:
+            output_fd = os.dup(cast(Callable[[], int], fileno)())
+            output_stream = os.fdopen(
+                output_fd,
+                "w",
+                encoding=getattr(original_stderr, "encoding", None) or "utf-8",
+                errors=getattr(original_stderr, "errors", None) or "replace",
+                buffering=1,
+            )
+        except (OSError, TypeError, ValueError):
+            if output_fd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(output_fd)
+            return None
+
+        if output_stream is None:
+            return None
+
+        self._terminal_output_stream = output_stream
+        sys.__stderr__ = output_stream
+        return output_stream
+
+    def run(
+        self,
+        *,
+        headless: bool = False,
+        inline: bool = False,
+        inline_no_clear: bool = False,
+        mouse: bool = True,
+        size: Optional[tuple[int, int]] = None,
+        auto_pilot: Optional[AutopilotCallbackType] = None,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
+    ) -> Optional[ReturnType]:
+        """Run Textual with an output stream independent of low-level stderr capture."""
+        original_stderr = sys.__stderr__
+        output_stream = self._prepare_terminal_output_stream()
+
+        try:
+            return super().run(
+                headless=headless,
+                inline=inline,
+                inline_no_clear=inline_no_clear,
+                mouse=mouse,
+                size=size,
+                auto_pilot=auto_pilot,
+                loop=loop,
+            )
+        finally:
+            if output_stream is not None:
+                sys.__stderr__ = original_stderr
+                self._terminal_output_stream = None
+                with contextlib.suppress(OSError, ValueError):
+                    output_stream.close()
+
     def compose(self) -> ComposeResult:
         """Define the UI.
 
@@ -1025,6 +1114,11 @@ class CeluneUI(App):
         self._stderr_forward_thread = forward_thread
         forward_thread.start()
 
+    @staticmethod
+    def _is_textual_terminal_frame(payload: bytes) -> bool:
+        """Return whether bytes contain a Textual synchronized terminal frame."""
+        return b"\x1b[?2026h" in payload or b"\x1b[?2026l" in payload
+
     def _forward_low_level_stderr(self) -> None:
         """Forward low-level stderr bytes back to the terminal and UI log."""
         read_fd = self._stderr_pipe_read_fd
@@ -1045,6 +1139,13 @@ class CeluneUI(App):
 
             if not payload:
                 break
+
+            if self._is_textual_terminal_frame(payload):
+                try:
+                    os.write(original_fd_dup, payload)
+                except OSError:
+                    break
+                continue
 
             redirect.write(payload.decode(encoding, errors=errors))
 
@@ -1535,7 +1636,14 @@ class CeluneUI(App):
         if threading.current_thread() is threading.main_thread():
             self.logs.write(entry)
         else:
-            self.call_from_thread(lambda: self.logs.write(entry))
+            self.post_message(UILogMessage(msg, severity))
+
+    def on_uilog_message(self, message: UILogMessage) -> None:
+        """Write a background log message on Textual's application thread."""
+        if self.logs is not None:
+            self.logs.write(
+                Text(message.message, style=self._severity_color(message.severity))
+            )
 
     def safe_log_dev(self, msg: str, severity: str = "info") -> None:
         """Log a message.

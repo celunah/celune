@@ -4,6 +4,7 @@
 import os
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from typing import Optional, cast
 from unittest import TestCase, mock
@@ -12,7 +13,7 @@ import yaml
 from textual.widgets import RichLog
 
 from celune.constants import APP_SLUG
-from celune.ui.app import CeluneUI
+from celune.ui.app import CeluneUI, UILogMessage
 from celune.utils import format_error
 from celune.persona.memory import default_memory_dir
 from celune.cevoice import bundled_voices_dir, default_bundle_path
@@ -248,6 +249,26 @@ class RuntimePathTests(TestCase):
 
         self.assertIn("[INFO] Hello from Celune", persisted)
         self.assertIn("[WARNING] Something odd happened", persisted)
+
+    def test_safe_log_from_worker_posts_without_waiting_for_ui_thread(self) -> None:
+        """Verify background logging queues a message without a synchronous UI callback."""
+        ui = CeluneUI()
+        ui.logs = cast(RichLog, mock.Mock())
+        ui._persist_log_entry = mock.Mock()
+        ui.post_message = mock.Mock()
+        ui.call_from_thread = mock.Mock()
+
+        worker = threading.Thread(target=ui.safe_log, args=("worker log",))
+        worker.start()
+        worker.join(timeout=1.0)
+
+        self.assertFalse(worker.is_alive())
+        ui.post_message.assert_called_once()
+        ui.call_from_thread.assert_not_called()
+        message = ui.post_message.call_args.args[0]
+        self.assertIsInstance(message, UILogMessage)
+        self.assertEqual(message.message, "worker log")
+        self.assertEqual(UILogMessage.handler_name, "on_uilog_message")
 
     def test_ensure_config_path_prefers_legacy_repo_config(self) -> None:
         """Verify first-run config creation prefers the historical repo-root config."""

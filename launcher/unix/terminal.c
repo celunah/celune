@@ -39,11 +39,9 @@ void launcher_reset_terminal_state(void) {
     }
 
     if (isatty(STDOUT_FILENO)) {
-        (void)write(
-            STDOUT_FILENO,
-            reset_sequences,
-            sizeof(reset_sequences) - 1
-        );
+        if (write(STDOUT_FILENO, reset_sequences, sizeof(reset_sequences) - 1) < 0) {
+            /* Terminal cleanup is best effort. */
+        }
     }
 
     tcsetattr(STDIN_FILENO, TCSANOW, &saved_terminal_state);

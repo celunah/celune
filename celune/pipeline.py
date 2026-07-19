@@ -3022,6 +3022,7 @@ def _ensure_playback_stream(engine: Celune, sample_rate: int) -> bool:
         if engine.stream is None:
             raise NotAvailableError("audio stream is not available")
         engine.stream.start()
+        engine._audio_unavailable = False
         engine.log_dev(f"[PLAY] started stream at {sample_rate} Hz")
         return True
     except ValueError as error:

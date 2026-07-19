@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create CEVOICE Pack"
+  short_description: "Design and package Celune voices"
+  default_prompt: "Use $create-cevoice to design and install a Celune CEVOICE pack from a voice brief."

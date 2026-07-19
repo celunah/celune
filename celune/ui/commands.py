@@ -12,6 +12,7 @@ from typing import Awaitable, Callable, Optional, TYPE_CHECKING, cast
 
 import soundfile as sf
 
+from ..audio import restart_audio_server
 from ..backends.tts.qwen3 import Qwen3
 from ..i18n import string
 from ..constants import APP_NAME
@@ -269,8 +270,39 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(string("commands.help_seed"))
         ui.safe_log(string("commands.help_tutorial", app_name=APP_NAME))
         ui.safe_log(string("commands.help_stop"))
+        ui.safe_log(string("commands.help_restart_audio"))
         ui.safe_log(string("commands.help_exit", app_name=APP_NAME))
         ui.safe_log(string("commands.help_help"))
+        return
+    if command == "restartaudio":
+
+        def restart_audio() -> None:
+            """Restart the host audio server and play a readiness test signal."""
+            try:
+                restart_audio_server()
+            except RuntimeError as error:
+                ui.safe_log(
+                    string("commands.audio_restart_failed", error=error), "error"
+                )
+                return
+
+            celune = getattr(ui, "celune", None)
+            close_stream = getattr(celune, "_close_stream", None)
+            if callable(close_stream):
+                close_stream(abort=True)
+
+            try_play_signal = getattr(celune, "try_play_signal", None)
+            if not callable(try_play_signal) or not try_play_signal("readiness"):
+                ui.safe_log(string("commands.audio_restart_signal_failed"), "warning")
+                return
+
+            ui.safe_log(string("commands.audio_restart_success"))
+
+        threading.Thread(
+            target=restart_audio,
+            name="celune-audio-restart",
+            daemon=True,
+        ).start()
         return
     if command == "consumebuffer":
         if not args:

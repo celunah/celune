@@ -231,6 +231,29 @@ class UICommandTests(TestCase):
             self.logs[-1], ("Qwen3 identity-only cloning enabled.", "info")
         )
 
+    def test_restartaudio_command_restarts_host_audio_server(self) -> None:
+        """Verify the audio recovery command reports a successful restart."""
+        with (
+            mock.patch("celune.ui.commands.restart_audio_server") as restart,
+            mock.patch(
+                "celune.ui.commands.threading.Thread",
+                side_effect=self._thread_runs_immediately,
+            ),
+        ):
+            self.ui.celune._close_stream = mock.Mock()
+            self._process_command("restartaudio", [])
+
+        restart.assert_called_once_with()
+        self.ui.celune._close_stream.assert_called_once_with(abort=True)
+        self.ui.celune.try_play_signal.assert_called_once_with("readiness")
+        self.assertEqual(
+            self.logs[-1],
+            (
+                "Host audio server restarted.",
+                "info",
+            ),
+        )
+
     def test_common_commands_update_state_and_validate_inputs(self) -> None:
         """Verify prompt, speed, and reverb command paths.
 
