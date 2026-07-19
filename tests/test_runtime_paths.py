@@ -12,11 +12,8 @@ from unittest import TestCase, mock
 import yaml
 from textual.widgets import RichLog
 
-from celune.constants import APP_SLUG
-from celune.ui.app import CeluneUI, UILogMessage
-from celune.utils import format_error
-from celune.persona.memory import default_memory_dir
 from celune.cevoice import bundled_voices_dir, default_bundle_path
+from celune.constants import APP_SLUG
 from celune.paths import (
     configure_huggingface_cache_environment,
     configure_huggingface_runtime,
@@ -27,6 +24,9 @@ from celune.paths import (
     project_root,
     running_compiled,
 )
+from celune.persona.memory import default_memory_dir
+from celune.ui.app import CeluneUI, UILogMessage
+from celune.utils import format_error
 
 
 class RuntimePathTests(TestCase):

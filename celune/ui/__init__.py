@@ -3,8 +3,8 @@
 
 from .app import CeluneUI
 from .headless import CeluneHeadlessUI
-from .terminal import LogRedirect, SelectMenu
 from .protocols import CeluneBaseUI, CeluneHeadlessBaseUI, CeluneTextualUI
+from .terminal import LogRedirect, SelectMenu
 
 __all__ = [
     "CeluneBaseUI",

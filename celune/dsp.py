@@ -6,12 +6,11 @@ from typing import Callable, Iterable
 
 import numpy as np
 import numpy.typing as npt
-from scipy.signal import butter, resample_poly, sosfilt
 from pedalboard import Pedalboard, PitchShift, Reverb
+from scipy.signal import butter, resample_poly, sosfilt
 
-from .constants import UtteranceLoudnessTier, BASE_SR
+from .constants import BASE_SR, UtteranceLoudnessTier
 from .exceptions import AudioMismatchError, BadAudioError
-
 
 _SIGNAL_CACHE: dict[str, npt.NDArray[np.float32]] = {}
 _READINESS_FREQUENCIES = (261.63, 329.63, 369.99, 440.0, 493.88, 739.99)

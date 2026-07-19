@@ -1,7 +1,7 @@
 """Property helpers for grouped Celune runtime state."""
 
-from enum import Enum
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional, Union
 
 from ..typing.common import JSONSerializable

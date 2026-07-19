@@ -20,13 +20,13 @@ if TYPE_CHECKING:
     import sounddevice as sd
 
     from ..backends.tts import BackendModel, CeluneBackend
+    from ..backends.vc import CeluneVCBackend
     from ..cevoice import CEVoicePersona
     from ..chroma import AudioRGBGlow
     from ..constants import PipelineStates
     from ..dsp import StreamingPedalboardReverb
     from ..extensions.manager import CeluneExtensionManager
     from ..persona.impl import PersonaClient
-    from ..backends.vc import CeluneVCBackend
 
 
 type GenerationKwarg = Union[torch.Tensor, int, bool, None]

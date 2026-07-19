@@ -2,10 +2,10 @@
 """Tests for Celune's browser-facing API UI."""
 
 import asyncio
-from typing import cast
 from queue import Queue
-from unittest import TestCase, mock
 from types import SimpleNamespace
+from typing import cast
+from unittest import TestCase, mock
 
 import numpy as np
 from starlette.requests import Request

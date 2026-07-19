@@ -3,13 +3,13 @@
 
 from __future__ import annotations
 
-import re
-import json
-import uuid
 import datetime
-from pathlib import Path
+import json
+import re
+import uuid
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Optional, Union, cast
 
 import numpy as np
@@ -17,10 +17,10 @@ import torch
 import torch.nn.functional as f
 from transformers import AutoModel, AutoTokenizer
 
+from ..constants import PERSONA_MEMORY_EMBEDDING_MODEL, JSONSerializable
 from ..paths import persona_data_dir
-from .paths import persona_character_slug
 from ..typing.aliases import EmbeddingVector, _EmbeddingBackend
-from ..constants import JSONSerializable, PERSONA_MEMORY_EMBEDDING_MODEL
+from .paths import persona_character_slug
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
 _STOPWORDS = {

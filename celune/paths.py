@@ -2,8 +2,8 @@
 """Runtime filesystem paths and global Hugging Face runtime setup for Celune."""
 
 import os
-import sys
 import shutil
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -130,8 +130,8 @@ def configure_huggingface_cache_environment(force: bool = False) -> None:
 
 def configure_huggingface_runtime() -> None:
     """Apply Celune's process-wide Hugging Face progress suppression."""
-    from transformers.utils.logging import disable_progress_bar
     from huggingface_hub.utils import disable_progress_bars
+    from transformers.utils.logging import disable_progress_bar
 
     os.environ.setdefault(_HF_HUB_DISABLE_PROGRESS_BARS_ENV, "1")
     disable_progress_bar()

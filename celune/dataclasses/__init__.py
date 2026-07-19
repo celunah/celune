@@ -22,8 +22,8 @@ if TYPE_CHECKING:
         GenerateResponse,
     )
     from .pipeline import (
-        AudioOutput,
         AudioInputRequest,
+        AudioOutput,
         PlaybackChunk,
         PlaybackSourceDone,
         SpeechDone,

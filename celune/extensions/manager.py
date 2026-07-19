@@ -1,24 +1,23 @@
 # SPDX-License-Identifier: MIT
 """Celune's extension manager methods and classes."""
 
-import sys
-import inspect
-import warnings
 import importlib.util
+import inspect
+import sys
 import threading
 import traceback
-from pathlib import Path
+import warnings
 from dataclasses import dataclass
+from pathlib import Path
 from types import ModuleType
 from typing import Callable, Optional, cast
 
-from ..i18n import string
-from ..typing.events import EventName
-from ..typing.events import EventPayload
 from ..dataclasses.events import ReadyEvent
-from ..utils import format_error, discard
+from ..exceptions import ExtensionAlreadyRegisteredError, InvalidExtensionError
+from ..i18n import string
+from ..typing.events import EventName, EventPayload
+from ..utils import discard, format_error
 from .base import CeluneContext, CeluneExtension
-from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
 from .events import (
     EventDispatcher,
     RegisteredEventHandler,

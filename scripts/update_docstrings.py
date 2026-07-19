@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: MIT
 """Recursively populate and convert docstrings to a unified format."""
 
-import re
 import ast
+import re
 import textwrap
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, Optional, Union
-
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = [

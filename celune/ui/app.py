@@ -1,38 +1,32 @@
 # SPDX-License-Identifier: MIT
 """Frontend layer."""
 
-import os
-import sys
-import time
-import queue as queue_module
-import shlex
-import types
-import ctypes
-import signal
 import asyncio
-import logging
+import contextlib
+import ctypes
 import datetime
 import itertools
+import logging
+import os
+import queue as queue_module
+import shlex
+import signal
+import sys
 import threading
-import contextlib
-from io import TextIOWrapper
-from pathlib import Path
+import time
+import types
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Optional, Callable, Union, TextIO, cast
+from io import TextIOWrapper
+from pathlib import Path
+from typing import Callable, Optional, TextIO, Union, cast
 
-import yaml
 import numpy as np
 import numpy.typing as npt
 import sounddevice as sd
+import yaml
 from rich.text import Text
-from textual.color import Color
-from textual.theme import Theme
-from textual.timer import Timer
-from textual.widget import Widget
-from textual.css.types import EdgeStyle
-from textual import work, events
-from textual.message import Message
+from textual import events, work
 from textual.app import (
     App,
     AutopilotCallbackType,
@@ -40,45 +34,46 @@ from textual.app import (
     ReturnType,
     ScreenStackError,
 )
+from textual.color import Color
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Label, RichLog, TextArea, Button, ProgressBar
+from textual.css.types import EdgeStyle
+from textual.message import Message
+from textual.theme import Theme
+from textual.timer import Timer
+from textual.widget import Widget
+from textual.widgets import Button, Label, ProgressBar, RichLog, TextArea
 
-from ..celune import Celune
 from .. import colors
-from ..i18n import string
+from ..celune import Celune
 from ..cevoice import default_loader
-from .resources import FOOTER_ROTATE_SECONDS
-from . import resources as ui_resources
-from .theme import CELUNE_CSS, severity_color
-from ..constants import APP_NAME, SIGTSTP, CRASH_LINES
-from ..paths import config_path, main_window_log_path
-from ..typing.aliases import (  # pylint: disable=unused-import
-    _AudioDeviceScalar,
-    _VCAudioCallback,
-)
-from .commands import process_command as process_ui_command
-from .terminal import LogRedirect, UILogHandler, is_celune_log_record
-from ..pipeline import finish_streaming_sfx_audio, queue_streaming_sfx_audio
 from ..config import format_audio_device_name, resolve_audio_device_with_info
-from ..persona.impl import (
-    persona_config,
-    persona_talkback_enabled,
-    persona_enabled,
-)
+from ..constants import APP_NAME, CRASH_LINES, SIGTSTP
+from ..i18n import string
+from ..paths import config_path, main_window_log_path
 from ..persona.asr import (
     DEFAULT_PERSONA_SPEECH_MODEL_ID,
     PERSONA_SPEECH_END_DELAY_SECONDS,
     WhisperTranscriber,
 )
+from ..persona.impl import (
+    persona_config,
+    persona_enabled,
+    persona_talkback_enabled,
+)
+from ..pipeline import finish_streaming_sfx_audio, queue_streaming_sfx_audio
+from ..typing.aliases import (  # pylint: disable=unused-import
+    _AudioDeviceScalar,
+    _VCAudioCallback,
+)
 from ..utils import (
+    discard,
     format_error,
     indent,
+    is_april_fools,
     replace_ipa,
+    supports_ansi,
     typing_animation,
     typing_delay,
-    is_april_fools,
-    supports_ansi,
-    discard,
 )
 from ..vc import (
     VC_PITCH_SHIFT_MAX,
@@ -92,6 +87,11 @@ from ..vc import (
     vc_vad_hangover_frames,
     vc_vad_preroll_frames,
 )
+from . import resources as ui_resources
+from .commands import process_command as process_ui_command
+from .resources import FOOTER_ROTATE_SECONDS
+from .terminal import LogRedirect, UILogHandler, is_celune_log_record
+from .theme import CELUNE_CSS, severity_color
 
 _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
     {
@@ -825,7 +825,20 @@ class CeluneUI(App):
         auto_pilot: Optional[AutopilotCallbackType] = None,
         loop: Optional[asyncio.AbstractEventLoop] = None,
     ) -> Optional[ReturnType]:
-        """Run Textual with an output stream independent of low-level stderr capture."""
+        """Run Textual with an output stream independent of low-level stderr capture.
+
+        Args:
+            headless: Whether to run without interactive terminal input.
+            inline: Whether to use Textual's inline terminal mode.
+            inline_no_clear: Whether inline mode should preserve existing terminal output.
+            mouse: Whether mouse input should be enabled.
+            size: Optional terminal size override.
+            auto_pilot: Optional callback used to drive automated interaction.
+            loop: Optional event loop used by the Textual application.
+
+        Returns:
+            Optional return value produced by the Textual application.
+        """
         original_stderr = sys.__stderr__
         output_stream = self._prepare_terminal_output_stream()
 
@@ -1639,7 +1652,11 @@ class CeluneUI(App):
             self.post_message(UILogMessage(msg, severity))
 
     def on_uilog_message(self, message: UILogMessage) -> None:
-        """Write a background log message on Textual's application thread."""
+        """Write a background log message on Textual's application thread.
+
+        Args:
+            message: Background log message to write to the UI.
+        """
         if self.logs is not None:
             self.logs.write(
                 Text(message.message, style=self._severity_color(message.severity))

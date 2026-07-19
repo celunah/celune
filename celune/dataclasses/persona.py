@@ -1,7 +1,7 @@
 """Persona runtime dataclasses."""
 
-from typing import Optional
 from dataclasses import dataclass, field
+from typing import Optional
 
 from ..typing.persona import MessageContent, Role
 

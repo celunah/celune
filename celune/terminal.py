@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT
 """Terminal color capability helpers for Celune."""
 
+import ctypes
 import os
 import sys
-import ctypes
-from typing import IO, Final, Optional, Callable, cast
+from typing import IO, Callable, Final, Optional, cast
 
 from .config import config_value
 from .typing.common import ColorMode, Config, JSONSerializable, ResolvedColorMode

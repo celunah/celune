@@ -21,7 +21,6 @@ from ..dataclasses.events import (
     VoiceChangedEvent,
 )
 
-
 type EventName = Literal[
     "ready",
     "shutdown",

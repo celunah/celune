@@ -40,11 +40,11 @@ if TYPE_CHECKING:
         VoiceManifest,
     )
     from .common import (
+        JSON,
+        RGB,
         ColorMode,
         Config,
-        JSON,
         JSONSerializable,
-        RGB,
         ResolvedColorMode,
         TerminalConfig,
         VideoMetadataScalar,

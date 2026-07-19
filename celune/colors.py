@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Color utility helpers."""
 
-import random
 import colorsys
+import random
 from typing import Final, Optional
 
 from textual.theme import Theme

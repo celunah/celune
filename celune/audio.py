@@ -9,7 +9,6 @@ import subprocess
 import sys
 from typing import Sequence
 
-
 _WINDOWS_AUDIO_SERVICE = "Audiosrv"
 _WINDOWS_ELEVATED_RESTART_SCRIPT = (
     "$ErrorActionPreference = 'Stop'; "

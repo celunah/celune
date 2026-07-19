@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MIT
 """Tests for the lightweight `celune doctor` CLI path."""
 
-import io
 import contextlib
-from unittest import TestCase, mock
-from types import SimpleNamespace
+import io
 from pathlib import Path, PureWindowsPath
+from types import SimpleNamespace
+from unittest import TestCase, mock
 
 import main
 

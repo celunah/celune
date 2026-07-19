@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: MIT
 """Create a character pack for use in Celune."""
 
-import sys
-import io
 import argparse
+import io
+import sys
+from collections.abc import Mapping
 from math import gcd
 from pathlib import Path
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, TypedDict, Union, Optional, cast
+from typing import TYPE_CHECKING, Optional, TypedDict, Union, cast
 
 import numpy as np
 import soundfile as sf

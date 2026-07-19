@@ -3,8 +3,8 @@
 
 import numpy as np
 
-from .base import CeluneVCBackend
 from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+from .base import CeluneVCBackend
 
 __all__ = ["CelunePassthroughVCBackend"]
 

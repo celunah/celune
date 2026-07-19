@@ -8,8 +8,8 @@ import numpy.typing as npt
 
 from ..constants import PipelineStates
 from ..dataclasses.pipeline import (
-    AudioOutput,
     AudioInputRequest,
+    AudioOutput,
     PlaybackChunk,
     PlaybackSourceDone,
     SpeechRequest,

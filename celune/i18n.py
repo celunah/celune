@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: MIT
 """Celune internationalization helpers backed by JSON language files."""
 
+import contextlib
+import ctypes
+import json
+import locale as _locale  # else it gets shadowed
 import os
 import sys
-import json
-import ctypes
-import locale as _locale  # else it gets shadowed
-import contextlib
 from pathlib import Path
-from typing import Optional
 from types import SimpleNamespace
+from typing import Optional
 
 DEFAULT_LOCALE = "en"
 _LANG_DIR = Path(__file__).resolve().parent / "lang"

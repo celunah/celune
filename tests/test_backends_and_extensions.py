@@ -1,40 +1,40 @@
 # SPDX-License-Identifier: MIT
 """Tests for backend resolution and extension infrastructure."""
 
-import sys
+import contextlib
+import importlib
 import re
+import sys
 import tempfile
 import textwrap
-import importlib
 import threading
-import contextlib
+from collections.abc import Generator, Iterator
 from pathlib import Path
-from types import ModuleType
-from types import SimpleNamespace
-from unittest import mock, TestCase
-from collections.abc import Iterator, Generator
+from types import ModuleType, SimpleNamespace
 from typing import Optional, Union, cast
+from unittest import TestCase, mock
 
 import numpy as np
 import numpy.typing as npt
-import torch
 import soundfile as sf
+import torch
 
-from celune.celune import Celune
-from celune.i18n import string
-from celune.utils import discard
-from celune.typing.backends import BackendModel
 from celune.backends.tts import resolve_backend
 from celune.backends.vc import resolve_vc_backend
-from celune.backends.vc.seedvc import CeluneSeedVCBackend
-from celune.extensions.manager import CeluneExtensionManager
-from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.backends.vc.passthrough import CelunePassthroughVCBackend
-from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.backends.vc.seedvc import CeluneSeedVCBackend
+from celune.celune import Celune
+from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.exceptions import (
     ExtensionAlreadyRegisteredError,
     InvalidExtensionError,
 )
+from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.extensions.manager import CeluneExtensionManager
+from celune.i18n import string
+from celune.typing.backends import BackendModel
+from celune.utils import discard
+
 from .support import (
     FakeBackend,
     FakeVCBackend,

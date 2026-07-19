@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: MIT
 """Main entrypoint for the app launcher."""
 
-import sys
 import importlib.util
+import sys
 from pathlib import Path
-from typing import Optional
 from types import ModuleType
+from typing import Optional
 
 # fallback for unsupported interpreters (Python 3.11 and below)
 APP_NAME = "Celune"

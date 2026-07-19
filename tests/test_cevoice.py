@@ -5,9 +5,9 @@ import copy
 import json
 import shutil
 import tempfile
-from typing import cast
 from pathlib import Path
-from unittest import mock, TestCase
+from typing import cast
+from unittest import TestCase, mock
 
 from celune import cevoice
 from celune.exceptions import CEVoiceError

@@ -1,32 +1,30 @@
 # SPDX-License-Identifier: MIT
 """Shared Persona runtime helpers for Celune-managed generation."""
 
-import os
-import gc
-import threading
 import contextlib
+import gc
+import os
+import threading
 from collections.abc import Mapping, Sequence
 from typing import Optional, Union, cast
 
 import torch
-from transformers.tokenization_utils_base import BatchEncoding
 from transformers import (
-    Qwen3VLForConditionalGeneration,
+    AutoConfig,
     AutoProcessor,
     AutoTokenizer,
-    AutoConfig,
     BitsAndBytesConfig,
+    Qwen3VLForConditionalGeneration,
 )
+from transformers.tokenization_utils_base import BatchEncoding
 
-from ..vram import resolve_vram_preset
-from ..utils import discard, normalize_special_characters
-from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
 from ..constants import (
-    JSONSerializable,
-    PERSONA_MODEL_ID,
     N_A_STR,
+    PERSONA_MODEL_ID,
+    JSONSerializable,
     remote_code_model_revision,
 )
+from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
 from ..typing.persona import (
     ChatMessagePayload,
     ChatTemplateRenderer,
@@ -43,6 +41,8 @@ from ..typing.persona import (
     VisionInput,
     VisionProcessorOutput,
 )
+from ..utils import discard, normalize_special_characters
+from ..vram import resolve_vram_preset
 
 
 def _render_chat_prompt(

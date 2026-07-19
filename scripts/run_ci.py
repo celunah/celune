@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Run CI automatically."""
 
-import sys
 import subprocess
+import sys
 from typing import Optional
 
 from tqdm.contrib import tzip

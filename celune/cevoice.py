@@ -3,16 +3,16 @@
 
 from __future__ import annotations
 
-import json
 import atexit
+import contextlib
+import hashlib
+import json
 import shutil
 import struct
-import hashlib
 import tempfile
 import threading
-import contextlib
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import BinaryIO, Callable, Final, Mapping, Optional, Union, cast
 
 from .exceptions import CEVoiceError

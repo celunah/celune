@@ -2,16 +2,16 @@
 """Normalizer loading helpers for Celune."""
 
 from collections.abc import Mapping
-from typing import Callable, Union, Optional
+from typing import Callable, Optional, Union
 
 import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .backends.tts import CeluneBackend
+from .constants import NORMALIZER_MODEL_ID, JSONSerializable
 from .vram import resolve_vram_preset
-from .constants import JSONSerializable, NORMALIZER_MODEL_ID
 
 NORMALIZER_SPECIAL_TOKENS = ("<|im_start|>", "<|im_end|>", "<NORM>")
 NORMALIZER_DEVICE = "cpu"

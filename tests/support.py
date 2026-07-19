@@ -3,25 +3,25 @@
 
 from __future__ import annotations
 
-import sys
-import queue
-import importlib
-import threading
 import contextlib
-from unittest import mock
-from pathlib import Path
+import importlib
+import queue
+import sys
+import threading
 from collections.abc import Iterator
-from types import SimpleNamespace, ModuleType
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Optional, TypedDict
+from unittest import mock
 
 import numpy as np
 import numpy.typing as npt
 
-from celune.utils import discard
 from celune.backends.tts.base import CeluneBackend
 from celune.backends.vc.base import CeluneVCBackend
 from celune.constants import JSONSerializable, PipelineStates
 from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+from celune.utils import discard
 
 if TYPE_CHECKING:
     from celune.celune import Celune

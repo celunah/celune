@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: MIT
 """Tests for the docstring update script."""
 
-import sys
 import ast
 import importlib.util
+import sys
 from pathlib import Path
-from unittest import TestCase
 from types import SimpleNamespace
-
+from unittest import TestCase
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT / "scripts" / "update_docstrings.py"

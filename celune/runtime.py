@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: MIT
 """Runtime and environment validation helpers."""
 
-import sys
 import platform
+import sys
 from typing import Callable, Union
 
 import torch
 
-from .i18n import string
-from .constants import APP_NAME
+from . import __codename__, __comment__, __version__
 from .backends.tts import CeluneBackend
 from .backends.vc import CeluneVCBackend
+from .constants import APP_NAME
+from .i18n import string
 from .utils import cuda_architecture, format_number
-from . import __codename__, __comment__, __version__
 
 
 def log_runtime_banner(

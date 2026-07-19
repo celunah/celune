@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT
 """Tests for configuration and lightweight utility helpers."""
 
-import math
 import datetime
-from unittest import mock, TestCase
-from typing import Literal, Optional, Mapping, cast
+import math
+from typing import Literal, Mapping, Optional, cast
+from unittest import TestCase, mock
 
 from celune import config, utils
 from celune.constants import JSONSerializable

@@ -4,11 +4,10 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Literal, Optional, TypeVar, cast, overload
 
-from ..utils import format_error
 from ..typing.aliases import _DispatcherCallback
 from ..typing.events import (
     AudioEndEventCallback,
@@ -29,6 +28,7 @@ from ..typing.events import (
     StateChangedEventCallback,
     VoiceChangedEventCallback,
 )
+from ..utils import format_error
 
 if TYPE_CHECKING:
     from ..dataclasses.events import (

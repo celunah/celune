@@ -14,10 +14,10 @@ Only construct :class:`Celune` and its UI classes once per process. Creating mul
 instances can exhaust GPU resources and is not a supported usage pattern.
 """
 
-import sys as _sys
+import contextlib as _contextlib
 import inspect as _inspect
 import subprocess as _subprocess
-import contextlib as _contextlib
+import sys as _sys
 from typing import TYPE_CHECKING, Callable, Union
 
 from .constants import APP_NAME
@@ -70,7 +70,7 @@ def _caller_is_repl() -> bool:
 
 
 REVISION = _get_revision()
-VERSION = "4.3.0"
+VERSION = "4.3.1"
 
 if REVISION:
     _local = REVISION.rstrip("*")

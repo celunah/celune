@@ -1,22 +1,22 @@
 # SPDX-License-Identifier: MIT
 """API layer."""
 
-import os
-import io
+import asyncio
+import contextlib
+import datetime
 import errno
-import time
-import uuid
+import io
+import os
 import queue
 import socket
-import asyncio
-import datetime
 import textwrap
 import threading
-import contextlib
-from html import escape
-from hmac import compare_digest
-from dataclasses import dataclass, field
+import time
+import uuid
 from collections import defaultdict, deque
+from dataclasses import dataclass, field
+from hmac import compare_digest
+from html import escape
 from typing import (
     Awaitable,
     Callable,
@@ -27,21 +27,11 @@ from typing import (
     cast,
 )
 
+import gradio as gr
 import numpy as np
 import numpy.typing as npt
-import gradio as gr
-import uvicorn
 import soundfile as sf
-from pydantic import BaseModel, Field
-from starlette.concurrency import run_in_threadpool
-from starlette.middleware.base import RequestResponseEndpoint
-from fastapi.responses import (
-    JSONResponse,
-    Response,
-    StreamingResponse,
-    FileResponse,
-    RedirectResponse,
-)
+import uvicorn
 from fastapi import (
     FastAPI,
     File,
@@ -52,19 +42,24 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
+from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
+from starlette.middleware.base import RequestResponseEndpoint
 
+from . import __version__, colors
 from .celune import Celune
-from . import colors
-from . import __version__
-from .i18n import string
-from .ui.app import CeluneUI
-from .utils import format_error
 from .cevoice import default_loader
+from .constants import APP_NAME, BASE_SR, JSONSerializable
 from .dsp import resample_audio
-from .ui import resources as ui_resources
+from .i18n import string
 from .paths import main_window_log_path, project_root
-from .constants import BASE_SR, APP_NAME, JSONSerializable
-from .vc import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
 from .pipeline import SpeechStreamQueue, prepare_playback_audio
 from .typing.api import (
     TaskCommandName,
@@ -74,6 +69,10 @@ from .typing.api import (
     WebUiInputAudioValue,
     WebUiUpdate,
 )
+from .ui import resources as ui_resources
+from .ui.app import CeluneUI
+from .utils import format_error
+from .vc import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
 
 api = FastAPI(title=f"{APP_NAME}API")
 bound_celune: Optional[Celune] = None

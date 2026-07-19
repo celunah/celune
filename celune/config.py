@@ -2,14 +2,14 @@
 """Configuration helpers for Celune."""
 
 import os
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import Optional, cast
-from collections.abc import Mapping, Sequence
 
 import sounddevice as sd
 
-from .i18n import string
 from .constants import APP_NAME
+from .i18n import string
 from .typing.common import Config, JSONSerializable
 from .typing.config import (
     AudioDeviceConfig,

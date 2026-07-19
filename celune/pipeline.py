@@ -3,102 +3,83 @@
 
 from __future__ import annotations
 
-import os
-import sys
-import re
+import asyncio
+import contextlib
+import datetime
 import json
-import time
+import os
+import pathlib
 import queue
 import random
-import asyncio
-import pathlib
-import datetime
-import contextlib
+import re
 import subprocess
+import sys
+import time
 from collections import deque
 from dataclasses import replace
-from urllib.request import urlopen
-from urllib.parse import urlparse, urlencode
 from importlib import util as importlib_util
-from typing import TYPE_CHECKING, Optional, Mapping, Union, cast
+from typing import TYPE_CHECKING, Mapping, Optional, Union, cast
+from urllib.parse import urlencode, urlparse
+from urllib.request import urlopen
 
 import numpy as np
 import numpy.typing as npt
-import torch
-import soundfile as sf
-import sounddevice as sd
 import pyrubberband as rb
+import sounddevice as sd
+import soundfile as sf
+import torch
 from iso639 import Lang
-from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
+from iso639.exceptions import DeprecatedLanguageValue, InvalidLanguageValue
 
-from .i18n import string
 from . import __version__
-from .exceptions import NotAvailableError
-from .typing.pipeline import SpeechStreamQueue
-from .persona.memory import PersonaMemoryStore
 from .analysis import analyze_voice_audio
-from .config import resolve_audio_device
-from .persona.paths import persona_override_files
-from .persona.emotion import PersonaEmotionAnalyzer
-from .paths import (
-    app_data_dir,
-    outputs_dir,
-    project_root,
-    running_compiled,
-)
-from .utils import (
-    format_number,
-    run_async,
-    format_error,
-    detect_language,
-    is_april_fools,
-    rng_replace,
-)
 from .cevoice import (
     bundle_character_name,
     default_loader,
     persona_files_from_bundle,
     persona_metadata_from_manifest,
 )
-from .persona.prompts import (
-    CharacterProfile,
-    PersonaCard,
-    PersonaContext,
-    PersonaPromptBuilder,
-    PersonaSourceMaterial,
-    RetrievedMemoryBundle,
+from .config import resolve_audio_device
+from .constants import (
+    APP_NAME,
+    APP_SLUG,
+    BASE_SR,
+    JSON,
+    PERSONA_EMOTION_MODEL,
+    PERSONA_MEMORY_EMBEDDING_MODEL,
+    JSONSerializable,
+    PipelineStates,
 )
 from .dataclasses.pipeline import (
-    AudioOutput,
     AudioInputRequest,
+    AudioOutput,
     PlaybackChunk,
     PlaybackSourceDone,
     SpeechRequest,
     SpeechTiming,
     VoiceConversionRequest,
 )
-from .constants import (
-    APP_NAME,
-    APP_SLUG,
-    BASE_SR,
-    JSON,
-    PipelineStates,
-    PERSONA_EMOTION_MODEL,
-    JSONSerializable,
-    PERSONA_MEMORY_EMBEDDING_MODEL,
-)
 from .dsp import (
+    error_signal,
+    is_silent_utterance,
     pitch_shift_audio,
+    readiness_signal,
     resample_audio,
+    sleeping_signal,
     soften,
     split,
     to_48khz,
-    is_silent_utterance,
-    readiness_signal,
-    sleeping_signal,
     working_signal,
-    error_signal,
 )
+from .exceptions import NotAvailableError
+from .i18n import string
+from .paths import (
+    app_data_dir,
+    outputs_dir,
+    project_root,
+    running_compiled,
+)
+from .persona.emotion import PersonaEmotionAnalyzer
 from .persona.impl import (
     default_persona_age,
     default_persona_context,
@@ -117,7 +98,25 @@ from .persona.impl import (
     persona_short_term_history_limit,
     persona_style_traits,
 )
-
+from .persona.memory import PersonaMemoryStore
+from .persona.paths import persona_override_files
+from .persona.prompts import (
+    CharacterProfile,
+    PersonaCard,
+    PersonaContext,
+    PersonaPromptBuilder,
+    PersonaSourceMaterial,
+    RetrievedMemoryBundle,
+)
+from .typing.pipeline import SpeechStreamQueue
+from .utils import (
+    detect_language,
+    format_error,
+    format_number,
+    is_april_fools,
+    rng_replace,
+    run_async,
+)
 
 if TYPE_CHECKING:
     from .celune import Celune

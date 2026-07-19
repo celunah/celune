@@ -1,28 +1,28 @@
 # SPDX-License-Identifier: MIT
 """CLI entrypoint helpers."""
 
-import os
-import sys
-import time
-import random
-import shutil
+import contextlib
 import datetime
-import platform
-import warnings
 import importlib
 import importlib.util
-import contextlib
+import os
+import platform
+import random
+import shutil
 import subprocess
-from pathlib import Path
-from typing import Optional
+import sys
+import time
+import warnings
 from dataclasses import dataclass
-from types import SimpleNamespace, ModuleType
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+from typing import Optional
 
-from celune.i18n import string
-from celune.updater import apply_update_and_restart
+from celune import REVISION, __tagline__, __version__
 from celune.constants import APP_NAME, APP_SLUG, ExitCodes
+from celune.i18n import string
 from celune.paths import project_root, running_compiled
-from celune import __version__, REVISION, __tagline__
+from celune.updater import apply_update_and_restart
 
 
 def _env_flag(name: str) -> bool:
@@ -124,33 +124,34 @@ def _load_runtime() -> SimpleNamespace:
     _print_startup_diagnostic(string("cli.startup_loading_runtime"))
 
     try:
-        import yaml
-        import psutil
         import webbrowser
 
+        import psutil
+        import yaml
+
         from celune.celune import Celune
-        from celune.exceptions import No, UpdateError
-        from celune.namedays import has_name_day
-        from celune.updater import check_for_update, update_to_latest
-        from celune.ui import (
-            CeluneUI,
-            CeluneHeadlessUI,
-            CeluneHeadlessBaseUI,
-            CeluneTextualUI,
-            SelectMenu,
-        )
         from celune.config import (
             config_bool,
             config_value,
             env_bool,
             merge_missing_defaults,
         )
+        from celune.exceptions import No, UpdateError
+        from celune.namedays import has_name_day
         from celune.paths import (
             config_path,
             default_config_path,
             ensure_config_path,
         )
-        from celune.utils import detected_ide, supports_ansi, indent, title_case
+        from celune.ui import (
+            CeluneHeadlessBaseUI,
+            CeluneHeadlessUI,
+            CeluneTextualUI,
+            CeluneUI,
+            SelectMenu,
+        )
+        from celune.updater import check_for_update, update_to_latest
+        from celune.utils import detected_ide, indent, supports_ansi, title_case
     except ModuleNotFoundError as package:
         if package.name is not None:
             _print_dependency_setup_help(package.name)

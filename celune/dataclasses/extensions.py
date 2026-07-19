@@ -1,9 +1,9 @@
 """Extension-facing dataclasses."""
 
-from pathlib import Path
-from dataclasses import dataclass, field
 from contextlib import AbstractContextManager
-from typing import TYPE_CHECKING, Optional, Callable, Union
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 from .. import __version__
 from ..typing.common import JSONSerializable

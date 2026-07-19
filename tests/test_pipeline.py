@@ -1,32 +1,33 @@
 # SPDX-License-Identifier: MIT
 """Tests for pipeline helpers that do not perform real synthesis."""
 
-import os
-import sys
 import json as _json
+import os
 import queue
+import sys
 import tempfile
 import threading
-from pathlib import Path
 from collections.abc import Iterator
 from importlib.machinery import ModuleSpec
-from typing import cast, Optional
+from pathlib import Path
 from types import SimpleNamespace, TracebackType
-from unittest import mock, IsolatedAsyncioTestCase, TestCase
+from typing import Optional, cast
+from unittest import IsolatedAsyncioTestCase, TestCase, mock
 
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
 
-from celune.celune import Celune
-from celune.utils import discard
 from celune import pipeline
-from celune.dataclasses.pipeline import AudioInputRequest
-from celune.constants import JSON, JSONSerializable, PipelineStates
-from celune.persona.prompts import PersonaPromptBuilder, _render_markdown_subsection
+from celune.celune import Celune
 from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
-from .test_persona_memory import StubEmbeddingMemoryStore
+from celune.constants import JSON, JSONSerializable, PipelineStates
+from celune.dataclasses.pipeline import AudioInputRequest
+from celune.persona.prompts import PersonaPromptBuilder, _render_markdown_subsection
+from celune.utils import discard
+
 from .support import FakeStream, FakeVCBackend, make_pipeline_engine, make_voice_loader
+from .test_persona_memory import StubEmbeddingMemoryStore
 
 
 class PipelineTests(TestCase):

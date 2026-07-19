@@ -1,20 +1,20 @@
 # SPDX-License-Identifier: MIT
 """dots.tts MeanFlow backend implementation for Celune."""
 
+import contextlib
 import os
 import time
-import contextlib
 from collections.abc import Iterator
-from typing import Callable, Optional, Mapping, Generator, Protocol, cast
+from typing import Callable, Generator, Mapping, Optional, Protocol, cast
 
+import loguru
 import numpy as np
 import numpy.typing as npt
 import torch
-import loguru
 from dots_tts.runtime import DotsTtsRuntime
 
+from ...cevoice import CEVoiceLoader, default_loader
 from ...utils import custom_assert, discard
-from ...cevoice import default_loader, CEVoiceLoader
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 

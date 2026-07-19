@@ -188,9 +188,11 @@ Tested on: RTX 5070 (12 GB VRAM)
 
 ## Installation
 
-Download and extract the [latest binary artifact](https://nightly.link/celunah/celune/workflows/ci/main) prior to running the below commands in an already cloned copy of Celune.
+Download and extract the [latest SemVer binary release](https://github.com/celunah/celune/releases/latest) prior to running the below commands in an already cloned copy of Celune.
 
-Don't have one yet? Run the following commands:
+Alternatively, run `scripts/build_nuitka.ps1` or `scripts/build_nuitka.sh` to build Celune binaries by yourself, depending on your platform.
+
+Don't have a copy yet? Run the following commands:
 
 ```bash
 git clone https://github.com/celunah/celune

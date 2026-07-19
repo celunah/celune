@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: MIT
 """Celune's backend layer."""
 
-import os
-import sys
+import asyncio
+import contextlib
 import gc
-import time
+import os
 import queue
 import shutil
-import asyncio
+import sys
 import threading
-import contextlib
-from pathlib import Path
+import time
 from dataclasses import dataclass
-from typing import Optional, Callable, Protocol, Union, cast
+from pathlib import Path
+from typing import Callable, Optional, Protocol, Union, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -20,56 +20,26 @@ import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from .backends.tts.qwen3 import Qwen3
 from . import __version__
-from .chroma import AudioRGBGlow
-from .typing.backends import BackendModel
-from .extensions.base import CeluneContext
-from .extensions.events import EventDispatcher
-from .typing.pipeline import SpeechStreamQueue
-from .vc import clamp_vc_pitch_shift
-from .extensions.manager import CeluneExtensionManager
-from .typing.events import EventName, EventPayload
-from .paths import project_root, temp_data_dir
-from .dataclasses.pipeline import AudioInputRequest, AudioOutput
-from .config import Config, config_bool, config_value
-from .runtime import log_runtime_banner, validate_runtime
-from .i18n import get_system_locale, set_locale, string
 from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
-from .modeling import normalizer_device, load_normalizer_components
-from .constants import APP_NAME, JSONSerializable, NORMALIZER_MODEL_ID
+from .backends.tts.qwen3 import Qwen3
 from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
-from .dataclasses.properties import (
-    bind_constant_properties,
-    bind_forwarded_properties,
+from .cevoice import (
+    CEVoicePersona,
+    active_bundle_path,
+    announce_default_bundle,
+    bundle_character_name,
+    bundle_matches_default_pack_checksum,
+    close_default_loader,
+    default_loader,
+    is_protected_temp_path,
+    persona_metadata_from_manifest,
+    resolve_bundle_path,
+    select_voice_bundle,
 )
-from .exceptions import NotAvailableError, WarmupError, BackendError, RuntimeCheckError
-from .utils import format_number, format_error, discard, is_port_usable, custom_assert
-from .vram import (
-    QWEN3_0_6B_MODEL,
-    VramPreset,
-    backend_allowed,
-    resolve_backend_name,
-    resolve_vram_preset,
-    validate_vram_preset,
-)
-from .persona.impl import (
-    PersonaClient,
-    create_persona_client,
-    persona_enabled,
-    persona_is_available,
-    persona_model_id,
-    persona_quantization,
-)
-from .dataclasses.events import (
-    CharacterChangedEvent,
-    CharacterLoadedEvent,
-    CharacterUnloadedEvent,
-    ReadyEvent,
-    ShutdownEvent,
-    StateChangedEvent,
-    VoiceChangedEvent,
-)
+from .chroma import AudioRGBGlow
+from .config import Config, config_bool, config_value
+from .constants import APP_NAME, NORMALIZER_MODEL_ID, JSONSerializable
 from .dataclasses.celune import (
     CELUNE_CONSTANT_PROPERTIES,
     CELUNE_FORWARDED_PROPERTIES,
@@ -81,9 +51,74 @@ from .dataclasses.celune import (
     CeluneRuntimeState,
     CeluneVoiceState,
 )
+from .dataclasses.events import (
+    CharacterChangedEvent,
+    CharacterLoadedEvent,
+    CharacterUnloadedEvent,
+    ReadyEvent,
+    ShutdownEvent,
+    StateChangedEvent,
+    VoiceChangedEvent,
+)
+from .dataclasses.pipeline import AudioInputRequest, AudioOutput
+from .dataclasses.properties import (
+    bind_constant_properties,
+    bind_forwarded_properties,
+)
+from .exceptions import BackendError, NotAvailableError, RuntimeCheckError, WarmupError
+from .extensions.base import CeluneContext
+from .extensions.events import EventDispatcher
+from .extensions.manager import CeluneExtensionManager
+from .i18n import get_system_locale, set_locale, string
+from .modeling import load_normalizer_components, normalizer_device
+from .paths import project_root, temp_data_dir
+from .persona.impl import (
+    PersonaClient,
+    create_persona_client,
+    persona_enabled,
+    persona_is_available,
+    persona_model_id,
+    persona_quantization,
+)
+from .pipeline import (
+    acquire_pipeline,
+    clear_queue,
+    close_stream,
+    convert_audio_input,
+    generation_worker_job,
+    handle_audio_input,
+    play_signal,
+    playback_worker_job,
+    queue_sfx_audio,
+    queue_speech,
+    queue_speech_async,
+    release_pipeline,
+    saved_output_speech_seconds,
+    split_text,
+)
+from .pipeline import (
+    close as close_pipeline,
+)
+from .pipeline import (
+    force_stop_speech as force_stop_pipeline,
+)
+from .pipeline import (
+    play as play_pipeline,
+)
+from .pipeline import (
+    say as say_pipeline,
+)
+from .pipeline import (
+    say_async as say_pipeline_async,
+)
+from .pipeline import (
+    think as think_pipeline,
+)
+from .runtime import log_runtime_banner, validate_runtime
+from .typing.backends import BackendModel
 from .typing.celune import (
-    CoreBackendSpec,
     CeluneStateAccessors,
+    CoreBackendSpec,
     Generative,
     InputStateCallback,
     MessageCallback,
@@ -94,40 +129,17 @@ from .typing.celune import (
     VCBackendSpec,
     VoiceLockStateCallback,
 )
-from .cevoice import (
-    CEVoicePersona,
-    active_bundle_path,
-    announce_default_bundle,
-    bundle_matches_default_pack_checksum,
-    bundle_character_name,
-    close_default_loader,
-    default_loader,
-    is_protected_temp_path,
-    persona_metadata_from_manifest,
-    resolve_bundle_path,
-    select_voice_bundle,
-)
-from .pipeline import (
-    acquire_pipeline,
-    clear_queue,
-    close as close_pipeline,
-    close_stream,
-    force_stop_speech as force_stop_pipeline,
-    generation_worker_job,
-    queue_sfx_audio,
-    playback_worker_job,
-    play as play_pipeline,
-    handle_audio_input,
-    convert_audio_input,
-    queue_speech,
-    queue_speech_async,
-    release_pipeline,
-    saved_output_speech_seconds,
-    say as say_pipeline,
-    say_async as say_pipeline_async,
-    think as think_pipeline,
-    split_text,
-    play_signal,
+from .typing.events import EventName, EventPayload
+from .typing.pipeline import SpeechStreamQueue
+from .utils import custom_assert, discard, format_error, format_number, is_port_usable
+from .vc import clamp_vc_pitch_shift
+from .vram import (
+    QWEN3_0_6B_MODEL,
+    VramPreset,
+    backend_allowed,
+    resolve_backend_name,
+    resolve_vram_preset,
+    validate_vram_preset,
 )
 
 

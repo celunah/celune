@@ -3,19 +3,19 @@
 
 from __future__ import annotations
 
-import shutil
 import datetime
+import shutil
 import subprocess
 import threading
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Optional
 
-import torch
 import psutil
+import torch
 
+from ..constants import APP_NAME, COST_EQUIVALENTS
 from ..i18n import string
 from ..persona.impl import persona_talkback_enabled
-from ..constants import APP_NAME, COST_EQUIVALENTS
 from ..utils import celune_day_status, lunar_info, lunar_phase
 
 if TYPE_CHECKING:

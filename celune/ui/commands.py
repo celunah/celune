@@ -3,23 +3,23 @@
 
 from __future__ import annotations
 
-import os
 import asyncio
+import os
 import threading
 from pathlib import Path
+from typing import TYPE_CHECKING, Awaitable, Callable, Optional, cast
 from urllib.parse import urlparse
-from typing import Awaitable, Callable, Optional, TYPE_CHECKING, cast
 
 import soundfile as sf
 
 from ..audio import restart_audio_server
 from ..backends.tts.qwen3 import Qwen3
-from ..i18n import string
-from ..constants import APP_NAME
-from ..paths import project_root
-from ..exceptions import InvalidExtensionError
 from ..cevoice import active_bundle_path, resolve_bundle_path
-from ..utils import format_error, replace_ipa, format_number
+from ..constants import APP_NAME
+from ..exceptions import InvalidExtensionError
+from ..i18n import string
+from ..paths import project_root
+from ..utils import format_error, format_number, replace_ipa
 from ..vc import (
     VC_PITCH_SHIFT_MAX,
     VC_PITCH_SHIFT_MIN,
@@ -27,8 +27,8 @@ from ..vc import (
 )
 
 if TYPE_CHECKING:
-    from .app import CeluneUI
     from ..celune import Celune
+    from .app import CeluneUI
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".webm"}

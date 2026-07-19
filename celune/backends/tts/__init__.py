@@ -2,8 +2,8 @@
 """Celune backend initialization manager."""
 
 from importlib import import_module
-from importlib.metadata import version, PackageNotFoundError
-from typing import Callable, Union, Optional
+from importlib.metadata import PackageNotFoundError, version
+from typing import Callable, Optional, Union
 
 from ...i18n import string
 from ...typing.backends import BackendModel

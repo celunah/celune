@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: MIT
 """Structured prompt building for the Persona system."""
 
-import re
 import contextlib
+import re
 from dataclasses import dataclass, field
 
 from ..paths import temp_data_dir
-
 
 _MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}(?:\s|$)")
 

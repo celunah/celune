@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MIT
 """Shared Celune constants."""
 
-import signal
 import datetime
 import itertools
+import signal
+from enum import Enum, IntEnum, auto
 from typing import Optional
-from enum import auto, IntEnum, Enum
 
 from .i18n import string
 from .typing.common import JSON, JSONSerializable  # pylint: disable=unused-import

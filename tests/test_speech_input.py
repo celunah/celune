@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: MIT
 """Tests for Persona microphone speech input."""
 
-from unittest import TestCase, mock
 from types import SimpleNamespace
 from typing import Callable, Optional, cast
+from unittest import TestCase, mock
 
 import numpy as np
 from textual import events
 
-from celune.ui.app import CeluneUI
 from celune.persona.asr import WhisperTranscriber
+from celune.ui.app import CeluneUI
 
 
 class SpeechInputTests(TestCase):

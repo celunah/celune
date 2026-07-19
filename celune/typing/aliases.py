@@ -9,9 +9,10 @@ import numpy.typing as npt
 import sounddevice as sd
 
 if TYPE_CHECKING:
-    from .events import EventPayload
     from transformers.modeling_utils import PreTrainedModel
     from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+
+    from .events import EventPayload
 
 type RuntimeValue = Union[
     str,

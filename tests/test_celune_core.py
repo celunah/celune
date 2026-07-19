@@ -1,34 +1,35 @@
 # SPDX-License-Identifier: MIT
 """Tests for Celune core behavior without real models or GPU work."""
 
-import weakref
+import contextlib
 import tempfile
 import threading
-import contextlib
-from typing import cast
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
-from unittest import mock, IsolatedAsyncioTestCase, TestCase
+from typing import cast
+from unittest import IsolatedAsyncioTestCase, TestCase, mock
 
 import numpy as np
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
+from celune import cevoice, i18n
 from celune.backends.tts.qwen3 import Qwen3
 from celune.celune import Celune
 from celune.config import Config
-from celune.utils import discard
-from celune import cevoice, i18n
 from celune.constants import JSONSerializable
-from celune.vram import QWEN3_0_6B_MODEL
-from celune.persona.impl import persona_quantization
 from celune.exceptions import BackendError, WarmupError
+from celune.persona.impl import persona_quantization
 from celune.pipeline import (
     convert_audio_input,
     handle_audio_input,
     play_signal,
     release_pipeline,
 )
+from celune.utils import discard
+from celune.vram import QWEN3_0_6B_MODEL
+
 from .support import FakeBackend, FakeGlow, FakeVCBackend
 
 

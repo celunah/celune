@@ -3,20 +3,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Optional, Protocol, Union, cast
 
 import numpy as np
 import numpy.typing as npt
 import torch
+from transformers import AutoModel, AutoModelForSequenceClassification, AutoTokenizer
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-from transformers import AutoModel, AutoModelForSequenceClassification, AutoTokenizer
 
-from ..utils import discard
+from ..constants import PERSONA_EMOTION_MODEL, JSONSerializable
 from ..typing.aliases import EmbeddingVector
-from ..constants import JSONSerializable, PERSONA_EMOTION_MODEL
+from ..utils import discard
 
 GOEMOTIONS_LABELS: tuple[str, ...] = (
     "admiration",
