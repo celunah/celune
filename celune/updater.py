@@ -30,6 +30,7 @@ UPDATE_MANIFEST_NAME = "celune-update.json"
 SHORT_HASH_LENGTH = 7
 UPDATE_BRANCHES = {"main", "master"}
 DOWNLOAD_TIMEOUT = 30
+FORCE_DISABLE_UPDATES = True
 
 
 @dataclass(frozen=True)
@@ -444,6 +445,9 @@ def check_for_update() -> Optional[UpdateInfo]:
         Optional[UpdateInfo]: Metadata describing the available update, or ``None`` when no safe update path is
         currently available.
     """
+    if FORCE_DISABLE_UPDATES:
+        return None
+
     if os.getenv("CELUNE_SKIP_UPDATE") in {"1", "true", "on", "yes", "enabled"}:
         return None
 
