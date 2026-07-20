@@ -79,6 +79,13 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 | Bold | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_dotstts.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_dotstts.wav) |
 | Upbeat | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_dotstts.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_dotstts.wav) |
 
+> [!NOTE]
+> Due to limitations of GPT-SoVITS with Celune's calm voice, a demonstration of GPT-SoVITS was not included.
+> This backend does not work with softly spoken or other low-energy voices, and is susceptible to accent drift.
+> The model least susceptible to accent drift is GPT-SoVITS v4.
+> Set `gpt_sovits_variant: v4` in Celune's configuration file to use it.
+> Otherwise, the default model will be GPT-SoVITS v2ProPlus.
+
 The demonstration lines try to showcase Celune's best, but they may include minor mistakes. This is an inherent limitation with TTS models, and Celune should not be blamed for it.
 
 These examples were recorded with the default voice pack, which contains canonical Celune voices. Other voice packs may be created and installed by the end user, allowing for other characters to speak through Celune.
@@ -110,7 +117,7 @@ Browse the `demos` directory for demonstration content from the current version 
 
 Samples were captured directly from Celune's output directory. No extra post-processing was applied.
 
-For details on voice production, check the VOICES.md file.
+For details on voice production, check [VOICES.md](./VOICES.md).
 
 ## System Requirements
 
@@ -151,9 +158,8 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 >
 > This preset supports:
 >
-> - Qwen3-TTS 0.6B / Celune Mini
+> - Qwen3-TTS 0.6B / Celune Mini / GPT-SoVITS
 > - SeedVC voice changer mode
-> - GPT-SoVITS (CPU or GPU, with generation speed depending on hardware)
 > - Normalization on CPU
 >
 > Medium (8GB VRAM required)
@@ -180,16 +186,6 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 > - Normalization on GPU
 > - Upcoming advanced features
 
-GPT-SoVITS is available as the optional `gpt-sovits` backend. It uses the
-[official RVC-Boss/GPT-SoVITS source tree](https://github.com/RVC-Boss/GPT-SoVITS)
-and its `TTS_Config`/`TTS.run` inference API. Install Celune with
-`uv sync --extra gpt-sovits`; the backend downloads the source into
-`%LOCALAPPDATA%/Celune/gpt_sovits` and stores pretrained checkpoints in
-Celune's Hugging Face cache. Set `gpt_sovits_root` only when using an existing
-source checkout. With `gpt_sovits_variant: auto`, Celune selects assets in this
-order: v2ProPlus, v4, v2Pro, v3, v2, then v1. The current v2-capable language
-set is English, Chinese, Japanese, Cantonese, Korean, and automatic
-mixed-language detection.
 
 The desired preset may be set in Celune's configuration file. Refer to `default_config.yaml` for details.
 

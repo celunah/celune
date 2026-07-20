@@ -146,8 +146,9 @@ mini = [
     "pocket-tts>=2.1.0",
 ]
 
-# GPT-SoVITS inference support. Celune downloads the source tree on first use
-# and stores pretrained assets in its Hugging Face cache.
+# An experimental Celune backend supporting the entire GPT-SoVITS family: v1, v2/Pro/ProPlus, v3, and v4.
+# Fast, but may not work with certain voices and experiences accent drift to a varying amount, with v4 the least.
+# It does not use a library. Celune reimplements the system directly, using more dependencies.
 gpt-sovits = [
     "cn2an",
     "ffmpeg-python",
