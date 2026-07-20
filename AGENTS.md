@@ -139,6 +139,24 @@ At the end of every task, always sort and verify imports in every modified Pytho
 
 Code reviews should state mismatches in the import ordering.
 
+## Exceptions
+
+All Celune related exceptions follow a Python-style format. Adhere to the below example when writing exceptions:
+
+```text
+# Do not use
+Error: Error description.
+
+# Use
+Error: error description
+```
+
+Use reusable exception classes from `celune.exceptions`, if any match. General exceptions should use Python exception classes rather than Celune's own ones.
+
+If a new Celune specific exception category needs to be created, create it in `celune.exceptions`, associating all related exceptions with it.
+
+Document it according to the usual CI rules. If the exception type would be too broad, do not add it, using Python exceptions instead.
+
 ## Localization
 
 Celune does not use hardcoded strings in English. Define each new string you add into Celune's localization string database.
@@ -157,6 +175,16 @@ Make sure to only modify user-facing strings (both normal and dev mode strings),
 * Do not use `pip` directly unless explicitly required. If you need to run `pip` alone, do it so with `uv pip` instead.
 * Do not assume CPU-only mode supports all features. CPU-only execution is only supported with Celune Mini.
 * Be aware that many features require an RTX 30 series GPU or newer.
+
+## Audio Format
+
+Celune only works with normalized `np.float32` audio arrays `-1.0` to `1.0`. When dealing with audio-related code that returns other audio formats, such as signed 16-bit PCM `-32768` to `32767`, normalize it to Celune's expected audio format.
+
+Not normalizing such audio may result in extreme audio distortions.
+
+Keep audio related computations in `np.float32`, using `np.float64` only if precision would be insufficient to represent said audio.
+
+Always output audio files in 24-bit 48 kHz FLAC. Do not output other formats.
 
 ## UI and WebUI
 

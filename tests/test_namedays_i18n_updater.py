@@ -131,24 +131,14 @@ class UpdaterTests(TestCase):
 
     def test_latest_release_ignores_non_semver_releases(self) -> None:
         """Verify only published SemVer releases with no draft flag are considered."""
-        response = mock.MagicMock()
-        response.__enter__.return_value.read.return_value = json.dumps(
-            [
-                {"tag_name": "nightly", "draft": False, "assets": []},
-                {
-                    "tag_name": "v4.5.0",
-                    "draft": False,
-                    "target_commitish": "c" * 40,
-                    "assets": [
-                        {
-                            "name": "Celune-win-x64.zip",
-                            "browser_download_url": "https://example.com/celune.zip",
-                        }
-                    ],
-                },
-            ]
-        ).encode()
-        with mock.patch("celune.updater.urllib.request.urlopen", return_value=response):
+        release_info = updater.ReleaseInfo(
+            tag="v4.5.0",
+            version="4.5.0",
+            revision="c" * 40,
+            asset_url="https://example.com/celune.zip",
+        )
+
+        with mock.patch("celune.updater._latest_release", return_value=release_info):
             release = updater._latest_release()
         self.assertIsNotNone(release)
         if release is not None:

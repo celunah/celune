@@ -186,3 +186,5 @@ COST_EQUIVALENTS = {
     "fishaudio-s2-pro": 0.021,
     "fishaudio-s2.1-pro": 0.021,
 }
+
+CELUNE_UA = "Celune/4.3.2"

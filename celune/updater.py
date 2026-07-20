@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 from . import __version__
+from .constants import CELUNE_UA
 from .exceptions import UpdateError
 from .i18n import string
 from .paths import project_root, running_compiled
@@ -151,7 +152,7 @@ def _latest_release() -> Optional[ReleaseInfo]:
         RELEASES_API_URL,
         headers={
             "Accept": "application/vnd.github+json",
-            "User-Agent": "Celune-Updater/1.0",
+            "User-Agent": CELUNE_UA,
         },
     )
     with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:
@@ -387,7 +388,7 @@ def _download_to_file(url: str, destination: Path) -> None:
     """Download one URL into the given destination path."""
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "Celune-Updater/1.0"},
+        headers={"User-Agent": CELUNE_UA},
     )
     with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:
         with destination.open("wb") as handle:
