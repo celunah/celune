@@ -25,6 +25,8 @@ class MiniModel(Protocol):
         Args:
             audio_conditioning: Backend-specific prompt descriptor for one voice sample.
 
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -39,5 +41,7 @@ class MiniModel(Protocol):
             model_state: Prompt state cached for the active voice.
             text_to_generate: Text content to synthesize.
 
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")

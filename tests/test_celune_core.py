@@ -1442,7 +1442,7 @@ class CeluneCoreTests(TestCase):
         celune.change_voice_lock_state_callback.assert_not_called()
         celune._try_play_signal.assert_not_called()
         celune.log_callback.assert_called_once_with(
-            "Unknown backend: qwen (available: mini, qwen3, dotstts, voxcpm2, passthrough, seed-vc)",
+            "unknown backend: qwen (available: mini, qwen3, dotstts, voxcpm2, gpt-sovits, passthrough, seed-vc)",
             "warning",
         )
         self.assertEqual(celune.cur_state, "idle")

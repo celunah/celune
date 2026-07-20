@@ -2662,6 +2662,8 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                         audio_chunk = to_48khz(
                             np.asarray(audio_chunk, dtype=np.float32), sr
                         )
+                        if audio_chunk.size == 0 or not np.any(audio_chunk):
+                            continue
 
                         if engine.speed != 1.0 and engine.can_use_rubberband:
                             try:

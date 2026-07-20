@@ -929,11 +929,11 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         with mock.patch(
             "celune.pipeline.resolve_audio_device",
             side_effect=ValueError(
-                "The specified output device name has multiple matches for "
+                "the specified output device name has multiple matches for "
                 "'CABLE-B Input (VB-Audio Cable B)':\n"
                 "- [22] CABLE-B Input (VB-Audio Cable B), Windows DirectSound\n"
                 "- [28] CABLE-B Input (VB-Audio Cable B), Windows WASAPI\n\n"
-                "Please specify one of the above devices, then restart Celune."
+                "please specify one of the above devices, then restart Celune"
             ),
         ):
             await self._run_playback_worker(cast(Celune, engine))
@@ -944,7 +944,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ]
         self.assertTrue(warning_messages)
         self.assertIn(
-            "The specified output device name has multiple matches",
+            "the specified output device name has multiple matches",
             warning_messages[-1],
         )
 
@@ -2526,7 +2526,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
             discard(model)
             discard(kwargs)
-            chunk = np.zeros((48000, 2), dtype=np.float32)
+            chunk = np.full((48000, 2), 0.1, dtype=np.float32)
             for _ in range(3):
                 yield chunk.copy(), 48000, None
 
@@ -2584,7 +2584,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
             discard(model)
             discard(kwargs)
-            chunk = np.zeros((48000, 2), dtype=np.float32)
+            chunk = np.full((48000, 2), 0.1, dtype=np.float32)
             for _ in range(3):
                 yield chunk.copy(), 48000, None
 
@@ -2648,7 +2648,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
             discard(model)
             discard(kwargs)
-            chunk = np.zeros((48000, 2), dtype=np.float32)
+            chunk = np.full((48000, 2), 0.1, dtype=np.float32)
             for _ in range(3):
                 yield chunk.copy(), 48000, None
 
@@ -2725,7 +2725,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         engine = make_pipeline_engine()
         engine.backend = SimpleNamespace(
             generate_stream=lambda _model, **_kwargs: iter(
-                [(np.zeros((8, 2), dtype=np.float32), 48000, None)]
+                [(np.full((8, 2), 0.1, dtype=np.float32), 48000, None)]
             )
         )
         engine.model_lock = threading.Lock()
@@ -2770,7 +2770,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         engine = make_pipeline_engine()
         engine.backend = SimpleNamespace(
             generate_stream=lambda _model, **_kwargs: iter(
-                [(np.zeros((48000, 2), dtype=np.float32), 48000, None)]
+                [(np.full((48000, 2), 0.1, dtype=np.float32), 48000, None)]
             )
         )
         engine.model_lock = threading.Lock()
@@ -2805,10 +2805,10 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(engine.total_generated_speech_seconds, 31.0)
 
-    async def test_generation_worker_requeues_silent_utterance_until_retry_limit(
+    async def test_generation_worker_ignores_absolute_silence_without_retrying(
         self,
     ) -> None:
-        """Verify fully silent utterances are retried only up to the configured cap."""
+        """Verify absolute-silence chunks never enter playback or trigger retries."""
         engine = make_pipeline_engine()
         generate_stream = mock.Mock(
             side_effect=lambda _model, **_kwargs: iter(
@@ -2842,22 +2842,21 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         with (
             mock.patch("celune.pipeline.split_text", return_value=["hello"]),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(True, 2)),
+            mock.patch("celune.pipeline._queue_playback_chunk") as queue_chunk,
         ):
             await self._run_generation_worker(cast(Celune, engine))
 
-        self.assertEqual(generate_stream.call_count, 4)
+        self.assertEqual(generate_stream.call_count, 1)
+        queue_chunk.assert_not_called()
         retry_logs = [
             message
             for message, severity in engine.messages
             if severity == "warning" and "regenerating" in message
         ]
-        self.assertEqual(len(retry_logs), 3)
-        self.assertIn("(1/3)", retry_logs[0])
-        self.assertIn("(2/3)", retry_logs[1])
-        self.assertIn("(3/3)", retry_logs[2])
-        self.assertTrue(
+        self.assertEqual(retry_logs, [])
+        self.assertFalse(
             any(
-                "stayed silent after 3 retries" in message
+                "may be unexpectedly silent" in message
                 for message, severity in engine.messages
                 if severity == "warning"
             )
@@ -2877,7 +2876,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         )
         generate_stream = mock.Mock(
             side_effect=lambda _model, **_kwargs: iter(
-                [(np.zeros((8, 2), dtype=np.float32), 48000, None)]
+                [(np.full((8, 2), 0.0005, dtype=np.float32), 48000, None)]
             )
         )
 

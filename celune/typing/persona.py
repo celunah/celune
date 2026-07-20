@@ -77,6 +77,8 @@ class ChatTemplateRenderer(Protocol):
             return_dict: Whether structured tensor output should be returned.
             return_tensors: Tensor backend requested by the caller.
 
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -97,6 +99,8 @@ class PersonaTokenizer(Protocol):
             token_ids: Generated token IDs to decode.
             skip_special_tokens: Whether special tokens should be omitted.
 
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
@@ -131,9 +135,15 @@ class PersonaModel(Protocol):
         Args:
             kwargs: Prepared model inputs and generation options.
 
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("protocol not defined")
 
     def eval(self) -> None:
-        """Switch the model into eval mode."""
+        """Switch the model into eval mode.
+
+        Raises:
+            NotImplementedError: If `NotImplementedError` needs to be raised.
+        """
         raise NotImplementedError("protocol not defined")

@@ -70,7 +70,7 @@ def _caller_is_repl() -> bool:
 
 
 REVISION = _get_revision()
-VERSION = "4.3.1"
+VERSION = "4.3.2"
 
 if REVISION:
     _local = REVISION.rstrip("*")

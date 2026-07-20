@@ -126,7 +126,7 @@ class ConfigTests(TestCase):
         ):
             with self.assertRaisesRegex(
                 ValueError,
-                "The specified input device name has multiple matches",
+                "the specified input device name has multiple matches",
             ) as caught:
                 config.resolve_audio_device(
                     {"input_device": "CABLE-A Output"},
@@ -140,7 +140,7 @@ class ConfigTests(TestCase):
             "- [1] CABLE-A Output (VB-Audio Cable A), Windows WASAPI",
             message,
         )
-        self.assertIn("Please specify one of the above devices", message)
+        self.assertIn("please specify one of the above devices", message)
 
     def test_resolve_audio_device_prefers_exact_single_output_index(self) -> None:
         """Verify one matching output device is resolved to its exact index."""

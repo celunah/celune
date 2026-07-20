@@ -153,6 +153,7 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 >
 > - Qwen3-TTS 0.6B / Celune Mini
 > - SeedVC voice changer mode
+> - GPT-SoVITS (CPU or GPU, with generation speed depending on hardware)
 > - Normalization on CPU
 >
 > Medium (8GB VRAM required)
@@ -178,6 +179,17 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 > - Persona (8-bit)
 > - Normalization on GPU
 > - Upcoming advanced features
+
+GPT-SoVITS is available as the optional `gpt-sovits` backend. It uses the
+[official RVC-Boss/GPT-SoVITS source tree](https://github.com/RVC-Boss/GPT-SoVITS)
+and its `TTS_Config`/`TTS.run` inference API. Install Celune with
+`uv sync --extra gpt-sovits`; the backend downloads the source into
+`%LOCALAPPDATA%/Celune/gpt_sovits` and stores pretrained checkpoints in
+Celune's Hugging Face cache. Set `gpt_sovits_root` only when using an existing
+source checkout. With `gpt_sovits_variant: auto`, Celune selects assets in this
+order: v2ProPlus, v4, v2Pro, v3, v2, then v1. The current v2-capable language
+set is English, Chinese, Japanese, Cantonese, Korean, and automatic
+mixed-language detection.
 
 The desired preset may be set in Celune's configuration file. Refer to `default_config.yaml` for details.
 

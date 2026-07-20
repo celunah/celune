@@ -277,7 +277,6 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
     if command == "restartaudio":
 
         def restart_audio() -> None:
-            """Restart the host audio server and play a readiness test signal."""
             try:
                 restart_audio_server()
             except RuntimeError as error:

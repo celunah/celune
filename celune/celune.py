@@ -477,6 +477,23 @@ class Celune(CeluneStateAccessors):
             )
             backend_kwargs["clone_model_id"] = preset.qwen3_clone_model_id
 
+        if not isinstance(tts_backend, CeluneBackend) and (
+            (
+                isinstance(tts_backend, str)
+                and tts_backend.strip().lower() == "gpt-sovits"
+            )
+            or (
+                isinstance(tts_backend, type)
+                and getattr(tts_backend, "name", "").strip().lower() == "gpt-sovits"
+            )
+        ):
+            backend_kwargs["root"] = _config_str(
+                config_value(config, "gpt_sovits_root")
+            )
+            backend_kwargs["variant"] = _config_str(
+                config_value(config, "gpt_sovits_variant")
+            )
+
         try:
             resolved_tts_backend = cast(TTSBackendSpec, tts_backend)
             if not isinstance(tts_backend, CeluneBackend):
@@ -917,6 +934,19 @@ class Celune(CeluneStateAccessors):
                 "qwen3_x_vector_only",
             )
             backend_kwargs["clone_model_id"] = preset.qwen3_clone_model_id
+        elif (
+            isinstance(backend_spec, str)
+            and backend_spec.strip().lower() == "gpt-sovits"
+        ) or (
+            isinstance(backend_spec, type)
+            and getattr(backend_spec, "name", "").strip().lower() == "gpt-sovits"
+        ):
+            backend_kwargs["root"] = _config_str(
+                config_value(self.config, "gpt_sovits_root")
+            )
+            backend_kwargs["variant"] = _config_str(
+                config_value(self.config, "gpt_sovits_variant")
+            )
         return backend_kwargs
 
     def _capture_reload_snapshot(self) -> _ReloadSnapshot:

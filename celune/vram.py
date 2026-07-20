@@ -15,12 +15,26 @@ QWEN3_0_6B_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 QWEN3_1_7B_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
 
 TEST_BACKENDS = ("fake", "counting")
-PERSONA_HIGH_ALLOWED_BACKENDS = ("mini", "qwen3", *TEST_BACKENDS)
+PERSONA_HIGH_ALLOWED_BACKENDS = ("mini", "qwen3", "gpt-sovits", *TEST_BACKENDS)
 BACKENDS_ALLOWED: Mapping[VramTier, list[str]] = {
-    "low": ["mini", "qwen3", *TEST_BACKENDS],
-    "medium": ["mini", "qwen3", *TEST_BACKENDS],
-    "high": ["mini", "qwen3", "dotstts", "voxcpm2", *TEST_BACKENDS],
-    "xhigh": ["mini", "qwen3", "dotstts", "voxcpm2", *TEST_BACKENDS],
+    "low": ["mini", "qwen3", "gpt-sovits", *TEST_BACKENDS],
+    "medium": ["mini", "qwen3", "gpt-sovits", *TEST_BACKENDS],
+    "high": [
+        "mini",
+        "qwen3",
+        "dotstts",
+        "voxcpm2",
+        "gpt-sovits",
+        *TEST_BACKENDS,
+    ],
+    "xhigh": [
+        "mini",
+        "qwen3",
+        "dotstts",
+        "voxcpm2",
+        "gpt-sovits",
+        *TEST_BACKENDS,
+    ],
 }
 
 

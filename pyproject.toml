@@ -1,6 +1,6 @@
 [project]
 name = "celune"
-version = "4.3.1"
+version = "4.3.2"
 description = "Real-time AI TTS character engine for all use cases"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -144,6 +144,28 @@ dotstts = [
 # to size ratio.
 mini = [
     "pocket-tts>=2.1.0",
+]
+
+# GPT-SoVITS inference support. Celune downloads the source tree on first use
+# and stores pretrained assets in its Hugging Face cache.
+gpt-sovits = [
+    "cn2an",
+    "ffmpeg-python",
+    "g2p-en",
+    "g2pk2",
+    "jieba-fast",
+    "ko-pron",
+    "opencc",
+    "peft<0.18.0",
+    "pypinyin",
+    "pytorch-lightning>=2.4",
+    "pyopenjtalk>=0.4.1",
+    "rotary-embedding-torch",
+    "split-lang",
+    "tojyutping",
+    "torchmetrics<=1.5",
+    "wordsegment",
+    "x-transformers",
 ]
 
 # A voice conversion backend allowing you to speak in your character voices directly. It does not use TTS, using it

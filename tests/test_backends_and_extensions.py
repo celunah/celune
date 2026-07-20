@@ -20,6 +20,7 @@ import soundfile as sf
 import torch
 
 from celune.backends.tts import resolve_backend
+from celune.backends.tts.gpt_sovits import GPTSoVITS, _GPTSoVITSPipeline
 from celune.backends.vc import resolve_vc_backend
 from celune.backends.vc.passthrough import CelunePassthroughVCBackend
 from celune.backends.vc.seedvc import CeluneSeedVCBackend
@@ -48,6 +49,129 @@ from .support import (
 
 class BackendTests(TestCase):
     """Tests for backend base behavior and backend resolution."""
+
+    def test_gpt_sovits_uses_huggingface_snapshot_paths_for_model_config(self) -> None:
+        """Verify GPT-SoVITS model configuration stays outside its source tree."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "source"
+            (root / "GPT_SoVITS/TTS_infer_pack").mkdir(parents=True)
+            (root / "GPT_SoVITS/TTS_infer_pack/TTS.py").touch()
+            snapshot = Path(temp_dir) / "huggingface" / "snapshot"
+            snapshot.mkdir(parents=True)
+
+            backend = GPTSoVITS(
+                log=lambda _msg, _severity="info": None,
+                root=str(root),
+                variant="v4",
+            )
+            backend._model_snapshot = snapshot
+            config = backend._model_config("v4")
+            custom = cast(dict[str, Union[str, bool]], config["custom"])
+
+            self.assertEqual(
+                custom["t2s_weights_path"],
+                str(snapshot / "s1v3.ckpt"),
+            )
+            self.assertEqual(
+                custom["vits_weights_path"],
+                str(snapshot / "gsv-v4-pretrained/s2Gv4.pth"),
+            )
+            self.assertNotIn("GPT_SoVITS/pretrained_models", str(custom))
+
+    def test_gpt_sovits_bootstrap_uses_celune_user_data_directory(self) -> None:
+        """Verify missing GPT-SoVITS source is installed below Celune user data."""
+        expected_root = Path("C:/runtime-data") / "gpt_sovits"
+
+        with (
+            mock.patch(
+                "celune.backends.tts.gpt_sovits.app_data_dir",
+                return_value=expected_root.parent,
+            ),
+            mock.patch.object(GPTSoVITS, "_candidate_roots", return_value=iter(())),
+            mock.patch.object(
+                GPTSoVITS, "_download_source_tree", return_value=expected_root
+            ) as download,
+        ):
+            self.assertEqual(GPTSoVITS._resolve_root(None), expected_root)
+
+        download.assert_called_once_with(expected_root)
+
+    def test_gpt_sovits_converts_integer_pcm_to_float_audio(self) -> None:
+        """Verify GPT-SoVITS int16 PCM is scaled to Celune's float audio range."""
+        pcm = np.array([-32768, 0, 32767], dtype=np.int16)
+
+        audio = GPTSoVITS._to_numpy_audio(pcm)
+
+        np.testing.assert_allclose(audio, [-1.0, 0.0, 32767 / 32768])
+        self.assertEqual(audio.dtype, np.float32)
+
+    def test_gpt_sovits_uses_english_for_unambiguous_latin_text(self) -> None:
+        """Verify automatic language selection uses English phonemization for Latin text."""
+        self.assertEqual(
+            GPTSoVITS._resolve_text_language("auto", "Hello, Celune."),
+            "en",
+        )
+        self.assertEqual(
+            GPTSoVITS._resolve_text_language("auto", "Hello, 你好."),
+            "auto",
+        )
+        self.assertEqual(GPTSoVITS._resolve_text_language("ja", "Hello."), "ja")
+
+    def test_gpt_sovits_rejects_reference_audio_shorter_than_three_seconds(
+        self,
+    ) -> None:
+        """Verify invalid GPT-SoVITS reference duration is rejected before inference."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "short.wav"
+            sf.write(path, np.zeros(24000, dtype=np.float32), 24000)
+
+            with self.assertRaises(ValueError):
+                GPTSoVITS._validate_reference_audio("calm", path)
+
+    def test_gpt_sovits_trims_quiet_reference_edges(self) -> None:
+        """Verify quiet reference edges are removed while spoken audio is retained."""
+        backend = GPTSoVITS.__new__(GPTSoVITS)
+        backend._truncated_reference_paths = set()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "calm.wav"
+            audio = np.concatenate(
+                [
+                    np.zeros(12000, dtype=np.float32),
+                    np.full(96000, 0.1, dtype=np.float32),
+                    np.zeros(12000, dtype=np.float32),
+                ]
+            )
+            sf.write(source, audio, 24000)
+
+            trimmed = backend._trim_reference_silence(source)
+
+            self.assertNotEqual(trimmed, source)
+            self.assertGreaterEqual(float(sf.info(trimmed).duration), 4.0)
+            self.assertLess(float(sf.info(trimmed).duration), 5.0)
+            self.assertIn(trimmed, backend._truncated_reference_paths)
+
+    def test_gpt_sovits_refreshes_prompt_cache_after_voice_change(self) -> None:
+        """Verify a changed voice reference clears official prompt state."""
+        pipeline = SimpleNamespace(
+            prompt_cache={
+                "ref_audio_path": "old.wav",
+                "prompt_semantic": object(),
+                "refer_spec": [object()],
+                "prompt_text": "Old voice.",
+                "prompt_lang": "en",
+            }
+        )
+
+        GPTSoVITS._refresh_prompt_cache(
+            cast(_GPTSoVITSPipeline, pipeline),
+            Path("new.wav"),
+            "New voice.",
+            "en",
+        )
+
+        self.assertIsNone(pipeline.prompt_cache["ref_audio_path"])
+        self.assertEqual(pipeline.prompt_cache["refer_spec"], [])
+        self.assertIsNone(pipeline.prompt_cache["prompt_text"])
 
     def test_base_backend_reports_models(self) -> None:
         """Verify model metadata helpers on a fake backend.
@@ -125,7 +249,7 @@ class BackendTests(TestCase):
                 string(
                     "celune.unknown_backend",
                     backend="missing",
-                    available="mini, qwen3, dotstts, voxcpm2",
+                    available="mini, qwen3, dotstts, voxcpm2, gpt-sovits",
                 )
             ),
         ):
