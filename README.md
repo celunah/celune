@@ -380,7 +380,7 @@ Celune exposes the following core events to extensions:
 - `character_loaded`
 - `character_unloaded`
 
-For example extension usage, check the [example extension](./extensions/test.py).
+For example extension usage, check the [example extension](./extensions/test.lua).
 
 The aforementioned extension defines a basic usage case for Celune extensions.
 
