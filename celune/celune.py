@@ -340,6 +340,7 @@ class Celune(CeluneStateAccessors):
         voice_bundle_is_default: bool
         loaded: bool
         cur_state: str
+        version: str
 
     def __init__(
         self,
@@ -367,6 +368,7 @@ class Celune(CeluneStateAccessors):
         if Celune._instance is not None:
             raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
 
+        self.version = __version__
         self._callbacks = CeluneCallbackState(
             log_callback=log_callback or self._noop_message,
             status_callback=status_callback or self._noop_message,
@@ -952,6 +954,7 @@ class Celune(CeluneStateAccessors):
     def _capture_reload_snapshot(self) -> _ReloadSnapshot:
         """Capture the current backend runtime state for rollback."""
         return self._ReloadSnapshot(
+            version=self.version,
             backend=self.backend,
             restorable_backend_spec=self._restorable_backend_spec(),
             backend_spec=self._backend_spec,
