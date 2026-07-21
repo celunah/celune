@@ -9,12 +9,12 @@ from typing import Callable, Generator, Mapping, Optional, Protocol, cast
 
 import loguru
 import numpy as np
-import numpy.typing as npt
 import torch
 from dots_tts.runtime import DotsTtsRuntime
 
 from ...cevoice import CEVoiceLoader, default_loader
 from ...utils import custom_assert, discard
+from ...typing.aliases import AudioChunk
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
@@ -239,7 +239,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         return self.model
 
     @staticmethod
-    def _to_numpy_audio(chunk: torch.Tensor) -> npt.NDArray[np.float32]:
+    def _to_numpy_audio(chunk: torch.Tensor) -> AudioChunk:
         """Convert one streamed torch chunk to a Celune-compatible audio array."""
         audio = chunk.detach().float().cpu().numpy()
         audio = np.asarray(audio, dtype=np.float32).reshape(-1)
@@ -247,7 +247,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
 
     def generate_stream(
         self, model: DotsTtsRuntime, **kwargs
-    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate Celune-compatible audio chunks.
 
         Args:
@@ -255,7 +255,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             kwargs: Streaming generation keyword arguments to use.
 
         Returns:
-            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of dots.tts streaming audio
+            Iterator[tuple[AudioChunk, int, Optional[dict]]]: An iterator of dots.tts streaming audio
             chunks.
 
         Raises:
@@ -311,10 +311,10 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                     **kwargs,
                 )
 
-                batch: list[npt.NDArray[np.float32]] = []
+                batch: list[AudioChunk] = []
                 chunk_index = 0
                 total_steps = 0
-                pending_audio: Optional[npt.NDArray[np.float32]] = None
+                pending_audio: Optional[AudioChunk] = None
                 pending_steps = 0
                 first_chunk_time: Optional[float] = None
 

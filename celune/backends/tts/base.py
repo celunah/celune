@@ -22,7 +22,6 @@ from typing import (
 )
 
 import numpy as np
-import numpy.typing as npt
 import soundfile as sf
 import torch
 from huggingface_hub import snapshot_download
@@ -31,7 +30,7 @@ from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import N_A_NUMERIC
 from ...i18n import string
 from ...paths import huggingface_hub_cache_dir, temp_data_dir
-from ...typing.aliases import RuntimeValue
+from ...typing.aliases import RuntimeValue, AudioChunk
 from ...typing.backends import BackendModel, ModelT
 from ...utils import discard
 
@@ -499,7 +498,7 @@ class CeluneBackend(ABC, Generic[ModelT]):
     @abstractmethod
     def generate_stream(
         self, model: ModelT, **kwargs
-    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Yield audio chunks from a loaded backend model.
 
         Args:
@@ -507,5 +506,5 @@ class CeluneBackend(ABC, Generic[ModelT]):
             kwargs: Backend-specific generation parameters.
 
         Returns:
-            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of audio chunks.
+            Iterator[tuple[AudioChunk, int, Optional[dict]]]: An iterator of audio chunks.
         """

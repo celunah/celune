@@ -6,12 +6,12 @@ from collections.abc import Mapping
 from typing import Optional, Protocol, cast
 
 import numpy as np
-import numpy.typing as npt
 import torch
 from scipy import signal
 
 from .config import config_bool
 from .typing.common import JSONSerializable
+from .typing.aliases import AudioChunk
 
 VC_PITCH_SHIFT_MIN = -3
 VC_PITCH_SHIFT_MAX = 3
@@ -68,7 +68,7 @@ def clamp_vc_pitch_shift(value: int) -> int:
     return max(VC_PITCH_SHIFT_MIN, min(VC_PITCH_SHIFT_MAX, value))
 
 
-def vc_input_rms(audio: npt.NDArray[np.float32]) -> float:
+def vc_input_rms(audio: AudioChunk) -> float:
     """Return RMS energy for one microphone callback buffer.
 
     Args:
@@ -106,7 +106,7 @@ def vc_vad_preroll_frames(sample_rate: int) -> int:
     return max(1, int(sample_rate * VC_VAD_PREROLL_SECONDS))
 
 
-def vc_input_has_voice(audio: npt.NDArray[np.float32]) -> bool:
+def vc_input_has_voice(audio: AudioChunk) -> bool:
     """Return whether one live callback buffer likely contains voice.
 
     Args:
@@ -142,7 +142,7 @@ def vc_live_chunk_overlap_frames(sample_rate: int) -> int:
     return max(1, int(sample_rate * VC_LIVE_CHUNK_OVERLAP_SECONDS))
 
 
-def _normalize_live_audio(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+def _normalize_live_audio(audio: AudioChunk) -> AudioChunk:
     """Return one mono float32 waveform for live input helpers."""
     normalized = np.asarray(audio, dtype=np.float32)
     if normalized.ndim == 1:
@@ -158,10 +158,10 @@ def _normalize_live_audio(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.floa
 
 
 def _resample_audio(
-    audio: npt.NDArray[np.float32],
+    audio: AudioChunk,
     source_sample_rate: int,
     target_sample_rate: int,
-) -> npt.NDArray[np.float32]:
+) -> AudioChunk:
     """Resample one mono waveform when the sample rate differs."""
     if source_sample_rate == target_sample_rate:
         return np.asarray(audio, dtype=np.float32)
@@ -218,7 +218,7 @@ class LiveVoiceActivityDetector:
 
     def has_voice(
         self,
-        audio: npt.NDArray[np.float32],
+        audio: AudioChunk,
         sample_rate: int,
     ) -> bool:
         """Return whether one live microphone callback likely contains speech.

@@ -8,14 +8,13 @@ from dataclasses import dataclass
 from typing import Optional, Protocol, Union, cast
 
 import numpy as np
-import numpy.typing as npt
 import torch
 from transformers import AutoModel, AutoModelForSequenceClassification, AutoTokenizer
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from ..constants import PERSONA_EMOTION_MODEL, JSONSerializable
-from ..typing.aliases import EmbeddingVector
+from ..typing.aliases import EmbeddingVector, AudioChunk
 from ..utils import discard
 
 GOEMOTIONS_LABELS: tuple[str, ...] = (
@@ -298,7 +297,7 @@ class PersonaEmotionAnalyzer:
 
     @staticmethod
     def _row_predictions(
-        row: Optional[npt.NDArray[np.float32]],
+        row: Optional[AudioChunk],
         labels: tuple[str, ...],
     ) -> tuple[EmotionPrediction, ...]:
         """Return sorted label scores for one model row."""

@@ -11,13 +11,12 @@ from types import ModuleType, TracebackType
 from typing import Callable, Optional, Protocol, cast
 
 import numpy as np
-import numpy.typing as npt
 import soundfile as sf
 
 from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from ...i18n import string
 from ...paths import huggingface_hub_cache_dir
-from ...typing.aliases import SeedVCArgument, SeedVCGenerator
+from ...typing.aliases import SeedVCArgument, SeedVCGenerator, AudioChunk
 from .base import CeluneVCBackend
 
 __all__ = ["CeluneSeedVCBackend"]
@@ -40,7 +39,7 @@ class _SeedVCWrapper(Protocol):
 class _TemporaryWaveFile:
     """Temporary WAV file helper used for backends that require file paths."""
 
-    def __init__(self, audio: npt.NDArray[np.float32], sample_rate: int) -> None:
+    def __init__(self, audio: AudioChunk, sample_rate: int) -> None:
         self.path: Optional[Path] = None
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
@@ -161,7 +160,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             return self._wrapper
 
     @staticmethod
-    def _mix_to_mono(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    def _mix_to_mono(audio: AudioChunk) -> AudioChunk:
         """Return a mono float32 waveform for Seed-VC inference."""
         mono = np.asarray(audio, dtype=np.float32)
         if mono.ndim == 1:
@@ -173,7 +172,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
     @staticmethod
     def _drain_generator_return_value(
         generator: SeedVCGenerator,
-    ) -> npt.NDArray[np.float32]:
+    ) -> AudioChunk:
         """Run a generator to completion and return its final value."""
         try:
             while True:

@@ -5,20 +5,20 @@ import math
 from typing import Callable, Iterable
 
 import numpy as np
-import numpy.typing as npt
 from pedalboard import Pedalboard, PitchShift, Reverb
 from scipy.signal import butter, resample_poly, sosfilt
 
 from .constants import BASE_SR, UtteranceLoudnessTier
 from .exceptions import AudioMismatchError, BadAudioError
+from .typing.aliases import AudioChunk
 
-_SIGNAL_CACHE: dict[str, npt.NDArray[np.float32]] = {}
+_SIGNAL_CACHE: dict[str, AudioChunk] = {}
 _READINESS_FREQUENCIES = (261.63, 329.63, 369.99, 440.0, 493.88, 739.99)
 
 
 def _resample_audio(
-    audio: npt.NDArray[np.float32], source_sr: int, target_sr: int = BASE_SR
-) -> npt.NDArray[np.float32]:
+    audio: AudioChunk, source_sr: int, target_sr: int = BASE_SR
+) -> AudioChunk:
     """Resample the given audio to the given sample rate."""
     if source_sr == 0:
         raise BadAudioError("cannot resample from zero sample rate")
@@ -43,7 +43,7 @@ def _resample_audio(
     )
 
 
-def _make_stereo(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+def _make_stereo(audio: AudioChunk) -> AudioChunk:
     """Convert mono input to stereo input."""
     audio = np.asarray(audio, dtype=np.float32)
 
@@ -62,18 +62,16 @@ def _make_stereo(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
     return np.ascontiguousarray(audio, dtype=np.float32)
 
 
-def _to_48khz(
-    audio: npt.NDArray[np.float32], source_sr: int
-) -> npt.NDArray[np.float32]:
+def _to_48khz(audio: AudioChunk, source_sr: int) -> AudioChunk:
     """Cast a speech chunk to 48 kHz stereo format."""
     return _resample_audio(audio, source_sr, BASE_SR)
 
 
 def pitch_shift_audio(
-    audio: npt.NDArray[np.float32],
+    audio: AudioChunk,
     sample_rate: int,
     n_steps: float,
-) -> npt.NDArray[np.float32]:
+) -> AudioChunk:
     """Shift audio pitch while preserving tempo at the given sample rate.
 
     Args:
@@ -82,7 +80,7 @@ def pitch_shift_audio(
         n_steps: Number of semitones to shift the signal up or down.
 
     Returns:
-        npt.NDArray[np.float32]: A contiguous float32 waveform with pitch shifted and tempo preserved.
+        AudioChunk: A contiguous float32 waveform with pitch shifted and tempo preserved.
     """
     if n_steps == 0:
         return np.ascontiguousarray(audio, dtype=np.float32)
@@ -94,16 +92,14 @@ def pitch_shift_audio(
     return np.ascontiguousarray(shifted, dtype=np.float32)
 
 
-def _freeze_signal(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+def _freeze_signal(audio: AudioChunk) -> AudioChunk:
     """Return one shared read-only buffer for a cached UI signal."""
     frozen = np.ascontiguousarray(audio, dtype=np.float32)
     frozen.setflags(write=False)
     return frozen
 
 
-def _cached_signal(
-    name: str, factory: Callable[[], npt.NDArray[np.float32]]
-) -> npt.NDArray[np.float32]:
+def _cached_signal(name: str, factory: Callable[[], AudioChunk]) -> AudioChunk:
     """Return a cached signal waveform."""
     if name not in _SIGNAL_CACHE:
         _SIGNAL_CACHE[name] = _freeze_signal(factory())
@@ -129,7 +125,7 @@ def pad_note(
     detune_cents: float = 1.0,
     leading_silence_seconds: float = 1.0,
     trailing_silence_seconds: float = 1.0,
-) -> npt.NDArray[np.float32]:
+) -> AudioChunk:
     """Generate a softly blended, normalized stereo chord pad.
 
     Args:
@@ -144,7 +140,7 @@ def pad_note(
         trailing_silence_seconds: Silence added after the audible pad.
 
     Returns:
-        npt.NDArray[np.float32]: Stereo float32 audio with shape ``(samples, 2)``.
+        AudioChunk: Stereo float32 audio with shape ``(samples, 2)``.
 
     Raises:
         BadAudioError: If the frequencies, duration, or sample rate are invalid.
@@ -232,26 +228,26 @@ def pad_note(
     )
 
 
-def _load_readiness_signal() -> npt.NDArray[np.float32]:
+def _load_readiness_signal() -> AudioChunk:
     """Generate Celune's startup readiness sound."""
     return pad_note(_READINESS_FREQUENCIES)
 
 
-def readiness_signal() -> npt.NDArray[np.float32]:
+def readiness_signal() -> AudioChunk:
     """Dynamically generate Celune's readiness sound.
 
     Returns:
-        npt.NDArray[np.float32]: The readiness sound formatted as a NumPy array, or silent array if not found.
+        AudioChunk: The readiness sound formatted as a NumPy array, or silent array if not found.
     """
 
     return _cached_signal("readiness", _load_readiness_signal)
 
 
-def sleeping_signal() -> npt.NDArray[np.float32]:
+def sleeping_signal() -> AudioChunk:
     """Dynamically generate Celune's sleeping sound.
 
     Returns:
-        npt.NDArray[np.float32]: The sleeping sound formatted as a NumPy array, or a silent array if the readiness sound
+        AudioChunk: The sleeping sound formatted as a NumPy array, or a silent array if the readiness sound
         wasn't found.
     """
 
@@ -263,11 +259,11 @@ def sleeping_signal() -> npt.NDArray[np.float32]:
     )
 
 
-def working_signal() -> npt.NDArray[np.float32]:
+def working_signal() -> AudioChunk:
     """Dynamically generate Celune's working sound.
 
     Returns:
-        npt.NDArray[np.float32]: The working sound formatted as a NumPy array, or a silent array if the readiness sound
+        AudioChunk: The working sound formatted as a NumPy array, or a silent array if the readiness sound
         wasn't found.
     """
 
@@ -279,15 +275,15 @@ def working_signal() -> npt.NDArray[np.float32]:
     )
 
 
-def error_signal() -> npt.NDArray[np.float32]:
+def error_signal() -> AudioChunk:
     """Dynamically generate Celune's error sound.
 
     Returns:
-        npt.NDArray[np.float32]: The error sound formatted as a NumPy array, or a silent array if the readiness sound
+        AudioChunk: The error sound formatted as a NumPy array, or a silent array if the readiness sound
         wasn't found.
     """
 
-    def factory() -> npt.NDArray[np.float32]:
+    def factory() -> AudioChunk:
         stacked_frequencies = _READINESS_FREQUENCIES + _transpose_frequencies(
             _READINESS_FREQUENCIES,
             6,
@@ -298,12 +294,12 @@ def error_signal() -> npt.NDArray[np.float32]:
 
 
 def _soften(
-    audio: npt.NDArray[np.float32],
+    audio: AudioChunk,
     sr: int,
     duration: float = 0.2,
     start_gain: float = 0.5,
     end: bool = False,
-) -> npt.NDArray[np.float32]:
+) -> AudioChunk:
     """Soften the leading or trailing audio."""
     samples = int(sr * duration)
     samples = min(samples, len(audio))
@@ -320,9 +316,7 @@ def _soften(
     return audio
 
 
-def _split(
-    audio: npt.NDArray[np.float32], sr: int, chunk_size: float
-) -> Iterable[npt.NDArray[np.float32]]:
+def _split(audio: AudioChunk, sr: int, chunk_size: float) -> Iterable[AudioChunk]:
     """Chop up input audio into chunks."""
     duration = chunk_size * 0.08
     frames = max(1, int(sr * duration))
@@ -338,7 +332,7 @@ soften = _soften
 split = _split
 
 
-def is_silent_utterance(audio: npt.NDArray[np.float32]) -> tuple[bool, int]:
+def is_silent_utterance(audio: AudioChunk) -> tuple[bool, int]:
     """Validate if this utterance is silent or not.
 
     Args:
@@ -386,9 +380,7 @@ class StreamingPedalboardReverb:
         self.reverb.wet_level = wet
         self.reverb.dry_level = dry
 
-    def process(
-        self, audio: npt.NDArray[np.float32], sr: int = BASE_SR
-    ) -> npt.NDArray[np.float32]:
+    def process(self, audio: AudioChunk, sr: int = BASE_SR) -> AudioChunk:
         """Apply reverb effect.
 
         Args:
@@ -396,7 +388,7 @@ class StreamingPedalboardReverb:
             sr: The sample rate of the input audio.
 
         Returns:
-            npt.NDArray[np.float32]: The processed stereo audio chunk.
+            AudioChunk: The processed stereo audio chunk.
 
         Raises:
             AudioMismatchError: ``audio`` is not stereo audio shaped ``(samples, 2)``.
@@ -421,7 +413,7 @@ class StreamingPedalboardReverb:
 
     def flush(
         self, sr: int = BASE_SR, threshold: float = 1e-4, max_secs: float = 3.0
-    ) -> npt.NDArray[np.float32]:
+    ) -> AudioChunk:
         """Extract the remaining reverb by pushing silence.
 
         Args:
@@ -430,7 +422,7 @@ class StreamingPedalboardReverb:
             max_secs: The maximum amount of tail audio to extract.
 
         Returns:
-            npt.NDArray[np.float32]: The remaining reverb tail as stereo audio.
+            AudioChunk: The remaining reverb tail as stereo audio.
         """
         chunk_size = int(0.1 * sr)
         max_chunks = int(max_secs / 0.1)

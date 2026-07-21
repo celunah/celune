@@ -297,7 +297,7 @@
     "commands.tutorial_playback_failed": "Tutorial playback failed: {error}",
     "ui.tutorial_stop_failed": "Could not stop tutorial audio: {error}",
     "cac.voice_persona_speaking_style": "Voice '{voice_name}' Persona speaking style override, leave empty to skip",
-    "cac.voice_persona_style": "Voice '{voice_name}' Persona style {key}, leave empty to skip",
+    "cac.voice_persona_style": "Voice '{voice_name}' Persona style {style}, leave empty to skip",
     "commands.unknown_command": "Unknown command: {command}. Run /help for a list of commands.",
     "commands.unmatched_ipa": "Found {count} unmatched IPA characters, output may be inaccurate.",
     "commands.unsupported_attachment_type": "Unsupported attachment type: {path}",

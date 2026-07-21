@@ -33,7 +33,7 @@ from ...paths import (
     huggingface_hub_cache_dir,
     project_root,
 )
-from ...typing.aliases import RuntimeValue
+from ...typing.aliases import RuntimeValue, AudioChunk
 from ...utils import custom_assert
 from .base import CeluneBackend
 
@@ -855,8 +855,8 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
 
     @staticmethod
     def _to_numpy_audio(
-        audio: Union[npt.NDArray[np.float32], npt.NDArray[np.int16], torch.Tensor],
-    ) -> npt.NDArray[np.float32]:
+        audio: Union[AudioChunk, npt.NDArray[np.int16], torch.Tensor],
+    ) -> AudioChunk:
         """Convert one GPT-SoVITS output chunk to mono float32 audio."""
         if isinstance(audio, torch.Tensor):
             values = audio.detach().cpu().numpy()
@@ -909,7 +909,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
 
     def generate_stream(
         self, model: _GPTSoVITSRuntime, **kwargs
-    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate Celune-compatible streaming audio with GPT-SoVITS.
 
         Args:
@@ -917,7 +917,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             kwargs: Generation options including text, voice, language, and sampling controls.
 
         Returns:
-            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: Audio chunks, sample rates, and timing
+            Iterator[tuple[AudioChunk, int, Optional[dict]]]: Audio chunks, sample rates, and timing
             metadata.
 
         Raises:
@@ -1000,7 +1000,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
 
         first_chunk_time: Optional[float] = None
         generated = iter(self._run_pipeline(pipeline, request))
-        pending: Optional[tuple[int, npt.NDArray[np.float32]]] = None
+        pending: Optional[tuple[int, AudioChunk]] = None
         try:
             for raw_chunk in generated:
                 if not isinstance(raw_chunk, tuple) or len(raw_chunk) != 2:
@@ -1009,7 +1009,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                 if not isinstance(raw_sr, int):
                     continue
                 audio = self._to_numpy_audio(
-                    cast(Union[npt.NDArray[np.float32], torch.Tensor], raw_audio)
+                    cast(Union[AudioChunk, torch.Tensor], raw_audio)
                 )
                 if pending is not None:
                     if first_chunk_time is None:

@@ -92,7 +92,7 @@ for cmd, paths in tzip(
             total_errors.append(failed.stdout)
         if failed.stderr:
             total_errors.append(failed.stderr)
-    except subprocess.TimeoutExpired as failed:
+    except subprocess.TimeoutExpired:
         cmds_failed += 1
         total_errors.append(f"{' '.join(cmd)} has timed out")
 
@@ -100,6 +100,8 @@ for cmd, paths in tzip(
 if cmds_failed:
     print()
     print("######## SLOP DETECTED! ########")
+    print("Are you vibe coding?")
+    print()
     print(f"{cmds_failed} command(s) failed:")
     print()
     print("\n\n".join(total_errors))

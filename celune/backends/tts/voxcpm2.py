@@ -8,12 +8,12 @@ from collections.abc import Iterator
 from typing import Callable, Generator, Mapping, Optional
 
 import numpy as np
-import numpy.typing as npt
 from voxcpm import VoxCPM
 
 from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import BASE_SR
 from ...utils import custom_assert
+from ...typing.aliases import AudioChunk
 from . import get_version
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
@@ -216,7 +216,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
 
     def generate_stream(
         self, model: VoxCPM, **kwargs
-    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate Celune compatible audio chunks.
 
         Args:
@@ -224,7 +224,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             kwargs: Streaming generation arguments passed to the backend.
 
         Returns:
-            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of ``(audio, sample_rate,
+            Iterator[tuple[AudioChunk, int, Optional[dict]]]: An iterator of ``(audio, sample_rate,
             timing)`` tuples suitable for Celune's playback pipeline.
 
         Raises:
@@ -290,8 +290,8 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                     **kwargs,
                 )
 
-                batch: list[npt.NDArray[np.float32]] = []
-                pending_audio: Optional[npt.NDArray[np.float32]] = None
+                batch: list[AudioChunk] = []
+                pending_audio: Optional[AudioChunk] = None
                 pending_steps = 0
                 chunk_index = 0
                 total_steps = 0

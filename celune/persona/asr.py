@@ -8,9 +8,9 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Optional, Protocol, Union, cast
 
 import numpy as np
-import numpy.typing as npt
 
 from ..dsp import resample_audio
+from ..typing.aliases import AudioChunk
 
 if TYPE_CHECKING:
     import torch
@@ -28,7 +28,7 @@ class _WhisperProcessor(Protocol):
 
     def __call__(
         self,
-        audio: npt.NDArray[np.float32],
+        audio: AudioChunk,
         *,
         sampling_rate: int,
         return_tensors: str,
@@ -135,7 +135,7 @@ class WhisperTranscriber:
 
     def _decode(
         self,
-        audio: npt.NDArray[np.float32],
+        audio: AudioChunk,
         sample_rate: int,
     ) -> str:
         """Prepare audio, generate Whisper tokens, and decode the transcript."""
@@ -175,7 +175,7 @@ class WhisperTranscriber:
 
     def transcribe(
         self,
-        audio: npt.NDArray[np.float32],
+        audio: AudioChunk,
         sample_rate: int,
     ) -> str:
         """Transcribe one captured microphone snapshot.

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Callable, Optional, cast
 
 import numpy as np
-import numpy.typing as npt
 import yaml
 from huggingface_hub import snapshot_download
 from pocket_tts import TTSModel
@@ -18,6 +17,7 @@ from ...cevoice import CEVoiceLoader, default_loader
 from ...paths import temp_data_dir
 from ...typing.backends import MiniModel, MiniPromptState
 from ...utils import custom_assert
+from ...typing.aliases import AudioChunk
 from .base import CeluneBackend, cached_hf_snapshot_path
 
 
@@ -342,7 +342,7 @@ class Mini(CeluneBackend[TTSModel]):
 
     def generate_stream(
         self, model: TTSModel, **kwargs
-    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate Celune-compatible audio chunks from Pocket TTS.
 
         Args:
@@ -366,8 +366,8 @@ class Mini(CeluneBackend[TTSModel]):
         voice_state = self._get_voice_state(mini_model, voice)
         chunks_per_batch = max(1, round(chunk_size * self.chunk_rate))
 
-        batch: list[npt.NDArray[np.float32]] = []
-        pending_audio: Optional[npt.NDArray[np.float32]] = None
+        batch: list[AudioChunk] = []
+        pending_audio: Optional[AudioChunk] = None
         pending_steps = 0
         chunk_index = 0
         total_steps = 0

@@ -23,7 +23,6 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import urlopen
 
 import numpy as np
-import numpy.typing as npt
 import pyrubberband as rb
 import sounddevice as sd
 import soundfile as sf
@@ -109,6 +108,7 @@ from .persona.prompts import (
     RetrievedMemoryBundle,
 )
 from .typing.pipeline import SpeechStreamQueue
+from .typing.aliases import AudioChunk
 from .utils import (
     detect_language,
     format_error,
@@ -358,7 +358,7 @@ def _write_flac_metadata(path: str, tags: JSON) -> None:
 def _write_celune_flac(
     engine: Celune,
     path: str,
-    audio: npt.NDArray[np.float32],
+    audio: AudioChunk,
     sample_rate: int,
     subtype: str,
     metadata: JSON,
@@ -651,7 +651,7 @@ def _clear_playback_source_status(engine: Celune, source_id: int) -> None:
 def _queue_playback_chunk(
     engine: Celune,
     source_id: int,
-    audio: npt.NDArray[np.float32],
+    audio: AudioChunk,
     sample_rate: int,
     timing: Optional[SpeechTiming] = None,
 ) -> bool:
@@ -731,9 +731,7 @@ def _dequeue_playback_item(
 
 def _update_playback_progress(
     engine: Celune,
-    source_buffers: dict[
-        int, deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]
-    ],
+    source_buffers: dict[int, deque[tuple[AudioChunk, Optional[SpeechTiming]]]],
 ) -> None:
     """Reflect the active playback source position in the shared progress bar."""
     if not source_buffers:
@@ -767,9 +765,7 @@ def _update_playback_progress(
 
 
 def _active_speech_source_ids(
-    source_buffers: dict[
-        int, deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]
-    ],
+    source_buffers: dict[int, deque[tuple[AudioChunk, Optional[SpeechTiming]]]],
     engine: Celune,
 ) -> set[int]:
     """Return active speech-source ids that should trigger SFX ducking."""
@@ -782,13 +778,13 @@ def _active_speech_source_ids(
 
 
 def _apply_source_gain(
-    audio: npt.NDArray[np.float32],
+    audio: AudioChunk,
     source_id: int,
     *,
     speech_active: bool,
     block_seconds: float,
     engine: Celune,
-) -> npt.NDArray[np.float32]:
+) -> AudioChunk:
     """Apply ducking and smooth gain ramps for one mixer source block."""
     meta = _playback_source_meta(engine).get(source_id)
     if not isinstance(meta, dict):
@@ -820,7 +816,7 @@ def _queue_playback_done(
     release_pipeline_when_finished: bool = False,
     notify_idle_when_finished: bool = True,
     saved_path: Optional[str] = None,
-    analysis_audio: Optional[npt.NDArray[np.float32]] = None,
+    analysis_audio: Optional[AudioChunk] = None,
 ) -> bool:
     """Queue a completion marker for one playback source."""
     with engine.queue_lock:
@@ -847,7 +843,7 @@ def _queue_playback_done(
 def _flush_buffered_speech_chunks(
     engine: Celune,
     source_id: int,
-    buffer: list[npt.NDArray[np.float32]],
+    buffer: list[AudioChunk],
     speech_timing: SpeechTiming,
     pushed_audio: bool,
     stream_queue: Optional[SpeechStreamQueue],
@@ -2045,7 +2041,7 @@ async def queue_speech_async(
 
 def queue_sfx_audio(
     engine: Celune,
-    audio: npt.NDArray[np.float32],
+    audio: AudioChunk,
     sample_rate: int,
     label: str,
     keep: bool = False,
@@ -2114,7 +2110,7 @@ def queue_sfx_audio(
 
 def queue_streaming_sfx_audio(
     engine: Celune,
-    audio: npt.NDArray[np.float32],
+    audio: AudioChunk,
     sample_rate: int,
     label: str,
     *,
@@ -2188,9 +2184,9 @@ def finish_streaming_sfx_audio(engine: Celune, source_id: Optional[int]) -> None
 
 
 def prepare_playback_audio(
-    audio: npt.NDArray[np.float32],
+    audio: AudioChunk,
     sample_rate: int,
-) -> npt.NDArray[np.float32]:
+) -> AudioChunk:
     """Normalize audio to Celune's shared playback format.
 
     Args:
@@ -2198,7 +2194,7 @@ def prepare_playback_audio(
         sample_rate: Source sample rate for the decoded audio.
 
     Returns:
-        npt.NDArray[np.float32]: Audio resampled into Celune's playback format.
+        AudioChunk: Audio resampled into Celune's playback format.
     """
     return resample_audio(np.asarray(audio, dtype=np.float32), sample_rate)
 
@@ -2542,8 +2538,8 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                     stream_queue.put(None)
                 break
 
-            buffer: list[npt.NDArray[np.float32]] = []
-            full_audio: list[npt.NDArray[np.float32]] = []
+            buffer: list[AudioChunk] = []
+            full_audio: list[AudioChunk] = []
             generated_text_parts: list[str] = []
             request_generation = item.generation
             source_id = _next_playback_source_id(engine)
@@ -2978,9 +2974,9 @@ async def generation_worker_job(engine: Celune) -> None:
 def _playback_blocks(
     chunk: PlaybackChunk,
     block_seconds: float = 0.05,
-) -> deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]:
+) -> deque[tuple[AudioChunk, Optional[SpeechTiming]]]:
     """Split one queued source chunk into short blocks for the mixer."""
-    blocks = deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]()
+    blocks = deque[tuple[AudioChunk, Optional[SpeechTiming]]]()
     audio = np.asarray(chunk.audio, dtype=np.float32)
     frames_per_block = max(1, round(chunk.sample_rate * block_seconds))
     for start in range(0, len(audio), frames_per_block):
@@ -3047,7 +3043,7 @@ def _ensure_playback_stream(engine: Celune, sample_rate: int) -> bool:
 def _finalize_playback_idle(
     engine: Celune,
     saved_path: Optional[str] = None,
-    analysis_audio: Optional[npt.NDArray[np.float32]] = None,
+    analysis_audio: Optional[AudioChunk] = None,
 ) -> None:
     """Handle post-playback reactions when the mixer becomes fully idle."""
     _reset_glow_audio_reactivity(engine)
@@ -3148,9 +3144,7 @@ async def playback_worker_job(engine: Celune) -> None:
     Raises:
         NotAvailableError: Raised when no suitable output audio device is available.
     """
-    source_buffers: dict[
-        int, deque[tuple[npt.NDArray[np.float32], Optional[SpeechTiming]]]
-    ] = {}
+    source_buffers: dict[int, deque[tuple[AudioChunk, Optional[SpeechTiming]]]] = {}
     source_done: dict[int, PlaybackSourceDone] = {}
     stop_requested = False
     (

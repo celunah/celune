@@ -6,13 +6,12 @@ import time
 from collections.abc import Iterator
 from typing import Callable, Optional
 
-import numpy as np
-import numpy.typing as npt
 from faster_qwen3_tts import FasterQwen3TTS
 from faster_qwen3_tts import __version__ as qwen3_ver
 
 from ...cevoice import CEVoiceLoader, default_loader
 from ...utils import custom_assert
+from ...typing.aliases import AudioChunk
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
@@ -170,7 +169,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
 
     def generate_stream(
         self, model: FasterQwen3TTS, **kwargs
-    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate Celune compatible audio chunks.
 
         Args:
@@ -178,7 +177,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
             kwargs: Streaming generation keyword arguments to use.
 
         Returns:
-            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of Qwen3 streaming audio chunks.
+            Iterator[tuple[AudioChunk, int, Optional[dict]]]: An iterator of Qwen3 streaming audio chunks.
 
         Raises:
             ValueError: The requested voice is unsupported, or input text is empty.

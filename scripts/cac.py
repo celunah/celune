@@ -369,7 +369,7 @@ def collect_voice_persona_metadata(voice_name: str) -> Optional[PersonaMetadata]
         "enthusiasm",
     ):
         value = ask_optional_text(
-            string("cac.voice_persona_style", voice_name=voice_name, key=key)
+            string("cac.voice_persona_style", voice_name=voice_name, style=key)
         )
         if value is not None:
             style[key] = value
