@@ -53,6 +53,42 @@ class CeluneCoreTests(TestCase):
             self.addCleanup(self._close_celune, celune)
             return celune
 
+    def test_sleep_delegates_to_time_sleep(self) -> None:
+        """Verify the public sleep method preserves ``time.sleep`` semantics."""
+        celune = self._make_celune({})
+
+        with mock.patch("celune.celune.time.sleep") as sleep:
+            celune.sleep(1.25)
+
+        sleep.assert_called_once_with(1.25)
+
+    def test_status_delegates_to_status_callback(self) -> None:
+        """Verify the public status method preserves message severity."""
+        celune = self._make_celune({})
+
+        with mock.patch.object(celune._callbacks, "status_callback") as status:
+            celune.status("Status test", "warning")
+
+        status.assert_called_once_with("Status test", "warning")
+
+    def test_exiting_core_rejects_late_lua_audio_requests(self) -> None:
+        """Verify shutdown prevents Lua callbacks from queueing new audio work."""
+        celune = self._make_celune({})
+        celune._exit_requested = True
+
+        with (
+            mock.patch("celune.celune.say_pipeline") as say_pipeline,
+            mock.patch("celune.celune.play_pipeline") as play_pipeline,
+            mock.patch("celune.celune.play_signal") as play_signal,
+        ):
+            self.assertFalse(celune.say("late speech"))
+            self.assertFalse(celune.play("late.wav"))
+            self.assertFalse(celune.try_play_signal("readiness"))
+
+        say_pipeline.assert_not_called()
+        play_pipeline.assert_not_called()
+        play_signal.assert_not_called()
+
     @staticmethod
     def _immediate_thread(*args, **kwargs):
         """Return a thread stub whose ``start()`` runs the target immediately."""
@@ -581,10 +617,13 @@ class CeluneCoreTests(TestCase):
         celune.cur_state = "idle"
         celune.backend.model_id_for_voice = mock.Mock(return_value="shared-model")
         statuses: list[tuple[str, str]] = []
+        readiness_states: list[tuple[bool, str]] = []
         celune.status_callback = lambda msg, severity="info": statuses.append(
             (msg, severity)
         )
-        celune.voice_changed_callback = mock.Mock()
+        celune.voice_changed_callback = lambda _name: readiness_states.append(
+            (celune.model_ready.is_set(), celune.cur_state)
+        )
 
         with mock.patch("celune.celune.play_signal", return_value=False):
             celune.change_voice("bold")
@@ -593,7 +632,7 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(celune.loaded, True)
         self.assertEqual(celune.cur_state, "idle")
         self.assertEqual(statuses[-1], ("Idle", "info"))
-        celune.voice_changed_callback.assert_called_once_with("bold")
+        self.assertEqual(readiness_states, [(True, "idle")])
 
     def test_change_voice_in_voice_conversion_mode_skips_tts_reload(self) -> None:
         """Verify VC mode updates the target voice without loading TTS models."""

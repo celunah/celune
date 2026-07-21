@@ -58,6 +58,7 @@ dependencies = [
     "lingua-language-detector>=2.2.0,<3.0.0",
     "iso639-lang>=2.0.0,<3.0.0",
     "yt-dlp",
+    "lupa>=2.8,<3.0",
 ]
 
 [project.urls]

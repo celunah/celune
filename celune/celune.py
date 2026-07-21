@@ -1261,6 +1261,11 @@ class Celune(CeluneStateAccessors):
             elif backend_target == "vc":
                 self._unload_normalizer_components()
             self.loaded = True
+            self.log(string("celune.switched_backend", backend=requested_name))
+            self.progress_callback(1, 1)
+            self.cur_state = "idle"
+            self.status_callback(string("status.idle"))
+            self._model_ready.set()
             if candidate_backend is not None:
                 if candidate_voice is None:
                     raise BackendError("no voices found")
@@ -1274,10 +1279,6 @@ class Celune(CeluneStateAccessors):
                             new_voice=candidate_voice,
                         ),
                     )
-            self.log(string("celune.switched_backend", backend=requested_name))
-            self.progress_callback(1, 1)
-            self.cur_state = "idle"
-            self.status_callback(string("status.idle"))
             return True
         except Exception as e:
             self.log(
@@ -1392,6 +1393,16 @@ class Celune(CeluneStateAccessors):
                     _release_loaded_object(cast(ReleasableObject, previous_model))
 
             self.loaded = True
+            self.log(
+                string(
+                    "celune.switched_character",
+                    character=(bundle if bundle is not None else previous_bundle.name),
+                )
+            )
+            self.progress_callback(1, 1)
+            self.cur_state = "idle"
+            self.status_callback(string("status.idle"))
+            self._model_ready.set()
             self.voice_changed_callback(candidate_voice)
             self._emit_character_event_transition(
                 snapshot.current_character,
@@ -1409,15 +1420,6 @@ class Celune(CeluneStateAccessors):
                         new_voice=candidate_voice,
                     ),
                 )
-            self.log(
-                string(
-                    "celune.switched_character",
-                    character=(bundle if bundle is not None else previous_bundle.name),
-                )
-            )
-            self.progress_callback(1, 1)
-            self.cur_state = "idle"
-            self.status_callback(string("status.idle"))
             return True
         except Exception as e:
             self.log(
@@ -1825,7 +1827,7 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when the reload thread was started, otherwise ``False``.
         """
-        if not self._prepare_voice_change(name):
+        if self.exit_requested or not self._prepare_voice_change(name):
             return False
 
         threading.Thread(
@@ -1837,6 +1839,8 @@ class Celune(CeluneStateAccessors):
 
     def _prepare_voice_change(self, name: str) -> bool:
         """Wait for playback to drain before preparing one voice switch."""
+        if self.exit_requested:
+            return False
         if name not in self.voices:
             # this voice was not found in the current CEVOICE/CECHAR pack
             self.log(string("celune.unknown_voice", voice=name), "warning")
@@ -1956,6 +1960,8 @@ class Celune(CeluneStateAccessors):
         backend_spec: CoreBackendSpec,
     ) -> bool:
         """Prepare runtime state for one backend reload before loading begins."""
+        if self.exit_requested:
+            return False
         if self._reload_pending or self.cur_state == "reloading":
             self.log(string("celune.reload_already_in_progress"), "warning")
             return False
@@ -2075,6 +2081,8 @@ class Celune(CeluneStateAccessors):
 
     def _prepare_cevoice_reload(self, bundle: Optional[Union[str, Path]]) -> bool:
         """Prepare runtime state for one CEVOICE reload before loading begins."""
+        if self.exit_requested:
+            return False
         if self._reload_pending or self.cur_state == "reloading":
             self.log(string("celune.reload_already_in_progress"), "warning")
             return False
@@ -2287,7 +2295,11 @@ class Celune(CeluneStateAccessors):
             dev=self.dev,
             log_dev=self.log_dev,
         )
-        self.extension_manager = CeluneExtensionManager(ctx, self._event_dispatcher)
+        self.extension_manager = CeluneExtensionManager(
+            ctx,
+            self._event_dispatcher,
+            core=self,
+        )
         self.extension_manager.autoload(str(project_root() / "extensions"))
 
         self.log_dev(
@@ -2303,6 +2315,15 @@ class Celune(CeluneStateAccessors):
         """
         self.log_callback(msg, severity)
 
+    def status(self, msg: str, severity: str = "info") -> None:
+        """Update Celune's status display.
+
+        Args:
+            msg: The status message to show.
+            severity: The status severity level.
+        """
+        self.status_callback(msg, severity)
+
     def log_dev(self, msg: str, severity: str = "info") -> None:
         """Log a developer message.
 
@@ -2312,6 +2333,14 @@ class Celune(CeluneStateAccessors):
         """
         if self.dev:
             self.log_callback(msg, severity)
+
+    def sleep(self, seconds: float) -> None:
+        """Block the current thread for a requested number of seconds.
+
+        Args:
+            seconds: Number of seconds to block, matching :func:`time.sleep`.
+        """
+        time.sleep(seconds)
 
     def try_play_signal(self, signal_type: str) -> bool:
         """Public interface for Celune._try_play_signal.
@@ -2329,6 +2358,8 @@ class Celune(CeluneStateAccessors):
 
     def _try_play_signal(self, signal_type: str) -> bool:
         """Play a runtime signal only when the playback pipeline can currently accept it."""
+        if self.exit_requested:
+            return False
         playback_thread = self.playback_thread
         if playback_thread is None or not playback_thread.is_alive():
             return False
@@ -2412,6 +2443,11 @@ class Celune(CeluneStateAccessors):
                     self.current_voice = voice
                     self.loaded = True
 
+            self.log(string("celune.voice_loaded", voice=voice))
+            self.progress_callback(1, 1)
+            self.cur_state = "idle"
+            self.status_callback(string("status.idle"))
+            self._model_ready.set()
             self.voice_changed_callback(voice)
             if active_voice != voice:
                 self._emit_event(
@@ -2422,10 +2458,6 @@ class Celune(CeluneStateAccessors):
                         new_voice=voice,
                     ),
                 )
-            self.log(string("celune.voice_loaded", voice=voice))
-            self.progress_callback(1, 1)
-            self.cur_state = "idle"
-            self.status_callback(string("status.idle"))
         except Exception as e:
             self.fatal()
             self.log(
@@ -3144,6 +3176,8 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when the text was queued successfully, otherwise ``False``.
         """
+        if self.exit_requested:
+            return False
         if self.input_mode != "text_to_speech":
             self.log(string("celune.text_input_unavailable_vc"), "warning")
             self.error_callback(string("celune.not_possible"))
@@ -3168,6 +3202,8 @@ class Celune(CeluneStateAccessors):
         Returns:
             ``True`` when the text was queued successfully.
         """
+        if self.exit_requested:
+            return False
         if self.input_mode != "text_to_speech":
             self.log(string("celune.text_input_unavailable_vc"), "warning")
             self.error_callback(string("celune.not_possible"))
@@ -3189,6 +3225,8 @@ class Celune(CeluneStateAccessors):
             Optional[queue.Queue]: Queue receiving 48 kHz stereo float32 chunks, or ``None`` when the request could not
             be queued.
         """
+        if self.exit_requested:
+            return None
         stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
         if not queue_speech(self, text, save=save, stream_queue=stream_queue):
             return None
@@ -3208,6 +3246,8 @@ class Celune(CeluneStateAccessors):
         Returns:
             A queue receiving generated audio chunks, or ``None`` when queuing fails.
         """
+        if self.exit_requested:
+            return None
         stream_queue: SpeechStreamQueue = queue.Queue(maxsize=2)
         if not await queue_speech_async(
             self,
@@ -3307,6 +3347,8 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when playback was queued successfully, otherwise ``False``.
         """
+        if self.exit_requested:
+            return False
         return play_pipeline(self, sound_path, keep=keep, volume=volume)
 
     def play_audio(
@@ -3327,12 +3369,17 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when playback was queued successfully, otherwise ``False``.
         """
+        if self.exit_requested:
+            return False
         return queue_sfx_audio(self, audio, sample_rate, label, keep=keep)
 
     def close(self) -> None:
         """Shut off Celune and release loaded runtime state."""
+        self._exit_requested = True
         self._emit_event("shutdown", ShutdownEvent(celune=self))
         try:
+            if self.extension_manager is not None:
+                self.extension_manager.unregister_all()
             close_pipeline(self)
             wake_background_thread = self._wake_background_thread
             if (

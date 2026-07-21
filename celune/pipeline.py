@@ -531,6 +531,8 @@ def acquire_pipeline(engine: Celune, action: str) -> bool:
         bool: ``True`` when the pipeline was claimed, otherwise ``False``.
     """
     with engine.say_lock:
+        if engine.exit_requested:
+            return False
         engine.log_dev(f"[LOCK] acquire requested by {action}, locked={engine.locked}")
         if engine.locked:
             engine.log(
@@ -657,6 +659,8 @@ def _queue_playback_chunk(
 ) -> bool:
     """Queue one chunk for the shared DSP playback mixer."""
     with engine.queue_lock:
+        if engine.exit_requested:
+            return False
         active_generation = getattr(engine, "_active_speech_generation", None)
         if active_generation is not None and (
             active_generation
@@ -820,6 +824,8 @@ def _queue_playback_done(
 ) -> bool:
     """Queue a completion marker for one playback source."""
     with engine.queue_lock:
+        if engine.exit_requested:
+            return False
         active_generation = getattr(engine, "_active_speech_generation", None)
         if active_generation is not None and (
             active_generation
@@ -1870,10 +1876,12 @@ def queue_speech(
     Raises:
         Exception: An exception was caught and subsequently raised to propagate it to Celune.
     """
-    if not _prepare_speech_readiness(engine):
+    if engine.exit_requested or not _prepare_speech_readiness(engine):
         return False
 
     engine.model_ready.wait()
+    if engine.exit_requested:
+        return False
     if not _finish_speech_readiness(engine):
         return False
 
@@ -1929,6 +1937,9 @@ def _queue_speech_after_ready(
 ) -> bool:
     """Queue one speech request after reload readiness is satisfied."""
 
+    if engine.exit_requested:
+        return False
+
     language_meta = detect_language(text, list(engine.backend.supported_languages))
     requested_language = engine.language
     backend_name = str(getattr(engine.backend, "name", "")).strip().lower()
@@ -1982,6 +1993,9 @@ def _queue_speech_after_ready(
 
         engine.cur_state = "generating"
         with engine.queue_lock:
+            if engine.exit_requested:
+                release_pipeline(engine)
+                return False
             engine._speech_generation = getattr(engine, "_speech_generation", 0) + 1
             engine.utterance_force_stop.clear()
             engine.text_queue.put(
@@ -2069,8 +2083,13 @@ def queue_sfx_audio(
     Raises:
         Exception: Re-raised after releasing the pipeline if SFX playback setup fails.
     """
+    if engine.exit_requested:
+        return False
+
     try:
         audio = prepare_playback_audio(audio, sample_rate)
+        if engine.exit_requested:
+            return False
         playback_sample_rate = BASE_SR
         audio_len = len(audio) / playback_sample_rate
         if log_length:
@@ -2094,8 +2113,15 @@ def queue_sfx_audio(
         engine.cur_state = "speaking"
         # push the smallest possible chunks for responsive stopping
         for chunk in split(audio, playback_sample_rate, 1):
-            _queue_playback_chunk(engine, source_id, chunk, playback_sample_rate)
-        _queue_playback_done(engine, source_id)
+            if not _queue_playback_chunk(
+                engine, source_id, chunk, playback_sample_rate
+            ):
+                return False
+        if not _queue_playback_done(engine, source_id):
+            return False
+
+        if engine.exit_requested:
+            return False
 
         _set_playback_source_status(
             engine,
@@ -2432,6 +2458,9 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
     Raises:
         ValueError: An invalid signal name was requested.
     """
+    if engine.exit_requested:
+        return False
+
     if signal_type == "readiness":
         signal = readiness_signal()
     elif signal_type == "working":
@@ -2450,12 +2479,14 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
         source_id = _next_playback_source_id(engine)
         _register_overlay_playback(engine)
         _register_playback_source(engine, source_id, kind="sfx")
-        _queue_playback_chunk(engine, source_id, signal, BASE_SR)
-        _queue_playback_done(
+        if not _queue_playback_chunk(engine, source_id, signal, BASE_SR):
+            return False
+        if not _queue_playback_done(
             engine,
             source_id,
             notify_idle_when_finished=True,
-        )
+        ):
+            return False
         return True
 
     if acquire_pipeline(engine, f"play {signal_type} signal"):
@@ -2464,13 +2495,17 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
             engine.cur_state = "speaking"
         source_id = _next_playback_source_id(engine)
         _register_playback_source(engine, source_id, kind="sfx")
-        _queue_playback_chunk(engine, source_id, signal, BASE_SR)
-        _queue_playback_done(
+        if not _queue_playback_chunk(engine, source_id, signal, BASE_SR):
+            release_pipeline(engine)
+            return False
+        if not _queue_playback_done(
             engine,
             source_id,
             release_pipeline_when_finished=release_to_idle,
             notify_idle_when_finished=signal_type == "readiness",
-        )
+        ):
+            release_pipeline(engine)
+            return False
         release_pipeline(engine, playback_idle=False)
         return True
     return False
