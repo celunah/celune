@@ -53,6 +53,7 @@ type _VCAudioCallback = Callable[
 ]
 
 type AudioChunk = npt.NDArray[np.float32]
+type AudioChunks = list[AudioChunk]
 
 
 class SupportsCloseHook(Protocol):

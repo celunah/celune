@@ -13,7 +13,7 @@ from voxcpm import VoxCPM
 from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import BASE_SR
 from ...utils import custom_assert
-from ...typing.aliases import AudioChunk
+from ...typing.aliases import AudioChunk, AudioChunks
 from . import get_version
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
@@ -224,8 +224,8 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             kwargs: Streaming generation arguments passed to the backend.
 
         Returns:
-            Iterator[tuple[AudioChunk, int, Optional[dict]]]: An iterator of ``(audio, sample_rate,
-            timing)`` tuples suitable for Celune's playback pipeline.
+            Iterator[tuple[AudioChunk, int, Optional[dict]]]: An iterator of ``(audio, sample_rate, timing)`` tuples
+            suitable for Celune's playback pipeline.
 
         Raises:
             ValueError: The requested voice is unknown or input text is empty.
@@ -290,7 +290,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                     **kwargs,
                 )
 
-                batch: list[AudioChunk] = []
+                batch: AudioChunks = []
                 pending_audio: Optional[AudioChunk] = None
                 pending_steps = 0
                 chunk_index = 0

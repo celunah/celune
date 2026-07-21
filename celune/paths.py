@@ -168,6 +168,21 @@ def temp_data_dir(create: bool = False) -> Path:
     return path
 
 
+def voices_data_dir(create: bool = False) -> Path:
+    """Return the user-local directory containing installed voice packs.
+
+    Args:
+        create: Whether this directory should be created before being returned.
+
+    Returns:
+        Path: Celune's user-local voice-pack directory.
+    """
+    path = app_data_dir(create=create) / "voices"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def config_path(create_parent: bool = False) -> Path:
     """Return the active user configuration file path.
 

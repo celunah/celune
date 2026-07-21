@@ -372,6 +372,7 @@ class ApiWebUITests(TestCase):
         self.assertIn("--celune-background: #112233;", api.webui_theme_style)
         self.assertIn("--celune-sleeping: #556677;", api.webui_theme_style)
         self.assertIn("--celune-primary:", api.webui_theme_style)
+        self.assertIn("--celune-error:", api.webui_theme_style)
         self.assertIn("--celune-ui-accent:", api.webui_theme_style)
         self.assertIn("--celune-ui-bg:", api.webui_theme_style)
         self.assertIn('rel="icon"', api.WEBUI_HEAD)
@@ -383,6 +384,9 @@ class ApiWebUITests(TestCase):
         self.assertIn("min-height: 0;", api.WEBUI_CSS)
         self.assertIn('.standard-player input[type="range"]', api.WEBUI_CSS)
         self.assertIn(".minimal-audio-player button:hover", api.WEBUI_CSS)
+        self.assertIn(".toast-body.error", api.WEBUI_CSS)
+        self.assertIn(".toast-message-text.error::before", api.WEBUI_CSS)
+        self.assertIn('content: "Celune is currently unavailable.";', api.WEBUI_CSS)
         self.assertIn(
             "@media (max-width: 768px), (any-pointer: coarse), (hover: none)",
             api.WEBUI_CSS,
@@ -462,6 +466,33 @@ class ApiWebUITests(TestCase):
             _logs, status_html, _resources, _voice, _send, _input = api.webui_snapshot()
 
         self.assertIn("Normalizing", status_html)
+
+    def test_webui_probe_reconciles_stale_speaking_status_after_sleep(self) -> None:
+        """Verify sleeping runtime state overrides a late speaking callback."""
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="sleeping",
+                sleeping=True,
+            ),
+        )
+        api.webui_last_probed_state = "sleeping"
+        api.set_webui_status("Speaking", source="callback")
+
+        with mock.patch(
+            "celune.api.ui_resources.resource_pages",
+            return_value=("VRAM: 10.66/11.94 GB available",),
+        ):
+            logs_html, status_html, _resources, _voice, _send, _input = (
+                api.webui_snapshot()
+            )
+
+        self.assertIn("currently sleeping. Type anything to wake up.", logs_html)
+        self.assertIn("Sleeping", status_html)
 
     def test_webui_slash_command_uses_main_ui_command_path(self) -> None:
         """Verify slash commands are delegated into the main UI command handler."""

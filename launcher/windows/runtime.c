@@ -263,7 +263,14 @@ int launcher_run(int argc, char **argv) {
     char setuptools_vendor[1600];
     char nuitka_pythonpath[5200];
 
-    SetEnvironmentVariableA("CELUNE_LAUNCHER", "1");
+    char launcher_pid[32];
+    snprintf(launcher_pid, sizeof(launcher_pid), "%lu", (unsigned long)GetCurrentProcessId());
+
+    if (!SetEnvironmentVariableA("CELUNE_LAUNCHER", "1") ||
+        !SetEnvironmentVariableA("CELUNE_LAUNCHER_PID", launcher_pid)) {
+        printfe("Celune could not configure launcher environment variables.\n");
+        return 1;
+    }
 
     if (!get_exe_dir(base, sizeof(base))) {
         printfe("Celune could not determine the launcher location.\n");

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import BinaryIO, Callable, Final, Mapping, Optional, Union, cast
 
 from .exceptions import CEVoiceError
-from .paths import project_root, temp_data_dir
+from .paths import project_root, temp_data_dir, voices_data_dir
 from .typing.cevoice import Manifest, ManifestValue, VoiceManifest
 
 # Celune supports both of these specifications
@@ -948,7 +948,7 @@ def default_bundle_path() -> Path:
     Returns:
         Path: The absolute path to Celune's default voice bundle.
     """
-    return project_root() / "voices" / "default.cevoice"
+    return bundled_voices_dir() / "default.cevoice"
 
 
 def bundle_sha256(path: Union[str, Path]) -> str:
@@ -983,12 +983,24 @@ def bundle_matches_default_pack_checksum(path: Union[str, Path]) -> bool:
 
 
 def bundled_voices_dir() -> Path:
-    """Return the repository-level directory that stores bundled voice packs.
+    """Return the user-local directory that stores bundled voice packs.
 
     Returns:
-        Path: The absolute path to the bundled CEVOICE directory.
+        Path: The absolute path to the user-local CEVOICE directory.
     """
-    return project_root() / "voices"
+    user_directory = voices_data_dir()
+    if user_directory.is_dir():
+        return user_directory
+
+    repository_directory = project_root() / "voices"
+    if not repository_directory.is_dir():
+        return user_directory
+
+    try:
+        shutil.copytree(repository_directory, user_directory)
+    except OSError:
+        return repository_directory
+    return user_directory
 
 
 def resolve_bundle_path(bundle: Optional[Union[str, Path]] = None) -> Path:

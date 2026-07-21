@@ -17,7 +17,7 @@ from ...cevoice import CEVoiceLoader, default_loader
 from ...paths import temp_data_dir
 from ...typing.backends import MiniModel, MiniPromptState
 from ...utils import custom_assert
-from ...typing.aliases import AudioChunk
+from ...typing.aliases import AudioChunk, AudioChunks
 from .base import CeluneBackend, cached_hf_snapshot_path
 
 
@@ -366,7 +366,7 @@ class Mini(CeluneBackend[TTSModel]):
         voice_state = self._get_voice_state(mini_model, voice)
         chunks_per_batch = max(1, round(chunk_size * self.chunk_rate))
 
-        batch: list[AudioChunk] = []
+        batch: AudioChunks = []
         pending_audio: Optional[AudioChunk] = None
         pending_steps = 0
         chunk_index = 0

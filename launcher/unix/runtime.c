@@ -146,7 +146,14 @@ int launcher_run(int argc, char **argv) {
     char main_py[1024];
     char setup_py[1024];
 
-    setenv("CELUNE_LAUNCHER", "1", 1);
+    char launcher_pid[32];
+    snprintf(launcher_pid, sizeof(launcher_pid), "%ld", (long)getpid());
+
+    if (setenv("CELUNE_LAUNCHER", "1", 1) != 0 ||
+        setenv("CELUNE_LAUNCHER_PID", launcher_pid, 1) != 0) {
+        printfe("Celune could not configure launcher environment variables.\n");
+        return 1;
+    }
 
     if (!get_exe_dir(base, sizeof(base))) {
         printfe("Celune could not determine the launcher location.\n");
