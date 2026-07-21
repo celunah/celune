@@ -917,8 +917,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             kwargs: Generation options including text, voice, language, and sampling controls.
 
         Returns:
-            Iterator[tuple[AudioChunk, int, Optional[dict]]]: Audio chunks, sample rates, and timing
-            metadata.
+            Iterator[tuple[AudioChunk, int, Optional[dict]]]: Audio chunks, sample rates, and timing metadata.
 
         Raises:
             ValueError: If text, voice, or model identifier is invalid.

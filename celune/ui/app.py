@@ -64,6 +64,7 @@ from ..pipeline import finish_streaming_sfx_audio, queue_streaming_sfx_audio
 from ..typing.aliases import (  # pylint: disable=unused-import
     _AudioDeviceScalar,
     _VCAudioCallback,
+    AudioChunks,
 )
 from ..utils import (
     discard,
@@ -211,15 +212,13 @@ class CeluneUIInteractionState:
     border_pulse_widgets: dict[int, Widget] = field(default_factory=dict)
     tutorial_timers: list[Timer] = field(default_factory=list)
     vc_recording_buffered_frames: int = 0
-    vc_recording_chunks: list[npt.NDArray[np.float32]] = field(default_factory=list)
+    vc_recording_chunks: AudioChunks = field(default_factory=list)
     vc_recording_captured_frames: int = 0
     vc_recording_feedback_detected: bool = False
     vc_recording_feedback_spike_count: int = 0
     vc_recording_label: str = ""
     vc_recording_lock: threading.Lock = field(default_factory=threading.Lock)
-    vc_recording_preroll_chunks: list[npt.NDArray[np.float32]] = field(
-        default_factory=list
-    )
+    vc_recording_preroll_chunks: AudioChunks = field(default_factory=list)
     vc_recording_preroll_frames: int = 0
     vc_recording_previous_rms: float = 0.0
     vc_recording_sample_rate: int = 0
@@ -230,9 +229,7 @@ class CeluneUIInteractionState:
     vc_recording_stream: Optional[sd.InputStream] = None
     vc_recording_stop_thread: Optional[threading.Thread] = None
     vc_recording_worker: Optional[threading.Thread] = None
-    persona_recording_chunks: list[npt.NDArray[np.float32]] = field(
-        default_factory=list
-    )
+    persona_recording_chunks: AudioChunks = field(default_factory=list)
     persona_recording_lock: threading.Lock = field(default_factory=threading.Lock)
     persona_recording_queue: Optional[
         queue_module.Queue[tuple[npt.NDArray[np.float32], bool]]

@@ -23,6 +23,7 @@ from celune.paths import (
     persona_data_dir,
     project_root,
     running_compiled,
+    voices_data_dir,
 )
 from celune.persona.memory import default_memory_dir
 from celune.ui.app import CeluneUI, UILogMessage
@@ -75,6 +76,13 @@ class RuntimePathTests(TestCase):
 
         with mock.patch("celune.paths.user_data_dir", return_value="C:/runtime-data"):
             self.assertEqual(persona_data_dir(), expected)
+
+    def test_voices_data_dir_uses_runtime_voice_pack_directory(self) -> None:
+        """Verify voice packs use a sibling directory in Celune's app data."""
+        expected = Path("C:/runtime-data/voices")
+
+        with mock.patch("celune.paths.user_data_dir", return_value="C:/runtime-data"):
+            self.assertEqual(voices_data_dir(), expected)
 
     def test_huggingface_cache_dirs_live_in_runtime_data(self) -> None:
         """Verify Celune's default Hugging Face caches live under user data."""
@@ -321,13 +329,20 @@ class RuntimePathTests(TestCase):
         with (
             mock.patch.dict(sys.modules, {"__main__": fake_main}),
             mock.patch.object(sys, "argv", [str(executable)]),
+            mock.patch(
+                "celune.cevoice.voices_data_dir",
+                return_value=Path("C:/runtime-data/voices"),
+            ),
         ):
             self.assertEqual(project_root(), expected_root)
             self.assertEqual(
                 default_bundle_path(),
-                expected_root / "voices" / "default.cevoice",
+                Path("C:/runtime-data/voices/default.cevoice"),
             )
-            self.assertEqual(bundled_voices_dir(), expected_root / "voices")
+            self.assertEqual(
+                bundled_voices_dir(),
+                Path("C:/runtime-data/voices"),
+            )
 
     def test_compiled_project_root_uses_repo_parent_when_running_from_bin(self) -> None:
         """Verify compiled launches from bin/ still resolve the repository root."""
@@ -346,9 +361,13 @@ class RuntimePathTests(TestCase):
             mock.patch.dict(sys.modules, {"__main__": fake_main}),
             mock.patch.object(sys, "argv", [str(executable)]),
             mock.patch.object(Path, "exists", fake_exists),
+            mock.patch(
+                "celune.cevoice.voices_data_dir",
+                return_value=Path("C:/runtime-data/voices"),
+            ),
         ):
             self.assertEqual(project_root(), expected_root)
             self.assertEqual(
                 default_bundle_path(),
-                expected_root / "voices" / "default.cevoice",
+                Path("C:/runtime-data/voices/default.cevoice"),
             )

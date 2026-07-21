@@ -247,8 +247,8 @@ def sleeping_signal() -> AudioChunk:
     """Dynamically generate Celune's sleeping sound.
 
     Returns:
-        AudioChunk: The sleeping sound formatted as a NumPy array, or a silent array if the readiness sound
-        wasn't found.
+        AudioChunk: The sleeping sound formatted as a NumPy array, or a silent array if the readiness sound wasn't
+        found.
     """
 
     return _cached_signal(
@@ -263,8 +263,7 @@ def working_signal() -> AudioChunk:
     """Dynamically generate Celune's working sound.
 
     Returns:
-        AudioChunk: The working sound formatted as a NumPy array, or a silent array if the readiness sound
-        wasn't found.
+        AudioChunk: The working sound formatted as a NumPy array, or a silent array if the readiness sound wasn't found.
     """
 
     return _cached_signal(
@@ -279,8 +278,7 @@ def error_signal() -> AudioChunk:
     """Dynamically generate Celune's error sound.
 
     Returns:
-        AudioChunk: The error sound formatted as a NumPy array, or a silent array if the readiness sound
-        wasn't found.
+        AudioChunk: The error sound formatted as a NumPy array, or a silent array if the readiness sound wasn't found.
     """
 
     def factory() -> AudioChunk:

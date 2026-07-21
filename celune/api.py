@@ -6,6 +6,7 @@ import contextlib
 import datetime
 import errno
 import io
+import json
 import os
 import queue
 import socket
@@ -61,6 +62,7 @@ from .dsp import resample_audio
 from .i18n import string
 from .paths import main_window_log_path, project_root
 from .pipeline import SpeechStreamQueue, prepare_playback_audio
+from .typing.aliases import AudioChunks
 from .typing.api import (
     TaskCommandName,
     TaskEventName,
@@ -289,6 +291,12 @@ WEBUI_CSS = textwrap.dedent(
     body,
     gradio-app {
         --color-accent: var(--celune-primary, #cebaff) !important;
+        --body-text-color: var(--celune-secondary, #a595cc) !important;
+        --block-label-text-color: var(--celune-primary, #cebaff) !important;
+        --block-title-text-color: var(--celune-primary, #cebaff) !important;
+        --block-info-text-color: var(--celune-secondary, #a595cc) !important;
+        /* the Celune "accent" color in CSS is actually considered as Celune tertiary */
+        --body-text-color-subdued: var(--celune-accent, #7c7099) !important;
         background: var(--celune-ui-bg, var(--celune-background, #1d1826)) !important;
     }
 
@@ -483,6 +491,82 @@ WEBUI_CSS = textwrap.dedent(
         background-color: var(--celune-primary, #cebaff) !important;
     }
 
+    .toast-body.error {
+        position: fixed;
+        background: color-mix(
+            in srgb,
+            var(--celune-background, #1d1826) 90%,
+            transparent 10%
+        ) !important;
+        border: none;
+        top: 0;
+    }
+
+    .toast-header {
+        display: none !important;
+    }
+
+    .toast-messages {
+        height: 100vh;
+        width: 100vw;
+        place-items: center;
+        justify-content: center;
+    }
+
+    .toast-message-text.error {
+        font-size: 0;
+    }
+
+    .toast-message-text.error::before {
+        content: __CELUNE_CONNECTION_LOST_MESSAGE__;
+        font-size: 16px;
+        color: var(--celune-error, #f07178);
+    }
+
+    input[type="number"] {
+        -webkit-appearance: textfield !important;
+        appearance: textfield !important;
+    }
+
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        appearance: none;
+        margin: 0;
+    }
+
+    input[type="radio"][aria-checked="false"][disabled] {
+        background: color-mix(
+            var(--celune-background) 90%,
+            var(--celune-primary) 10%
+        );
+    }
+
+    input[type="range"]::-moz-range-thumb {
+        background: var(--celune-primary) !important;
+        border-color: var(--celune-primary) !important;
+    }
+
+    input[type="range"]::-moz-range-track {
+        background: var(--celune-accent) !important;
+    }
+
+    input[type="range"]::-webkit-slider-runnable-track {
+        background: var(--celune-accent) !important;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        background: var(--celune-primary) !important;
+        border: none !important;
+    }
+
+    input[type="range"] {
+        -webkit-appearance: none;
+        appearance: none;
+    }
+
     @media (max-width: 768px), (any-pointer: coarse), (hover: none) {
         .gradio-container {
             height: 100dvh;
@@ -559,6 +643,9 @@ WEBUI_CSS = textwrap.dedent(
         }
     }
     """
+).replace(
+    "__CELUNE_CONNECTION_LOST_MESSAGE__",
+    json.dumps(string("webui.connection_lost"), ensure_ascii=False),
 )
 
 
@@ -601,6 +688,7 @@ def _configure_webui_theme() -> None:
     background = colors.THEME.background or "#1d1826"
     palette = colors.SEVERITY_COLORS["celune"]
     primary = palette["info"]
+    error = palette["error"]
     foreground = colors.THEME.foreground or "#ffffff"
     secondary = colors.THEME.secondary or primary
     accent = colors.THEME.accent or primary
@@ -614,6 +702,7 @@ def _configure_webui_theme() -> None:
         ":root {"
         f"--celune-background: {background};"
         f"--celune-primary: {primary};"
+        f"--celune-error: {error};"
         f"--celune-foreground: {foreground};"
         f"--celune-secondary: {secondary};"
         f"--celune-accent: {accent};"
@@ -1016,12 +1105,23 @@ def _probe_webui_runtime() -> None:
 
     now = time.monotonic()
     current_state = (celune.cur_state or "").strip().lower()
-    if current_state != webui_last_probed_state:
-        if current_state == "sleeping":
-            _append_webui_log(
-                string("webui.sleeping_log", app_name=APP_NAME),
-                "sleeping",
+    if current_state == "sleeping":
+        sleeping_log = string("webui.sleeping_log", app_name=APP_NAME)
+        if not any(message == sleeping_log for message, _ in webui_log_lines):
+            _append_webui_log(sleeping_log, "sleeping")
+        sleeping_status, sleeping_severity = _probed_status_text(celune)
+        if (
+            webui_status_text != sleeping_status
+            or webui_status_severity != sleeping_severity
+            or webui_status_source == "callback"
+        ):
+            _set_webui_status(
+                sleeping_status,
+                sleeping_severity,
+                source="probe",
+                updated_at=now,
             )
+    if current_state != webui_last_probed_state:
         status_text, severity = _probed_status_text(celune)
         should_override_status = (
             webui_last_probed_state is None
@@ -1214,7 +1314,7 @@ def audio_bytes(
         item: An exception class was raised, causing the stream to be interrupted.
         Exception: The stream was interrupted by Celune.
     """
-    audio_chunks: list[npt.NDArray[np.float32]] = []
+    audio_chunks: AudioChunks = []
     chunk_count = 0
     while True:
         item = chunks.get()
@@ -1236,7 +1336,7 @@ def audio_bytes(
 
 def _webui_audio_array(chunks: SpeechStreamQueue) -> npt.NDArray[np.float32]:
     """Collect queued audio into a frame-major float32 array for Gradio playback."""
-    audio_chunks: list[npt.NDArray[np.float32]] = []
+    audio_chunks: AudioChunks = []
     while True:
         item = chunks.get()
         if item is None:
@@ -1913,7 +2013,7 @@ def _webui_speak(
     snapshot = _webui_submit_snapshot("")
     yield snapshot[0], None, *snapshot[1:]
 
-    audio_chunks: list[npt.NDArray[np.float32]] = []
+    audio_chunks: AudioChunks = []
 
     try:
         while True:

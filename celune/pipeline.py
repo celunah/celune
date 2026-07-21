@@ -108,7 +108,7 @@ from .persona.prompts import (
     RetrievedMemoryBundle,
 )
 from .typing.pipeline import SpeechStreamQueue
-from .typing.aliases import AudioChunk
+from .typing.aliases import AudioChunk, AudioChunks
 from .utils import (
     detect_language,
     format_error,
@@ -843,7 +843,7 @@ def _queue_playback_done(
 def _flush_buffered_speech_chunks(
     engine: Celune,
     source_id: int,
-    buffer: list[AudioChunk],
+    buffer: AudioChunks,
     speech_timing: SpeechTiming,
     pushed_audio: bool,
     stream_queue: Optional[SpeechStreamQueue],
@@ -2538,8 +2538,8 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                     stream_queue.put(None)
                 break
 
-            buffer: list[AudioChunk] = []
-            full_audio: list[AudioChunk] = []
+            buffer: AudioChunks = []
+            full_audio: AudioChunks = []
             generated_text_parts: list[str] = []
             request_generation = item.generation
             source_id = _next_playback_source_id(engine)

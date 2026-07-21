@@ -45,6 +45,9 @@ SCRIPT_NAME = "main.py"
 EXIT_CODES = ExitCodes
 _RUNTIME: Optional[SimpleNamespace] = None
 _FORCE_STARTUP_DIAGNOSTICS = False
+_CELUNE_PROCESS_NAMES = frozenset(
+    {"celune", "celune-bin", "celune-bin.exe", "celune.appimage", "celune.exe"}
+)
 
 
 def _load_ui_test_backend() -> type:
@@ -988,6 +991,64 @@ def handle_config(command_args: list[str], prog_name: str) -> None:
         sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
 
 
+def _close_existing_celune_processes(runtime: SimpleNamespace) -> None:
+    """Prompt before terminating other Celune processes found by the launcher."""
+    current_pids = {os.getpid(), os.getppid()}
+    launcher_pid = os.getenv("CELUNE_LAUNCHER_PID")
+    if launcher_pid:
+        with contextlib.suppress(ValueError):
+            current_pids.add(int(launcher_pid))
+
+    existing_processes = []
+    for proc in runtime.psutil.process_iter():
+        with contextlib.suppress(
+            runtime.psutil.AccessDenied,
+            runtime.psutil.NoSuchProcess,
+            runtime.psutil.ZombieProcess,
+        ):
+            if proc.pid in current_pids:
+                continue
+            if str(proc.name()).casefold() in _CELUNE_PROCESS_NAMES:
+                existing_processes.append(proc)
+
+    if not existing_processes:
+        return
+
+    print(string("cli.already_running", app_name=APP_NAME))
+    choice = runtime.SelectMenu(
+        [string("cli.yes"), string("cli.no")],
+        [True, False],
+        string(
+            "cli.already_running_close_existing",
+            app_name=APP_NAME,
+        ),
+    ).start()
+
+    if choice is not True:
+        sys.exit(EXIT_CODES.EXIT_ALREADY_RUNNING.value)
+
+    for proc in existing_processes:
+        try:
+            proc.kill()
+            proc.wait(timeout=5)
+        except (
+            runtime.psutil.NoSuchProcess,
+            runtime.psutil.ZombieProcess,
+        ):
+            continue
+        except (
+            runtime.psutil.AccessDenied,
+            runtime.psutil.TimeoutExpired,
+        ):
+            print(
+                string(
+                    "cli.already_running_failed_closing",
+                    app_name=APP_NAME,
+                )
+            )
+            sys.exit(EXIT_CODES.EXIT_ALREADY_RUNNING.value)
+
+
 def start(verbose: bool = False, testing: bool = False) -> None:
     """Instantiate and start the app.
 
@@ -1149,19 +1210,7 @@ def start(verbose: bool = False, testing: bool = False) -> None:
             print(runtime.indent("CELUNE_LAUNCHER=1", spaces=4))
             time.sleep(5)
         else:
-            active_processes = 0
-            for proc in runtime.psutil.process_iter():
-                with contextlib.suppress(
-                    runtime.psutil.AccessDenied,
-                    runtime.psutil.NoSuchProcess,
-                    runtime.psutil.ZombieProcess,
-                ):
-                    if proc.name() in ["celune.exe", "celune.appimage"]:
-                        active_processes += 1
-                        if active_processes > 1:
-                            print(string("cli.already_running", app_name=APP_NAME))
-                            time.sleep(5)
-                            sys.exit(runtime.ExitCodes.EXIT_ALREADY_RUNNING.value)
+            _close_existing_celune_processes(runtime)
 
         if not headless and runtime.supports_ansi():
             _print_startup_diagnostic(string("cli.startup_creating_ui"))

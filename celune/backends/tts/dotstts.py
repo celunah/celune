@@ -14,7 +14,7 @@ from dots_tts.runtime import DotsTtsRuntime
 
 from ...cevoice import CEVoiceLoader, default_loader
 from ...utils import custom_assert, discard
-from ...typing.aliases import AudioChunk
+from ...typing.aliases import AudioChunk, AudioChunks
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
@@ -255,8 +255,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             kwargs: Streaming generation keyword arguments to use.
 
         Returns:
-            Iterator[tuple[AudioChunk, int, Optional[dict]]]: An iterator of dots.tts streaming audio
-            chunks.
+            Iterator[tuple[AudioChunk, int, Optional[dict]]]: An iterator of dots.tts streaming audio chunks.
 
         Raises:
             ValueError: The requested voice is unsupported, or input text is empty.
@@ -311,7 +310,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                     **kwargs,
                 )
 
-                batch: list[AudioChunk] = []
+                batch: AudioChunks = []
                 chunk_index = 0
                 total_steps = 0
                 pending_audio: Optional[AudioChunk] = None
