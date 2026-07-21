@@ -384,29 +384,7 @@ For example extension usage, check the [example extension](./extensions/test.py)
 
 The aforementioned extension defines a basic usage case for Celune extensions.
 
-Lua extensions are also loaded from the `extensions` directory when Lupa is
-installed. Each Lua file receives the active Celune core singleton as the
-global `celune` value and can register event handlers with `subscribe`:
-
-```lua
-EXTENSION_NAME = "Example Lua extension"
-
-subscribe("ready", function(event)
-    celune.log("Celune is ready")
-end)
-
-function invoke(text)
-    celune.say(text)
-end
-```
-
-The `invoke` function is optional and is called by `/invoke` in the same way as
-Python extensions. Lua event payloads are exposed as tables without the raw
-Celune object or Python exception instances. `celune.sleep(seconds)` mirrors
-`time.sleep` for blocking extension code, and a subscription can be disabled by
-passing `false` as its third argument: `subscribe("ready", handler, false)`.
-Use `celune.set_voice_and_wait(name)` when the next Lua statement must wait for
-a voice reload to finish; `celune.set_voice(name)` starts the reload asynchronously.
+Celune extensions can be made in either Python or Lua. Lua extensions use Celune's singleton objects and do not require additional imports to run. They inherit the same feature set from Python extensions.
 
 ## Web UI
 
