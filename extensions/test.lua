@@ -53,7 +53,7 @@ subscribe("voice_changed", function(event)
     celune.log("Voice changed from "..old.." to "..new..".")
 end)
 
--- This will be executed when you run "/invoke <your extension name>"."
+-- This will be executed when you run "/invoke <your extension name>".
 function invoke(...)
     celune.log("You invoked the extension.")
     celune.say("You invoked the extension.")
