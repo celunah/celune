@@ -29,7 +29,7 @@ It was proudly made in 🇵🇱 for your listening pleasure.
 
 Celune is against the stance of "vibe coding" used in development.
 
-None of the 30,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
+None of the 40,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
 
 All decisions and implementations were reviewed, validated, and approved by human developers.
 
