@@ -298,6 +298,7 @@ class CeluneUI(App):
             log_file_path=main_window_log_path(create_parent=True),
         )
         self._interaction_state = CeluneUIInteractionState()
+        self._shutdown_lock = threading.Lock()
 
         CeluneUI._instance = self
 
@@ -850,6 +851,7 @@ class CeluneUI(App):
                 loop=loop,
             )
         finally:
+            self._shutdown_runtime()
             if output_stream is not None:
                 sys.__stderr__ = original_stderr
                 self._terminal_output_stream = None
@@ -3246,18 +3248,33 @@ class CeluneUI(App):
 
     def on_unmount(self) -> None:
         """Unload Celune."""
-        self._write_terminal_escape(
-            f"\x1b]2;{string('osc.exiting', app_name=APP_NAME)}\x07"
-        )
-        self._shutdown_live_vc_recording()
-        if self.celune is not None:
-            self.celune.close()
+        self._shutdown_runtime()
 
-        self.cur_state = "exiting"
-        if self._runtime_log_capture_enabled:
-            self._disable_runtime_log_capture()
+    def _shutdown_runtime(self) -> None:
+        """Release Celune and UI resources exactly once during any exit path."""
+        with self._shutdown_lock:
+            if self.cur_state == "exiting":
+                return
 
-        CeluneUI._instance = None
+            self.cur_state = "exiting"
+            self._write_terminal_escape(
+                f"\x1b]2;{string('osc.exiting', app_name=APP_NAME)}\x07"
+            )
+            self._shutdown_live_vc_recording()
+            if self.celune is not None:
+                self.celune.close()
+
+            if self._runtime_log_capture_enabled:
+                self._disable_runtime_log_capture()
+
+            CeluneUI._instance = None
+
+    def _shutdown_from_windows_signal(self) -> None:
+        """Schedule graceful teardown after a Windows console-close notification."""
+        try:
+            self.call_from_thread(self._graceful_exit)
+        except RuntimeError:
+            self._shutdown_runtime()
 
     def tts_idle(self) -> None:
         """Reset UI state after Celune stops talking."""
@@ -3374,7 +3391,7 @@ class CeluneUI(App):
     def _signal_handler_windows(self, sig: int) -> bool:
         """Handle incoming Windows signals."""
         if sig in (2, 5, 6):
-            self._graceful_exit()
+            self._shutdown_from_windows_signal()
             return True
         return False
 
@@ -3382,10 +3399,7 @@ class CeluneUI(App):
         """Exit from Celune gracefully."""
         # while Python cleanup would tear down the core, we'd rather explicitly tell Celune to shut down
         # before we tell Textual to exit its main loop
-        self.cur_state = "exiting"
-        self._shutdown_live_vc_recording()
-        if self.celune is not None:
-            self.celune.close()
+        self._shutdown_runtime()
         self.exit()
 
     def graceful_exit(self) -> None:

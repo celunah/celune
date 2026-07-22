@@ -594,6 +594,20 @@ class UIStartupTests(TestCase):
         CeluneUI._instance = None
         CeluneHeadlessUI._instance = None
 
+    def test_ui_shutdown_is_idempotent_for_window_and_keyboard_exit(self) -> None:
+        """Verify all UI exit paths release Celune only once."""
+        ui = CeluneUI()
+        celune = SimpleNamespace(close=mock.Mock())
+        ui.celune = cast(Celune, celune)
+        ui._shutdown_live_vc_recording = mock.Mock()
+        ui._write_terminal_escape = mock.Mock()
+
+        ui._shutdown_runtime()
+        ui._shutdown_runtime()
+
+        celune.close.assert_called_once_with()
+        ui._shutdown_live_vc_recording.assert_called_once_with()
+
     def test_crossfade_vc_overlap_keeps_mono_audio_one_dimensional(self) -> None:
         """Verify mono live VC overlap crossfades stay valid 1D audio."""
         ui = CeluneUI()
