@@ -16,6 +16,9 @@ backend: null
 gpt_sovits_root: null
 # auto prefers v2ProPlus, then v4, v2Pro, v3, v2, and v1 when their assets exist
 gpt_sovits_variant: auto
+# optional absolute path to a custom GPT/text-to-semantic checkpoint
+# the selected variant still supplies the SoVITS/vocoder checkpoint
+gpt_sovits_t2s_weights_path: null
 
 # Qwen3 TTS settings
 #

@@ -100,6 +100,7 @@
     "gpt_sovits.invalid_model": "invalid GPT-SoVITS model identifier: {model}",
     "gpt_sovits.cache_link_failed": "could not connect GPT-SoVITS relative assets to the Hugging Face cache: {error}",
     "gpt_sovits.cache_path_occupied": "gpt-sovits cache bridge path is occupied: {path}",
+    "gpt_sovits.custom_t2s_weights_not_found": "custom GPT-SoVITS text-to-semantic checkpoint was not found: {path}",
     "gpt_sovits.model_download_failed": "could not download GPT-SoVITS pretrained models: {error}",
     "gpt_sovits.models_downloading": "Downloading GPT-SoVITS models...",
     "gpt_sovits.fast_langdetect_download_failed": "could not download GPT-SoVITS language detector data: {error}",

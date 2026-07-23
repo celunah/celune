@@ -493,6 +493,9 @@ class Celune(CeluneStateAccessors):
             backend_kwargs["variant"] = _config_str(
                 config_value(config, "gpt_sovits_variant")
             )
+            backend_kwargs["t2s_weights_path"] = _config_str(
+                config_value(config, "gpt_sovits_t2s_weights_path")
+            )
 
         try:
             resolved_tts_backend = cast(TTSBackendSpec, tts_backend)
@@ -946,6 +949,9 @@ class Celune(CeluneStateAccessors):
             )
             backend_kwargs["variant"] = _config_str(
                 config_value(self.config, "gpt_sovits_variant")
+            )
+            backend_kwargs["t2s_weights_path"] = _config_str(
+                config_value(self.config, "gpt_sovits_t2s_weights_path")
             )
         return backend_kwargs
 

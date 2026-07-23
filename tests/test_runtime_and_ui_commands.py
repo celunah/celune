@@ -972,6 +972,23 @@ class UIStartupTests(TestCase):
 
         self.assertEqual(captured, [])
 
+    def test_runtime_log_filters_gpt_sovits_text2semantic_loading(self) -> None:
+        """Verify GPT-SoVITS checkpoint loading chatter stays out of the UI log."""
+        stream = mock.Mock()
+        stream.isatty.return_value = True
+        captured: list[tuple[str, str]] = []
+        redirect = ui_terminal.LogRedirect(
+            stdout=stream,
+            stderr=stream,
+            write_callback=lambda msg, severity: captured.append((msg, severity)),
+            default_severity="info",
+            filter_messages=ui_app._RUNTIME_LOG_REDIRECT_FILTER_MESSAGES,
+        )
+
+        redirect.write("Loading Text2Semantic weights from C:/models/custom-e20.ckpt\n")
+
+        self.assertEqual(captured, [])
+
     def test_log_redirect_suppresses_tqdm_progress_lines(self) -> None:
         """Verify tqdm carriage-return progress lines are filtered out."""
         stream = mock.Mock()

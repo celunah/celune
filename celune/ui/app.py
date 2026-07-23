@@ -102,6 +102,8 @@ _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
         "length_regulator loaded",
         "Removing weight norm...",
         "Loading weights from",
+        "Loading Text2Semantic weights from",
+        "Loading Text2Semantic Weights from",
         "min value is",
         "max value is",
         "it/s]",

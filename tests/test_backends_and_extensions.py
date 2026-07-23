@@ -78,6 +78,48 @@ class BackendTests(TestCase):
             )
             self.assertNotIn("GPT_SoVITS/pretrained_models", str(custom))
 
+    def test_gpt_sovits_uses_custom_t2s_checkpoint_override(self) -> None:
+        """Verify a configured GPT checkpoint replaces only the variant T2S model."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "source"
+            (root / "GPT_SoVITS/TTS_infer_pack").mkdir(parents=True)
+            (root / "GPT_SoVITS/TTS_infer_pack/TTS.py").touch()
+            custom_checkpoint = Path(temp_dir) / "custom-e20.ckpt"
+            custom_checkpoint.touch()
+            snapshot = Path(temp_dir) / "huggingface" / "snapshot"
+            for relative_path in (
+                "chinese-hubert-base/config.json",
+                "chinese-roberta-wwm-ext-large/config.json",
+                "gsv-v4-pretrained/s2Gv4.pth",
+                "gsv-v4-pretrained/vocoder.pth",
+            ):
+                target = snapshot / relative_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.touch()
+
+            backend = GPTSoVITS(
+                log=lambda _msg, _severity="info": None,
+                root=str(root),
+                variant="v4",
+                t2s_weights_path=str(custom_checkpoint),
+            )
+            backend._model_snapshot = snapshot
+            config = backend._model_config("v4")
+            custom = cast(dict[str, Union[str, bool]], config["custom"])
+
+            self.assertEqual(custom["t2s_weights_path"], str(custom_checkpoint))
+            self.assertEqual(
+                custom["vits_weights_path"],
+                str(snapshot / "gsv-v4-pretrained/s2Gv4.pth"),
+            )
+            self.assertTrue(
+                backend._variant_is_available(
+                    snapshot,
+                    "v4",
+                    custom_checkpoint,
+                )
+            )
+
     def test_gpt_sovits_bootstrap_uses_celune_user_data_directory(self) -> None:
         """Verify missing GPT-SoVITS source is installed below Celune user data."""
         expected_root = Path("C:/runtime-data") / "gpt_sovits"
