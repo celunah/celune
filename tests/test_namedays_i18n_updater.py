@@ -79,7 +79,7 @@ class I18nTests(TestCase):
         try:
             i18n.STRINGS.clear()
             i18n.STRINGS["en"] = {"hello": "Hello"}
-            i18n.STRINGS["pl"] = {"hello": "Czesc"}
+            i18n.STRINGS["pl"] = {"hello": "Cześć"}
             with mock.patch(
                 "celune.i18n._locale.getlocale", return_value=("pl_PL", None)
             ):

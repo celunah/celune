@@ -15,10 +15,9 @@ if TYPE_CHECKING:
     import queue
     import threading
 
-    import numpy as np
-    import numpy.typing as npt
     import sounddevice as sd
 
+    from .aliases import AudioChunk
     from ..backends.tts import BackendModel, CeluneBackend
     from ..backends.vc import CeluneVCBackend
     from ..cevoice import CEVoicePersona
@@ -177,10 +176,10 @@ type ErrorCallback = Callable[[str], None]
 type IdleCallback = Callable[[], None]
 type QueueAvailableCallback = Callable[[], None]
 type VoiceChangedCallback = Callable[[str], None]
-type TTSBackendRecipe = Union[str, type["CeluneBackend"]]
-type VCBackendRecipe = Union[str, type["CeluneVCBackend"]]
-type TTSBackendSpec = Union[TTSBackendRecipe, "CeluneBackend"]
-type VCBackendSpec = Union[VCBackendRecipe, "CeluneVCBackend"]
+type TTSBackendRecipe = Union[str, type[CeluneBackend]]
+type VCBackendRecipe = Union[str, type[CeluneVCBackend]]
+type TTSBackendSpec = Union[TTSBackendRecipe, CeluneBackend]
+type VCBackendSpec = Union[VCBackendRecipe, CeluneVCBackend]
 type CoreBackendSpec = Union[TTSBackendSpec, VCBackendSpec]
 
 
@@ -199,10 +198,10 @@ class CeluneStateAccessors:
     config: Config
     _backend_spec: Optional[TTSBackendRecipe]
     _backend_kwargs: dict[str, JSONSerializable]
-    backend: "CeluneBackend"
+    backend: CeluneBackend
     tts_backend: str
     _vc_backend_spec: Optional[VCBackendRecipe]
-    vc_backend: Optional["CeluneVCBackend"]
+    vc_backend: Optional[CeluneVCBackend]
     voice_conversion_backend: str
     vc_pitch_shift: int
     vc_f0_condition: bool
@@ -211,7 +210,7 @@ class CeluneStateAccessors:
     language: str
     dev: bool
     use_normalization: bool
-    model: Optional["BackendModel"]
+    model: Optional[BackendModel]
     model_name: str
     llm: Optional[PreTrainedModel]
     tokenizer: Optional[PreTrainedTokenizerBase]
@@ -219,36 +218,36 @@ class CeluneStateAccessors:
     _normalizer_load_epoch: int
     current_voice: Optional[str]
     current_character: Optional[str]
-    current_character_persona: Optional["CEVoicePersona"]
+    current_character_persona: Optional[CEVoicePersona]
     voice_bundle_is_default: bool
     persona_history: list[dict[str, str]]
     persona_attachments: list[dict[str, str]]
     voices: tuple[str, ...]
     voice_prompt: Optional[str]
-    text_queue: "queue.Queue"
-    audio_queue: "queue.Queue"
-    _playback_thread: Optional["threading.Thread"]
-    _generation_thread: Optional["threading.Thread"]
-    _api_thread: Optional["threading.Thread"]
-    _persona_thread: Optional["threading.Thread"]
-    _wake_background_thread: Optional["threading.Thread"]
-    _wake_background_lock: "threading.Lock"
-    _persona_queue: "queue.Queue"
-    _queue_lock: "threading.Lock"
-    _utterance_force_stop: "threading.Event"
+    text_queue: queue.Queue
+    audio_queue: queue.Queue
+    _playback_thread: Optional[threading.Thread]
+    _generation_thread: Optional[threading.Thread]
+    _api_thread: Optional[threading.Thread]
+    _persona_thread: Optional[threading.Thread]
+    _wake_background_thread: Optional[threading.Thread]
+    _wake_background_lock: threading.Lock
+    _persona_queue: queue.Queue
+    _queue_lock: threading.Lock
+    _utterance_force_stop: threading.Event
     _speech_generation: int
     _next_playback_source_id: int
     _playback_source_statuses: dict[int, str]
     _playback_source_meta: dict[int, dict[str, Union[str, float]]]
     _playback_progress_last_emit_at: float
     _playback_progress_last_source_id: int
-    _model_ready: "threading.Event"
-    _playback_done: "threading.Event"
-    _say_lock: "threading.Lock"
-    _wake_lock: "threading.Lock"
-    _model_lock: "threading.RLock"
+    _model_ready: threading.Event
+    _playback_done: threading.Event
+    _say_lock: threading.Lock
+    _wake_lock: threading.Lock
+    _model_lock: threading.RLock  # noqa
     _exit_requested: bool
-    _stream: Optional["sd.OutputStream"]
+    _stream: Optional[sd.OutputStream]
     _current_sr: Optional[int]
     _audio_unavailable: bool
     can_use_rubberband: bool
@@ -257,9 +256,9 @@ class CeluneStateAccessors:
     smart_buffer_target_seconds: float
     total_generated_speech_seconds: float
     historical_generated_speech_seconds: float
-    reverb: "StreamingPedalboardReverb"
+    reverb: StreamingPedalboardReverb
     recently_saved: Optional[str]
-    kept_sfx_audio: Optional["npt.NDArray[np.float32]"]
+    kept_sfx_audio: Optional[AudioChunk]
     regenerate: bool
     locked: bool
     loaded: bool
@@ -268,27 +267,27 @@ class CeluneStateAccessors:
     _last_flavor: Optional[str]
     _ready_announced: bool
     is_in_tutorial: bool
-    extension_manager: Optional["CeluneExtensionManager"]
-    glow: "AudioRGBGlow"
-    vision: Optional["PersonaClient"]
-    stream: Optional["sd.OutputStream"]
-    say_lock: "threading.Lock"
-    utterance_force_stop: "threading.Event"
-    queue_lock: "threading.Lock"
-    force_stop_marker: "PipelineStates"
-    playback_done: "threading.Event"
-    model_ready: "threading.Event"
-    utterance_done: "PipelineStates"
-    sentinel: "PipelineStates"
-    generation_thread: Optional["threading.Thread"]
-    playback_thread: Optional["threading.Thread"]
+    extension_manager: Optional[CeluneExtensionManager]
+    glow: AudioRGBGlow
+    vision: Optional[PersonaClient]
+    stream: Optional[sd.OutputStream]
+    say_lock: threading.Lock
+    utterance_force_stop: threading.Event
+    queue_lock: threading.Lock
+    force_stop_marker: PipelineStates
+    playback_done: threading.Event
+    model_ready: threading.Event
+    utterance_done: PipelineStates
+    sentinel: PipelineStates
+    generation_thread: Optional[threading.Thread]
+    playback_thread: Optional[threading.Thread]
     exit_requested: bool
-    model_lock: "threading.RLock"
+    model_lock: threading.RLock  # noqa
     audio_unavailable: bool
     current_sr: Optional[int]
 
     @property
-    def cur_state(self) -> str:
+    def cur_state(self) -> str:  # noqa
         """Return the current runtime-state label.
 
         Raises:
@@ -297,7 +296,7 @@ class CeluneStateAccessors:
         raise NotImplementedError("typing surface only")
 
     @cur_state.setter
-    def cur_state(self, value: str) -> None:
+    def cur_state(self, value: str) -> None:  # noqa
         """Store the current runtime-state label.
 
         Args:
@@ -307,3 +306,21 @@ class CeluneStateAccessors:
             NotImplementedError: If `NotImplementedError` needs to be raised.
         """
         raise NotImplementedError("typing surface only")
+
+    @property
+    def persona_queue(self) -> queue.Queue:  # noqa
+        """Return the queue receiving Persona input text.
+
+        Returns:
+            Result of this function.
+        """
+        return self._persona_queue
+
+    @property
+    def speech_generation(self) -> int:  # noqa
+        """Return the current speech-generation counter.
+
+        Returns:
+            Result of this function.
+        """
+        return self._speech_generation

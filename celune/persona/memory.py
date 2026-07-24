@@ -19,7 +19,7 @@ from transformers import AutoModel, AutoTokenizer
 
 from ..constants import PERSONA_MEMORY_EMBEDDING_MODEL, JSONSerializable
 from ..paths import persona_data_dir
-from ..typing.aliases import EmbeddingVector, _EmbeddingBackend
+from ..typing.aliases import EmbeddingVector, EmbeddingBackend
 from .paths import persona_character_slug
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
@@ -54,7 +54,7 @@ _STOPWORDS = {
     "you",
 }
 
-_EMBEDDING_BACKENDS: dict[str, _EmbeddingBackend] = {}
+_EMBEDDING_BACKENDS: dict[str, EmbeddingBackend] = {}
 _FAILED_EMBEDDING_MODELS: set[str] = set()
 
 
@@ -107,7 +107,7 @@ def _cosine_similarity(first: EmbeddingVector, second: EmbeddingVector) -> float
     return float(np.dot(first, second) / denom)
 
 
-def _load_transformer_text_embedder(model_name: str) -> Optional[_EmbeddingBackend]:
+def _load_transformer_text_embedder(model_name: str) -> Optional[EmbeddingBackend]:
     """Load one lazy text-embedding backend, or return ``None`` when unavailable."""
     if model_name in _FAILED_EMBEDDING_MODELS:
         return None

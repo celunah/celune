@@ -62,9 +62,10 @@ from ..persona.impl import (
 )
 from ..pipeline import finish_streaming_sfx_audio, queue_streaming_sfx_audio
 from ..typing.aliases import (  # pylint: disable=unused-import
-    _AudioDeviceScalar,
-    _VCAudioCallback,
+    AudioChunk,
     AudioChunks,
+    AudioDeviceScalar,
+    _VCAudioCallback,  # noqa
 )
 from ..utils import (
     discard,
@@ -112,7 +113,7 @@ _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
 )
 
 
-def _device_scalar_int(value: Optional[_AudioDeviceScalar], default: int) -> int:
+def _device_scalar_int(value: Optional[AudioDeviceScalar], default: int) -> int:
     """Return one audio-device metadata value as an integer when possible."""
     if isinstance(value, bool):
         return default
@@ -143,7 +144,7 @@ class CeluneUIWidgetState:
     resources: Optional[Label] = None
     progress_bar: Optional[ProgressBar] = None
     header: Optional[Label] = None
-    header_lines: tuple[Label, ...] = ()
+    header_lines: tuple[Label, ...] = ()  # noqa
 
 
 @dataclass
@@ -167,7 +168,7 @@ class CeluneUIBindingState:
 
     celune: Optional[Celune] = None
     celune_ready: bool = False
-    celune_styles: tuple[str, ...] = ()
+    celune_styles: tuple[str, ...] = ()  # noqa
     celune_voices: Optional[Iterator[str]] = None
     style_index: int = 0
     cur_state: str = "active"
@@ -226,7 +227,7 @@ class CeluneUIInteractionState:
     vc_recording_sample_rate: int = 0
     vc_recording_silence_frames: int = 0
     vc_recording_submission_queue: Optional[
-        queue_module.Queue[Optional[tuple[npt.NDArray[np.float32], int, str, bool]]]
+        queue_module.Queue[Optional[tuple[AudioChunk, int, str, bool]]]  # noqa
     ] = None
     vc_recording_stream: Optional[sd.InputStream] = None
     vc_recording_stop_thread: Optional[threading.Thread] = None
@@ -234,7 +235,7 @@ class CeluneUIInteractionState:
     persona_recording_chunks: AudioChunks = field(default_factory=list)
     persona_recording_lock: threading.Lock = field(default_factory=threading.Lock)
     persona_recording_queue: Optional[
-        queue_module.Queue[tuple[npt.NDArray[np.float32], bool]]
+        queue_module.Queue[tuple[AudioChunk, bool]]  # noqa
     ] = None
     persona_recording_sample_rate: int = 0
     persona_recording_silence_frames: int = 0
@@ -791,6 +792,7 @@ class CeluneUI(App):
 
         output_fd: Optional[int] = None
         output_stream: Optional[TextIOWrapper] = None
+        discard(output_stream)
         try:
             output_fd = os.dup(cast(Callable[[], int], fileno)())
             output_stream = os.fdopen(
@@ -1042,7 +1044,7 @@ class CeluneUI(App):
         )
         original_call_handlers = logging.Logger.callHandlers
 
-        def call_handlers(self: logging.Logger, record: logging.LogRecord) -> None:
+        def call_handlers(self: logging.Logger, record: logging.LogRecord) -> None:  # noqa
             if is_celune_log_record(record):
                 original_call_handlers(self, record)
                 return
@@ -1422,7 +1424,7 @@ class CeluneUI(App):
         steps = 10
 
         widget = self.query_one(target) if isinstance(target, str) else target
-        original_border: tuple[EdgeStyle, ...] = tuple(widget.styles.border)
+        original_border: tuple[EdgeStyle, ...] = tuple(widget.styles.border)  # noqa
 
         if not any(edge_type for edge_type, _ in original_border):
             return
@@ -1432,7 +1434,7 @@ class CeluneUI(App):
         self._border_pulse_tokens[widget_key] = token
         self._border_pulse_widgets[widget_key] = widget
 
-        target_border: tuple[EdgeStyle, ...] = tuple(
+        target_border: tuple[EdgeStyle, ...] = tuple(  # noqa
             (
                 edge_type,
                 self._with_darkened_brightness(color) if edge_type else color,
@@ -1445,7 +1447,7 @@ class CeluneUI(App):
         transition_duration = max(0.0, duration - hold_duration)
         frame_delay = transition_duration / (steps * 2) if transition_duration else 0.0
 
-        def set_border(border: tuple[EdgeStyle, ...]) -> None:
+        def set_border(border: tuple[EdgeStyle, ...]) -> None:  # noqa
             (
                 widget.styles.border_top,
                 widget.styles.border_right,
@@ -1881,7 +1883,7 @@ class CeluneUI(App):
 
     def _persona_transcription_worker(
         self,
-        recording_queue: queue_module.Queue[tuple[npt.NDArray[np.float32], bool]],
+        recording_queue: queue_module.Queue[tuple[AudioChunk, bool]],
         transcriber: WhisperTranscriber,
         sample_rate: int,
         prefix: str,
@@ -1975,10 +1977,10 @@ class CeluneUI(App):
                 "input",
             )
             device_info = (
-                cast(dict[str, _AudioDeviceScalar], dict(direct_device_info))
+                cast(dict[str, AudioDeviceScalar], dict(direct_device_info))
                 if direct_device_info is not None
                 else cast(
-                    dict[str, _AudioDeviceScalar],
+                    dict[str, AudioDeviceScalar],
                     sd.query_devices(device=input_device, kind="input"),
                 )
             )
@@ -2006,7 +2008,7 @@ class CeluneUI(App):
             sample_rate * self._persona_speech_end_delay_seconds()
         )
         ai_vad = create_live_voice_activity_detector(input_config)
-        recording_queue: queue_module.Queue[tuple[npt.NDArray[np.float32], bool]] = (
+        recording_queue: queue_module.Queue[tuple[AudioChunk, bool]] = (
             queue_module.Queue(maxsize=1)
         )
         transcriber = WhisperTranscriber(
@@ -2178,7 +2180,7 @@ class CeluneUI(App):
         self._vc_recording_stop_thread = stop_thread
         stop_thread.start()
 
-    def _flush_vc_recording_buffer_locked(self) -> Optional[npt.NDArray[np.float32]]:
+    def _flush_vc_recording_buffer_locked(self) -> Optional[AudioChunk]:
         """Return and clear the buffered microphone chunk accumulator."""
         if not self._vc_recording_chunks:
             return None
@@ -2190,7 +2192,7 @@ class CeluneUI(App):
     def _flush_vc_recording_chunk_locked(
         self,
         keep_tail_frames: int = 0,
-    ) -> Optional[npt.NDArray[np.float32]]:
+    ) -> Optional[AudioChunk]:
         """Return one buffered VC chunk while optionally retaining a tail overlap."""
         audio = self._flush_vc_recording_buffer_locked()
         if audio is None or keep_tail_frames <= 0:
@@ -2294,8 +2296,8 @@ class CeluneUI(App):
             f"expected mono or stereo VC overlap audio, got {normalized.shape}"
         )
 
-    @staticmethod
     def _crossfade_vc_overlap(
+        self,
         previous_tail: npt.NDArray[np.float32],
         current_head: npt.NDArray[np.float32],
     ) -> npt.NDArray[np.float32]:
@@ -2304,8 +2306,8 @@ class CeluneUI(App):
         if overlap_frames <= 0:
             return np.zeros((0, 2), dtype=np.float32)
 
-        previous = CeluneUI._normalize_vc_overlap_audio(previous_tail[-overlap_frames:])
-        current = CeluneUI._normalize_vc_overlap_audio(current_head[:overlap_frames])
+        previous = self._normalize_vc_overlap_audio(previous_tail[-overlap_frames:])
+        current = self._normalize_vc_overlap_audio(current_head[:overlap_frames])
 
         if previous.ndim != current.ndim:
             if previous.ndim == 1:
@@ -2325,9 +2327,9 @@ class CeluneUI(App):
     @staticmethod
     def _enqueue_vc_submission_chunk(
         submission_queue: queue_module.Queue[
-            Optional[tuple[npt.NDArray[np.float32], int, str, bool]]
+            Optional[tuple[AudioChunk, int, str, bool]]
         ],
-        item: tuple[npt.NDArray[np.float32], int, str, bool],
+        item: tuple[AudioChunk, int, str, bool],
     ) -> None:
         """Queue one live VC chunk while dropping only the stalest backlog item."""
         try:
@@ -2345,9 +2347,9 @@ class CeluneUI(App):
     @staticmethod
     def _finish_vc_submission_queue(
         submission_queue: Optional[
-            queue_module.Queue[Optional[tuple[npt.NDArray[np.float32], int, str, bool]]]
+            queue_module.Queue[Optional[tuple[AudioChunk, int, str, bool]]]  # noqa
         ],
-        final_item: Optional[tuple[npt.NDArray[np.float32], int, str, bool]] = None,
+        final_item: Optional[tuple[AudioChunk, int, str, bool]] = None,
     ) -> None:
         """Flush stale live VC chunks and end the submission worker."""
         if submission_queue is None:
@@ -2386,11 +2388,11 @@ class CeluneUI(App):
         self,
     ) -> tuple[
         Optional[sd.InputStream],
-        Optional[npt.NDArray[np.float32]],
+        Optional[AudioChunk],
         int,
         str,
         Optional[
-            queue_module.Queue[Optional[tuple[npt.NDArray[np.float32], int, str, bool]]]
+            queue_module.Queue[Optional[tuple[AudioChunk, int, str, bool]]]  # noqa
         ],
         int,
         Optional[threading.Thread],
@@ -2535,10 +2537,10 @@ class CeluneUI(App):
 
         try:
             device_info = (
-                cast(dict[str, _AudioDeviceScalar], dict(direct_device_info))
+                cast(dict[str, AudioDeviceScalar], dict(direct_device_info))
                 if direct_device_info is not None
                 else cast(
-                    dict[str, _AudioDeviceScalar],
+                    dict[str, AudioDeviceScalar],
                     sd.query_devices(device=input_device, kind="input"),
                 )
             )
@@ -2571,26 +2573,28 @@ class CeluneUI(App):
         live_chunk_overlap_frames = self._vc_live_chunk_overlap_frames(sample_rate)
         ai_vad = create_live_voice_activity_detector(input_config)
         submission_queue: queue_module.Queue[
-            Optional[tuple[npt.NDArray[np.float32], int, str, bool]]
+            Optional[tuple[AudioChunk, int, str, bool]]
         ] = queue_module.Queue(maxsize=1)
 
         def submit_live_audio() -> None:
             live_source_id: Optional[int] = None
 
             def queue_playback_segment(
-                audio: npt.NDArray[np.float32],
-                playback_sample_rate: int,
-                playback_label: str,
+                audio_chunk: AudioChunk,
+                sr: int,
+                audio_label: str,
             ) -> None:
                 nonlocal live_source_id
-                if len(audio) <= 0 or self.celune is None:
+                if len(audio_chunk) <= 0 or self.celune is None:
                     return
+
+                # noinspection PyBroadException
                 try:
                     live_source_id = queue_streaming_sfx_audio(
                         self.celune,
-                        np.asarray(audio, dtype=np.float32),
-                        playback_sample_rate,
-                        playback_label,
+                        np.asarray(audio_chunk, dtype=np.float32),
+                        sr,
+                        audio_label,
                         source_id=live_source_id,
                         status_label_key="pipeline.revoicing_label",
                         reset_ready_announcement=live_source_id is None,
@@ -2645,14 +2649,14 @@ class CeluneUI(App):
 
                     if is_final_chunk:
                         finish_playback_segment()
-                except Exception as e:
+                except Exception as exc:
                     if self.celune is None:
                         continue
                     self.safe_log(
                         string(
                             "ui.recording_stream_chunk_failed",
                             label=queued_label,
-                            error=format_error(e, self.celune.dev),
+                            error=format_error(exc, self.celune.dev),
                         ),
                         "warning",
                     )
@@ -2689,7 +2693,7 @@ class CeluneUI(App):
                 self._vc_recording_previous_rms = current_rms
                 self._vc_recording_captured_frames += len(callback_audio)
 
-                buffered_audio: Optional[npt.NDArray[np.float32]] = None
+                buffered_audio: Optional[AudioChunk] = None
                 if voice_detected:
                     if self._vc_recording_buffered_frames <= 0:
                         self._prepend_vc_preroll_locked()
@@ -2999,7 +3003,7 @@ class CeluneUI(App):
 
         Args:
             delay: Delay in seconds before running the callback.
-            callback: Callback to run if the tutorial has not been cancelled.
+            callback: Callback to run if the tutorial has not been canceled.
         """
         token = self._tutorial_token
 
@@ -3038,7 +3042,7 @@ class CeluneUI(App):
             stop_audio: Whether active tutorial playback should be interrupted.
 
         Returns:
-            bool: ``True`` when tutorial work was cancelled.
+            bool: ``True`` when tutorial work was canceled.
         """
         was_active = self._tutorial_active or bool(self._tutorial_timers)
         if not was_active:
@@ -3395,7 +3399,7 @@ class CeluneUI(App):
         self._graceful_exit()
 
     @property
-    def tutorial_token(self) -> int:
+    def tutorial_token(self) -> int:  # noqa
         """Return the active tutorial cancellation token.
 
         Returns:
@@ -3404,7 +3408,7 @@ class CeluneUI(App):
         return self._tutorial_token
 
     @property
-    def tutorial_active(self) -> bool:
+    def tutorial_active(self) -> bool:  # noqa
         """Return whether a tutorial flow is currently active.
 
         Returns:

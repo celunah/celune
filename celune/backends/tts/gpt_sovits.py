@@ -21,7 +21,6 @@ from typing import Callable, Optional, Protocol, Union, cast
 
 from huggingface_hub import snapshot_download
 import numpy as np
-import numpy.typing as npt
 import soundfile as sf
 import torch
 
@@ -33,12 +32,12 @@ from ...paths import (
     huggingface_hub_cache_dir,
     project_root,
 )
-from ...typing.aliases import RuntimeValue, AudioChunk
+from ...typing.aliases import RuntimeValue, AudioChunk, AudioChunkNonNormalized
 from ...utils import custom_assert
 from .base import CeluneBackend
 
 
-class _GPTSoVITSPipeline(Protocol):
+class GPTSoVITSPipeline(Protocol):
     """Subset of the official GPT-SoVITS pipeline used by Celune."""
 
     def run(self, inputs: dict[str, JSONSerializable]) -> Iterator[RuntimeValue]:
@@ -65,11 +64,11 @@ class _GPTSoVITSRuntime:
 
     def __init__(
         self,
-        pipeline: _GPTSoVITSPipeline,
+        pipeline: GPTSoVITSPipeline,
         variant: str,
         sample_rate: int,
     ) -> None:
-        self.pipeline: Optional[_GPTSoVITSPipeline] = pipeline
+        self.pipeline: Optional[GPTSoVITSPipeline] = pipeline
         self.variant = variant
         self.sample_rate = sample_rate
 
@@ -404,7 +403,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             loader.materialize(name, "wav")
 
     @property
-    def default_model_id(self) -> str:
+    def default_model_id(self) -> str:  # noqa
         """Return the selected GPT-SoVITS variant identifier.
 
         Returns:
@@ -413,7 +412,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         return self.variant
 
     @property
-    def all_model_ids(self) -> list[str]:
+    def all_model_ids(self) -> list[str]:  # noqa
         """Return the selected GPT-SoVITS variant identifier.
 
         Returns:
@@ -422,7 +421,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         return [self.variant]
 
     @property
-    def voices(self) -> list[str]:
+    def voices(self) -> list[str]:  # noqa
         """Return voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:
@@ -757,7 +756,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                     getattr(module, "TTS_Config"),
                 )
                 pipeline_type = cast(
-                    Callable[[_GPTSoVITSConfig], _GPTSoVITSPipeline],
+                    Callable[[_GPTSoVITSConfig], GPTSoVITSPipeline],
                     getattr(module, "TTS"),
                 )
                 config = config_type(self._model_config(variant))
@@ -889,7 +888,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
 
     @staticmethod
     def _to_numpy_audio(
-        audio: Union[AudioChunk, npt.NDArray[np.int16], torch.Tensor],
+        audio: Union[AudioChunk, AudioChunkNonNormalized, torch.Tensor],  # noqa
     ) -> AudioChunk:
         """Convert one GPT-SoVITS output chunk to mono float32 audio."""
         if isinstance(audio, torch.Tensor):
@@ -902,7 +901,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
 
     def _run_pipeline(
         self,
-        pipeline: _GPTSoVITSPipeline,
+        pipeline: GPTSoVITSPipeline,
         request: dict[str, JSONSerializable],
     ) -> Iterator[RuntimeValue]:
         """Run GPT-SoVITS while its relative runtime paths are active."""
@@ -912,7 +911,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
 
     @staticmethod
     def _refresh_prompt_cache(
-        pipeline: _GPTSoVITSPipeline,
+        pipeline: GPTSoVITSPipeline,
         reference_wav: Path,
         prompt_text: str,
         prompt_language: str,

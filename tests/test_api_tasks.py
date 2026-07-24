@@ -117,7 +117,7 @@ class ApiTaskWebSocketTests(TestCase):
         self.assertEqual(api.speech_jobs[job_id].subscriptions, [])
 
     def test_websocket_streams_failure_and_cancellation_terminal_events(self) -> None:
-        """Verify failed and cancelled tasks use typed terminal event names."""
+        """Verify failed and canceled tasks use typed terminal event names."""
         terminals: tuple[Literal["failed", "cancelled"], ...] = (
             "failed",
             "cancelled",

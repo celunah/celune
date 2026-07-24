@@ -105,7 +105,7 @@ class CEVoice:
         return cls(bundle_path, metadata, payload_offset)
 
     @property
-    def voices(self) -> VoiceManifest:
+    def voices(self) -> VoiceManifest:  # noqa
         """Return the voice manifest.
 
         Returns:
@@ -120,7 +120,7 @@ class CEVoice:
         return cast(VoiceManifest, voices)
 
     @property
-    def voice_order(self) -> tuple[str, ...]:
+    def voice_order(self) -> tuple[str, ...]:  # noqa
         """Return the preferred user-facing voice order.
 
         Returns:
@@ -157,7 +157,7 @@ class CEVoice:
         )
 
     @property
-    def assets(self) -> Manifest:
+    def assets(self) -> Manifest:  # noqa
         """Return the top-level bundle asset manifest.
 
         Returns:

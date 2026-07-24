@@ -35,7 +35,7 @@ VIDEO_EXTENSIONS = {".mp4", ".webm"}
 
 
 def _run_runtime_async(
-    target: "Celune",
+    target: Celune,
     async_name: str,
     sync_name: str,
     *method_args: str,
@@ -53,7 +53,7 @@ def _run_runtime_async(
 
 
 async def _run_runtime_async_on_loop(
-    target: "Celune",
+    target: Celune,
     async_name: str,
     sync_name: str,
     *method_args: str,
@@ -211,9 +211,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             return
 
         ui.celune.vc_f0_condition = enabled
-        backend = getattr(ui.celune, "vc_backend", None)
-        if backend is not None and hasattr(backend, "f0_condition"):
-            setattr(backend, "f0_condition", enabled)
+        vc_backend = getattr(ui.celune, "vc_backend", None)
+        if vc_backend is not None and hasattr(vc_backend, "f0_condition"):
+            setattr(vc_backend, "f0_condition", enabled)
         refresh_vc_controls()
         ui.safe_log(
             string(
@@ -222,17 +222,17 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             )
         )
 
-    def set_vc_pitch_shift(value: int) -> None:
+    def set_vc_pitch_shift(svalue: int) -> None:
         setter = getattr(ui, "set_vc_pitch_shift", None)
         if callable(setter):
-            setter(value)
+            setter(svalue)
             return
 
-        clamped = clamp_vc_pitch_shift(value)
+        clamped = clamp_vc_pitch_shift(svalue)
         ui.celune.vc_pitch_shift = clamped
-        backend = getattr(ui.celune, "vc_backend", None)
-        if backend is not None and hasattr(backend, "pitch_shift"):
-            setattr(backend, "pitch_shift", clamped)
+        vc_backend = getattr(ui.celune, "vc_backend", None)
+        if vc_backend is not None and hasattr(vc_backend, "pitch_shift"):
+            setattr(vc_backend, "pitch_shift", clamped)
         refresh_vc_controls()
         ui.safe_log(string("commands.vcpitch_set", value=clamped))
 

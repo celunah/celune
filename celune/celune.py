@@ -147,7 +147,7 @@ class _BundleWithPath(Protocol):
     """Protocol for bundle-like objects that expose a path."""
 
     @property
-    def path(self) -> Union[str, Path]:
+    def path(self) -> Union[str, Path]:  # noqa
         """Return the bundle path."""
 
 
@@ -333,7 +333,7 @@ class Celune(CeluneStateAccessors):
         input_mode: str
         model: Optional[BackendModel]
         model_name: str
-        voices: tuple[str, ...]
+        voices: tuple[str, ...]  # noqa
         current_voice: Optional[str]
         current_character: Optional[str]
         current_character_persona: Optional[CEVoicePersona]
@@ -606,7 +606,7 @@ class Celune(CeluneStateAccessors):
     bind_constant_properties(locals(), CELUNE_CONSTANT_PROPERTIES)
 
     @property
-    def cur_state(self) -> str:
+    def cur_state(self) -> str:  # noqa
         """Return Celune's current runtime state.
 
         Returns:
@@ -615,7 +615,7 @@ class Celune(CeluneStateAccessors):
         return self._runtime_state.cur_state
 
     @cur_state.setter
-    def cur_state(self, value: str) -> None:
+    def cur_state(self, value: str) -> None:  # noqa
         """Store Celune's runtime state and emit transition events on change.
 
         Args:
@@ -1054,12 +1054,12 @@ class Celune(CeluneStateAccessors):
             restored_vc_backend.preload_models()
         snapshot.vc_backend = restored_vc_backend
 
+    @staticmethod
     def _resolve_voice_state(
-        self,
         backend: CeluneBackend,
         preferred_voice: Optional[str] = None,
     ) -> tuple[
-        tuple[str, ...],
+        tuple[str, ...],  # noqa
         Optional[str],
         Optional[str],
         Optional[CEVoicePersona],
@@ -1105,8 +1105,8 @@ class Celune(CeluneStateAccessors):
         )
         return voices, current_voice, None, None, True
 
+    @staticmethod
     def _load_backend_voice_runtime(
-        self,
         backend: CeluneBackend,
         voice: str,
     ) -> tuple[Optional[PreTrainedModel], str]:
@@ -1122,6 +1122,7 @@ class Celune(CeluneStateAccessors):
         preferred_voice: Optional[str] = None,
     ) -> bool:
         """Synchronously switch to a new backend family with rollback on failure."""
+        # noinspection PyProtectedMember
         snapshot: Optional[Celune._ReloadSnapshot] = None
         candidate_kwargs: dict[str, JSONSerializable] = {}
         candidate_backend: Optional[CeluneBackend] = None
@@ -1345,6 +1346,7 @@ class Celune(CeluneStateAccessors):
         preferred_voice: Optional[str] = None,
     ) -> bool:
         """Synchronously switch to a new CEVOICE bundle with rollback on failure."""
+        # noinspection PyProtectedMember
         snapshot: Optional[Celune._ReloadSnapshot] = None
         previous_bundle = active_bundle_path()
         loaded_model: Optional[PreTrainedModel] = None
@@ -1720,7 +1722,7 @@ class Celune(CeluneStateAccessors):
             if self._wake_background_thread is threading.current_thread():
                 self._wake_background_thread = None
 
-    def set_voices(self, voices: tuple[str, ...]) -> None:
+    def set_voices(self, voices: tuple[str, ...]) -> None:  # noqa
         """Configure Celune's voice information.
 
         Args:
@@ -2948,7 +2950,7 @@ class Celune(CeluneStateAccessors):
 
                 device = next(llm.parameters()).device
                 inputs = tokens.to(device)
-                token_ids = cast(torch.Tensor, tokens["input_ids"])
+                token_ids = cast(torch.Tensor, tokens["input_ids"])  # noqa
                 len_tokens = token_ids.shape[1]
 
                 self.log(string("celune.tokens_to_normalize", count=len_tokens))
@@ -2966,7 +2968,7 @@ class Celune(CeluneStateAccessors):
                         eos_token_id=tokenizer.eos_token_id,
                     )
 
-                input_ids = cast(torch.Tensor, inputs["input_ids"])
+                input_ids = cast(torch.Tensor, inputs["input_ids"])  # noqa
                 prompt_len = input_ids.shape[1]
                 new_ids = output_ids[0][prompt_len:]
 

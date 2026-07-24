@@ -18,6 +18,10 @@ class CeluneVCBackend(ABC):
     def __init__(self, log: Callable[[str, str], None]) -> None:
         self.log = log
 
+    def __str__(self) -> str:
+        """Return the backend name for callers using str(CeluneVCBackend(...))."""
+        return self.name
+
     def preload_models(self) -> None:
         """Ensure any optional backend assets are ready before conversion."""
         return None

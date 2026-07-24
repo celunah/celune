@@ -27,7 +27,7 @@ class Mini(CeluneBackend[TTSModel]):
     name: str = "mini"
     uses_voice_bundles: bool = True
     chunk_rate: float = 12.5
-    supported_languages: tuple[str, ...] = ("en", "fr", "de", "it", "pt", "es")
+    supported_languages: tuple[str, ...] = ("en", "fr", "de", "it", "pt", "es")  # noqa
 
     voice_models: Optional[Mapping[str, str]] = {
         "balanced": "lunahr/pocket-tts-ungated",
@@ -63,7 +63,7 @@ class Mini(CeluneBackend[TTSModel]):
             loader.materialize(name, "wav")
 
     @property
-    def voices(self) -> list[str]:
+    def voices(self) -> list[str]:  # noqa
         """Return the voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:

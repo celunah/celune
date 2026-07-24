@@ -8,7 +8,9 @@ from enum import Enum, IntEnum, auto
 from typing import Optional
 
 from .i18n import string
-from .typing.common import JSON, JSONSerializable  # pylint: disable=unused-import
+
+# noinspection PyUnresolvedReferences
+from .typing.common import JSON, JSONSerializable  # pylint: disable=W0611
 
 # main app name
 # why would you rename her? she doesn't approve of it

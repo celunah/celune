@@ -6,7 +6,7 @@ from typing import Callable, Optional, Union
 
 from .base import CeluneVCBackend
 
-__all__ = ["CeluneVCBackend", "resolve_vc_backend"]
+__all__ = ["CeluneVCBackend", "resolve_vc_backend", "VC_BACKENDS"]
 
 VC_BACKENDS = {
     "passthrough": (
