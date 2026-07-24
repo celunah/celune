@@ -2085,7 +2085,7 @@ def queue_sfx_audio(
             )
 
         if keep:
-            engine.kept_sfx_audio = audio.copy()
+            engine.kept_sfx_audio = [chunk.copy() for chunk in split(audio, BASE_SR, 1)]
 
         source_id = _next_playback_source_id(engine)
         _register_overlay_playback_state(
@@ -2857,7 +2857,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                     wav = np.concatenate(full_audio)
                     analysis_audio = wav.copy()
                     if kept_sfx_audio is not None:
-                        wav = np.concatenate((kept_sfx_audio, wav))
+                        wav = np.concatenate([*kept_sfx_audio, wav])
                     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
 
                     first_words = "_".join(text.split()[:3]).lower()

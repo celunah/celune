@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
     import sounddevice as sd
 
-    from .aliases import AudioChunk
+    from .aliases import AudioChunks
     from ..backends.tts import BackendModel, CeluneBackend
     from ..backends.vc import CeluneVCBackend
     from ..cevoice import CEVoicePersona
@@ -258,7 +258,7 @@ class CeluneStateAccessors:
     historical_generated_speech_seconds: float
     reverb: StreamingPedalboardReverb
     recently_saved: Optional[str]
-    kept_sfx_audio: Optional[AudioChunk]
+    kept_sfx_audio: Optional[AudioChunks]
     regenerate: bool
     locked: bool
     loaded: bool
