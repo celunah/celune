@@ -226,8 +226,11 @@ int launcher_run(int argc, char **argv) {
             }
             else if (WIFSIGNALED(status)) {
                 int sig = WTERMSIG(status);
+                const char* signame = strsignal(sig);
 
-                printfe("Celune was killed by signal %d.\n", sig);
+                if ( sig > 2 )
+                    printfe("Celune was terminated by signal %d (%s).\n", sig, signame);
+
                 return 128 + sig;
             }
         }
@@ -335,8 +338,10 @@ int launcher_run(int argc, char **argv) {
         }
         else if (WIFSIGNALED(status)) {
             int sig = WTERMSIG(status);
+            const char* signame = strsignal(sig);
 
-            printfe("Celune was killed by signal %d.\n", sig);
+            if ( sig > 2 )
+                printfe("Celune was terminated by signal %d (%s).\n", sig, signame);
             return 128 + sig;
         }
     }
