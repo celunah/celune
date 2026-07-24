@@ -7,8 +7,11 @@ import signal
 from enum import Enum, IntEnum, auto
 from typing import Optional
 
+from ._version import VERSION
 from .i18n import string
-from .typing.common import JSON, JSONSerializable  # pylint: disable=unused-import
+
+# noinspection PyUnresolvedReferences
+from .typing.common import JSON, JSONSerializable  # pylint: disable=W0611
 
 # main app name
 # why would you rename her? she doesn't approve of it
@@ -187,4 +190,5 @@ COST_EQUIVALENTS = {
     "fishaudio-s2.1-pro": 0.021,
 }
 
-CELUNE_UA = "Celune/4.3.2"
+# temporary Celune user agent, will be used properly in v5
+CELUNE_UA = f"Celune/{VERSION}"

@@ -23,8 +23,9 @@ from celune.celune import Celune
 from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
 from celune.constants import JSON, JSONSerializable, PipelineStates
 from celune.dataclasses.pipeline import AudioInputRequest
-from celune.persona.prompts import PersonaPromptBuilder, _render_markdown_subsection
+from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
 from celune.utils import discard
+from celune.typing.aliases import AudioChunk
 
 from .support import FakeStream, FakeVCBackend, make_pipeline_engine, make_voice_loader
 from .test_persona_memory import StubEmbeddingMemoryStore
@@ -123,7 +124,7 @@ class PipelineTests(TestCase):
         @staticmethod
         def generate_stream(
             model: mock.Mock, **kwargs: JSONSerializable
-        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+        ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
             """Yield one deterministic chunk and preserve kwargs for assertions.
 
             Args:
@@ -162,7 +163,7 @@ class PipelineTests(TestCase):
         self.assertEqual(pipeline.force_stop_speech(celune_engine), True)
         self.assertEqual(engine._speech_generation, 1)
         self.assertEqual(engine.text_queue.empty(), True)
-        self.assertEqual(engine._persona_queue.empty(), True)
+        self.assertEqual(engine.persona_queue.empty(), True)
         self.assertIs(engine.audio_queue.get_nowait(), engine.force_stop_marker)
 
     def test_cancelled_speech_generation_cannot_queue_playback(self) -> None:
@@ -248,11 +249,13 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
     _LanguageAwareBackend = PipelineTests._LanguageAwareBackend
 
-    async def _run_generation_worker(self, engine: Celune) -> None:
+    @staticmethod
+    async def _run_generation_worker(engine: Celune) -> None:
         """Run the async generation worker directly inside the test loop."""
         await pipeline.generation_worker_job(engine)
 
-    async def _run_playback_worker(self, engine: Celune) -> None:
+    @staticmethod
+    async def _run_playback_worker(engine: Celune) -> None:
         """Run the async playback worker directly inside the test loop."""
         await pipeline.playback_worker_job(engine)
 
@@ -414,7 +417,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         with (
             mock.patch("celune.pipeline.default_loader", return_value=loader),
-            mock.patch("celune.pipeline.queue_sfx_audio", return_value=True) as queue,
+            mock.patch("celune.pipeline.queue_sfx_audio", return_value=True) as q,
         ):
             result = pipeline.handle_audio_input(cast(Celune, engine), request)
 
@@ -424,12 +427,12 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertEqual(vc_request.target_references, (Path("balanced.wav"),))
         self.assertEqual(vc_request.pitch_shift, 0)
         self.assertEqual(vc_request.f0_condition, False)
-        queue.assert_called_once()
-        queued_audio = queue.call_args.args[1]
-        self.assertEqual(queue.call_args.args[2], 48000)
-        self.assertEqual(queue.call_args.args[3], "mic test")
+        q.assert_called_once()
+        queued_audio = q.call_args.args[1]
+        self.assertEqual(q.call_args.args[2], 48000)
+        self.assertEqual(q.call_args.args[3], "mic test")
         self.assertEqual(
-            queue.call_args.kwargs["status_label_key"],
+            q.call_args.kwargs["status_label_key"],
             "pipeline.revoicing_label",
         )
         self.assertEqual(queued_audio.shape, (16, 2))
@@ -825,7 +828,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         engine.dev = False
         engine.current_voice = "balanced"
         engine.idle_callback = mock.Mock()
-        glow_calls: list[npt.NDArray[np.float32]] = []
+        glow_calls: list[AudioChunk] = []
         engine.glow = SimpleNamespace(
             schedule=lambda audio: glow_calls.append(np.asarray(audio))
         )
@@ -1590,7 +1593,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
     def test_markdown_persona_headers_use_consistent_spacing(self) -> None:
         """Verify generated and embedded Persona Markdown headers have one blank line after them."""
-        rendered = _render_markdown_subsection(
+        rendered = render_markdown_subsection(
             "Fixture",
             "Intro\n## Nested\n\n- first\n## Another\n- second",
         )
@@ -2193,14 +2196,14 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         with (
             mock.patch("celune.pipeline._store_persona_memories"),
             mock.patch("celune.pipeline.build_persona_request", return_value={}),
-            mock.patch("celune.pipeline.queue_speech", return_value=True) as queue,
+            mock.patch("celune.pipeline.queue_speech", return_value=True) as q,
         ):
             self.assertEqual(
                 pipeline.think(cast(Celune, engine), "User request."),
                 True,
             )
 
-        queue.assert_called_once_with(
+        q.assert_called_once_with(
             engine,
             "Generated reply.",
             save=False,
@@ -2403,7 +2406,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         def generate_stream(
             model: mock.Mock, **kwargs: JSONSerializable
-        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+        ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
             discard(model)
             text = cast(str, kwargs["text"])
             events.append(f"generate:{text}")
@@ -2523,7 +2526,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         def generate_stream(
             model: mock.Mock, **kwargs: JSONSerializable
-        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+        ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
             discard(model)
             discard(kwargs)
             chunk = np.full((48000, 2), 0.1, dtype=np.float32)
@@ -2581,7 +2584,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         def generate_stream(
             model: mock.Mock, **kwargs: JSONSerializable
-        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+        ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
             discard(model)
             discard(kwargs)
             chunk = np.full((48000, 2), 0.1, dtype=np.float32)
@@ -2645,7 +2648,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         def generate_stream(
             model: mock.Mock, **kwargs: JSONSerializable
-        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+        ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
             discard(model)
             discard(kwargs)
             chunk = np.full((48000, 2), 0.1, dtype=np.float32)

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Optional, TextIO, Union, overload
 
 import psutil
-from lingua import (  # pylint: disable=no-name-in-module
+from lingua import (  # pylint: disable=E0611
     Language,
     LanguageDetectorBuilder,
 )

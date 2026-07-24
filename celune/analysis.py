@@ -32,6 +32,7 @@ from .typing.analysis import (
     TextConfigValue,
     VoiceMatch,
 )
+from .typing.aliases import AudioChunk
 
 matplotlib.use("Agg")
 
@@ -180,7 +181,7 @@ def _join_trait_names(trait_names: list[str]) -> str:
     return ", ".join(display_names[:-1]) + f", and {display_names[-1]}"
 
 
-def load_audio(voice: pathlib.Path) -> tuple[npt.NDArray[np.float32], int]:
+def load_audio(voice: pathlib.Path) -> tuple[AudioChunk, int]:
     """Load a WAV file while preserving the native sample rate.
 
     Args:

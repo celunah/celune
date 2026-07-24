@@ -2,14 +2,12 @@
 
 from typing import Literal, Optional, Union
 
-import numpy as np
-import numpy.typing as npt
-
 from .common import JSONSerializable
+from .aliases import AudioChunk, AudioChunkNonNormalized
 
 type WebUiUpdate = dict[str, JSONSerializable]
-type WebUiAudioValue = Optional[tuple[int, npt.NDArray[np.float32]]]
-type WebUiInputArray = Union[npt.NDArray[np.float32], npt.NDArray[np.int16]]
+type WebUiAudioValue = Optional[tuple[int, AudioChunk]]
+type WebUiInputArray = Union[AudioChunk, AudioChunkNonNormalized]
 type WebUiInputAudioValue = Optional[tuple[int, WebUiInputArray]]
 type TaskEventName = Literal[
     "started",

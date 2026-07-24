@@ -202,14 +202,15 @@ class CEVoiceTests(TestCase):
         with self.assertRaisesRegex(CEVoiceError, "format/version mismatch"):
             cevoice.CEVoice.open(self.path)
 
+    # any types here are resolved dynamically
     def test_asset_checksums_are_case_insensitive(self) -> None:
         """Accept uppercase hexadecimal asset checksums in a valid manifest."""
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
         voice_data = voices["balanced"]
-        assets = cast(cevoice.Manifest, voice_data["assets"])
-        wav_asset = cast(cevoice.Manifest, assets["wav"])
+        assets = cast(cevoice.Manifest, voice_data["assets"])  # noqa
+        wav_asset = cast(cevoice.Manifest, assets["wav"])  # noqa
         wav_asset["sha256"] = cast(str, wav_asset["sha256"]).upper()
         self._rewrite_metadata(metadata)
 
@@ -294,6 +295,7 @@ class CEVoiceTests(TestCase):
             },
         )
 
+    # any types here are resolved dynamically
     def test_bundle_assets_can_store_supported_persona_markdown(self) -> None:
         """Verify CECHAR v3 persona Markdown is stored as top-level payload assets."""
         cevoice.write_cevoice(
@@ -350,7 +352,7 @@ class CEVoiceTests(TestCase):
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
         voices["balanced"]["cfg_scale"] = 0
         self._rewrite_metadata(metadata)
         with self.assertRaisesRegex(CEVoiceError, "cfg_scale"):
@@ -358,7 +360,7 @@ class CEVoiceTests(TestCase):
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
         voices["balanced"]["reference_text"] = " "
         self._rewrite_metadata(metadata)
         with self.assertRaisesRegex(CEVoiceError, "reference_text"):
@@ -366,7 +368,7 @@ class CEVoiceTests(TestCase):
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
         del voices["balanced"]["reference_text"]
         self._rewrite_metadata(metadata)
         with self.assertRaisesRegex(CEVoiceError, "reference_text is required"):
@@ -374,8 +376,8 @@ class CEVoiceTests(TestCase):
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])
-        assets = cast(cevoice.Manifest, voices["balanced"]["assets"])
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
+        assets = cast(cevoice.Manifest, voices["balanced"]["assets"])  # noqa
         assets["json"] = {
             "offset": 0,
             "length": 0,

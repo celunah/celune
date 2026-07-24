@@ -17,6 +17,7 @@ from unittest import mock
 import numpy as np
 import numpy.typing as npt
 
+from celune.typing.aliases import AudioChunk
 from celune.backends.tts.base import CeluneBackend
 from celune.backends.vc.base import CeluneVCBackend
 from celune.constants import JSONSerializable, PipelineStates
@@ -77,7 +78,7 @@ class FakeBackend(CeluneBackend):
 
     def generate_stream(
         self, model: FakeModel, **kwargs: JSONSerializable
-    ) -> Iterator[tuple[npt.NDArray[np.float32], int, dict[str, int]]]:
+    ) -> Iterator[tuple[AudioChunk, int, dict[str, int]]]:
         """Yield one deterministic fake audio chunk.
 
         Args:
@@ -136,7 +137,7 @@ class FakeGlow:
         self.wake_called = False
         self.finished = threading.Event()
         self.finished.set()
-        self.scheduled: list[npt.NDArray[np.float32]] = []
+        self.scheduled: list[AudioChunk] = []
         self.reset_audio_reactivity_called = False
 
     def start(self) -> bool:
@@ -200,7 +201,7 @@ class FakeStream:
         self.stopped = False
         self.aborted = False
         self.closed = False
-        self.written: list[npt.NDArray[np.float32]] = []
+        self.written: list[AudioChunk] = []
 
     def start(self) -> None:
         """Record stream startup."""
@@ -272,9 +273,9 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.queue_lock = threading.Lock()
     engine.playback_done = threading.Event()
     engine.playback_done.set()
-    engine._persona_queue = queue.Queue()
+    engine.persona_queue = queue.Queue()
     engine.utterance_force_stop = threading.Event()
-    engine._speech_generation = 0
+    engine.speech_generation = 0
     engine.kept_sfx_audio = None
     engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
     engine.log = lambda msg, severity="info": messages.append((msg, severity))

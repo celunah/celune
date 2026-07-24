@@ -40,6 +40,8 @@ Only hardcode or redefine values when importing the existing value would create 
 
 ## CI and Validation
 
+Note: Do not run CI if the current diff made no logical changes to any Python files within Celune. Proceed only if you made changes that would actually require running validations.
+
 The canonical CI command is:
 
 ```bash

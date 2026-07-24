@@ -116,6 +116,7 @@ from .utils import (
     is_april_fools,
     rng_replace,
     run_async,
+    discard,
 )
 
 if TYPE_CHECKING:
@@ -512,7 +513,7 @@ def force_stop_speech(engine: Celune) -> bool:
     with engine.queue_lock:
         engine._speech_generation = getattr(engine, "_speech_generation", 0) + 1
         clear_queue(engine.text_queue)
-        clear_queue(engine._persona_queue)
+        clear_queue(engine.persona_queue)
         clear_queue(engine.audio_queue)
         engine.kept_sfx_audio = None
         engine.audio_queue.put(engine.force_stop_marker)
@@ -867,7 +868,7 @@ def _flush_buffered_speech_chunks(
             BASE_SR,
             speech_timing if not pushed_audio and first_buffer_chunk else None,
         )
-        if queued is False:
+        if not queued:
             buffer.clear()
             return pushed_audio
         if stream_queue is not None:
@@ -904,6 +905,7 @@ def _youtube_sfx_title(url: str) -> str:
     """Return a friendly title for one YouTube URL when available."""
     query = urlencode({"url": url, "format": "json"})
     endpoint = f"https://www.youtube.com/oembed?{query}"
+    # noinspection PyBroadException
     try:
         with urlopen(endpoint, timeout=5) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -2006,7 +2008,7 @@ def _queue_speech_after_ready(
                     save=save,
                     stream_queue=stream_queue,
                     normalize=engine.use_normalization,
-                    generation=engine._speech_generation,
+                    generation=engine.speech_generation,
                 )
             )
         engine.status_callback(string("status.generating"))
@@ -2102,7 +2104,7 @@ def queue_sfx_audio(
             )
 
         if keep:
-            engine.kept_sfx_audio = audio.copy()
+            engine.kept_sfx_audio = [chunk.copy() for chunk in split(audio, BASE_SR, 1)]
 
         source_id = _next_playback_source_id(engine)
         _register_overlay_playback_state(
@@ -2473,7 +2475,7 @@ def play_signal(engine: Celune, signal_type: str) -> bool:
         raise ValueError("no such signal")
 
     # if a pipeline lock is already held or was not initialized this can cause
-    # Celune to become deadlocked or it won't have an effect, so please call
+    # Celune to become deadlocked, or it won't have an effect, so please call
     # Celune._try_play_signal() instead of calling this method directly
     if signal_type == "readiness":
         source_id = _next_playback_source_id(engine)
@@ -2642,7 +2644,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
 
                         model_id = engine.backend.model_id_for_voice(active_voice)
                         engine.log_dev(
-                            f"[RELOAD] Loading {model_id} for language: {target_language}"
+                            f"[RELOAD] Loading {model_id} for language: {str(target_language)}"
                         )
                         engine.backend.unload_model()
                         engine.model = engine.backend.load_model(
@@ -2814,7 +2816,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
             )
 
             if buffer:
-                pushed_audio = _flush_buffered_speech_chunks(
+                _flush_buffered_speech_chunks(
                     engine,
                     source_id,
                     buffer,
@@ -2837,9 +2839,9 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                             tail,
                             BASE_SR,
                         )
-                        if queued_tail is not False and stream_queue is not None:
+                        if queued_tail and stream_queue is not None:
                             stream_queue.put(tail.copy())
-                        if queued_tail is not False:
+                        if queued_tail:
                             buffer.append(tail)
                         if save_output:
                             full_audio.append(tail)
@@ -2890,7 +2892,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                     wav = np.concatenate(full_audio)
                     analysis_audio = wav.copy()
                     if kept_sfx_audio is not None:
-                        wav = np.concatenate((kept_sfx_audio, wav))
+                        wav = np.concatenate([*kept_sfx_audio, wav])
                     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
 
                     first_words = "_".join(text.split()[:3]).lower()
@@ -3128,6 +3130,7 @@ def _finalize_playback_idle(
             and not getattr(engine, "_ready_announced", False)
         ):
             is_vc_mode = False
+            discard(is_vc_mode)
             mode_check = getattr(engine, "_is_voice_conversion_mode", None)
             if callable(mode_check):
                 is_vc_mode = bool(mode_check())
@@ -3232,9 +3235,11 @@ async def playback_worker_job(engine: Celune) -> None:
                 return False
 
             if isinstance(pending, PlaybackChunk):
-                blocks = _playback_blocks(pending)
-                if blocks:
-                    source_buffers.setdefault(pending.source_id, deque()).extend(blocks)
+                blocking = _playback_blocks(pending)
+                if blocking:
+                    source_buffers.setdefault(pending.source_id, deque()).extend(
+                        blocking
+                    )
                     buffered_seconds += len(pending.audio) / max(1, pending.sample_rate)
             elif isinstance(pending, PlaybackSourceDone):
                 source_done[pending.source_id] = pending

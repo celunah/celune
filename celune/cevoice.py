@@ -42,7 +42,7 @@ SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
     "examples.md",
 )
 DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
-    "4c9f0a1b9dd28d9c411c0d5ad5e88b35e9fcd7ef389080940bb35e0068460928"
+    "9fbbc1244c027a2e5ab42f62ab557e0e0147bdf3bbb59fc23d57afd26d10dccf"
 )
 
 
@@ -105,7 +105,7 @@ class CEVoice:
         return cls(bundle_path, metadata, payload_offset)
 
     @property
-    def voices(self) -> VoiceManifest:
+    def voices(self) -> VoiceManifest:  # noqa
         """Return the voice manifest.
 
         Returns:
@@ -120,7 +120,7 @@ class CEVoice:
         return cast(VoiceManifest, voices)
 
     @property
-    def voice_order(self) -> tuple[str, ...]:
+    def voice_order(self) -> tuple[str, ...]:  # noqa
         """Return the preferred user-facing voice order.
 
         Returns:
@@ -157,7 +157,7 @@ class CEVoice:
         )
 
     @property
-    def assets(self) -> Manifest:
+    def assets(self) -> Manifest:  # noqa
         """Return the top-level bundle asset manifest.
 
         Returns:

@@ -9,10 +9,10 @@ import numpy.typing as npt
 import sounddevice as sd
 
 if TYPE_CHECKING:
-    from transformers.modeling_utils import PreTrainedModel
-    from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+    from transformers.modeling_utils import PreTrainedModel  # noqa
+    from transformers.tokenization_utils_base import PreTrainedTokenizerBase  # noqa
 
-    from .events import EventPayload
+    from .events import EventPayload  # noqa
 
 type RuntimeValue = Union[
     str,
@@ -25,23 +25,32 @@ type RuntimeValue = Union[
     dict[Hashable, "RuntimeValue"],
     list["RuntimeValue"],
     set["RuntimeValue"],
-    tuple["RuntimeValue", ...],
+    tuple["RuntimeValue", ...],  # noqa
     "SupportsCloseHook",
     "SupportsUnloadHook",
     "SupportsRuntimeAttributes",
     unittest.mock.NonCallableMock,
 ]
+
+type AudioChunk = npt.NDArray[np.float32]  # noqa
+type AudioChunkNonNormalized = npt.NDArray[np.int16]  # noqa
+type AudioChunkBroad = npt.NDArray[np.floating]  # noqa
+type AudioChunks = list[AudioChunk]  # noqa
+
 type SeedVCArgument = Union[str, int, float, bool]
 type SeedVCGenerator = Generator[
-    Optional[npt.NDArray[np.float32]], None, npt.NDArray[np.float32]
+    Optional[AudioChunk], None, AudioChunk  # noqa
 ]
 
 type DevLogCallback = Callable[[str, str], None]
 type _DispatcherCallback = Callable[["EventPayload"], None]
-type EmbeddingVector = npt.NDArray[np.float32]
+type DispatcherCallback = _DispatcherCallback
+type EmbeddingVector = npt.NDArray[np.float32]  # noqa
 type _EmbeddingBackend = tuple["PreTrainedTokenizerBase", "PreTrainedModel"]
+type EmbeddingBackend = _EmbeddingBackend
 
 type _AudioDeviceScalar = Union[bool, int, float, str]
+type AudioDeviceScalar = _AudioDeviceScalar
 type _VCAudioCallback = Callable[
     [
         npt.NDArray[np.float32],
@@ -51,9 +60,6 @@ type _VCAudioCallback = Callable[
     ],
     None,
 ]
-
-type AudioChunk = npt.NDArray[np.float32]
-type AudioChunks = list[AudioChunk]
 
 
 class SupportsCloseHook(Protocol):

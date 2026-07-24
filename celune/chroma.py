@@ -23,6 +23,7 @@ from .utils import discard, is_celune_day, lunar_info, range_interpolated, to_rg
 
 if TYPE_CHECKING:
     from .celune import Celune
+    from .typing.aliases import AudioChunkBroad
 
 
 class AudioRGBGlow:
@@ -30,7 +31,7 @@ class AudioRGBGlow:
 
     def __init__(
         self,
-        celune: Optional["Celune"],
+        celune: Optional[Celune],
         color: str,
         host: str = "127.0.0.1",
         port: int = 6742,
@@ -321,7 +322,7 @@ class AudioRGBGlow:
         level = level ** (1.0 / self.gamma)
         return float(np.clip(level, 0.0, 1.0))
 
-    def _set_all_devices(self, rgb: Union[RGB, npt.NDArray[np.floating]]) -> None:
+    def _set_all_devices(self, rgb: Union[RGB, AudioChunkBroad]) -> None:
         """Apply color to all registered OpenRGB devices."""
         rgb = np.clip(rgb, 0, 255).astype(int)
         color = RGBColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))

@@ -9,7 +9,13 @@ from ...i18n import string
 from ...typing.backends import BackendModel
 from .base import CeluneBackend
 
-__all__ = ["BackendModel", "CeluneBackend", "get_version", "resolve_backend"]
+__all__ = [
+    "BackendModel",
+    "CeluneBackend",
+    "get_version",
+    "resolve_backend",
+    "BACKENDS",
+]
 
 BACKENDS = {
     "mini": ("celune.backends.tts.mini", "Mini"),

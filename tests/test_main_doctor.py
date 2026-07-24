@@ -15,7 +15,8 @@ entrypoint = main.load_entrypoint_module()
 class DoctorCommandTests(TestCase):
     """Verify `celune doctor` works without booting the full app."""
 
-    def test_close_existing_processes_never_kills_current_process(self) -> None:
+    @staticmethod
+    def test_close_existing_processes_never_kills_current_process() -> None:
         """Verify launcher cleanup excludes itself and waits for the old process."""
         current = SimpleNamespace(pid=101, name=lambda: "python.exe")
         launcher = SimpleNamespace(pid=303, name=lambda: "celune.exe")

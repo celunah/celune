@@ -62,7 +62,7 @@ from .dsp import resample_audio
 from .i18n import string
 from .paths import main_window_log_path, project_root
 from .pipeline import SpeechStreamQueue, prepare_playback_audio
-from .typing.aliases import AudioChunks
+from .typing.aliases import AudioChunks, AudioChunk
 from .typing.api import (
     TaskCommandName,
     TaskEventName,
@@ -1889,6 +1889,7 @@ def _webui_submit_snapshot(
 
 def _webui_run_command(text: str) -> bool:
     """Run one slash command through the main UI command path when available."""
+    # noinspection PyProtectedMember
     ui = CeluneUI._instance
     if ui is None:
         _append_webui_log(
@@ -1914,7 +1915,7 @@ def _webui_run_command(text: str) -> bool:
 
 def _decode_uploaded_audio(
     data: bytes,
-) -> tuple[npt.NDArray[np.float32], int]:
+) -> tuple[AudioChunk, int]:
     """Decode uploaded audio bytes into float32 audio and a source sample rate."""
     audio, sample_rate = sf.read(io.BytesIO(data), dtype="float32")
     return np.asarray(audio, dtype=np.float32), int(sample_rate)
@@ -2440,6 +2441,7 @@ async def _cancel_speech_job(job_id: str) -> bool:
         return False
 
     celune = require_celune()
+    # noinspection PyBroadException
     try:
         stopped = await celune.force_stop_speech_async()
     except Exception:
@@ -2850,6 +2852,7 @@ async def sfx(
             },
         )
 
+    # noinspection PyBroadException
     try:
         audio, sr = _decode_uploaded_audio(data)
         audio = resample_audio(audio, sr)
@@ -2917,6 +2920,7 @@ async def convert_audio(
             },
         )
 
+    # noinspection PyBroadException
     try:
         audio, sample_rate = _decode_uploaded_audio(data)
     except Exception:
@@ -2928,6 +2932,7 @@ async def convert_audio(
             },
         )
 
+    # noinspection PyBroadException
     try:
         output = await run_in_threadpool(
             celune.convert_audio,

@@ -181,7 +181,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             return exc.value
 
     @property
-    def output_sample_rate(self) -> int:
+    def output_sample_rate(self) -> int:  # noqa
         """Return the sample rate produced by the backend's default Seed-VC mode.
 
         Returns:

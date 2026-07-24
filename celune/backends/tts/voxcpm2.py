@@ -25,7 +25,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
     uses_voice_bundles: bool = True
     chunk_rate: float = 6.25
     max_new_tokens: int = 512
-    supported_languages: tuple[str, ...] = (
+    supported_languages: tuple[str, ...] = (  # noqa
         "ar",
         "my",
         "zh-cn",
@@ -99,7 +99,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             loader.materialize(name, "wav")
 
     @property
-    def voices(self) -> list[str]:
+    def voices(self) -> list[str]:  # noqa
         """Return the voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:

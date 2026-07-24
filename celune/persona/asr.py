@@ -13,14 +13,16 @@ from ..dsp import resample_audio
 from ..typing.aliases import AudioChunk
 
 if TYPE_CHECKING:
-    import torch
+    # noinspection PyPep8Naming
+    from torch import Tensor, device as Device, dtype as DType
+    from torch.nn import Parameter
 
 
 class _WhisperProcessorOutput(Protocol):
     """Protocol for tensor fields returned by a Whisper processor."""
 
-    input_features: torch.Tensor
-    attention_mask: Optional[torch.Tensor]
+    input_features: Tensor
+    attention_mask: Optional[Tensor]
 
 
 class _WhisperProcessor(Protocol):
@@ -38,7 +40,7 @@ class _WhisperProcessor(Protocol):
 
     def batch_decode(
         self,
-        generated_ids: torch.Tensor,
+        generated_ids: Tensor,
         *,
         skip_special_tokens: bool,
     ) -> list[str]:
@@ -56,14 +58,14 @@ class _WhisperModel(Protocol):
     def eval(self) -> None:
         """Switch the model to evaluation mode."""
 
-    def generate(self, **kwargs: Union[torch.Tensor, str]) -> torch.Tensor:
+    def generate(self, **kwargs: Union[Tensor, str]) -> Tensor:
         """Generate token IDs from prepared Whisper inputs.
 
         Args:
             kwargs: Tensor and text inputs forwarded to Whisper generation.
         """
 
-    def parameters(self) -> Iterator[torch.nn.Parameter]:
+    def parameters(self) -> Iterator[Parameter]:
         """Iterate over the model parameters.
 
         Returns:
@@ -84,8 +86,8 @@ class WhisperTranscriber:
         self.language = language.strip() if language and language.strip() else None
         self._processor: Optional[_WhisperProcessor] = None
         self._model: Optional[_WhisperModel] = None
-        self._device: Optional[torch.device] = None
-        self._dtype: Optional[torch.dtype] = None
+        self._device: Optional[Device] = None
+        self._dtype: Optional[DType] = None
         self._is_multilingual = True
         self._load_lock = threading.Lock()
 
@@ -181,7 +183,7 @@ class WhisperTranscriber:
         """Transcribe one captured microphone snapshot.
 
         Args:
-            audio: Mono or multi-channel microphone audio samples.
+            audio: Mono or multichannel microphone audio samples.
             sample_rate: Sample rate of the captured audio in hertz.
 
         Returns:

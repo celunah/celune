@@ -27,7 +27,7 @@ from celune.paths import (
 )
 from celune.persona.memory import default_memory_dir
 from celune.ui.app import CeluneUI, UILogMessage
-from celune.utils import format_error
+from celune.utils import format_error, discard
 
 
 class RuntimePathTests(TestCase):
@@ -225,6 +225,7 @@ class RuntimePathTests(TestCase):
             RuntimeError: Raised by the test to verify deferred traceback formatting.
         """
         captured: Optional[RuntimeError] = None
+        discard(captured)
         try:
             raise RuntimeError("deferred boom")
         except RuntimeError as exc:

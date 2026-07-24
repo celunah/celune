@@ -231,6 +231,10 @@ class CeluneBackend(ABC, Generic[ModelT]):
         self.random_seed = True
         self._truncated_reference_paths: set[Path] = set()
 
+    def __str__(self) -> str:
+        """Return the backend name for callers using str(CeluneBackend(...))."""
+        return self.name
+
     def bind_fatal(self, fatal: Optional[Callable[[], None]]) -> None:
         """Bind the active Celune fatal callback to this backend instance.
 
@@ -340,7 +344,7 @@ class CeluneBackend(ABC, Generic[ModelT]):
         """
 
     @property
-    def default_model_id(self) -> str:
+    def default_model_id(self) -> str:  # noqa
         """Return the default model identifier for this backend.
 
         Returns:
@@ -358,7 +362,7 @@ class CeluneBackend(ABC, Generic[ModelT]):
         raise ValueError(f"{self.name} does not define a default model")
 
     @property
-    def all_model_ids(self) -> list[str]:
+    def all_model_ids(self) -> list[str]:  # noqa
         """Return every known model identifier for this backend.
 
         Returns:
@@ -373,7 +377,7 @@ class CeluneBackend(ABC, Generic[ModelT]):
         return []
 
     @property
-    def voices(self) -> list[str]:
+    def voices(self) -> list[str]:  # noqa
         """Return the available voice names for this backend.
 
         Returns:

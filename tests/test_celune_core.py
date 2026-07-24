@@ -672,8 +672,13 @@ class CeluneCoreTests(TestCase):
         celune.model_ready.set()
         celune.playback_done.clear()
         prepare_started = threading.Event()
+
+        def input_state(locked: bool) -> None:
+            if locked:
+                prepare_started.set()
+
         celune.change_input_state_callback = mock.Mock(
-            side_effect=lambda locked: prepare_started.set() if locked else None
+            side_effect=input_state,
         )
         celune.force_stop_speech = mock.Mock()
         result: list[bool] = []
@@ -882,7 +887,7 @@ class CeluneCoreTests(TestCase):
         calls: list[str] = []
 
         def process_request(engine: Celune, text: str) -> bool:
-            del engine
+            discard(engine)  # LOL, discarding Celune, why?
             calls.append(text)
             return True
 

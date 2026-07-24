@@ -570,7 +570,7 @@ def _extract_artifact_root(zip_path: Path, destination: Path) -> Path:
 
 
 def _replace_path(source: Path, destination: Path) -> None:
-    """Replace one file or directory in the install directory."""
+    """Replace one file or directory in the installation directory."""
     if destination.exists():
         if destination.is_dir() and not destination.is_symlink():
             shutil.rmtree(destination)

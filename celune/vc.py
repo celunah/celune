@@ -287,7 +287,7 @@ def create_live_voice_activity_detector(
 
     try:
         silero_vad = importlib.import_module("silero_vad")
-    except Exception:
+    except ImportError:
         return None
 
     try:

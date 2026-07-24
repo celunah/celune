@@ -81,10 +81,10 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 
 > [!NOTE]
 > Due to limitations of GPT-SoVITS with Celune's calm voice, a demonstration of GPT-SoVITS was not included.
-> This backend does not work with softly spoken or other low-energy voices, and is susceptible to accent drift.
-> The model least susceptible to accent drift is GPT-SoVITS v4.
-> Set `gpt_sovits_variant: v4` in Celune's configuration file to use it.
-> Otherwise, the default model will be GPT-SoVITS v2ProPlus.
+> 
+> This backend may not work with certain types of low-energy voices and may cause accent drifts if not using Celune's custom [T2S model](https://huggingface.co/lunahr/celune-t2s-en-us/blob/main/celune_t2s_en_US-e15.ckpt).
+> 
+> After downloading, set `gpt_sovits_t2s_weights_path: <path_to_t2s>` in Celune's configuration to fix these problems.
 
 The demonstration lines try to showcase Celune's best, but they may include minor mistakes. This is an inherent limitation with TTS models, and Celune should not be blamed for it.
 

@@ -21,7 +21,6 @@ from typing import Callable, Optional, Protocol, Union, cast
 
 from huggingface_hub import snapshot_download
 import numpy as np
-import numpy.typing as npt
 import soundfile as sf
 import torch
 
@@ -33,12 +32,12 @@ from ...paths import (
     huggingface_hub_cache_dir,
     project_root,
 )
-from ...typing.aliases import RuntimeValue, AudioChunk
+from ...typing.aliases import RuntimeValue, AudioChunk, AudioChunkNonNormalized
 from ...utils import custom_assert
 from .base import CeluneBackend
 
 
-class _GPTSoVITSPipeline(Protocol):
+class GPTSoVITSPipeline(Protocol):
     """Subset of the official GPT-SoVITS pipeline used by Celune."""
 
     def run(self, inputs: dict[str, JSONSerializable]) -> Iterator[RuntimeValue]:
@@ -65,11 +64,11 @@ class _GPTSoVITSRuntime:
 
     def __init__(
         self,
-        pipeline: _GPTSoVITSPipeline,
+        pipeline: GPTSoVITSPipeline,
         variant: str,
         sample_rate: int,
     ) -> None:
-        self.pipeline: Optional[_GPTSoVITSPipeline] = pipeline
+        self.pipeline: Optional[GPTSoVITSPipeline] = pipeline
         self.variant = variant
         self.sample_rate = sample_rate
 
@@ -142,26 +141,14 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         "v4",
         "v2Pro",
         "v3",
-        "v2",
-        "v1",
     )
     _variant_aliases: Mapping[str, str] = {
-        "v1": "v1",
-        "v2": "v2",
         "v2pro": "v2Pro",
         "v2proplus": "v2ProPlus",
         "v3": "v3",
         "v4": "v4",
     }
     _variant_files: Mapping[str, tuple[str, ...]] = {
-        "v1": (
-            "s1bert25hz-2kh-longer-epoch=68e-step=50232.ckpt",
-            "s2G488k.pth",
-        ),
-        "v2": (
-            "gsv-v2final-pretrained/s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt",
-            "gsv-v2final-pretrained/s2G2333k.pth",
-        ),
         "v2Pro": (
             "s1v3.ckpt",
             "v2Pro/s2Gv2Pro.pth",
@@ -193,11 +180,15 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         log: Callable[[str, str], None],
         root: Optional[str] = None,
         variant: Optional[str] = None,
+        t2s_weights_path: Optional[str] = None,
         fatal: Optional[Callable[[], None]] = None,
     ) -> None:
         self.root = self._resolve_root(root)
         requested_variant = self._normalize_variant(variant)
         self._requested_variant = requested_variant
+        self._custom_t2s_weights_path = self._resolve_custom_t2s_weights_path(
+            t2s_weights_path
+        )
         self._model_snapshot: Optional[Path] = None
         self.variant = requested_variant or self._variant_order[0]
         super().__init__(log=log, model_name=self.variant, fatal=fatal)
@@ -224,6 +215,15 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                     available=choices,
                 )
             ) from error
+
+    @staticmethod
+    def _resolve_custom_t2s_weights_path(
+        path: Optional[str],
+    ) -> Optional[Path]:
+        """Resolve an optional custom text-to-semantic checkpoint path."""
+        if path is None or not path.strip():
+            return None
+        return Path(path).expanduser().resolve()
 
     @classmethod
     def _managed_source_root(cls, create: bool = False) -> Path:
@@ -344,9 +344,17 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         return cls._download_source_tree(cls._managed_source_root(create=True))
 
     @classmethod
-    def _variant_is_available(cls, model_root: Path, variant: str) -> bool:
+    def _variant_is_available(
+        cls,
+        model_root: Path,
+        variant: str,
+        custom_t2s_weights_path: Optional[Path] = None,
+    ) -> bool:
         """Return whether one variant has all required cached assets."""
-        required = (*cls._common_files, *cls._variant_files[variant])
+        variant_files = cls._variant_files[variant]
+        if custom_t2s_weights_path is not None:
+            variant_files = variant_files[1:]
+        required = (*cls._common_files, *variant_files)
         return all((model_root / relative_path).exists() for relative_path in required)
 
     def _select_variant(
@@ -354,7 +362,11 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
     ) -> str:
         """Select an explicit variant or the best available cached variant."""
         if requested_variant is not None:
-            if not self._variant_is_available(model_root, requested_variant):
+            if not self._variant_is_available(
+                model_root,
+                requested_variant,
+                self._custom_t2s_weights_path,
+            ):
                 raise FileNotFoundError(
                     string(
                         "gpt_sovits.variant_not_found",
@@ -365,7 +377,11 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             return requested_variant
 
         for candidate in self._variant_order:
-            if self._variant_is_available(model_root, candidate):
+            if self._variant_is_available(
+                model_root,
+                candidate,
+                self._custom_t2s_weights_path,
+            ):
                 return candidate
 
         choices = ", ".join(self._variant_order)
@@ -387,7 +403,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             loader.materialize(name, "wav")
 
     @property
-    def default_model_id(self) -> str:
+    def default_model_id(self) -> str:  # noqa
         """Return the selected GPT-SoVITS variant identifier.
 
         Returns:
@@ -396,7 +412,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         return self.variant
 
     @property
-    def all_model_ids(self) -> list[str]:
+    def all_model_ids(self) -> list[str]:  # noqa
         """Return the selected GPT-SoVITS variant identifier.
 
         Returns:
@@ -405,7 +421,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         return [self.variant]
 
     @property
-    def voices(self) -> list[str]:
+    def voices(self) -> list[str]:  # noqa
         """Return voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:
@@ -571,7 +587,11 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         snapshot = self._model_snapshot
         if snapshot is None:
             return False, None
-        available = self._variant_is_available(snapshot, normalized_model)
+        available = self._variant_is_available(
+            snapshot,
+            normalized_model,
+            self._custom_t2s_weights_path,
+        )
         return available, str(snapshot) if available else None
 
     def preload_models(self) -> None:
@@ -623,7 +643,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         """Build an absolute-path TTS_Config payload for one cached variant."""
         model_root = self._ensure_model_snapshot()
         paths = self._variant_files[variant]
-        t2s_path = model_root / paths[0]
+        t2s_path = self._custom_t2s_weights_path or model_root / paths[0]
         sovits_path = model_root / paths[1]
         return {
             "custom": {
@@ -683,7 +703,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                     ) from junction_error
 
     def load_model(self, model_id: str, **kwargs) -> _GPTSoVITSRuntime:
-        """Load one official GPT-SoVITS variant through ``TTS_Config`` and ``TTS``.
+        """Load one GPT-SoVITS variant through ``TTS_Config`` and ``TTS``.
 
         Args:
             model_id: GPT-SoVITS variant identifier to load.
@@ -694,7 +714,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
 
         Raises:
             ValueError: If `model_id` is not a known GPT-SoVITS variant.
-            FileNotFoundError: If required cached variant assets are missing.
+            FileNotFoundError: If required cached assets or a custom checkpoint are missing.
         """
         del kwargs
         variant = self._normalize_variant(model_id)
@@ -703,7 +723,11 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         snapshot = self._ensure_model_snapshot()
         self.variant = variant
         self.model_name = variant
-        available = self._variant_is_available(snapshot, variant)
+        available = self._variant_is_available(
+            snapshot,
+            variant,
+            self._custom_t2s_weights_path,
+        )
         if not available:
             raise FileNotFoundError(
                 string(
@@ -712,6 +736,15 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                     root=snapshot,
                 )
             )
+
+        if self._custom_t2s_weights_path is not None:
+            if not self._custom_t2s_weights_path.is_file():
+                raise FileNotFoundError(
+                    string(
+                        "gpt_sovits.custom_t2s_weights_not_found",
+                        path=self._custom_t2s_weights_path,
+                    )
+                )
 
         self._ensure_cached_model_links()
         self._ensure_nltk_data()
@@ -723,7 +756,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                     getattr(module, "TTS_Config"),
                 )
                 pipeline_type = cast(
-                    Callable[[_GPTSoVITSConfig], _GPTSoVITSPipeline],
+                    Callable[[_GPTSoVITSConfig], GPTSoVITSPipeline],
                     getattr(module, "TTS"),
                 )
                 config = config_type(self._model_config(variant))
@@ -855,7 +888,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
 
     @staticmethod
     def _to_numpy_audio(
-        audio: Union[AudioChunk, npt.NDArray[np.int16], torch.Tensor],
+        audio: Union[AudioChunk, AudioChunkNonNormalized, torch.Tensor],  # noqa
     ) -> AudioChunk:
         """Convert one GPT-SoVITS output chunk to mono float32 audio."""
         if isinstance(audio, torch.Tensor):
@@ -868,7 +901,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
 
     def _run_pipeline(
         self,
-        pipeline: _GPTSoVITSPipeline,
+        pipeline: GPTSoVITSPipeline,
         request: dict[str, JSONSerializable],
     ) -> Iterator[RuntimeValue]:
         """Run GPT-SoVITS while its relative runtime paths are active."""
@@ -878,7 +911,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
 
     @staticmethod
     def _refresh_prompt_cache(
-        pipeline: _GPTSoVITSPipeline,
+        pipeline: GPTSoVITSPipeline,
         reference_wav: Path,
         prompt_text: str,
         prompt_language: str,

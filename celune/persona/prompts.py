@@ -26,8 +26,16 @@ def _render_optional_section(tag: str, content: str) -> str:
     return f"<{tag}>\n{stripped}\n</{tag}>"
 
 
-def _render_markdown_subsection(heading: str, content: str) -> str:
-    """Return one Markdown subsection with consistent heading spacing."""
+def render_markdown_subsection(heading: str, content: str) -> str:
+    """Return one Markdown subsection with consistent heading spacing.
+
+    Args:
+        heading: Value for `heading`.
+        content: Value for `content`.
+
+    Returns:
+        Result of this function.
+    """
     lines = content.strip().splitlines()
     normalized_lines: list[str] = []
     index = 0
@@ -163,8 +171,8 @@ class PersonaSourceMaterial:
         return "\n\n".join(
             section
             for section in (
-                _render_markdown_subsection("Identity", self.identity),
-                _render_markdown_subsection("Soul", self.soul),
+                render_markdown_subsection("Identity", self.identity),
+                render_markdown_subsection("Soul", self.soul),
             )
             if section
         )
@@ -178,10 +186,10 @@ class PersonaSourceMaterial:
         return "\n\n".join(
             section
             for section in (
-                _render_markdown_subsection("Personality", self.personality),
-                _render_markdown_subsection("Speech Style", self.speech_style),
-                _render_markdown_subsection("Boundaries", self.boundaries),
-                _render_markdown_subsection("Examples", self.examples),
+                render_markdown_subsection("Personality", self.personality),
+                render_markdown_subsection("Speech Style", self.speech_style),
+                render_markdown_subsection("Boundaries", self.boundaries),
+                render_markdown_subsection("Examples", self.examples),
             )
             if section
         )
@@ -274,11 +282,11 @@ class PersonaPromptBuilder:
                     section
                     for section in (
                         context.persona_source_material.behavior_section(),
-                        _render_markdown_subsection(
+                        render_markdown_subsection(
                             "Runtime Guidance",
                             _render_lines(behavior_lines),
                         ),
-                        _render_markdown_subsection(
+                        render_markdown_subsection(
                             "Reference Resolution",
                             _render_lines(reference_resolution_lines),
                         ),

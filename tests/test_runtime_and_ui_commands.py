@@ -928,7 +928,8 @@ class UIStartupTests(TestCase):
             sys.stdout = original_stdout
             sys.stderr = original_stderr
 
-    def test_log_redirect_ansi_forwards_and_flushes_underlying_stdout(self) -> None:
+    @staticmethod
+    def test_log_redirect_ansi_forwards_and_flushes_underlying_stdout() -> None:
         """Verify ANSI escape forwarding reaches the original terminal stream."""
         stream = mock.Mock()
         stream.isatty.return_value = True
@@ -986,6 +987,23 @@ class UIStartupTests(TestCase):
 
         self.assertEqual(captured, [])
 
+    def test_runtime_log_filters_gpt_sovits_text2semantic_loading(self) -> None:
+        """Verify GPT-SoVITS checkpoint loading chatter stays out of the UI log."""
+        stream = mock.Mock()
+        stream.isatty.return_value = True
+        captured: list[tuple[str, str]] = []
+        redirect = ui_terminal.LogRedirect(
+            stdout=stream,
+            stderr=stream,
+            write_callback=lambda msg, severity: captured.append((msg, severity)),
+            default_severity="info",
+            filter_messages=ui_app._RUNTIME_LOG_REDIRECT_FILTER_MESSAGES,
+        )
+
+        redirect.write("Loading Text2Semantic weights from C:/models/custom-e20.ckpt\n")
+
+        self.assertEqual(captured, [])
+
     def test_log_redirect_suppresses_tqdm_progress_lines(self) -> None:
         """Verify tqdm carriage-return progress lines are filtered out."""
         stream = mock.Mock()
@@ -1003,7 +1021,8 @@ class UIStartupTests(TestCase):
 
         self.assertEqual(captured, [])
 
-    def test_load_tts_writes_terminal_title_to_original_stdout(self) -> None:
+    @staticmethod
+    def test_load_tts_writes_terminal_title_to_original_stdout() -> None:
         """Verify the ready-state title reset targets the original terminal stream."""
         ui = CeluneUI()
         ui.safe_log = lambda *_args, **_kwargs: None
@@ -1217,7 +1236,8 @@ class UIStartupTests(TestCase):
         ui.change_voice_lock_state.assert_called_once_with(locked=True)
         ui.safe_status.assert_not_called()
 
-    def test_on_button_pressed_ignores_voice_switch_when_no_voices_loaded(self) -> None:
+    @staticmethod
+    def test_on_button_pressed_ignores_voice_switch_when_no_voices_loaded() -> None:
         """Verify voice cycling is blocked cleanly when startup left no voices loaded."""
         ui = CeluneUI()
         ui.celune_ready = False
@@ -1756,6 +1776,8 @@ class UIStartupTests(TestCase):
 
             def __init__(self) -> None:
                 self.calls = 0
+                self.last_shape = ()
+                self.last_sample_rate = 0
 
             def has_voice(self, audio: np.ndarray, sample_rate: int) -> bool:
                 """Report every callback as non-speech.

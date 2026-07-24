@@ -401,7 +401,7 @@ class PersonaRuntime:
         self.lock = threading.Lock()
 
     @property
-    def model_id(self) -> str:
+    def model_id(self) -> str:  # noqa
         """Return the currently loaded model identifier.
 
         Returns:
@@ -410,7 +410,7 @@ class PersonaRuntime:
         return self.backend.model_id
 
     @property
-    def quantization(self) -> str:
+    def quantization(self) -> str:  # noqa
         """Return the currently loaded quantization mode.
 
         Returns:

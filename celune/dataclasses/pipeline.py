@@ -12,6 +12,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ..constants import N_A_NUMERIC
+from ..typing.aliases import AudioChunk
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,7 @@ class SpeechDone:
     """Playback completion marker for one generated utterance."""
 
     saved_path: Optional[str] = None
-    analysis_audio: Optional[npt.NDArray[np.float32]] = None
+    analysis_audio: Optional[AudioChunk] = None
 
 
 @dataclass(frozen=True)
@@ -81,7 +82,7 @@ class PlaybackChunk:
     source_id: int
     audio: npt.NDArray[np.float32]
     sample_rate: int
-    timing: Optional["SpeechTiming"] = None
+    timing: Optional[SpeechTiming] = None
 
 
 @dataclass(frozen=True)
@@ -92,7 +93,7 @@ class PlaybackSourceDone:
     release_pipeline: bool = False
     notify_idle: bool = True
     saved_path: Optional[str] = None
-    analysis_audio: Optional[npt.NDArray[np.float32]] = None
+    analysis_audio: Optional[AudioChunk] = None
 
 
 @dataclass

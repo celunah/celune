@@ -35,9 +35,9 @@ def _agent_permission_marker(output: str) -> Optional[str]:
     return None
 
 
-def _run_uv_command(*cmd: str) -> None:
+def _run_uv_command(*command: str) -> None:
     """Run one uv-backed CI command, retrying without cache on permission errors."""
-    base_cmd = ["uv", "run", *cmd]
+    base_cmd = ["uv", "run", *command]
     try:
         subprocess.run(
             base_cmd,
@@ -48,8 +48,8 @@ def _run_uv_command(*cmd: str) -> None:
             timeout=300,
         )
         return
-    except subprocess.CalledProcessError as failed:
-        combined_output = f"{failed.stdout}\n{failed.stderr}"
+    except subprocess.CalledProcessError as failed_process:
+        combined_output = f"{failed_process.stdout}\n{failed_process.stderr}"
         marker = _agent_permission_marker(combined_output)
         if marker is None:
             raise
@@ -63,13 +63,13 @@ def _run_uv_command(*cmd: str) -> None:
             text=True,
             timeout=300,
         )
-    except subprocess.CalledProcessError as failed:
-        combined_output = f"{failed.stdout}\n{failed.stderr}"
+    except subprocess.CalledProcessError as failed_process:
+        combined_output = f"{failed_process.stdout}\n{failed_process.stderr}"
         marker = _agent_permission_marker(combined_output)
         if marker is not None:
             raise RuntimeError(
                 f"agent has no permissions to run CI: {marker}"
-            ) from failed
+            ) from failed_process
         raise
 
 

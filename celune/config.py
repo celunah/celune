@@ -172,6 +172,7 @@ def _hostapi_name(
 ) -> Optional[str]:
     """Resolve one host API display name from sounddevice info."""
     if hostapis is None:
+        # noinspection PyBroadException
         try:
             queried = sd.query_hostapis()
         except Exception:
@@ -305,6 +306,7 @@ def resolve_audio_device_with_info(
     try:
         direct_info = sd.query_devices(device=configured_name, kind=query_kind)
     except ValueError:
+        # noinspection PyUnusedLocal
         direct_info = None
     else:
         if (

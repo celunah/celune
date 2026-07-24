@@ -68,7 +68,8 @@ class SpeechInputTests(TestCase):
         self.assertEqual(fake_processor.call_args.kwargs["sampling_rate"], 16000)
         self.assertEqual(fake_model.generate.call_args.kwargs["task"], "transcribe")
 
-    def test_ctrl_r_routes_persona_and_vc_to_separate_recorders(self) -> None:
+    @staticmethod
+    def test_ctrl_r_routes_persona_and_vc_to_separate_recorders() -> None:
         """Verify Persona CTRL+R does not alter the existing VC shortcut path."""
         ui = CeluneUI()
         ui.cur_state = "idle"
@@ -184,7 +185,8 @@ class SpeechInputTests(TestCase):
         ui.celune.think.assert_called_once_with("hello there")
         transcriber.transcribe.assert_called_once()
 
-    def test_persona_transcription_does_not_repeat_reported_error(self) -> None:
+    @staticmethod
+    def test_persona_transcription_does_not_repeat_reported_error() -> None:
         """Verify a final transcription failure does not repeat its warning."""
         ui = CeluneUI()
         ui.safe_log = mock.Mock()

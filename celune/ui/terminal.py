@@ -224,6 +224,7 @@ class UILogHandler(logging.Handler):
         Args:
             record: The logging record to be emitted.
         """
+        # noinspection PyBroadException
         try:
             message = record.getMessage().strip()
         except Exception:

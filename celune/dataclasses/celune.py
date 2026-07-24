@@ -5,8 +5,6 @@ import threading
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
-import numpy as np
-import numpy.typing as npt
 import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
@@ -20,6 +18,7 @@ from ..constants import JSONSerializable, PipelineStates
 from ..dsp import StreamingPedalboardReverb
 from ..extensions.manager import CeluneExtensionManager
 from ..persona.impl import PersonaClient
+from ..typing.aliases import AudioChunks
 from ..typing.backends import BackendModel
 from ..typing.celune import (
     ErrorCallback,
@@ -125,7 +124,7 @@ class CelunePipelineState:
     playback_done: threading.Event = field(default_factory=threading.Event)
     say_lock: threading.Lock = field(default_factory=threading.Lock)
     wake_lock: threading.Lock = field(default_factory=threading.Lock)
-    model_lock: threading.RLock = field(default_factory=threading.RLock)
+    model_lock: threading.RLock = field(default_factory=threading.RLock)  # noqa
     exit_requested: bool = False
 
 
@@ -144,7 +143,7 @@ class CeluneAudioState:
     historical_generated_speech_seconds: float = 0.0
     reverb: StreamingPedalboardReverb = field(default_factory=StreamingPedalboardReverb)
     recently_saved: Optional[str] = None
-    kept_sfx_audio: Optional[npt.NDArray[np.float32]] = None
+    kept_sfx_audio: Optional[AudioChunks] = None
 
 
 @dataclass

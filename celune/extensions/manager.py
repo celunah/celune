@@ -307,7 +307,6 @@ class CeluneExtensionManager:
                 )
                 continue
 
-            found_any = False
             module_handlers_registered = self._register_module_handlers(
                 module,
                 owner_name=file_path.stem,
