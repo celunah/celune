@@ -61,7 +61,7 @@ from ..persona.impl import (
     persona_talkback_enabled,
 )
 from ..pipeline import finish_streaming_sfx_audio, queue_streaming_sfx_audio
-from ..typing.aliases import (  # pylint: disable=unused-import
+from ..typing.aliases import (  # pylint: disable=W0611
     AudioChunk,
     AudioChunks,
     AudioDeviceScalar,

@@ -16,10 +16,10 @@ instances can exhaust GPU resources and is not a supported usage pattern.
 
 import contextlib as _contextlib
 import inspect as _inspect
-import subprocess as _subprocess
 import sys as _sys
 from typing import TYPE_CHECKING, Callable, Union
 
+from ._version import REVISION, VERSION, __version__
 from .constants import APP_NAME
 from .paths import (
     configure_huggingface_cache_environment,
@@ -36,24 +36,6 @@ if TYPE_CHECKING:
     from .extensions.events import subscribe
 
 
-def _get_revision() -> str:
-    """Return the current Git revision."""
-    try:
-        rev = _subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            stderr=_subprocess.DEVNULL,
-            text=True,
-        ).strip()
-        status = _subprocess.check_output(
-            ["git", "status", "--porcelain"],
-            stderr=_subprocess.DEVNULL,
-            text=True,
-        ).strip()
-        return f"{rev}{'*' if status else ''}"
-    except (_subprocess.CalledProcessError, FileNotFoundError):
-        return ""
-
-
 def _caller_is_repl() -> bool:
     """Return whether Celune appears to be imported from the interactive Python REPL."""
     for frame in _inspect.stack():
@@ -68,16 +50,6 @@ def _caller_is_repl() -> bool:
         return filename.startswith("<python-input-")
     return False
 
-
-REVISION = _get_revision()
-VERSION = "4.3.2"
-
-if REVISION:
-    _local = REVISION.rstrip("*")
-    _dirty = ".dirty" if REVISION.endswith("*") else ""
-    __version__ = f"{VERSION}+{_local}{_dirty}"
-else:
-    __version__ = f"{VERSION}+unknown"
 
 __tagline__ = '"Your voice, your way."'
 __codename__ = "Personality"

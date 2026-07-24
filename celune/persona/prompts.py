@@ -27,7 +27,15 @@ def _render_optional_section(tag: str, content: str) -> str:
 
 
 def render_markdown_subsection(heading: str, content: str) -> str:
-    """Return one Markdown subsection with consistent heading spacing."""
+    """Return one Markdown subsection with consistent heading spacing.
+
+    Args:
+        heading: Value for `heading`.
+        content: Value for `content`.
+
+    Returns:
+        Result of this function.
+    """
     lines = content.strip().splitlines()
     normalized_lines: list[str] = []
     index = 0

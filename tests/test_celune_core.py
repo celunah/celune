@@ -635,7 +635,6 @@ class CeluneCoreTests(TestCase):
         prepare_started = threading.Event()
 
         def input_state(locked: bool) -> None:
-            """Return a mock input state callback."""
             if locked:
                 prepare_started.set()
 
