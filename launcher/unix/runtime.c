@@ -230,7 +230,6 @@ int launcher_run(int argc, char **argv) {
             }
             else if (WIFSIGNALED(status)) {
                 int sig = WTERMSIG(status);
-
                 launcher_child_failed = 1;
                 return 128 + sig;
             }
@@ -337,7 +336,6 @@ int launcher_run(int argc, char **argv) {
         }
         else if (WIFSIGNALED(status)) {
             int sig = WTERMSIG(status);
-
             launcher_child_failed = 1;
             return 128 + sig;
         }
