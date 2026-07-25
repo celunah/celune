@@ -9,12 +9,19 @@ from tqdm.contrib import tzip
 
 CI_COMMANDS = (
     ("ruff", "format", "--check"),
+    ("ruff", "check"),
     ("pylint",),
     ("pyrefly", "check"),
     ("pytest", "-v"),
 )
 
-CI_PATHS = ((".",), ("celune", "tests"), ("celune", "tests"), ("tests",))
+CI_PATHS = (
+    (".",),
+    (".",),
+    ("celune", "tests"),
+    ("celune", "tests", "scripts"),
+    ("tests",),
+)
 
 cmds_failed = 0
 total_errors = []
@@ -41,11 +48,10 @@ def _run_uv_command(*command: str) -> None:
     try:
         subprocess.run(
             base_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             check=True,
             text=True,
             timeout=300,
+            capture_output=True,
         )
         return
     except subprocess.CalledProcessError as failed_process:
@@ -57,11 +63,10 @@ def _run_uv_command(*command: str) -> None:
     try:
         subprocess.run(
             ["uv", "--no-cache", "run", *cmd],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             check=True,
             text=True,
             timeout=300,
+            capture_output=True,
         )
     except subprocess.CalledProcessError as failed_process:
         combined_output = f"{failed_process.stdout}\n{failed_process.stderr}"

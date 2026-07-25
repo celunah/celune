@@ -15,13 +15,11 @@ import threading
 import time
 import uuid
 from collections import defaultdict, deque
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from hmac import compare_digest
 from html import escape
 from typing import (
-    Awaitable,
-    Callable,
-    Iterator,
     Literal,
     Optional,
     Union,
@@ -57,12 +55,12 @@ from starlette.middleware.base import RequestResponseEndpoint
 from . import __version__, colors
 from .celune import Celune
 from .cevoice import default_loader
-from .constants import APP_NAME, BASE_SR, JSONSerializable
+from .constants import APP_NAME, BASE_SR
 from .dsp import resample_audio
 from .i18n import string
 from .paths import main_window_log_path, project_root
 from .pipeline import SpeechStreamQueue, prepare_playback_audio
-from .typing.aliases import AudioChunks, AudioChunk
+from .typing.aliases import AudioChunk, AudioChunks
 from .typing.api import (
     TaskCommandName,
     TaskEventName,
@@ -71,6 +69,7 @@ from .typing.api import (
     WebUiInputAudioValue,
     WebUiUpdate,
 )
+from .typing.common import JSONSerializable
 from .ui import resources as ui_resources
 from .ui.app import CeluneUI
 from .utils import format_error
@@ -924,7 +923,7 @@ async def api_security(
         )
 
     if _rate_limited(request):
-        current_time = datetime.datetime.now()
+        current_time = datetime.datetime.now(datetime.UTC)
         next_minute = current_time.replace(
             second=0, microsecond=0
         ) + datetime.timedelta(minutes=1)
@@ -1264,7 +1263,7 @@ def api_log(action: str, content: str, suffix: str = "") -> None:
         content: The request body sent by the user.
         suffix: The suffix to append to the log line.
     """
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S")
     preview = content.replace("\n", "\\n").replace("\r", "\\r")[:64]
     if len(content) > 64:
         preview += "..."
@@ -1332,23 +1331,6 @@ def audio_bytes(
         yield _flac_bytes(np.concatenate(audio_chunks))
     else:
         yield _flac_bytes(np.empty((0, 2), dtype=np.float32))
-
-
-def _webui_audio_array(chunks: SpeechStreamQueue) -> npt.NDArray[np.float32]:
-    """Collect queued audio into a frame-major float32 array for Gradio playback."""
-    audio_chunks: AudioChunks = []
-    while True:
-        item = chunks.get()
-        if item is None:
-            break
-        if isinstance(item, Exception):
-            raise item
-        audio_chunks.append(_normalized_audio(item))
-
-    if not audio_chunks:
-        return np.empty((0, 2), dtype=np.float32)
-
-    return np.concatenate(audio_chunks)
 
 
 def stream_headers(sample_rate: int = BASE_SR) -> dict[str, str]:
@@ -1633,85 +1615,6 @@ def _webui_resources_html() -> str:
             "</div>"
         )
     return f'<div class="footer-block">{escape(resource)}</div>'
-
-
-def _webui_shortcuts_html() -> str:
-    """Render browser-side keyboard shortcuts for WebUI-only controls."""
-    recording_shortcut = string("ui.footer_toggle_recording")
-    script = textwrap.dedent(
-        """
-        <script>
-        (() => {
-          if (window.__celuneCtrlRInstalled) {
-            return;
-          }
-          window.__celuneCtrlRInstalled = true;
-
-          function recordingShortcutEnabled() {
-            const resources = document.querySelector("#celune-resources");
-            const text = resources ? (resources.textContent || "") : "";
-            return text.includes("__CELUNE_RECORDING_SHORTCUT__");
-          }
-
-          function clickRecordingButton() {
-            const container = document.querySelector("#celune-source-audio");
-            if (!container) {
-              return false;
-            }
-
-            const buttons = Array.from(container.querySelectorAll("button"));
-            const shortcutButton =
-              buttons.find((button) => button.getAttribute("aria-pressed") !== null) ||
-              buttons.find((button) => {
-                const text = [
-                  button.getAttribute("aria-label"),
-                  button.getAttribute("title"),
-                  button.textContent,
-                ]
-                  .filter(Boolean)
-                  .join(" ")
-                  .toLowerCase();
-                return (
-                  text.includes("record") ||
-                  text.includes("stop") ||
-                  text.includes("microphone") ||
-                  text.includes("mic")
-                );
-              }) ||
-              null;
-
-            if (!shortcutButton) {
-              return false;
-            }
-
-            shortcutButton.click();
-            return true;
-          }
-
-          document.addEventListener("keydown", (event) => {
-            if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) {
-              return;
-            }
-            if ((event.key || "").toLowerCase() !== "r") {
-              return;
-            }
-            if (!recordingShortcutEnabled()) {
-              return;
-            }
-            if (!clickRecordingButton()) {
-              return;
-            }
-            event.preventDefault();
-            event.stopPropagation();
-          });
-        })();
-        </script>
-        """
-    ).strip()
-    return script.replace(
-        "__CELUNE_RECORDING_SHORTCUT__",
-        repr(recording_shortcut)[1:-1],
-    )
 
 
 def _voice_button_update() -> WebUiUpdate:
@@ -2261,53 +2164,55 @@ def _build_webui() -> gr.Blocks:
                             </p>
                         """)
                     )
-                with gr.Tab(string("webui.vc_tab_label")):
-                    with gr.Column(elem_id="celune-convert-panel"):
-                        source_audio = gr.Audio(
-                            value=None,
-                            type="numpy",
-                            sources=["upload", "microphone"],
-                            autoplay=False,
-                            show_label=True,
-                            label=string("webui.source_audio_label"),
-                            interactive=False,
-                            waveform_options=_webui_audio_waveform_options(),
-                            elem_id="celune-source-audio",
-                        )
-                        vc_pitch_shift = gr.Slider(
-                            minimum=VC_PITCH_SHIFT_MIN,
-                            maximum=VC_PITCH_SHIFT_MAX,
-                            step=1,
-                            value=0,
-                            label=string("webui.pitch_shift_label"),
-                            info=string("webui.pitch_shift_info"),
-                            interactive=False,
-                        )
-                        vc_mode = gr.Radio(
-                            choices=[
-                                ("Talk", "talk"),
-                                ("Sing", "sing"),
-                            ],
-                            value="talk",
-                            label=string("webui.conversion_mode_label"),
-                            info=string("webui.conversion_mode_info"),
-                            interactive=False,
-                        )
-                        convert_button = gr.Button(
-                            value=string("webui.convert_button"),
-                            elem_id="celune-convert",
-                            interactive=False,
-                        )
-                        converted_audio = gr.Audio(
-                            value=None,
-                            type="numpy",
-                            autoplay=True,
-                            show_label=False,
-                            interactive=False,
-                            visible="hidden",
-                            waveform_options=_webui_audio_waveform_options(),
-                            elem_id="celune-converted-audio",
-                        )
+                with (
+                    gr.Tab(string("webui.vc_tab_label")),
+                    gr.Column(elem_id="celune-convert-panel"),
+                ):
+                    source_audio = gr.Audio(
+                        value=None,
+                        type="numpy",
+                        sources=["upload", "microphone"],
+                        autoplay=False,
+                        show_label=True,
+                        label=string("webui.source_audio_label"),
+                        interactive=False,
+                        waveform_options=_webui_audio_waveform_options(),
+                        elem_id="celune-source-audio",
+                    )
+                    vc_pitch_shift = gr.Slider(
+                        minimum=VC_PITCH_SHIFT_MIN,
+                        maximum=VC_PITCH_SHIFT_MAX,
+                        step=1,
+                        value=0,
+                        label=string("webui.pitch_shift_label"),
+                        info=string("webui.pitch_shift_info"),
+                        interactive=False,
+                    )
+                    vc_mode = gr.Radio(
+                        choices=[
+                            ("Talk", "talk"),
+                            ("Sing", "sing"),
+                        ],
+                        value="talk",
+                        label=string("webui.conversion_mode_label"),
+                        info=string("webui.conversion_mode_info"),
+                        interactive=False,
+                    )
+                    convert_button = gr.Button(
+                        value=string("webui.convert_button"),
+                        elem_id="celune-convert",
+                        interactive=False,
+                    )
+                    converted_audio = gr.Audio(
+                        value=None,
+                        type="numpy",
+                        autoplay=True,
+                        show_label=False,
+                        interactive=False,
+                        visible="hidden",
+                        waveform_options=_webui_audio_waveform_options(),
+                        elem_id="celune-converted-audio",
+                    )
             audio = gr.Audio(
                 value=None,
                 type="numpy",

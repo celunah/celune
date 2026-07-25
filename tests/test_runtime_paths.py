@@ -27,7 +27,7 @@ from celune.paths import (
 )
 from celune.persona.memory import default_memory_dir
 from celune.ui.app import CeluneUI, UILogMessage
-from celune.utils import format_error, discard
+from celune.utils import discard, format_error
 
 
 class RuntimePathTests(TestCase):

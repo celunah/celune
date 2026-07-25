@@ -3,7 +3,8 @@
 
 import platform
 import sys
-from typing import Callable, Union
+from collections.abc import Callable
+from typing import Union
 
 import torch
 

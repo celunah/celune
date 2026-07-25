@@ -4,9 +4,9 @@
 import contextlib
 import tempfile
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
-from typing import Callable, Optional, cast
+from typing import Optional, cast
 
 import numpy as np
 import yaml
@@ -15,9 +15,9 @@ from pocket_tts import TTSModel
 
 from ...cevoice import CEVoiceLoader, default_loader
 from ...paths import temp_data_dir
+from ...typing.aliases import AudioChunk, AudioChunks
 from ...typing.backends import MiniModel, MiniPromptState
 from ...utils import custom_assert
-from ...typing.aliases import AudioChunk, AudioChunks
 from .base import CeluneBackend, cached_hf_snapshot_path
 
 

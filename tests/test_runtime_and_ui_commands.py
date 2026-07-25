@@ -21,8 +21,9 @@ from celune import colors, runtime
 from celune.backends.tts.qwen3 import Qwen3
 from celune.celune import Celune
 from celune.config import Config
-from celune.constants import APP_NAME, COST_EQUIVALENTS, JSONSerializable
+from celune.constants import APP_NAME, COST_EQUIVALENTS
 from celune.i18n import string
+from celune.typing.common import JSONSerializable
 from celune.ui import app as ui_app
 from celune.ui import resources as ui_resources
 from celune.ui import terminal as ui_terminal
@@ -318,9 +319,9 @@ class UICommandTests(TestCase):
         self._process_command("vcpitch", ["clear"])
 
         self.assertEqual(self.ui.celune.vc_f0_condition, True)
-        self.assertEqual(getattr(self.ui.celune.vc_backend, "f0_condition"), True)
+        self.assertEqual(self.ui.celune.vc_backend.f0_condition, True)
         self.assertEqual(self.ui.celune.vc_pitch_shift, 0)
-        self.assertEqual(getattr(self.ui.celune.vc_backend, "pitch_shift"), 0)
+        self.assertEqual(self.ui.celune.vc_backend.pitch_shift, 0)
         self.assertEqual(self.logs[-3], ("Voice conversion mode set to Sing.", "info"))
         self.assertEqual(
             self.logs[-2],
@@ -2275,8 +2276,10 @@ class UIStartupTests(TestCase):
             captured,
             [
                 (
-                    "Internal runtime warning: triton not found; flop counting "
-                    "will not work for triton kernels",
+                    (
+                        "Internal runtime warning: triton not found; flop counting "
+                        "will not work for triton kernels"
+                    ),
                     "warning",
                 )
             ],
@@ -2301,8 +2304,10 @@ class UIStartupTests(TestCase):
             captured,
             [
                 (
-                    "Internal runtime warning: triton not found; flop counting "
-                    "will not work for triton kernels",
+                    (
+                        "Internal runtime warning: triton not found; flop counting "
+                        "will not work for triton kernels"
+                    ),
                     "warning",
                 )
             ],
@@ -2324,8 +2329,10 @@ class UIStartupTests(TestCase):
             captured,
             [
                 (
-                    "Internal runtime error: download failed because the "
-                    "connection dropped",
+                    (
+                        "Internal runtime error: download failed because the "
+                        "connection dropped"
+                    ),
                     "error",
                 )
             ],

@@ -3,15 +3,16 @@
 
 import importlib
 from collections.abc import Mapping
-from typing import Optional, Protocol, cast
+from typing import Optional, cast
 
 import numpy as np
 import torch
 from scipy import signal
 
 from .config import config_bool
-from .typing.common import JSONSerializable
 from .typing.aliases import AudioChunk
+from .typing.backends import _StreamingSpeechModel
+from .typing.common import JSONSerializable
 
 VC_PITCH_SHIFT_MIN = -3
 VC_PITCH_SHIFT_MAX = 3
@@ -27,14 +28,14 @@ _LIVE_VAD_THRESHOLD = 0.50
 _LIVE_VAD_NEGATIVE_THRESHOLD = 0.35
 
 __all__ = [
-    "LiveVoiceActivityDetector",
+    "VC_LIVE_CHUNK_OVERLAP_SECONDS",
+    "VC_LIVE_CHUNK_SECONDS",
     "VC_PITCH_SHIFT_MAX",
     "VC_PITCH_SHIFT_MIN",
     "VC_VAD_HANGOVER_SECONDS",
-    "VC_LIVE_CHUNK_OVERLAP_SECONDS",
-    "VC_LIVE_CHUNK_SECONDS",
     "VC_VAD_PREROLL_SECONDS",
     "VC_VAD_RMS_THRESHOLD",
+    "LiveVoiceActivityDetector",
     "clamp_vc_pitch_shift",
     "create_live_voice_activity_detector",
     "vc_input_has_voice",
@@ -44,16 +45,6 @@ __all__ = [
     "vc_vad_hangover_frames",
     "vc_vad_preroll_frames",
 ]
-
-
-class _StreamingSpeechModel(Protocol):
-    """Protocol for stateful streaming speech detectors."""
-
-    def __call__(self, audio: torch.Tensor, sample_rate: int) -> torch.Tensor:
-        """Return one speech probability tensor."""
-
-    def reset_states(self) -> None:
-        """Reset the detector's internal streaming state."""
 
 
 def clamp_vc_pitch_shift(value: int) -> int:

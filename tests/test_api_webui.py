@@ -796,14 +796,6 @@ class ApiWebUITests(TestCase):
         self.assertIn("VRAM: first", resources1)
         self.assertIn("Friday, June 11, 2026", resources2)
 
-    def test_webui_shortcuts_html_registers_ctrl_r_recording_toggle(self) -> None:
-        """Verify the WebUI shortcut script exposes the VC recording hotkey."""
-        shortcuts_html = api._webui_shortcuts_html()
-
-        self.assertIn(string("ui.footer_toggle_recording"), shortcuts_html)
-        self.assertIn("#celune-source-audio", shortcuts_html)
-        self.assertIn("keydown", shortcuts_html)
-
     def test_webui_runtime_theme_keeps_normal_palette_for_error_status(self) -> None:
         """Verify browser error statuses no longer switch the full UI palette."""
         api.set_webui_status("I can't speak right now.", "error")

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """CEVOICE manifest type aliases."""
 
 from typing import Union

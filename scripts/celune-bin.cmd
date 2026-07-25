@@ -1,3 +1,5 @@
+REM SPDX-License-Identifier: MIT
+
 @echo off
 setlocal
 

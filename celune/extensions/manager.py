@@ -7,10 +7,11 @@ import sys
 import threading
 import traceback
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Callable, Optional, cast
+from typing import Optional, cast
 
 from ..dataclasses.events import ReadyEvent
 from ..exceptions import ExtensionAlreadyRegisteredError, InvalidExtensionError

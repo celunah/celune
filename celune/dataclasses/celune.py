@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Grouped Celune runtime state containers and property specs."""
 
 import queue
@@ -14,7 +15,7 @@ from ..backends.vc import CeluneVCBackend
 from ..cevoice import CEVoicePersona
 from ..chroma import AudioRGBGlow
 from ..config import Config
-from ..constants import JSONSerializable, PipelineStates
+from ..constants import PipelineStates
 from ..dsp import StreamingPedalboardReverb
 from ..extensions.manager import CeluneExtensionManager
 from ..persona.impl import PersonaClient
@@ -32,6 +33,7 @@ from ..typing.celune import (
     VoiceChangedCallback,
     VoiceLockStateCallback,
 )
+from ..typing.common import JSONSerializable
 from .properties import ConstantPropertySpec, ForwardedPropertySpec
 
 

@@ -18,7 +18,6 @@ from celune import cevoice, i18n
 from celune.backends.tts.qwen3 import Qwen3
 from celune.celune import Celune
 from celune.config import Config
-from celune.constants import JSONSerializable
 from celune.exceptions import BackendError, WarmupError
 from celune.persona.impl import persona_quantization
 from celune.pipeline import (
@@ -27,6 +26,7 @@ from celune.pipeline import (
     play_signal,
     release_pipeline,
 )
+from celune.typing.common import JSONSerializable
 from celune.utils import discard
 from celune.vram import QWEN3_0_6B_MODEL
 
@@ -84,7 +84,7 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.persona_is_available", return_value=False),
             mock.patch(
                 "celune.celune.resolve_backend",
-                return_value=FakeBackend(log=lambda _msg, _severity="info": None),
+                return_value=FakeBackend(),
             ) as resolve,
         ):
             celune = Celune(config={"vram": "low"}, tts_backend=None)
@@ -133,7 +133,7 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.persona_is_available", return_value=False),
             mock.patch(
                 "celune.celune.resolve_backend",
-                return_value=FakeBackend(log=lambda _msg, _severity="info": None),
+                return_value=FakeBackend(),
             ),
         ):
             celune = Celune(config={"mode": "voice_conversion"}, backend=FakeVCBackend)
@@ -152,7 +152,7 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.persona_is_available", return_value=False),
             mock.patch(
                 "celune.celune.resolve_backend",
-                return_value=FakeBackend(log=lambda _msg, _severity="info": None),
+                return_value=FakeBackend(),
             ),
         ):
             celune = Celune(config={"mode": "voice_conversion"}, backend="passthrough")
@@ -733,7 +733,7 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.persona_is_available", return_value=False),
             mock.patch(
                 "celune.celune.resolve_backend",
-                return_value=FakeBackend(log=lambda _msg, _severity="info": None),
+                return_value=FakeBackend(),
             ) as resolve,
         ):
             celune = Celune(
@@ -752,7 +752,7 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.persona_is_available", return_value=False),
             mock.patch(
                 "celune.celune.resolve_backend",
-                return_value=FakeBackend(log=lambda _msg, _severity="info": None),
+                return_value=FakeBackend(),
             ) as resolve,
         ):
             celune = Celune(
@@ -1549,7 +1549,7 @@ class CeluneCoreTests(TestCase):
             """Backend fixture whose warmup generation fails after observing live state."""
 
             name = "failingwarmup"
-            voice_models = {"storm": "warmup/storm"}
+            voice_models = {"storm": "alt/storm"}
             default_voice = "storm"
 
             def generate_stream(self, model, **kwargs: JSONSerializable):
@@ -1620,7 +1620,7 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
         ):
-            original_backend = FakeBackend(log=lambda _msg, _severity="info": None)
+            original_backend = FakeBackend()
             backend_ref = weakref.ref(original_backend)
             celune = Celune(config={}, tts_backend=original_backend)
             self.addCleanup(self._close_celune, celune)
@@ -1638,12 +1638,14 @@ class CeluneCoreTests(TestCase):
         celune._warmup = mock.Mock(return_value=True)
         del original_backend
 
-        with mock.patch("celune.celune.play_signal", return_value=False):
-            with celune.with_backend(AltFakeBackend):
-                import gc as _gc
+        with (
+            mock.patch("celune.celune.play_signal", return_value=False),
+            celune.with_backend(AltFakeBackend),
+        ):
+            import gc as _gc
 
-                _gc.collect()
-                self.assertIsNone(backend_ref())
+            _gc.collect()
+            self.assertIsNone(backend_ref())
 
     def test_hot_cevoice_reload_failure_restores_previous_bundle_state(self) -> None:
         """Verify failed CEVOICE reloads restore the previous bundle and voice state."""
@@ -2136,7 +2138,7 @@ class CeluneCoreTests(TestCase):
         celune.cur_state = "sleeping"
         celune.current_voice = "balanced"
         celune.voices = ("balanced",)
-        failing_backend = FakeBackend(log=lambda _msg, _severity="info": None)
+        failing_backend = FakeBackend()
         failing_backend.load_model = mock.Mock(side_effect=RuntimeError("boom"))
 
         with (
@@ -2168,7 +2170,7 @@ class CeluneCoreTests(TestCase):
 
         load_started = threading.Event()
         release_load = threading.Event()
-        recreated_backend = FakeBackend(log=lambda _msg, _severity="info": None)
+        recreated_backend = FakeBackend()
 
         def blocking_load_model(model_id: str) -> dict[str, JSONSerializable]:
             load_started.set()

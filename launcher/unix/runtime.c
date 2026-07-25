@@ -4,6 +4,7 @@
 
 #include <unistd.h>
 #include <sys/wait.h>
+#include <signal.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -11,6 +12,8 @@
 
 #define printfe(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
 #define EXIT_PENDING_UPDATE 7
+
+static int launcher_child_failed = 0;
 
 static int file_exists(const char *path) {
     return access(path, F_OK) == 0;
@@ -222,12 +225,13 @@ int launcher_run(int argc, char **argv) {
                     }
                     return 0;
                 }
+                launcher_child_failed = exit_code != 0;
                 return exit_code;
             }
             else if (WIFSIGNALED(status)) {
                 int sig = WTERMSIG(status);
 
-                printfe("Celune was killed by signal %d.\n", sig);
+                launcher_child_failed = 1;
                 return 128 + sig;
             }
         }
@@ -241,12 +245,11 @@ int launcher_run(int argc, char **argv) {
         int setup_status = 1;
 
         if (access(setup_py, R_OK) != 0) {
-            printfe("Python virtual environment and/or interpreter was not found or isn't working.\n");
-            printfe("Celune needs setup.py to create her virtual environment.\n");
+            printfe("Celune: Python environment is missing and setup.py is unavailable.\n");
             return 1;
         }
 
-        printfe("Python virtual environment was not found. Running setup.py...\n");
+        printfe("Celune: Python environment missing; running setup.py.\n");
 
         for (size_t i = 0; i < sizeof(system_python) / sizeof(system_python[0]); i++) {
             pid_t setup_pid = fork();
@@ -280,19 +283,17 @@ int launcher_run(int argc, char **argv) {
         }
 
         if (!found_system_python) {
-            printfe("Celune could not find a system Python interpreter to run setup.py.\n");
-            printfe("Install Python 3.12 or 3.13 and run Celune again.\n");
+            printfe("Celune: no system Python interpreter was found for setup.py.\n");
             return 1;
         }
 
         if (!WIFEXITED(setup_status) || WEXITSTATUS(setup_status) != 0) {
-            printfe("Celune setup failed.\n");
+            printfe("Celune: setup.py failed.\n");
             return WIFEXITED(setup_status) ? WEXITSTATUS(setup_status) : 1;
         }
 
         if (access(python, X_OK) != 0) {
-            printfe("Python virtual environment and/or interpreter was not found or isn't working.\n");
-            printfe("Celune needs a working Python interpreter and virtual environment to operate.\n");
+            printfe("Celune: setup.py completed but the Python environment is still unavailable.\n");
             return 1;
         }
     }
@@ -331,15 +332,29 @@ int launcher_run(int argc, char **argv) {
         waitpid(pid, &status, 0);
 
         if (WIFEXITED(status)) {
+            launcher_child_failed = WEXITSTATUS(status) != 0;
             return WEXITSTATUS(status);
         }
         else if (WIFSIGNALED(status)) {
             int sig = WTERMSIG(status);
 
-            printfe("Celune was killed by signal %d.\n", sig);
+            launcher_child_failed = 1;
             return 128 + sig;
         }
     }
 
     return 1;
+}
+
+void launcher_report_failure(int return_code) {
+    if (launcher_startup_was_interrupted() || return_code == 128 + SIGINT) {
+        printfe("Startup was interrupted.\n");
+        return;
+    }
+
+    if (!launcher_child_failed) {
+        return;
+    }
+
+    printfe("Celune has crashed.\n");
 }

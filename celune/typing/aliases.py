@@ -1,18 +1,29 @@
+# SPDX-License-Identifier: MIT
 """Shared type aliases moved out of runtime implementation modules."""
 
+from __future__ import annotations
+
 import unittest.mock
-from collections.abc import Generator, Hashable
-from typing import TYPE_CHECKING, Callable, Optional, Protocol, Union
+from collections.abc import Callable, Generator, Hashable
+from enum import Enum
+from typing import TYPE_CHECKING, Optional, Protocol, Union
 
 import numpy as np
 import numpy.typing as npt
 import sounddevice as sd
 
+from .common import JSONSerializable
+
 if TYPE_CHECKING:
+    # noinspection PyPep8Naming
+    from torch import Tensor
+    from torch import device as Device
+    from torch import dtype as DType
     from transformers.modeling_utils import PreTrainedModel  # noqa
     from transformers.tokenization_utils_base import PreTrainedTokenizerBase  # noqa
 
-    from .events import EventPayload  # noqa
+    # noinspection PyUnresolvedReferences
+    from .events import EventPayload
 
 type RuntimeValue = Union[
     str,
@@ -60,6 +71,21 @@ type _VCAudioCallback = Callable[
     ],
     None,
 ]
+type VCAudioCallback = _VCAudioCallback
+type ConstantPropertyValue = Union[JSONSerializable, Enum]
+
+type _RecordedKwargValue = Optional[
+    Union[
+        str,
+        bool,
+        bytes,
+        list[bytes],
+        "Tensor",
+        "DType",
+        "Device",
+    ]
+]
+type RecordedKwargValue = _RecordedKwargValue
 
 
 class SupportsCloseHook(Protocol):

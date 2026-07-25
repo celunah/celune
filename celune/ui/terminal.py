@@ -4,12 +4,12 @@
 import logging
 import re
 import sys
-from collections.abc import Collection
-from typing import Callable, Optional
+from collections.abc import Callable, Collection
+from typing import Optional
 
 import readchar
 
-from ..constants import JSONSerializable
+from ..typing.common import JSONSerializable
 
 
 class SelectMenu:
@@ -253,7 +253,7 @@ class UILogHandler(logging.Handler):
             severity = "info"
             prefix = "Internal runtime notice:"
 
-        self.write_callback(" ".join([prefix, message]), severity)
+        self.write_callback(f"{prefix} {message}", severity)
 
 
 def is_celune_log_record(record: logging.LogRecord) -> bool:

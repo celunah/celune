@@ -4,8 +4,8 @@
 import contextlib
 import os
 import time
-from collections.abc import Iterator
-from typing import Callable, Generator, Mapping, Optional, Protocol, cast
+from collections.abc import Callable, Generator, Iterator, Mapping
+from typing import Optional, Protocol, cast
 
 import loguru
 import numpy as np
@@ -13,8 +13,8 @@ import torch
 from dots_tts.runtime import DotsTtsRuntime
 
 from ...cevoice import CEVoiceLoader, default_loader
-from ...utils import custom_assert, discard
 from ...typing.aliases import AudioChunk, AudioChunks
+from ...utils import custom_assert, discard
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
@@ -174,9 +174,11 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                     disabled_loguru = True
 
             try:
-                with contextlib.redirect_stdout(devnull):
-                    with contextlib.redirect_stderr(devnull):
-                        yield
+                with (
+                    contextlib.redirect_stdout(devnull),
+                    contextlib.redirect_stderr(devnull),
+                ):
+                    yield
             finally:
                 if disabled_loguru and bound_logger is not None:
                     with contextlib.suppress(Exception):
@@ -227,14 +229,16 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         if target == model_id:
             self.log("Downloading TTS model...", "info")
 
-        with local_hf_offline_mode(available and path is not None):
-            with self._suppress_backend_output():
-                self.model = DotsTtsRuntime.from_pretrained(
-                    target,
-                    precision=precision,
-                    optimize=optimize,
-                    max_generate_length=max_generate_length,
-                )
+        with (
+            local_hf_offline_mode(available and path is not None),
+            self._suppress_backend_output(),
+        ):
+            self.model = DotsTtsRuntime.from_pretrained(
+                target,
+                precision=precision,
+                optimize=optimize,
+                max_generate_length=max_generate_length,
+            )
 
         return self.model
 

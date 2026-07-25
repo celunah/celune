@@ -16,9 +16,10 @@ import subprocess
 import sys
 import time
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import replace
 from importlib import util as importlib_util
-from typing import TYPE_CHECKING, Mapping, Optional, Union, cast
+from typing import TYPE_CHECKING, Optional, Union, cast
 from urllib.parse import urlencode, urlparse
 from urllib.request import urlopen
 
@@ -43,10 +44,8 @@ from .constants import (
     APP_NAME,
     APP_SLUG,
     BASE_SR,
-    JSON,
     PERSONA_EMOTION_MODEL,
     PERSONA_MEMORY_EMBEDDING_MODEL,
-    JSONSerializable,
     PipelineStates,
 )
 from .dataclasses.pipeline import (
@@ -107,16 +106,17 @@ from .persona.prompts import (
     PersonaSourceMaterial,
     RetrievedMemoryBundle,
 )
-from .typing.pipeline import SpeechStreamQueue
 from .typing.aliases import AudioChunk, AudioChunks
+from .typing.common import JSON, JSONSerializable
+from .typing.pipeline import SpeechStreamQueue
 from .utils import (
     detect_language,
+    discard,
     format_error,
     format_number,
     is_april_fools,
     rng_replace,
     run_async,
-    discard,
 )
 
 if TYPE_CHECKING:
@@ -187,10 +187,10 @@ def _celune_metadata_payload(
 ) -> JSON:
     """Build the Celune generation metadata payload."""
     return {
-        "format": "celune_metadata",
+        "format": "CEMETA",
         "format_version": 1,
         "celune_version": __version__,
-        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
         "text": text,
         "display_text": display_text,
         "backend": _json_value(getattr(engine, "tts_backend", None)),
@@ -261,7 +261,7 @@ def _encode_vorbis_comment_block(
     payload.extend(vendor)
     payload.extend(len(comments).to_bytes(4, "little"))
     for key, value in comments:
-        raw_comment = f"{key}={value}".encode("utf-8")
+        raw_comment = f"{key}={value}".encode()
         payload.extend(len(raw_comment).to_bytes(4, "little"))
         payload.extend(raw_comment)
 
@@ -332,7 +332,7 @@ def _write_flac_metadata(path: str, tags: JSON) -> None:
     audio_data = data[audio_offset:]
 
     comment_index: Optional[int] = None
-    vendor = f"{APP_NAME} {__version__}".encode("utf-8")
+    vendor = f"{APP_NAME} {__version__}".encode()
     comments: list[tuple[str, str]] = []
     for index, (block_type, payload) in enumerate(blocks):
         if block_type == _FLAC_VORBIS_COMMENT_BLOCK:
@@ -379,7 +379,7 @@ def _write_celune_flac(
         audio_file.write(audio)
 
     created_at = metadata.get(
-        "created_at", datetime.datetime.now(datetime.timezone.utc).isoformat()
+        "created_at", datetime.datetime.now(datetime.UTC).isoformat()
     )
     display_text = metadata.get("display_text")
 
@@ -398,7 +398,7 @@ def _write_celune_flac(
         "title": words,
         "comment": encoded,
         "created_at": created_at,
-        "date": datetime.datetime.now(datetime.timezone.utc).year,
+        "date": datetime.datetime.now(datetime.UTC).year,
     }
     _write_flac_metadata(path, tags)
 
@@ -889,9 +889,7 @@ def _is_youtube_sfx_url(value: str) -> bool:
     parsed = urlparse(value.strip())
     if parsed.scheme not in {"http", "https"}:
         return False
-    host = (parsed.netloc or "").lower()
-    if host.startswith("www."):
-        host = host[4:]
+    host = (parsed.netloc or "").lower().removeprefix("www.")
     return host in {"youtube.com", "youtu.be", "music.youtube.com"}
 
 
@@ -1567,7 +1565,7 @@ def build_persona_messages(engine: Celune, request: str) -> list[JSON]:
         cast(JSON, {"role": "system", "content": PersonaPromptBuilder.build(context)})
     ]
     for message in persona_history_messages(engine):
-        messages.append(message)
+        messages.append(message)  # noqa: PERF402
     messages.append(cast(JSON, {"role": "user", "content": user_content}))
     return messages
 
@@ -2307,7 +2305,7 @@ def split_text(engine: Celune, text: str) -> list[str]:
     max_length = 400
 
     # detect sentences
-    unit_checker = re.compile(r"\S.*?(?:[.!?]+[\"')\]]*(?=\s+|$)|$)", re.S)
+    unit_checker = re.compile(r"\S.*?(?:[.!?]+[\"')\]]*(?=\s+|$)|$)", re.DOTALL)
 
     # detected quoted text with a boundary
     quote_checker = re.compile(r'"[^"]*[.!?]"')
@@ -2332,10 +2330,9 @@ def split_text(engine: Celune, text: str) -> list[str]:
                 unit_chunks.extend(split_words(piece))
                 continue
 
-            if unit_current and len(unit_current) + 1 + len(piece) > max_length:
-                unit_chunks.append(unit_current)
-                unit_current = piece
-            elif unit_current and len(unit_current) >= chunk_length:
+            if (unit_current and len(unit_current) + 1 + len(piece) > max_length) or (
+                unit_current and len(unit_current) >= chunk_length
+            ):
                 unit_chunks.append(unit_current)
                 unit_current = piece
             elif unit_current:
@@ -2403,10 +2400,9 @@ def split_text(engine: Celune, text: str) -> list[str]:
             chunks.append(u)
             continue
 
-        if current and len(current) + 1 + len(u) > max_length:
-            chunks.append(current)
-            current = u
-        elif current and len(current) >= chunk_length:
+        if (current and len(current) + 1 + len(u) > max_length) or (
+            current and len(current) >= chunk_length
+        ):
             chunks.append(current)
             current = u
         elif current:
@@ -2609,7 +2605,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
 
                         model_id = engine.backend.model_id_for_voice(active_voice)
                         engine.log_dev(
-                            f"[RELOAD] Loading {model_id} for language: {str(target_language)}"
+                            f"[RELOAD] Loading {model_id} for language: {target_language!s}"
                         )
                         engine.backend.unload_model()
                         engine.model = engine.backend.load_model(
@@ -2858,7 +2854,9 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                     analysis_audio = wav.copy()
                     if kept_sfx_audio is not None:
                         wav = np.concatenate([*kept_sfx_audio, wav])
-                    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+                    timestamp = datetime.datetime.now(datetime.UTC).strftime(
+                        "%Y%m%d%H%M%S"
+                    )
 
                     first_words = "_".join(text.split()[:3]).lower()
                     first_words = re.sub(r"[^a-zA-Z0-9_]", "", first_words)

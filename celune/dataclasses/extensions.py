@@ -1,9 +1,11 @@
+# SPDX-License-Identifier: MIT
 """Extension-facing dataclasses."""
 
+from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 from .. import __version__
 from ..typing.common import JSONSerializable

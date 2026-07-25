@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Tests for Persona microphone speech input."""
 
+from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Callable, Optional, cast
+from typing import Optional, cast
 from unittest import TestCase, mock
 
 import numpy as np

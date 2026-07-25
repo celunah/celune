@@ -9,7 +9,7 @@ from typing import Optional, cast
 import torch
 
 from .constants import TIERS, VRAM_REQUIREMENTS
-from .typing.common import VramTier, JSONSerializable
+from .typing.common import JSONSerializable, VramTier
 
 QWEN3_0_6B_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 QWEN3_1_7B_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"

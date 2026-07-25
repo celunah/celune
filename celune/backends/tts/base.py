@@ -11,12 +11,9 @@ import secrets
 import threading
 import unittest.mock
 from abc import ABC, abstractmethod
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator, Mapping
 from pathlib import Path
 from typing import (
-    Callable,
-    Generic,
-    Mapping,
     Optional,
     cast,
 )
@@ -30,8 +27,8 @@ from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import N_A_NUMERIC
 from ...i18n import string
 from ...paths import huggingface_hub_cache_dir, temp_data_dir
-from ...typing.aliases import RuntimeValue, AudioChunk
-from ...typing.backends import BackendModel, ModelT
+from ...typing.aliases import AudioChunk, RuntimeValue
+from ...typing.backends import BackendModel
 from ...utils import discard
 
 __all__ = [
@@ -198,7 +195,7 @@ def _release_runtime_references(value: RuntimeValue, seen: set[int]) -> None:
     _release_runtime_object_members(value, seen)
 
 
-class CeluneBackend(ABC, Generic[ModelT]):
+class CeluneBackend[ModelT](ABC):
     """Base class for Celune speech backends."""
 
     name: str = "unknown"

@@ -10,9 +10,10 @@ import shutil
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional, Protocol, Union, cast
+from typing import Optional, Union, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -39,7 +40,7 @@ from .cevoice import (
 )
 from .chroma import AudioRGBGlow
 from .config import Config, config_bool, config_value
-from .constants import APP_NAME, NORMALIZER_MODEL_ID, JSONSerializable
+from .constants import APP_NAME, NORMALIZER_MODEL_ID
 from .dataclasses.celune import (
     CELUNE_CONSTANT_PROPERTIES,
     CELUNE_FORWARDED_PROPERTIES,
@@ -128,7 +129,9 @@ from .typing.celune import (
     TTSBackendSpec,
     VCBackendSpec,
     VoiceLockStateCallback,
+    _BundleWithPath,
 )
+from .typing.common import JSONSerializable
 from .typing.events import EventName, EventPayload
 from .typing.pipeline import SpeechStreamQueue
 from .utils import custom_assert, discard, format_error, format_number, is_port_usable
@@ -141,14 +144,6 @@ from .vram import (
     resolve_vram_preset,
     validate_vram_preset,
 )
-
-
-class _BundleWithPath(Protocol):
-    """Protocol for bundle-like objects that expose a path."""
-
-    @property
-    def path(self) -> Union[str, Path]:  # noqa
-        """Return the bundle path."""
 
 
 def _config_str(value: JSONSerializable) -> Optional[str]:
@@ -1558,22 +1553,24 @@ class Celune(CeluneStateAccessors):
         self.model_ready.clear()
         self.progress_callback(0, 1)
 
-        with self._wake_background_lock:
-            with self._model_lock:
-                if unload["persona"]:
-                    self._unload_persona_state()
+        with (
+            self._wake_background_lock,
+            self._model_lock,
+        ):
+            if unload["persona"]:
+                self._unload_persona_state()
 
-                if unload["tts"]:
-                    self.unload_runtime_state(
-                        include_normalizer=unload["normalizer"],
-                        include_vc=unload["vc"],
-                    )
-                    self.model_name = ""
-                elif unload["normalizer"]:
-                    self.unload_normalizer_state()
+            if unload["tts"]:
+                self.unload_runtime_state(
+                    include_normalizer=unload["normalizer"],
+                    include_vc=unload["vc"],
+                )
+                self.model_name = ""
+            elif unload["normalizer"]:
+                self.unload_normalizer_state()
 
-                if unload["vc"] and not unload["tts"] and self.vc_backend is not None:
-                    self.vc_backend.unload_model()
+            if unload["vc"] and not unload["tts"] and self.vc_backend is not None:
+                self.vc_backend.unload_model()
 
         self.model_ready.set()
         return True

@@ -32,8 +32,8 @@ from celune.exceptions import (
 from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.extensions.manager import CeluneExtensionManager
 from celune.i18n import string
-from celune.typing.backends import BackendModel
 from celune.typing.aliases import AudioChunk
+from celune.typing.backends import BackendModel
 from celune.utils import discard
 
 from .support import (
@@ -556,7 +556,9 @@ class BackendTests(TestCase):
 
         setattr(fake_hf_utils, "hf_hub_download", fake_hf_hub_download)
         setattr(
-            fake_hf_utils, "load_custom_model_from_hf", lambda *args, **kwargs: None
+            fake_hf_utils,
+            "load_custom_model_from_hf",
+            lambda *args, **kwargs: None,
         )
         setattr(fake_wrapper, "load_custom_model_from_hf", lambda *args, **kwargs: None)
         setattr(fake_wrapper, "SeedVCWrapper", type("FakeSeedVCWrapper", (), {}))
@@ -622,9 +624,11 @@ class BackendTests(TestCase):
     def test_resolve_backend_accepts_dotstts_backend_name(self) -> None:
         """Verify the dots.tts backend resolves through the backend registry."""
 
-        with mock_dotstts_backend() as dotstts_cls:
-            with mock.patch.object(dotstts_cls, "_validate_refs"):
-                backend = resolve_backend("dotstts")
+        with (
+            mock_dotstts_backend() as dotstts_cls,
+            mock.patch.object(dotstts_cls, "_validate_refs"),
+        ):
+            backend = resolve_backend("dotstts")
 
         self.assertIsInstance(backend, dotstts_cls)
         self.assertEqual(backend.name, "dotstts")
@@ -1166,9 +1170,11 @@ class BackendTests(TestCase):
 
         with mock_dotstts_backend() as dotstts_cls:
             fake_loguru = mock.Mock()
-            with mock.patch("celune.backends.tts.dotstts.loguru.logger", fake_loguru):
-                with dotstts_cls.suppress_backend_output():
-                    pass
+            with (
+                mock.patch("celune.backends.tts.dotstts.loguru.logger", fake_loguru),
+                dotstts_cls.suppress_backend_output(),
+            ):
+                pass
 
         fake_loguru.disable.assert_called_once_with("dots_tts")
         fake_loguru.enable.assert_called_once_with("dots_tts")

@@ -1,9 +1,9 @@
+# SPDX-License-Identifier: MIT
 """Speech pipeline aliases."""
 
 import queue
 from typing import Optional, Union
 
-from .aliases import AudioChunk
 from ..constants import PipelineStates
 from ..dataclasses.pipeline import (
     AudioInputRequest,
@@ -13,6 +13,7 @@ from ..dataclasses.pipeline import (
     SpeechRequest,
     VoiceConversionRequest,
 )
+from .aliases import AudioChunk
 
 type SpeechStreamItem = Optional[Union[AudioChunk, Exception]]
 type SpeechStreamQueue = queue.Queue[SpeechStreamItem]  # noqa

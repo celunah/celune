@@ -15,11 +15,11 @@ instances can exhaust GPU resources and is not a supported usage pattern.
 """
 
 import contextlib as _contextlib
-import inspect as _inspect
 import sys as _sys
-from typing import TYPE_CHECKING, Callable, Union
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Union
 
-from ._version import REVISION, VERSION, __version__
+from ._version import REVISION, __version__
 from .constants import APP_NAME
 from .paths import (
     configure_huggingface_cache_environment,
@@ -34,22 +34,6 @@ if TYPE_CHECKING:
     from .celune import Celune
     from .extensions.base import CeluneContext, CeluneExtension
     from .extensions.events import subscribe
-
-
-def _caller_is_repl() -> bool:
-    """Return whether Celune appears to be imported from the interactive Python REPL."""
-    for frame in _inspect.stack():
-        filename = frame.filename
-        if "importlib" in filename or filename.startswith("<frozen"):
-            continue
-        if (
-            __name__.replace(".", "\\") in filename
-            or __name__.replace(".", "/") in filename
-        ):
-            continue
-        return filename.startswith("<python-input-")
-    return False
-
 
 __tagline__ = '"Your voice, your way."'
 __codename__ = "Personality"
@@ -96,15 +80,15 @@ def __getattr__(
 
 
 __all__ = [
+    "REVISION",
     "Celune",
     "CeluneContext",
     "CeluneExtension",
-    "REVISION",
-    "subscribe",
-    "__version__",
-    "__tagline__",
     "__codename__",
     "__comment__",
+    "__tagline__",
+    "__version__",
+    "subscribe",
 ]
 
 

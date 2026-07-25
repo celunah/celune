@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import threading
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Literal, Optional, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Literal, Optional, TypeVar, cast, overload
 
 from ..typing.aliases import DispatcherCallback
 from ..typing.events import (

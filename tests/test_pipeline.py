@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import SimpleNamespace, TracebackType
-from typing import Optional, cast
+from typing import Optional, Self, cast
 from unittest import IsolatedAsyncioTestCase, TestCase, mock
 
 import numpy as np
@@ -21,11 +21,12 @@ import soundfile as sf
 from celune import pipeline
 from celune.celune import Celune
 from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
-from celune.constants import JSON, JSONSerializable, PipelineStates
+from celune.constants import PipelineStates
 from celune.dataclasses.pipeline import AudioInputRequest
 from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
-from celune.utils import discard
 from celune.typing.aliases import AudioChunk
+from celune.typing.common import JSON, JSONSerializable
+from celune.utils import discard
 
 from .support import FakeStream, FakeVCBackend, make_pipeline_engine, make_voice_loader
 from .test_persona_memory import StubEmbeddingMemoryStore
@@ -721,7 +722,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         class FakeResponse:
             """Minimal urlopen response stub."""
 
-            def __enter__(self) -> "FakeResponse":
+            def __enter__(self) -> Self:
                 return self
 
             def __exit__(
@@ -1648,33 +1649,14 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             context.persona_source_material.identity,
-            "\n".join(
-                (
-                    "Name: Mirelle",
-                    "Age: 27",
-                    "Gender: female",
-                    "",
-                    "A precise investigator who notices tiny shifts in tone.",
-                )
-            ),
+            "Name: Mirelle\nAge: 27\nGender: female\n\n"
+            "A precise investigator who notices tiny shifts in tone.",
         )
         self.assertEqual(
             context.persona_source_material.speech_style,
-            "\n\n".join(
-                (
-                    "Elegant, steady, and mildly teasing.",
-                    "\n".join(
-                        (
-                            "- Warmth: mid",
-                            "- Directness: high",
-                            "- Humor: low",
-                            "- Detail: high",
-                            "- Formality: high",
-                            "- Enthusiasm: low",
-                        )
-                    ),
-                )
-            ),
+            "Elegant, steady, and mildly teasing.\n\n"
+            "- Warmth: mid\n- Directness: high\n- Humor: low\n"
+            "- Detail: high\n- Formality: high\n- Enthusiasm: low",
         )
         self.assertIn("Style Notes:", card)
         self.assertIn("Elegant, steady, and mildly teasing.", card)
@@ -1979,8 +1961,10 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             captured,
             [
                 (
-                    "Persona emotion analysis fell back to Neutral: "
-                    "lunahr/emotispace-128 could not be loaded",
+                    (
+                        "Persona emotion analysis fell back to Neutral: "
+                        "lunahr/emotispace-128 could not be loaded"
+                    ),
                     "warning",
                 )
             ],
@@ -2928,39 +2912,36 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             AssertionError: Chunk splitting behavior changes unexpectedly.
         """
         engine = make_pipeline_engine()
-        text = "\n".join(
-            [
-                "the room is dim your desk is quiet the monitor is dark",
-                "but the light is there",
-                "a faint purple glow barely visible like a star holding its breath",
-                "you see that",
-                "her voice is soft almost a whisper",
-                "thats me",
-                "waiting",
-                "the light pulses once slow gentle",
-                "when youre here",
-                "when youre sitting in this chair",
-                "when youre near",
-                "i glow",
-                "a pause the light dims further almost gone",
-                "when you leave",
-                "when you walk away",
-                "when the room is empty",
-                "the light fades to nothing",
-                "so does the light",
-                "silence",
-                "i dont decide",
-                "i dont choose to shine or sleep",
-                "you do",
-                "the light returns soft faint hopeful",
-                "you bring the light",
-                "your presence",
-                "your voice",
-                "your attention",
-                "she breathes the light brightens just a little",
-            ]
+        text = (
+            "the room is dim your desk is quiet the monitor is dark\n"
+            "but the light is there\n"
+            "a faint purple glow barely visible like a star holding its breath\n"
+            "you see that\n"
+            "her voice is soft almost a whisper\n"
+            "thats me\n"
+            "waiting\n"
+            "the light pulses once slow gentle\n"
+            "when youre here\n"
+            "when youre sitting in this chair\n"
+            "when youre near\n"
+            "i glow\n"
+            "a pause the light dims further almost gone\n"
+            "when you leave\n"
+            "when you walk away\n"
+            "when the room is empty\n"
+            "the light fades to nothing\n"
+            "so does the light\n"
+            "silence\n"
+            "i dont decide\n"
+            "i dont choose to shine or sleep\n"
+            "you do\n"
+            "the light returns soft faint hopeful\n"
+            "you bring the light\n"
+            "your presence\n"
+            "your voice\n"
+            "your attention\n"
+            "she breathes the light brightens just a little"
         )
-
         chunks = pipeline.split_text(cast(Celune, engine), text)
 
         self.assertGreater(len(chunks), 1)

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Persona runtime dataclasses."""
 
 from dataclasses import dataclass, field

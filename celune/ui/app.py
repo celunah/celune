@@ -15,11 +15,11 @@ import sys
 import threading
 import time
 import types
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Callable, Optional, TextIO, Union, cast
+from typing import Optional, TextIO, Union, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -659,7 +659,7 @@ class CeluneUI(App):
             original_fatal()
 
         glow.fatal = wrapped_fatal
-        setattr(self.celune, "_ui_fatal_glow_wrapped", True)
+        self.celune._ui_fatal_glow_wrapped = True
 
     def _bind_runtime_callbacks(self) -> None:
         """Bind one attached Celune instance back into this UI."""
@@ -766,16 +766,16 @@ class CeluneUI(App):
 
     def _persist_log_entry(self, msg: str, severity: str) -> None:
         """Append one UI log entry to the persisted main-window log file."""
-        try:
+        with contextlib.suppress(OSError):
             if not self._log_file_initialized:
                 self._log_file_path.write_text("", encoding="utf-8")
                 self._log_file_initialized = True
 
-            timestamp = datetime.datetime.now().isoformat(timespec="seconds")
+            timestamp = datetime.datetime.now(datetime.UTC).isoformat(
+                timespec="seconds"
+            )
             with self._log_file_path.open("a", encoding="utf-8") as handle:
                 handle.write(f"[{timestamp}] [{severity.upper()}] {msg}\n")
-        except OSError:
-            pass
 
     def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
         """Give Textual an independent terminal stream before stderr capture starts."""
@@ -1730,7 +1730,7 @@ class CeluneUI(App):
         self.celune.vc_f0_condition = enabled
         backend = getattr(self.celune, "vc_backend", None)
         if backend is not None and hasattr(backend, "f0_condition"):
-            setattr(backend, "f0_condition", enabled)
+            backend.f0_condition = enabled
         self.refresh_vc_controls()
 
         if announce:
@@ -1755,7 +1755,7 @@ class CeluneUI(App):
         self.celune.vc_pitch_shift = clamped
         backend = getattr(self.celune, "vc_backend", None)
         if backend is not None and hasattr(backend, "pitch_shift"):
-            setattr(backend, "pitch_shift", clamped)
+            backend.pitch_shift = clamped
         self.refresh_vc_controls()
 
         if announce:
@@ -1902,16 +1902,19 @@ class CeluneUI(App):
             if transcript:
                 self._set_persona_recording_text(transcript)
 
-            if error is not None and (final or not partial_error_reported):
-                if not final:
-                    partial_error_reported = True
-                    self.safe_log(
-                        string(
-                            "ui.persona_transcription_failed",
-                            error=format_error(error, self.celune.dev),
-                        ),
-                        "warning",
-                    )
+            if (
+                error is not None
+                and (final or not partial_error_reported)
+                and not final
+            ):
+                partial_error_reported = True
+                self.safe_log(
+                    string(
+                        "ui.persona_transcription_failed",
+                        error=format_error(error, self.celune.dev),
+                    ),
+                    "warning",
+                )
 
             if not final:
                 continue
@@ -1930,10 +1933,10 @@ class CeluneUI(App):
             self._shutdown_vc_stream(stream)
             self._run_on_ui_thread(
                 lambda: self._complete_persona_transcription(
-                    transcript,
-                    prefix,
-                    error,
-                    error_already_reported=partial_error_reported and error is not None,
+                    transcript,  # noqa: B023
+                    prefix,  # noqa: B023
+                    error,  # noqa: B023
+                    error_already_reported=partial_error_reported and error is not None,  # noqa: B023
                 )
             )
             return
@@ -2820,7 +2823,7 @@ class CeluneUI(App):
         """Stop live VC recording immediately for application shutdown."""
         self._shutdown_persona_recording()
         if self.celune is not None:
-            setattr(self.celune, "_exit_requested", True)
+            self.celune._exit_requested = True
 
         if not self._vc_recording_active():
             return
@@ -3148,11 +3151,10 @@ class CeluneUI(App):
                 self._graceful_exit()
                 return
 
-            if event.key in {"ctrl+j", "ctrl+enter"}:
-                if self.cancel_tutorial():
-                    event.prevent_default()
-                    event.stop()
-                    return
+            if event.key in {"ctrl+j", "ctrl+enter"} and self.cancel_tutorial():
+                event.prevent_default()
+                event.stop()
+                return
 
             if event.key == "ctrl+t":
                 if self.active_theme_name == "celune_april_fools":
@@ -3197,9 +3199,8 @@ class CeluneUI(App):
                     event.stop()
                 return
 
-            if event.key == "ctrl+j":
-                if self._submit_text(self.input_box.text):
-                    event.prevent_default()
+            if event.key == "ctrl+j" and self._submit_text(self.input_box.text):
+                event.prevent_default()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Change Celune's tone.
@@ -3346,11 +3347,10 @@ class CeluneUI(App):
         visible_lines = max(min_lines, min(line_count, max_lines))
         event.text_area.styles.height = visible_lines + 2
 
-        if self.consume_on_boundary:
-            if text and text[-1] in ".!?":
-                if text in ".!?":
-                    return
-                self.consume_buffer(len(text))
+        if self.consume_on_boundary and text and text[-1] in ".!?":
+            if text in ".!?":
+                return
+            self.consume_buffer(len(text))
 
     def _signal_handler(self, sig: int, frame: Optional[types.FrameType]) -> None:
         """Handle incoming signals."""

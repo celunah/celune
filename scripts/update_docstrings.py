@@ -4,9 +4,10 @@
 import ast
 import re
 import textwrap
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional, Union
+from typing import Optional, Union
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = [
@@ -212,11 +213,10 @@ def has_non_none_return(root: ast.AST) -> bool:
             return
 
         def visit_Return(self, node: ast.Return) -> None:
-            if node.value is not None:
-                if not (
-                    isinstance(node.value, ast.Constant) and node.value.value is None
-                ):
-                    self.found = True
+            if node.value is not None and not (
+                isinstance(node.value, ast.Constant) and node.value.value is None
+            ):
+                self.found = True
 
     collector = ReturnCollector()
     collector.visit(root)
@@ -250,7 +250,7 @@ def arg_description(name: str, parsed: ParsedDoc) -> str:
 
 
 def raise_description(name: str, parsed: ParsedDoc) -> str:
-    if name in parsed.raises and parsed.raises[name]:
+    if name in parsed.raises and parsed.raises.get(name):
         return parsed.raises[name]
     return f"If `{name}` needs to be raised."
 

@@ -1,8 +1,10 @@
+# SPDX-License-Identifier: MIT
 """Typed event names, payload protocols, and callback aliases for extensions."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Literal, Optional, Protocol, Union
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Literal, Optional, Protocol, Union
 
 from ..dataclasses.events import (
     AudioEndEvent,

@@ -72,7 +72,7 @@ class AudioRGBGlow:
 
         # Celune glows much brighter on Celune Day, else she'll glow according to the lunar phase
         # this effect is muted down to 25% of current brightness while Celune is sleeping
-        current_date = datetime.datetime.now()
+        current_date = datetime.datetime.now(datetime.UTC)
         if is_celune_day():
             self.glow_multiplier *= 3.0
         else:

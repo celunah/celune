@@ -6,8 +6,9 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional, cast
+from typing import TYPE_CHECKING, Optional, cast
 from urllib.parse import urlparse
 
 import soundfile as sf
@@ -213,7 +214,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.celune.vc_f0_condition = enabled
         vc_backend = getattr(ui.celune, "vc_backend", None)
         if vc_backend is not None and hasattr(vc_backend, "f0_condition"):
-            setattr(vc_backend, "f0_condition", enabled)
+            vc_backend.f0_condition = enabled
         refresh_vc_controls()
         ui.safe_log(
             string(
@@ -232,7 +233,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.celune.vc_pitch_shift = clamped
         vc_backend = getattr(ui.celune, "vc_backend", None)
         if vc_backend is not None and hasattr(vc_backend, "pitch_shift"):
-            setattr(vc_backend, "pitch_shift", clamped)
+            vc_backend.pitch_shift = clamped
         refresh_vc_controls()
         ui.safe_log(string("commands.vcpitch_set", value=clamped))
 

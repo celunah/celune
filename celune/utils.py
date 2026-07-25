@@ -9,12 +9,11 @@ import os
 import random
 import re
 import subprocess
-import textwrap
 import time
 import traceback
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, TextIO, Union, overload
+from typing import Any, Literal, Optional, TextIO, overload
 
 import psutil
 from lingua import (  # pylint: disable=E0611
@@ -123,7 +122,7 @@ def lunar_info(dt: datetime.datetime) -> tuple[float, float, float]:
     Returns:
         tuple[float, float, float]: The lunar phase, illumination level and days until a full moon.
     """
-    frac_dt = dt.astimezone(datetime.timezone.utc)
+    frac_dt = dt.astimezone(datetime.UTC)
     since_ref = (frac_dt - REFERENCE_NEW_MOON).total_seconds() / 86400
     cycle_days = 29.530588
     phase = (since_ref / cycle_days) % 1.0
@@ -169,13 +168,13 @@ def celune_day_status(now: datetime.datetime) -> str:
     Returns:
         str: The formatted Celune Day status message.
     """
-    celune_day_this_year = datetime.datetime(now.year, 6, 2)
+    celune_day_this_year = datetime.datetime(now.year, 6, 2, tzinfo=datetime.UTC)
 
     if now.date() == celune_day_this_year.date():
         return f"Today is Celune Day {now.year}"
 
     if now > celune_day_this_year:
-        next_celune_day = datetime.datetime(now.year + 1, 6, 2)
+        next_celune_day = datetime.datetime(now.year + 1, 6, 2, tzinfo=datetime.UTC)
     else:
         next_celune_day = celune_day_this_year
 
@@ -184,9 +183,7 @@ def celune_day_status(now: datetime.datetime) -> str:
     return f"{days_until} day{suffix} until Celune Day {next_celune_day.year}"
 
 
-def range_interpolated(
-    value: float, lo: Union[int, float], hi: Union[int, float], power: float = 3.0
-) -> Union[int, float]:
+def range_interpolated(value: float, lo: float, hi: float, power: float = 3.0) -> float:
     """Get interpolated number within a specified range.
 
     Args:
@@ -636,7 +633,7 @@ def is_april_fools() -> bool:
     Returns:
         bool: Whether today is April Fools.
     """
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(datetime.UTC)
     return now.month == 4 and now.day == 1
 
 
@@ -646,7 +643,7 @@ def is_celune_day() -> bool:
     Returns:
         bool: Whether today is Celune Day.
     """
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(datetime.UTC)
     return now.month == 6 and now.day == 2
 
 
@@ -748,87 +745,6 @@ def is_port_usable(port: int) -> bool:
         return True
     except (psutil.Error, OSError):
         return False
-
-
-def make_persona_card(
-    name: str,
-    age: str,
-    gender: str,
-    persona: str,
-    traits: dict[str, str],
-    context: str,
-    voice: str,
-) -> str:
-    """Return a persona card for the current character.
-
-    Args:
-        name: The character name.
-        age: The character's age.
-        gender: The character's gender or LGBT type.
-        persona: The character's personality description.
-        traits: The character's trait values.
-        context: Additional context information for the character.
-        voice: The character's selected voice type.
-
-    Returns:
-        str: The formatted persona card.
-
-    Raises:
-        ValueError: The Persona card has missing or invalid traits.
-    """
-    required_traits = ("warmth", "directness", "humor", "detail")
-    missing_traits = [trait for trait in required_traits if trait not in traits]
-    if missing_traits:
-        raise ValueError(f"persona card is missing traits: {', '.join(missing_traits)}")
-
-    unknown_traits = [trait for trait in traits if trait not in required_traits]
-    if unknown_traits:
-        raise ValueError(
-            f"undefined trait for persona card: {', '.join(unknown_traits)}"
-        )
-
-    base_card = """
-    # Speaker Profile
-
-    Name: {name}
-    Age: {age}
-    Gender: {gender}
-
-    ## Personality
-    {persona}
-
-    ## Response Style
-    - Warmth: {warmth}
-    - Directness: {directness}
-    - Humor: {humor}
-    - Detail: {detail}
-
-    ## Context
-    {context}
-
-    ## Voice
-    {voice}
-    """
-
-    custom_assert(bool(name.strip()), ValueError("persona card name cannot be empty"))
-    assert bool(name.strip())
-
-    return (
-        textwrap.dedent(base_card)
-        .strip()
-        .format(
-            name=name,
-            age=age,
-            gender=gender,
-            persona=persona,
-            warmth=traits["warmth"],
-            directness=traits["directness"],
-            humor=traits["humor"],
-            detail=traits["detail"],
-            context=context,
-            voice=voice,
-        )
-    )
 
 
 def raise_test() -> None:

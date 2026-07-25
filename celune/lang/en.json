@@ -1,4 +1,5 @@
 {
+    "SPDX-License-Identifier": "MIT",
     "api.cannot_convert": "I can't convert that.",
     "api.cannot_play_now": "I can't play that right now.",
     "api.could_not_convert": "I couldn't convert that.",

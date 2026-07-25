@@ -6,9 +6,10 @@ import gc
 import importlib
 import tempfile
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, TracebackType
-from typing import Callable, Optional, Protocol, cast
+from typing import Optional, cast
 
 import numpy as np
 import soundfile as sf
@@ -16,24 +17,11 @@ import soundfile as sf
 from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from ...i18n import string
 from ...paths import huggingface_hub_cache_dir
-from ...typing.aliases import SeedVCArgument, SeedVCGenerator, AudioChunk
+from ...typing.aliases import AudioChunk, SeedVCGenerator
+from ...typing.backends import _SeedVCWrapper
 from .base import CeluneVCBackend
 
 __all__ = ["CeluneSeedVCBackend"]
-
-
-class _SeedVCWrapper(Protocol):
-    """Protocol for the dynamically loaded Seed-VC wrapper."""
-
-    def convert_voice(self, **kwargs: SeedVCArgument) -> SeedVCGenerator:
-        """Run Seed-VC and return its generator-style conversion result.
-
-        Args:
-            kwargs: String, numeric, and boolean conversion options accepted by Seed-VC.
-
-        Returns:
-            SeedVCGenerator: A generator whose return value is the converted waveform.
-        """
 
 
 class _TemporaryWaveFile:
@@ -110,7 +98,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
     ) -> None:
         """Redirect Seed-VC's hardcoded checkpoint downloads into Celune's cache."""
         cache_dir = cls._seedvc_huggingface_cache_dir(create=True)
-        hf_hub_download = getattr(hf_utils_module, "hf_hub_download")
+        hf_hub_download = hf_utils_module.hf_hub_download
 
         def load_custom_model_from_hf(
             repo_id: str,

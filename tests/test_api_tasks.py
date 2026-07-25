@@ -70,36 +70,40 @@ class ApiTaskWebSocketTests(TestCase):
         api._update_speech_job(job_id, status="completed")
         self._publish(job_id, "completed", "completed")
 
-        with TestClient(api.api) as client:
-            with client.websocket_connect(f"/v1/ws/tasks/{job_id}") as websocket:
-                events = [websocket.receive_json() for _ in range(4)]
-                self.assertEqual(
-                    [event["event"] for event in events],
-                    ["started", "progress", "log", "completed"],
-                )
-                self.assertTrue(all(event["task_id"] == job_id for event in events))
-                with self.assertRaises(WebSocketDisconnect):
-                    websocket.receive_json()
+        with (
+            TestClient(api.api) as client,
+            client.websocket_connect(f"/v1/ws/tasks/{job_id}") as websocket,
+        ):
+            events = [websocket.receive_json() for _ in range(4)]
+            self.assertEqual(
+                [event["event"] for event in events],
+                ["started", "progress", "log", "completed"],
+            )
+            self.assertTrue(all(event["task_id"] == job_id for event in events))
+            with self.assertRaises(WebSocketDisconnect):
+                websocket.receive_json()
 
     def test_client_can_connect_after_task_started(self) -> None:
         """Verify late subscribers receive the retained start event before live events."""
         job_id = self._job()
         self._publish(job_id, "started", "running")
 
-        with TestClient(api.api) as client:
-            with client.websocket_connect(f"/v1/ws/tasks/{job_id}") as websocket:
-                self.assertEqual(websocket.receive_json()["event"], "started")
-                api._update_speech_job(job_id, status="failed", error="hidden")
-                api._publish_task_event(
-                    job_id,
-                    api.TaskEvent(
-                        task_id=job_id,
-                        event="failed",
-                        status="failed",
-                        error="generation_failed",
-                    ),
-                )
-                failed = websocket.receive_json()
+        with (
+            TestClient(api.api) as client,
+            client.websocket_connect(f"/v1/ws/tasks/{job_id}") as websocket,
+        ):
+            self.assertEqual(websocket.receive_json()["event"], "started")
+            api._update_speech_job(job_id, status="failed", error="hidden")
+            api._publish_task_event(
+                job_id,
+                api.TaskEvent(
+                    task_id=job_id,
+                    event="failed",
+                    status="failed",
+                    error="generation_failed",
+                ),
+            )
+            failed = websocket.receive_json()
 
         self.assertEqual(failed["event"], "failed")
         self.assertNotIn("hidden", failed.values())
@@ -109,9 +113,11 @@ class ApiTaskWebSocketTests(TestCase):
         job_id = self._job()
         self._publish(job_id, "started", "running")
 
-        with TestClient(api.api) as client:
-            with client.websocket_connect(f"/v1/ws/tasks/{job_id}") as websocket:
-                websocket.receive_json()
+        with (
+            TestClient(api.api) as client,
+            client.websocket_connect(f"/v1/ws/tasks/{job_id}") as websocket,
+        ):
+            websocket.receive_json()
 
         self.assertEqual(api.speech_jobs[job_id].status, "running")
         self.assertEqual(api.speech_jobs[job_id].subscriptions, [])
@@ -128,10 +134,12 @@ class ApiTaskWebSocketTests(TestCase):
             api._update_speech_job(job_id, status=terminal)
             self._publish(job_id, terminal, terminal)
 
-            with TestClient(api.api) as client:
-                with client.websocket_connect(f"/v1/ws/tasks/{job_id}") as websocket:
-                    self.assertEqual(websocket.receive_json()["event"], "started")
-                    self.assertEqual(websocket.receive_json()["event"], terminal)
+            with (
+                TestClient(api.api) as client,
+                client.websocket_connect(f"/v1/ws/tasks/{job_id}") as websocket,
+            ):
+                self.assertEqual(websocket.receive_json()["event"], "started")
+                self.assertEqual(websocket.receive_json()["event"], terminal)
 
     def test_http_cancellation_calls_core_and_publishes_cancelled(self) -> None:
         """Verify explicit HTTP cancellation delegates to the Core cancellation method."""

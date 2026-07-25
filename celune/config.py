@@ -341,20 +341,22 @@ def resolve_audio_device_with_info(
 
     if isinstance(all_devices, Mapping):
         name = str(all_devices.get("name", ""))
-        if configured_name.casefold() in name.casefold():
-            if int(all_devices.get(channel_key, 0)) > 0:
-                hostapi_name = _hostapi_name(
-                    all_devices,
-                    list(hostapis)
-                    if isinstance(hostapis, Sequence)
-                    and not isinstance(hostapis, (str, bytes))
-                    else None,
-                )
-                if (
-                    configured_hostapi is None
-                    or hostapi_name == WINDOWS_AUDIO_HOSTAPIS[configured_hostapi]
-                ):
-                    return configured_name, all_devices
+        if (
+            configured_name.casefold() in name.casefold()
+            and int(all_devices.get(channel_key, 0)) > 0
+        ):
+            hostapi_name = _hostapi_name(
+                all_devices,
+                list(hostapis)
+                if isinstance(hostapis, Sequence)
+                and not isinstance(hostapis, (str, bytes))
+                else None,
+            )
+            if (
+                configured_hostapi is None
+                or hostapi_name == WINDOWS_AUDIO_HOSTAPIS[configured_hostapi]
+            ):
+                return configured_name, all_devices
         return configured_name, None
 
     for index, info in enumerate(all_devices):

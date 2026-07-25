@@ -8,6 +8,9 @@
 
 #define printfe(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
 #define EXIT_PENDING_UPDATE 7
+#define STATUS_CONTROL_C_EXIT_VALUE 0xC000013AUL
+
+static int launcher_child_failed = 0;
 
 static int file_exists(const char *path) {
     DWORD attr = GetFileAttributesA(path);
@@ -464,5 +467,21 @@ int launcher_run(int argc, char **argv) {
         return 0;
     }
 
+    launcher_child_failed = exit_code != 0;
     return (int)exit_code;
+}
+
+void launcher_report_failure(int return_code) {
+    if (launcher_startup_was_interrupted() ||
+        return_code == 130 ||
+        (DWORD)return_code == STATUS_CONTROL_C_EXIT_VALUE) {
+        printfe("Startup was interrupted.\n");
+        return;
+    }
+
+    if (!launcher_child_failed) {
+        return;
+    }
+
+    printfe("Celune has crashed.\n");
 }
