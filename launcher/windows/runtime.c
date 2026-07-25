@@ -7,7 +7,6 @@
 #include <stdlib.h>
 
 #define printfe(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
-#define EXIT_PENDING_UPDATE 7
 #define STATUS_CONTROL_C_EXIT_VALUE 0xC000013AUL
 
 static int launcher_child_failed = 0;
@@ -455,7 +454,8 @@ int launcher_run(int argc, char **argv) {
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
 
-    if ((int)exit_code == EXIT_PENDING_UPDATE) {
+    if ((int)exit_code == CELUNE_EXIT_PENDING_UPDATE) {
+        printfe("%s\n", launcher_exit_reason(CELUNE_EXIT_PENDING_UPDATE));
         if (!file_exists(venv_python) || !file_exists(main_py)) {
             printfe("Celune could not find the Python helper needed to apply updates.\n");
             return 1;
@@ -483,5 +483,8 @@ void launcher_report_failure(int return_code) {
         return;
     }
 
-    printfe("Celune has crashed.\n");
+    const char *reason = launcher_exit_reason(return_code);
+    if (reason != NULL) {
+        printfe("%s\n", reason);
+    }
 }

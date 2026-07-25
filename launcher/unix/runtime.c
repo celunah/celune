@@ -11,8 +11,6 @@
 #include <stdlib.h>
 
 #define printfe(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
-#define EXIT_PENDING_UPDATE 7
-
 static int launcher_child_failed = 0;
 
 static int file_exists(const char *path) {
@@ -218,7 +216,8 @@ int launcher_run(int argc, char **argv) {
 
             if (WIFEXITED(status)) {
                 int exit_code = WEXITSTATUS(status);
-                if (exit_code == EXIT_PENDING_UPDATE) {
+                if (exit_code == CELUNE_EXIT_PENDING_UPDATE) {
+                    printfe("%s\n", launcher_exit_reason(CELUNE_EXIT_PENDING_UPDATE));
                     if (!spawn_update_helper_unix(python, main_py, launcher, repo_root, argc, argv)) {
                         printfe("Celune could not start her update helper.\n");
                         return 1;
@@ -354,5 +353,8 @@ void launcher_report_failure(int return_code) {
         return;
     }
 
-    printfe("Celune has crashed.\n");
+    const char *reason = launcher_exit_reason(return_code);
+    if (reason != NULL) {
+        printfe("%s\n", reason);
+    }
 }
