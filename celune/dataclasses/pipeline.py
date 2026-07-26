@@ -82,6 +82,7 @@ class PlaybackChunk:
     audio: npt.NDArray[np.float32]
     sample_rate: int
     timing: Optional[SpeechTiming] = None
+    generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,7 @@ class PlaybackSourceDone:
     notify_idle: bool = True
     saved_path: Optional[str] = None
     analysis_audio: Optional[AudioChunk] = None
+    generation: int = 0
 
 
 @dataclass

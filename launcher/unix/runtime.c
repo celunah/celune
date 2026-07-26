@@ -182,14 +182,32 @@ int launcher_run(int argc, char **argv) {
     }
 
     if (access(target, X_OK) == 0) {
+        int launcher_pipe[2];
+        if (pipe(launcher_pipe) != 0) {
+            perror("pipe failed");
+            return 1;
+        }
+
+        char launcher_pipe_fd[32];
+        snprintf(launcher_pipe_fd, sizeof(launcher_pipe_fd), "%d", launcher_pipe[0]);
+        if (setenv("CELUNE_LAUNCHER_PIPE_FD", launcher_pipe_fd, 1) != 0) {
+            close(launcher_pipe[0]);
+            close(launcher_pipe[1]);
+            printfe("Celune could not configure the launcher connection pipe.\n");
+            return 1;
+        }
+
         pid_t pid = fork();
         if (pid == -1) {
             perror("fork failed");
+            close(launcher_pipe[0]);
+            close(launcher_pipe[1]);
             return 1;
         }
 
         if (pid == 0) {
             launcher_restore_child_terminal();
+            close(launcher_pipe[1]);
             char **args = malloc(((size_t)argc + 1U) * sizeof(char *));
             if (args == NULL) {
                 perror("malloc failed");
@@ -211,8 +229,10 @@ int launcher_run(int argc, char **argv) {
             perror("execv failed");
             _exit(1);
         } else {
+            close(launcher_pipe[0]);
             int status;
             waitpid(pid, &status, 0);
+            close(launcher_pipe[1]);
 
             if (WIFEXITED(status)) {
                 int exit_code = WEXITSTATUS(status);

@@ -21,6 +21,7 @@ from typing import Optional
 from celune import REVISION, __tagline__, __version__
 from celune.constants import APP_NAME, APP_SLUG, ExitCodes
 from celune.i18n import string
+from celune.watchdog import launcher_loss_requested, start_watchdog
 from celune.paths import project_root, running_compiled
 from celune.updater import apply_update_and_restart
 
@@ -48,6 +49,8 @@ _FORCE_STARTUP_DIAGNOSTICS = False
 _CELUNE_PROCESS_NAMES = frozenset(
     {"celune", "celune-bin", "celune-bin.exe", "celune.appimage", "celune.exe"}
 )
+
+start_watchdog()
 
 
 def _load_ui_test_backend() -> type:
@@ -1262,6 +1265,9 @@ def start(verbose: bool = False, testing: bool = False) -> None:
             print(runtime.indent(string("cli.try_another_terminal"), spaces=4))
             time.sleep(5)
             sys.exit(runtime.ExitCodes.EXIT_NO_ANSI.value)
+
+        if launcher_loss_requested():
+            sys.exit(runtime.ExitCodes.EXIT_LAUNCHER_LOST.value)
     except Exception as exc:
         if exc.__class__ != runtime.No:
             stdout = getattr(sys.stdout, "underlying_stdout", sys.stdout)

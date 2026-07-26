@@ -5,6 +5,7 @@ import ast
 import importlib.util
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import TestCase
 
@@ -19,6 +20,52 @@ SPEC.loader.exec_module(UPDATE_DOCSTRINGS)
 
 class UpdateDocstringsTests(TestCase):
     """Verify nested docstring rewriting behavior."""
+
+    def test_existing_docstrings_are_not_reformatted(self) -> None:
+        """Verify valid docstrings are not rewritten just to change their layout."""
+        source = '''def example(value):
+    """Return `value` unchanged."""
+    return value
+'''
+
+        replacements = UPDATE_DOCSTRINGS.collect_replacements(source, ast.parse(source))
+
+        self.assertEqual(replacements, [])
+
+    def test_placeholder_docstrings_are_rewritten(self) -> None:
+        """Verify placeholder docstrings remain eligible for generation."""
+        source = '''def example(value):
+    """Describe this function.
+
+    Args:
+        value: Value for `value`.
+    """
+    return value
+'''
+
+        replacements = UPDATE_DOCSTRINGS.collect_replacements(source, ast.parse(source))
+
+        self.assertEqual(len(replacements), 1)
+
+    def test_rewrite_preserves_crlf_line_endings(self) -> None:
+        """Verify a real placeholder rewrite does not normalize repository line endings."""
+        source = '''def example(value):
+    """Describe this function.
+
+    Args:
+        value: Value for `value`.
+    """
+    return value
+'''.replace("\n", "\r\n")
+
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "example.py"
+            path.write_bytes(source.encode())
+
+            self.assertTrue(UPDATE_DOCSTRINGS.rewrite_file(path))
+            updated = path.read_bytes()
+
+        self.assertNotIn(b"\n", updated.replace(b"\r\n", b""))
 
     def test_local_class_methods_keep_their_docstrings(self) -> None:
         """Verify methods on classes defined inside functions are preserved."""

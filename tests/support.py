@@ -286,6 +286,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.persona_queue = queue.Queue()
     engine.utterance_force_stop = threading.Event()
     engine.speech_generation = 0
+    engine._playback_generation = 0
     engine.kept_sfx_audio = None
     engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
     engine.log = lambda msg, severity="info": messages.append((msg, severity))

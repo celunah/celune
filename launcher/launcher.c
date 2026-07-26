@@ -18,6 +18,8 @@ const char *launcher_exit_reason(int return_code) {
             return "Celune is running on an unsupported Python interpreter.";
         case CELUNE_EXIT_PENDING_UPDATE:
             return "Celune has a pending update.";
+        case CELUNE_EXIT_LAUNCHER_LOST:
+            return NULL;
         case CELUNE_EXIT_CELINE_DAY_SIX_SEVEN:
         case CELUNE_EXIT_CELINE_DAY:
             return NULL;
@@ -31,8 +33,10 @@ int main(int argc, char **argv) {
     int return_code = launcher_run(argc, argv);
 
     if (return_code != 0 || launcher_startup_was_interrupted()) {
+        launcher_reset_terminal_state();
         launcher_report_failure(return_code);
         launcher_wait_after_failure();
+        return return_code;
     }
 
     launcher_reset_terminal_state();

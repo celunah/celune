@@ -37,6 +37,8 @@ class Replacement:
 SECTION_PATTERN = re.compile(
     r"^(Args|Arguments|Parameters|Returns|Yields|Raises)\s*:\s*$"
 )
+ARG_PLACEHOLDER_PATTERN = re.compile(r"Value for `[^`]+`\.")
+RAISE_PLACEHOLDER_PATTERN = re.compile(r"If `[^`]+` needs to be raised\.")
 MAX_LINE_LENGTH = 120
 
 
@@ -61,6 +63,16 @@ def normalize_sentence(text: str) -> str:
 
 def clean_inline(text: str) -> str:
     return " ".join(text.strip().split())
+
+
+def contains_placeholders(doc: str) -> bool:
+    """Return whether a docstring contains one of the generator placeholders."""
+    return (
+        "Describe this function." in doc
+        or "Result of this function." in doc
+        or ARG_PLACEHOLDER_PATTERN.search(doc) is not None
+        or RAISE_PLACEHOLDER_PATTERN.search(doc) is not None
+    )
 
 
 def wrap_doc_line(
@@ -370,6 +382,12 @@ def collect_replacements(source: str, tree: ast.AST) -> list[Replacement]:
                 self.parents.pop()
                 return
 
+            if not contains_placeholders(doc_expr.value.value):
+                self.parents.append(("func", node.name))
+                self.generic_visit(node)
+                self.parents.pop()
+                return
+
             kind = function_kind(self.parents, node.name)
             parsed = parse_docstring(doc_expr.value.value)
             start = line_offsets[doc_expr.lineno - 1]
@@ -405,7 +423,9 @@ def collect_replacements(source: str, tree: ast.AST) -> list[Replacement]:
 
 
 def rewrite_file(path: Path) -> bool:
-    source = path.read_text(encoding="utf-8")
+    with path.open("r", encoding="utf-8", newline="") as source_file:
+        source = source_file.read()
+    newline = "\r\n" if "\r\n" in source else "\n"
     tree = ast.parse(source)
     replacements = collect_replacements(source, tree)
     if not replacements:
@@ -416,9 +436,12 @@ def rewrite_file(path: Path) -> bool:
         updated = (
             updated[: replacement.start] + replacement.text + updated[replacement.end :]
         )
+    if newline == "\r\n":
+        updated = updated.replace("\r\n", "\n").replace("\n", newline)
 
     if updated != source:
-        path.write_text(updated, encoding="utf-8")
+        with path.open("w", encoding="utf-8", newline="") as output_file:
+            output_file.write(updated)
         return True
     return False
 

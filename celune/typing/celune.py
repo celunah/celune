@@ -238,6 +238,7 @@ class CeluneStateAccessors:
     _queue_lock: threading.Lock
     _utterance_force_stop: threading.Event
     _speech_generation: int
+    _playback_generation: int
     _next_playback_source_id: int
     _playback_source_statuses: dict[int, str]
     _playback_source_meta: dict[int, dict[str, Union[str, float]]]

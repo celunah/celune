@@ -98,7 +98,8 @@ dev = [
     # How many useless functions do we have?
     "vulture",
     # This package is required to compile Celune into a properly packaged binary, bypassing the need to run Python.
-    "nuitka>=4.1.2",
+    # Canonically pinned, I know. 412 is her number, Nuitka happened to be on that version.
+    "nuitka==4.1.2",
     # If not installed, type checkers may complain.
     "types-pyyaml",
     "types-psutil",

@@ -85,6 +85,7 @@ class ExitCodes(Enum):
     EXIT_UNKNOWN_ARGS = 5  # Celune CLI command is unknown.
     EXIT_BAD_PYTHON = 6  # Celune is trying to run on an unsupported Python interpreter.
     EXIT_PENDING_UPDATE = 7  # Celune has a pending update.
+    EXIT_LAUNCHER_LOST = 8  # Celune lost the connection to her launcher.
 
     # the following exit codes may be disabled by the end user
     EXIT_CELINE_DAY_SIX_SEVEN = 67  # Celune refuses to run on Celine Day.

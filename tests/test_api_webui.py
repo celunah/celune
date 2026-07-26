@@ -467,6 +467,33 @@ class ApiWebUITests(TestCase):
 
         self.assertIn("Normalizing", status_html)
 
+    def test_webui_probe_prefers_active_playback_status(self) -> None:
+        """Verify active playback status remains visible over generic speaking state."""
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="speaking",
+                _playback_source_statuses={1: "Playing fixture.wav"},
+            ),
+        )
+        api.webui_last_probed_state = "idle"
+        api.set_webui_status("Speaking", source="callback", updated_at=10.0)
+
+        with (
+            mock.patch(
+                "celune.api.ui_resources.resource_pages",
+                return_value=("VRAM: 10.66/11.94 GB available",),
+            ),
+            mock.patch("celune.api.time.monotonic", return_value=10.1),
+        ):
+            _logs, status_html, _resources, _voice, _send, _input = api.webui_snapshot()
+
+        self.assertIn("Playing fixture.wav", status_html)
+
     def test_webui_probe_reconciles_stale_speaking_status_after_sleep(self) -> None:
         """Verify sleeping runtime state overrides a late speaking callback."""
         api.bound_celune = cast(

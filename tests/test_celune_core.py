@@ -661,6 +661,27 @@ class CeluneCoreTests(TestCase):
         self.assertFalse(celune.loaded)
         self.assertFalse(celune.model_ready.is_set())
 
+    def test_voice_change_does_not_wait_for_non_speech_playback(self) -> None:
+        """Verify voice changes ignore active non-verbal playback."""
+        celune = self._make_celune({})
+        celune.voices = ("balanced", "bold")
+        celune.loaded = True
+        celune.locked = False
+        celune.cur_state = "speaking"
+        celune.model_ready.set()
+        celune.playback_done.clear()
+        celune._playback_source_meta[1] = {
+            "kind": "sfx",
+            "base_gain": 1.0,
+            "current_gain": 1.0,
+            "total_frames": 48000.0,
+            "played_frames": 0.0,
+        }
+
+        self.assertEqual(celune._prepare_voice_change("bold"), True)
+        self.assertFalse(celune.loaded)
+        self.assertFalse(celune.model_ready.is_set())
+
     def test_fatal_glow_marks_runtime_error_state(self) -> None:
         """Verify fatal glow always stamps Celune into the error state."""
         celune = self._make_celune({})

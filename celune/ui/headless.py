@@ -13,6 +13,7 @@ from ..celune import Celune
 from ..config import Config, config_bool
 from ..constants import APP_NAME, SIGTSTP
 from ..i18n import string
+from ..watchdog import launcher_loss_requested
 from ..utils import discard
 
 
@@ -114,7 +115,11 @@ class CeluneHeadlessUI:
                 signal.signal(SIGTSTP, self._signal_handler)
 
         while not self._exit:
-            time.sleep(1)
+            if launcher_loss_requested():
+                self.close()
+                self._exit = True
+                continue
+            time.sleep(0.1)
 
     def close(self) -> None:
         """Exit from Celune's headless interface."""

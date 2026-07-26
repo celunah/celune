@@ -59,7 +59,11 @@ from .constants import APP_NAME, BASE_SR
 from .dsp import resample_audio
 from .i18n import string
 from .paths import main_window_log_path, project_root
-from .pipeline import SpeechStreamQueue, prepare_playback_audio
+from .pipeline import (
+    SpeechStreamQueue,
+    current_playback_status,
+    prepare_playback_audio,
+)
 from .typing.aliases import AudioChunk, AudioChunks
 from .typing.api import (
     TaskCommandName,
@@ -1104,7 +1108,17 @@ def _probe_webui_runtime() -> None:
 
     now = time.monotonic()
     current_state = (celune.cur_state or "").strip().lower()
-    if current_state == "sleeping":
+    playback_status = current_playback_status(celune)
+    if playback_status is not None:
+        if webui_status_text != playback_status or webui_status_source != "playback":
+            _set_webui_status(
+                playback_status,
+                "info",
+                source="playback",
+                updated_at=now,
+            )
+        webui_last_probed_state = current_state
+    elif current_state == "sleeping":
         sleeping_log = string("webui.sleeping_log", app_name=APP_NAME)
         if not any(message == sleeping_log for message, _ in webui_log_lines):
             _append_webui_log(sleeping_log, "sleeping")
@@ -1120,7 +1134,7 @@ def _probe_webui_runtime() -> None:
                 source="probe",
                 updated_at=now,
             )
-    if current_state != webui_last_probed_state:
+    if playback_status is None and current_state != webui_last_probed_state:
         status_text, severity = _probed_status_text(celune)
         should_override_status = (
             webui_last_probed_state is None

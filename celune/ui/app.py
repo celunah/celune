@@ -49,6 +49,7 @@ from ..cevoice import default_loader
 from ..config import format_audio_device_name, resolve_audio_device_with_info
 from ..constants import APP_NAME, CRASH_LINES, SIGTSTP
 from ..i18n import string
+from ..watchdog import launcher_loss_requested
 from ..paths import config_path, main_window_log_path
 from ..persona.asr import (
     DEFAULT_PERSONA_SPEECH_MODEL_ID,
@@ -60,7 +61,11 @@ from ..persona.impl import (
     persona_enabled,
     persona_talkback_enabled,
 )
-from ..pipeline import finish_streaming_sfx_audio, queue_streaming_sfx_audio
+from ..pipeline import (
+    current_playback_status,
+    finish_streaming_sfx_audio,
+    queue_streaming_sfx_audio,
+)
 from ..typing.aliases import (  # pylint: disable=W0611
     AudioChunk,
     AudioChunks,
@@ -724,6 +729,14 @@ class CeluneUI(App):
         """Advance the marquee one character for long status messages."""
         if self.status is None:
             return
+        playback_status = (
+            current_playback_status(self.celune) if self.celune is not None else None
+        )
+        if playback_status is not None and playback_status != self._status_text:
+            self._status_text = playback_status
+            self.status_severity = "info"
+            self._status_marquee_offset = 0
+            self._refresh_theme_text()
         if len(self._status_text) <= self._status_view_width():
             self._update_status_label()
             return
@@ -908,6 +921,8 @@ class CeluneUI(App):
                 signal.signal(SIGTSTP, self._signal_handler)
             signal.signal(signal.SIGTERM, self._signal_handler)
 
+        self.set_interval(0.1, self._check_launcher_loss)
+
         loader = default_loader()
         if loader is not None:
             theme = loader.bundle.metadata.get("theme")
@@ -979,6 +994,11 @@ class CeluneUI(App):
         self.call_after_refresh(self.start_background_init)
         self.safe_status(string("status.initializing"))
         self.update_resources()
+
+    def _check_launcher_loss(self) -> None:
+        """Run the normal UI shutdown path after the launcher disconnects."""
+        if launcher_loss_requested() and self.cur_state != "exiting":
+            self._graceful_exit()
 
     def update_resources(self) -> None:
         """Refresh the currently selected resource footer page."""
@@ -2581,27 +2601,37 @@ class CeluneUI(App):
 
         def submit_live_audio() -> None:
             live_source_id: Optional[int] = None
+            live_playback_generation: Optional[int] = None
 
             def queue_playback_segment(
                 audio_chunk: AudioChunk,
                 sr: int,
                 audio_label: str,
             ) -> None:
-                nonlocal live_source_id
+                nonlocal live_playback_generation, live_source_id
                 if len(audio_chunk) <= 0 or self.celune is None:
                     return
 
                 # noinspection PyBroadException
                 try:
+                    if live_source_id is None:
+                        live_playback_generation = getattr(
+                            self.celune,
+                            "_playback_generation",
+                            0,
+                        )
                     live_source_id = queue_streaming_sfx_audio(
                         self.celune,
                         np.asarray(audio_chunk, dtype=np.float32),
                         sr,
                         audio_label,
                         source_id=live_source_id,
+                        generation=live_playback_generation,
                         status_label_key="pipeline.revoicing_label",
                         reset_ready_announcement=live_source_id is None,
                     )
+                    if live_source_id is None:
+                        live_playback_generation = None
                 except Exception:
                     self.safe_log(
                         string("ui.recording_stream_submit_failed"),
@@ -2610,11 +2640,12 @@ class CeluneUI(App):
                     return
 
             def finish_playback_segment() -> None:
-                nonlocal live_source_id
+                nonlocal live_playback_generation, live_source_id
                 if self.celune is None:
                     return
                 finish_streaming_sfx_audio(self.celune, live_source_id)
                 live_source_id = None
+                live_playback_generation = None
 
             while True:
                 item = submission_queue.get()

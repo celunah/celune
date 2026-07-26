@@ -1841,19 +1841,20 @@ class Celune(CeluneStateAccessors):
         return True
 
     def _prepare_voice_change(self, name: str) -> bool:
-        """Wait for playback to drain before preparing one voice switch."""
+        """Wait for speech to drain before preparing one voice switch."""
         if name not in self.voices:
             # this voice was not found in the current CEVOICE/CECHAR pack
             self.log(string("celune.unknown_voice", voice=name), "warning")
             return False
 
         self.change_input_state_callback(locked=True)
+        wait_for_speech = self._speech_playback_active()
         previous_state = self.cur_state
         self.cur_state = "reloading"
 
         if not self._model_ready.is_set():
             self.log(string("celune.waiting_for_models"))
-        if not self._wait_until_idle():
+        if not self._wait_until_idle(wait_for_speech=wait_for_speech):
             self.cur_state = previous_state
             self.change_input_state_callback(locked=False)
             return False
@@ -2219,8 +2220,30 @@ class Celune(CeluneStateAccessors):
             if not self._hot_reload_cevoice(restore_bundle, restore_voice):
                 raise BackendError("failed to restore character")
 
-    def _wait_until_idle(self, timeout: float = 30.0) -> bool:
-        """Wait until the model and playback pipeline are ready."""
+    def _speech_playback_active(self) -> bool:
+        """Return whether speech generation or a speech source is active."""
+        if self.locked or self.cur_state == "generating":
+            return True
+        if getattr(self, "_active_speech_generation", None) is not None:
+            return True
+
+        return any(
+            isinstance(metadata, dict) and metadata.get("kind") == "speech"
+            for metadata in self._playback_source_meta.values()
+        )
+
+    def _wait_until_idle(
+        self,
+        timeout: float = 30.0,
+        *,
+        wait_for_speech: Optional[bool] = None,
+    ) -> bool:
+        """Wait until the model and speech pipeline are ready.
+
+        Args:
+            timeout: Maximum time to wait for readiness.
+            wait_for_speech: Whether active speech must finish before returning.
+        """
         # don't wait a timeout while Celune is downloading a model
         ok = self._model_ready.wait(timeout=timeout)
         if not ok:
@@ -2233,24 +2256,34 @@ class Celune(CeluneStateAccessors):
             self.log(string("celune.model_unloaded_while_waiting"), "warning")
             return False
 
-        ok = self._playback_done.wait(timeout=timeout)
-        if not ok:
-            self.log(
-                string("celune.playback_idle_timeout"),
-                "warning",
-            )
-            return False
+        if wait_for_speech is None:
+            wait_for_speech = self._speech_playback_active()
+
+        if wait_for_speech:
+            ok = self._playback_done.wait(timeout=timeout)
+            if not ok:
+                self.log(
+                    string("celune.playback_idle_timeout"),
+                    "warning",
+                )
+                return False
 
         with self._say_lock:
             return (not self.locked) and self.loaded
 
     wait_until_idle = _wait_until_idle
 
-    async def wait_until_idle_async(self, timeout: float = 30.0) -> bool:
+    async def wait_until_idle_async(
+        self,
+        timeout: float = 30.0,
+        *,
+        wait_for_speech: Optional[bool] = None,
+    ) -> bool:
         """Wait until model reload and playback completion without blocking the event loop.
 
         Args:
             timeout: Maximum time to wait for model and playback readiness.
+            wait_for_speech: Whether active speech must finish before returning.
 
         Returns:
             ``True`` when Celune becomes ready before the timeout.
@@ -2266,10 +2299,14 @@ class Celune(CeluneStateAccessors):
             self.log(string("celune.model_unloaded_while_waiting"), "warning")
             return False
 
-        ok = await asyncio.to_thread(self._playback_done.wait, timeout)
-        if not ok:
-            self.log(string("celune.playback_idle_timeout"), "warning")
-            return False
+        if wait_for_speech is None:
+            wait_for_speech = self._speech_playback_active()
+
+        if wait_for_speech:
+            ok = await asyncio.to_thread(self._playback_done.wait, timeout)
+            if not ok:
+                self.log(string("celune.playback_idle_timeout"), "warning")
+                return False
 
         with self._say_lock:
             return (not self.locked) and self.loaded

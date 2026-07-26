@@ -11,6 +11,29 @@
 
 static int launcher_child_failed = 0;
 
+static HANDLE create_launcher_pipe(char *name, size_t size) {
+    int written = snprintf(
+        name,
+        size,
+        "\\\\.\\pipe\\celune-launcher-%lu",
+        (unsigned long)GetCurrentProcessId()
+    );
+    if (written < 0 || (size_t)written >= size) {
+        return INVALID_HANDLE_VALUE;
+    }
+
+    return CreateNamedPipeA(
+        name,
+        PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+        1,
+        1,
+        1,
+        0,
+        NULL
+    );
+}
+
 static int file_exists(const char *path) {
     DWORD attr = GetFileAttributesA(path);
     return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
@@ -406,6 +429,10 @@ int launcher_run(int argc, char **argv) {
 
     STARTUPINFOA si = {0};
     PROCESS_INFORMATION pi = {0};
+    OVERLAPPED pipe_connect = {0};
+    HANDLE launcher_pipe = INVALID_HANDLE_VALUE;
+    HANDLE pipe_connect_event = NULL;
+    char launcher_pipe_name[256];
     si.cb = sizeof(si);
 
     si.dwFlags = STARTF_USESHOWWINDOW;
@@ -428,6 +455,40 @@ int launcher_run(int argc, char **argv) {
         }
     }
 
+    launcher_pipe = create_launcher_pipe(launcher_pipe_name, sizeof(launcher_pipe_name));
+    if (launcher_pipe == INVALID_HANDLE_VALUE) {
+        printfe("Celune could not create the launcher connection pipe.\n");
+        return 1;
+    }
+
+    pipe_connect_event = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (pipe_connect_event == NULL) {
+        CloseHandle(launcher_pipe);
+        printfe("Celune could not create the launcher connection event.\n");
+        return 1;
+    }
+    pipe_connect.hEvent = pipe_connect_event;
+
+    BOOL connect_pending = ConnectNamedPipe(launcher_pipe, &pipe_connect);
+    DWORD connect_error = connect_pending ? ERROR_SUCCESS : GetLastError();
+    if (connect_pending || connect_error == ERROR_PIPE_CONNECTED) {
+        SetEvent(pipe_connect_event);
+    }
+    else if (connect_error != ERROR_IO_PENDING) {
+        CloseHandle(pipe_connect_event);
+        CloseHandle(launcher_pipe);
+        printfe("Celune could not prepare the launcher connection pipe.\n");
+        return 1;
+    }
+
+    if (!SetEnvironmentVariableA("CELUNE_LAUNCHER_PIPE", launcher_pipe_name)) {
+        CancelIoEx(launcher_pipe, &pipe_connect);
+        CloseHandle(pipe_connect_event);
+        CloseHandle(launcher_pipe);
+        printfe("Celune could not configure the launcher connection pipe.\n");
+        return 1;
+    }
+
     BOOL ok = CreateProcessA(
         NULL,
         cmd,
@@ -442,10 +503,19 @@ int launcher_run(int argc, char **argv) {
     );
 
     if (!ok) {
+        CancelIoEx(launcher_pipe, &pipe_connect);
+        CloseHandle(pipe_connect_event);
+        CloseHandle(launcher_pipe);
         printfe("Celune could not launch her compiled runtime.\nExit code: %lu\n", GetLastError());
         return 1;
     }
 
+    HANDLE wait_handles[2] = {pi.hProcess, pipe_connect_event};
+    DWORD first_wait = WaitForMultipleObjects(2, wait_handles, FALSE, INFINITE);
+    if (first_wait == WAIT_OBJECT_0) {
+        CancelIoEx(launcher_pipe, &pipe_connect);
+    }
+    CloseHandle(pipe_connect_event);
     WaitForSingleObject(pi.hProcess, INFINITE);
 
     DWORD exit_code = 1;
@@ -453,6 +523,7 @@ int launcher_run(int argc, char **argv) {
 
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    CloseHandle(launcher_pipe);
 
     if ((int)exit_code == CELUNE_EXIT_PENDING_UPDATE) {
         printfe("%s\n", launcher_exit_reason(CELUNE_EXIT_PENDING_UPDATE));
