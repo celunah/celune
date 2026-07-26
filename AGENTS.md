@@ -73,6 +73,8 @@ If for any reason any `uv` command exits with `Access is denied.` or `Permission
 
 Do not modify the execution environment to work around failures.
 
+To satisfy CI, prefer solutions that work on both Linux and Windows. When platform-specific code cannot be avoided, make sure CI only checks or runs it on the supported platform.
+
 Before CI, format the repository with `uv run ruff format .`.
 
 Expected CI runtime is 5 minutes or less.

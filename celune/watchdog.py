@@ -41,6 +41,9 @@ def _watch_windows_pipe(pipe_name: str) -> None:
     import ctypes
     from ctypes import wintypes
 
+    if not hasattr(ctypes, "WinDLL"):
+        return
+
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateFileW.argtypes = [
         wintypes.LPCWSTR,
@@ -86,7 +89,7 @@ def _watch_windows_pipe(pipe_name: str) -> None:
 
     try:
         buffer = ctypes.create_string_buffer(1)
-        bytes_read = wintypes.DWORD()
+        bytes_read = wintypes.DWORD()  # pylint: disable=E1120
         while (
             kernel32.ReadFile(
                 handle,
