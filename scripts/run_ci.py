@@ -1,20 +1,27 @@
 # SPDX-License-Identifier: MIT
 """Run CI automatically."""
 
-import sys
 import subprocess
+import sys
 from typing import Optional
 
 from tqdm.contrib import tzip
 
 CI_COMMANDS = (
     ("ruff", "format", "--check"),
+    ("ruff", "check"),
     ("pylint",),
     ("pyrefly", "check"),
     ("pytest", "-v"),
 )
 
-CI_PATHS = ((".",), ("celune", "tests"), ("celune", "tests"), ("tests",))
+CI_PATHS = (
+    (".",),
+    (".",),
+    ("celune", "tests"),
+    ("celune", "tests", "scripts"),
+    ("tests",),
+)
 
 cmds_failed = 0
 total_errors = []
@@ -35,21 +42,20 @@ def _agent_permission_marker(output: str) -> Optional[str]:
     return None
 
 
-def _run_uv_command(*cmd: str) -> None:
+def _run_uv_command(*command: str) -> None:
     """Run one uv-backed CI command, retrying without cache on permission errors."""
-    base_cmd = ["uv", "run", *cmd]
+    base_cmd = ["uv", "run", *command]
     try:
         subprocess.run(
             base_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             check=True,
             text=True,
             timeout=300,
+            capture_output=True,
         )
         return
-    except subprocess.CalledProcessError as failed:
-        combined_output = f"{failed.stdout}\n{failed.stderr}"
+    except subprocess.CalledProcessError as failed_process:
+        combined_output = f"{failed_process.stdout}\n{failed_process.stderr}"
         marker = _agent_permission_marker(combined_output)
         if marker is None:
             raise
@@ -57,19 +63,18 @@ def _run_uv_command(*cmd: str) -> None:
     try:
         subprocess.run(
             ["uv", "--no-cache", "run", *cmd],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             check=True,
             text=True,
             timeout=300,
+            capture_output=True,
         )
-    except subprocess.CalledProcessError as failed:
-        combined_output = f"{failed.stdout}\n{failed.stderr}"
+    except subprocess.CalledProcessError as failed_process:
+        combined_output = f"{failed_process.stdout}\n{failed_process.stderr}"
         marker = _agent_permission_marker(combined_output)
         if marker is not None:
             raise RuntimeError(
                 f"agent has no permissions to run CI: {marker}"
-            ) from failed
+            ) from failed_process
         raise
 
 
@@ -92,7 +97,7 @@ for cmd, paths in tzip(
             total_errors.append(failed.stdout)
         if failed.stderr:
             total_errors.append(failed.stderr)
-    except subprocess.TimeoutExpired as failed:
+    except subprocess.TimeoutExpired:
         cmds_failed += 1
         total_errors.append(f"{' '.join(cmd)} has timed out")
 
@@ -100,6 +105,8 @@ for cmd, paths in tzip(
 if cmds_failed:
     print()
     print("######## SLOP DETECTED! ########")
+    print("Are you vibe coding?")
+    print()
     print(f"{cmds_failed} command(s) failed:")
     print()
     print("\n\n".join(total_errors))

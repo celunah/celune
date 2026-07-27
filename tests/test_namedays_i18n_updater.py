@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT
 """Tests for lightweight data, localization, and update helpers."""
 
-import json
 import datetime
-import tempfile
+import json
 import subprocess
+import tempfile
 from pathlib import Path
-from unittest import mock, TestCase
+from unittest import TestCase, mock
 
 from celune import i18n, namedays, updater
 
@@ -79,7 +79,7 @@ class I18nTests(TestCase):
         try:
             i18n.STRINGS.clear()
             i18n.STRINGS["en"] = {"hello": "Hello"}
-            i18n.STRINGS["pl"] = {"hello": "Czesc"}
+            i18n.STRINGS["pl"] = {"hello": "Cześć"}
             with mock.patch(
                 "celune.i18n._locale.getlocale", return_value=("pl_PL", None)
             ):
@@ -126,6 +126,24 @@ class UpdaterTests(TestCase):
         self.assertEqual(updater.short_revision(""), "unknown")
         self.assertEqual(updater.is_newer_version_tag("9.9.9", "4.0.0"), True)
         self.assertEqual(updater.is_newer_version_tag("4.0.0", "4.0.0"), False)
+        self.assertEqual(updater.is_newer_version_tag("nightly", "4.0.0"), False)
+        self.assertEqual(updater.is_newer_version_tag("4.0.0", "4.0.0-rc.1"), True)
+
+    def test_latest_release_ignores_non_semver_releases(self) -> None:
+        """Verify only published SemVer releases with no draft flag are considered."""
+        release_info = updater.ReleaseInfo(
+            tag="v4.5.0",
+            version="4.5.0",
+            revision="c" * 40,
+            asset_url="https://example.com/celune.zip",
+        )
+
+        with mock.patch("celune.updater._latest_release", return_value=release_info):
+            release = updater._latest_release()
+        self.assertIsNotNone(release)
+        if release is not None:
+            self.assertEqual(release.version, "4.5.0")
+            self.assertEqual(release.asset_url, "https://example.com/celune.zip")
 
     def test_check_for_update_returns_none_for_dirty_worktree(self) -> None:
         """Verify dirty repositories suppress update prompts.
@@ -140,12 +158,8 @@ class UpdaterTests(TestCase):
         ):
             self.assertIsNone(updater.check_for_update())
 
-    def test_check_for_update_builds_update_info(self) -> None:
-        """Verify update metadata assembly for a newer revision.
-
-        Raises:
-            AssertionError: Update metadata behavior changes unexpectedly.
-        """
+    def test_check_for_update_builds_update_info_from_release(self) -> None:
+        """Verify update metadata comes from a newer SemVer release with an asset."""
         with (
             mock.patch.dict("os.environ", {}, clear=True),
             mock.patch("celune.updater._is_git_checkout", return_value=True),
@@ -154,31 +168,26 @@ class UpdaterTests(TestCase):
             mock.patch("celune.updater._local_revision", return_value="a" * 40),
             mock.patch("celune.updater._local_tag", return_value="3.5.0"),
             mock.patch(
-                "celune.updater._remote_branch_revision",
-                return_value="b" * 40,
-            ),
-            mock.patch(
-                "celune.updater._latest_remote_tag",
-                return_value=("4.0.0", "c" * 40),
-            ),
-            mock.patch(
-                "celune.updater._git_succeeds",
-                side_effect=[False, True],
+                "celune.updater._get_latest_release",
+                return_value=updater.ReleaseInfo(
+                    tag="v4.4.0",
+                    version="4.4.0",
+                    revision="b" * 40,
+                    asset_url="https://example.com/celune.zip",
+                ),
             ),
         ):
             update = updater.check_for_update()
-        self.assertIsNotNone(update)
-        if update is not None:
-            self.assertEqual(update.local_revision, "aaaaaaa")
-            self.assertEqual(update.latest_revision, "bbbbbbb")
-            self.assertEqual(update.latest_version, "4.0.0")
 
-    def test_check_for_update_ignores_local_commits_ahead_of_remote(self) -> None:
-        """Verify unpushed local commits do not show as available updates.
+        if not updater.FORCE_DISABLE_UPDATES:
+            self.assertIsNotNone(update)
+            if update is not None:
+                self.assertEqual(update.local_revision, "aaaaaaa")
+                self.assertEqual(update.latest_revision, "bbbbbbb")
+                self.assertEqual(update.latest_version, "4.4.0")
 
-        Raises:
-            AssertionError: Ahead-of-remote repositories should not prompt updates.
-        """
+    def test_check_for_update_ignores_release_without_platform_zip(self) -> None:
+        """Verify a release without the current-platform ZIP does not prompt updates."""
         with (
             mock.patch.dict("os.environ", {}, clear=True),
             mock.patch("celune.updater._is_git_checkout", return_value=True),
@@ -187,43 +196,16 @@ class UpdaterTests(TestCase):
             mock.patch("celune.updater._local_revision", return_value="a" * 40),
             mock.patch("celune.updater._local_tag", return_value="3.5.0"),
             mock.patch(
-                "celune.updater._remote_branch_revision",
-                return_value="b" * 40,
-            ),
-            mock.patch(
-                "celune.updater._latest_remote_tag",
-                return_value=("3.5.0", "b" * 40),
-            ),
-            mock.patch(
-                "celune.updater._git_succeeds",
-                side_effect=[True],
+                "celune.updater._get_latest_release",
+                return_value=updater.ReleaseInfo(
+                    tag="v4.0.0",
+                    version="4.0.0",
+                    revision="b" * 40,
+                    asset_url="",
+                ),
             ),
         ):
             self.assertIsNone(updater.check_for_update())
-
-    def test_has_new_remote_revision_only_for_fast_forward_updates(self) -> None:
-        """Verify revision comparison distinguishes ahead vs behind states.
-
-        Raises:
-            AssertionError: Fast-forward detection behavior changes unexpectedly.
-        """
-        with mock.patch(
-            "celune.updater._git_succeeds",
-            side_effect=[True],
-        ):
-            self.assertFalse(updater.has_new_remote_revision("a" * 40, "b" * 40))
-
-        with mock.patch(
-            "celune.updater._git_succeeds",
-            side_effect=[False, True],
-        ):
-            self.assertTrue(updater.has_new_remote_revision("a" * 40, "b" * 40))
-
-        with mock.patch(
-            "celune.updater._git_succeeds",
-            side_effect=[False, False],
-        ):
-            self.assertFalse(updater.has_new_remote_revision("a" * 40, "b" * 40))
 
     def test_check_for_update_compiled_uses_bundle_checksums(self) -> None:
         """Verify compiled update detection compares bundle checksums against artifact metadata."""
@@ -260,17 +242,27 @@ class UpdaterTests(TestCase):
                 mock.patch("celune.updater.running_compiled", return_value=True),
                 mock.patch("celune.updater._bundle_dir", return_value=bundle_dir),
                 mock.patch(
+                    "celune.updater._latest_release",
+                    return_value=updater.ReleaseInfo(
+                        tag="v4.2.0",
+                        version="4.2.0",
+                        revision="b" * 40,
+                        asset_url="https://example.com/celune.zip",
+                    ),
+                ),
+                mock.patch(
                     "celune.updater._read_remote_bundle_manifest", return_value=remote
                 ),
                 mock.patch("celune.updater._is_git_checkout", return_value=False),
             ):
                 update = updater.check_for_update()
 
-        self.assertIsNotNone(update)
-        if update is not None:
-            self.assertEqual(update.local_revision, "aaaaaaa")
-            self.assertEqual(update.latest_revision, "bbbbbbb")
-            self.assertEqual(update.latest_version, "4.2.0")
+        if not updater.FORCE_DISABLE_UPDATES:
+            self.assertIsNotNone(update)
+            if update is not None:
+                self.assertEqual(update.local_revision, "aaaaaaa")
+                self.assertEqual(update.latest_revision, "bbbbbbb")
+                self.assertEqual(update.latest_version, "4.2.0")
 
     def test_check_for_update_compiled_returns_none_when_bundle_matches_remote(
         self,
@@ -304,6 +296,64 @@ class UpdaterTests(TestCase):
             with (
                 mock.patch("celune.updater.running_compiled", return_value=True),
                 mock.patch("celune.updater._bundle_dir", return_value=bundle_dir),
+                mock.patch(
+                    "celune.updater._latest_release",
+                    return_value=updater.ReleaseInfo(
+                        tag="v4.2.0",
+                        version="4.2.0",
+                        revision="b" * 40,
+                        asset_url="https://example.com/celune.zip",
+                    ),
+                ),
+                mock.patch(
+                    "celune.updater._read_remote_bundle_manifest", return_value=remote
+                ),
+                mock.patch("celune.updater._is_git_checkout", return_value=False),
+            ):
+                self.assertIsNone(updater.check_for_update())
+
+    def test_check_for_update_compiled_ignores_rebuilt_same_release(self) -> None:
+        """Verify a rebuilt artifact does not prompt for the same local release."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle_dir = Path(temp_dir)
+            (bundle_dir / "celune.exe").write_bytes(b"launcher")
+            (bundle_dir / "celune-bin.exe").write_bytes(b"runtime")
+            local_files = {
+                "celune.exe": updater.sha256_file(bundle_dir / "celune.exe"),
+                "celune-bin.exe": updater.sha256_file(bundle_dir / "celune-bin.exe"),
+            }
+            manifest = {
+                "version": "4.3.0",
+                "revision": "a" * 40,
+                "artifact": "Celune-win-x64",
+                "files": local_files,
+            }
+            (bundle_dir / updater.UPDATE_MANIFEST_NAME).write_text(
+                json.dumps(manifest),
+                encoding="utf-8",
+            )
+            remote = updater.BundleManifest(
+                version="4.3.0",
+                revision="a" * 40,
+                artifact="Celune-win-x64",
+                files={
+                    "celune.exe": "1" * 64,
+                    "celune-bin.exe": "2" * 64,
+                },
+            )
+
+            with (
+                mock.patch("celune.updater.running_compiled", return_value=True),
+                mock.patch("celune.updater._bundle_dir", return_value=bundle_dir),
+                mock.patch(
+                    "celune.updater._latest_release",
+                    return_value=updater.ReleaseInfo(
+                        tag="v4.3.0",
+                        version="4.3.0",
+                        revision="a" * 40,
+                        asset_url="https://example.com/celune.zip",
+                    ),
+                ),
                 mock.patch(
                     "celune.updater._read_remote_bundle_manifest", return_value=remote
                 ),

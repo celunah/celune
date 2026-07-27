@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Unified Celune dataclass package with lazy re-exports."""
 
 from importlib import import_module
@@ -22,8 +23,8 @@ if TYPE_CHECKING:
         GenerateResponse,
     )
     from .pipeline import (
-        AudioOutput,
         AudioInputRequest,
+        AudioOutput,
         PlaybackChunk,
         PlaybackSourceDone,
         SpeechDone,
@@ -73,9 +74,9 @@ _MODULE_EXPORTS = {
 __all__ = [
     "CELUNE_CONSTANT_PROPERTIES",
     "CELUNE_FORWARDED_PROPERTIES",
-    "CeluneAudioState",
-    "AudioOutput",
     "AudioInputRequest",
+    "AudioOutput",
+    "CeluneAudioState",
     "CeluneBackendState",
     "CeluneCallbackState",
     "CeluneContext",

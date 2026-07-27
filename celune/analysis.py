@@ -1,30 +1,33 @@
 # SPDX-License-Identifier: MIT
 """Analyze a WAV file and generate a radar chart plus a text report."""
 
+import contextlib
 import pathlib
 import warnings
-import contextlib
 from pathlib import Path
 from typing import Optional, cast
 
+import librosa
+import matplotlib
 import numpy as np
 import numpy.typing as npt
 import torch
-import librosa
-import matplotlib
+from matplotlib import colors as mcolors
+from matplotlib import font_manager, rcParams
+from matplotlib import pyplot as plt
 from matplotlib.projections import PolarAxes
-from matplotlib import rcParams, font_manager, pyplot as plt, colors as mcolors
 from transformers import AutoModel, AutoProcessor
 
 from .cevoice import ManifestValue, default_loader
 from .constants import (
-    VOICE_EMBEDDING_MODEL,
     N_A_NUMERIC,
+    VOICE_EMBEDDING_MODEL,
     remote_code_model_revision,
 )
+from .typing.aliases import AudioChunk
 from .typing.analysis import (
-    EmbeddingPayload,
     EmbeddingModel,
+    EmbeddingPayload,
     EmbeddingProcessor,
     TextConfig,
     TextConfigValue,
@@ -178,7 +181,7 @@ def _join_trait_names(trait_names: list[str]) -> str:
     return ", ".join(display_names[:-1]) + f", and {display_names[-1]}"
 
 
-def load_audio(voice: pathlib.Path) -> tuple[npt.NDArray[np.float32], int]:
+def load_audio(voice: pathlib.Path) -> tuple[AudioChunk, int]:
     """Load a WAV file while preserving the native sample rate.
 
     Args:
@@ -1038,17 +1041,3 @@ def _reference_embedding_names() -> set[str]:
 def _has_reference_embedding(voice: str) -> bool:
     """Does this voice have an embedding?"""
     return voice in _reference_embedding_names()
-
-
-def analyze_voice(voice: pathlib.Path) -> None:
-    """Analyze incoming voice artifact.
-
-    Args:
-        voice: Path to the WAV file to analyze.
-    """
-    if not voice.exists():
-        return
-
-    y, sr = load_audio(voice)
-    reference_voice = voice.stem if _has_reference_embedding(voice.stem) else None
-    _analyze_voice_data(y, sr, voice, voice.parent, voice.stem, reference_voice)

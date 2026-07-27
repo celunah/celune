@@ -1,61 +1,32 @@
 # SPDX-License-Identifier: MIT
 """Celune-managed Persona runtime helpers."""
 
-import os
-import io
 import contextlib
-from collections.abc import Mapping
-from typing import Optional, Generator, Protocol
+import io
+import os
+from collections.abc import Generator, Mapping
+from typing import Optional
 
-from ..config import Config
-from ..typing.aliases import DevLogCallback
-from ..vram import resolve_vram_preset
-from .runtime import PersonaRuntime, request_from_json, response_to_json
 from ..cevoice import (
     CEVoicePersona,
     default_loader,
     merge_persona_metadata,
     persona_metadata_from_voice,
 )
+from ..config import Config
 from ..constants import (
     DEFAULT_PERSONA_CONTEXT,
     DEFAULT_PERSONA_DESCRIPTION,
-    JSON,
-    JSONSerializable,
     PERSONA_HISTORY_MESSAGES,
     PERSONA_MODEL_ID,
 )
+from ..typing.aliases import DevLogCallback
+from ..typing.common import JSON, JSONSerializable
+from ..typing.persona import PersonaClientResponse, PersonaEngineView
+from ..vram import resolve_vram_preset
+from .runtime import PersonaRuntime, request_from_json, response_to_json
 
 PERSONA_QUANTIZATION = "4bit"
-
-
-class PersonaEngineView(Protocol):
-    """Typed view of the engine fields consumed by Persona helpers."""
-
-    config: Config
-    current_character_persona: Optional[CEVoicePersona]
-    current_character: Optional[str]
-    voice_bundle_is_default: bool
-    persona_history: list[dict[str, str]]
-    persona_attachments: list[dict[str, str]]
-
-
-class PersonaClientResponse:
-    """Small response shim matching the local HTTP client contract."""
-
-    def __init__(self, payload: dict[str, JSONSerializable]) -> None:
-        self._payload = payload
-
-    def raise_for_status(self) -> None:
-        """Mirror the ``httpx`` response API for local in-process calls."""
-
-    def json(self) -> dict[str, JSONSerializable]:
-        """Return the stored response payload.
-
-        Returns:
-            str: The stored JSON response payload.
-        """
-        return dict(self._payload)
 
 
 class PersonaClient:
@@ -131,9 +102,7 @@ def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
     raw = config.get("persona", config.get("pyop", {}))
     if isinstance(raw, bool):
         raw = {"enabled": raw}
-    elif raw is None:
-        raw = {}
-    elif not isinstance(raw, dict):
+    elif raw is None or not isinstance(raw, dict):
         raw = {}
 
     return dict(raw)
@@ -392,15 +361,6 @@ def persona_short_term_history_limit(engine: PersonaEngineView) -> int:
                     return max(0, int(stripped))
                 except ValueError:
                     return PERSONA_HISTORY_MESSAGES
-    return PERSONA_HISTORY_MESSAGES
-
-
-def persona_history_limit() -> int:
-    """Return the default short-term memory length for Persona.
-
-    Returns:
-        int: Built-in fallback message-window length for Persona history.
-    """
     return PERSONA_HISTORY_MESSAGES
 
 

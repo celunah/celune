@@ -5,9 +5,9 @@ import time
 from pathlib import Path
 
 import celune
-from celune.utils import discard
 from celune import CeluneExtension
 from celune.dataclasses.events import ReadyEvent, VoiceChangedEvent
+from celune.utils import discard
 
 
 class TestExtension(CeluneExtension):

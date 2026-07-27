@@ -4,18 +4,13 @@
 import sys
 import tempfile
 import textwrap
-from typing import cast
 from pathlib import Path
-from unittest import TestCase, mock
 from types import SimpleNamespace
+from typing import cast
+from unittest import TestCase, mock
 
-from celune.celune import Celune
 from celune import subscribe
-from celune.dataclasses.extensions import CeluneContext
-from celune.extensions.base import CeluneExtension
-from celune.typing.events import ReadyEventCallback
-from celune.extensions.manager import CeluneExtensionManager
-from celune.extensions.events import EventDispatcher, iter_subscriptions
+from celune.celune import Celune
 from celune.dataclasses.events import (
     AudioEndEvent,
     AudioStartEvent,
@@ -27,6 +22,12 @@ from celune.dataclasses.events import (
     StateChangedEvent,
     VoiceChangedEvent,
 )
+from celune.dataclasses.extensions import CeluneContext
+from celune.extensions.base import CeluneExtension
+from celune.extensions.events import EventDispatcher, iter_subscriptions
+from celune.extensions.manager import CeluneExtensionManager
+from celune.typing.events import ReadyEventCallback
+
 from .support import FakeBackend, FakeGlow
 
 
@@ -228,7 +229,7 @@ class ManagerEventTests(TestCase):
             module = sys.modules["user_extension_fixture"]
             self.dispatcher.emit("ready", ReadyEvent(celune=mock.Mock(spec=Celune)))
 
-        self.assertEqual(getattr(module, "EVENTS"), ["ReadyEvent"])
+        self.assertEqual(module.EVENTS, ["ReadyEvent"])
 
 
 class EngineEventIntegrationTests(TestCase):
@@ -308,8 +309,9 @@ class EngineEventIntegrationTests(TestCase):
         second_bundle.metadata = {"name": "Nova", "default_voice": "bold"}
         second_loader = mock.Mock(bundle=second_bundle)
 
-        with mock.patch("celune.celune.select_voice_bundle"):
-            with mock.patch(
+        with (
+            mock.patch("celune.celune.select_voice_bundle"),
+            mock.patch(
                 "celune.celune.default_loader",
                 side_effect=[
                     None,
@@ -319,10 +321,11 @@ class EngineEventIntegrationTests(TestCase):
                     second_loader,
                     None,
                 ],
-            ):
-                self.assertEqual(celune.load_voice_bundle(Path("celune.cevoice")), True)
-                self.assertEqual(celune.load_voice_bundle(Path("nova.cevoice")), True)
-                self.assertEqual(celune.load_voice_bundle(None), True)
+            ),
+        ):
+            self.assertEqual(celune.load_voice_bundle(Path("celune.cevoice")), True)
+            self.assertEqual(celune.load_voice_bundle(Path("nova.cevoice")), True)
+            self.assertEqual(celune.load_voice_bundle(None), True)
 
         self.assertEqual(len(loaded_events), 1)
         self.assertEqual(loaded_events[0].character_name, "Celune")

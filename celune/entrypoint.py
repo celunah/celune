@@ -1,28 +1,29 @@
 # SPDX-License-Identifier: MIT
 """CLI entrypoint helpers."""
 
-import os
-import sys
-import time
-import random
-import shutil
+import contextlib
 import datetime
-import platform
-import warnings
 import importlib
 import importlib.util
-import contextlib
+import os
+import platform
+import random
+import shutil
 import subprocess
-from pathlib import Path
-from typing import Optional
+import sys
+import time
+import warnings
 from dataclasses import dataclass
-from types import SimpleNamespace, ModuleType
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+from typing import Optional
 
-from celune.i18n import string
-from celune.updater import apply_update_and_restart
+from celune import REVISION, __tagline__, __version__
 from celune.constants import APP_NAME, APP_SLUG, ExitCodes
+from celune.i18n import string
+from celune.watchdog import launcher_loss_requested, start_watchdog
 from celune.paths import project_root, running_compiled
-from celune import __version__, REVISION, __tagline__
+from celune.updater import apply_update_and_restart
 
 
 def _env_flag(name: str) -> bool:
@@ -45,6 +46,11 @@ SCRIPT_NAME = "main.py"
 EXIT_CODES = ExitCodes
 _RUNTIME: Optional[SimpleNamespace] = None
 _FORCE_STARTUP_DIAGNOSTICS = False
+_CELUNE_PROCESS_NAMES = frozenset(
+    {"celune", "celune-bin", "celune-bin.exe", "celune.appimage", "celune.exe"}
+)
+
+start_watchdog()
 
 
 def _load_ui_test_backend() -> type:
@@ -124,33 +130,34 @@ def _load_runtime() -> SimpleNamespace:
     _print_startup_diagnostic(string("cli.startup_loading_runtime"))
 
     try:
-        import yaml
-        import psutil
         import webbrowser
 
+        import psutil
+        import yaml
+
         from celune.celune import Celune
-        from celune.exceptions import No, UpdateError
-        from celune.namedays import has_name_day
-        from celune.updater import check_for_update, update_to_latest
-        from celune.ui import (
-            CeluneUI,
-            CeluneHeadlessUI,
-            CeluneHeadlessBaseUI,
-            CeluneTextualUI,
-            SelectMenu,
-        )
         from celune.config import (
             config_bool,
             config_value,
             env_bool,
             merge_missing_defaults,
         )
+        from celune.exceptions import No, UpdateError
+        from celune.namedays import has_name_day
         from celune.paths import (
             config_path,
             default_config_path,
             ensure_config_path,
         )
-        from celune.utils import detected_ide, supports_ansi, indent, title_case
+        from celune.ui import (
+            CeluneHeadlessBaseUI,
+            CeluneHeadlessUI,
+            CeluneTextualUI,
+            CeluneUI,
+            SelectMenu,
+        )
+        from celune.updater import check_for_update, update_to_latest
+        from celune.utils import detected_ide, indent, supports_ansi, title_case
     except ModuleNotFoundError as package:
         if package.name is not None:
             _print_dependency_setup_help(package.name)
@@ -253,7 +260,7 @@ def _doctor_distro_name(system_name: str) -> str:
 def _doctor_openrgb_path() -> Optional[Path]:
     """Resolve OpenRGB even when it was not added to PATH."""
     for binary_name in ("openrgb", "OpenRGB"):
-        binary_path = shutil.which(binary_name)  # noqa: "before Python 3.12", but Celune expects 3.12/3.13.
+        binary_path = shutil.which(binary_name)
         if binary_path:
             return Path(binary_path)
 
@@ -295,7 +302,7 @@ def _doctor_binary_path(binary_name: str) -> Optional[Path]:
     if binary_name == "openrgb":
         return _doctor_openrgb_path()
 
-    binary_path = shutil.which(binary_name)  # noqa: "before Python 3.12", but Celune expects 3.12/3.13.
+    binary_path = shutil.which(binary_name)
     return Path(binary_path) if binary_path else None
 
 
@@ -702,7 +709,7 @@ def _doctor_checks() -> list[DoctorCheck]:
         hint="Run `uv sync` to create or repair a compatible environment.",
     )
 
-    uv_path = shutil.which("uv")  # noqa: "before Python 3.12", but Celune expects 3.12/3.13.
+    uv_path = shutil.which("uv")
     _doctor_add(
         checks,
         "uv",
@@ -987,6 +994,64 @@ def handle_config(command_args: list[str], prog_name: str) -> None:
         sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
 
 
+def _close_existing_celune_processes(runtime: SimpleNamespace) -> None:
+    """Prompt before terminating other Celune processes found by the launcher."""
+    current_pids = {os.getpid(), os.getppid()}
+    launcher_pid = os.getenv("CELUNE_LAUNCHER_PID")
+    if launcher_pid:
+        with contextlib.suppress(ValueError):
+            current_pids.add(int(launcher_pid))
+
+    existing_processes = []
+    for proc in runtime.psutil.process_iter():
+        with contextlib.suppress(
+            runtime.psutil.AccessDenied,
+            runtime.psutil.NoSuchProcess,
+            runtime.psutil.ZombieProcess,
+        ):
+            if proc.pid in current_pids:
+                continue
+            if str(proc.name()).casefold() in _CELUNE_PROCESS_NAMES:
+                existing_processes.append(proc)
+
+    if not existing_processes:
+        return
+
+    print(string("cli.already_running", app_name=APP_NAME))
+    choice = runtime.SelectMenu(
+        [string("cli.yes"), string("cli.no")],
+        [True, False],
+        string(
+            "cli.already_running_close_existing",
+            app_name=APP_NAME,
+        ),
+    ).start()
+
+    if choice is not True:
+        sys.exit(EXIT_CODES.EXIT_ALREADY_RUNNING.value)
+
+    for proc in existing_processes:
+        try:
+            proc.kill()
+            proc.wait(timeout=5)
+        except (
+            runtime.psutil.NoSuchProcess,
+            runtime.psutil.ZombieProcess,
+        ):
+            continue
+        except (
+            runtime.psutil.AccessDenied,
+            runtime.psutil.TimeoutExpired,
+        ):
+            print(
+                string(
+                    "cli.already_running_failed_closing",
+                    app_name=APP_NAME,
+                )
+            )
+            sys.exit(EXIT_CODES.EXIT_ALREADY_RUNNING.value)
+
+
 def start(verbose: bool = False, testing: bool = False) -> None:
     """Instantiate and start the app.
 
@@ -1017,7 +1082,7 @@ def start(verbose: bool = False, testing: bool = False) -> None:
         if runtime.supports_ansi():
             sys.stdout.write(f"\x1b]2;{string('osc.starting', app_name=APP_NAME)}\x07")
             sys.stdout.flush()
-        date = datetime.datetime.now()
+        date = datetime.datetime.now(datetime.UTC)
         if runtime.has_name_day("Celine", date) and not runtime.env_bool(
             "CELUNE_OVERRIDE_CELINE_DAY"
         ):
@@ -1148,19 +1213,7 @@ def start(verbose: bool = False, testing: bool = False) -> None:
             print(runtime.indent("CELUNE_LAUNCHER=1", spaces=4))
             time.sleep(5)
         else:
-            active_processes = 0
-            for proc in runtime.psutil.process_iter():
-                with contextlib.suppress(
-                    runtime.psutil.AccessDenied,
-                    runtime.psutil.NoSuchProcess,
-                    runtime.psutil.ZombieProcess,
-                ):
-                    if proc.name() in ["celune.exe", "celune.appimage"]:
-                        active_processes += 1
-                        if active_processes > 1:
-                            print(string("cli.already_running", app_name=APP_NAME))
-                            time.sleep(5)
-                            sys.exit(runtime.ExitCodes.EXIT_ALREADY_RUNNING.value)
+            _close_existing_celune_processes(runtime)
 
         if not headless and runtime.supports_ansi():
             _print_startup_diagnostic(string("cli.startup_creating_ui"))
@@ -1212,6 +1265,9 @@ def start(verbose: bool = False, testing: bool = False) -> None:
             print(runtime.indent(string("cli.try_another_terminal"), spaces=4))
             time.sleep(5)
             sys.exit(runtime.ExitCodes.EXIT_NO_ANSI.value)
+
+        if launcher_loss_requested():
+            sys.exit(runtime.ExitCodes.EXIT_LAUNCHER_LOST.value)
     except Exception as exc:
         if exc.__class__ != runtime.No:
             stdout = getattr(sys.stdout, "underlying_stdout", sys.stdout)
@@ -1320,13 +1376,12 @@ def main(argv: Optional[list[str]] = None) -> None:
     elif args[0] == "config":
         handle_config(args[1:], resolved_argv[0])
     elif args[0] == "doctor":
-        if len(args) > 1:
-            if args[1] != "--fix":
-                print(string("cli.invalid_argument"))
-                print()
-                print(string("cli.doctor_usage", program=resolved_argv[0]))
-                print(string("cli.doctor_description", app_name=APP_NAME))
-                sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+        if len(args) > 1 and args[1] != "--fix":
+            print(string("cli.invalid_argument"))
+            print()
+            print(string("cli.doctor_usage", program=resolved_argv[0]))
+            print(string("cli.doctor_description", app_name=APP_NAME))
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
         sys.exit(run_doctor(resolved_argv))
     elif args[0] in {"help", "--help", "-h"}:
         if len(args) > 1:

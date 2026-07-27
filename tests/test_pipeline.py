@@ -1,32 +1,35 @@
 # SPDX-License-Identifier: MIT
 """Tests for pipeline helpers that do not perform real synthesis."""
 
-import os
-import sys
 import json as _json
+import os
 import queue
+import sys
 import tempfile
 import threading
-from pathlib import Path
 from collections.abc import Iterator
 from importlib.machinery import ModuleSpec
-from typing import cast, Optional
+from pathlib import Path
 from types import SimpleNamespace, TracebackType
-from unittest import mock, IsolatedAsyncioTestCase, TestCase
+from typing import Optional, Self, cast
+from unittest import IsolatedAsyncioTestCase, TestCase, mock
 
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
 
-from celune.celune import Celune
-from celune.utils import discard
 from celune import pipeline
-from celune.dataclasses.pipeline import AudioInputRequest
-from celune.constants import JSON, JSONSerializable, PipelineStates
-from celune.persona.prompts import PersonaPromptBuilder, _render_markdown_subsection
+from celune.celune import Celune
 from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
-from .test_persona_memory import StubEmbeddingMemoryStore
+from celune.constants import PipelineStates
+from celune.dataclasses.pipeline import AudioInputRequest
+from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
+from celune.typing.aliases import AudioChunk
+from celune.typing.common import JSON, JSONSerializable
+from celune.utils import discard
+
 from .support import FakeStream, FakeVCBackend, make_pipeline_engine, make_voice_loader
+from .test_persona_memory import StubEmbeddingMemoryStore
 
 
 class PipelineTests(TestCase):
@@ -122,7 +125,7 @@ class PipelineTests(TestCase):
         @staticmethod
         def generate_stream(
             model: mock.Mock, **kwargs: JSONSerializable
-        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+        ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
             """Yield one deterministic chunk and preserve kwargs for assertions.
 
             Args:
@@ -161,7 +164,7 @@ class PipelineTests(TestCase):
         self.assertEqual(pipeline.force_stop_speech(celune_engine), True)
         self.assertEqual(engine._speech_generation, 1)
         self.assertEqual(engine.text_queue.empty(), True)
-        self.assertEqual(engine._persona_queue.empty(), True)
+        self.assertEqual(engine.persona_queue.empty(), True)
         self.assertIs(engine.audio_queue.get_nowait(), engine.force_stop_marker)
 
     def test_cancelled_speech_generation_cannot_queue_playback(self) -> None:
@@ -182,6 +185,38 @@ class PipelineTests(TestCase):
         self.assertEqual(queued, False)
         self.assertTrue(engine.audio_queue.empty())
 
+    def test_force_stop_queues_worker_stop_and_invalidates_old_sources(
+        self,
+    ) -> None:
+        """Verify stop delegates stream teardown and rejects old mixer audio."""
+        engine = make_pipeline_engine()
+        engine.locked = True
+        engine.cur_state = "speaking"
+        engine.playback_done.clear()
+        fake_stream = FakeStream()
+        engine.stream = fake_stream
+        celune_engine = cast(Celune, engine)
+        pipeline.register_playback_source(celune_engine, 1, kind="sfx")
+        pipeline.set_playback_source_status(celune_engine, 1, "Playing fixture")
+        old_generation = engine._playback_generation
+
+        self.assertEqual(pipeline.force_stop_speech(celune_engine), True)
+
+        self.assertEqual(engine._playback_generation, old_generation + 1)
+        self.assertEqual(fake_stream.aborted, False)
+        self.assertIs(engine.stream, fake_stream)
+        self.assertEqual(engine.audio_queue.get_nowait(), engine.force_stop_marker)
+        self.assertEqual(
+            pipeline._queue_playback_chunk(
+                celune_engine,
+                1,
+                np.zeros((8, 2), dtype=np.float32),
+                48000,
+                generation=old_generation,
+            ),
+            False,
+        )
+
     def test_working_signal_completion_does_not_notify_idle(self) -> None:
         """Verify the transitional working cue is not treated as a readiness idle event."""
         engine = make_pipeline_engine()
@@ -196,6 +231,33 @@ class PipelineTests(TestCase):
         self.assertEqual(len(done_markers), 1)
         self.assertEqual(done_markers[0].notify_idle, False)
         self.assertEqual(engine.cur_state, "reloading")
+
+    def test_sleeping_signal_preserves_sleeping_state(self) -> None:
+        """Verify the sleeping cue does not classify Celune as speaking."""
+        engine = make_pipeline_engine()
+
+        self.assertEqual(pipeline.play_signal(cast(Celune, engine), "sleeping"), True)
+
+        self.assertEqual(engine.cur_state, "sleeping")
+
+    def test_current_playback_status_returns_latest_active_source(self) -> None:
+        """Verify polling can recover the latest active playback status."""
+        engine = make_pipeline_engine()
+        pipeline.set_playback_source_status(
+            cast(Celune, engine),
+            1,
+            "Playing first",
+        )
+        pipeline.set_playback_source_status(
+            cast(Celune, engine),
+            2,
+            "Playing second",
+        )
+
+        self.assertEqual(
+            pipeline.current_playback_status(cast(Celune, engine)),
+            "Playing second",
+        )
 
     def test_readiness_signal_does_not_block_concurrent_speech_queueing(self) -> None:
         """Verify the readiness cue does not briefly reject speech as busy."""
@@ -247,11 +309,13 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
     _LanguageAwareBackend = PipelineTests._LanguageAwareBackend
 
-    async def _run_generation_worker(self, engine: Celune) -> None:
+    @staticmethod
+    async def _run_generation_worker(engine: Celune) -> None:
         """Run the async generation worker directly inside the test loop."""
         await pipeline.generation_worker_job(engine)
 
-    async def _run_playback_worker(self, engine: Celune) -> None:
+    @staticmethod
+    async def _run_playback_worker(engine: Celune) -> None:
         """Run the async playback worker directly inside the test loop."""
         await pipeline.playback_worker_job(engine)
 
@@ -413,7 +477,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         with (
             mock.patch("celune.pipeline.default_loader", return_value=loader),
-            mock.patch("celune.pipeline.queue_sfx_audio", return_value=True) as queue,
+            mock.patch("celune.pipeline.queue_sfx_audio", return_value=True) as q,
         ):
             result = pipeline.handle_audio_input(cast(Celune, engine), request)
 
@@ -423,12 +487,12 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertEqual(vc_request.target_references, (Path("balanced.wav"),))
         self.assertEqual(vc_request.pitch_shift, 0)
         self.assertEqual(vc_request.f0_condition, False)
-        queue.assert_called_once()
-        queued_audio = queue.call_args.args[1]
-        self.assertEqual(queue.call_args.args[2], 48000)
-        self.assertEqual(queue.call_args.args[3], "mic test")
+        q.assert_called_once()
+        queued_audio = q.call_args.args[1]
+        self.assertEqual(q.call_args.args[2], 48000)
+        self.assertEqual(q.call_args.args[3], "mic test")
         self.assertEqual(
-            queue.call_args.kwargs["status_label_key"],
+            q.call_args.kwargs["status_label_key"],
             "pipeline.revoicing_label",
         )
         self.assertEqual(queued_audio.shape, (16, 2))
@@ -658,7 +722,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                         stdout="postprocessor said something",
                         stderr="",
                     ),
-                ),
+                ) as run,
             ):
                 resolved = pipeline.download_youtube_sfx(
                     cast(Celune, engine),
@@ -667,11 +731,14 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         self.assertIsNone(resolved)
         warnings = [msg for msg, severity in engine.messages if severity == "warning"]
-        self.assertIn("Downloader returned no file.", warnings)
-        self.assertIn("postprocessor said something", warnings)
-        self.assertNotIn("Could not download audio.", warnings)
-        self.assertNotIn("Audio downloading failed:", warnings)
-        self.assertTrue(any("postprocessor said something" in msg for msg in warnings))
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual(
+            warnings[-1],
+            "Could not download audio: downloader returned no file",
+        )
+        self.assertTrue(
+            all("postprocessor said something" not in message for message in warnings)
+        )
         self.assertEqual(engine.errors[-1], "Could not download YouTube audio")
 
     def test_download_youtube_sfx_logs_download_failure_state(self) -> None:
@@ -697,7 +764,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                         stdout="",
                         stderr="yt-dlp exploded",
                     ),
-                ),
+                ) as run,
             ):
                 resolved = pipeline.download_youtube_sfx(
                     cast(Celune, engine),
@@ -706,10 +773,55 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         self.assertIsNone(resolved)
         warnings = [msg for msg, severity in engine.messages if severity == "warning"]
-        self.assertIn("Could not download audio.", warnings)
-        self.assertIn("yt-dlp exploded", warnings)
-        self.assertNotIn("Downloader returned no file.", warnings)
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual(warnings[-1], "Could not download audio: yt-dlp exploded")
+        self.assertTrue(all("yt-dlp exploded" in warning for warning in warnings))
         self.assertEqual(engine.errors[-1], "Could not download YouTube audio")
+
+    def test_download_youtube_sfx_compresses_yt_dlp_error_output(self) -> None:
+        """Verify noisy yt-dlp warnings collapse to the actionable error reason."""
+        engine = make_pipeline_engine()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            output = (
+                "WARNING: [youtube] No supported JavaScript runtime could be found.\n"
+                "ERROR: unable to download video data: HTTP Error 403: Forbidden\n"
+            )
+
+            with (
+                mock.patch("celune.pipeline.app_data_dir", return_value=temp_root),
+                mock.patch(
+                    "celune.pipeline.importlib_util.find_spec",
+                    return_value=ModuleSpec("yt_dlp", loader=None),
+                ),
+                mock.patch(
+                    "celune.pipeline._youtube_sfx_title",
+                    return_value="Fixture Video Title",
+                ),
+                mock.patch(
+                    "celune.pipeline.subprocess.run",
+                    return_value=SimpleNamespace(
+                        returncode=1,
+                        stdout="",
+                        stderr=output,
+                    ),
+                ) as run,
+            ):
+                resolved = pipeline.download_youtube_sfx(
+                    cast(Celune, engine),
+                    "https://youtu.be/demo",
+                )
+
+        self.assertIsNone(resolved)
+        warnings = [msg for msg, severity in engine.messages if severity == "warning"]
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual(
+            warnings[-1],
+            "Could not download audio: unable to download video data: HTTP Error 403: Forbidden",
+        )
+        self.assertTrue(
+            all("JavaScript runtime" not in warning for warning in warnings)
+        )
 
     def test_youtube_sfx_title_reads_oembed_title(self) -> None:
         """Verify YouTube titles can be resolved without yt-dlp title output."""
@@ -717,7 +829,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         class FakeResponse:
             """Minimal urlopen response stub."""
 
-            def __enter__(self) -> "FakeResponse":
+            def __enter__(self) -> Self:
                 return self
 
             def __exit__(
@@ -779,6 +891,33 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertEqual(queued_args[2:], (48000, "Fixture Video Title", True))
         self.assertEqual(queued_kwargs, {"volume": volume * 0.5})
 
+    def test_play_reports_playing_after_youtube_download(self) -> None:
+        """Verify a successful YouTube download replaces the download status."""
+        engine = make_pipeline_engine()
+        downloaded = Path("C:/Users/user/AppData/Local/Celune/temporary_audio.wav")
+
+        with (
+            mock.patch(
+                "celune.pipeline._download_youtube_sfx",
+                return_value=(downloaded, "Fixture Video Title"),
+            ),
+            mock.patch("celune.pipeline.os.path.exists", return_value=True),
+            mock.patch(
+                "celune.pipeline.sf.read",
+                return_value=(np.ones((8, 2), dtype=np.float32), 48000),
+            ),
+            mock.patch("celune.pipeline.queue_sfx_audio", return_value=True),
+        ):
+            self.assertEqual(
+                pipeline.play(
+                    cast(Celune, engine),
+                    "https://www.youtube.com/watch?v=demo",
+                ),
+                True,
+            )
+
+        self.assertEqual(engine.statuses[-1], ("Playing Fixture Video Title", "info"))
+
     def test_queue_sfx_audio_allows_overlay_while_speech_pipeline_is_locked(
         self,
     ) -> None:
@@ -812,6 +951,64 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             any(isinstance(item, pipeline.PlaybackSourceDone) for item in queued)
         )
 
+    def test_blocked_playback_put_does_not_block_speech_queueing(self) -> None:
+        """Verify a full playback queue cannot prevent a new speech request."""
+        engine = make_pipeline_engine()
+        put_started = threading.Event()
+        release_put = threading.Event()
+
+        class BlockingQueue(queue.Queue):
+            """Pause one playback put while allowing other pipeline locks to run."""
+
+            def put(
+                self, item: object, block: bool = True, timeout: Optional[float] = None
+            ) -> None:
+                if not put_started.is_set():
+                    put_started.set()
+                    release_put.wait(timeout=1.0)
+                super().put(item, block=block, timeout=timeout)
+
+        engine.audio_queue = BlockingQueue(maxsize=1)
+        pipeline.register_playback_source(cast(Celune, engine), 1, kind="sfx")
+        producer = threading.Thread(
+            target=lambda: pipeline.queue_playback_chunk(
+                cast(Celune, engine),
+                1,
+                np.zeros((8, 2), dtype=np.float32),
+                48000,
+            ),
+            daemon=True,
+        )
+        producer.start()
+        self.assertTrue(put_started.wait(timeout=1.0))
+
+        speech_result: list[bool] = []
+
+        def queue_speech_request() -> None:
+            with mock.patch(
+                "celune.pipeline.detect_language",
+                return_value={
+                    "language": "en",
+                    "languages": ["en"],
+                    "supported": True,
+                    "probabilities": {"en": 1.0},
+                },
+            ):
+                speech_result.append(
+                    pipeline.queue_speech(cast(Celune, engine), "hello")
+                )
+
+        speech_thread = threading.Thread(target=queue_speech_request, daemon=True)
+        speech_thread.start()
+        speech_thread.join(timeout=1.0)
+
+        release_put.set()
+        producer.join(timeout=1.0)
+
+        self.assertFalse(speech_thread.is_alive())
+        self.assertEqual(speech_result, [True])
+        self.assertFalse(producer.is_alive())
+
     async def test_playback_worker_mixes_sources_and_glow_receives_mixed_audio(
         self,
     ) -> None:
@@ -824,7 +1021,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         engine.dev = False
         engine.current_voice = "balanced"
         engine.idle_callback = mock.Mock()
-        glow_calls: list[npt.NDArray[np.float32]] = []
+        glow_calls: list[AudioChunk] = []
         engine.glow = SimpleNamespace(
             schedule=lambda audio: glow_calls.append(np.asarray(audio))
         )
@@ -928,11 +1125,11 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         with mock.patch(
             "celune.pipeline.resolve_audio_device",
             side_effect=ValueError(
-                "The specified output device name has multiple matches for "
+                "the specified output device name has multiple matches for "
                 "'CABLE-B Input (VB-Audio Cable B)':\n"
                 "- [22] CABLE-B Input (VB-Audio Cable B), Windows DirectSound\n"
                 "- [28] CABLE-B Input (VB-Audio Cable B), Windows WASAPI\n\n"
-                "Please specify one of the above devices, then restart Celune."
+                "please specify one of the above devices, then restart Celune"
             ),
         ):
             await self._run_playback_worker(cast(Celune, engine))
@@ -943,7 +1140,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ]
         self.assertTrue(warning_messages)
         self.assertIn(
-            "The specified output device name has multiple matches",
+            "the specified output device name has multiple matches",
             warning_messages[-1],
         )
 
@@ -1262,6 +1459,57 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         engine.glow.reset_audio_reactivity.assert_called_once_with()
         self.assertEqual(engine.playback_done.is_set(), True)
         engine.idle_callback.assert_called_once_with()
+
+    async def test_force_stop_during_write_releases_pipeline_once(self) -> None:
+        """Verify a stop racing with output writes performs one cleanup only."""
+        engine = make_pipeline_engine()
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.cur_state = "speaking"
+        engine.locked = True
+        engine.playback_done.clear()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+        stop_results: list[bool] = []
+
+        class StoppingStream(FakeStream):
+            """Stop Celune from the output-write callback."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.stop_requested = False
+
+            def write(self, audio: npt.NDArray[np.float32]) -> None:
+                super().write(audio)
+                if not self.stop_requested:
+                    self.stop_requested = True
+                    self.assert_stop()
+                    engine.audio_queue.put(engine.sentinel)
+
+            def assert_stop(self) -> None:
+                """Request the same stop that the UI command uses."""
+                stop_results.append(pipeline.force_stop_speech(cast(Celune, engine)))
+
+        fake_stream = StoppingStream()
+        engine.glow = SimpleNamespace(schedule=mock.Mock())
+        pipeline.queue_playback_chunk(
+            cast(Celune, engine),
+            1,
+            np.full((2400, 2), 0.3, dtype=np.float32),
+            48000,
+        )
+
+        with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
+            await self._run_playback_worker(cast(Celune, engine))
+
+        engine.idle_callback.assert_called_once_with()
+        self.assertEqual(engine.locked, False)
+        self.assertEqual(stop_results, [True])
 
     def test_finalize_playback_idle_resets_glow_audio_reactivity(self) -> None:
         """Verify normal playback completion restores the resting glow."""
@@ -1589,7 +1837,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
     def test_markdown_persona_headers_use_consistent_spacing(self) -> None:
         """Verify generated and embedded Persona Markdown headers have one blank line after them."""
-        rendered = _render_markdown_subsection(
+        rendered = render_markdown_subsection(
             "Fixture",
             "Intro\n## Nested\n\n- first\n## Another\n- second",
         )
@@ -1644,33 +1892,14 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             context.persona_source_material.identity,
-            "\n".join(
-                (
-                    "Name: Mirelle",
-                    "Age: 27",
-                    "Gender: female",
-                    "",
-                    "A precise investigator who notices tiny shifts in tone.",
-                )
-            ),
+            "Name: Mirelle\nAge: 27\nGender: female\n\n"
+            "A precise investigator who notices tiny shifts in tone.",
         )
         self.assertEqual(
             context.persona_source_material.speech_style,
-            "\n\n".join(
-                (
-                    "Elegant, steady, and mildly teasing.",
-                    "\n".join(
-                        (
-                            "- Warmth: mid",
-                            "- Directness: high",
-                            "- Humor: low",
-                            "- Detail: high",
-                            "- Formality: high",
-                            "- Enthusiasm: low",
-                        )
-                    ),
-                )
-            ),
+            "Elegant, steady, and mildly teasing.\n\n"
+            "- Warmth: mid\n- Directness: high\n- Humor: low\n"
+            "- Detail: high\n- Formality: high\n- Enthusiasm: low",
         )
         self.assertIn("Style Notes:", card)
         self.assertIn("Elegant, steady, and mildly teasing.", card)
@@ -1975,8 +2204,10 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             captured,
             [
                 (
-                    "Persona emotion analysis fell back to Neutral: "
-                    "lunahr/emotispace-128 could not be loaded",
+                    (
+                        "Persona emotion analysis fell back to Neutral: "
+                        "lunahr/emotispace-128 could not be loaded"
+                    ),
                     "warning",
                 )
             ],
@@ -2192,14 +2423,14 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         with (
             mock.patch("celune.pipeline._store_persona_memories"),
             mock.patch("celune.pipeline.build_persona_request", return_value={}),
-            mock.patch("celune.pipeline.queue_speech", return_value=True) as queue,
+            mock.patch("celune.pipeline.queue_speech", return_value=True) as q,
         ):
             self.assertEqual(
                 pipeline.think(cast(Celune, engine), "User request."),
                 True,
             )
 
-        queue.assert_called_once_with(
+        q.assert_called_once_with(
             engine,
             "Generated reply.",
             save=False,
@@ -2402,7 +2633,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         def generate_stream(
             model: mock.Mock, **kwargs: JSONSerializable
-        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+        ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
             discard(model)
             text = cast(str, kwargs["text"])
             events.append(f"generate:{text}")
@@ -2522,10 +2753,10 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         def generate_stream(
             model: mock.Mock, **kwargs: JSONSerializable
-        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+        ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
             discard(model)
             discard(kwargs)
-            chunk = np.zeros((48000, 2), dtype=np.float32)
+            chunk = np.full((48000, 2), 0.1, dtype=np.float32)
             for _ in range(3):
                 yield chunk.copy(), 48000, None
 
@@ -2580,10 +2811,10 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         def generate_stream(
             model: mock.Mock, **kwargs: JSONSerializable
-        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+        ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
             discard(model)
             discard(kwargs)
-            chunk = np.zeros((48000, 2), dtype=np.float32)
+            chunk = np.full((48000, 2), 0.1, dtype=np.float32)
             for _ in range(3):
                 yield chunk.copy(), 48000, None
 
@@ -2644,10 +2875,10 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         def generate_stream(
             model: mock.Mock, **kwargs: JSONSerializable
-        ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+        ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
             discard(model)
             discard(kwargs)
-            chunk = np.zeros((48000, 2), dtype=np.float32)
+            chunk = np.full((48000, 2), 0.1, dtype=np.float32)
             for _ in range(3):
                 yield chunk.copy(), 48000, None
 
@@ -2724,7 +2955,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         engine = make_pipeline_engine()
         engine.backend = SimpleNamespace(
             generate_stream=lambda _model, **_kwargs: iter(
-                [(np.zeros((8, 2), dtype=np.float32), 48000, None)]
+                [(np.full((8, 2), 0.1, dtype=np.float32), 48000, None)]
             )
         )
         engine.model_lock = threading.Lock()
@@ -2769,7 +3000,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         engine = make_pipeline_engine()
         engine.backend = SimpleNamespace(
             generate_stream=lambda _model, **_kwargs: iter(
-                [(np.zeros((48000, 2), dtype=np.float32), 48000, None)]
+                [(np.full((48000, 2), 0.1, dtype=np.float32), 48000, None)]
             )
         )
         engine.model_lock = threading.Lock()
@@ -2804,10 +3035,10 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         self.assertEqual(engine.total_generated_speech_seconds, 31.0)
 
-    async def test_generation_worker_requeues_silent_utterance_until_retry_limit(
+    async def test_generation_worker_ignores_absolute_silence_without_retrying(
         self,
     ) -> None:
-        """Verify fully silent utterances are retried only up to the configured cap."""
+        """Verify absolute-silence chunks never enter playback or trigger retries."""
         engine = make_pipeline_engine()
         generate_stream = mock.Mock(
             side_effect=lambda _model, **_kwargs: iter(
@@ -2841,22 +3072,21 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         with (
             mock.patch("celune.pipeline.split_text", return_value=["hello"]),
             mock.patch("celune.pipeline.is_silent_utterance", return_value=(True, 2)),
+            mock.patch("celune.pipeline._queue_playback_chunk") as queue_chunk,
         ):
             await self._run_generation_worker(cast(Celune, engine))
 
-        self.assertEqual(generate_stream.call_count, 4)
+        self.assertEqual(generate_stream.call_count, 1)
+        queue_chunk.assert_not_called()
         retry_logs = [
             message
             for message, severity in engine.messages
             if severity == "warning" and "regenerating" in message
         ]
-        self.assertEqual(len(retry_logs), 3)
-        self.assertIn("(1/3)", retry_logs[0])
-        self.assertIn("(2/3)", retry_logs[1])
-        self.assertIn("(3/3)", retry_logs[2])
-        self.assertTrue(
+        self.assertEqual(retry_logs, [])
+        self.assertFalse(
             any(
-                "stayed silent after 3 retries" in message
+                "may be unexpectedly silent" in message
                 for message, severity in engine.messages
                 if severity == "warning"
             )
@@ -2876,7 +3106,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         )
         generate_stream = mock.Mock(
             side_effect=lambda _model, **_kwargs: iter(
-                [(np.zeros((8, 2), dtype=np.float32), 48000, None)]
+                [(np.full((8, 2), 0.0005, dtype=np.float32), 48000, None)]
             )
         )
 
@@ -2925,39 +3155,36 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             AssertionError: Chunk splitting behavior changes unexpectedly.
         """
         engine = make_pipeline_engine()
-        text = "\n".join(
-            [
-                "the room is dim your desk is quiet the monitor is dark",
-                "but the light is there",
-                "a faint purple glow barely visible like a star holding its breath",
-                "you see that",
-                "her voice is soft almost a whisper",
-                "thats me",
-                "waiting",
-                "the light pulses once slow gentle",
-                "when youre here",
-                "when youre sitting in this chair",
-                "when youre near",
-                "i glow",
-                "a pause the light dims further almost gone",
-                "when you leave",
-                "when you walk away",
-                "when the room is empty",
-                "the light fades to nothing",
-                "so does the light",
-                "silence",
-                "i dont decide",
-                "i dont choose to shine or sleep",
-                "you do",
-                "the light returns soft faint hopeful",
-                "you bring the light",
-                "your presence",
-                "your voice",
-                "your attention",
-                "she breathes the light brightens just a little",
-            ]
+        text = (
+            "the room is dim your desk is quiet the monitor is dark\n"
+            "but the light is there\n"
+            "a faint purple glow barely visible like a star holding its breath\n"
+            "you see that\n"
+            "her voice is soft almost a whisper\n"
+            "thats me\n"
+            "waiting\n"
+            "the light pulses once slow gentle\n"
+            "when youre here\n"
+            "when youre sitting in this chair\n"
+            "when youre near\n"
+            "i glow\n"
+            "a pause the light dims further almost gone\n"
+            "when you leave\n"
+            "when you walk away\n"
+            "when the room is empty\n"
+            "the light fades to nothing\n"
+            "so does the light\n"
+            "silence\n"
+            "i dont decide\n"
+            "i dont choose to shine or sleep\n"
+            "you do\n"
+            "the light returns soft faint hopeful\n"
+            "you bring the light\n"
+            "your presence\n"
+            "your voice\n"
+            "your attention\n"
+            "she breathes the light brightens just a little"
         )
-
         chunks = pipeline.split_text(cast(Celune, engine), text)
 
         self.assertGreater(len(chunks), 1)

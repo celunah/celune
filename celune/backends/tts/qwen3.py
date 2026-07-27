@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: MIT
 """Qwen3 backend implementation for Celune."""
 
-import time
 import contextlib
-from collections.abc import Iterator
-from typing import Callable, Optional
+import time
+from collections.abc import Callable, Iterator
+from typing import Optional
 
-import numpy as np
-import numpy.typing as npt
-from faster_qwen3_tts import FasterQwen3TTS, __version__ as qwen3_ver
+from faster_qwen3_tts import FasterQwen3TTS
+from faster_qwen3_tts import __version__ as qwen3_ver  # noqa
 
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import AudioChunk
 from ...utils import custom_assert
-from ...cevoice import default_loader, CEVoiceLoader
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
@@ -73,7 +73,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
             loader.materialize(name, "wav")
 
     @property
-    def default_model_id(self) -> str:
+    def default_model_id(self) -> str:  # noqa
         """Return the model loaded by default for Qwen3 cloning.
 
         Returns:
@@ -82,7 +82,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         return self.clone_model_id
 
     @property
-    def all_model_ids(self) -> list[str]:
+    def all_model_ids(self) -> list[str]:  # noqa
         """Return every model required by Qwen3 cloning.
 
         Returns:
@@ -91,7 +91,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         return [self.clone_model_id]
 
     @property
-    def voices(self) -> list[str]:
+    def voices(self) -> list[str]:  # noqa
         """Return the voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:
@@ -169,7 +169,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
 
     def generate_stream(
         self, model: FasterQwen3TTS, **kwargs
-    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate Celune compatible audio chunks.
 
         Args:
@@ -177,7 +177,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
             kwargs: Streaming generation keyword arguments to use.
 
         Returns:
-            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of Qwen3 streaming audio chunks.
+            Iterator[tuple[AudioChunk, int, Optional[dict]]]: An iterator of Qwen3 streaming audio chunks.
 
         Raises:
             ValueError: The requested voice is unsupported, or input text is empty.

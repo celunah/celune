@@ -1,77 +1,37 @@
 #include "launcher_platform.h"
 
 #include <windows.h>
-#include <conio.h>
-#include <direct.h>
 
-#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
 #define printfe(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
-#define EXIT_PENDING_UPDATE 7
+#define STATUS_CONTROL_C_EXIT_VALUE 0xC000013AUL
 
-static BOOL WINAPI ignore_console_interrupt(DWORD event_type) {
-    return event_type == CTRL_C_EVENT || event_type == CTRL_BREAK_EVENT;
-}
+static int launcher_child_failed = 0;
 
-static DWORD saved_console_input_mode = 0;
-static DWORD saved_console_output_mode = 0;
-static BOOL saved_console_modes = FALSE;
-
-static void save_console_modes(void) {
-    HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-    HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
-
-    saved_console_modes =
-        input != INVALID_HANDLE_VALUE && output != INVALID_HANDLE_VALUE &&
-        GetConsoleMode(input, &saved_console_input_mode) &&
-        GetConsoleMode(output, &saved_console_output_mode);
-}
-
-void launcher_reset_terminal_state(void) {
-    HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-    HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
-    const char reset_sequences[] =
-        "\x1b[0m"
-        "\x1b[?25h"
-        "\x1b[?1000l"
-        "\x1b[?1002l"
-        "\x1b[?1003l"
-        "\x1b[?1006l"
-        "\x1b[?1015l"
-        "\x1b[?1049l"
-        "\x1b[?2004l";
-
-    if (saved_console_modes) {
-        DWORD current_output_mode;
-        if (GetConsoleMode(output, &current_output_mode)) {
-            DWORD reset_output_mode =
-                current_output_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
-            if (SetConsoleMode(output, reset_output_mode)) {
-                DWORD written;
-                WriteFile(
-                    output,
-                    reset_sequences,
-                    (DWORD)(sizeof(reset_sequences) - 1),
-                    &written,
-                    NULL
-                );
-                FlushFileBuffers(output);
-            }
-        }
-
-        SetConsoleMode(output, saved_console_output_mode);
-        SetConsoleMode(input, saved_console_input_mode);
-        FlushConsoleInputBuffer(input);
+static HANDLE create_launcher_pipe(char *name, size_t size) {
+    int written = snprintf(
+        name,
+        size,
+        "\\\\.\\pipe\\celune-launcher-%lu",
+        (unsigned long)GetCurrentProcessId()
+    );
+    if (written < 0 || (size_t)written >= size) {
+        return INVALID_HANDLE_VALUE;
     }
 
-    SetConsoleCtrlHandler(ignore_console_interrupt, FALSE);
-}
-
-void launcher_wait_after_failure(void) {
-    _getch();
+    return CreateNamedPipeA(
+        name,
+        PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+        1,
+        1,
+        1,
+        0,
+        NULL
+    );
 }
 
 static int file_exists(const char *path) {
@@ -328,9 +288,14 @@ int launcher_run(int argc, char **argv) {
     char setuptools_vendor[1600];
     char nuitka_pythonpath[5200];
 
-    save_console_modes();
-    SetConsoleCtrlHandler(ignore_console_interrupt, TRUE);
-    SetEnvironmentVariableA("CELUNE_LAUNCHER", "1");
+    char launcher_pid[32];
+    snprintf(launcher_pid, sizeof(launcher_pid), "%lu", (unsigned long)GetCurrentProcessId());
+
+    if (!SetEnvironmentVariableA("CELUNE_LAUNCHER", "1") ||
+        !SetEnvironmentVariableA("CELUNE_LAUNCHER_PID", launcher_pid)) {
+        printfe("Celune could not configure launcher environment variables.\n");
+        return 1;
+    }
 
     if (!get_exe_dir(base, sizeof(base))) {
         printfe("Celune could not determine the launcher location.\n");
@@ -464,6 +429,10 @@ int launcher_run(int argc, char **argv) {
 
     STARTUPINFOA si = {0};
     PROCESS_INFORMATION pi = {0};
+    OVERLAPPED pipe_connect = {0};
+    HANDLE launcher_pipe = INVALID_HANDLE_VALUE;
+    HANDLE pipe_connect_event = NULL;
+    char launcher_pipe_name[256];
     si.cb = sizeof(si);
 
     si.dwFlags = STARTF_USESHOWWINDOW;
@@ -486,6 +455,40 @@ int launcher_run(int argc, char **argv) {
         }
     }
 
+    launcher_pipe = create_launcher_pipe(launcher_pipe_name, sizeof(launcher_pipe_name));
+    if (launcher_pipe == INVALID_HANDLE_VALUE) {
+        printfe("Celune could not create the launcher connection pipe.\n");
+        return 1;
+    }
+
+    pipe_connect_event = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (pipe_connect_event == NULL) {
+        CloseHandle(launcher_pipe);
+        printfe("Celune could not create the launcher connection event.\n");
+        return 1;
+    }
+    pipe_connect.hEvent = pipe_connect_event;
+
+    BOOL connect_pending = ConnectNamedPipe(launcher_pipe, &pipe_connect);
+    DWORD connect_error = connect_pending ? ERROR_SUCCESS : GetLastError();
+    if (connect_pending || connect_error == ERROR_PIPE_CONNECTED) {
+        SetEvent(pipe_connect_event);
+    }
+    else if (connect_error != ERROR_IO_PENDING) {
+        CloseHandle(pipe_connect_event);
+        CloseHandle(launcher_pipe);
+        printfe("Celune could not prepare the launcher connection pipe.\n");
+        return 1;
+    }
+
+    if (!SetEnvironmentVariableA("CELUNE_LAUNCHER_PIPE", launcher_pipe_name)) {
+        CancelIoEx(launcher_pipe, &pipe_connect);
+        CloseHandle(pipe_connect_event);
+        CloseHandle(launcher_pipe);
+        printfe("Celune could not configure the launcher connection pipe.\n");
+        return 1;
+    }
+
     BOOL ok = CreateProcessA(
         NULL,
         cmd,
@@ -500,10 +503,19 @@ int launcher_run(int argc, char **argv) {
     );
 
     if (!ok) {
+        CancelIoEx(launcher_pipe, &pipe_connect);
+        CloseHandle(pipe_connect_event);
+        CloseHandle(launcher_pipe);
         printfe("Celune could not launch her compiled runtime.\nExit code: %lu\n", GetLastError());
         return 1;
     }
 
+    HANDLE wait_handles[2] = {pi.hProcess, pipe_connect_event};
+    DWORD first_wait = WaitForMultipleObjects(2, wait_handles, FALSE, INFINITE);
+    if (first_wait == WAIT_OBJECT_0) {
+        CancelIoEx(launcher_pipe, &pipe_connect);
+    }
+    CloseHandle(pipe_connect_event);
     WaitForSingleObject(pi.hProcess, INFINITE);
 
     DWORD exit_code = 1;
@@ -511,8 +523,10 @@ int launcher_run(int argc, char **argv) {
 
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
+    CloseHandle(launcher_pipe);
 
-    if ((int)exit_code == EXIT_PENDING_UPDATE) {
+    if ((int)exit_code == CELUNE_EXIT_PENDING_UPDATE) {
+        printfe("%s\n", launcher_exit_reason(CELUNE_EXIT_PENDING_UPDATE));
         if (!file_exists(venv_python) || !file_exists(main_py)) {
             printfe("Celune could not find the Python helper needed to apply updates.\n");
             return 1;
@@ -524,5 +538,24 @@ int launcher_run(int argc, char **argv) {
         return 0;
     }
 
+    launcher_child_failed = exit_code != 0;
     return (int)exit_code;
+}
+
+void launcher_report_failure(int return_code) {
+    if (launcher_startup_was_interrupted() ||
+        return_code == 130 ||
+        (DWORD)return_code == STATUS_CONTROL_C_EXIT_VALUE) {
+        printfe("Startup was interrupted.\n");
+        return;
+    }
+
+    if (!launcher_child_failed) {
+        return;
+    }
+
+    const char *reason = launcher_exit_reason(return_code);
+    if (reason != NULL) {
+        printfe("%s\n", reason);
+    }
 }

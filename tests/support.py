@@ -3,25 +3,27 @@
 
 from __future__ import annotations
 
-import sys
-import queue
-import importlib
-import threading
 import contextlib
-from unittest import mock
+import importlib
+import queue
+import sys
+import threading
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from collections.abc import Iterator
-from types import SimpleNamespace, ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Optional, TypedDict
+from unittest import mock
 
 import numpy as np
 import numpy.typing as npt
 
-from celune.utils import discard
 from celune.backends.tts.base import CeluneBackend
 from celune.backends.vc.base import CeluneVCBackend
-from celune.constants import JSONSerializable, PipelineStates
+from celune.constants import PipelineStates
 from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+from celune.typing.aliases import AudioChunk
+from celune.typing.common import JSONSerializable
+from celune.utils import discard
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -44,6 +46,16 @@ class FakeBackend(CeluneBackend):
     default_voice = "balanced"
     is_fake = True
 
+    def __init__(
+        self,
+        log: Optional[Callable[[str, str], None]] = None,
+        fatal: Optional[Callable[[], None]] = None,
+    ) -> None:
+        super().__init__(
+            log=log or (lambda _msg, _severity="info": None),
+            fatal=fatal,
+        )
+
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
     ) -> tuple[bool, Optional[str]]:
@@ -61,7 +73,6 @@ class FakeBackend(CeluneBackend):
 
     def preload_models(self) -> None:
         """Pretend to preload models without performing work."""
-        return None
 
     def load_model(self, model_id: str, **kwargs: JSONSerializable) -> FakeModel:
         """Return lightweight model metadata for one fake model.
@@ -77,7 +88,7 @@ class FakeBackend(CeluneBackend):
 
     def generate_stream(
         self, model: FakeModel, **kwargs: JSONSerializable
-    ) -> Iterator[tuple[npt.NDArray[np.float32], int, dict[str, int]]]:
+    ) -> Iterator[tuple[AudioChunk, int, dict[str, int]]]:
         """Yield one deterministic fake audio chunk.
 
         Args:
@@ -119,7 +130,7 @@ class FakeGlow:
     def __init__(
         self,
         color: str,
-        celune: Optional["Celune"] = None,
+        celune: Optional[Celune] = None,
         host: str = "127.0.0.1",
         port: int = 6742,
     ) -> None:
@@ -136,7 +147,7 @@ class FakeGlow:
         self.wake_called = False
         self.finished = threading.Event()
         self.finished.set()
-        self.scheduled: list[npt.NDArray[np.float32]] = []
+        self.scheduled: list[AudioChunk] = []
         self.reset_audio_reactivity_called = False
 
     def start(self) -> bool:
@@ -200,7 +211,7 @@ class FakeStream:
         self.stopped = False
         self.aborted = False
         self.closed = False
-        self.written: list[npt.NDArray[np.float32]] = []
+        self.written: list[AudioChunk] = []
 
     def start(self) -> None:
         """Record stream startup."""
@@ -272,9 +283,10 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.queue_lock = threading.Lock()
     engine.playback_done = threading.Event()
     engine.playback_done.set()
-    engine._persona_queue = queue.Queue()
+    engine.persona_queue = queue.Queue()
     engine.utterance_force_stop = threading.Event()
-    engine._speech_generation = 0
+    engine.speech_generation = 0
+    engine._playback_generation = 0
     engine.kept_sfx_audio = None
     engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
     engine.log = lambda msg, severity="info": messages.append((msg, severity))

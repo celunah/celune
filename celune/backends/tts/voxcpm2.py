@@ -1,20 +1,20 @@
 # SPDX-License-Identifier: MIT
 """VoxCPM2 backend implementation for Celune."""
 
+import contextlib
 import os
 import time
-import contextlib
-from collections.abc import Iterator
-from typing import Callable, Optional, Mapping, Generator
+from collections.abc import Callable, Generator, Iterator, Mapping
+from typing import Optional
 
 import numpy as np
-import numpy.typing as npt
 from voxcpm import VoxCPM
 
+from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import BASE_SR
-from . import get_version
+from ...typing.aliases import AudioChunk, AudioChunks
 from ...utils import custom_assert
-from ...cevoice import default_loader, CEVoiceLoader
+from . import get_version
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
@@ -25,7 +25,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
     uses_voice_bundles: bool = True
     chunk_rate: float = 6.25
     max_new_tokens: int = 512
-    supported_languages: tuple[str, ...] = (
+    supported_languages: tuple[str, ...] = (  # noqa
         "ar",
         "my",
         "zh-cn",
@@ -99,7 +99,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             loader.materialize(name, "wav")
 
     @property
-    def voices(self) -> list[str]:
+    def voices(self) -> list[str]:  # noqa
         """Return the voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:
@@ -136,10 +136,12 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
     @contextlib.contextmanager
     def _suppress_backend_output() -> Generator[None, None, None]:
         """Suppress unnecessary backend output."""
-        with open(os.devnull, "w", encoding="utf-8") as devnull:
-            with contextlib.redirect_stdout(devnull):
-                with contextlib.redirect_stderr(devnull):
-                    yield
+        with (
+            open(os.devnull, "w", encoding="utf-8") as devnull,
+            contextlib.redirect_stdout(devnull),
+            contextlib.redirect_stderr(devnull),
+        ):
+            yield
 
     suppress_backend_output = _suppress_backend_output
 
@@ -195,13 +197,12 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         # torch.use_deterministic_algorithms(True)
 
         if available and path is not None:
-            with local_hf_offline_mode():
-                with self._suppress_backend_output():
-                    self.model = VoxCPM.from_pretrained(
-                        path,
-                        load_denoiser=kwargs.get("load_denoiser", False),
-                        optimize=kwargs.get("optimize", False),
-                    )
+            with local_hf_offline_mode(), self._suppress_backend_output():
+                self.model = VoxCPM.from_pretrained(
+                    path,
+                    load_denoiser=kwargs.get("load_denoiser", False),
+                    optimize=kwargs.get("optimize", False),
+                )
 
             return self.model
 
@@ -216,7 +217,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
 
     def generate_stream(
         self, model: VoxCPM, **kwargs
-    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate Celune compatible audio chunks.
 
         Args:
@@ -224,8 +225,8 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             kwargs: Streaming generation arguments passed to the backend.
 
         Returns:
-            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of ``(audio, sample_rate,
-            timing)`` tuples suitable for Celune's playback pipeline.
+            Iterator[tuple[AudioChunk, int, Optional[dict]]]: An iterator of ``(audio, sample_rate, timing)`` tuples
+            suitable for Celune's playback pipeline.
 
         Raises:
             ValueError: The requested voice is unknown or input text is empty.
@@ -290,8 +291,8 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                     **kwargs,
                 )
 
-                batch: list[npt.NDArray[np.float32]] = []
-                pending_audio: Optional[npt.NDArray[np.float32]] = None
+                batch: AudioChunks = []
+                pending_audio: Optional[AudioChunk] = None
                 pending_steps = 0
                 chunk_index = 0
                 total_steps = 0

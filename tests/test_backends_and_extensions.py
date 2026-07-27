@@ -1,40 +1,41 @@
 # SPDX-License-Identifier: MIT
 """Tests for backend resolution and extension infrastructure."""
 
-import sys
+import contextlib
+import importlib
 import re
+import sys
 import tempfile
 import textwrap
-import importlib
 import threading
-import contextlib
+from collections.abc import Generator, Iterator
 from pathlib import Path
-from types import ModuleType
-from types import SimpleNamespace
-from unittest import mock, TestCase
-from collections.abc import Iterator, Generator
+from types import ModuleType, SimpleNamespace
 from typing import Optional, Union, cast
+from unittest import TestCase, mock
 
 import numpy as np
-import numpy.typing as npt
-import torch
 import soundfile as sf
+import torch
 
-from celune.celune import Celune
-from celune.i18n import string
-from celune.utils import discard
-from celune.typing.backends import BackendModel
 from celune.backends.tts import resolve_backend
+from celune.backends.tts.gpt_sovits import GPTSoVITS, GPTSoVITSPipeline
 from celune.backends.vc import resolve_vc_backend
-from celune.backends.vc.seedvc import CeluneSeedVCBackend
-from celune.extensions.manager import CeluneExtensionManager
-from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.backends.vc.passthrough import CelunePassthroughVCBackend
-from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.backends.vc.seedvc import CeluneSeedVCBackend
+from celune.celune import Celune
+from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.exceptions import (
     ExtensionAlreadyRegisteredError,
     InvalidExtensionError,
 )
+from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.extensions.manager import CeluneExtensionManager
+from celune.i18n import string
+from celune.typing.aliases import AudioChunk
+from celune.typing.backends import BackendModel
+from celune.utils import discard
+
 from .support import (
     FakeBackend,
     FakeVCBackend,
@@ -48,6 +49,171 @@ from .support import (
 
 class BackendTests(TestCase):
     """Tests for backend base behavior and backend resolution."""
+
+    def test_gpt_sovits_uses_huggingface_snapshot_paths_for_model_config(self) -> None:
+        """Verify GPT-SoVITS model configuration stays outside its source tree."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "source"
+            (root / "GPT_SoVITS/TTS_infer_pack").mkdir(parents=True)
+            (root / "GPT_SoVITS/TTS_infer_pack/TTS.py").touch()
+            snapshot = Path(temp_dir) / "huggingface" / "snapshot"
+            snapshot.mkdir(parents=True)
+
+            backend = GPTSoVITS(
+                log=lambda _msg, _severity="info": None,
+                root=str(root),
+                variant="v4",
+            )
+            backend._model_snapshot = snapshot
+            config = backend._model_config("v4")
+            custom = cast(dict[str, Union[str, bool]], config["custom"])
+
+            self.assertEqual(
+                custom["t2s_weights_path"],
+                str(snapshot / "s1v3.ckpt"),
+            )
+            self.assertEqual(
+                custom["vits_weights_path"],
+                str(snapshot / "gsv-v4-pretrained/s2Gv4.pth"),
+            )
+            self.assertNotIn("GPT_SoVITS/pretrained_models", str(custom))
+
+    def test_gpt_sovits_uses_custom_t2s_checkpoint_override(self) -> None:
+        """Verify a configured GPT checkpoint replaces only the variant T2S model."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "source"
+            (root / "GPT_SoVITS/TTS_infer_pack").mkdir(parents=True)
+            (root / "GPT_SoVITS/TTS_infer_pack/TTS.py").touch()
+            custom_checkpoint = Path(temp_dir) / "custom-e20.ckpt"
+            custom_checkpoint.touch()
+            snapshot = Path(temp_dir) / "huggingface" / "snapshot"
+            for relative_path in (
+                "chinese-hubert-base/config.json",
+                "chinese-roberta-wwm-ext-large/config.json",
+                "gsv-v4-pretrained/s2Gv4.pth",
+                "gsv-v4-pretrained/vocoder.pth",
+            ):
+                target = snapshot / relative_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.touch()
+
+            backend = GPTSoVITS(
+                log=lambda _msg, _severity="info": None,
+                root=str(root),
+                variant="v4",
+                t2s_weights_path=str(custom_checkpoint),
+            )
+            backend._model_snapshot = snapshot
+            config = backend._model_config("v4")
+            custom = cast(dict[str, Union[str, bool]], config["custom"])
+
+            self.assertEqual(custom["t2s_weights_path"], str(custom_checkpoint))
+            self.assertEqual(
+                custom["vits_weights_path"],
+                str(snapshot / "gsv-v4-pretrained/s2Gv4.pth"),
+            )
+            self.assertTrue(
+                backend._variant_is_available(
+                    snapshot,
+                    "v4",
+                    custom_checkpoint,
+                )
+            )
+
+    def test_gpt_sovits_bootstrap_uses_celune_user_data_directory(self) -> None:
+        """Verify missing GPT-SoVITS source is installed below Celune user data."""
+        expected_root = Path("C:/runtime-data") / "gpt_sovits"
+
+        with (
+            mock.patch(
+                "celune.backends.tts.gpt_sovits.app_data_dir",
+                return_value=expected_root.parent,
+            ),
+            mock.patch.object(GPTSoVITS, "_candidate_roots", return_value=iter(())),
+            mock.patch.object(
+                GPTSoVITS, "_download_source_tree", return_value=expected_root
+            ) as download,
+        ):
+            self.assertEqual(GPTSoVITS._resolve_root(None), expected_root)
+
+        download.assert_called_once_with(expected_root)
+
+    def test_gpt_sovits_converts_integer_pcm_to_float_audio(self) -> None:
+        """Verify GPT-SoVITS int16 PCM is scaled to Celune's float audio range."""
+        pcm = np.array([-32768, 0, 32767], dtype=np.int16)
+
+        audio = GPTSoVITS._to_numpy_audio(pcm)
+
+        np.testing.assert_allclose(audio, [-1.0, 0.0, 32767 / 32768])
+        self.assertEqual(audio.dtype, np.float32)
+
+    def test_gpt_sovits_uses_english_for_unambiguous_latin_text(self) -> None:
+        """Verify automatic language selection uses English phonemization for Latin text."""
+        self.assertEqual(
+            GPTSoVITS._resolve_text_language("auto", "Hello, Celune."),
+            "en",
+        )
+        self.assertEqual(
+            GPTSoVITS._resolve_text_language("auto", "Hello, 你好."),
+            "auto",
+        )
+        self.assertEqual(GPTSoVITS._resolve_text_language("ja", "Hello."), "ja")
+
+    def test_gpt_sovits_rejects_reference_audio_shorter_than_three_seconds(
+        self,
+    ) -> None:
+        """Verify invalid GPT-SoVITS reference duration is rejected before inference."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "short.wav"
+            sf.write(path, np.zeros(24000, dtype=np.float32), 24000)
+
+            with self.assertRaises(ValueError):
+                GPTSoVITS._validate_reference_audio("calm", path)
+
+    def test_gpt_sovits_trims_quiet_reference_edges(self) -> None:
+        """Verify quiet reference edges are removed while spoken audio is retained."""
+        backend = GPTSoVITS.__new__(GPTSoVITS)
+        backend._truncated_reference_paths = set()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "calm.wav"
+            audio = np.concatenate(
+                [
+                    np.zeros(12000, dtype=np.float32),
+                    np.full(96000, 0.1, dtype=np.float32),
+                    np.zeros(12000, dtype=np.float32),
+                ]
+            )
+            sf.write(source, audio, 24000)
+
+            trimmed = backend._trim_reference_silence(source)
+
+            self.assertNotEqual(trimmed, source)
+            self.assertGreaterEqual(float(sf.info(trimmed).duration), 4.0)
+            self.assertLess(float(sf.info(trimmed).duration), 5.0)
+            self.assertIn(trimmed, backend._truncated_reference_paths)
+
+    def test_gpt_sovits_refreshes_prompt_cache_after_voice_change(self) -> None:
+        """Verify a changed voice reference clears official prompt state."""
+        pipeline = SimpleNamespace(
+            prompt_cache={
+                "ref_audio_path": "old.wav",
+                "prompt_semantic": object(),
+                "refer_spec": [object()],
+                "prompt_text": "Old voice.",
+                "prompt_lang": "en",
+            }
+        )
+
+        GPTSoVITS._refresh_prompt_cache(
+            cast(GPTSoVITSPipeline, pipeline),
+            Path("new.wav"),
+            "New voice.",
+            "en",
+        )
+
+        self.assertIsNone(pipeline.prompt_cache["ref_audio_path"])
+        self.assertEqual(pipeline.prompt_cache["refer_spec"], [])
+        self.assertIsNone(pipeline.prompt_cache["prompt_text"])
 
     def test_base_backend_reports_models(self) -> None:
         """Verify model metadata helpers on a fake backend.
@@ -125,7 +291,7 @@ class BackendTests(TestCase):
                 string(
                     "celune.unknown_backend",
                     backend="missing",
-                    available="mini, qwen3, dotstts, voxcpm2",
+                    available="mini, qwen3, dotstts, voxcpm2, gpt-sovits",
                 )
             ),
         ):
@@ -240,9 +406,7 @@ class BackendTests(TestCase):
                 assert Path(str(kwargs["source"])).exists()
                 assert Path(str(kwargs["target"])).exists()
 
-                def result_generator() -> Generator[
-                    None, None, npt.NDArray[np.float32]
-                ]:
+                def result_generator() -> Generator[None, None, AudioChunk]:
                     yield from ()
                     return np.array([0.25, -0.25], dtype=np.float32)
 
@@ -299,9 +463,7 @@ class BackendTests(TestCase):
                 """
                 captured.update(kwargs)
 
-                def result_generator() -> Generator[
-                    None, None, npt.NDArray[np.float32]
-                ]:
+                def result_generator() -> Generator[None, None, AudioChunk]:
                     yield from ()
                     return np.array([0.1, -0.1], dtype=np.float32)
 
@@ -350,9 +512,7 @@ class BackendTests(TestCase):
                 """
                 captured.update(kwargs)
 
-                def result_generator() -> Generator[
-                    None, None, npt.NDArray[np.float32]
-                ]:
+                def result_generator() -> Generator[None, None, AudioChunk]:
                     yield from ()
                     return np.array([0.1, -0.1], dtype=np.float32)
 
@@ -396,7 +556,9 @@ class BackendTests(TestCase):
 
         setattr(fake_hf_utils, "hf_hub_download", fake_hf_hub_download)
         setattr(
-            fake_hf_utils, "load_custom_model_from_hf", lambda *args, **kwargs: None
+            fake_hf_utils,
+            "load_custom_model_from_hf",
+            lambda *args, **kwargs: None,
         )
         setattr(fake_wrapper, "load_custom_model_from_hf", lambda *args, **kwargs: None)
         setattr(fake_wrapper, "SeedVCWrapper", type("FakeSeedVCWrapper", (), {}))
@@ -462,9 +624,11 @@ class BackendTests(TestCase):
     def test_resolve_backend_accepts_dotstts_backend_name(self) -> None:
         """Verify the dots.tts backend resolves through the backend registry."""
 
-        with mock_dotstts_backend() as dotstts_cls:
-            with mock.patch.object(dotstts_cls, "_validate_refs"):
-                backend = resolve_backend("dotstts")
+        with (
+            mock_dotstts_backend() as dotstts_cls,
+            mock.patch.object(dotstts_cls, "_validate_refs"),
+        ):
+            backend = resolve_backend("dotstts")
 
         self.assertIsInstance(backend, dotstts_cls)
         self.assertEqual(backend.name, "dotstts")
@@ -480,9 +644,7 @@ class BackendTests(TestCase):
                 def __init__(self) -> None:
                     self.cfg_value = None
 
-                def generate_streaming(
-                    self, *args, **kwargs
-                ) -> Iterator[npt.NDArray[np.float32]]:
+                def generate_streaming(self, *args, **kwargs) -> Iterator[AudioChunk]:
                     """Generate fake VoxCPM2 chunks.
 
                     Args:
@@ -518,7 +680,8 @@ class BackendTests(TestCase):
 
             self.assertEqual(model.cfg_value, 4.2)
 
-    def test_voxcpm2_requires_reference_text_for_valid_voice_identifiers(self) -> None:
+    @staticmethod
+    def test_voxcpm2_requires_reference_text_for_valid_voice_identifiers() -> None:
         """Verify VoxCPM2 enters fatal state when pack voices omit reference text."""
 
         with mock_voxcpm_backend() as voxcpm2_cls:
@@ -542,9 +705,7 @@ class BackendTests(TestCase):
                 def __init__(self) -> None:
                     self.reference_wav_path = None
 
-                def generate_streaming(
-                    self, *args, **kwargs
-                ) -> Iterator[npt.NDArray[np.float32]]:
+                def generate_streaming(self, *args, **kwargs) -> Iterator[AudioChunk]:
                     """Generate fake VoxCPM2 chunks.
 
                     Args:
@@ -579,7 +740,8 @@ class BackendTests(TestCase):
 
             self.assertEqual(model.reference_wav_path, Path("trimmed.wav"))
 
-    def test_voxcpm2_requires_a_compatible_voice_pack(self) -> None:
+    @staticmethod
+    def test_voxcpm2_requires_a_compatible_voice_pack() -> None:
         """Verify VoxCPM2 enters fatal state without a usable CEVOICE/CECHAR pack."""
 
         with (
@@ -591,7 +753,8 @@ class BackendTests(TestCase):
 
         fatal.assert_called_once_with()
 
-    def test_mini_requires_reference_text_for_valid_voice_identifiers(self) -> None:
+    @staticmethod
+    def test_mini_requires_reference_text_for_valid_voice_identifiers() -> None:
         """Verify Mini enters fatal state when pack voices omit reference text."""
 
         with mock_mini_backend() as mini_cls:
@@ -678,7 +841,8 @@ class BackendTests(TestCase):
                 backend = mini_cls(log=lambda _msg, _severity="info": None)
                 self.assertEqual(backend.voices, ["calm"])
 
-    def test_mini_requires_a_compatible_voice_pack(self) -> None:
+    @staticmethod
+    def test_mini_requires_a_compatible_voice_pack() -> None:
         """Verify Mini enters fatal state without a usable CEVOICE/CECHAR pack."""
 
         with (
@@ -704,7 +868,7 @@ class BackendTests(TestCase):
 
                 def generate_voice_clone_streaming(
                     self, *args, **kwargs
-                ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+                ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
                     """Generate fake Qwen3 chunks.
 
                     Args:
@@ -746,7 +910,7 @@ class BackendTests(TestCase):
 
                 def generate_voice_clone_streaming(
                     self, *args, **kwargs
-                ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+                ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
                     """Generate fake Qwen3 chunks.
 
                     Args:
@@ -903,7 +1067,8 @@ class BackendTests(TestCase):
             self.assertEqual(model.prompt_audio_path, str(Path("calm.wav")))
             self.assertEqual(model.prompt_text, "Pack reference.")
 
-    def test_dotstts_requires_reference_text_for_valid_voice_identifiers(self) -> None:
+    @staticmethod
+    def test_dotstts_requires_reference_text_for_valid_voice_identifiers() -> None:
         """Verify dots.tts enters fatal state when pack voices omit reference text."""
 
         with mock_dotstts_backend() as dotstts_cls:
@@ -916,7 +1081,8 @@ class BackendTests(TestCase):
 
         fatal.assert_called_once_with()
 
-    def test_dotstts_requires_a_compatible_voice_pack(self) -> None:
+    @staticmethod
+    def test_dotstts_requires_a_compatible_voice_pack() -> None:
         """Verify dots.tts enters fatal state without a usable CEVOICE/CECHAR pack."""
 
         with (
@@ -998,19 +1164,23 @@ class BackendTests(TestCase):
             self.assertEqual(chunks[1][0].tolist(), [1.0])
             self.assertEqual(model.stream.closed, True)
 
-    def test_dotstts_suppresses_loguru_runtime_noise(self) -> None:
+    @staticmethod
+    def test_dotstts_suppresses_loguru_runtime_noise() -> None:
         """Verify dots.tts suppression also disables its Loguru logger namespace."""
 
         with mock_dotstts_backend() as dotstts_cls:
             fake_loguru = mock.Mock()
-            with mock.patch("celune.backends.tts.dotstts.loguru.logger", fake_loguru):
-                with dotstts_cls.suppress_backend_output():
-                    pass
+            with (
+                mock.patch("celune.backends.tts.dotstts.loguru.logger", fake_loguru),
+                dotstts_cls.suppress_backend_output(),
+            ):
+                pass
 
         fake_loguru.disable.assert_called_once_with("dots_tts")
         fake_loguru.enable.assert_called_once_with("dots_tts")
 
-    def test_qwen3_requires_reference_text_for_valid_voice_identifiers(self) -> None:
+    @staticmethod
+    def test_qwen3_requires_reference_text_for_valid_voice_identifiers() -> None:
         """Verify Qwen3 enters fatal state when pack voices omit reference text."""
 
         with mock_qwen3_backend() as qwen3_cls:
@@ -1023,7 +1193,8 @@ class BackendTests(TestCase):
 
         fatal.assert_called_once_with()
 
-    def test_qwen3_requires_a_compatible_voice_pack(self) -> None:
+    @staticmethod
+    def test_qwen3_requires_a_compatible_voice_pack() -> None:
         """Verify Qwen3 enters fatal state without a usable CEVOICE/CECHAR pack."""
 
         with (
@@ -1035,7 +1206,8 @@ class BackendTests(TestCase):
 
         fatal.assert_called_once_with()
 
-    def test_qwen3_requires_at_least_one_valid_voice_identifier(self) -> None:
+    @staticmethod
+    def test_qwen3_requires_at_least_one_valid_voice_identifier() -> None:
         """Verify Qwen3 enters fatal state when no usable voice names exist."""
 
         loader = SimpleNamespace(
@@ -1075,7 +1247,7 @@ class BackendTests(TestCase):
 
                 def __next__(
                     self,
-                ) -> tuple[npt.NDArray[np.float32], int, Optional[dict]]:
+                ) -> tuple[AudioChunk, int, Optional[dict]]:
                     if not self._chunks:
                         raise StopIteration
                     return self._chunks.pop(0)
@@ -1136,7 +1308,7 @@ class BackendTests(TestCase):
                 @staticmethod
                 def generate_voice_clone_streaming(
                     *args, **kwargs
-                ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+                ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
                     """Generate fake Qwen3 chunks.
 
                     Args:
@@ -1181,9 +1353,7 @@ class BackendTests(TestCase):
                 """Fake model class for use in this test suite."""
 
                 @staticmethod
-                def generate_streaming(
-                    *args, **kwargs
-                ) -> Iterator[npt.NDArray[np.float32]]:
+                def generate_streaming(*args, **kwargs) -> Iterator[AudioChunk]:
                     """Generate fake VoxCPM2 chunks.
 
                     Args:

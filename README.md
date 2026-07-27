@@ -29,7 +29,7 @@ It was proudly made in 🇵🇱 for your listening pleasure.
 
 Celune is against the stance of "vibe coding" used in development.
 
-None of the 30,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
+None of the 40,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
 
 All decisions and implementations were reviewed, validated, and approved by human developers.
 
@@ -79,6 +79,13 @@ Each voice is demonstrated using a short introduction and a longer narration sam
 | Bold | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_sc_dotstts.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/bold_lc_dotstts.wav) |
 | Upbeat | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_sc_dotstts.wav) | [▶️ Play](https://gabalpha.github.io/read-audio/?p=https://raw.githubusercontent.com/celunah/celune/main/demos/upbeat_lc_dotstts.wav) |
 
+> [!NOTE]
+> Due to limitations of GPT-SoVITS with Celune's calm voice, a demonstration of GPT-SoVITS was not included.
+> 
+> This backend may not work with certain types of low-energy voices and may cause accent drifts if not using Celune's custom [T2S model](https://huggingface.co/lunahr/celune-t2s-en-us/blob/main/celune_t2s_en_US-e15.ckpt).
+> 
+> After downloading, set `gpt_sovits_t2s_weights_path: <path_to_t2s>` in Celune's configuration to fix these problems.
+
 The demonstration lines try to showcase Celune's best, but they may include minor mistakes. This is an inherent limitation with TTS models, and Celune should not be blamed for it.
 
 These examples were recorded with the default voice pack, which contains canonical Celune voices. Other voice packs may be created and installed by the end user, allowing for other characters to speak through Celune.
@@ -110,7 +117,7 @@ Browse the `demos` directory for demonstration content from the current version 
 
 Samples were captured directly from Celune's output directory. No extra post-processing was applied.
 
-For details on voice production, check the VOICES.md file.
+For details on voice production, check [VOICES.md](./VOICES.md).
 
 ## System Requirements
 
@@ -151,7 +158,7 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 >
 > This preset supports:
 >
-> - Qwen3-TTS 0.6B / Celune Mini
+> - Qwen3-TTS 0.6B / Celune Mini / GPT-SoVITS
 > - SeedVC voice changer mode
 > - Normalization on CPU
 >
@@ -179,6 +186,7 @@ Celune has several VRAM presets available. Here are their baseline requirements:
 > - Normalization on GPU
 > - Upcoming advanced features
 
+
 The desired preset may be set in Celune's configuration file. Refer to `default_config.yaml` for details.
 
 ---
@@ -188,9 +196,11 @@ Tested on: RTX 5070 (12 GB VRAM)
 
 ## Installation
 
-Download and extract the [latest binary artifact](https://nightly.link/celunah/celune/workflows/ci/main) prior to running the below commands in an already cloned copy of Celune.
+Download and extract the [latest SemVer binary release](https://github.com/celunah/celune/releases/latest) prior to running the below commands in an already cloned copy of Celune.
 
-Don't have one yet? Run the following commands:
+Alternatively, run `scripts/build_nuitka.ps1` or `scripts/build_nuitka.sh` to build Celune binaries by yourself, depending on your platform.
+
+Don't have a copy yet? Run the following commands:
 
 ```bash
 git clone https://github.com/celunah/celune

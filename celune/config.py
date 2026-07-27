@@ -2,14 +2,14 @@
 """Configuration helpers for Celune."""
 
 import os
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import Optional, cast
-from collections.abc import Mapping, Sequence
 
 import sounddevice as sd
 
-from .i18n import string
 from .constants import APP_NAME
+from .i18n import string
 from .typing.common import Config, JSONSerializable
 from .typing.config import (
     AudioDeviceConfig,
@@ -172,6 +172,7 @@ def _hostapi_name(
 ) -> Optional[str]:
     """Resolve one host API display name from sounddevice info."""
     if hostapis is None:
+        # noinspection PyBroadException
         try:
             queried = sd.query_hostapis()
         except Exception:
@@ -305,6 +306,7 @@ def resolve_audio_device_with_info(
     try:
         direct_info = sd.query_devices(device=configured_name, kind=query_kind)
     except ValueError:
+        # noinspection PyUnusedLocal
         direct_info = None
     else:
         if (
@@ -339,20 +341,22 @@ def resolve_audio_device_with_info(
 
     if isinstance(all_devices, Mapping):
         name = str(all_devices.get("name", ""))
-        if configured_name.casefold() in name.casefold():
-            if int(all_devices.get(channel_key, 0)) > 0:
-                hostapi_name = _hostapi_name(
-                    all_devices,
-                    list(hostapis)
-                    if isinstance(hostapis, Sequence)
-                    and not isinstance(hostapis, (str, bytes))
-                    else None,
-                )
-                if (
-                    configured_hostapi is None
-                    or hostapi_name == WINDOWS_AUDIO_HOSTAPIS[configured_hostapi]
-                ):
-                    return configured_name, all_devices
+        if (
+            configured_name.casefold() in name.casefold()
+            and int(all_devices.get(channel_key, 0)) > 0
+        ):
+            hostapi_name = _hostapi_name(
+                all_devices,
+                list(hostapis)
+                if isinstance(hostapis, Sequence)
+                and not isinstance(hostapis, (str, bytes))
+                else None,
+            )
+            if (
+                configured_hostapi is None
+                or hostapi_name == WINDOWS_AUDIO_HOSTAPIS[configured_hostapi]
+            ):
+                return configured_name, all_devices
         return configured_name, None
 
     for index, info in enumerate(all_devices):

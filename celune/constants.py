@@ -1,14 +1,15 @@
 # SPDX-License-Identifier: MIT
 """Shared Celune constants."""
 
-import signal
 import datetime
 import itertools
+import signal
+from enum import Enum, IntEnum, auto
 from typing import Optional
-from enum import auto, IntEnum, Enum
 
+from ._version import VERSION
 from .i18n import string
-from .typing.common import JSON, JSONSerializable  # pylint: disable=unused-import
+from .typing.common import JSON, JSONSerializable  # noqa: F401  # pylint: disable=W0611
 
 # main app name
 # why would you rename her? she doesn't approve of it
@@ -57,40 +58,9 @@ def remote_code_model_revision(model_id: str) -> Optional[str]:
 
 
 # used to pre-calculate the next full moon for the glow boost
-REFERENCE_NEW_MOON = datetime.datetime(2000, 1, 6, 18, 14, tzinfo=datetime.timezone.utc)
+REFERENCE_NEW_MOON = datetime.datetime(2000, 1, 6, 18, 14, tzinfo=datetime.UTC)
 
-# controllable style traits for Persona
-VOICE_STYLE_OVERLAYS = {
-    "calm": {
-        "warmth": "high",
-        "directness": "mid",
-        "humor": "low",
-        "detail": "mid",
-        "extra": "The speaker uses a soft tone and avoids sharp phrasing.",
-    },
-    "balanced": {
-        "warmth": "high",
-        "directness": "high",
-        "humor": "low",
-        "detail": "mid",
-        "extra": "The speaker sounds natural and clear.",
-    },
-    "bold": {
-        "warmth": "mid",
-        "directness": "high",
-        "humor": "mid",
-        "detail": "low",
-        "extra": "The speaker uses a more confident and less hesitant tone.",
-    },
-    "upbeat": {
-        "warmth": "high",
-        "directness": "mid",
-        "humor": "high",
-        "detail": "low",
-        "extra": "The speaker sounds more playful and emotionally lively.",
-    },
-}
-
+# fallback Persona metadata
 DEFAULT_PERSONA_DESCRIPTION = (
     "Stay in character using the active character metadata, selected voice style, "
     "and the user's request. Do not invent fixed personality traits unless they are "
@@ -115,6 +85,7 @@ class ExitCodes(Enum):
     EXIT_UNKNOWN_ARGS = 5  # Celune CLI command is unknown.
     EXIT_BAD_PYTHON = 6  # Celune is trying to run on an unsupported Python interpreter.
     EXIT_PENDING_UPDATE = 7  # Celune has a pending update.
+    EXIT_LAUNCHER_LOST = 8  # Celune lost the connection to her launcher.
 
     # the following exit codes may be disabled by the end user
     EXIT_CELINE_DAY_SIX_SEVEN = 67  # Celune refuses to run on Celine Day.
@@ -186,3 +157,6 @@ COST_EQUIVALENTS = {
     "fishaudio-s2-pro": 0.021,
     "fishaudio-s2.1-pro": 0.021,
 }
+
+# temporary Celune user agent, will be used properly in v5
+CELUNE_UA = f"Celune/{VERSION}"

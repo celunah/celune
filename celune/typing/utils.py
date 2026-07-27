@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Utility-layer typed dictionaries."""
 
 from typing import TypedDict

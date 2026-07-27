@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Configuration-specific type aliases."""
 
 from collections.abc import Mapping, Sequence

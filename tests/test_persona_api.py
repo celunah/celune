@@ -2,26 +2,14 @@
 """Tests for the shared Persona runtime helpers."""
 
 import contextlib
-from unittest import TestCase, mock
 from types import SimpleNamespace
 from typing import Optional, Union, cast
+from unittest import TestCase, mock
 
-from celune.persona import impl
-from celune.utils import discard
-from celune.persona import runtime
 from celune.constants import PERSONA_MODEL_REVISION
-
-type _RecordedKwargValue = Optional[
-    Union[
-        str,
-        bool,
-        bytes,
-        list[bytes],
-        runtime.torch.Tensor,
-        runtime.torch.dtype,
-        runtime.torch.device,
-    ]
-]
+from celune.persona import impl, runtime
+from celune.typing.aliases import RecordedKwargValue
+from celune.utils import discard
 
 
 class _FakeEncoded:
@@ -100,7 +88,7 @@ class _FakeGenerativeModel:
 
     def __init__(self) -> None:
         self.device = "cpu"
-        self.calls: list[dict[str, _RecordedKwargValue]] = []
+        self.calls: list[dict[str, RecordedKwargValue]] = []
 
     def generate(self, **kwargs) -> runtime.torch.Tensor:
         """Record generation kwargs and return one synthetic completion.
@@ -147,7 +135,7 @@ class _FakeMultimodalProcessor:
     def __init__(self, tokenizer: Optional[_FakeTokenizer] = None) -> None:
         self.tokenizer = tokenizer
         self.image_processor = SimpleNamespace()
-        self.calls: list[dict[str, _RecordedKwargValue]] = []
+        self.calls: list[dict[str, RecordedKwargValue]] = []
 
     def __call__(self, **kwargs) -> _FakeEncoded:
         """Return one encoded batch for multimodal processor calls."""

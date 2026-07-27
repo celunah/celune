@@ -2,14 +2,12 @@
 """Runtime filesystem paths and global Hugging Face runtime setup for Celune."""
 
 import os
-import sys
 import shutil
+import sys
 from pathlib import Path
 from typing import Optional
 
 from platformdirs import user_data_dir
-from transformers.utils.logging import disable_progress_bar
-from huggingface_hub.utils import disable_progress_bars
 
 from .constants import APP_NAME, APP_SLUG
 
@@ -132,6 +130,9 @@ def configure_huggingface_cache_environment(force: bool = False) -> None:
 
 def configure_huggingface_runtime() -> None:
     """Apply Celune's process-wide Hugging Face progress suppression."""
+    from huggingface_hub.utils import disable_progress_bars
+    from transformers.utils.logging import disable_progress_bar
+
     os.environ.setdefault(_HF_HUB_DISABLE_PROGRESS_BARS_ENV, "1")
     disable_progress_bar()
     disable_progress_bars()
@@ -162,6 +163,21 @@ def temp_data_dir(create: bool = False) -> Path:
         Path: Celune's temporary data directory.
     """
     path = app_data_dir(create=create) / "temp"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def voices_data_dir(create: bool = False) -> Path:
+    """Return the user-local directory containing installed voice packs.
+
+    Args:
+        create: Whether this directory should be created before being returned.
+
+    Returns:
+        Path: Celune's user-local voice-pack directory.
+    """
+    path = app_data_dir(create=create) / "voices"
     if create:
         path.mkdir(parents=True, exist_ok=True)
     return path

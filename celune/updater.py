@@ -3,33 +3,42 @@
 
 from __future__ import annotations
 
-import os
-import sys
-import re
-import json
-import time
 import ctypes
-import shutil
-import urllib.request
 import hashlib
-import zipfile
-import tempfile
+import json
+import os
+import re
+import shutil
 import subprocess
-from pathlib import Path
+import sys
+import tempfile
+import time
+import urllib.request
+import zipfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Union
 
 from . import __version__
+from .constants import CELUNE_UA
 from .exceptions import UpdateError
-from .typing.common import JSONSerializable
+from .i18n import string
 from .paths import project_root, running_compiled
+from .typing.common import JSONSerializable
 
 REMOTE_URL = "https://github.com/celunah/celune.git"
-ARTIFACT_BASE_URL = "https://nightly.link/celunah/celune/workflows/ci"
+RELEASES_API_URL = "https://api.github.com/repos/celunah/celune/releases?per_page=100"
 UPDATE_MANIFEST_NAME = "celune-update.json"
 SHORT_HASH_LENGTH = 7
 UPDATE_BRANCHES = {"main", "master"}
 DOWNLOAD_TIMEOUT = 30
+FORCE_DISABLE_UPDATES = False
+SEMVER_PATTERN = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 
 
 @dataclass(frozen=True)
@@ -62,6 +71,16 @@ class BundleManifest:
     files: dict[str, str]
 
 
+@dataclass(frozen=True)
+class ReleaseInfo:
+    """Published release metadata used by the updater."""
+
+    tag: str
+    version: str
+    revision: str
+    asset_url: str
+
+
 def _repo_root() -> Path:
     """Return where the Git repository root is located."""
     return project_root()
@@ -87,9 +106,69 @@ def _platform_artifact_name() -> str:
     return "Celune-linux-x64"
 
 
-def _artifact_download_url(branch: str, artifact: str) -> str:
-    """Return the direct nightly.link ZIP URL for one workflow artifact."""
-    return f"{ARTIFACT_BASE_URL}/{branch}/{artifact}.zip"
+def _parse_release(raw: JSONSerializable) -> Optional[ReleaseInfo]:
+    """Parse one GitHub release when it is a published SemVer release."""
+    if not isinstance(raw, dict):
+        return None
+
+    tag = raw.get("tag_name")
+    if not isinstance(tag, str) or not _is_semver(tag):
+        return None
+    if raw.get("draft") is True:
+        return None
+
+    asset_url = ""
+    assets = raw.get("assets")
+    if isinstance(assets, list):
+        expected_name = f"{_platform_artifact_name()}.zip"
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            if asset.get("name") != expected_name:
+                continue
+            browser_download_url = asset.get("browser_download_url")
+            if isinstance(browser_download_url, str):
+                asset_url = browser_download_url
+                break
+
+    target_commitish = raw.get("target_commitish")
+    revision = (
+        target_commitish
+        if isinstance(target_commitish, str)
+        and re.fullmatch(r"[0-9a-fA-F]{40}", target_commitish)
+        else ""
+    )
+    return ReleaseInfo(
+        tag=tag,
+        version=_normalize_tag(tag),
+        revision=revision,
+        asset_url=asset_url,
+    )
+
+
+def _latest_release() -> Optional[ReleaseInfo]:
+    """Return the newest published GitHub release with a SemVer tag."""
+    request = urllib.request.Request(
+        RELEASES_API_URL,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": CELUNE_UA,
+        },
+    )
+    with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:
+        releases = json.loads(response.read().decode("utf-8"))
+
+    if not isinstance(releases, list):
+        return None
+
+    latest: Optional[ReleaseInfo] = None
+    for raw in releases:
+        release = _parse_release(raw)
+        if release is None:
+            continue
+        if latest is None or _is_newer_version_tag(release.tag, latest.tag):
+            latest = release
+    return latest
 
 
 def _run_git(args: list[str], timeout: int = 15) -> str:
@@ -98,10 +177,9 @@ def _run_git(args: list[str], timeout: int = 15) -> str:
         ["git", *args],
         cwd=_repo_root(),
         check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
         text=True,
         timeout=timeout,
+        capture_output=True,
     )
     return result.stdout.strip()
 
@@ -145,65 +223,62 @@ def _normalize_tag(tag: str) -> str:
 
 
 def _version_key(tag: str) -> VersionKey:
-    """Return a Celune version for the given tag."""
+    """Return a structured SemVer key for the given tag."""
     normalized = _normalize_tag(tag)
-    rmatch = re.match(r"^(\d+(?:\.\d+)*)(.*)$", normalized)
+    rmatch = SEMVER_PATTERN.fullmatch(normalized)
     if not rmatch:
         return VersionKey((), normalized)
 
-    numbers = tuple(int(part) for part in rmatch.group(1).split("."))
-    suffix = rmatch.group(2)
+    numbers = tuple(int(part) for part in rmatch.group(1, 2, 3))
+    suffix = rmatch.group(4) or ""
     return VersionKey(numbers, suffix)
 
 
+def _is_semver(tag: str) -> bool:
+    """Return whether a tag contains a valid SemVer version."""
+    return bool(SEMVER_PATTERN.fullmatch(_normalize_tag(tag)))
+
+
+def _compare_prerelease(candidate: str, current: str) -> int:
+    """Compare two SemVer prerelease identifiers."""
+    if not candidate and not current:
+        return 0
+    if not candidate:
+        return 1
+    if not current:
+        return -1
+
+    candidate_parts = candidate.split(".")
+    current_parts = current.split(".")
+    for candidate_part, current_part in zip(candidate_parts, current_parts):
+        if candidate_part == current_part:
+            continue
+        candidate_numeric = candidate_part.isdigit()
+        current_numeric = current_part.isdigit()
+        if candidate_numeric and current_numeric:
+            return (int(candidate_part) > int(current_part)) - (
+                int(candidate_part) < int(current_part)
+            )
+        if candidate_numeric != current_numeric:
+            return -1 if candidate_numeric else 1
+        return (candidate_part > current_part) - (candidate_part < current_part)
+
+    return (len(candidate_parts) > len(current_parts)) - (
+        len(candidate_parts) < len(current_parts)
+    )
+
+
 def _is_newer_version_tag(candidate: str, current: str) -> bool:
-    """Is this revision a newer Celune version?"""
+    """Return whether one valid SemVer tag is newer than another."""
+    if not _is_semver(candidate) or not _is_semver(current):
+        return False
+
     candidate_key = _version_key(candidate)
     current_key = _version_key(current)
     if candidate_key.numbers != current_key.numbers:
         return candidate_key.numbers > current_key.numbers
 
-    return candidate_key.suffix > current_key.suffix
-
-
-def _latest_remote_tag() -> tuple[str, str]:
-    """Return the latest revision from the remote repository."""
-    output = _run_git(["ls-remote", "--tags", "--refs", REMOTE_URL], timeout=20)
-    tags: list[tuple[str, str]] = []
-    for line in output.splitlines():
-        if not line:
-            continue
-        revision, ref = line.split(maxsplit=1)
-        tags.append((_normalize_tag(ref), revision))
-
-    if not tags:
-        return "", ""
-
-    latest_tag, latest_revision = tags[0]
-    for tag, revision in tags[1:]:
-        if _is_newer_version_tag(tag, latest_tag):
-            latest_tag = tag
-            latest_revision = revision
-
-    return latest_tag, latest_revision
-
-
-def _remote_revision(ref: str) -> str:
-    """Get current remote revision."""
-    output = _run_git(["ls-remote", REMOTE_URL, ref], timeout=20)
-    if not output:
-        return ""
-    return output.split(maxsplit=1)[0]
-
-
-def _remote_head_revision() -> str:
-    """Get current remote revision from HEAD."""
-    return _remote_revision("HEAD")
-
-
-def _remote_branch_revision(branch: str) -> str:
-    """Return current remote branch revision."""
-    return _remote_revision(f"refs/heads/{branch}")
+    return _compare_prerelease(candidate_key.suffix, current_key.suffix) > 0
 
 
 def _current_branch() -> str:
@@ -227,17 +302,6 @@ def _local_revision() -> str:
 def _has_local_changes() -> bool:
     """Does the local repository have any changes pending for commit?"""
     return bool(_run_git(["status", "--porcelain"]))
-
-
-def _has_new_remote_revision(local_revision: str, remote_revision: str) -> bool:
-    """Return whether the remote revision is a fast-forward update for HEAD."""
-    if not remote_revision or local_revision == remote_revision:
-        return False
-
-    if _git_succeeds(["merge-base", "--is-ancestor", remote_revision, "HEAD"]):
-        return False
-
-    return _git_succeeds(["merge-base", "--is-ancestor", "HEAD", remote_revision])
 
 
 def _is_git_checkout() -> bool:
@@ -323,16 +387,20 @@ def _download_to_file(url: str, destination: Path) -> None:
     """Download one URL into the given destination path."""
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "Celune-Updater/1.0"},
+        headers={"User-Agent": CELUNE_UA},
     )
-    with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:
-        with destination.open("wb") as handle:
-            shutil.copyfileobj(response, handle)
+    with (
+        urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response,
+        destination.open("wb") as handle,
+    ):
+        shutil.copyfileobj(response, handle)
 
 
-def _download_artifact_zip(branch: str, artifact: str, destination: Path) -> None:
-    """Download the latest launcher artifact ZIP for one branch."""
-    _download_to_file(_artifact_download_url(branch, artifact), destination)
+def _download_release_zip(release: ReleaseInfo, destination: Path) -> None:
+    """Download the current-platform ZIP attached to one GitHub release."""
+    if not release.asset_url:
+        raise UpdateError(string("cli.update_no_platform_zip"))
+    _download_to_file(release.asset_url, destination)
 
 
 def _manifest_from_zip(zip_path: Path) -> Optional[BundleManifest]:
@@ -350,80 +418,103 @@ def _manifest_from_zip(zip_path: Path) -> Optional[BundleManifest]:
     return None
 
 
-def _read_remote_bundle_manifest(branch: str) -> Optional[BundleManifest]:
-    """Download the latest artifact manifest for this platform."""
+def _read_remote_bundle_manifest(release: ReleaseInfo) -> Optional[BundleManifest]:
+    """Download a release ZIP and read its bundled update metadata."""
     artifact = _platform_artifact_name()
     with tempfile.TemporaryDirectory(prefix="celune-update-check-") as temp_dir:
         zip_path = Path(temp_dir) / f"{artifact}.zip"
         try:
-            _download_artifact_zip(branch, artifact, zip_path)
-        except OSError:
+            _download_release_zip(release, zip_path)
+        except (OSError, UpdateError):
             return None
         return _manifest_from_zip(zip_path)
 
 
-def _compiled_bundle_matches_remote(
+def _compiled_bundle_matches_manifest(
     bundle_dir: Path,
-    remote_manifest: BundleManifest,
+    manifest: BundleManifest,
 ) -> bool:
-    """Return whether the installed bundle already matches the remote artifact."""
-    local_files = _bundle_checksums(bundle_dir, list(remote_manifest.files))
-    return bool(local_files) and local_files == remote_manifest.files
+    """Return whether the installed bundle matches the supplied manifest."""
+    local_files = _bundle_checksums(bundle_dir, list(manifest.files))
+    return bool(local_files) and local_files == manifest.files
+
+
+def _release_manifest_matches(
+    release: ReleaseInfo,
+    manifest: BundleManifest,
+) -> bool:
+    """Return whether a bundle manifest belongs to the selected release."""
+    return _is_semver(manifest.version) and _base_version(
+        manifest.version
+    ) == _base_version(release.version)
 
 
 def _check_for_compiled_update() -> Optional[UpdateInfo]:
-    """Check whether the packaged launcher bundle differs from the latest artifact."""
+    """Check whether a newer SemVer release bundle is available."""
     local_manifest = _load_local_bundle_manifest()
     if local_manifest is None:
         return None
 
-    branch = "main"
-    remote_revision = ""
-    latest_tag = ""
-    latest_tag_revision = ""
     try:
-        if _is_git_checkout():
-            branch = _current_branch() or branch
-            if branch and branch not in UPDATE_BRANCHES:
-                return None
-            remote_revision = (
-                _remote_branch_revision(branch) if branch else _remote_head_revision()
-            )
-            latest_tag, latest_tag_revision = _latest_remote_tag()
+        release = _latest_release()
     except (
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        FileNotFoundError,
+        OSError,
         ValueError,
+        json.JSONDecodeError,
     ):
-        branch = "main"
-
-    remote_manifest = _read_remote_bundle_manifest(branch or "main")
-    if remote_manifest is None:
         return None
 
-    if _compiled_bundle_matches_remote(_bundle_dir(), remote_manifest):
+    if (
+        release is None
+        or not release.asset_url
+        or not _is_newer_version_tag(release.version, local_manifest.version)
+    ):
         return None
 
-    latest_revision = remote_manifest.revision or remote_revision or latest_tag_revision
-    latest_version = remote_manifest.version or latest_tag or _base_version(__version__)
+    remote_manifest = _read_remote_bundle_manifest(release)
+    if remote_manifest is None or not _release_manifest_matches(
+        release, remote_manifest
+    ):
+        return None
+    if not _is_newer_version_tag(remote_manifest.version, local_manifest.version):
+        return None
+
+    bundle_dir = _bundle_dir()
+    if _compiled_bundle_matches_manifest(bundle_dir, remote_manifest):
+        return None
+
+    latest_revision = remote_manifest.revision or release.revision
     return UpdateInfo(
         local_version=local_manifest.version,
         local_revision=_short_revision(local_manifest.revision),
         local_tag="",
-        latest_version=latest_version,
+        latest_version=release.version,
         latest_revision=_short_revision(latest_revision),
-        latest_tag=latest_tag,
+        latest_tag=release.tag,
     )
 
 
+def _get_latest_release() -> Optional[ReleaseInfo]:
+    """Return the newest SemVer release, suppressing network and payload errors."""
+    try:
+        return _latest_release()
+    except (
+        OSError,
+        ValueError,
+    ):
+        return None
+
+
 def check_for_update() -> Optional[UpdateInfo]:
-    """Check for a newer Celune revision or packaged launcher bundle.
+    """Check for a newer published SemVer release with a platform ZIP.
 
     Returns:
         Optional[UpdateInfo]: Metadata describing the available update, or ``None`` when no safe update path is
         currently available.
     """
+    if FORCE_DISABLE_UPDATES:
+        return None
+
     if os.getenv("CELUNE_SKIP_UPDATE") in {"1", "true", "on", "yes", "enabled"}:
         return None
 
@@ -437,17 +528,10 @@ def check_for_update() -> Optional[UpdateInfo]:
         branch = _current_branch()
         if branch and branch not in UPDATE_BRANCHES:
             return None
-
         if _has_local_changes():
             return None
-
         local_revision = _local_revision()
         local_tag = _local_tag()
-        remote_revision = (
-            _remote_branch_revision(branch) if branch else _remote_head_revision()
-        )
-        latest_tag, latest_tag_revision = _latest_remote_tag()
-        has_new_revision = _has_new_remote_revision(local_revision, remote_revision)
     except (
         subprocess.CalledProcessError,
         subprocess.TimeoutExpired,
@@ -456,25 +540,22 @@ def check_for_update() -> Optional[UpdateInfo]:
     ):
         return None
 
+    release = _get_latest_release()
     local_version = _base_version(__version__)
-    has_new_tag = bool(
-        latest_tag and _is_newer_version_tag(latest_tag, local_tag or local_version)
-    )
-    if not has_new_revision and not has_new_tag:
+    if (
+        release is None
+        or not release.asset_url
+        or not _is_newer_version_tag(release.version, local_version)
+    ):
         return None
 
-    latest_revision = remote_revision if has_new_revision else latest_tag_revision
-    if not latest_revision:
-        return None
-
-    latest_version = latest_tag or _base_version(__version__)
     return UpdateInfo(
         local_version=local_version,
         local_revision=_short_revision(local_revision),
         local_tag=local_tag,
-        latest_version=latest_version,
-        latest_revision=_short_revision(latest_revision),
-        latest_tag=latest_tag,
+        latest_version=release.version,
+        latest_revision=_short_revision(release.revision),
+        latest_tag=release.tag,
     )
 
 
@@ -490,7 +571,7 @@ def _extract_artifact_root(zip_path: Path, destination: Path) -> Path:
 
 
 def _replace_path(source: Path, destination: Path) -> None:
-    """Replace one file or directory in the install directory."""
+    """Replace one file or directory in the installation directory."""
     if destination.exists():
         if destination.is_dir() and not destination.is_symlink():
             shutil.rmtree(destination)
@@ -505,39 +586,42 @@ def _replace_path(source: Path, destination: Path) -> None:
 
 
 def _apply_compiled_update(install_dir: Optional[Path] = None) -> None:
-    """Download and replace the packaged launcher bundle in place."""
+    """Download and replace the current-platform ZIP from a SemVer release."""
     bundle_dir = (install_dir or _bundle_dir()).resolve()
-    branch = "main"
-    if _is_git_checkout():
-        try:
-            branch = _current_branch() or branch
-        except (
-            subprocess.CalledProcessError,
-            subprocess.TimeoutExpired,
-            FileNotFoundError,
-        ):
-            branch = "main"
-
     artifact = _platform_artifact_name()
+    release = _get_latest_release()
+    if release is None or not release.asset_url:
+        raise UpdateError(string("cli.update_no_platform_zip"))
+
     with tempfile.TemporaryDirectory(prefix="celune-update-") as temp_dir:
         temp_root = Path(temp_dir)
         zip_path = temp_root / f"{artifact}.zip"
         try:
-            _download_artifact_zip(branch, artifact, zip_path)
+            _download_release_zip(release, zip_path)
         except OSError as exc:
-            raise UpdateError(f"could not download the latest artifact: {exc}") from exc
+            raise UpdateError(
+                string("cli.update_download_failed", error=str(exc))
+            ) from exc
+
+        release_manifest = _manifest_from_zip(zip_path)
+        if release_manifest is None or not _release_manifest_matches(
+            release, release_manifest
+        ):
+            raise UpdateError(string("cli.update_invalid_release"))
 
         try:
             extracted_root = _extract_artifact_root(zip_path, temp_root / "artifact")
         except (OSError, zipfile.BadZipFile, UpdateError) as exc:
-            raise UpdateError(f"could not unpack the latest artifact: {exc}") from exc
+            raise UpdateError(
+                string("cli.update_unpack_failed", error=str(exc))
+            ) from exc
 
         for source in extracted_root.iterdir():
             _replace_path(source, bundle_dir / source.name)
 
 
 def update_to_latest(install_dir: Optional[Path] = None) -> None:
-    """Update Celune either from Git or from the latest packaged artifact.
+    """Update Celune from a published SemVer release.
 
     Args:
         install_dir: Optional compiled-install directory to replace in place.
@@ -569,7 +653,15 @@ def update_to_latest(install_dir: Optional[Path] = None) -> None:
     if branch and branch not in UPDATE_BRANCHES:
         raise UpdateError(f"automatic updates are disabled on branch '{branch}'")
 
-    fetch_ref = f"refs/heads/{branch}" if branch else "HEAD"
+    release = _get_latest_release()
+    if (
+        release is None
+        or not release.asset_url
+        or not _is_newer_version_tag(release.version, _base_version(__version__))
+    ):
+        raise UpdateError(string("cli.update_no_newer_release"))
+
+    fetch_ref = f"refs/tags/{release.tag}"
 
     try:
         _run_git(["fetch", "--prune", REMOTE_URL, fetch_ref], timeout=120)
@@ -642,7 +734,6 @@ def _wait_for_pid_exit(pid: int, timeout: float = 120.0) -> None:
 short_revision = _short_revision
 normalize_tag = _normalize_tag
 is_newer_version_tag = _is_newer_version_tag
-has_new_remote_revision = _has_new_remote_revision
 sha256_file = _sha256_file
 
 

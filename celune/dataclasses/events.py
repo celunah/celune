@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Typed Celune lifecycle and extension event payloads."""
 
 from __future__ import annotations
@@ -13,21 +14,21 @@ if TYPE_CHECKING:
 class ReadyEvent:
     """Payload emitted once Celune is fully initialized."""
 
-    celune: "Celune"
+    celune: Celune
 
 
 @dataclass(slots=True)
 class ShutdownEvent:
     """Payload emitted when Celune begins shutting down."""
 
-    celune: "Celune"
+    celune: Celune
 
 
 @dataclass(slots=True)
 class FatalEvent:
     """Payload emitted when Celune enters a fatal runtime error state."""
 
-    celune: "Celune"
+    celune: Celune
     error: Exception
     source: str
 
@@ -36,7 +37,7 @@ class FatalEvent:
 class ErrorEvent:
     """Payload emitted for non-fatal engine-level errors."""
 
-    celune: "Celune"
+    celune: Celune
     error: Exception
     source: str
 
@@ -45,7 +46,7 @@ class ErrorEvent:
 class VoiceChangedEvent:
     """Payload emitted after Celune switches to a different voice."""
 
-    celune: "Celune"
+    celune: Celune
     old_voice: str
     new_voice: str
 
@@ -54,7 +55,7 @@ class VoiceChangedEvent:
 class StateChangedEvent:
     """Payload emitted whenever Celune changes runtime state."""
 
-    celune: "Celune"
+    celune: Celune
     old_state: str
     new_state: str
 
@@ -63,7 +64,7 @@ class StateChangedEvent:
 class GenerationStartEvent:
     """Payload emitted when a speech request starts generating."""
 
-    celune: "Celune"
+    celune: Celune
     text: str
     display_text: str
     save: bool
@@ -74,7 +75,7 @@ class GenerationStartEvent:
 class GenerationEndEvent:
     """Payload emitted when a speech request finishes generating."""
 
-    celune: "Celune"
+    celune: Celune
     text: str
     display_text: str
     save: bool
@@ -86,7 +87,7 @@ class GenerationEndEvent:
 class GenerationErrorEvent:
     """Payload emitted when generation fails for one speech request."""
 
-    celune: "Celune"
+    celune: Celune
     text: str
     display_text: str
     save: bool
@@ -98,7 +99,7 @@ class GenerationErrorEvent:
 class AudioStartEvent:
     """Payload emitted when an audio source begins playback."""
 
-    celune: "Celune"
+    celune: Celune
     source_id: int
     label: str
     kind: str
@@ -109,7 +110,7 @@ class AudioStartEvent:
 class AudioEndEvent:
     """Payload emitted when an audio source finishes playback."""
 
-    celune: "Celune"
+    celune: Celune
     source_id: int
     label: str
     kind: str
@@ -120,7 +121,7 @@ class AudioEndEvent:
 class CharacterLoadedEvent:
     """Payload emitted when one CEVOICE character bundle becomes active."""
 
-    celune: "Celune"
+    celune: Celune
     character_name: str
     bundle_path: Optional[str]
     is_default: bool
@@ -130,7 +131,7 @@ class CharacterLoadedEvent:
 class CharacterUnloadedEvent:
     """Payload emitted when one CEVOICE character bundle is unloaded."""
 
-    celune: "Celune"
+    celune: Celune
     character_name: str
     bundle_path: Optional[str]
 
@@ -139,7 +140,7 @@ class CharacterUnloadedEvent:
 class CharacterChangedEvent:
     """Payload emitted when Celune switches between CEVOICE characters."""
 
-    celune: "Celune"
+    celune: Celune
     old_character: str
     new_character: str
     old_bundle_path: Optional[str]

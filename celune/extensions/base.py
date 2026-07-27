@@ -12,14 +12,14 @@ from ..exceptions import IncompleteExtensionError
 class CeluneExtension(ABC):
     """Celune extension abstract base class."""
 
-    EXTENSION_NAME = "Unknown Extension"
+    EXTENSION_NAME = "unknown"
     AUTOSTART = False
 
     def __init__(self, context: CeluneContext) -> None:
         self.ctx = context
 
     @property
-    def name(self) -> str:
+    def name(self) -> str:  # noqa
         """Return the extension's display name.
 
         Returns:
@@ -28,7 +28,7 @@ class CeluneExtension(ABC):
         return self.EXTENSION_NAME
 
     @property
-    def state(self) -> str:
+    def state(self) -> str:  # noqa
         """Read Celune's current state.
 
         Returns:

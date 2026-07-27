@@ -4,82 +4,14 @@
 
 #include <unistd.h>
 #include <sys/wait.h>
-#include <termios.h>
 #include <signal.h>
 
-#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
 #define printfe(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
-#define EXIT_PENDING_UPDATE 7
-
-static struct termios saved_terminal_state;
-static int saved_terminal_state_valid = 0;
-
-static void save_terminal_state(void) {
-    if (isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &saved_terminal_state) == 0) {
-        saved_terminal_state_valid = 1;
-    }
-}
-
-void launcher_reset_terminal_state(void) {
-    static const char reset_sequences[] =
-        "\033[0m"
-        "\033[?25h"
-        "\033[?1000l"
-        "\033[?1002l"
-        "\033[?1003l"
-        "\033[?1006l"
-        "\033[?1015l"
-        "\033[?1049l"
-        "\033[?2004l";
-
-    if (!saved_terminal_state_valid) {
-        return;
-    }
-
-    if (isatty(STDOUT_FILENO)) {
-        (void)write(
-            STDOUT_FILENO,
-            reset_sequences,
-            sizeof(reset_sequences) - 1
-        );
-    }
-
-    tcsetattr(STDIN_FILENO, TCSANOW, &saved_terminal_state);
-    tcflush(STDIN_FILENO, TCIFLUSH);
-}
-
-static void ignore_console_interrupts(void) {
-    signal(SIGINT, SIG_IGN);
-#ifdef SIGQUIT
-    signal(SIGQUIT, SIG_IGN);
-#endif
-}
-
-static void restore_child_console_interrupts(void) {
-    signal(SIGINT, SIG_DFL);
-#ifdef SIGQUIT
-    signal(SIGQUIT, SIG_DFL);
-#endif
-}
-
-void launcher_wait_after_failure(void) {
-    struct termios oldt;
-    struct termios newt;
-
-    if (tcgetattr(STDIN_FILENO, &oldt) != 0) {
-        return;
-    }
-
-    newt = oldt;
-    newt.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-    getchar();
-    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-}
+static int launcher_child_failed = 0;
 
 static int file_exists(const char *path) {
     return access(path, F_OK) == 0;
@@ -173,7 +105,7 @@ static int spawn_update_helper_unix(
     }
 
     if (pid == 0) {
-        restore_child_console_interrupts();
+        launcher_restore_child_terminal();
         char pid_text[32];
         snprintf(pid_text, sizeof(pid_text), "%ld", (long)getppid());
 
@@ -215,9 +147,14 @@ int launcher_run(int argc, char **argv) {
     char main_py[1024];
     char setup_py[1024];
 
-    save_terminal_state();
-    ignore_console_interrupts();
-    setenv("CELUNE_LAUNCHER", "1", 1);
+    char launcher_pid[32];
+    snprintf(launcher_pid, sizeof(launcher_pid), "%ld", (long)getpid());
+
+    if (setenv("CELUNE_LAUNCHER", "1", 1) != 0 ||
+        setenv("CELUNE_LAUNCHER_PID", launcher_pid, 1) != 0) {
+        printfe("Celune could not configure launcher environment variables.\n");
+        return 1;
+    }
 
     if (!get_exe_dir(base, sizeof(base))) {
         printfe("Celune could not determine the launcher location.\n");
@@ -245,14 +182,32 @@ int launcher_run(int argc, char **argv) {
     }
 
     if (access(target, X_OK) == 0) {
+        int launcher_pipe[2];
+        if (pipe(launcher_pipe) != 0) {
+            perror("pipe failed");
+            return 1;
+        }
+
+        char launcher_pipe_fd[32];
+        snprintf(launcher_pipe_fd, sizeof(launcher_pipe_fd), "%d", launcher_pipe[0]);
+        if (setenv("CELUNE_LAUNCHER_PIPE_FD", launcher_pipe_fd, 1) != 0) {
+            close(launcher_pipe[0]);
+            close(launcher_pipe[1]);
+            printfe("Celune could not configure the launcher connection pipe.\n");
+            return 1;
+        }
+
         pid_t pid = fork();
         if (pid == -1) {
             perror("fork failed");
+            close(launcher_pipe[0]);
+            close(launcher_pipe[1]);
             return 1;
         }
 
         if (pid == 0) {
-            restore_child_console_interrupts();
+            launcher_restore_child_terminal();
+            close(launcher_pipe[1]);
             char **args = malloc(((size_t)argc + 1U) * sizeof(char *));
             if (args == NULL) {
                 perror("malloc failed");
@@ -274,24 +229,27 @@ int launcher_run(int argc, char **argv) {
             perror("execv failed");
             _exit(1);
         } else {
+            close(launcher_pipe[0]);
             int status;
             waitpid(pid, &status, 0);
+            close(launcher_pipe[1]);
 
             if (WIFEXITED(status)) {
                 int exit_code = WEXITSTATUS(status);
-                if (exit_code == EXIT_PENDING_UPDATE) {
+                if (exit_code == CELUNE_EXIT_PENDING_UPDATE) {
+                    printfe("%s\n", launcher_exit_reason(CELUNE_EXIT_PENDING_UPDATE));
                     if (!spawn_update_helper_unix(python, main_py, launcher, repo_root, argc, argv)) {
                         printfe("Celune could not start her update helper.\n");
                         return 1;
                     }
                     return 0;
                 }
+                launcher_child_failed = exit_code != 0;
                 return exit_code;
             }
             else if (WIFSIGNALED(status)) {
                 int sig = WTERMSIG(status);
-
-                printfe("Celune was killed by signal %d.\n", sig);
+                launcher_child_failed = 1;
                 return 128 + sig;
             }
         }
@@ -305,12 +263,11 @@ int launcher_run(int argc, char **argv) {
         int setup_status = 1;
 
         if (access(setup_py, R_OK) != 0) {
-            printfe("Python virtual environment and/or interpreter was not found or isn't working.\n");
-            printfe("Celune needs setup.py to create her virtual environment.\n");
+            printfe("Celune: Python environment is missing and setup.py is unavailable.\n");
             return 1;
         }
 
-        printfe("Python virtual environment was not found. Running setup.py...\n");
+        printfe("Celune: Python environment missing; running setup.py.\n");
 
         for (size_t i = 0; i < sizeof(system_python) / sizeof(system_python[0]); i++) {
             pid_t setup_pid = fork();
@@ -320,7 +277,7 @@ int launcher_run(int argc, char **argv) {
             }
 
             if (setup_pid == 0) {
-                restore_child_console_interrupts();
+                launcher_restore_child_terminal();
                 char *args[] = {(char *)system_python[i], setup_py, NULL};
                 if (chdir(repo_root) != 0) {
                     perror("chdir failed");
@@ -344,19 +301,17 @@ int launcher_run(int argc, char **argv) {
         }
 
         if (!found_system_python) {
-            printfe("Celune could not find a system Python interpreter to run setup.py.\n");
-            printfe("Install Python 3.12 or 3.13 and run Celune again.\n");
+            printfe("Celune: no system Python interpreter was found for setup.py.\n");
             return 1;
         }
 
         if (!WIFEXITED(setup_status) || WEXITSTATUS(setup_status) != 0) {
-            printfe("Celune setup failed.\n");
+            printfe("Celune: setup.py failed.\n");
             return WIFEXITED(setup_status) ? WEXITSTATUS(setup_status) : 1;
         }
 
         if (access(python, X_OK) != 0) {
-            printfe("Python virtual environment and/or interpreter was not found or isn't working.\n");
-            printfe("Celune needs a working Python interpreter and virtual environment to operate.\n");
+            printfe("Celune: setup.py completed but the Python environment is still unavailable.\n");
             return 1;
         }
     }
@@ -368,7 +323,7 @@ int launcher_run(int argc, char **argv) {
     }
 
     if (pid == 0) {
-        restore_child_console_interrupts();
+        launcher_restore_child_terminal();
         char **args = malloc(((size_t)argc + 2U) * sizeof(char *));
         if (args == NULL) {
             perror("malloc failed");
@@ -395,15 +350,31 @@ int launcher_run(int argc, char **argv) {
         waitpid(pid, &status, 0);
 
         if (WIFEXITED(status)) {
+            launcher_child_failed = WEXITSTATUS(status) != 0;
             return WEXITSTATUS(status);
         }
         else if (WIFSIGNALED(status)) {
             int sig = WTERMSIG(status);
-
-            printfe("Celune was killed by signal %d.\n", sig);
+            launcher_child_failed = 1;
             return 128 + sig;
         }
     }
 
     return 1;
+}
+
+void launcher_report_failure(int return_code) {
+    if (launcher_startup_was_interrupted() || return_code == 128 + SIGINT) {
+        printfe("Startup was interrupted.\n");
+        return;
+    }
+
+    if (!launcher_child_failed) {
+        return;
+    }
+
+    const char *reason = launcher_exit_reason(return_code);
+    if (reason != NULL) {
+        printfe("%s\n", reason);
+    }
 }

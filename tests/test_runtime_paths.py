@@ -4,6 +4,7 @@
 import os
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from typing import Optional, cast
 from unittest import TestCase, mock
@@ -11,11 +12,8 @@ from unittest import TestCase, mock
 import yaml
 from textual.widgets import RichLog
 
-from celune.constants import APP_SLUG
-from celune.ui.app import CeluneUI
-from celune.utils import format_error
-from celune.persona.memory import default_memory_dir
 from celune.cevoice import bundled_voices_dir, default_bundle_path
+from celune.constants import APP_SLUG
 from celune.paths import (
     configure_huggingface_cache_environment,
     configure_huggingface_runtime,
@@ -25,7 +23,11 @@ from celune.paths import (
     persona_data_dir,
     project_root,
     running_compiled,
+    voices_data_dir,
 )
+from celune.persona.memory import default_memory_dir
+from celune.ui.app import CeluneUI, UILogMessage
+from celune.utils import discard, format_error
 
 
 class RuntimePathTests(TestCase):
@@ -74,6 +76,13 @@ class RuntimePathTests(TestCase):
 
         with mock.patch("celune.paths.user_data_dir", return_value="C:/runtime-data"):
             self.assertEqual(persona_data_dir(), expected)
+
+    def test_voices_data_dir_uses_runtime_voice_pack_directory(self) -> None:
+        """Verify voice packs use a sibling directory in Celune's app data."""
+        expected = Path("C:/runtime-data/voices")
+
+        with mock.patch("celune.paths.user_data_dir", return_value="C:/runtime-data"):
+            self.assertEqual(voices_data_dir(), expected)
 
     def test_huggingface_cache_dirs_live_in_runtime_data(self) -> None:
         """Verify Celune's default Hugging Face caches live under user data."""
@@ -176,8 +185,10 @@ class RuntimePathTests(TestCase):
     def test_huggingface_runtime_disables_global_progress_bars(self) -> None:
         """Verify Celune suppresses Hugging Face progress bars without muting logs."""
         with (
-            mock.patch("celune.paths.disable_progress_bar") as disable_transformers,
-            mock.patch("celune.paths.disable_progress_bars") as disable_hub,
+            mock.patch(
+                "transformers.utils.logging.disable_progress_bar"
+            ) as disable_transformers,
+            mock.patch("huggingface_hub.utils.disable_progress_bars") as disable_hub,
             mock.patch.dict(os.environ, {}, clear=True),
         ):
             configure_huggingface_runtime()
@@ -214,6 +225,7 @@ class RuntimePathTests(TestCase):
             RuntimeError: Raised by the test to verify deferred traceback formatting.
         """
         captured: Optional[RuntimeError] = None
+        discard(captured)
         try:
             raise RuntimeError("deferred boom")
         except RuntimeError as exc:
@@ -246,6 +258,26 @@ class RuntimePathTests(TestCase):
 
         self.assertIn("[INFO] Hello from Celune", persisted)
         self.assertIn("[WARNING] Something odd happened", persisted)
+
+    def test_safe_log_from_worker_posts_without_waiting_for_ui_thread(self) -> None:
+        """Verify background logging queues a message without a synchronous UI callback."""
+        ui = CeluneUI()
+        ui.logs = cast(RichLog, mock.Mock())
+        ui._persist_log_entry = mock.Mock()
+        ui.post_message = mock.Mock()
+        ui.call_from_thread = mock.Mock()
+
+        worker = threading.Thread(target=ui.safe_log, args=("worker log",))
+        worker.start()
+        worker.join(timeout=1.0)
+
+        self.assertFalse(worker.is_alive())
+        ui.post_message.assert_called_once()
+        ui.call_from_thread.assert_not_called()
+        message = ui.post_message.call_args.args[0]
+        self.assertIsInstance(message, UILogMessage)
+        self.assertEqual(message.message, "worker log")
+        self.assertEqual(UILogMessage.handler_name, "on_uilog_message")
 
     def test_ensure_config_path_prefers_legacy_repo_config(self) -> None:
         """Verify first-run config creation prefers the historical repo-root config."""
@@ -298,13 +330,20 @@ class RuntimePathTests(TestCase):
         with (
             mock.patch.dict(sys.modules, {"__main__": fake_main}),
             mock.patch.object(sys, "argv", [str(executable)]),
+            mock.patch(
+                "celune.cevoice.voices_data_dir",
+                return_value=Path("C:/runtime-data/voices"),
+            ),
         ):
             self.assertEqual(project_root(), expected_root)
             self.assertEqual(
                 default_bundle_path(),
-                expected_root / "voices" / "default.cevoice",
+                Path("C:/runtime-data/voices/default.cevoice"),
             )
-            self.assertEqual(bundled_voices_dir(), expected_root / "voices")
+            self.assertEqual(
+                bundled_voices_dir(),
+                Path("C:/runtime-data/voices"),
+            )
 
     def test_compiled_project_root_uses_repo_parent_when_running_from_bin(self) -> None:
         """Verify compiled launches from bin/ still resolve the repository root."""
@@ -323,9 +362,13 @@ class RuntimePathTests(TestCase):
             mock.patch.dict(sys.modules, {"__main__": fake_main}),
             mock.patch.object(sys, "argv", [str(executable)]),
             mock.patch.object(Path, "exists", fake_exists),
+            mock.patch(
+                "celune.cevoice.voices_data_dir",
+                return_value=Path("C:/runtime-data/voices"),
+            ),
         ):
             self.assertEqual(project_root(), expected_root)
             self.assertEqual(
                 default_bundle_path(),
-                expected_root / "voices" / "default.cevoice",
+                Path("C:/runtime-data/voices/default.cevoice"),
             )

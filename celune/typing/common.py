@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Shared Celune type aliases."""
 
 from collections.abc import Mapping
@@ -16,7 +17,5 @@ type JSON = dict[str, JSONSerializable]
 type RGB = tuple[int, int, int]
 type Config = dict[str, JSONSerializable]
 type TerminalConfig = Mapping[str, JSONSerializable]
-type ColorMode = Literal["auto", "truecolor", "terminal-default", "ansi", "none"]
-type ResolvedColorMode = Literal["truecolor", "terminal-default", "ansi", "none"]
 type VramTier = Literal["low", "medium", "high", "xhigh"]
 type VideoMetadataScalar = Optional[Union[bool, int, float, str]]

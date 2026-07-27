@@ -7,9 +7,9 @@ from unittest import TestCase
 import numpy as np
 
 from celune.persona.emotion import (
+    GOEMOTIONS_LABELS,
     EmotionAnalysis,
     EmotionPrediction,
-    GOEMOTIONS_LABELS,
     PersonaEmotionAnalyzer,
 )
 

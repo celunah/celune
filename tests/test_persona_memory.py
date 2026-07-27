@@ -2,10 +2,10 @@
 """Tests for Persona long-term memory persistence and retrieval."""
 
 import tempfile
-from pathlib import Path
 from collections.abc import Sequence
+from pathlib import Path
+from typing import Optional, Union
 from unittest import TestCase, mock
-from typing import Union, Optional
 
 import numpy as np
 

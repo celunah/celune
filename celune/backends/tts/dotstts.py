@@ -1,20 +1,20 @@
 # SPDX-License-Identifier: MIT
 """dots.tts MeanFlow backend implementation for Celune."""
 
+import contextlib
 import os
 import time
-import contextlib
-from collections.abc import Iterator
-from typing import Callable, Optional, Mapping, Generator, Protocol, cast
+from collections.abc import Callable, Generator, Iterator, Mapping
+from typing import Optional, Protocol, cast
 
-import numpy as np
-import numpy.typing as npt
-import torch
 import loguru
+import numpy as np
+import torch
 from dots_tts.runtime import DotsTtsRuntime
 
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import AudioChunk, AudioChunks
 from ...utils import custom_assert, discard
-from ...cevoice import default_loader, CEVoiceLoader
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 
@@ -43,7 +43,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
     uses_voice_bundles: bool = True
     chunk_rate: float = 6.25
     max_new_tokens: int = 512
-    supported_languages: tuple[str, ...] = (
+    supported_languages: tuple[str, ...] = (  # noqa
         "ar",
         "my",
         "zh-cn",
@@ -107,7 +107,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             loader.materialize(name, "wav")
 
     @property
-    def voices(self) -> list[str]:
+    def voices(self) -> list[str]:  # noqa
         """Return the voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:
@@ -174,9 +174,11 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                     disabled_loguru = True
 
             try:
-                with contextlib.redirect_stdout(devnull):
-                    with contextlib.redirect_stderr(devnull):
-                        yield
+                with (
+                    contextlib.redirect_stdout(devnull),
+                    contextlib.redirect_stderr(devnull),
+                ):
+                    yield
             finally:
                 if disabled_loguru and bound_logger is not None:
                     with contextlib.suppress(Exception):
@@ -227,19 +229,21 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         if target == model_id:
             self.log("Downloading TTS model...", "info")
 
-        with local_hf_offline_mode(available and path is not None):
-            with self._suppress_backend_output():
-                self.model = DotsTtsRuntime.from_pretrained(
-                    target,
-                    precision=precision,
-                    optimize=optimize,
-                    max_generate_length=max_generate_length,
-                )
+        with (
+            local_hf_offline_mode(available and path is not None),
+            self._suppress_backend_output(),
+        ):
+            self.model = DotsTtsRuntime.from_pretrained(
+                target,
+                precision=precision,
+                optimize=optimize,
+                max_generate_length=max_generate_length,
+            )
 
         return self.model
 
     @staticmethod
-    def _to_numpy_audio(chunk: torch.Tensor) -> npt.NDArray[np.float32]:
+    def _to_numpy_audio(chunk: torch.Tensor) -> AudioChunk:
         """Convert one streamed torch chunk to a Celune-compatible audio array."""
         audio = chunk.detach().float().cpu().numpy()
         audio = np.asarray(audio, dtype=np.float32).reshape(-1)
@@ -247,7 +251,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
 
     def generate_stream(
         self, model: DotsTtsRuntime, **kwargs
-    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate Celune-compatible audio chunks.
 
         Args:
@@ -255,8 +259,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             kwargs: Streaming generation keyword arguments to use.
 
         Returns:
-            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of dots.tts streaming audio
-            chunks.
+            Iterator[tuple[AudioChunk, int, Optional[dict]]]: An iterator of dots.tts streaming audio chunks.
 
         Raises:
             ValueError: The requested voice is unsupported, or input text is empty.
@@ -311,10 +314,10 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                     **kwargs,
                 )
 
-                batch: list[npt.NDArray[np.float32]] = []
+                batch: AudioChunks = []
                 chunk_index = 0
                 total_steps = 0
-                pending_audio: Optional[npt.NDArray[np.float32]] = None
+                pending_audio: Optional[AudioChunk] = None
                 pending_steps = 0
                 first_chunk_time: Optional[float] = None
 

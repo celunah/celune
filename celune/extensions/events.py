@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
 from collections import defaultdict
-from typing import TYPE_CHECKING, Callable, Literal, Optional, TypeVar, cast, overload
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal, Optional, TypeVar, cast, overload
 
-from ..utils import format_error
-from ..typing.aliases import _DispatcherCallback
+from ..typing.aliases import DispatcherCallback
 from ..typing.events import (
     AudioEndEventCallback,
     AudioStartEventCallback,
@@ -29,6 +29,7 @@ from ..typing.events import (
     StateChangedEventCallback,
     VoiceChangedEventCallback,
 )
+from ..utils import format_error
 
 if TYPE_CHECKING:
     from ..dataclasses.events import (
@@ -99,8 +100,8 @@ class EventDispatcher:
         self._log_warning = log_warning
         self._dev = dev
         self._lock = threading.RLock()
-        self._callbacks: dict[EventName, list[_DispatcherCallback]] = defaultdict(list)
-        self._owners: dict[tuple[EventName, _DispatcherCallback], str] = {}
+        self._callbacks: dict[EventName, list[DispatcherCallback]] = defaultdict(list)
+        self._owners: dict[tuple[EventName, DispatcherCallback], str] = {}
 
     @overload
     def subscribe(
@@ -235,10 +236,10 @@ class EventDispatcher:
             callback: Callback invoked for matching event payloads.
             owner_name: Optional display name used in failure logs.
         """
-        self._validate_event_name(event_name)
+        self.validate_event_name(event_name)
         with self._lock:
             callbacks = self._callbacks[event_name]
-            typed_callback = cast(_DispatcherCallback, callback)
+            typed_callback = cast(DispatcherCallback, callback)
             if typed_callback not in callbacks:
                 callbacks.append(typed_callback)
             self._owners[(event_name, typed_callback)] = (
@@ -361,12 +362,12 @@ class EventDispatcher:
             event_name: Event name to remove the callback from.
             callback: Previously registered callback to remove.
         """
-        self._validate_event_name(event_name)
+        self.validate_event_name(event_name)
         with self._lock:
             callbacks = self._callbacks.get(event_name)
             if callbacks is None:
                 return
-            typed_callback = cast(_DispatcherCallback, callback)
+            typed_callback = cast(DispatcherCallback, callback)
             try:
                 callbacks.remove(typed_callback)
             except ValueError:
@@ -376,77 +377,75 @@ class EventDispatcher:
                 self._callbacks.pop(event_name, None)
 
     @overload
-    def emit(self, event_name: Literal["ready"], event: "ReadyEvent") -> None: ...
+    def emit(self, event_name: Literal["ready"], event: ReadyEvent) -> None: ...
 
     @overload
-    def emit(self, event_name: Literal["shutdown"], event: "ShutdownEvent") -> None: ...
+    def emit(self, event_name: Literal["shutdown"], event: ShutdownEvent) -> None: ...
 
     @overload
-    def emit(self, event_name: Literal["fatal"], event: "FatalEvent") -> None: ...
+    def emit(self, event_name: Literal["fatal"], event: FatalEvent) -> None: ...
 
     @overload
-    def emit(self, event_name: Literal["error"], event: "ErrorEvent") -> None: ...
+    def emit(self, event_name: Literal["error"], event: ErrorEvent) -> None: ...
 
     @overload
     def emit(
-        self, event_name: Literal["voice_changed"], event: "VoiceChangedEvent"
+        self, event_name: Literal["voice_changed"], event: VoiceChangedEvent
     ) -> None: ...
 
     @overload
     def emit(
-        self, event_name: Literal["state_changed"], event: "StateChangedEvent"
+        self, event_name: Literal["state_changed"], event: StateChangedEvent
     ) -> None: ...
 
     @overload
     def emit(
         self,
         event_name: Literal["generation_start"],
-        event: "GenerationStartEvent",
+        event: GenerationStartEvent,
     ) -> None: ...
 
     @overload
     def emit(
         self,
         event_name: Literal["generation_end"],
-        event: "GenerationEndEvent",
+        event: GenerationEndEvent,
     ) -> None: ...
 
     @overload
     def emit(
         self,
         event_name: Literal["generation_error"],
-        event: "GenerationErrorEvent",
+        event: GenerationErrorEvent,
     ) -> None: ...
 
     @overload
     def emit(
-        self, event_name: Literal["audio_start"], event: "AudioStartEvent"
+        self, event_name: Literal["audio_start"], event: AudioStartEvent
     ) -> None: ...
 
     @overload
-    def emit(
-        self, event_name: Literal["audio_end"], event: "AudioEndEvent"
-    ) -> None: ...
+    def emit(self, event_name: Literal["audio_end"], event: AudioEndEvent) -> None: ...
 
     @overload
     def emit(
         self,
         event_name: Literal["character_changed"],
-        event: "CharacterChangedEvent",
+        event: CharacterChangedEvent,
     ) -> None: ...
 
     @overload
     def emit(
         self,
         event_name: Literal["character_loaded"],
-        event: "CharacterLoadedEvent",
+        event: CharacterLoadedEvent,
     ) -> None: ...
 
     @overload
     def emit(
         self,
         event_name: Literal["character_unloaded"],
-        event: "CharacterUnloadedEvent",
+        event: CharacterUnloadedEvent,
     ) -> None: ...
 
     @overload
@@ -459,7 +458,7 @@ class EventDispatcher:
             event_name: Event name being dispatched.
             event: Event payload delivered to subscribers.
         """
-        self._validate_event_name(event_name)
+        self.validate_event_name(event_name)
         with self._lock:
             callbacks = list(self._callbacks.get(event_name, ()))
             owners = {
@@ -483,13 +482,20 @@ class EventDispatcher:
                 )
 
     @staticmethod
-    def _validate_event_name(event_name: EventName) -> None:
-        """Reject unknown event names."""
+    def validate_event_name(event_name: EventName) -> None:
+        """Reject unknown event names.
+
+        Args:
+            event_name: Value for `event_name`.
+
+        Raises:
+            ValueError: If `ValueError` needs to be raised.
+        """
         if event_name not in _EVENT_NAME_SET:
             raise ValueError(f"unknown event name: {event_name}")
 
     @staticmethod
-    def _describe_callback(callback: _DispatcherCallback) -> str:
+    def _describe_callback(callback: DispatcherCallback) -> str:
         """Return a useful callback label for logs."""
         qualname = getattr(callback, "__qualname__", None)
         if isinstance(qualname, str) and qualname:
@@ -506,7 +512,7 @@ def _store_subscription_metadata(
     enabled: bool,
 ) -> Callable[..., None]:
     """Attach one declared event subscription to a callback."""
-    EventDispatcher._validate_event_name(event_name)
+    EventDispatcher.validate_event_name(event_name)
     subscription = EventSubscription(event_name=event_name, enabled=enabled)
     existing = getattr(callback, EVENT_HANDLER_METADATA_ATTR, None)
     if isinstance(existing, tuple):
@@ -677,7 +683,7 @@ def subscribe(
         return cast(
             _DecoratedCallback,
             _store_subscription_metadata(
-                cast(_DispatcherCallback, callback),
+                cast(DispatcherCallback, callback),
                 event_name,
                 enabled,
             ),

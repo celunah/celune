@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Unified Celune type package with lazy re-exports."""
 
 from importlib import import_module
@@ -40,12 +41,10 @@ if TYPE_CHECKING:
         VoiceManifest,
     )
     from .common import (
-        ColorMode,
-        Config,
         JSON,
-        JSONSerializable,
         RGB,
-        ResolvedColorMode,
+        Config,
+        JSONSerializable,
         TerminalConfig,
         VideoMetadataScalar,
         VramTier,
@@ -108,7 +107,6 @@ _MODULE_EXPORTS = {
     "CeluneTextualUI": "ui",
     "ChatMessagePayload": "persona",
     "ChatTemplateRenderer": "persona",
-    "ColorMode": "common",
     "Config": "common",
     "ContentItem": "persona",
     "DevLogCallable": "extensions",
@@ -144,7 +142,6 @@ _MODULE_EXPORTS = {
     "ProgressCallback": "celune",
     "QueueAvailableCallback": "celune",
     "ReleasableObject": "celune",
-    "ResolvedColorMode": "common",
     "RGB": "common",
     "Role": "persona",
     "SayCallable": "extensions",
@@ -175,6 +172,8 @@ _MODULE_EXPORTS = {
 }
 
 __all__ = [
+    "JSON",
+    "RGB",
     "AudioChunk",
     "AudioQueueItem",
     "BackendModel",
@@ -184,7 +183,6 @@ __all__ = [
     "CeluneTextualUI",
     "ChatMessagePayload",
     "ChatTemplateRenderer",
-    "ColorMode",
     "Config",
     "ContentItem",
     "DevLogCallable",
@@ -198,7 +196,6 @@ __all__ = [
     "IdleCallback",
     "ImageContentItem",
     "InputStateCallback",
-    "JSON",
     "JSONDict",
     "JSONSerializable",
     "LanguageResult",
@@ -220,8 +217,6 @@ __all__ = [
     "ProgressCallback",
     "QueueAvailableCallback",
     "ReleasableObject",
-    "ResolvedColorMode",
-    "RGB",
     "Role",
     "SayCallable",
     "SetVoiceCallable",
@@ -233,8 +228,8 @@ __all__ = [
     "TerminalConfig",
     "TextConfig",
     "TextConfigValue",
-    "TextQueueItem",
     "TextContentItem",
+    "TextQueueItem",
     "ThinkCallable",
     "VideoContentItem",
     "VideoInputWithMetadata",

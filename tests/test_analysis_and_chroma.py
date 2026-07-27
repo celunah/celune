@@ -2,14 +2,14 @@
 """Tests for pure analysis helpers and RGB glow math."""
 
 from pathlib import Path
-from unittest import mock, TestCase
+from unittest import TestCase, mock
 
 import numpy as np
 
-from celune.colors import RGB
 from celune import analysis
-from celune.constants import N_A_NUMERIC
 from celune.chroma import AudioRGBGlow
+from celune.colors import RGB
+from celune.constants import N_A_NUMERIC
 
 
 class AnalysisTests(TestCase):

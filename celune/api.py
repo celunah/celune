@@ -1,47 +1,36 @@
 # SPDX-License-Identifier: MIT
 """API layer."""
 
-import os
-import io
+import asyncio
+import contextlib
+import datetime
 import errno
-import time
-import uuid
+import io
+import json
+import os
 import queue
 import socket
-import asyncio
-import datetime
 import textwrap
 import threading
-import contextlib
-from html import escape
-from hmac import compare_digest
-from dataclasses import dataclass, field
+import time
+import uuid
 from collections import defaultdict, deque
+from collections.abc import Awaitable, Callable, Iterator
+from dataclasses import dataclass, field
+from hmac import compare_digest
+from html import escape
 from typing import (
-    Awaitable,
-    Callable,
-    Iterator,
     Literal,
     Optional,
     Union,
     cast,
 )
 
+import gradio as gr
 import numpy as np
 import numpy.typing as npt
-import gradio as gr
-import uvicorn
 import soundfile as sf
-from pydantic import BaseModel, Field
-from starlette.concurrency import run_in_threadpool
-from starlette.middleware.base import RequestResponseEndpoint
-from fastapi.responses import (
-    JSONResponse,
-    Response,
-    StreamingResponse,
-    FileResponse,
-    RedirectResponse,
-)
+import uvicorn
 from fastapi import (
     FastAPI,
     File,
@@ -52,20 +41,30 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
+from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
+from starlette.middleware.base import RequestResponseEndpoint
 
+from . import __version__, colors
 from .celune import Celune
-from . import colors
-from . import __version__
-from .i18n import string
-from .ui.app import CeluneUI
-from .utils import format_error
 from .cevoice import default_loader
+from .constants import APP_NAME, BASE_SR
 from .dsp import resample_audio
-from .ui import resources as ui_resources
+from .i18n import string
 from .paths import main_window_log_path, project_root
-from .constants import BASE_SR, APP_NAME, JSONSerializable
-from .vc import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
-from .pipeline import SpeechStreamQueue, prepare_playback_audio
+from .pipeline import (
+    SpeechStreamQueue,
+    current_playback_status,
+    prepare_playback_audio,
+)
+from .typing.aliases import AudioChunk, AudioChunks
 from .typing.api import (
     TaskCommandName,
     TaskEventName,
@@ -74,6 +73,11 @@ from .typing.api import (
     WebUiInputAudioValue,
     WebUiUpdate,
 )
+from .typing.common import JSONSerializable
+from .ui import resources as ui_resources
+from .ui.app import CeluneUI
+from .utils import format_error
+from .vc import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
 
 api = FastAPI(title=f"{APP_NAME}API")
 bound_celune: Optional[Celune] = None
@@ -290,6 +294,12 @@ WEBUI_CSS = textwrap.dedent(
     body,
     gradio-app {
         --color-accent: var(--celune-primary, #cebaff) !important;
+        --body-text-color: var(--celune-secondary, #a595cc) !important;
+        --block-label-text-color: var(--celune-primary, #cebaff) !important;
+        --block-title-text-color: var(--celune-primary, #cebaff) !important;
+        --block-info-text-color: var(--celune-secondary, #a595cc) !important;
+        /* the Celune "accent" color in CSS is actually considered as Celune tertiary */
+        --body-text-color-subdued: var(--celune-accent, #7c7099) !important;
         background: var(--celune-ui-bg, var(--celune-background, #1d1826)) !important;
     }
 
@@ -484,6 +494,82 @@ WEBUI_CSS = textwrap.dedent(
         background-color: var(--celune-primary, #cebaff) !important;
     }
 
+    .toast-body.error {
+        position: fixed;
+        background: color-mix(
+            in srgb,
+            var(--celune-background, #1d1826) 90%,
+            transparent 10%
+        ) !important;
+        border: none;
+        top: 0;
+    }
+
+    .toast-header {
+        display: none !important;
+    }
+
+    .toast-messages {
+        height: 100vh;
+        width: 100vw;
+        place-items: center;
+        justify-content: center;
+    }
+
+    .toast-message-text.error {
+        font-size: 0;
+    }
+
+    .toast-message-text.error::before {
+        content: __CELUNE_CONNECTION_LOST_MESSAGE__;
+        font-size: 16px;
+        color: var(--celune-error, #f07178);
+    }
+
+    input[type="number"] {
+        -webkit-appearance: textfield !important;
+        appearance: textfield !important;
+    }
+
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        appearance: none;
+        margin: 0;
+    }
+
+    input[type="radio"][aria-checked="false"][disabled] {
+        background: color-mix(
+            var(--celune-background) 90%,
+            var(--celune-primary) 10%
+        );
+    }
+
+    input[type="range"]::-moz-range-thumb {
+        background: var(--celune-primary) !important;
+        border-color: var(--celune-primary) !important;
+    }
+
+    input[type="range"]::-moz-range-track {
+        background: var(--celune-accent) !important;
+    }
+
+    input[type="range"]::-webkit-slider-runnable-track {
+        background: var(--celune-accent) !important;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        background: var(--celune-primary) !important;
+        border: none !important;
+    }
+
+    input[type="range"] {
+        -webkit-appearance: none;
+        appearance: none;
+    }
+
     @media (max-width: 768px), (any-pointer: coarse), (hover: none) {
         .gradio-container {
             height: 100dvh;
@@ -560,6 +646,9 @@ WEBUI_CSS = textwrap.dedent(
         }
     }
     """
+).replace(
+    "__CELUNE_CONNECTION_LOST_MESSAGE__",
+    json.dumps(string("webui.connection_lost"), ensure_ascii=False),
 )
 
 
@@ -602,6 +691,7 @@ def _configure_webui_theme() -> None:
     background = colors.THEME.background or "#1d1826"
     palette = colors.SEVERITY_COLORS["celune"]
     primary = palette["info"]
+    error = palette["error"]
     foreground = colors.THEME.foreground or "#ffffff"
     secondary = colors.THEME.secondary or primary
     accent = colors.THEME.accent or primary
@@ -615,6 +705,7 @@ def _configure_webui_theme() -> None:
         ":root {"
         f"--celune-background: {background};"
         f"--celune-primary: {primary};"
+        f"--celune-error: {error};"
         f"--celune-foreground: {foreground};"
         f"--celune-secondary: {secondary};"
         f"--celune-accent: {accent};"
@@ -836,7 +927,7 @@ async def api_security(
         )
 
     if _rate_limited(request):
-        current_time = datetime.datetime.now()
+        current_time = datetime.datetime.now(datetime.UTC)
         next_minute = current_time.replace(
             second=0, microsecond=0
         ) + datetime.timedelta(minutes=1)
@@ -1017,12 +1108,33 @@ def _probe_webui_runtime() -> None:
 
     now = time.monotonic()
     current_state = (celune.cur_state or "").strip().lower()
-    if current_state != webui_last_probed_state:
-        if current_state == "sleeping":
-            _append_webui_log(
-                string("webui.sleeping_log", app_name=APP_NAME),
-                "sleeping",
+    playback_status = current_playback_status(celune)
+    if playback_status is not None:
+        if webui_status_text != playback_status or webui_status_source != "playback":
+            _set_webui_status(
+                playback_status,
+                "info",
+                source="playback",
+                updated_at=now,
             )
+        webui_last_probed_state = current_state
+    elif current_state == "sleeping":
+        sleeping_log = string("webui.sleeping_log", app_name=APP_NAME)
+        if not any(message == sleeping_log for message, _ in webui_log_lines):
+            _append_webui_log(sleeping_log, "sleeping")
+        sleeping_status, sleeping_severity = _probed_status_text(celune)
+        if (
+            webui_status_text != sleeping_status
+            or webui_status_severity != sleeping_severity
+            or webui_status_source == "callback"
+        ):
+            _set_webui_status(
+                sleeping_status,
+                sleeping_severity,
+                source="probe",
+                updated_at=now,
+            )
+    if playback_status is None and current_state != webui_last_probed_state:
         status_text, severity = _probed_status_text(celune)
         should_override_status = (
             webui_last_probed_state is None
@@ -1165,7 +1277,7 @@ def api_log(action: str, content: str, suffix: str = "") -> None:
         content: The request body sent by the user.
         suffix: The suffix to append to the log line.
     """
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S")
     preview = content.replace("\n", "\\n").replace("\r", "\\r")[:64]
     if len(content) > 64:
         preview += "..."
@@ -1215,7 +1327,7 @@ def audio_bytes(
         item: An exception class was raised, causing the stream to be interrupted.
         Exception: The stream was interrupted by Celune.
     """
-    audio_chunks: list[npt.NDArray[np.float32]] = []
+    audio_chunks: AudioChunks = []
     chunk_count = 0
     while True:
         item = chunks.get()
@@ -1233,23 +1345,6 @@ def audio_bytes(
         yield _flac_bytes(np.concatenate(audio_chunks))
     else:
         yield _flac_bytes(np.empty((0, 2), dtype=np.float32))
-
-
-def _webui_audio_array(chunks: SpeechStreamQueue) -> npt.NDArray[np.float32]:
-    """Collect queued audio into a frame-major float32 array for Gradio playback."""
-    audio_chunks: list[npt.NDArray[np.float32]] = []
-    while True:
-        item = chunks.get()
-        if item is None:
-            break
-        if isinstance(item, Exception):
-            raise item
-        audio_chunks.append(_normalized_audio(item))
-
-    if not audio_chunks:
-        return np.empty((0, 2), dtype=np.float32)
-
-    return np.concatenate(audio_chunks)
 
 
 def stream_headers(sample_rate: int = BASE_SR) -> dict[str, str]:
@@ -1536,85 +1631,6 @@ def _webui_resources_html() -> str:
     return f'<div class="footer-block">{escape(resource)}</div>'
 
 
-def _webui_shortcuts_html() -> str:
-    """Render browser-side keyboard shortcuts for WebUI-only controls."""
-    recording_shortcut = string("ui.footer_toggle_recording")
-    script = textwrap.dedent(
-        """
-        <script>
-        (() => {
-          if (window.__celuneCtrlRInstalled) {
-            return;
-          }
-          window.__celuneCtrlRInstalled = true;
-
-          function recordingShortcutEnabled() {
-            const resources = document.querySelector("#celune-resources");
-            const text = resources ? (resources.textContent || "") : "";
-            return text.includes("__CELUNE_RECORDING_SHORTCUT__");
-          }
-
-          function clickRecordingButton() {
-            const container = document.querySelector("#celune-source-audio");
-            if (!container) {
-              return false;
-            }
-
-            const buttons = Array.from(container.querySelectorAll("button"));
-            const shortcutButton =
-              buttons.find((button) => button.getAttribute("aria-pressed") !== null) ||
-              buttons.find((button) => {
-                const text = [
-                  button.getAttribute("aria-label"),
-                  button.getAttribute("title"),
-                  button.textContent,
-                ]
-                  .filter(Boolean)
-                  .join(" ")
-                  .toLowerCase();
-                return (
-                  text.includes("record") ||
-                  text.includes("stop") ||
-                  text.includes("microphone") ||
-                  text.includes("mic")
-                );
-              }) ||
-              null;
-
-            if (!shortcutButton) {
-              return false;
-            }
-
-            shortcutButton.click();
-            return true;
-          }
-
-          document.addEventListener("keydown", (event) => {
-            if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) {
-              return;
-            }
-            if ((event.key || "").toLowerCase() !== "r") {
-              return;
-            }
-            if (!recordingShortcutEnabled()) {
-              return;
-            }
-            if (!clickRecordingButton()) {
-              return;
-            }
-            event.preventDefault();
-            event.stopPropagation();
-          });
-        })();
-        </script>
-        """
-    ).strip()
-    return script.replace(
-        "__CELUNE_RECORDING_SHORTCUT__",
-        repr(recording_shortcut)[1:-1],
-    )
-
-
 def _voice_button_update() -> WebUiUpdate:
     """Return the current browser voice-button state."""
     celune = bound_celune
@@ -1790,6 +1806,7 @@ def _webui_submit_snapshot(
 
 def _webui_run_command(text: str) -> bool:
     """Run one slash command through the main UI command path when available."""
+    # noinspection PyProtectedMember
     ui = CeluneUI._instance
     if ui is None:
         _append_webui_log(
@@ -1815,7 +1832,7 @@ def _webui_run_command(text: str) -> bool:
 
 def _decode_uploaded_audio(
     data: bytes,
-) -> tuple[npt.NDArray[np.float32], int]:
+) -> tuple[AudioChunk, int]:
     """Decode uploaded audio bytes into float32 audio and a source sample rate."""
     audio, sample_rate = sf.read(io.BytesIO(data), dtype="float32")
     return np.asarray(audio, dtype=np.float32), int(sample_rate)
@@ -1914,7 +1931,7 @@ def _webui_speak(
     snapshot = _webui_submit_snapshot("")
     yield snapshot[0], None, *snapshot[1:]
 
-    audio_chunks: list[npt.NDArray[np.float32]] = []
+    audio_chunks: AudioChunks = []
 
     try:
         while True:
@@ -2161,53 +2178,55 @@ def _build_webui() -> gr.Blocks:
                             </p>
                         """)
                     )
-                with gr.Tab(string("webui.vc_tab_label")):
-                    with gr.Column(elem_id="celune-convert-panel"):
-                        source_audio = gr.Audio(
-                            value=None,
-                            type="numpy",
-                            sources=["upload", "microphone"],
-                            autoplay=False,
-                            show_label=True,
-                            label=string("webui.source_audio_label"),
-                            interactive=False,
-                            waveform_options=_webui_audio_waveform_options(),
-                            elem_id="celune-source-audio",
-                        )
-                        vc_pitch_shift = gr.Slider(
-                            minimum=VC_PITCH_SHIFT_MIN,
-                            maximum=VC_PITCH_SHIFT_MAX,
-                            step=1,
-                            value=0,
-                            label=string("webui.pitch_shift_label"),
-                            info=string("webui.pitch_shift_info"),
-                            interactive=False,
-                        )
-                        vc_mode = gr.Radio(
-                            choices=[
-                                ("Talk", "talk"),
-                                ("Sing", "sing"),
-                            ],
-                            value="talk",
-                            label=string("webui.conversion_mode_label"),
-                            info=string("webui.conversion_mode_info"),
-                            interactive=False,
-                        )
-                        convert_button = gr.Button(
-                            value=string("webui.convert_button"),
-                            elem_id="celune-convert",
-                            interactive=False,
-                        )
-                        converted_audio = gr.Audio(
-                            value=None,
-                            type="numpy",
-                            autoplay=True,
-                            show_label=False,
-                            interactive=False,
-                            visible="hidden",
-                            waveform_options=_webui_audio_waveform_options(),
-                            elem_id="celune-converted-audio",
-                        )
+                with (
+                    gr.Tab(string("webui.vc_tab_label")),
+                    gr.Column(elem_id="celune-convert-panel"),
+                ):
+                    source_audio = gr.Audio(
+                        value=None,
+                        type="numpy",
+                        sources=["upload", "microphone"],
+                        autoplay=False,
+                        show_label=True,
+                        label=string("webui.source_audio_label"),
+                        interactive=False,
+                        waveform_options=_webui_audio_waveform_options(),
+                        elem_id="celune-source-audio",
+                    )
+                    vc_pitch_shift = gr.Slider(
+                        minimum=VC_PITCH_SHIFT_MIN,
+                        maximum=VC_PITCH_SHIFT_MAX,
+                        step=1,
+                        value=0,
+                        label=string("webui.pitch_shift_label"),
+                        info=string("webui.pitch_shift_info"),
+                        interactive=False,
+                    )
+                    vc_mode = gr.Radio(
+                        choices=[
+                            ("Talk", "talk"),
+                            ("Sing", "sing"),
+                        ],
+                        value="talk",
+                        label=string("webui.conversion_mode_label"),
+                        info=string("webui.conversion_mode_info"),
+                        interactive=False,
+                    )
+                    convert_button = gr.Button(
+                        value=string("webui.convert_button"),
+                        elem_id="celune-convert",
+                        interactive=False,
+                    )
+                    converted_audio = gr.Audio(
+                        value=None,
+                        type="numpy",
+                        autoplay=True,
+                        show_label=False,
+                        interactive=False,
+                        visible="hidden",
+                        waveform_options=_webui_audio_waveform_options(),
+                        elem_id="celune-converted-audio",
+                    )
             audio = gr.Audio(
                 value=None,
                 type="numpy",
@@ -2341,6 +2360,7 @@ async def _cancel_speech_job(job_id: str) -> bool:
         return False
 
     celune = require_celune()
+    # noinspection PyBroadException
     try:
         stopped = await celune.force_stop_speech_async()
     except Exception:
@@ -2751,6 +2771,7 @@ async def sfx(
             },
         )
 
+    # noinspection PyBroadException
     try:
         audio, sr = _decode_uploaded_audio(data)
         audio = resample_audio(audio, sr)
@@ -2818,6 +2839,7 @@ async def convert_audio(
             },
         )
 
+    # noinspection PyBroadException
     try:
         audio, sample_rate = _decode_uploaded_audio(data)
     except Exception:
@@ -2829,6 +2851,7 @@ async def convert_audio(
             },
         )
 
+    # noinspection PyBroadException
     try:
         output = await run_in_threadpool(
             celune.convert_audio,

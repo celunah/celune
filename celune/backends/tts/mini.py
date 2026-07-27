@@ -1,23 +1,23 @@
 # SPDX-License-Identifier: MIT
 """Pocket TTS backend implementation for Celune."""
 
-import time
-import tempfile
 import contextlib
+import tempfile
+import time
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
-from collections.abc import Iterator, Mapping
-from typing import Callable, Optional, cast
+from typing import Optional, cast
 
-import yaml
 import numpy as np
-import numpy.typing as npt
-from pocket_tts import TTSModel
+import yaml
 from huggingface_hub import snapshot_download
+from pocket_tts import TTSModel
 
-from ...utils import custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
 from ...paths import temp_data_dir
+from ...typing.aliases import AudioChunk, AudioChunks
 from ...typing.backends import MiniModel, MiniPromptState
-from ...cevoice import default_loader, CEVoiceLoader
+from ...utils import custom_assert
 from .base import CeluneBackend, cached_hf_snapshot_path
 
 
@@ -27,7 +27,7 @@ class Mini(CeluneBackend[TTSModel]):
     name: str = "mini"
     uses_voice_bundles: bool = True
     chunk_rate: float = 12.5
-    supported_languages: tuple[str, ...] = ("en", "fr", "de", "it", "pt", "es")
+    supported_languages: tuple[str, ...] = ("en", "fr", "de", "it", "pt", "es")  # noqa
 
     voice_models: Optional[Mapping[str, str]] = {
         "balanced": "lunahr/pocket-tts-ungated",
@@ -63,7 +63,7 @@ class Mini(CeluneBackend[TTSModel]):
             loader.materialize(name, "wav")
 
     @property
-    def voices(self) -> list[str]:
+    def voices(self) -> list[str]:  # noqa
         """Return the voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:
@@ -342,7 +342,7 @@ class Mini(CeluneBackend[TTSModel]):
 
     def generate_stream(
         self, model: TTSModel, **kwargs
-    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Generate Celune-compatible audio chunks from Pocket TTS.
 
         Args:
@@ -366,8 +366,8 @@ class Mini(CeluneBackend[TTSModel]):
         voice_state = self._get_voice_state(mini_model, voice)
         chunks_per_batch = max(1, round(chunk_size * self.chunk_rate))
 
-        batch: list[npt.NDArray[np.float32]] = []
-        pending_audio: Optional[npt.NDArray[np.float32]] = None
+        batch: AudioChunks = []
+        pending_audio: Optional[AudioChunk] = None
         pending_steps = 0
         chunk_index = 0
         total_steps = 0

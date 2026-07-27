@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: MIT
 """Tests for configuration and lightweight utility helpers."""
 
-import math
 import datetime
-from unittest import mock, TestCase
-from typing import Literal, Optional, Mapping, cast
+import math
+from collections.abc import Mapping
+from typing import Literal, Optional, cast
+from unittest import TestCase, mock
 
 from celune import config, utils
-from celune.constants import JSONSerializable
+from celune.typing.common import JSONSerializable
 
 
 class ConfigTests(TestCase):
@@ -123,16 +124,16 @@ class ConfigTests(TestCase):
         with (
             mock.patch("celune.config.sd.query_devices", return_value=devices),
             mock.patch("celune.config.sd.query_hostapis", return_value=hostapis),
-        ):
-            with self.assertRaisesRegex(
+            self.assertRaisesRegex(
                 ValueError,
-                "The specified input device name has multiple matches",
-            ) as caught:
-                config.resolve_audio_device(
-                    {"input_device": "CABLE-A Output"},
-                    "input_device",
-                    "input",
-                )
+                "the specified input device name has multiple matches",
+            ) as caught,
+        ):
+            config.resolve_audio_device(
+                {"input_device": "CABLE-A Output"},
+                "input_device",
+                "input",
+            )
 
         message = str(caught.exception)
         self.assertIn("- [0] CABLE-A Output (VB-Audio Cable A), MME", message)
@@ -140,7 +141,7 @@ class ConfigTests(TestCase):
             "- [1] CABLE-A Output (VB-Audio Cable A), Windows WASAPI",
             message,
         )
-        self.assertIn("Please specify one of the above devices", message)
+        self.assertIn("please specify one of the above devices", message)
 
     def test_resolve_audio_device_prefers_exact_single_output_index(self) -> None:
         """Verify one matching output device is resolved to its exact index."""
@@ -466,7 +467,7 @@ class UtilsTests(TestCase):
             AssertionError: Helper output changes unexpectedly.
         """
         phase, illumination, days = utils.lunar_info(
-            datetime.datetime(2000, 1, 6, 18, 14, tzinfo=datetime.timezone.utc)
+            datetime.datetime(2000, 1, 6, 18, 14, tzinfo=datetime.UTC)
         )
         self.assertAlmostEqual(phase, 0.0, places=6)
         self.assertAlmostEqual(illumination, 0.0, places=6)

@@ -3,26 +3,27 @@
 
 from __future__ import annotations
 
-import os
-import time
-import datetime
-import threading
 import contextlib
+import datetime
+import os
+import threading
+import time
 from collections import deque
-from typing import Union, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional, Union
 
 import numpy as np
 import numpy.typing as npt
-from openrgb.utils import RGBColor
 from openrgb import OpenRGBClient
+from openrgb.utils import RGBColor
 
-from .dsp import split
+from .colors import ERROR, RGB
 from .constants import BASE_SR
-from .colors import RGB, ERROR
-from .utils import to_rgb, lunar_info, range_interpolated, is_celune_day, discard
+from .dsp import split
+from .utils import discard, is_celune_day, lunar_info, range_interpolated, to_rgb
 
 if TYPE_CHECKING:
     from .celune import Celune
+    from .typing.aliases import AudioChunkBroad
 
 
 class AudioRGBGlow:
@@ -30,7 +31,7 @@ class AudioRGBGlow:
 
     def __init__(
         self,
-        celune: Optional["Celune"],
+        celune: Optional[Celune],
         color: str,
         host: str = "127.0.0.1",
         port: int = 6742,
@@ -71,7 +72,7 @@ class AudioRGBGlow:
 
         # Celune glows much brighter on Celune Day, else she'll glow according to the lunar phase
         # this effect is muted down to 25% of current brightness while Celune is sleeping
-        current_date = datetime.datetime.now()
+        current_date = datetime.datetime.now(datetime.UTC)
         if is_celune_day():
             self.glow_multiplier *= 3.0
         else:
@@ -321,7 +322,7 @@ class AudioRGBGlow:
         level = level ** (1.0 / self.gamma)
         return float(np.clip(level, 0.0, 1.0))
 
-    def _set_all_devices(self, rgb: Union[RGB, npt.NDArray[np.floating]]) -> None:
+    def _set_all_devices(self, rgb: Union[RGB, AudioChunkBroad]) -> None:
         """Apply color to all registered OpenRGB devices."""
         rgb = np.clip(rgb, 0, 255).astype(int)
         color = RGBColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))

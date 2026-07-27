@@ -1,17 +1,19 @@
+# SPDX-License-Identifier: MIT
 """Speech pipeline dataclasses."""
 
 from __future__ import annotations
 
-import time
 import queue
-from pathlib import Path
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Union
 
 import numpy as np
 import numpy.typing as npt
 
 from ..constants import N_A_NUMERIC
+from ..typing.aliases import AudioChunk
 
 
 @dataclass(frozen=True)
@@ -22,9 +24,7 @@ class SpeechRequest:
     display_text: str
     language: str = "Auto"
     save: bool = True
-    stream_queue: Optional[
-        "queue.Queue[Optional[Union[npt.NDArray[np.float32], Exception]]]"
-    ] = None
+    stream_queue: Optional[queue.Queue[Optional[Union[AudioChunk, Exception]]]] = None  # noqa
     normalize: bool = False
     silent_retry_count: int = 0
     generation: int = 0
@@ -71,7 +71,7 @@ class SpeechDone:
     """Playback completion marker for one generated utterance."""
 
     saved_path: Optional[str] = None
-    analysis_audio: Optional[npt.NDArray[np.float32]] = None
+    analysis_audio: Optional[AudioChunk] = None
 
 
 @dataclass(frozen=True)
@@ -81,7 +81,8 @@ class PlaybackChunk:
     source_id: int
     audio: npt.NDArray[np.float32]
     sample_rate: int
-    timing: Optional["SpeechTiming"] = None
+    timing: Optional[SpeechTiming] = None
+    generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -92,7 +93,8 @@ class PlaybackSourceDone:
     release_pipeline: bool = False
     notify_idle: bool = True
     saved_path: Optional[str] = None
-    analysis_audio: Optional[npt.NDArray[np.float32]] = None
+    analysis_audio: Optional[AudioChunk] = None
+    generation: int = 0
 
 
 @dataclass

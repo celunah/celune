@@ -3,22 +3,24 @@
 
 from __future__ import annotations
 
-import os
 import asyncio
+import os
 import threading
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional, cast
 from urllib.parse import urlparse
-from typing import Awaitable, Callable, Optional, TYPE_CHECKING, cast
 
 import soundfile as sf
 
+from ..audio import restart_audio_server
 from ..backends.tts.qwen3 import Qwen3
-from ..i18n import string
-from ..constants import APP_NAME
-from ..paths import project_root
-from ..exceptions import InvalidExtensionError
 from ..cevoice import active_bundle_path, resolve_bundle_path
-from ..utils import format_error, replace_ipa, format_number
+from ..constants import APP_NAME
+from ..exceptions import InvalidExtensionError
+from ..i18n import string
+from ..paths import project_root
+from ..utils import format_error, format_number, replace_ipa
 from ..vc import (
     VC_PITCH_SHIFT_MAX,
     VC_PITCH_SHIFT_MIN,
@@ -26,15 +28,15 @@ from ..vc import (
 )
 
 if TYPE_CHECKING:
-    from .app import CeluneUI
     from ..celune import Celune
+    from .app import CeluneUI
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".webm"}
 
 
 def _run_runtime_async(
-    target: "Celune",
+    target: Celune,
     async_name: str,
     sync_name: str,
     *method_args: str,
@@ -52,7 +54,7 @@ def _run_runtime_async(
 
 
 async def _run_runtime_async_on_loop(
-    target: "Celune",
+    target: Celune,
     async_name: str,
     sync_name: str,
     *method_args: str,
@@ -210,9 +212,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             return
 
         ui.celune.vc_f0_condition = enabled
-        backend = getattr(ui.celune, "vc_backend", None)
-        if backend is not None and hasattr(backend, "f0_condition"):
-            setattr(backend, "f0_condition", enabled)
+        vc_backend = getattr(ui.celune, "vc_backend", None)
+        if vc_backend is not None and hasattr(vc_backend, "f0_condition"):
+            vc_backend.f0_condition = enabled
         refresh_vc_controls()
         ui.safe_log(
             string(
@@ -221,17 +223,17 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             )
         )
 
-    def set_vc_pitch_shift(value: int) -> None:
+    def set_vc_pitch_shift(svalue: int) -> None:
         setter = getattr(ui, "set_vc_pitch_shift", None)
         if callable(setter):
-            setter(value)
+            setter(svalue)
             return
 
-        clamped = clamp_vc_pitch_shift(value)
+        clamped = clamp_vc_pitch_shift(svalue)
         ui.celune.vc_pitch_shift = clamped
-        backend = getattr(ui.celune, "vc_backend", None)
-        if backend is not None and hasattr(backend, "pitch_shift"):
-            setattr(backend, "pitch_shift", clamped)
+        vc_backend = getattr(ui.celune, "vc_backend", None)
+        if vc_backend is not None and hasattr(vc_backend, "pitch_shift"):
+            vc_backend.pitch_shift = clamped
         refresh_vc_controls()
         ui.safe_log(string("commands.vcpitch_set", value=clamped))
 
@@ -269,8 +271,38 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(string("commands.help_seed"))
         ui.safe_log(string("commands.help_tutorial", app_name=APP_NAME))
         ui.safe_log(string("commands.help_stop"))
+        ui.safe_log(string("commands.help_restart_audio"))
         ui.safe_log(string("commands.help_exit", app_name=APP_NAME))
         ui.safe_log(string("commands.help_help"))
+        return
+    if command == "restartaudio":
+
+        def restart_audio() -> None:
+            try:
+                restart_audio_server()
+            except RuntimeError as error:
+                ui.safe_log(
+                    string("commands.audio_restart_failed", error=error), "error"
+                )
+                return
+
+            celune = getattr(ui, "celune", None)
+            close_stream = getattr(celune, "_close_stream", None)
+            if callable(close_stream):
+                close_stream(abort=True)
+
+            try_play_signal = getattr(celune, "try_play_signal", None)
+            if not callable(try_play_signal) or not try_play_signal("readiness"):
+                ui.safe_log(string("commands.audio_restart_signal_failed"), "warning")
+                return
+
+            ui.safe_log(string("commands.audio_restart_success"))
+
+        threading.Thread(
+            target=restart_audio,
+            name="celune-audio-restart",
+            daemon=True,
+        ).start()
         return
     if command == "consumebuffer":
         if not args:

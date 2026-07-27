@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MIT
 """Tests for the lightweight `celune doctor` CLI path."""
 
-import io
 import contextlib
-from unittest import TestCase, mock
-from types import SimpleNamespace
+import io
 from pathlib import Path, PureWindowsPath
+from types import SimpleNamespace
+from unittest import TestCase, mock
 
 import main
 
@@ -14,6 +14,42 @@ entrypoint = main.load_entrypoint_module()
 
 class DoctorCommandTests(TestCase):
     """Verify `celune doctor` works without booting the full app."""
+
+    @staticmethod
+    def test_close_existing_processes_never_kills_current_process() -> None:
+        """Verify launcher cleanup excludes itself and waits for the old process."""
+        current = SimpleNamespace(pid=101, name=lambda: "python.exe")
+        launcher = SimpleNamespace(pid=303, name=lambda: "celune.exe")
+        existing = SimpleNamespace(
+            pid=202,
+            name=lambda: "CELUNE-BIN.EXE",
+            kill=mock.Mock(),
+            wait=mock.Mock(),
+        )
+        psutil = SimpleNamespace(
+            process_iter=lambda: [existing, launcher, current],
+            AccessDenied=PermissionError,
+            NoSuchProcess=ProcessLookupError,
+            ZombieProcess=RuntimeError,
+            TimeoutExpired=TimeoutError,
+        )
+        runtime = SimpleNamespace(
+            psutil=psutil,
+            SelectMenu=mock.Mock(
+                return_value=SimpleNamespace(start=mock.Mock(return_value=True))
+            ),
+        )
+
+        with (
+            mock.patch.object(entrypoint.os, "getpid", return_value=101),
+            mock.patch.object(entrypoint.os, "getppid", return_value=303),
+            mock.patch.dict(entrypoint.os.environ, {"CELUNE_LAUNCHER_PID": ""}),
+        ):
+            entrypoint._close_existing_celune_processes(runtime)
+
+        existing.kill.assert_called_once_with()
+        existing.wait.assert_called_once_with(timeout=5)
+        runtime.SelectMenu.assert_called_once()
 
     def test_ui_test_backend_is_loaded_lazily(self) -> None:
         """Verify normal entrypoint imports do not require the test suite package."""

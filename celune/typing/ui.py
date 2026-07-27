@@ -1,6 +1,7 @@
+# SPDX-License-Identifier: MIT
 """UI protocol definitions."""
 
-from typing import Optional, Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional, Protocol
 
 if TYPE_CHECKING:
     from ..celune import Celune

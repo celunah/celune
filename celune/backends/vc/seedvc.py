@@ -1,46 +1,33 @@
 # SPDX-License-Identifier: MIT
 """Seed-VC backend for Celune voice conversion."""
 
-import gc
-import tempfile
-import importlib
-import threading
 import contextlib
+import gc
+import importlib
+import tempfile
+import threading
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, TracebackType
-from typing import Optional, Callable, Protocol, cast
+from typing import Optional, cast
 
 import numpy as np
-import numpy.typing as npt
 import soundfile as sf
 
-from ...i18n import string
-from .base import CeluneVCBackend
-from ...paths import huggingface_hub_cache_dir
-from ...typing.aliases import SeedVCArgument, SeedVCGenerator
 from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+from ...i18n import string
+from ...paths import huggingface_hub_cache_dir
+from ...typing.aliases import AudioChunk, SeedVCGenerator
+from ...typing.backends import _SeedVCWrapper
+from .base import CeluneVCBackend
 
 __all__ = ["CeluneSeedVCBackend"]
-
-
-class _SeedVCWrapper(Protocol):
-    """Protocol for the dynamically loaded Seed-VC wrapper."""
-
-    def convert_voice(self, **kwargs: SeedVCArgument) -> SeedVCGenerator:
-        """Run Seed-VC and return its generator-style conversion result.
-
-        Args:
-            kwargs: String, numeric, and boolean conversion options accepted by Seed-VC.
-
-        Returns:
-            SeedVCGenerator: A generator whose return value is the converted waveform.
-        """
 
 
 class _TemporaryWaveFile:
     """Temporary WAV file helper used for backends that require file paths."""
 
-    def __init__(self, audio: npt.NDArray[np.float32], sample_rate: int) -> None:
+    def __init__(self, audio: AudioChunk, sample_rate: int) -> None:
         self.path: Optional[Path] = None
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
@@ -111,7 +98,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
     ) -> None:
         """Redirect Seed-VC's hardcoded checkpoint downloads into Celune's cache."""
         cache_dir = cls._seedvc_huggingface_cache_dir(create=True)
-        hf_hub_download = getattr(hf_utils_module, "hf_hub_download")
+        hf_hub_download = hf_utils_module.hf_hub_download
 
         def load_custom_model_from_hf(
             repo_id: str,
@@ -161,7 +148,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             return self._wrapper
 
     @staticmethod
-    def _mix_to_mono(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    def _mix_to_mono(audio: AudioChunk) -> AudioChunk:
         """Return a mono float32 waveform for Seed-VC inference."""
         mono = np.asarray(audio, dtype=np.float32)
         if mono.ndim == 1:
@@ -173,7 +160,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
     @staticmethod
     def _drain_generator_return_value(
         generator: SeedVCGenerator,
-    ) -> npt.NDArray[np.float32]:
+    ) -> AudioChunk:
         """Run a generator to completion and return its final value."""
         try:
             while True:
@@ -182,7 +169,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             return exc.value
 
     @property
-    def output_sample_rate(self) -> int:
+    def output_sample_rate(self) -> int:  # noqa
         """Return the sample rate produced by the backend's default Seed-VC mode.
 
         Returns:

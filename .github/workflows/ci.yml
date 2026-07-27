@@ -68,7 +68,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc wget desktop-file-utils libfuse2
+          sudo apt-get install -y gcc wget zip desktop-file-utils libfuse2
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -91,6 +91,7 @@ jobs:
           test -x bin/celune
           test -x bin/celune-bin
           test -f bin/celune.AppImage
+          test -f bin/Celune-linux-x64.zip
 
       - name: Upload Linux launcher artifacts
         uses: actions/upload-artifact@v6
@@ -123,6 +124,7 @@ jobs:
           powershell -ExecutionPolicy Bypass -File .\scripts\build_nuitka.ps1
           if (!(Test-Path .\bin\celune.exe)) { throw "bin/celune.exe not found" }
           if (!(Test-Path .\bin\celune-bin.exe)) { throw "bin/celune-bin.exe not found" }
+          if (!(Test-Path .\bin\Celune-win-x64.zip)) { throw "bin/Celune-win-x64.zip not found" }
 
       - name: Upload Windows launcher artifacts
         uses: actions/upload-artifact@v6

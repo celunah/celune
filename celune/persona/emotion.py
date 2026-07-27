@@ -3,20 +3,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
-from typing import Optional, Protocol, Union, cast
+from dataclasses import dataclass
+from typing import Optional, cast
 
 import numpy as np
-import numpy.typing as npt
 import torch
+from transformers import AutoModel, AutoModelForSequenceClassification, AutoTokenizer
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-from transformers import AutoModel, AutoModelForSequenceClassification, AutoTokenizer
 
+from ..constants import PERSONA_EMOTION_MODEL
+from ..typing.aliases import AudioChunk, EmbeddingVector
+from ..typing.common import JSONSerializable
+from ..typing.persona import _EmotionModelConfig
 from ..utils import discard
-from ..typing.aliases import EmbeddingVector
-from ..constants import JSONSerializable, PERSONA_EMOTION_MODEL
 
 GOEMOTIONS_LABELS: tuple[str, ...] = (
     "admiration",
@@ -126,12 +127,6 @@ class _EmotionBackend:
     tokenizer: PreTrainedTokenizerBase
     model: PreTrainedModel
     labels: tuple[str, ...]
-
-
-class _EmotionModelConfig(Protocol):
-    """Protocol for model configs that expose emotion label mappings."""
-
-    id2label: Mapping[Union[int, str], str]
 
 
 class PersonaEmotionAnalyzer:
@@ -298,7 +293,7 @@ class PersonaEmotionAnalyzer:
 
     @staticmethod
     def _row_predictions(
-        row: Optional[npt.NDArray[np.float32]],
+        row: Optional[AudioChunk],
         labels: tuple[str, ...],
     ) -> tuple[EmotionPrediction, ...]:
         """Return sorted label scores for one model row."""

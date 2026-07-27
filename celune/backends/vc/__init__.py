@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: MIT
 """Celune voice-conversion backend initialization manager."""
 
+from collections.abc import Callable
 from importlib import import_module
-from typing import Callable, Optional, Union
+from typing import Optional, Union
 
 from .base import CeluneVCBackend
 
-__all__ = ["CeluneVCBackend", "resolve_vc_backend"]
+__all__ = ["VC_BACKENDS", "CeluneVCBackend", "resolve_vc_backend"]
 
 VC_BACKENDS = {
     "passthrough": (

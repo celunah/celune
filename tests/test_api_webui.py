@@ -2,10 +2,10 @@
 """Tests for Celune's browser-facing API UI."""
 
 import asyncio
-from typing import cast
 from queue import Queue
-from unittest import TestCase, mock
 from types import SimpleNamespace
+from typing import cast
+from unittest import TestCase, mock
 
 import numpy as np
 from starlette.requests import Request
@@ -372,6 +372,7 @@ class ApiWebUITests(TestCase):
         self.assertIn("--celune-background: #112233;", api.webui_theme_style)
         self.assertIn("--celune-sleeping: #556677;", api.webui_theme_style)
         self.assertIn("--celune-primary:", api.webui_theme_style)
+        self.assertIn("--celune-error:", api.webui_theme_style)
         self.assertIn("--celune-ui-accent:", api.webui_theme_style)
         self.assertIn("--celune-ui-bg:", api.webui_theme_style)
         self.assertIn('rel="icon"', api.WEBUI_HEAD)
@@ -383,6 +384,9 @@ class ApiWebUITests(TestCase):
         self.assertIn("min-height: 0;", api.WEBUI_CSS)
         self.assertIn('.standard-player input[type="range"]', api.WEBUI_CSS)
         self.assertIn(".minimal-audio-player button:hover", api.WEBUI_CSS)
+        self.assertIn(".toast-body.error", api.WEBUI_CSS)
+        self.assertIn(".toast-message-text.error::before", api.WEBUI_CSS)
+        self.assertIn('content: "Celune is currently unavailable.";', api.WEBUI_CSS)
         self.assertIn(
             "@media (max-width: 768px), (any-pointer: coarse), (hover: none)",
             api.WEBUI_CSS,
@@ -446,18 +450,76 @@ class ApiWebUITests(TestCase):
             ),
         )
         api.webui_last_probed_state = "idle"
+        api.set_webui_status(
+            "Normalizing",
+            source="callback",
+            updated_at=10.0,
+        )
 
         with (
             mock.patch(
                 "celune.api.ui_resources.resource_pages",
                 return_value=("VRAM: 10.66/11.94 GB available",),
             ),
-            mock.patch("celune.api.time.monotonic", side_effect=[10.0, 10.1]),
+            mock.patch("celune.api.time.monotonic", return_value=10.1),
         ):
-            api.set_webui_status("Normalizing", source="callback")
             _logs, status_html, _resources, _voice, _send, _input = api.webui_snapshot()
 
         self.assertIn("Normalizing", status_html)
+
+    def test_webui_probe_prefers_active_playback_status(self) -> None:
+        """Verify active playback status remains visible over generic speaking state."""
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="speaking",
+                _playback_source_statuses={1: "Playing fixture.wav"},
+            ),
+        )
+        api.webui_last_probed_state = "idle"
+        api.set_webui_status("Speaking", source="callback", updated_at=10.0)
+
+        with (
+            mock.patch(
+                "celune.api.ui_resources.resource_pages",
+                return_value=("VRAM: 10.66/11.94 GB available",),
+            ),
+            mock.patch("celune.api.time.monotonic", return_value=10.1),
+        ):
+            _logs, status_html, _resources, _voice, _send, _input = api.webui_snapshot()
+
+        self.assertIn("Playing fixture.wav", status_html)
+
+    def test_webui_probe_reconciles_stale_speaking_status_after_sleep(self) -> None:
+        """Verify sleeping runtime state overrides a late speaking callback."""
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="sleeping",
+                sleeping=True,
+            ),
+        )
+        api.webui_last_probed_state = "sleeping"
+        api.set_webui_status("Speaking", source="callback")
+
+        with mock.patch(
+            "celune.api.ui_resources.resource_pages",
+            return_value=("VRAM: 10.66/11.94 GB available",),
+        ):
+            logs_html, status_html, _resources, _voice, _send, _input = (
+                api.webui_snapshot()
+            )
+
+        self.assertIn("currently sleeping. Type anything to wake up.", logs_html)
+        self.assertIn("Sleeping", status_html)
 
     def test_webui_slash_command_uses_main_ui_command_path(self) -> None:
         """Verify slash commands are delegated into the main UI command handler."""
@@ -761,14 +823,6 @@ class ApiWebUITests(TestCase):
         self.assertIn("VRAM: first", resources1)
         self.assertIn("Friday, June 11, 2026", resources2)
 
-    def test_webui_shortcuts_html_registers_ctrl_r_recording_toggle(self) -> None:
-        """Verify the WebUI shortcut script exposes the VC recording hotkey."""
-        shortcuts_html = api._webui_shortcuts_html()
-
-        self.assertIn(string("ui.footer_toggle_recording"), shortcuts_html)
-        self.assertIn("#celune-source-audio", shortcuts_html)
-        self.assertIn("keydown", shortcuts_html)
-
     def test_webui_runtime_theme_keeps_normal_palette_for_error_status(self) -> None:
         """Verify browser error statuses no longer switch the full UI palette."""
         api.set_webui_status("I can't speak right now.", "error")
@@ -822,7 +876,8 @@ class ApiWebUITests(TestCase):
         self.assertTrue(api.current_api_server.should_exit)
         self.assertTrue(api.current_api_server.force_exit)
 
-    def test_start_api_reports_when_port_is_already_in_use(self) -> None:
+    @staticmethod
+    def test_start_api_reports_when_port_is_already_in_use() -> None:
         """Verify occupied API ports produce a direct warning instead of a runtime error."""
         celune = SimpleNamespace(log=mock.Mock(), dev=False)
         bind_error = OSError(10048, "only one usage of each socket address")

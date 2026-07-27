@@ -3,13 +3,13 @@
 
 from __future__ import annotations
 
-import re
-import json
-import uuid
 import datetime
-from pathlib import Path
+import json
+import re
+import uuid
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Optional, Union, cast
 
 import numpy as np
@@ -17,10 +17,11 @@ import torch
 import torch.nn.functional as f
 from transformers import AutoModel, AutoTokenizer
 
+from ..constants import PERSONA_MEMORY_EMBEDDING_MODEL
 from ..paths import persona_data_dir
+from ..typing.aliases import EmbeddingBackend, EmbeddingVector
+from ..typing.common import JSONSerializable
 from .paths import persona_character_slug
-from ..typing.aliases import EmbeddingVector, _EmbeddingBackend
-from ..constants import JSONSerializable, PERSONA_MEMORY_EMBEDDING_MODEL
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
 _STOPWORDS = {
@@ -54,13 +55,13 @@ _STOPWORDS = {
     "you",
 }
 
-_EMBEDDING_BACKENDS: dict[str, _EmbeddingBackend] = {}
+_EMBEDDING_BACKENDS: dict[str, EmbeddingBackend] = {}
 _FAILED_EMBEDDING_MODELS: set[str] = set()
 
 
 def _utc_now() -> str:
     """Return the current UTC timestamp in ISO 8601 format."""
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return datetime.datetime.now(datetime.UTC).isoformat()
 
 
 def _normalize_text(text: str) -> str:
@@ -107,7 +108,7 @@ def _cosine_similarity(first: EmbeddingVector, second: EmbeddingVector) -> float
     return float(np.dot(first, second) / denom)
 
 
-def _load_transformer_text_embedder(model_name: str) -> Optional[_EmbeddingBackend]:
+def _load_transformer_text_embedder(model_name: str) -> Optional[EmbeddingBackend]:
     """Load one lazy text-embedding backend, or return ``None`` when unavailable."""
     if model_name in _FAILED_EMBEDDING_MODELS:
         return None
@@ -573,9 +574,7 @@ class PersonaMemoryStore:
     def _explicit_candidate(text: str) -> Optional[MemoryCandidate]:
         """Return one explicit memory candidate when the user asks to remember."""
         lowered = text.casefold()
-        if lowered.startswith("do you remember") or lowered.startswith(
-            "what do you remember"
-        ):
+        if lowered.startswith(("do you remember", "what do you remember")):
             return None
 
         patterns = (

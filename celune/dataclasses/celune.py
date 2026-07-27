@@ -1,27 +1,26 @@
+# SPDX-License-Identifier: MIT
 """Grouped Celune runtime state containers and property specs."""
 
 import queue
 import threading
-from typing import Optional, Union
 from dataclasses import dataclass, field
+from typing import Optional, Union
 
-import numpy as np
-import numpy.typing as npt
 import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from ..config import Config
-from ..chroma import AudioRGBGlow
-from ..typing.backends import BackendModel
 from ..backends.tts import CeluneBackend
-from ..persona.impl import PersonaClient
-from ..cevoice import CEVoicePersona
 from ..backends.vc import CeluneVCBackend
-from ..extensions.manager import CeluneExtensionManager
+from ..cevoice import CEVoicePersona
+from ..chroma import AudioRGBGlow
+from ..config import Config
+from ..constants import PipelineStates
 from ..dsp import StreamingPedalboardReverb
-from ..constants import JSONSerializable, PipelineStates
-from .properties import ConstantPropertySpec, ForwardedPropertySpec
+from ..extensions.manager import CeluneExtensionManager
+from ..persona.impl import PersonaClient
+from ..typing.aliases import AudioChunks
+from ..typing.backends import BackendModel
 from ..typing.celune import (
     ErrorCallback,
     IdleCallback,
@@ -34,6 +33,8 @@ from ..typing.celune import (
     VoiceChangedCallback,
     VoiceLockStateCallback,
 )
+from ..typing.common import JSONSerializable
+from .properties import ConstantPropertySpec, ForwardedPropertySpec
 
 
 @dataclass
@@ -114,6 +115,7 @@ class CelunePipelineState:
     queue_lock: threading.Lock = field(default_factory=threading.Lock)
     utterance_force_stop: threading.Event = field(default_factory=threading.Event)
     speech_generation: int = 0
+    playback_generation: int = 0
     next_playback_source_id: int = 0
     playback_source_statuses: dict[int, str] = field(default_factory=dict)
     playback_source_meta: dict[int, dict[str, Union[str, float]]] = field(
@@ -125,7 +127,7 @@ class CelunePipelineState:
     playback_done: threading.Event = field(default_factory=threading.Event)
     say_lock: threading.Lock = field(default_factory=threading.Lock)
     wake_lock: threading.Lock = field(default_factory=threading.Lock)
-    model_lock: threading.RLock = field(default_factory=threading.RLock)
+    model_lock: threading.RLock = field(default_factory=threading.RLock)  # noqa
     exit_requested: bool = False
 
 
@@ -144,7 +146,7 @@ class CeluneAudioState:
     historical_generated_speech_seconds: float = 0.0
     reverb: StreamingPedalboardReverb = field(default_factory=StreamingPedalboardReverb)
     recently_saved: Optional[str] = None
-    kept_sfx_audio: Optional[npt.NDArray[np.float32]] = None
+    kept_sfx_audio: Optional[AudioChunks] = None
 
 
 @dataclass
@@ -255,6 +257,9 @@ CELUNE_FORWARDED_PROPERTIES = (
         "utterance_force_stop",
     ),
     ForwardedPropertySpec("_speech_generation", "_pipeline_state", "speech_generation"),
+    ForwardedPropertySpec(
+        "_playback_generation", "_pipeline_state", "playback_generation"
+    ),
     ForwardedPropertySpec(
         "_next_playback_source_id",
         "_pipeline_state",

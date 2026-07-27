@@ -3,20 +3,21 @@
 
 from __future__ import annotations
 
-import json
 import atexit
+import contextlib
+import hashlib
+import json
 import shutil
 import struct
-import hashlib
 import tempfile
 import threading
-import contextlib
-from pathlib import Path
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import BinaryIO, Callable, Final, Mapping, Optional, Union, cast
+from pathlib import Path
+from typing import BinaryIO, Final, Optional, Union, cast
 
 from .exceptions import CEVoiceError
-from .paths import project_root, temp_data_dir
+from .paths import project_root, temp_data_dir, voices_data_dir
 from .typing.cevoice import Manifest, ManifestValue, VoiceManifest
 
 # Celune supports both of these specifications
@@ -42,7 +43,7 @@ SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
     "examples.md",
 )
 DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
-    "b5e9baeef964ec885577da4b45d356aa9ec84c37699870ea894c4ae0e884dfea"
+    "9fbbc1244c027a2e5ab42f62ab557e0e0147bdf3bbb59fc23d57afd26d10dccf"
 )
 
 
@@ -105,7 +106,7 @@ class CEVoice:
         return cls(bundle_path, metadata, payload_offset)
 
     @property
-    def voices(self) -> VoiceManifest:
+    def voices(self) -> VoiceManifest:  # noqa
         """Return the voice manifest.
 
         Returns:
@@ -120,7 +121,7 @@ class CEVoice:
         return cast(VoiceManifest, voices)
 
     @property
-    def voice_order(self) -> tuple[str, ...]:
+    def voice_order(self) -> tuple[str, ...]:  # noqa
         """Return the preferred user-facing voice order.
 
         Returns:
@@ -157,7 +158,7 @@ class CEVoice:
         )
 
     @property
-    def assets(self) -> Manifest:
+    def assets(self) -> Manifest:  # noqa
         """Return the top-level bundle asset manifest.
 
         Returns:
@@ -353,7 +354,7 @@ def write_cevoice(
     manifest_voices: VoiceManifest = {}
     unknown_voice_metadata = set(voice_metadata or {}) - set(voices)
     if unknown_voice_metadata:
-        unknown = sorted(unknown_voice_metadata)[0]
+        unknown = sorted(unknown_voice_metadata)[0]  # noqa: FURB192
         raise CEVoiceError(f"voice metadata provided for unknown voice '{unknown}'")
 
     for voice, assets in voices.items():
@@ -948,7 +949,7 @@ def default_bundle_path() -> Path:
     Returns:
         Path: The absolute path to Celune's default voice bundle.
     """
-    return project_root() / "voices" / "default.cevoice"
+    return bundled_voices_dir() / "default.cevoice"
 
 
 def bundle_sha256(path: Union[str, Path]) -> str:
@@ -983,12 +984,24 @@ def bundle_matches_default_pack_checksum(path: Union[str, Path]) -> bool:
 
 
 def bundled_voices_dir() -> Path:
-    """Return the repository-level directory that stores bundled voice packs.
+    """Return the user-local directory that stores bundled voice packs.
 
     Returns:
-        Path: The absolute path to the bundled CEVOICE directory.
+        Path: The absolute path to the user-local CEVOICE directory.
     """
-    return project_root() / "voices"
+    user_directory = voices_data_dir()
+    if user_directory.is_dir():
+        return user_directory
+
+    repository_directory = project_root() / "voices"
+    if not repository_directory.is_dir():
+        return user_directory
+
+    try:
+        shutil.copytree(repository_directory, user_directory)
+    except OSError:
+        return repository_directory
+    return user_directory
 
 
 def resolve_bundle_path(bundle: Optional[Union[str, Path]] = None) -> Path:

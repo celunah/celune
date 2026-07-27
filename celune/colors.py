@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Color utility helpers."""
 
-import random
 import colorsys
+import random
 from typing import Final, Optional
 
 from textual.theme import Theme
@@ -52,10 +52,6 @@ def _blend(color: str, destination: str, amount: float) -> str:
             round(source_rgb[2] + ((destination_rgb[2] - source_rgb[2]) * amount)),
         )
     )
-
-
-def _darken(color: str, amount: float) -> str:
-    return _blend(color, "#000000", amount)
 
 
 def _hls_color(hue: float, lightness: float, saturation: float) -> str:

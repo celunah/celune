@@ -1,21 +1,29 @@
 # SPDX-License-Identifier: MIT
 """Celune backend initialization manager."""
 
+from collections.abc import Callable
 from importlib import import_module
-from importlib.metadata import version, PackageNotFoundError
-from typing import Callable, Union, Optional
+from importlib.metadata import PackageNotFoundError, version
+from typing import Optional, Union
 
 from ...i18n import string
 from ...typing.backends import BackendModel
 from .base import CeluneBackend
 
-__all__ = ["BackendModel", "CeluneBackend", "get_version", "resolve_backend"]
+__all__ = [
+    "BACKENDS",
+    "BackendModel",
+    "CeluneBackend",
+    "get_version",
+    "resolve_backend",
+]
 
 BACKENDS = {
     "mini": ("celune.backends.tts.mini", "Mini"),
     "qwen3": ("celune.backends.tts.qwen3", "Qwen3"),
     "dotstts": ("celune.backends.tts.dotstts", "DotsTtsMF"),
     "voxcpm2": ("celune.backends.tts.voxcpm2", "VoxCPM2"),
+    "gpt-sovits": ("celune.backends.tts.gpt_sovits", "GPTSoVITS"),
 }
 
 

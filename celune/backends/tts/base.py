@@ -1,39 +1,35 @@
 # SPDX-License-Identifier: MIT
 """Unified backend abstractions for Celune."""
 
-import os
+import contextlib
 import gc
 import glob
-import random
 import hashlib
+import os
+import random
 import secrets
-import unittest.mock
 import threading
-import contextlib
-from pathlib import Path
+import unittest.mock
 from abc import ABC, abstractmethod
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator, Mapping
+from pathlib import Path
 from typing import (
-    Callable,
-    Generic,
-    Mapping,
     Optional,
     cast,
 )
 
 import numpy as np
-import numpy.typing as npt
-import torch
 import soundfile as sf
+import torch
 from huggingface_hub import snapshot_download
 
-from ...i18n import string
-from ...utils import discard
+from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import N_A_NUMERIC
-from ...typing.aliases import RuntimeValue
-from ...typing.backends import BackendModel, ModelT
-from ...cevoice import default_loader, CEVoiceLoader
+from ...i18n import string
 from ...paths import huggingface_hub_cache_dir, temp_data_dir
+from ...typing.aliases import AudioChunk, RuntimeValue
+from ...typing.backends import BackendModel
+from ...utils import discard
 
 __all__ = [
     "BackendModel",
@@ -199,7 +195,7 @@ def _release_runtime_references(value: RuntimeValue, seen: set[int]) -> None:
     _release_runtime_object_members(value, seen)
 
 
-class CeluneBackend(ABC, Generic[ModelT]):
+class CeluneBackend[ModelT](ABC):
     """Base class for Celune speech backends."""
 
     name: str = "unknown"
@@ -231,6 +227,10 @@ class CeluneBackend(ABC, Generic[ModelT]):
         self.current_seed: Optional[int] = None
         self.random_seed = True
         self._truncated_reference_paths: set[Path] = set()
+
+    def __str__(self) -> str:
+        """Return the backend name for callers using str(CeluneBackend(...))."""
+        return self.name
 
     def bind_fatal(self, fatal: Optional[Callable[[], None]]) -> None:
         """Bind the active Celune fatal callback to this backend instance.
@@ -341,7 +341,7 @@ class CeluneBackend(ABC, Generic[ModelT]):
         """
 
     @property
-    def default_model_id(self) -> str:
+    def default_model_id(self) -> str:  # noqa
         """Return the default model identifier for this backend.
 
         Returns:
@@ -359,7 +359,7 @@ class CeluneBackend(ABC, Generic[ModelT]):
         raise ValueError(f"{self.name} does not define a default model")
 
     @property
-    def all_model_ids(self) -> list[str]:
+    def all_model_ids(self) -> list[str]:  # noqa
         """Return every known model identifier for this backend.
 
         Returns:
@@ -374,7 +374,7 @@ class CeluneBackend(ABC, Generic[ModelT]):
         return []
 
     @property
-    def voices(self) -> list[str]:
+    def voices(self) -> list[str]:  # noqa
         """Return the available voice names for this backend.
 
         Returns:
@@ -499,7 +499,7 @@ class CeluneBackend(ABC, Generic[ModelT]):
     @abstractmethod
     def generate_stream(
         self, model: ModelT, **kwargs
-    ) -> Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]:
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
         """Yield audio chunks from a loaded backend model.
 
         Args:
@@ -507,5 +507,5 @@ class CeluneBackend(ABC, Generic[ModelT]):
             kwargs: Backend-specific generation parameters.
 
         Returns:
-            Iterator[tuple[npt.NDArray[np.float32], int, Optional[dict]]]: An iterator of audio chunks.
+            Iterator[tuple[AudioChunk, int, Optional[dict]]]: An iterator of audio chunks.
         """

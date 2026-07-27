@@ -5,9 +5,9 @@ import copy
 import json
 import shutil
 import tempfile
-from typing import cast
 from pathlib import Path
-from unittest import mock, TestCase
+from typing import cast
+from unittest import TestCase, mock
 
 from celune import cevoice
 from celune.exceptions import CEVoiceError
@@ -202,14 +202,15 @@ class CEVoiceTests(TestCase):
         with self.assertRaisesRegex(CEVoiceError, "format/version mismatch"):
             cevoice.CEVoice.open(self.path)
 
+    # any types here are resolved dynamically
     def test_asset_checksums_are_case_insensitive(self) -> None:
         """Accept uppercase hexadecimal asset checksums in a valid manifest."""
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
         voice_data = voices["balanced"]
-        assets = cast(cevoice.Manifest, voice_data["assets"])
-        wav_asset = cast(cevoice.Manifest, assets["wav"])
+        assets = cast(cevoice.Manifest, voice_data["assets"])  # noqa
+        wav_asset = cast(cevoice.Manifest, assets["wav"])  # noqa
         wav_asset["sha256"] = cast(str, wav_asset["sha256"]).upper()
         self._rewrite_metadata(metadata)
 
@@ -294,6 +295,7 @@ class CEVoiceTests(TestCase):
             },
         )
 
+    # any types here are resolved dynamically
     def test_bundle_assets_can_store_supported_persona_markdown(self) -> None:
         """Verify CECHAR v3 persona Markdown is stored as top-level payload assets."""
         cevoice.write_cevoice(
@@ -350,7 +352,7 @@ class CEVoiceTests(TestCase):
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
         voices["balanced"]["cfg_scale"] = 0
         self._rewrite_metadata(metadata)
         with self.assertRaisesRegex(CEVoiceError, "cfg_scale"):
@@ -358,7 +360,7 @@ class CEVoiceTests(TestCase):
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
         voices["balanced"]["reference_text"] = " "
         self._rewrite_metadata(metadata)
         with self.assertRaisesRegex(CEVoiceError, "reference_text"):
@@ -366,7 +368,7 @@ class CEVoiceTests(TestCase):
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
         del voices["balanced"]["reference_text"]
         self._rewrite_metadata(metadata)
         with self.assertRaisesRegex(CEVoiceError, "reference_text is required"):
@@ -374,8 +376,8 @@ class CEVoiceTests(TestCase):
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])
-        assets = cast(cevoice.Manifest, voices["balanced"]["assets"])
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
+        assets = cast(cevoice.Manifest, voices["balanced"]["assets"])  # noqa
         assets["json"] = {
             "offset": 0,
             "length": 0,
@@ -475,14 +477,37 @@ class CEVoiceTests(TestCase):
         )
 
     def test_named_bundle_resolution_uses_top_level_voices_directory(self) -> None:
-        """Verify bare bundle names resolve from the repository-level voices directory.
+        """Verify bare bundle names resolve from the user-local voices directory.
 
         Raises:
             AssertionError: Bundle path resolution changes unexpectedly.
         """
-        expected = cevoice.bundled_voices_dir() / "fixture.cevoice"
-        self.assertEqual(cevoice.resolve_bundle_path("fixture"), expected)
-        self.assertEqual(cevoice.resolve_bundle_path("fixture.cevoice"), expected)
+        expected = self.temp_dir / "voices" / "fixture.cevoice"
+        with mock.patch("celune.cevoice.voices_data_dir", return_value=expected.parent):
+            self.assertEqual(cevoice.resolve_bundle_path("fixture"), expected)
+            self.assertEqual(cevoice.resolve_bundle_path("fixture.cevoice"), expected)
+
+    def test_bundled_voices_are_copied_to_user_data_on_first_use(self) -> None:
+        """Verify repository voice packs are copied to user data once."""
+        repository_root = self.temp_dir / "repository-root"
+        repository_dir = repository_root / "voices"
+        user_dir = self.temp_dir / "user-voices"
+        repository_dir.mkdir(parents=True)
+        (repository_dir / "default.cevoice").write_bytes(b"default")
+
+        with (
+            mock.patch(
+                "celune.cevoice.project_root",
+                return_value=repository_root,
+            ),
+            mock.patch(
+                "celune.cevoice.voices_data_dir",
+                return_value=user_dir,
+            ),
+        ):
+            self.assertEqual(cevoice.bundled_voices_dir(), user_dir)
+
+        self.assertEqual((user_dir / "default.cevoice").read_bytes(), b"default")
 
     def test_missing_selected_and_default_bundles_report_no_compatible_pack(
         self,
