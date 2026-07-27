@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Typed Celune lifecycle and extension event payloads."""
 
 from __future__ import annotations

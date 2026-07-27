@@ -15,11 +15,11 @@ import sys
 import threading
 import time
 import types
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Callable, Optional, TextIO, Union, cast
+from typing import Optional, TextIO, Union, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -49,6 +49,7 @@ from ..cevoice import default_loader
 from ..config import format_audio_device_name, resolve_audio_device_with_info
 from ..constants import APP_NAME, CRASH_LINES, SIGTSTP
 from ..i18n import string
+from ..watchdog import launcher_loss_requested
 from ..paths import config_path, main_window_log_path
 from ..persona.asr import (
     DEFAULT_PERSONA_SPEECH_MODEL_ID,
@@ -60,7 +61,11 @@ from ..persona.impl import (
     persona_enabled,
     persona_talkback_enabled,
 )
-from ..pipeline import finish_streaming_sfx_audio, queue_streaming_sfx_audio
+from ..pipeline import (
+    current_playback_status,
+    finish_streaming_sfx_audio,
+    queue_streaming_sfx_audio,
+)
 from ..typing.aliases import (  # pylint: disable=W0611
     AudioChunk,
     AudioChunks,
@@ -660,7 +665,7 @@ class CeluneUI(App):
             original_fatal()
 
         glow.fatal = wrapped_fatal
-        setattr(self.celune, "_ui_fatal_glow_wrapped", True)
+        self.celune._ui_fatal_glow_wrapped = True
 
     def _bind_runtime_callbacks(self) -> None:
         """Bind one attached Celune instance back into this UI."""
@@ -725,6 +730,14 @@ class CeluneUI(App):
         """Advance the marquee one character for long status messages."""
         if self.status is None:
             return
+        playback_status = (
+            current_playback_status(self.celune) if self.celune is not None else None
+        )
+        if playback_status is not None and playback_status != self._status_text:
+            self._status_text = playback_status
+            self.status_severity = "info"
+            self._status_marquee_offset = 0
+            self._refresh_theme_text()
         if len(self._status_text) <= self._status_view_width():
             self._update_status_label()
             return
@@ -767,16 +780,16 @@ class CeluneUI(App):
 
     def _persist_log_entry(self, msg: str, severity: str) -> None:
         """Append one UI log entry to the persisted main-window log file."""
-        try:
+        with contextlib.suppress(OSError):
             if not self._log_file_initialized:
                 self._log_file_path.write_text("", encoding="utf-8")
                 self._log_file_initialized = True
 
-            timestamp = datetime.datetime.now().isoformat(timespec="seconds")
+            timestamp = datetime.datetime.now(datetime.UTC).isoformat(
+                timespec="seconds"
+            )
             with self._log_file_path.open("a", encoding="utf-8") as handle:
                 handle.write(f"[{timestamp}] [{severity.upper()}] {msg}\n")
-        except OSError:
-            pass
 
     def _prepare_terminal_output_stream(self) -> Optional[TextIOWrapper]:
         """Give Textual an independent terminal stream before stderr capture starts."""
@@ -910,6 +923,8 @@ class CeluneUI(App):
                 signal.signal(SIGTSTP, self._signal_handler)
             signal.signal(signal.SIGTERM, self._signal_handler)
 
+        self.set_interval(0.1, self._check_launcher_loss)
+
         loader = default_loader()
         if loader is not None:
             theme = loader.bundle.metadata.get("theme")
@@ -981,6 +996,11 @@ class CeluneUI(App):
         self.call_after_refresh(self.start_background_init)
         self.safe_status(string("status.initializing"))
         self.update_resources()
+
+    def _check_launcher_loss(self) -> None:
+        """Run the normal UI shutdown path after the launcher disconnects."""
+        if launcher_loss_requested() and self.cur_state != "exiting":
+            self._graceful_exit()
 
     def update_resources(self) -> None:
         """Refresh the currently selected resource footer page."""
@@ -1732,7 +1752,7 @@ class CeluneUI(App):
         self.celune.vc_f0_condition = enabled
         backend = getattr(self.celune, "vc_backend", None)
         if backend is not None and hasattr(backend, "f0_condition"):
-            setattr(backend, "f0_condition", enabled)
+            backend.f0_condition = enabled
         self.refresh_vc_controls()
 
         if announce:
@@ -1757,7 +1777,7 @@ class CeluneUI(App):
         self.celune.vc_pitch_shift = clamped
         backend = getattr(self.celune, "vc_backend", None)
         if backend is not None and hasattr(backend, "pitch_shift"):
-            setattr(backend, "pitch_shift", clamped)
+            backend.pitch_shift = clamped
         self.refresh_vc_controls()
 
         if announce:
@@ -1904,16 +1924,19 @@ class CeluneUI(App):
             if transcript:
                 self._set_persona_recording_text(transcript)
 
-            if error is not None and (final or not partial_error_reported):
-                if not final:
-                    partial_error_reported = True
-                    self.safe_log(
-                        string(
-                            "ui.persona_transcription_failed",
-                            error=format_error(error, self.celune.dev),
-                        ),
-                        "warning",
-                    )
+            if (
+                error is not None
+                and (final or not partial_error_reported)
+                and not final
+            ):
+                partial_error_reported = True
+                self.safe_log(
+                    string(
+                        "ui.persona_transcription_failed",
+                        error=format_error(error, self.celune.dev),
+                    ),
+                    "warning",
+                )
 
             if not final:
                 continue
@@ -1932,10 +1955,10 @@ class CeluneUI(App):
             self._shutdown_vc_stream(stream)
             self._run_on_ui_thread(
                 lambda: self._complete_persona_transcription(
-                    transcript,
-                    prefix,
-                    error,
-                    error_already_reported=partial_error_reported and error is not None,
+                    transcript,  # noqa: B023
+                    prefix,  # noqa: B023
+                    error,  # noqa: B023
+                    error_already_reported=partial_error_reported and error is not None,  # noqa: B023
                 )
             )
             return
@@ -2580,27 +2603,37 @@ class CeluneUI(App):
 
         def submit_live_audio() -> None:
             live_source_id: Optional[int] = None
+            live_playback_generation: Optional[int] = None
 
             def queue_playback_segment(
                 audio_chunk: AudioChunk,
                 sr: int,
                 audio_label: str,
             ) -> None:
-                nonlocal live_source_id
+                nonlocal live_playback_generation, live_source_id
                 if len(audio_chunk) <= 0 or self.celune is None:
                     return
 
                 # noinspection PyBroadException
                 try:
+                    if live_source_id is None:
+                        live_playback_generation = getattr(
+                            self.celune,
+                            "_playback_generation",
+                            0,
+                        )
                     live_source_id = queue_streaming_sfx_audio(
                         self.celune,
                         np.asarray(audio_chunk, dtype=np.float32),
                         sr,
                         audio_label,
                         source_id=live_source_id,
+                        generation=live_playback_generation,
                         status_label_key="pipeline.revoicing_label",
                         reset_ready_announcement=live_source_id is None,
                     )
+                    if live_source_id is None:
+                        live_playback_generation = None
                 except Exception:
                     self.safe_log(
                         string("ui.recording_stream_submit_failed"),
@@ -2609,11 +2642,12 @@ class CeluneUI(App):
                     return
 
             def finish_playback_segment() -> None:
-                nonlocal live_source_id
+                nonlocal live_playback_generation, live_source_id
                 if self.celune is None:
                     return
                 finish_streaming_sfx_audio(self.celune, live_source_id)
                 live_source_id = None
+                live_playback_generation = None
 
             while True:
                 item = submission_queue.get()
@@ -2822,7 +2856,7 @@ class CeluneUI(App):
         """Stop live VC recording immediately for application shutdown."""
         self._shutdown_persona_recording()
         if self.celune is not None:
-            setattr(self.celune, "_exit_requested", True)
+            self.celune._exit_requested = True
 
         if not self._vc_recording_active():
             return
@@ -3150,11 +3184,10 @@ class CeluneUI(App):
                 self._graceful_exit()
                 return
 
-            if event.key in {"ctrl+j", "ctrl+enter"}:
-                if self.cancel_tutorial():
-                    event.prevent_default()
-                    event.stop()
-                    return
+            if event.key in {"ctrl+j", "ctrl+enter"} and self.cancel_tutorial():
+                event.prevent_default()
+                event.stop()
+                return
 
             if event.key == "ctrl+t":
                 if self.active_theme_name == "celune_april_fools":
@@ -3199,9 +3232,8 @@ class CeluneUI(App):
                     event.stop()
                 return
 
-            if event.key == "ctrl+j":
-                if self._submit_text(self.input_box.text):
-                    event.prevent_default()
+            if event.key == "ctrl+j" and self._submit_text(self.input_box.text):
+                event.prevent_default()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Change Celune's tone.
@@ -3363,11 +3395,10 @@ class CeluneUI(App):
         visible_lines = max(min_lines, min(line_count, max_lines))
         event.text_area.styles.height = visible_lines + 2
 
-        if self.consume_on_boundary:
-            if text and text[-1] in ".!?":
-                if text in ".!?":
-                    return
-                self.consume_buffer(len(text))
+        if self.consume_on_boundary and text and text[-1] in ".!?":
+            if text in ".!?":
+                return
+            self.consume_buffer(len(text))
 
     def _signal_handler(self, sig: int, frame: Optional[types.FrameType]) -> None:
         """Handle incoming signals."""

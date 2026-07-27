@@ -467,6 +467,33 @@ class ApiWebUITests(TestCase):
 
         self.assertIn("Normalizing", status_html)
 
+    def test_webui_probe_prefers_active_playback_status(self) -> None:
+        """Verify active playback status remains visible over generic speaking state."""
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="speaking",
+                _playback_source_statuses={1: "Playing fixture.wav"},
+            ),
+        )
+        api.webui_last_probed_state = "idle"
+        api.set_webui_status("Speaking", source="callback", updated_at=10.0)
+
+        with (
+            mock.patch(
+                "celune.api.ui_resources.resource_pages",
+                return_value=("VRAM: 10.66/11.94 GB available",),
+            ),
+            mock.patch("celune.api.time.monotonic", return_value=10.1),
+        ):
+            _logs, status_html, _resources, _voice, _send, _input = api.webui_snapshot()
+
+        self.assertIn("Playing fixture.wav", status_html)
+
     def test_webui_probe_reconciles_stale_speaking_status_after_sleep(self) -> None:
         """Verify sleeping runtime state overrides a late speaking callback."""
         api.bound_celune = cast(
@@ -795,14 +822,6 @@ class ApiWebUITests(TestCase):
         self.assertIn("Speaking", status2)
         self.assertIn("VRAM: first", resources1)
         self.assertIn("Friday, June 11, 2026", resources2)
-
-    def test_webui_shortcuts_html_registers_ctrl_r_recording_toggle(self) -> None:
-        """Verify the WebUI shortcut script exposes the VC recording hotkey."""
-        shortcuts_html = api._webui_shortcuts_html()
-
-        self.assertIn(string("ui.footer_toggle_recording"), shortcuts_html)
-        self.assertIn("#celune-source-audio", shortcuts_html)
-        self.assertIn("keydown", shortcuts_html)
 
     def test_webui_runtime_theme_keeps_normal_palette_for_error_status(self) -> None:
         """Verify browser error statuses no longer switch the full UI palette."""

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Speech pipeline dataclasses."""
 
 from __future__ import annotations
@@ -23,9 +24,7 @@ class SpeechRequest:
     display_text: str
     language: str = "Auto"
     save: bool = True
-    stream_queue: Optional[
-        "queue.Queue[Optional[Union[npt.NDArray[np.float32], Exception]]]"
-    ] = None
+    stream_queue: Optional[queue.Queue[Optional[Union[AudioChunk, Exception]]]] = None  # noqa
     normalize: bool = False
     silent_retry_count: int = 0
     generation: int = 0
@@ -83,6 +82,7 @@ class PlaybackChunk:
     audio: npt.NDArray[np.float32]
     sample_rate: int
     timing: Optional[SpeechTiming] = None
+    generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -94,6 +94,7 @@ class PlaybackSourceDone:
     notify_idle: bool = True
     saved_path: Optional[str] = None
     analysis_audio: Optional[AudioChunk] = None
+    generation: int = 0
 
 
 @dataclass

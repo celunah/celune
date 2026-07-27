@@ -214,7 +214,7 @@ def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[st
     if getattr(celune.backend, "current_seed", None) is not None:
         pages.append(format_seed(celune))
 
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(datetime.UTC)
     phase, _, days = lunar_info(now)
     suffix = "s" if int(days) != 1 else ""
 

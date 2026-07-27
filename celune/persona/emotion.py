@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Optional, Protocol, Union, cast
+from typing import Optional, cast
 
 import numpy as np
 import torch
@@ -13,8 +13,10 @@ from transformers import AutoModel, AutoModelForSequenceClassification, AutoToke
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from ..constants import PERSONA_EMOTION_MODEL, JSONSerializable
-from ..typing.aliases import EmbeddingVector, AudioChunk
+from ..constants import PERSONA_EMOTION_MODEL
+from ..typing.aliases import AudioChunk, EmbeddingVector
+from ..typing.common import JSONSerializable
+from ..typing.persona import _EmotionModelConfig
 from ..utils import discard
 
 GOEMOTIONS_LABELS: tuple[str, ...] = (
@@ -125,12 +127,6 @@ class _EmotionBackend:
     tokenizer: PreTrainedTokenizerBase
     model: PreTrainedModel
     labels: tuple[str, ...]
-
-
-class _EmotionModelConfig(Protocol):
-    """Protocol for model configs that expose emotion label mappings."""
-
-    id2label: Mapping[Union[int, str], str]
 
 
 class PersonaEmotionAnalyzer:

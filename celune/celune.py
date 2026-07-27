@@ -10,9 +10,10 @@ import shutil
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional, Protocol, Union, cast
+from typing import Optional, Union, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -39,7 +40,7 @@ from .cevoice import (
 )
 from .chroma import AudioRGBGlow
 from .config import Config, config_bool, config_value
-from .constants import APP_NAME, NORMALIZER_MODEL_ID, JSONSerializable
+from .constants import APP_NAME, NORMALIZER_MODEL_ID
 from .dataclasses.celune import (
     CELUNE_CONSTANT_PROPERTIES,
     CELUNE_FORWARDED_PROPERTIES,
@@ -128,7 +129,9 @@ from .typing.celune import (
     TTSBackendSpec,
     VCBackendSpec,
     VoiceLockStateCallback,
+    _BundleWithPath,
 )
+from .typing.common import JSONSerializable
 from .typing.events import EventName, EventPayload
 from .typing.pipeline import SpeechStreamQueue
 from .utils import custom_assert, discard, format_error, format_number, is_port_usable
@@ -141,14 +144,6 @@ from .vram import (
     resolve_vram_preset,
     validate_vram_preset,
 )
-
-
-class _BundleWithPath(Protocol):
-    """Protocol for bundle-like objects that expose a path."""
-
-    @property
-    def path(self) -> Union[str, Path]:  # noqa
-        """Return the bundle path."""
 
 
 def _config_str(value: JSONSerializable) -> Optional[str]:
@@ -1563,22 +1558,24 @@ class Celune(CeluneStateAccessors):
         self.model_ready.clear()
         self.progress_callback(0, 1)
 
-        with self._wake_background_lock:
-            with self._model_lock:
-                if unload["persona"]:
-                    self._unload_persona_state()
+        with (
+            self._wake_background_lock,
+            self._model_lock,
+        ):
+            if unload["persona"]:
+                self._unload_persona_state()
 
-                if unload["tts"]:
-                    self.unload_runtime_state(
-                        include_normalizer=unload["normalizer"],
-                        include_vc=unload["vc"],
-                    )
-                    self.model_name = ""
-                elif unload["normalizer"]:
-                    self.unload_normalizer_state()
+            if unload["tts"]:
+                self.unload_runtime_state(
+                    include_normalizer=unload["normalizer"],
+                    include_vc=unload["vc"],
+                )
+                self.model_name = ""
+            elif unload["normalizer"]:
+                self.unload_normalizer_state()
 
-                if unload["vc"] and not unload["tts"] and self.vc_backend is not None:
-                    self.vc_backend.unload_model()
+            if unload["vc"] and not unload["tts"] and self.vc_backend is not None:
+                self.vc_backend.unload_model()
 
         self.model_ready.set()
         return True
@@ -1849,7 +1846,7 @@ class Celune(CeluneStateAccessors):
         return True
 
     def _prepare_voice_change(self, name: str) -> bool:
-        """Wait for playback to drain before preparing one voice switch."""
+        """Wait for speech playback to drain before preparing one voice switch."""
         if self.exit_requested:
             return False
         if name not in self.voices:
@@ -1858,12 +1855,13 @@ class Celune(CeluneStateAccessors):
             return False
 
         self.change_input_state_callback(locked=True)
+        wait_for_speech = self._speech_playback_active()
         previous_state = self.cur_state
         self.cur_state = "reloading"
 
         if not self._model_ready.is_set():
             self.log(string("celune.waiting_for_models"))
-        if not self._wait_until_idle():
+        if not self._wait_until_idle(wait_for_speech=wait_for_speech):
             self.cur_state = previous_state
             self.change_input_state_callback(locked=False)
             return False
@@ -2233,8 +2231,30 @@ class Celune(CeluneStateAccessors):
             if not self._hot_reload_cevoice(restore_bundle, restore_voice):
                 raise BackendError("failed to restore character")
 
-    def _wait_until_idle(self, timeout: float = 30.0) -> bool:
-        """Wait until the model and playback pipeline are ready."""
+    def _speech_playback_active(self) -> bool:
+        """Return whether speech generation or a speech source is active."""
+        if self.locked or self.cur_state == "generating":
+            return True
+        if getattr(self, "_active_speech_generation", None) is not None:
+            return True
+
+        return any(
+            isinstance(metadata, dict) and metadata.get("kind") == "speech"
+            for metadata in self._playback_source_meta.values()
+        )
+
+    def _wait_until_idle(
+        self,
+        timeout: float = 30.0,
+        *,
+        wait_for_speech: Optional[bool] = None,
+    ) -> bool:
+        """Wait until the model and speech pipeline are ready.
+
+        Args:
+            timeout: Maximum time to wait for readiness.
+            wait_for_speech: Whether active speech must finish before returning.
+        """
         # don't wait a timeout while Celune is downloading a model
         ok = self._model_ready.wait(timeout=timeout)
         if not ok:
@@ -2247,24 +2267,34 @@ class Celune(CeluneStateAccessors):
             self.log(string("celune.model_unloaded_while_waiting"), "warning")
             return False
 
-        ok = self._playback_done.wait(timeout=timeout)
-        if not ok:
-            self.log(
-                string("celune.playback_idle_timeout"),
-                "warning",
-            )
-            return False
+        if wait_for_speech is None:
+            wait_for_speech = self._speech_playback_active()
+
+        if wait_for_speech:
+            ok = self._playback_done.wait(timeout=timeout)
+            if not ok:
+                self.log(
+                    string("celune.playback_idle_timeout"),
+                    "warning",
+                )
+                return False
 
         with self._say_lock:
             return (not self.locked) and self.loaded
 
     wait_until_idle = _wait_until_idle
 
-    async def wait_until_idle_async(self, timeout: float = 30.0) -> bool:
+    async def wait_until_idle_async(
+        self,
+        timeout: float = 30.0,
+        *,
+        wait_for_speech: Optional[bool] = None,
+    ) -> bool:
         """Wait until model reload and playback completion without blocking the event loop.
 
         Args:
             timeout: Maximum time to wait for model and playback readiness.
+            wait_for_speech: Whether active speech must finish before returning.
 
         Returns:
             ``True`` when Celune becomes ready before the timeout.
@@ -2280,10 +2310,14 @@ class Celune(CeluneStateAccessors):
             self.log(string("celune.model_unloaded_while_waiting"), "warning")
             return False
 
-        ok = await asyncio.to_thread(self._playback_done.wait, timeout)
-        if not ok:
-            self.log(string("celune.playback_idle_timeout"), "warning")
-            return False
+        if wait_for_speech is None:
+            wait_for_speech = self._speech_playback_active()
+
+        if wait_for_speech:
+            ok = await asyncio.to_thread(self._playback_done.wait, timeout)
+            if not ok:
+                self.log(string("celune.playback_idle_timeout"), "warning")
+                return False
 
         with self._say_lock:
             return (not self.locked) and self.loaded

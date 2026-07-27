@@ -54,10 +54,6 @@ def _blend(color: str, destination: str, amount: float) -> str:
     )
 
 
-def _darken(color: str, amount: float) -> str:
-    return _blend(color, "#000000", amount)
-
-
 def _hls_color(hue: float, lightness: float, saturation: float) -> str:
     red, green, blue = colorsys.hls_to_rgb(hue, lightness, saturation)
     return _hex(

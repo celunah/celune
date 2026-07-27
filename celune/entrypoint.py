@@ -21,6 +21,7 @@ from typing import Optional
 from celune import REVISION, __tagline__, __version__
 from celune.constants import APP_NAME, APP_SLUG, ExitCodes
 from celune.i18n import string
+from celune.watchdog import launcher_loss_requested, start_watchdog
 from celune.paths import project_root, running_compiled
 from celune.updater import apply_update_and_restart
 
@@ -48,6 +49,8 @@ _FORCE_STARTUP_DIAGNOSTICS = False
 _CELUNE_PROCESS_NAMES = frozenset(
     {"celune", "celune-bin", "celune-bin.exe", "celune.appimage", "celune.exe"}
 )
+
+start_watchdog()
 
 
 def _load_ui_test_backend() -> type:
@@ -257,7 +260,7 @@ def _doctor_distro_name(system_name: str) -> str:
 def _doctor_openrgb_path() -> Optional[Path]:
     """Resolve OpenRGB even when it was not added to PATH."""
     for binary_name in ("openrgb", "OpenRGB"):
-        binary_path = shutil.which(binary_name)  # noqa: "before Python 3.12", but Celune expects 3.12/3.13.
+        binary_path = shutil.which(binary_name)
         if binary_path:
             return Path(binary_path)
 
@@ -299,7 +302,7 @@ def _doctor_binary_path(binary_name: str) -> Optional[Path]:
     if binary_name == "openrgb":
         return _doctor_openrgb_path()
 
-    binary_path = shutil.which(binary_name)  # noqa: "before Python 3.12", but Celune expects 3.12/3.13.
+    binary_path = shutil.which(binary_name)
     return Path(binary_path) if binary_path else None
 
 
@@ -706,7 +709,7 @@ def _doctor_checks() -> list[DoctorCheck]:
         hint="Run `uv sync` to create or repair a compatible environment.",
     )
 
-    uv_path = shutil.which("uv")  # noqa: "before Python 3.12", but Celune expects 3.12/3.13.
+    uv_path = shutil.which("uv")
     _doctor_add(
         checks,
         "uv",
@@ -1079,7 +1082,7 @@ def start(verbose: bool = False, testing: bool = False) -> None:
         if runtime.supports_ansi():
             sys.stdout.write(f"\x1b]2;{string('osc.starting', app_name=APP_NAME)}\x07")
             sys.stdout.flush()
-        date = datetime.datetime.now()
+        date = datetime.datetime.now(datetime.UTC)
         if runtime.has_name_day("Celine", date) and not runtime.env_bool(
             "CELUNE_OVERRIDE_CELINE_DAY"
         ):
@@ -1262,6 +1265,9 @@ def start(verbose: bool = False, testing: bool = False) -> None:
             print(runtime.indent(string("cli.try_another_terminal"), spaces=4))
             time.sleep(5)
             sys.exit(runtime.ExitCodes.EXIT_NO_ANSI.value)
+
+        if launcher_loss_requested():
+            sys.exit(runtime.ExitCodes.EXIT_LAUNCHER_LOST.value)
     except Exception as exc:
         if exc.__class__ != runtime.No:
             stdout = getattr(sys.stdout, "underlying_stdout", sys.stdout)
@@ -1370,13 +1376,12 @@ def main(argv: Optional[list[str]] = None) -> None:
     elif args[0] == "config":
         handle_config(args[1:], resolved_argv[0])
     elif args[0] == "doctor":
-        if len(args) > 1:
-            if args[1] != "--fix":
-                print(string("cli.invalid_argument"))
-                print()
-                print(string("cli.doctor_usage", program=resolved_argv[0]))
-                print(string("cli.doctor_description", app_name=APP_NAME))
-                sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+        if len(args) > 1 and args[1] != "--fix":
+            print(string("cli.invalid_argument"))
+            print()
+            print(string("cli.doctor_usage", program=resolved_argv[0]))
+            print(string("cli.doctor_description", app_name=APP_NAME))
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
         sys.exit(run_doctor(resolved_argv))
     elif args[0] in {"help", "--help", "-h"}:
         if len(args) > 1:

@@ -24,6 +24,7 @@ from .constants import (
     VOICE_EMBEDDING_MODEL,
     remote_code_model_revision,
 )
+from .typing.aliases import AudioChunk
 from .typing.analysis import (
     EmbeddingModel,
     EmbeddingPayload,
@@ -32,7 +33,6 @@ from .typing.analysis import (
     TextConfigValue,
     VoiceMatch,
 )
-from .typing.aliases import AudioChunk
 
 matplotlib.use("Agg")
 
@@ -1041,17 +1041,3 @@ def _reference_embedding_names() -> set[str]:
 def _has_reference_embedding(voice: str) -> bool:
     """Does this voice have an embedding?"""
     return voice in _reference_embedding_names()
-
-
-def analyze_voice(voice: pathlib.Path) -> None:
-    """Analyze incoming voice artifact.
-
-    Args:
-        voice: Path to the WAV file to analyze.
-    """
-    if not voice.exists():
-        return
-
-    y, sr = load_audio(voice)
-    reference_voice = voice.stem if _has_reference_embedding(voice.stem) else None
-    _analyze_voice_data(y, sr, voice, voice.parent, voice.stem, reference_voice)

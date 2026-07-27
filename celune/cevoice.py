@@ -11,9 +11,10 @@ import shutil
 import struct
 import tempfile
 import threading
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO, Callable, Final, Mapping, Optional, Union, cast
+from typing import BinaryIO, Final, Optional, Union, cast
 
 from .exceptions import CEVoiceError
 from .paths import project_root, temp_data_dir, voices_data_dir
@@ -353,7 +354,7 @@ def write_cevoice(
     manifest_voices: VoiceManifest = {}
     unknown_voice_metadata = set(voice_metadata or {}) - set(voices)
     if unknown_voice_metadata:
-        unknown = sorted(unknown_voice_metadata)[0]
+        unknown = sorted(unknown_voice_metadata)[0]  # noqa: FURB192
         raise CEVoiceError(f"voice metadata provided for unknown voice '{unknown}'")
 
     for voice, assets in voices.items():

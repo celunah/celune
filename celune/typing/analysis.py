@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Analysis-specific protocols and type aliases."""
 
 from collections.abc import Mapping

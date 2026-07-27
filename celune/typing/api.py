@@ -1,9 +1,10 @@
+# SPDX-License-Identifier: MIT
 """API-specific type aliases."""
 
 from typing import Literal, Optional, Union
 
-from .common import JSONSerializable
 from .aliases import AudioChunk, AudioChunkNonNormalized
+from .common import JSONSerializable
 
 type WebUiUpdate = dict[str, JSONSerializable]
 type WebUiAudioValue = Optional[tuple[int, AudioChunk]]

@@ -21,8 +21,9 @@ from celune import colors, runtime
 from celune.backends.tts.qwen3 import Qwen3
 from celune.celune import Celune
 from celune.config import Config
-from celune.constants import APP_NAME, COST_EQUIVALENTS, JSONSerializable
+from celune.constants import APP_NAME, COST_EQUIVALENTS
 from celune.i18n import string
+from celune.typing.common import JSONSerializable
 from celune.ui import app as ui_app
 from celune.ui import resources as ui_resources
 from celune.ui import terminal as ui_terminal
@@ -318,9 +319,9 @@ class UICommandTests(TestCase):
         self._process_command("vcpitch", ["clear"])
 
         self.assertEqual(self.ui.celune.vc_f0_condition, True)
-        self.assertEqual(getattr(self.ui.celune.vc_backend, "f0_condition"), True)
+        self.assertEqual(self.ui.celune.vc_backend.f0_condition, True)
         self.assertEqual(self.ui.celune.vc_pitch_shift, 0)
-        self.assertEqual(getattr(self.ui.celune.vc_backend, "pitch_shift"), 0)
+        self.assertEqual(self.ui.celune.vc_backend.pitch_shift, 0)
         self.assertEqual(self.logs[-3], ("Voice conversion mode set to Sing.", "info"))
         self.assertEqual(
             self.logs[-2],
@@ -1382,6 +1383,29 @@ class UIStartupTests(TestCase):
                 self.stop = mock.Mock()
                 self.close = mock.Mock()
 
+        def queue_streaming_segment(
+            _engine: Celune,
+            audio: np.ndarray,
+            sample_rate: int,
+            label: str,
+            source_id: Optional[int] = None,
+            generation: Optional[int] = None,
+            reset_ready_announcement: bool = False,
+        ) -> int:
+            """Capture one converted segment submitted for playback."""
+            discard(_engine)
+            discard(generation)
+            queued_segments.append(
+                (
+                    np.asarray(audio, dtype=np.float32).copy(),
+                    sample_rate,
+                    label,
+                    source_id,
+                    reset_ready_announcement,
+                )
+            )
+            return 1 if source_id is None else source_id
+
         with (
             mock.patch(
                 "celune.ui.app.sd.query_devices",
@@ -1397,18 +1421,7 @@ class UIStartupTests(TestCase):
             ) as mock_input_stream,
             mock.patch(
                 "celune.ui.app.queue_streaming_sfx_audio",
-                side_effect=lambda engine, audio, sample_rate, label, source_id=None, reset_ready_announcement=False: (
-                    queued_segments.append(
-                        (
-                            np.asarray(audio, dtype=np.float32).copy(),
-                            sample_rate,
-                            label,
-                            source_id,
-                            reset_ready_announcement,
-                        )
-                    )
-                    or (1 if source_id is None else source_id)
-                ),
+                side_effect=queue_streaming_segment,
             ),
             mock.patch(
                 "celune.ui.app.finish_streaming_sfx_audio",
@@ -2042,6 +2055,22 @@ class UIStartupTests(TestCase):
         cast(mock.Mock, ui.celune.close).assert_called_once_with()
         ui.exit.assert_called_once_with()
 
+    def test_launcher_loss_uses_graceful_exit_path(self) -> None:
+        """Verify a launcher disconnect routes through normal UI cleanup."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui.celune = cast(Celune, SimpleNamespace(close=mock.Mock()))
+        ui._shutdown_live_vc_recording = mock.Mock()
+        ui.exit = mock.Mock()
+
+        with mock.patch("celune.ui.app.launcher_loss_requested", return_value=True):
+            ui._check_launcher_loss()
+
+        self.assertEqual(ui.cur_state, "exiting")
+        ui._shutdown_live_vc_recording.assert_called_once_with()
+        cast(mock.Mock, ui.celune.close).assert_called_once_with()
+        ui.exit.assert_called_once_with()
+
     def test_start_vc_recording_logs_ambiguous_input_device_as_warning(self) -> None:
         """Verify ambiguous VC input device matches do not bubble up as exceptions."""
         ui = CeluneUI()
@@ -2289,8 +2318,10 @@ class UIStartupTests(TestCase):
             captured,
             [
                 (
-                    "Internal runtime warning: triton not found; flop counting "
-                    "will not work for triton kernels",
+                    (
+                        "Internal runtime warning: triton not found; flop counting "
+                        "will not work for triton kernels"
+                    ),
                     "warning",
                 )
             ],
@@ -2315,8 +2346,10 @@ class UIStartupTests(TestCase):
             captured,
             [
                 (
-                    "Internal runtime warning: triton not found; flop counting "
-                    "will not work for triton kernels",
+                    (
+                        "Internal runtime warning: triton not found; flop counting "
+                        "will not work for triton kernels"
+                    ),
                     "warning",
                 )
             ],
@@ -2338,8 +2371,10 @@ class UIStartupTests(TestCase):
             captured,
             [
                 (
-                    "Internal runtime error: download failed because the "
-                    "connection dropped",
+                    (
+                        "Internal runtime error: download failed because the "
+                        "connection dropped"
+                    ),
                     "error",
                 )
             ],
@@ -2442,6 +2477,33 @@ class UIStartupTests(TestCase):
         ui.advance_status_marquee()
 
         self.assertEqual(first, fake_status.rendered)
+
+    def test_status_ticker_recovers_active_playback_status(self) -> None:
+        """Verify the TUI ticker displays the active playback-source status."""
+
+        class FakeLabel:
+            """Tiny fake status label for the playback ticker."""
+
+            def __init__(self) -> None:
+                self.size = SimpleNamespace(width=40)
+                self.styles = SimpleNamespace(color=None)
+                self.rendered = ""
+
+            def update(self, value: str) -> None:
+                """Capture the rendered status."""
+                self.rendered = value
+
+        ui = CeluneUI()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(_playback_source_statuses={1: "Playing fixture.wav"}),
+        )
+        ui.status = cast(Label, FakeLabel())
+
+        ui.advance_status_marquee()
+
+        self.assertEqual(ui._status_text, "Playing fixture.wav")
+        self.assertIn("Playing fixture.wav", cast(FakeLabel, ui.status).rendered)
 
     def test_safe_status_repaints_terminal_accent_for_error(self) -> None:
         """Verify error status repaints the terminal shell accent to the error color."""

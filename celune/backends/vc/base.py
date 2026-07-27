@@ -2,7 +2,7 @@
 """Unified voice-conversion backend abstractions for Celune."""
 
 from abc import ABC, abstractmethod
-from typing import Callable
+from collections.abc import Callable
 
 from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
@@ -24,11 +24,9 @@ class CeluneVCBackend(ABC):
 
     def preload_models(self) -> None:
         """Ensure any optional backend assets are ready before conversion."""
-        return None
 
     def unload_model(self) -> None:
         """Release optional backend runtime state."""
-        return None
 
     @abstractmethod
     def convert(self, request: VoiceConversionRequest) -> AudioOutput:

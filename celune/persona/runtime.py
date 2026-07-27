@@ -21,10 +21,10 @@ from transformers.tokenization_utils_base import BatchEncoding
 from ..constants import (
     N_A_STR,
     PERSONA_MODEL_ID,
-    JSONSerializable,
     remote_code_model_revision,
 )
 from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
+from ..typing.common import JSONSerializable
 from ..typing.persona import (
     ChatMessagePayload,
     ChatTemplateRenderer,
@@ -263,7 +263,7 @@ class PersonaBackend:
         try:
             inputs = self._build_inputs(message_dicts)
             model_inputs = {
-                str(key): cast(torch.Tensor, value)
+                str(key): cast(torch.Tensor, value)  # noqa
                 for key, value in dict(inputs).items()
             }
             generation_kwargs: dict[str, int] = {}
@@ -282,7 +282,7 @@ class PersonaBackend:
                     **generation_kwargs,
                 )
 
-            input_ids = cast(torch.Tensor, inputs["input_ids"])
+            input_ids = cast(torch.Tensor, inputs["input_ids"])  # noqa
             new_ids = output_ids[0, input_ids.shape[1] :]
             text = normalize_special_characters(
                 tokenizer.decode(new_ids, skip_special_tokens=True).strip()

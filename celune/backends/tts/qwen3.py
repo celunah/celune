@@ -3,15 +3,15 @@
 
 import contextlib
 import time
-from collections.abc import Iterator
-from typing import Callable, Optional
+from collections.abc import Callable, Iterator
+from typing import Optional
 
 from faster_qwen3_tts import FasterQwen3TTS
 from faster_qwen3_tts import __version__ as qwen3_ver  # noqa
 
 from ...cevoice import CEVoiceLoader, default_loader
-from ...utils import custom_assert
 from ...typing.aliases import AudioChunk
+from ...utils import custom_assert
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
 

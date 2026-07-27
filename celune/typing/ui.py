@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """UI protocol definitions."""
 
 from typing import TYPE_CHECKING, Optional, Protocol

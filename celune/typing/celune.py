@@ -1,9 +1,11 @@
+# SPDX-License-Identifier: MIT
 """Core Celune protocols and callback types."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import TYPE_CHECKING, Callable, Optional, Protocol, Union
+from collections.abc import Callable, Iterator
+from pathlib import Path
+from typing import TYPE_CHECKING, Optional, Protocol, Union
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
@@ -17,7 +19,6 @@ if TYPE_CHECKING:
 
     import sounddevice as sd
 
-    from .aliases import AudioChunks
     from ..backends.tts import BackendModel, CeluneBackend
     from ..backends.vc import CeluneVCBackend
     from ..cevoice import CEVoicePersona
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from ..dsp import StreamingPedalboardReverb
     from ..extensions.manager import CeluneExtensionManager
     from ..persona.impl import PersonaClient
+    from .aliases import AudioChunks
 
 
 type GenerationKwarg = Union[torch.Tensor, int, bool, None]
@@ -236,6 +238,7 @@ class CeluneStateAccessors:
     _queue_lock: threading.Lock
     _utterance_force_stop: threading.Event
     _speech_generation: int
+    _playback_generation: int
     _next_playback_source_id: int
     _playback_source_statuses: dict[int, str]
     _playback_source_meta: dict[int, dict[str, Union[str, float]]]
@@ -312,7 +315,7 @@ class CeluneStateAccessors:
         """Return the queue receiving Persona input text.
 
         Returns:
-            Result of this function.
+            queue.Queue: Celune's current Persona queue.
         """
         return self._persona_queue
 
@@ -321,6 +324,14 @@ class CeluneStateAccessors:
         """Return the current speech-generation counter.
 
         Returns:
-            Result of this function.
+            int: Celune's current speech-generation counter.
         """
         return self._speech_generation
+
+
+class _BundleWithPath(Protocol):
+    """Protocol for bundle-like objects that expose a path."""
+
+    @property
+    def path(self) -> Union[str, Path]:  # noqa
+        """Return the bundle path."""

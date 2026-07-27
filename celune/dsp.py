@@ -2,7 +2,7 @@
 """Celune audio processing functions."""
 
 import math
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
 
 import numpy as np
 from pedalboard import Pedalboard, PitchShift, Reverb

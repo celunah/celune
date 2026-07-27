@@ -96,8 +96,11 @@ dev = [
     # Docstrings matter, so everyone can read the code more easily.
     "docstr-coverage",
     "ruff",
+    # How many useless functions do we have?
+    "vulture",
     # This package is required to compile Celune into a properly packaged binary, bypassing the need to run Python.
-    "nuitka>=4.1.2",
+    # Canonically pinned, I know. 412 is her number, Nuitka happened to be on that version.
+    "nuitka==4.1.2",
     # If not installed, type checkers may complain.
     "types-pyyaml",
     "types-psutil",
@@ -196,3 +199,6 @@ filterwarnings = [
      "ignore:CeluneExtension\\.autostart\\(\\) is deprecated and will be removed in Celune 5\\.0\\.0, please use @celune\\.subscribe\\('ready'\\) instead:DeprecationWarning",
      "ignore:CeluneExtensionManager\\.autostart_all\\(\\) is deprecated and will be removed in Celune 5\\.0\\.0, please use @celune\\.subscribe\\('ready'\\) in your extensions instead:DeprecationWarning",
 ]
+
+[tool.ruff.lint]
+ignore=["RUF100", "UP007", "UP045", "BLE001", "I001", "B008"]

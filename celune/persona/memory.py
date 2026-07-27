@@ -17,9 +17,10 @@ import torch
 import torch.nn.functional as f
 from transformers import AutoModel, AutoTokenizer
 
-from ..constants import PERSONA_MEMORY_EMBEDDING_MODEL, JSONSerializable
+from ..constants import PERSONA_MEMORY_EMBEDDING_MODEL
 from ..paths import persona_data_dir
-from ..typing.aliases import EmbeddingVector, EmbeddingBackend
+from ..typing.aliases import EmbeddingBackend, EmbeddingVector
+from ..typing.common import JSONSerializable
 from .paths import persona_character_slug
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
@@ -60,7 +61,7 @@ _FAILED_EMBEDDING_MODELS: set[str] = set()
 
 def _utc_now() -> str:
     """Return the current UTC timestamp in ISO 8601 format."""
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return datetime.datetime.now(datetime.UTC).isoformat()
 
 
 def _normalize_text(text: str) -> str:
@@ -573,9 +574,7 @@ class PersonaMemoryStore:
     def _explicit_candidate(text: str) -> Optional[MemoryCandidate]:
         """Return one explicit memory candidate when the user asks to remember."""
         lowered = text.casefold()
-        if lowered.startswith("do you remember") or lowered.startswith(
-            "what do you remember"
-        ):
+        if lowered.startswith(("do you remember", "what do you remember")):
             return None
 
         patterns = (

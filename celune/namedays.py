@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Name day list derived from Polish name days, translated to English, and with Polish-only names removed."""
 
-from collections.abc import Iterator
 from datetime import date, datetime
 from typing import Union
 
@@ -464,13 +463,3 @@ def has_name_day(name: str, value: Union[date, datetime, str]) -> bool:
     """
     needle = name.casefold()
     return any(n.casefold() == needle for n in get_names_for_date(value))
-
-
-def iter_name_days() -> Iterator[tuple[str, list[str]]]:
-    """Iterate over ``(MM-DD, names)`` pairs.
-
-    Returns:
-        Iterator[tuple[str, list[str]]]: A generator that yields each date key followed by its corresponding list of
-        names.
-    """
-    yield from NAME_DAYS.items()

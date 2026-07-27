@@ -30,11 +30,11 @@ def render_markdown_subsection(heading: str, content: str) -> str:
     """Return one Markdown subsection with consistent heading spacing.
 
     Args:
-        heading: Value for `heading`.
-        content: Value for `content`.
+        heading: The heading to be rendered.
+        content: The content to be rendered.
 
     Returns:
-        Result of this function.
+        str: The rendered Markdown subsection.
     """
     lines = content.strip().splitlines()
     normalized_lines: list[str] = []

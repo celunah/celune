@@ -104,6 +104,6 @@ class AudioServerTests(TestCase):
         with (
             mock.patch.object(audio.os, "name", "posix"),
             mock.patch.object(audio.sys, "platform", "darwin"),
+            self.assertRaisesRegex(RuntimeError, "unsupported platform"),
         ):
-            with self.assertRaisesRegex(RuntimeError, "unsupported platform"):
-                audio.restart_audio_server()
+            audio.restart_audio_server()

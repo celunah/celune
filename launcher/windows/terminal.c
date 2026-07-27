@@ -3,13 +3,26 @@
 #include <windows.h>
 #include <conio.h>
 
+#include <stdio.h>
+
+static volatile LONG startup_interrupted = 0;
+
 static BOOL WINAPI ignore_console_interrupt(DWORD event_type) {
-    return event_type == CTRL_C_EVENT || event_type == CTRL_BREAK_EVENT;
+    if (event_type == CTRL_C_EVENT || event_type == CTRL_BREAK_EVENT) {
+        InterlockedExchange(&startup_interrupted, 1);
+        return TRUE;
+    }
+
+    return FALSE;
 }
 
 static DWORD saved_console_input_mode = 0;
 static DWORD saved_console_output_mode = 0;
 static BOOL saved_console_modes = FALSE;
+
+int launcher_startup_was_interrupted(void) {
+    return InterlockedCompareExchange(&startup_interrupted, 0, 0) != 0;
+}
 
 void launcher_setup_terminal(void) {
     HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
@@ -64,6 +77,8 @@ void launcher_reset_terminal_state(void) {
 }
 
 void launcher_wait_after_failure(void) {
+    fputs("\nPress any key to exit.\n", stderr);
+    fflush(stderr);
     _getch();
 }
 

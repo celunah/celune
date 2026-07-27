@@ -1,12 +1,10 @@
+# SPDX-License-Identifier: MIT
 """Property helpers for grouped Celune runtime state."""
 
 from dataclasses import dataclass
-from enum import Enum
-from typing import Optional, Union
+from typing import Optional
 
-from ..typing.common import JSONSerializable
-
-type ConstantPropertyValue = Union[JSONSerializable, Enum]
+from ..typing.aliases import ConstantPropertyValue
 
 
 @dataclass(frozen=True, slots=True)

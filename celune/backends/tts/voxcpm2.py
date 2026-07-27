@@ -4,16 +4,16 @@
 import contextlib
 import os
 import time
-from collections.abc import Iterator
-from typing import Callable, Generator, Mapping, Optional
+from collections.abc import Callable, Generator, Iterator, Mapping
+from typing import Optional
 
 import numpy as np
 from voxcpm import VoxCPM
 
 from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import BASE_SR
-from ...utils import custom_assert
 from ...typing.aliases import AudioChunk, AudioChunks
+from ...utils import custom_assert
 from . import get_version
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 
@@ -136,10 +136,12 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
     @contextlib.contextmanager
     def _suppress_backend_output() -> Generator[None, None, None]:
         """Suppress unnecessary backend output."""
-        with open(os.devnull, "w", encoding="utf-8") as devnull:
-            with contextlib.redirect_stdout(devnull):
-                with contextlib.redirect_stderr(devnull):
-                    yield
+        with (
+            open(os.devnull, "w", encoding="utf-8") as devnull,
+            contextlib.redirect_stdout(devnull),
+            contextlib.redirect_stderr(devnull),
+        ):
+            yield
 
     suppress_backend_output = _suppress_backend_output
 
@@ -195,13 +197,12 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         # torch.use_deterministic_algorithms(True)
 
         if available and path is not None:
-            with local_hf_offline_mode():
-                with self._suppress_backend_output():
-                    self.model = VoxCPM.from_pretrained(
-                        path,
-                        load_denoiser=kwargs.get("load_denoiser", False),
-                        optimize=kwargs.get("optimize", False),
-                    )
+            with local_hf_offline_mode(), self._suppress_backend_output():
+                self.model = VoxCPM.from_pretrained(
+                    path,
+                    load_denoiser=kwargs.get("load_denoiser", False),
+                    optimize=kwargs.get("optimize", False),
+                )
 
             return self.model
 

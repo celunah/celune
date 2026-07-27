@@ -14,49 +14,28 @@ import threading
 import time
 import urllib.request
 import zipfile
-from collections.abc import Generator, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping
 from pathlib import Path
 from types import ModuleType
-from typing import Callable, Optional, Protocol, Union, cast
+from typing import Optional, Union, cast
 
-from huggingface_hub import snapshot_download
 import numpy as np
 import soundfile as sf
 import torch
+from huggingface_hub import snapshot_download
 
 from ...cevoice import CEVoiceLoader, default_loader
-from ...constants import JSONSerializable
 from ...i18n import string
 from ...paths import (
     app_data_dir,
     huggingface_hub_cache_dir,
     project_root,
 )
-from ...typing.aliases import RuntimeValue, AudioChunk, AudioChunkNonNormalized
+from ...typing.aliases import AudioChunk, AudioChunkNonNormalized, RuntimeValue
+from ...typing.backends import GPTSoVITSPipeline, _GPTSoVITSConfig
+from ...typing.common import JSONSerializable
 from ...utils import custom_assert
 from .base import CeluneBackend
-
-
-class GPTSoVITSPipeline(Protocol):
-    """Subset of the official GPT-SoVITS pipeline used by Celune."""
-
-    def run(self, inputs: dict[str, JSONSerializable]) -> Iterator[RuntimeValue]:
-        """Run one GPT-SoVITS request and yield audio tuples.
-
-        Args:
-            inputs: Request dictionary containing text, language, reference audio, prompt metadata, and inference
-                controls.
-
-        Returns:
-            Iterator[RuntimeValue]: GPT-SoVITS sample-rate/audio pairs.
-        """
-
-    def stop(self) -> None:
-        """Stop the active inference operation."""
-
-
-class _GPTSoVITSConfig(Protocol):
-    """Constructor surface of GPT-SoVITS' ``TTS_Config`` class."""
 
 
 class _GPTSoVITSRuntime:
@@ -256,9 +235,11 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                         cls._source_archive_url,
                         headers={"User-Agent": "Celune"},
                     )
-                    with urllib.request.urlopen(request, timeout=120) as response:
-                        with archive_path.open("wb") as archive_file:
-                            shutil.copyfileobj(response, archive_file)
+                    with (
+                        urllib.request.urlopen(request, timeout=120) as response,
+                        archive_path.open("wb") as archive_file,
+                    ):
+                        shutil.copyfileobj(response, archive_file)
 
                     extraction_root = temp_root / "extracted"
                     extraction_root.mkdir()
@@ -481,8 +462,8 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         nltk_module: ModuleType, paths: tuple[str, ...]
     ) -> bool:
         """Return whether any known path for one NLTK resource is available."""
-        data = getattr(nltk_module, "data")
-        find = getattr(data, "find")
+        data = nltk_module.data
+        find = data.find
         for path in paths:
             try:
                 find(path)
@@ -521,13 +502,15 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         model_path = cache_dir / self._fast_langdetect_model_name
 
         source_cache = self.root / "GPT_SoVITS/pretrained_models/fast_langdetect"
-        if source_cache.exists():
-            if source_cache.resolve() != cache_dir.resolve():
-                if not source_cache.is_symlink():
-                    raise RuntimeError(
-                        string("gpt_sovits.cache_path_occupied", path=source_cache)
-                    )
-                source_cache.unlink()
+        if (
+            source_cache.exists()
+            and source_cache.resolve() != cache_dir.resolve()
+            and not source_cache.is_symlink()
+        ):
+            raise RuntimeError(
+                string("gpt_sovits.cache_path_occupied", path=source_cache)
+            )
+        source_cache.unlink()
         if not source_cache.exists():
             source_cache.parent.mkdir(parents=True, exist_ok=True)
             try:
@@ -632,10 +615,12 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
     @contextlib.contextmanager
     def _suppress_backend_output() -> Generator[None, None, None]:
         """Suppress GPT-SoVITS diagnostic output while preserving Celune logs."""
-        with open(os.devnull, "w", encoding="utf-8") as devnull:
-            with contextlib.redirect_stdout(devnull):
-                with contextlib.redirect_stderr(devnull):
-                    yield
+        with (
+            open(os.devnull, "w", encoding="utf-8") as devnull,
+            contextlib.redirect_stdout(devnull),
+            contextlib.redirect_stderr(devnull),
+        ):
+            yield
 
     suppress_backend_output = _suppress_backend_output
 
@@ -737,35 +722,36 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                 )
             )
 
-        if self._custom_t2s_weights_path is not None:
-            if not self._custom_t2s_weights_path.is_file():
-                raise FileNotFoundError(
-                    string(
-                        "gpt_sovits.custom_t2s_weights_not_found",
-                        path=self._custom_t2s_weights_path,
-                    )
+        if (
+            self._custom_t2s_weights_path is not None
+            and not self._custom_t2s_weights_path.is_file()
+        ):
+            raise FileNotFoundError(
+                string(
+                    "gpt_sovits.custom_t2s_weights_not_found",
+                    path=self._custom_t2s_weights_path,
                 )
+            )
 
         self._ensure_cached_model_links()
         self._ensure_nltk_data()
-        with self._suppress_backend_output():
-            with self._source_context():
-                module = importlib.import_module("GPT_SoVITS.TTS_infer_pack.TTS")
-                config_type = cast(
-                    Callable[[dict[str, JSONSerializable]], _GPTSoVITSConfig],
-                    getattr(module, "TTS_Config"),
-                )
-                pipeline_type = cast(
-                    Callable[[_GPTSoVITSConfig], GPTSoVITSPipeline],
-                    getattr(module, "TTS"),
-                )
-                config = config_type(self._model_config(variant))
-                setattr(
-                    config,
-                    "configs_path",
-                    str(self.root / "GPT_SoVITS/configs/tts_infer.yaml"),
-                )
-                pipeline = pipeline_type(config)
+        with self._suppress_backend_output(), self._source_context():
+            module = importlib.import_module("GPT_SoVITS.TTS_infer_pack.TTS")
+            config_type = cast(
+                Callable[[dict[str, JSONSerializable]], _GPTSoVITSConfig],
+                module.TTS_Config,
+            )
+            pipeline_type = cast(
+                Callable[[_GPTSoVITSConfig], GPTSoVITSPipeline],
+                module.TTS,
+            )
+            config = config_type(self._model_config(variant))
+            setattr(
+                config,
+                "configs_path",
+                str(self.root / "GPT_SoVITS/configs/tts_infer.yaml"),
+            )
+            pipeline = pipeline_type(config)
 
         sample_rate = 48000 if variant == "v4" else 32000
         return _GPTSoVITSRuntime(pipeline, variant, sample_rate)
@@ -905,9 +891,8 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         request: dict[str, JSONSerializable],
     ) -> Iterator[RuntimeValue]:
         """Run GPT-SoVITS while its relative runtime paths are active."""
-        with self._suppress_backend_output():
-            with self._source_context():
-                yield from pipeline.run(request)
+        with self._suppress_backend_output(), self._source_context():
+            yield from pipeline.run(request)
 
     @staticmethod
     def _refresh_prompt_cache(

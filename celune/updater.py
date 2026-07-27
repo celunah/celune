@@ -177,10 +177,9 @@ def _run_git(args: list[str], timeout: int = 15) -> str:
         ["git", *args],
         cwd=_repo_root(),
         check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
         text=True,
         timeout=timeout,
+        capture_output=True,
     )
     return result.stdout.strip()
 
@@ -390,9 +389,11 @@ def _download_to_file(url: str, destination: Path) -> None:
         url,
         headers={"User-Agent": CELUNE_UA},
     )
-    with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:
-        with destination.open("wb") as handle:
-            shutil.copyfileobj(response, handle)
+    with (
+        urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response,
+        destination.open("wb") as handle,
+    ):
+        shutil.copyfileobj(response, handle)
 
 
 def _download_release_zip(release: ReleaseInfo, destination: Path) -> None:

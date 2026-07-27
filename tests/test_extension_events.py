@@ -229,7 +229,7 @@ class ManagerEventTests(TestCase):
             module = sys.modules["user_extension_fixture"]
             self.dispatcher.emit("ready", ReadyEvent(celune=mock.Mock(spec=Celune)))
 
-        self.assertEqual(getattr(module, "EVENTS"), ["ReadyEvent"])
+        self.assertEqual(module.EVENTS, ["ReadyEvent"])
 
 
 class EngineEventIntegrationTests(TestCase):
@@ -309,8 +309,9 @@ class EngineEventIntegrationTests(TestCase):
         second_bundle.metadata = {"name": "Nova", "default_voice": "bold"}
         second_loader = mock.Mock(bundle=second_bundle)
 
-        with mock.patch("celune.celune.select_voice_bundle"):
-            with mock.patch(
+        with (
+            mock.patch("celune.celune.select_voice_bundle"),
+            mock.patch(
                 "celune.celune.default_loader",
                 side_effect=[
                     None,
@@ -320,10 +321,11 @@ class EngineEventIntegrationTests(TestCase):
                     second_loader,
                     None,
                 ],
-            ):
-                self.assertEqual(celune.load_voice_bundle(Path("celune.cevoice")), True)
-                self.assertEqual(celune.load_voice_bundle(Path("nova.cevoice")), True)
-                self.assertEqual(celune.load_voice_bundle(None), True)
+            ),
+        ):
+            self.assertEqual(celune.load_voice_bundle(Path("celune.cevoice")), True)
+            self.assertEqual(celune.load_voice_bundle(Path("nova.cevoice")), True)
+            self.assertEqual(celune.load_voice_bundle(None), True)
 
         self.assertEqual(len(loaded_events), 1)
         self.assertEqual(loaded_events[0].character_name, "Celune")

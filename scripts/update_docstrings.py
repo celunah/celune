@@ -4,9 +4,10 @@
 import ast
 import re
 import textwrap
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional, Union
+from typing import Optional, Union
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = [
@@ -36,6 +37,8 @@ class Replacement:
 SECTION_PATTERN = re.compile(
     r"^(Args|Arguments|Parameters|Returns|Yields|Raises)\s*:\s*$"
 )
+ARG_PLACEHOLDER_PATTERN = re.compile(r"Value for `[^`]+`\.")
+RAISE_PLACEHOLDER_PATTERN = re.compile(r"If `[^`]+` needs to be raised\.")
 MAX_LINE_LENGTH = 120
 
 
@@ -60,6 +63,16 @@ def normalize_sentence(text: str) -> str:
 
 def clean_inline(text: str) -> str:
     return " ".join(text.strip().split())
+
+
+def contains_placeholders(doc: str) -> bool:
+    """Return whether a docstring contains one of the generator placeholders."""
+    return (
+        "Describe this function." in doc
+        or "Result of this function." in doc
+        or ARG_PLACEHOLDER_PATTERN.search(doc) is not None
+        or RAISE_PLACEHOLDER_PATTERN.search(doc) is not None
+    )
 
 
 def wrap_doc_line(
@@ -212,11 +225,10 @@ def has_non_none_return(root: ast.AST) -> bool:
             return
 
         def visit_Return(self, node: ast.Return) -> None:
-            if node.value is not None:
-                if not (
-                    isinstance(node.value, ast.Constant) and node.value.value is None
-                ):
-                    self.found = True
+            if node.value is not None and not (
+                isinstance(node.value, ast.Constant) and node.value.value is None
+            ):
+                self.found = True
 
     collector = ReturnCollector()
     collector.visit(root)
@@ -250,7 +262,7 @@ def arg_description(name: str, parsed: ParsedDoc) -> str:
 
 
 def raise_description(name: str, parsed: ParsedDoc) -> str:
-    if name in parsed.raises and parsed.raises[name]:
+    if name in parsed.raises and parsed.raises.get(name):
         return parsed.raises[name]
     return f"If `{name}` needs to be raised."
 
@@ -370,6 +382,12 @@ def collect_replacements(source: str, tree: ast.AST) -> list[Replacement]:
                 self.parents.pop()
                 return
 
+            if not contains_placeholders(doc_expr.value.value):
+                self.parents.append(("func", node.name))
+                self.generic_visit(node)
+                self.parents.pop()
+                return
+
             kind = function_kind(self.parents, node.name)
             parsed = parse_docstring(doc_expr.value.value)
             start = line_offsets[doc_expr.lineno - 1]
@@ -405,7 +423,9 @@ def collect_replacements(source: str, tree: ast.AST) -> list[Replacement]:
 
 
 def rewrite_file(path: Path) -> bool:
-    source = path.read_text(encoding="utf-8")
+    with path.open("r", encoding="utf-8", newline="") as source_file:
+        source = source_file.read()
+    newline = "\r\n" if "\r\n" in source else "\n"
     tree = ast.parse(source)
     replacements = collect_replacements(source, tree)
     if not replacements:
@@ -416,9 +436,12 @@ def rewrite_file(path: Path) -> bool:
         updated = (
             updated[: replacement.start] + replacement.text + updated[replacement.end :]
         )
+    if newline == "\r\n":
+        updated = updated.replace("\r\n", "\n").replace("\n", newline)
 
     if updated != source:
-        path.write_text(updated, encoding="utf-8")
+        with path.open("w", encoding="utf-8", newline="") as output_file:
+            output_file.write(updated)
         return True
     return False
 

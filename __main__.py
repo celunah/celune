@@ -1,5 +1,6 @@
-import sys
+# SPDX-License-Identifier: MIT
 import os
+import sys
 
 if os.name == "nt":
     possible_entrypoints: list[str] = ["`bin\\celune.exe`", "`bin\\celune`"]

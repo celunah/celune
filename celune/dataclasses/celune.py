@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Grouped Celune runtime state containers and property specs."""
 
 import queue
@@ -14,7 +15,7 @@ from ..backends.vc import CeluneVCBackend
 from ..cevoice import CEVoicePersona
 from ..chroma import AudioRGBGlow
 from ..config import Config
-from ..constants import JSONSerializable, PipelineStates
+from ..constants import PipelineStates
 from ..dsp import StreamingPedalboardReverb
 from ..extensions.manager import CeluneExtensionManager
 from ..persona.impl import PersonaClient
@@ -32,6 +33,7 @@ from ..typing.celune import (
     VoiceChangedCallback,
     VoiceLockStateCallback,
 )
+from ..typing.common import JSONSerializable
 from .properties import ConstantPropertySpec, ForwardedPropertySpec
 
 
@@ -113,6 +115,7 @@ class CelunePipelineState:
     queue_lock: threading.Lock = field(default_factory=threading.Lock)
     utterance_force_stop: threading.Event = field(default_factory=threading.Event)
     speech_generation: int = 0
+    playback_generation: int = 0
     next_playback_source_id: int = 0
     playback_source_statuses: dict[int, str] = field(default_factory=dict)
     playback_source_meta: dict[int, dict[str, Union[str, float]]] = field(
@@ -254,6 +257,9 @@ CELUNE_FORWARDED_PROPERTIES = (
         "utterance_force_stop",
     ),
     ForwardedPropertySpec("_speech_generation", "_pipeline_state", "speech_generation"),
+    ForwardedPropertySpec(
+        "_playback_generation", "_pipeline_state", "playback_generation"
+    ),
     ForwardedPropertySpec(
         "_next_playback_source_id",
         "_pipeline_state",
