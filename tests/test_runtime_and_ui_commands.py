@@ -991,6 +991,26 @@ class UIStartupTests(TestCase):
 
         self.assertEqual(captured, [])
 
+    def test_runtime_log_filters_transformers_ignored_generation_flags(self) -> None:
+        """Verify harmless Transformers generation-flag warnings stay out of the UI log."""
+        stream = mock.Mock()
+        stream.isatty.return_value = True
+        captured: list[tuple[str, str]] = []
+        redirect = ui_terminal.LogRedirect(
+            stdout=stream,
+            stderr=stream,
+            write_callback=lambda msg, severity: captured.append((msg, severity)),
+            default_severity="warning",
+            filter_messages=ui_app._RUNTIME_LOG_REDIRECT_FILTER_MESSAGES,
+        )
+
+        redirect.write(
+            "Internal runtime warning: The following generation flags are not valid "
+            "and may be ignored: ['temperature', 'top_k'].\n"
+        )
+
+        self.assertEqual(captured, [])
+
     def test_log_redirect_suppresses_tqdm_progress_lines(self) -> None:
         """Verify tqdm carriage-return progress lines are filtered out."""
         stream = mock.Mock()

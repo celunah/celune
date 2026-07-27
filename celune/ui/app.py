@@ -112,6 +112,7 @@ _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
         "Loading Text2Semantic Weights from",
         "min value is",
         "max value is",
+        "generation flags are not valid and may be ignored:",
         "it/s]",
         "s/it]",
     }

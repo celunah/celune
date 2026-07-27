@@ -54,6 +54,40 @@ _STOPWORDS = {
     "what",
     "you",
 }
+_EXPLICIT_MEMORY_PATTERNS = (
+    r"^(?:please\s+)?remember(?:\s+that)?\s+(.+)$",
+    r"^(?:please\s+)?(?:don't|do not)\s+forget(?:\s+that)?\s+(.+)$",
+    (
+        r"^(?:i\s+want|i'd\s+like|i\s+would\s+like)\s+you\s+to\s+"
+        r"(?:remember|know|keep\s+in\s+mind)(?:\s+that)?\s*[:,-]?\s*(.+)$"
+    ),
+    r"^(?:please\s+)?keep(?:\s+(?:this|that))?\s+in\s+mind(?:\s+that)?\s*[:,-]?\s*(.+)$",
+    r"^(?:please\s+)?bear\s+in\s+mind(?:\s+that)?\s*[:,-]?\s*(.+)$",
+    (
+        r"^(?:please\s+)?(?:make|take)\s+(?:a\s+)?note"
+        r"(?:\s+(?:that|of)(?:\s+(?:this|that))?|\s+(?:this|that))?"
+        r"\s*[:,-]?\s*(.+)$"
+    ),
+    r"^(?:please\s+)?note(?:\s+(?:that|of)(?:\s+(?:this|that))?|\s+(?:this|that))?\s*[:,-]?\s*(.+)$",
+    r"^(?:please\s+)?(?:save|store)\s+(?:this|that)(?:\s+(?:in|to)\s+(?:your\s+)?memory)?\s*[:,-]?\s*(.+)$",
+    r"^(?:please\s+)?add\s+(?:this|that)\s+to\s+(?:your\s+)?memory\s*[:,-]?\s*(.+)$",
+    r"^(?:please\s+)?keep(?:\s+(?:this|that))?\s+on\s+record\s*[:,-]?\s*(.+)$",
+    r"^(?:please\s+)?make\s+sure\s+you\s+remember(?:\s+that)?\s*[:,-]?\s*(.+)$",
+    (
+        r"^(?:for\s+(?:future|our\s+future)\s+conversations|for\s+next\s+time|"
+        r"going\s+forward|from\s+now\s+on)\s*[:,-]?\s*(.+)$"
+    ),
+    r"^(?:you\s+should|you\s+need\s+to)\s+know(?:\s+that)?\s*[:,-]?\s*(.+)$",
+    (
+        r"^(?:it(?:'s|\s+is)|this\s+is|that\s+is)\s+(?:a\s+)?"
+        r"(?:key|important)\s+(?:fact|detail)(?:\s+that)?\s*[:,-]?\s*(.+)$"
+    ),
+)
+_SENSITIVE_MEMORY_PATTERN = re.compile(
+    r"\b(?:password|passcode|secret|api[ -]?key|access token|private key|"
+    r"credit card|bank account|social security|\bssn\b)\b",
+    flags=re.IGNORECASE,
+)
 
 _EMBEDDING_BACKENDS: dict[str, EmbeddingBackend] = {}
 _FAILED_EMBEDDING_MODELS: set[str] = set()
@@ -577,11 +611,7 @@ class PersonaMemoryStore:
         if lowered.startswith(("do you remember", "what do you remember")):
             return None
 
-        patterns = (
-            r"^(?:please\s+)?remember(?:\s+that)?\s+(.+)$",
-            r"^(?:please\s+)?don't forget(?:\s+that)?\s+(.+)$",
-        )
-        for pattern in patterns:
+        for pattern in _EXPLICIT_MEMORY_PATTERNS:
             match = re.match(pattern, text, flags=re.IGNORECASE)
             if match is None:
                 continue
@@ -673,3 +703,82 @@ class PersonaMemoryStore:
                     )
 
         return candidates
+
+
+def classifier_memory_candidates(
+    payload: JSONSerializable,
+    *,
+    minimum_confidence: float = 0.82,
+    maximum_candidates: int = 3,
+) -> list[MemoryCandidate]:
+    """Parse safe long-term memory candidates from classifier JSON output.
+
+    Args:
+        payload: Classifier response text or decoded JSON payload.
+        minimum_confidence: Minimum classifier confidence required for storage.
+        maximum_candidates: Maximum number of candidates accepted from one turn.
+
+    Returns:
+        list[MemoryCandidate]: Validated, non-explicit memory candidates.
+    """
+    if maximum_candidates <= 0:
+        return []
+
+    raw_payload: JSONSerializable = payload
+    if isinstance(payload, str):
+        text = payload.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text).strip()
+        try:
+            raw_payload = cast(JSONSerializable, json.loads(text))
+        except (TypeError, ValueError):
+            return []
+
+    if isinstance(raw_payload, dict):
+        raw_candidates = raw_payload.get("memories")
+    elif isinstance(raw_payload, list):
+        raw_candidates = raw_payload
+    else:
+        return []
+
+    if not isinstance(raw_candidates, list):
+        return []
+
+    threshold = max(0.0, min(1.0, minimum_confidence))
+    candidates: list[MemoryCandidate] = []
+    seen: set[str] = set()
+    for item in raw_candidates:
+        if not isinstance(item, dict):
+            continue
+
+        content = item.get("content")
+        confidence = item.get("confidence")
+        importance = item.get("importance", 1)
+        if not isinstance(content, str) or not isinstance(confidence, (int, float)):
+            continue
+        if isinstance(confidence, bool) or float(confidence) < threshold:
+            continue
+
+        normalized = _normalize_text(content)
+        key = normalized.casefold()
+        if (
+            not normalized
+            or key in seen
+            or _SENSITIVE_MEMORY_PATTERN.search(normalized)
+        ):
+            continue
+
+        if isinstance(importance, bool) or not isinstance(importance, (int, float)):
+            importance = 1
+        candidates.append(
+            MemoryCandidate(
+                content=normalized,
+                importance=max(1, min(3, int(importance))),
+                explicit=False,
+            )
+        )
+        seen.add(key)
+        if len(candidates) >= maximum_candidates:
+            break
+
+    return candidates

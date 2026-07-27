@@ -2312,6 +2312,66 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             ],
         )
 
+    def test_persona_history_compacts_older_turns_into_session_summary(self) -> None:
+        """Verify older Persona turns are summarized and recent turns stay available."""
+        engine = make_pipeline_engine()
+        engine.config = {
+            "persona": {
+                "memory": {
+                    "max_short_term_messages": 3,
+                    "context_compaction_keep_recent_messages": 2,
+                    "context_summary_max_characters": 240,
+                }
+            }
+        }
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+        engine.persona_history = [
+            {"role": "user", "content": "The archive is stored in the attic."},
+            {"role": "assistant", "content": "I will keep that context in mind."},
+        ]
+
+        class FakeResponse:
+            """Fake API response for context-compaction assertions."""
+
+            @staticmethod
+            def raise_for_status() -> None:
+                """Fake return of raise_for_status()."""
+
+            @staticmethod
+            def json() -> JSONSerializable:
+                """Return a fake response."""
+                return {"response": "Understood."}
+
+        engine.vision = SimpleNamespace(
+            post=lambda json: FakeResponse(),  # noqa: ARG005
+        )
+        engine.dev = False
+
+        with mock.patch(
+            "celune.pipeline.detect_language",
+            return_value={
+                "language": "en",
+                "languages": ["en"],
+                "supported": True,
+                "probabilities": {"en": 1.0},
+            },
+        ):
+            self.assertEqual(
+                pipeline.think(cast(Celune, engine), "What is next?"), True
+            )
+
+        self.assertEqual(
+            engine.persona_history,
+            [
+                {"role": "user", "content": "What is next?"},
+                {"role": "assistant", "content": "Understood."},
+            ],
+        )
+        self.assertIn(
+            "The archive is stored in the attic.", engine.persona_session_summary
+        )
+
     def test_think_persists_explicit_memory_before_persona_reply(self) -> None:
         """Verify explicit memory requests are stored before Persona responds."""
 
@@ -2412,6 +2472,95 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                     Path(temp_dir) / "celune" / "memory" / "records.json",
                 )
 
+    def test_think_uses_classifier_for_unmatched_durable_user_context(self) -> None:
+        """Verify unmatched durable context can be saved by the local classifier."""
+
+        class FakeResponse:
+            """Fake response for Persona and memory-classifier requests."""
+
+            def __init__(self, payload: JSON) -> None:
+                self.payload = payload
+
+            def raise_for_status(self) -> None:
+                """Fake return of raise_for_status()."""
+
+            def json(self) -> JSON:
+                """Return the configured fake response payload."""
+                return self.payload
+
+        class FakeVision:
+            """Fake Persona client exposing the classifier hook."""
+
+            def __init__(self) -> None:
+                self.classifier_payload: Optional[JSON] = None
+
+            def post(self, json: JSON) -> FakeResponse:
+                """Return the normal Persona response."""
+                discard(json)
+                return FakeResponse({"response": "I understand."})
+
+            def classify_memory(self, json: JSON) -> FakeResponse:
+                """Return one durable fact from the classifier."""
+                self.classifier_payload = json
+                return FakeResponse(
+                    {
+                        "response": _json.dumps(
+                            {
+                                "memories": [
+                                    {
+                                        "content": "The user has a dog named Luna.",
+                                        "importance": 2,
+                                        "confidence": 0.94,
+                                    }
+                                ]
+                            }
+                        )
+                    }
+                )
+
+        engine = make_pipeline_engine()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            engine.config = {
+                "vram": "high",
+                "persona": {
+                    "model_id": "fixture/persona-test",
+                    "memory": {"storage_dir": temp_dir},
+                },
+            }
+            engine.current_character = "Celune"
+            engine.current_voice = "balanced"
+            engine.vision = FakeVision()
+            engine.dev = False
+            store = StubEmbeddingMemoryStore(storage_dir=temp_dir)
+            store.return_none = True
+            engine.persona_memory_store = store
+
+            with mock.patch(
+                "celune.pipeline.detect_language",
+                return_value={
+                    "language": "en",
+                    "languages": ["en"],
+                    "supported": True,
+                    "probabilities": {"en": 1.0},
+                },
+            ):
+                self.assertEqual(
+                    pipeline.think(
+                        cast(Celune, engine),
+                        "I recently adopted a dog named Luna.",
+                    ),
+                    True,
+                )
+
+            classifier_payload = cast(FakeVision, engine.vision).classifier_payload
+            self.assertIsNotNone(classifier_payload)
+            records = store.load_records("Celune")
+
+        self.assertEqual(
+            [record.content for record in records],
+            ["The user has a dog named Luna"],
+        )
+
     def test_persona_response_speech_is_not_saved(self) -> None:
         """Verify generated Persona replies skip saved utterance artifacts."""
         engine = make_pipeline_engine()
@@ -2437,10 +2586,10 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             display_text="Generated reply.",
         )
 
-    def test_persona_prompt_builder_omits_short_term_summary_from_system_prompt_when_present(
+    def test_persona_prompt_builder_includes_compacted_summary_when_present(
         self,
     ) -> None:
-        """Verify recent-summary text is not duplicated into the system prompt."""
+        """Verify compacted older conversation remains available to Persona."""
         engine = make_pipeline_engine()
         engine.config = {"persona": {"memory": {"max_short_term_messages": 2}}}
         engine.current_character = "Fixture"
@@ -2457,12 +2606,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         context = pipeline.build_persona_context(cast(Celune, engine), "Continue.")
         prompt = PersonaPromptBuilder.build(context)
 
-        self.assertNotIn("<history>", prompt)
-        self.assertNotIn("Summary:", prompt)
-        self.assertNotIn(
-            "The user and character already discussed the archive.",
-            prompt,
-        )
+        self.assertIn("<conversation_summary>", prompt)
+        self.assertIn("The user and character already discussed the archive.", prompt)
 
     def test_persona_messages_include_pending_attachments(self) -> None:
         """Verify visual attachments are sent in the next persona user turn."""

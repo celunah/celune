@@ -223,6 +223,7 @@ class CeluneStateAccessors:
     current_character_persona: Optional[CEVoicePersona]
     voice_bundle_is_default: bool
     persona_history: list[dict[str, str]]
+    persona_session_summary: str
     persona_attachments: list[dict[str, str]]
     voices: tuple[str, ...]
     voice_prompt: Optional[str]

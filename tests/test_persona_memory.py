@@ -9,7 +9,7 @@ from unittest import TestCase, mock
 
 import numpy as np
 
-from celune.persona.memory import PersonaMemoryStore
+from celune.persona.memory import PersonaMemoryStore, classifier_memory_candidates
 
 
 class StubEmbeddingMemoryStore(PersonaMemoryStore):
@@ -61,6 +61,51 @@ class PersonaMemoryTests(TestCase):
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0].content, "my test word is moonlight")
             self.assertEqual(records[0].explicit, True)
+
+    def test_broad_explicit_memory_language_is_accepted(self) -> None:
+        """Verify natural save-intent phrases create explicit memories."""
+        store = PersonaMemoryStore()
+        requests = (
+            "please keep this in mind: my test word is moonlight",
+            "I want you to know that my test word is moonlight",
+            "make a note of this: my test word is moonlight",
+            "for future conversations, my test word is moonlight",
+            "this is a key fact: my test word is moonlight",
+            "add this to your memory: my test word is moonlight",
+        )
+
+        for request in requests:
+            candidates = store.collect_candidates(request)
+            self.assertEqual(len(candidates), 1, request)
+            self.assertEqual(candidates[0].content, "my test word is moonlight")
+            self.assertTrue(candidates[0].explicit, request)
+
+    def test_memory_recall_questions_are_not_saved_as_explicit_memories(self) -> None:
+        """Verify questions about existing memories do not create new records."""
+        store = PersonaMemoryStore()
+
+        for request in (
+            "do you remember my test word?",
+            "what do you remember about me?",
+            "do you still remember our project?",
+        ):
+            self.assertEqual(store.collect_candidates(request), [], request)
+
+    def test_classifier_memory_candidates_require_confidence_and_reject_secrets(
+        self,
+    ) -> None:
+        """Verify classifier output is bounded, confident, and privacy-safe."""
+        candidates = classifier_memory_candidates(
+            '{"memories":['
+            '{"content":"The user prefers tea.","importance":2,"confidence":0.91},'
+            '{"content":"The user likes jokes.","importance":1,"confidence":0.4},'
+            '{"content":"The user password is moonlight.","importance":3,"confidence":0.99}'
+            "]}"
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].content, "The user prefers tea")
+        self.assertEqual(candidates[0].explicit, False)
 
     def test_automatic_memory_extracts_persistent_user_context(self) -> None:
         """Verify obvious user preferences are stored automatically."""

@@ -203,6 +203,7 @@ class PersonaContext:
     persona_card: PersonaCard
     persona_source_material: PersonaSourceMaterial
     mood_or_state: str
+    conversation_summary: str = ""
     retrieved_long_term_memory: RetrievedMemoryBundle = field(
         default_factory=RetrievedMemoryBundle
     )
@@ -267,6 +268,10 @@ class PersonaPromptBuilder:
             _render_optional_section(
                 "profile",
                 context.persona_source_material.profile_section(),
+            ),
+            _render_optional_section(
+                "conversation_summary",
+                context.conversation_summary,
             ),
             _render_optional_section(
                 "memory",

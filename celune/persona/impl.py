@@ -85,6 +85,19 @@ class PersonaClient:
             response = self.runtime.generate(request)
         return PersonaClientResponse(response_to_json(response))
 
+    def classify_memory(
+        self, json: dict[str, JSONSerializable]
+    ) -> PersonaClientResponse:
+        """Classify durable user-memory candidates through the same Persona runtime.
+
+        Args:
+            json: A structured memory-classification request.
+
+        Returns:
+            PersonaClientResponse: The classifier response using the local Persona model.
+        """
+        return self.post(json)
+
     def close(self) -> None:
         """Release Persona runtime state."""
         self.runtime.close()
@@ -394,6 +407,78 @@ def persona_history_messages(engine: PersonaEngineView) -> list[JSON]:
             messages.append({"role": role, "content": content.strip()})
 
     return messages
+
+
+def persona_session_summary(engine: PersonaEngineView) -> str:
+    """Return the bounded summary of older Persona conversation turns."""
+    summary = getattr(engine, "persona_session_summary", "")
+    return summary.strip() if isinstance(summary, str) else ""
+
+
+def compact_persona_history(engine: PersonaEngineView) -> None:
+    """Compact older Persona turns into a bounded session summary.
+
+    Args:
+        engine: Celune-like runtime whose Persona history should be bounded.
+    """
+    history = getattr(engine, "persona_history", None)
+    if not isinstance(history, list):
+        return
+
+    limit = persona_short_term_history_limit(engine)
+    if limit <= 0:
+        history.clear()
+        return
+    if len(history) <= limit:
+        return
+
+    config = getattr(engine, "config", {})
+    raw_memory = (
+        persona_config(config).get("memory") if isinstance(config, Mapping) else None
+    )
+    memory = raw_memory if isinstance(raw_memory, dict) else {}
+    enabled = memory.get("context_compaction_enabled", True)
+    if isinstance(enabled, bool) and not enabled:
+        del history[:-limit]
+        return
+
+    keep_recent = memory.get("context_compaction_keep_recent_messages", min(limit, 8))
+    if isinstance(keep_recent, bool) or not isinstance(keep_recent, (int, float)):
+        keep_recent = min(limit, 8)
+    keep_count = max(1, min(limit, int(keep_recent)))
+
+    old_messages = history[:-keep_count]
+    summary_parts: list[str] = []
+    previous_summary = persona_session_summary(engine)
+    if previous_summary:
+        summary_parts.append(f"Earlier summary: {previous_summary}")
+
+    for message in old_messages:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        content = message.get("content")
+        if role not in {"user", "assistant"} or not isinstance(content, str):
+            continue
+        normalized = " ".join(content.split())
+        if not normalized:
+            continue
+        if len(normalized) > 240:
+            normalized = f"{normalized[:237].rstrip()}..."
+        summary_parts.append(f"{role}: {normalized}")
+
+    maximum_characters = memory.get("context_summary_max_characters", 1200)
+    if isinstance(maximum_characters, bool) or not isinstance(
+        maximum_characters, (int, float)
+    ):
+        maximum_characters = 1200
+    maximum_characters = max(240, int(maximum_characters))
+    summary = " ".join(summary_parts).strip()
+    if len(summary) > maximum_characters:
+        summary = f"{summary[: maximum_characters - 3].rstrip()}..."
+
+    setattr(engine, "persona_session_summary", summary)
+    del history[:-keep_count]
 
 
 def persona_attachment_source(path: str) -> str:

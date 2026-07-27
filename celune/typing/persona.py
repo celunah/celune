@@ -230,6 +230,7 @@ class PersonaEngineView(Protocol):
     voice_bundle_is_default: bool
     persona_history: list[dict[str, str]]
     persona_attachments: list[dict[str, str]]
+    persona_session_summary: str
 
 
 class PersonaClientResponse:

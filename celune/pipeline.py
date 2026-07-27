@@ -79,6 +79,7 @@ from .paths import (
 )
 from .persona.emotion import PersonaEmotionAnalyzer
 from .persona.impl import (
+    compact_persona_history,
     default_persona_age,
     default_persona_context,
     default_persona_gender,
@@ -93,10 +94,10 @@ from .persona.impl import (
     persona_model_id,
     persona_pending_attachments,
     persona_quantization,
-    persona_short_term_history_limit,
+    persona_session_summary,
     persona_style_traits,
 )
-from .persona.memory import PersonaMemoryStore
+from .persona.memory import PersonaMemoryStore, classifier_memory_candidates
 from .persona.paths import persona_override_files
 from .persona.prompts import (
     CharacterProfile,
@@ -120,7 +121,10 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .celune import Celune
+    from .typing.persona import PersonaClientResponse
 
 _FLAC_MAGIC = b"fLaC"
 _FLAC_STREAMINFO_BLOCK = 0
@@ -145,6 +149,16 @@ _SMART_BUFFER_COMPLETE_BELOW_SPEED = 0.5
 _SMART_BUFFER_SMOOTHING = 0.35
 _MAX_SILENT_UTTERANCE_RETRIES = 3
 _MAX_YOUTUBE_DOWNLOAD_RETRIES = 3
+_MEMORY_CLASSIFIER_SYSTEM_PROMPT = """You classify durable user facts for long-term memory.
+Return JSON only in this exact shape:
+{"memories":[{"content":"...","importance":1,"confidence":0.0}]}
+
+Only include stable facts about the user that would help in a future conversation:
+preferences, identity, recurring constraints, projects, goals, and important life context.
+Do not include assistant statements, temporary requests, jokes, guesses, passwords, secrets,
+tokens, financial details, medical details, or unrelated conversation. If there is no durable
+fact, return {"memories":[]}.
+"""
 _PIPELINE_CPU_MAX_BUFFER_SECONDS = 4.0
 _PIPELINE_CPU_MAX_DRAIN_ITEMS = 1
 _PIPELINE_CPU_YIELD_SECONDS = 0.001
@@ -1412,6 +1426,103 @@ def _store_persona_memories(engine: Celune, request: str) -> None:
     store.remember_from_user_message(character_name, request)
 
 
+def _persona_memory_classifier_context(engine: Celune) -> str:
+    """Build the bounded conversation context sent to the memory classifier."""
+    sections: list[str] = []
+    summary = persona_session_summary(engine)
+    if summary:
+        sections.append(f"Conversation summary:\n{summary}")
+
+    messages = persona_history_messages(engine)
+    if messages:
+        sections.append(
+            "Recent conversation:\n"
+            + "\n".join(
+                f"{message['role']}: {message['content']}" for message in messages
+            )
+        )
+    return "\n\n".join(sections)
+
+
+def _classify_persona_memories(engine: Celune, request: str) -> None:
+    """Classify and persist unmatched durable user facts without blocking reply logic."""
+    store = _persona_memory_store(engine)
+    if store is None or store.collect_candidates(request):
+        return
+
+    memory_config = persona_config(engine.config).get("memory")
+    normalized_memory = memory_config if isinstance(memory_config, dict) else {}
+    enabled = normalized_memory.get("auto_classifier", True)
+    if isinstance(enabled, bool) and not enabled:
+        return
+
+    classifier = cast(
+        "Optional[Callable[[JSON], PersonaClientResponse]]",
+        getattr(getattr(engine, "vision", None), "classify_memory", None),
+    )
+    if not callable(classifier):
+        return
+
+    minimum_confidence = normalized_memory.get("auto_classifier_min_confidence", 0.82)
+    if isinstance(minimum_confidence, bool) or not isinstance(
+        minimum_confidence, (int, float)
+    ):
+        minimum_confidence = 0.82
+    maximum_candidates = normalized_memory.get("auto_classifier_max_candidates", 3)
+    if isinstance(maximum_candidates, bool) or not isinstance(
+        maximum_candidates, (int, float)
+    ):
+        maximum_candidates = 3
+
+    context = _persona_memory_classifier_context(engine)
+    if request.strip():
+        context = f"{context}\n\nCurrent user message:\n{request.strip()}".strip()
+
+    payload: JSON = {
+        "format": "celune_memory_classifier",
+        "format_version": 1,
+        "model": persona_model_id(engine.config),
+        "quantization": persona_quantization(engine.config),
+        "quantized": True,
+        "system": _MEMORY_CLASSIFIER_SYSTEM_PROMPT,
+        "user": context,
+        "request": context,
+        "messages": [
+            {"role": "system", "content": _MEMORY_CLASSIFIER_SYSTEM_PROMPT},
+            {"role": "user", "content": context},
+        ],
+        "max_new_tokens": 180,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "repetition_penalty": 1.0,
+    }
+
+    try:
+        response = classifier(payload)
+        response.raise_for_status()
+        candidates = classifier_memory_candidates(
+            _extract_persona_text(response.json()),
+            minimum_confidence=float(minimum_confidence),
+            maximum_candidates=max(1, int(maximum_candidates)),
+        )
+        character_name = persona_active_character_name(engine)
+        if not character_name.strip():
+            return
+        for candidate in candidates:
+            store.remember(
+                character_name,
+                candidate.content,
+                importance=candidate.importance,
+                explicit=False,
+            )
+    except Exception as error:
+        log_dev = getattr(engine, "log_dev", None)
+        if callable(log_dev):
+            log_dev(
+                f"Persona memory classifier failed: {format_error(error, engine.dev)}"
+            )
+
+
 def _build_retrieved_memory_bundle(
     engine: Celune, request: str
 ) -> RetrievedMemoryBundle:
@@ -1614,6 +1725,7 @@ def build_persona_context(engine: Celune, request: str) -> PersonaContext:
         persona_card=persona_card,
         persona_source_material=persona_source_material,
         mood_or_state=mood_or_state,
+        conversation_summary=persona_session_summary(engine),
         retrieved_long_term_memory=_build_retrieved_memory_bundle(engine, request),
     )
 
@@ -1768,18 +1880,16 @@ def think(engine: Celune, request: str) -> bool:
                 {"role": "assistant", "content": spoken_text},
             ]
         )
-        limit = persona_short_term_history_limit(engine)
-        if limit == 0:
-            history.clear()
-        elif len(history) > limit:
-            del history[: len(history) - limit]
+        compact_persona_history(engine)
 
-    return queue_speech(
+    queued = queue_speech(
         engine,
         spoken_text,
         save=False,
         display_text=spoken_text,
     )
+    _classify_persona_memories(engine, request)
+    return queued
 
 
 def say(

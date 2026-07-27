@@ -9,6 +9,7 @@ from typing import Union
 import torch
 
 from . import __codename__, __comment__, __version__
+from ._version import DEVELOPMENT
 from .backends.tts import CeluneBackend
 from .backends.vc import CeluneVCBackend
 from .constants import APP_NAME
@@ -44,6 +45,9 @@ def log_runtime_banner(
         f'{__codename__} - "{__comment__}"',
         "info",
     )
+
+    if DEVELOPMENT:
+        log(string("celune.development_version"), "warning")
 
     if not backend.is_fake:
         log(string("celune.testing_environment"), "info")

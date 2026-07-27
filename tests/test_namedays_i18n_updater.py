@@ -162,6 +162,7 @@ class UpdaterTests(TestCase):
         """Verify update metadata comes from a newer SemVer release with an asset."""
         with (
             mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch("celune.updater.__version__", "3.5.0"),
             mock.patch("celune.updater._is_git_checkout", return_value=True),
             mock.patch("celune.updater._current_branch", return_value="main"),
             mock.patch("celune.updater._has_local_changes", return_value=False),

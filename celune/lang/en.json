@@ -36,6 +36,7 @@
     "celune.default_model_failed_short": "Default model failed to load",
     "celune.default_model_load_failed": "{app_name} could not load the default model.",
     "celune.deleting": "Deleting...",
+    "celune.development_version": "DEVELOPMENT RELEASE - Some features may be incomplete and/or unstable.",
     "celune.initializing_persona": "Initializing Persona...",
     "celune.input_too_long_to_normalize": "Input is too long to normalize.",
     "celune.invalid_backend_type": "'backend_name' must be a backend instance, backend type, or backend name string",

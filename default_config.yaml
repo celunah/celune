@@ -189,6 +189,14 @@ persona:
   memory:
     # how much do you want Celune to remember
     max_short_term_messages: 20
+    # use the local Persona model to classify durable facts not matched by rules
+    auto_classifier: true
+    auto_classifier_min_confidence: 0.82
+    auto_classifier_max_candidates: 3
+    # summarize older turns instead of carrying the complete history forward
+    context_compaction_enabled: true
+    context_compaction_keep_recent_messages: 8
+    context_summary_max_characters: 1200
     # optional root for character-scoped records at <character>/memory/records.json
     storage_dir: null
     # minimum cosine similarity for semantic long-term memory retrieval

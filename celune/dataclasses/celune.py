@@ -94,6 +94,7 @@ class CeluneVoiceState:
     current_character_persona: Optional[CEVoicePersona] = None
     voice_bundle_is_default: bool = True
     persona_history: list[dict[str, str]] = field(default_factory=list)
+    persona_session_summary: str = ""
     persona_attachments: list[dict[str, str]] = field(default_factory=list)
     voices: tuple[str, ...] = ()
     voice_prompt: Optional[str] = None
@@ -229,6 +230,11 @@ CELUNE_FORWARDED_PROPERTIES = (
         "voice_bundle_is_default",
     ),
     ForwardedPropertySpec("persona_history", "_voice_state", "persona_history"),
+    ForwardedPropertySpec(
+        "persona_session_summary",
+        "_voice_state",
+        "persona_session_summary",
+    ),
     ForwardedPropertySpec("persona_attachments", "_voice_state", "persona_attachments"),
     ForwardedPropertySpec("voices", "_voice_state", "voices"),
     ForwardedPropertySpec("voice_prompt", "_voice_state", "voice_prompt"),
