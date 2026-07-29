@@ -77,6 +77,7 @@ from .paths import (
     running_compiled,
 )
 from .persona.emotion import PersonaEmotionAnalyzer
+from .persona.capabilities import PersonaCapabilities
 from .persona.impl import (
     compact_persona_history,
     default_persona_age,
@@ -1341,12 +1342,17 @@ def _persona_emotion_analyzer(engine: Celune) -> Optional[PersonaEmotionAnalyzer
         analyzer = existing
 
     vision = getattr(engine, "vision", None)
+    get_capabilities = getattr(vision, "capabilities", None)
+    capabilities = get_capabilities() if callable(get_capabilities) else None
     get_emotion_backend = getattr(vision, "emotion_backend", None)
     emotion_backend = cast(
         Optional[tuple[PersonaTokenizer, PersonaModel]],
         get_emotion_backend() if callable(get_emotion_backend) else None,
     )
-    if emotion_backend is None:
+    if (
+        isinstance(capabilities, PersonaCapabilities)
+        and not capabilities.emotion_probes
+    ) or emotion_backend is None:
         analyzer.clear_vlm()
     else:
         analyzer.bind_vlm(*emotion_backend)

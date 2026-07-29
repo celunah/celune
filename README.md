@@ -25,6 +25,20 @@ It was proudly made in 🇵🇱 for your listening pleasure.
 - Characters can respond back to you
 - Can voice change into character voices
 
+## Global operation modes
+
+Set the top-level `mode` in `default_config.yaml` or the active configuration:
+
+```yaml
+mode: converse
+```
+
+- `speak` runs speech-only mode without Persona or agent features.
+- `converse` enables Persona without agent features.
+- `agent` is reserved for Persona plus local agent features, but is temporarily redirected to `converse` until those features are implemented.
+
+Persona reports architecture capabilities at runtime. Text is always supported; vision and image uploads require a compatible multimodal model; emotion probes are enabled only when hidden-state probing is available.
+
 ## Note on development
 
 Celune is against the stance of "vibe coding" used in development.

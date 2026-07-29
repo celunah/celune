@@ -43,6 +43,7 @@ from ..typing.persona import (
 )
 from ..utils import discard, normalize_special_characters
 from ..vram import resolve_vram_preset
+from .capabilities import PersonaCapabilities
 
 
 def _render_chat_prompt(
@@ -92,6 +93,16 @@ def _payload_from_message(message: ChatMessage) -> ChatMessagePayload:
     return ChatMessagePayload(role=message.role, content=message.content)
 
 
+def _model_supports_emotion_probes(model: PersonaModel) -> bool:
+    """Return whether a loaded text model exposes a usable hidden-state shape."""
+    model_config = getattr(model, "config", None)
+    hidden_size = getattr(model_config, "hidden_size", None)
+    if hidden_size is None:
+        text_config = getattr(model_config, "text_config", None)
+        hidden_size = getattr(text_config, "hidden_size", None)
+    return isinstance(hidden_size, int) and hidden_size > 0
+
+
 class PersonaBackend:
     """Character-agnostic backend for Persona generation."""
 
@@ -102,6 +113,7 @@ class PersonaBackend:
         self.tokenizer: Optional[PersonaTokenizer] = None
         self.model: Optional[PersonaModel] = None
         self.supports_vision = False
+        self.supports_emotion_probes = False
 
     def load(self, model_id: str, quantization: str) -> None:
         """Load the requested model, quantized by default.
@@ -217,6 +229,7 @@ class PersonaBackend:
         self.model_id = model_id
         self.quantization = quantization
         self.supports_vision = supports_vision
+        self.supports_emotion_probes = _model_supports_emotion_probes(model)
 
     def unload(self) -> None:
         """Unload the active Persona model and related processor state."""
@@ -226,6 +239,7 @@ class PersonaBackend:
         self.model_id = ""
         self.quantization = ""
         self.supports_vision = False
+        self.supports_emotion_probes = False
         gc.collect()
 
         if torch.cuda.is_available():
@@ -236,9 +250,31 @@ class PersonaBackend:
 
     def emotion_backend(self) -> Optional[tuple[PersonaTokenizer, PersonaModel]]:
         """Return the loaded VLM components used for emotion probing."""
-        if self.tokenizer is None or self.model is None:
+        if (
+            self.tokenizer is None
+            or self.model is None
+            or not self.supports_emotion_probes
+        ):
             return None
         return self.tokenizer, self.model
+
+    def capabilities(self) -> PersonaCapabilities:
+        """Return the capabilities of the loaded Persona architecture."""
+        loaded = self.tokenizer is not None and self.model is not None
+        multimodal = loaded and self.processor_supports_vision()
+        return PersonaCapabilities(
+            text=True,
+            vision=multimodal,
+            image_uploads=multimodal,
+            emotion_probes=loaded and self.supports_emotion_probes,
+        )
+
+    def processor_supports_vision(self) -> bool:
+        """Return whether the loaded processor can accept multimodal content."""
+        processor = self.processor
+        if processor is None:
+            return False
+        return self.supports_vision or _processor_supports_vision(processor)
 
     def generate(self, request: GenerateRequest) -> GenerateResponse:
         """Generate a persona-formatted response.
@@ -321,6 +357,10 @@ class PersonaBackend:
             raise ValueError("Persona backend is not loaded")
 
         if _messages_have_vision(messages):
+            if not self.capabilities().vision:
+                raise ValueError(
+                    "Persona's active architecture does not support vision input"
+                )
             processor = self.processor
             if processor is None:
                 raise ValueError(
@@ -465,6 +505,11 @@ class PersonaRuntime:
         with self.lock:
             return self.backend.emotion_backend()
 
+    def capabilities(self) -> PersonaCapabilities:
+        """Return the capabilities of the loaded Persona architecture."""
+        with self.lock:
+            return self.backend.capabilities()
+
     def _allowed_quantization(self, requested: str) -> str:
         """Clamp Persona quantization to what the VRAM preset allows."""
         if self.config is None:
@@ -575,6 +620,19 @@ def _processor_supports_native_vision(processor: PersonaProcessor) -> bool:
     """Return whether the processor exposes native multimodal chat rendering."""
     apply_chat_template = getattr(processor, "apply_chat_template", None)
     return callable(apply_chat_template)
+
+
+def _processor_supports_vision(processor: PersonaProcessor) -> bool:
+    """Return whether a processor advertises a compatible vision pathway."""
+    return (
+        _processor_supports_native_vision(processor)
+        or getattr(
+            processor,
+            "image_processor",
+            None,
+        )
+        is not None
+    )
 
 
 def _content_from_json(value: JSONSerializable) -> Optional[MessageContent]:

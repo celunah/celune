@@ -124,6 +124,12 @@ pipeline_cpu:
 # true = IPA is treated as is
 ipa: false
 
+# Global operation mode:
+# speak    - speech-only operation without Persona or agent features
+# converse - Persona conversation without agent features
+# agent    - reserved for future agent features; currently redirected to converse
+mode: converse
+
 # VRAM target settings
 # we recommend choosing medium as a safe baseline for low VRAM users
 # the sane choice for users wanting to use Persona is the high preset

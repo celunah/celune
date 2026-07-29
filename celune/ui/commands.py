@@ -20,6 +20,7 @@ from ..constants import APP_NAME
 from ..exceptions import InvalidExtensionError
 from ..i18n import string
 from ..paths import project_root
+from ..persona.capabilities import PersonaCapabilities
 from ..utils import format_error, format_number, replace_ipa
 from ..vc import (
     VC_PITCH_SHIFT_MAX,
@@ -762,6 +763,21 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 "warning",
             )
             return
+        get_capabilities = getattr(vision, "capabilities", None)
+        if callable(get_capabilities):
+            capabilities = get_capabilities()
+            if (
+                isinstance(capabilities, PersonaCapabilities)
+                and not capabilities.image_uploads
+            ):
+                ui.safe_log(
+                    string(
+                        "commands.attachments_speech_only_mode",
+                        app_name=APP_NAME,
+                    ),
+                    "warning",
+                )
+                return
 
         added: list[str] = []
         for raw_path in args:

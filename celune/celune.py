@@ -72,6 +72,7 @@ from .extensions.events import EventDispatcher
 from .extensions.manager import CeluneExtensionManager
 from .i18n import get_system_locale, set_locale, string
 from .modeling import load_normalizer_components, normalizer_device
+from .modes import OperationMode, resolve_operation_mode
 from .paths import project_root, temp_data_dir
 from .persona.impl import (
     PersonaClient,
@@ -222,7 +223,9 @@ def _resolve_input_mode(config: Config, requested_mode: Optional[str] = None) ->
     if candidate is None:
         candidate = _config_str(config_value(config, "input_mode"))
     if candidate is None:
-        candidate = _config_str(config_value(config, "mode"))
+        configured_mode = _config_str(config_value(config, "mode"))
+        if configured_mode in {"text_to_speech", "tts", "voice_conversion", "revoice"}:
+            candidate = configured_mode
     if candidate is None:
         return "text_to_speech"
 
@@ -395,6 +398,7 @@ class Celune(CeluneStateAccessors):
 
         self.config = config
         set_locale(_configured_locale(config) or get_system_locale())
+        self.mode: OperationMode = resolve_operation_mode(config)
         self.input_mode = _resolve_input_mode(config, input_mode)
         glow_color = "#cebaff"
         loader = default_loader()

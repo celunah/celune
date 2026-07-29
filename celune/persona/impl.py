@@ -20,6 +20,11 @@ from ..constants import (
     PERSONA_HISTORY_MESSAGES,
     PERSONA_MODEL_ID,
 )
+from ..modes import (
+    has_explicit_operation_mode,
+    mode_allows_persona,
+    resolve_operation_mode,
+)
 from ..typing.aliases import DevLogCallback
 from ..typing.common import JSON, JSONSerializable
 from ..typing.persona import (
@@ -29,6 +34,7 @@ from ..typing.persona import (
     PersonaTokenizer,
 )
 from ..vram import resolve_vram_preset
+from .capabilities import PersonaCapabilities
 from .runtime import PersonaRuntime, request_from_json, response_to_json
 
 PERSONA_QUANTIZATION = "4bit"
@@ -110,6 +116,10 @@ class PersonaClient:
     def emotion_backend(self) -> Optional[tuple[PersonaTokenizer, PersonaModel]]:
         """Return the active VLM components for local emotion analysis."""
         return self.runtime.emotion_backend()
+
+    def capabilities(self) -> PersonaCapabilities:
+        """Return the capabilities of the active Persona architecture."""
+        return self.runtime.capabilities()
 
 
 def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
@@ -520,6 +530,16 @@ def persona_pending_attachments(engine: PersonaEngineView) -> list[JSON]:
     if not isinstance(attachments, list):
         return []
 
+    vision = getattr(engine, "vision", None)
+    get_capabilities = getattr(vision, "capabilities", None)
+    if callable(get_capabilities):
+        capabilities = get_capabilities()
+        if (
+            isinstance(capabilities, PersonaCapabilities)
+            and not capabilities.image_uploads
+        ):
+            return []
+
     content: list[JSON] = []
     for attachment in attachments:
         if not isinstance(attachment, dict):
@@ -542,8 +562,13 @@ def persona_enabled(config: Mapping[str, JSONSerializable]) -> bool:
     Returns:
         bool: Whether Persona is enabled.
     """
-    return resolve_vram_preset(config).persona_enabled and bool(
-        persona_config(config).get("enabled", True)
+    mode_allowed = mode_allows_persona(resolve_operation_mode(config))
+    vram_allowed = resolve_vram_preset(config).persona_enabled
+    configured_persona = bool(persona_config(config).get("enabled", True))
+    return (
+        mode_allowed
+        and vram_allowed
+        and (has_explicit_operation_mode(config) or configured_persona)
     )
 
 

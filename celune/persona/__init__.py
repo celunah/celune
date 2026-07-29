@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Persona helpers exposed as a package API."""
 
+from .capabilities import PersonaCapabilities
 from .impl import (
     PERSONA_QUANTIZATION,
     PersonaClient,
@@ -17,6 +18,7 @@ from .memory import MemoryRecord, PersonaMemoryStore
 
 __all__ = [
     "PERSONA_QUANTIZATION",
+    "PersonaCapabilities",
     "MemoryRecord",
     "PersonaClient",
     "PersonaClientResponse",

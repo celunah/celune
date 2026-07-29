@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Protocol, Union
+from typing import TYPE_CHECKING, Literal, Optional, Protocol, Union
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
@@ -207,6 +207,7 @@ class CeluneStateAccessors:
     voice_conversion_backend: str
     vc_pitch_shift: int
     vc_f0_condition: bool
+    mode: Literal["speak", "converse", "agent"]
     input_mode: str
     chunk_size: int
     language: str
