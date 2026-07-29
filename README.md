@@ -26,19 +26,21 @@ It was proudly made in 🇵🇱 for the finest of uses.
 - Automatic memory saving
 - Agentic capabilities with tools
 
-## Global operation modes
+## Operation modes
 
-Set the top-level `mode` in `default_config.yaml` or the active configuration:
+Celune can operate in three major modes, each meant for different uses.
+
+Set the following value in Celune's configuration to change the operation mode:
 
 ```yaml
-mode: converse
+mode: converse  # speak|converse|agent
 ```
 
-- `speak` runs speech-only mode without Persona or agent features.
-- `converse` enables Persona without agent features.
-- `agent` is reserved for Persona plus local agent features, but is temporarily redirected to `converse` until those features are implemented.
+- `speak` uses only Celune's speech features. It is best suited for performance use. It does not use any extra features.
+- `converse` uses Persona, allowing you to talk with any characters you've set up with Celune.
+- `agent` turns Celune into a conversational local agent, allowing her to perform actions on your computer while speaking hack as needed.
 
-Persona reports architecture capabilities at runtime. Text is always supported; vision and image uploads require a compatible multimodal model; emotion probes are enabled only when hidden-state probing is available.
+Persona can be used with both LLMs and VLMs, but vision features and image uploads are not available with text-only language models. If uncertain, use a vision-language model.
 
 ## Note on development
 

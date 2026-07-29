@@ -774,8 +774,8 @@ def normalize_special_characters(text: str) -> str:
             "\u201e": '"',  # double low quote
             "\u2018": "'",  # left single quote
             "\u2019": "'",  # right single quote
-            "\u2013": " - ",  # en dash
-            "\u2014": " - ",  # em dash
+            "\u2013": ": ",  # en dash
+            "\u2014": ": ",  # em dash
             "\u2026": "...",  # ellipsis
             "*": "",  # emphasis asterisks
         }
