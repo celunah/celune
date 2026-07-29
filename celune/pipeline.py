@@ -44,7 +44,6 @@ from .constants import (
     APP_NAME,
     APP_SLUG,
     BASE_SR,
-    PERSONA_EMOTION_MODEL,
     PERSONA_MEMORY_EMBEDDING_MODEL,
     PipelineStates,
 )
@@ -110,6 +109,7 @@ from .persona.prompts import (
 from .typing.aliases import AudioChunk, AudioChunks
 from .typing.common import JSON, JSONSerializable
 from .typing.pipeline import SpeechStreamQueue
+from .typing.persona import PersonaModel, PersonaTokenizer
 from .utils import (
     detect_language,
     discard,
@@ -1307,22 +1307,16 @@ def build_persona_character_card(engine: Celune) -> str:
 def _persona_emotion_analyzer(engine: Celune) -> Optional[PersonaEmotionAnalyzer]:
     """Return the configured Persona emotion analyzer for this engine."""
     existing = getattr(engine, "persona_emotion_analyzer", None)
-    if isinstance(existing, PersonaEmotionAnalyzer):
-        return existing
 
     emotion_config = persona_config(engine.config).get("emotion")
     if isinstance(emotion_config, dict):
         enabled = emotion_config.get("enabled", True)
         if isinstance(enabled, bool) and not enabled:
             return None
-        model_name = emotion_config.get("model")
         user_weight = emotion_config.get("user_weight", 0.75)
         assistant_weight = emotion_config.get("assistant_weight", 0.25)
         decay_power = emotion_config.get("history_decay_power", 3.0)
         analyzer = PersonaEmotionAnalyzer(
-            model_name=model_name.strip()
-            if isinstance(model_name, str) and model_name.strip()
-            else PERSONA_EMOTION_MODEL,
             user_weight=float(user_weight)
             if isinstance(user_weight, (int, float))
             and not isinstance(user_weight, bool)
@@ -1337,7 +1331,25 @@ def _persona_emotion_analyzer(engine: Celune) -> Optional[PersonaEmotionAnalyzer
             else 3.0,
         )
     else:
-        analyzer = PersonaEmotionAnalyzer()
+        analyzer = (
+            existing
+            if isinstance(existing, PersonaEmotionAnalyzer)
+            else PersonaEmotionAnalyzer()
+        )
+
+    if isinstance(existing, PersonaEmotionAnalyzer):
+        analyzer = existing
+
+    vision = getattr(engine, "vision", None)
+    get_emotion_backend = getattr(vision, "emotion_backend", None)
+    emotion_backend = cast(
+        Optional[tuple[PersonaTokenizer, PersonaModel]],
+        get_emotion_backend() if callable(get_emotion_backend) else None,
+    )
+    if emotion_backend is None:
+        analyzer.clear_vlm()
+    else:
+        analyzer.bind_vlm(*emotion_backend)
 
     setattr(engine, "persona_emotion_analyzer", analyzer)
     return analyzer

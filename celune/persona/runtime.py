@@ -234,6 +234,12 @@ class PersonaBackend:
             with contextlib.suppress(Exception):
                 torch.cuda.empty_cache()
 
+    def emotion_backend(self) -> Optional[tuple[PersonaTokenizer, PersonaModel]]:
+        """Return the loaded VLM components used for emotion probing."""
+        if self.tokenizer is None or self.model is None:
+            return None
+        return self.tokenizer, self.model
+
     def generate(self, request: GenerateRequest) -> GenerateResponse:
         """Generate a persona-formatted response.
 
@@ -453,6 +459,11 @@ class PersonaRuntime:
         """Unload the active Persona backend state."""
         with self.lock:
             self.backend.unload()
+
+    def emotion_backend(self) -> Optional[tuple[PersonaTokenizer, PersonaModel]]:
+        """Return the loaded VLM components used for emotion probing."""
+        with self.lock:
+            return self.backend.emotion_backend()
 
     def _allowed_quantization(self, requested: str) -> str:
         """Clamp Persona quantization to what the VRAM preset allows."""

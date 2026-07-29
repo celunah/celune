@@ -2,16 +2,24 @@
 """Tests for Persona emotion blending."""
 
 from collections.abc import Sequence
+from types import SimpleNamespace
+from typing import Optional, Union
 from unittest import TestCase
 
 import numpy as np
+import torch
+from transformers.tokenization_utils_base import BatchEncoding
 
 from celune.persona.emotion import (
     GOEMOTIONS_LABELS,
     EmotionAnalysis,
     EmotionPrediction,
     PersonaEmotionAnalyzer,
+    compute_emotion_directions,
+    compute_emotion_scores,
 )
+from celune.typing.persona import ModelGenerateKwargValue
+from celune.utils import discard
 
 
 class StubPersonaEmotionAnalyzer(PersonaEmotionAnalyzer):
@@ -33,6 +41,73 @@ class StubPersonaEmotionAnalyzer(PersonaEmotionAnalyzer):
 
     def _prototype_embeddings(self):
         return self._prototypes
+
+
+class FakePersonaTokenizer:
+    """Small tokenizer double for live-VLM emotion probing tests."""
+
+    eos_token_id: Optional[int]
+
+    def __init__(self) -> None:
+        self.eos_token_id = 0
+
+    def __call__(
+        self,
+        *,
+        text: Union[str, Sequence[str]],
+        return_tensors: str,
+        padding: bool = False,
+        truncation: bool = False,
+    ) -> BatchEncoding:
+        """Return a mock batch encoding."""
+        discard(return_tensors)
+        discard(padding)
+        discard(truncation)
+        values = [text] if isinstance(text, str) else list(text)
+        lengths = torch.tensor([[len(value), len(value) + 1] for value in values])
+        return BatchEncoding(
+            {
+                "input_ids": lengths,
+                "attention_mask": torch.ones_like(lengths),
+            }
+        )
+
+    @staticmethod
+    def decode(token_ids: torch.Tensor, *, skip_special_tokens: bool) -> str:
+        """Decode mock tokens."""
+        discard(token_ids)
+        discard(skip_special_tokens)
+        return ""
+
+
+class FakePersonaModel:
+    """VLM double exposing hidden states without a separate emotion model."""
+
+    def __init__(self) -> None:
+        self.device: Union[torch.device, str] = torch.device("cpu")
+        self.calls = 0
+        self.config = SimpleNamespace(id2label={})
+
+    def __call__(
+        self,
+        **kwargs: Union[torch.Tensor, bool],
+    ) -> SimpleNamespace:
+        """Return a mock emotional vector."""
+        self.calls += 1
+        input_ids = kwargs["input_ids"]
+        assert isinstance(input_ids, torch.Tensor)
+        input_ids = input_ids.float()
+        hidden = torch.stack((input_ids, input_ids * 2), dim=-1)
+        return SimpleNamespace(hidden_states=(hidden,))
+
+    @staticmethod
+    def generate(**kwargs: ModelGenerateKwargValue) -> torch.Tensor:
+        """Generate mock tokens."""
+        discard(kwargs)
+        return torch.empty((1, 0), dtype=torch.long)
+
+    def eval(self) -> None:
+        """Evaluate mock tokens."""
 
 
 class PersonaEmotionTests(TestCase):
@@ -82,6 +157,9 @@ class PersonaEmotionTests(TestCase):
         assert state is not None
         self.assertEqual(state.target_label, "sadness")
         self.assertIn("gently reassuring", state.target_state)
+        self.assertIn("Emotion direction: sadness", state.target_state)
+        self.assertIn("Response behavior:", state.target_state)
+        self.assertGreater(state.target_intensity, 0.0)
         self.assertEqual(state.user_label, "sadness")
 
     def test_positive_target_is_mirrored_softly(self) -> None:
@@ -122,3 +200,39 @@ class PersonaEmotionTests(TestCase):
         labels = PersonaEmotionAnalyzer._resolve_labels(config)
 
         self.assertEqual(labels, GOEMOTIONS_LABELS)
+
+    def test_live_vlm_hidden_states_produce_emotion_vectors(self) -> None:
+        """Verify emotion probing reuses the loaded Persona VLM backend."""
+        tokenizer = FakePersonaTokenizer()
+        model = FakePersonaModel()
+        analyzer = PersonaEmotionAnalyzer()
+
+        analyzer.bind_vlm(tokenizer, model)
+        analyses = analyzer.analyze_texts(("The user is curious.",))
+
+        self.assertIsNotNone(analyses)
+        assert analyses is not None
+        self.assertEqual(model.calls, 1)
+        self.assertAlmostEqual(
+            float(np.linalg.norm(analyses[0].embedding)), 1.0, places=5
+        )
+        self.assertEqual(analyzer._prototype_embeddings() is not None, True)
+        self.assertGreater(model.calls, 1)
+
+    def test_emotion_vectors_map_back_to_existing_labels(self) -> None:
+        """Verify contrastive floating-point vectors retain label mapping."""
+        baseline = np.array((1.0, 0.0), dtype=np.float32)
+        directions = compute_emotion_directions(
+            {
+                "sadness": np.array((1.0, 1.0), dtype=np.float32),
+                "joy": np.array((2.0, 0.0), dtype=np.float32),
+            },
+            baseline,
+        )
+
+        scores = compute_emotion_scores(
+            np.array((0.0, 1.0), dtype=np.float32),
+            directions,
+        )
+
+        self.assertGreater(scores["sadness"], scores["joy"])

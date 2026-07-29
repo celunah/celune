@@ -99,7 +99,14 @@ class PersonaTokenizer(Protocol):
 
     eos_token_id: Optional[int]
 
-    def __call__(self, *, text: str, return_tensors: str) -> BatchEncoding:
+    def __call__(
+        self,
+        *,
+        text: Union[str, Sequence[str]],
+        return_tensors: str,
+        padding: bool = False,
+        truncation: bool = False,
+    ) -> BatchEncoding:
         """Tokenize text into a batch encoding."""
         raise NotImplementedError("protocol not defined")
 

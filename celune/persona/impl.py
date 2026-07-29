@@ -22,7 +22,12 @@ from ..constants import (
 )
 from ..typing.aliases import DevLogCallback
 from ..typing.common import JSON, JSONSerializable
-from ..typing.persona import PersonaClientResponse, PersonaEngineView
+from ..typing.persona import (
+    PersonaClientResponse,
+    PersonaEngineView,
+    PersonaModel,
+    PersonaTokenizer,
+)
 from ..vram import resolve_vram_preset
 from .runtime import PersonaRuntime, request_from_json, response_to_json
 
@@ -101,6 +106,10 @@ class PersonaClient:
     def close(self) -> None:
         """Release Persona runtime state."""
         self.runtime.close()
+
+    def emotion_backend(self) -> Optional[tuple[PersonaTokenizer, PersonaModel]]:
+        """Return the active VLM components for local emotion analysis."""
+        return self.runtime.emotion_backend()
 
 
 def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
