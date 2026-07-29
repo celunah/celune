@@ -5,12 +5,17 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import gzip
 import hashlib
+import io
 import json
+import lzma
+import re
 import shutil
 import struct
 import tempfile
 import threading
+import wave
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,8 +25,8 @@ from .exceptions import CEVoiceError
 from .paths import project_root, temp_data_dir, voices_data_dir
 from .typing.cevoice import Manifest, ManifestValue, VoiceManifest
 
-# Celune supports both of these specifications
-# CECHAR v3 spec (Celune v4 format)
+# CECHAR v2/v3 legacy container. Keep these names stable for callers that
+# construct or inspect legacy packs.
 MAGIC: Final[bytes] = b"CECHAR\0\0"
 VERSION: Final[int] = 3
 FORMAT_NAME: Final[str] = "CECHAR"
@@ -33,7 +38,18 @@ LEGACY_VERSION: Final[int] = 1
 LEGACY_FORMAT_NAME: Final[str] = "CEVOICE"
 
 HEADER = struct.Struct("<8sHI")
+V4_MAGIC: Final[bytes] = b"CECHAR\0"
+V4_VERSION: Final[int] = 4
+V4_HEADER = struct.Struct("<7sBB")
+V4_FILE_ENTRY = struct.Struct("<II")
+V4_COMPRESSION_NONE: Final[int] = 0
+V4_COMPRESSION_GZIP: Final[int] = 1
+V4_COMPRESSION_ZSTANDARD: Final[int] = 2
+V4_COMPRESSION_XZ: Final[int] = 3
+V4_COMPRESSION_OPENZL: Final[int] = 4
+V4_COMPRESSION_MODES: Final[frozenset[int]] = frozenset(range(5))
 ALLOWED_ASSET_KINDS = {"wav", "pt"}
+V4_ALLOWED_ASSET_SUFFIXES: Final[frozenset[str]] = frozenset({".wav", ".pt", ".md"})
 SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
     "identity.md",
     "soul.md",
@@ -43,7 +59,7 @@ SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
     "examples.md",
 )
 DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
-    "9fbbc1244c027a2e5ab42f62ab557e0e0147bdf3bbb59fc23d57afd26d10dccf"
+    "52e15b5c1749e4cac0f81298632395b94f6b32e8373a8a901188c209a122ba5d"
 )
 
 
@@ -63,6 +79,17 @@ class CEVoice:
     path: Path
     metadata: Manifest
     payload_offset: int
+    _payload: Optional[bytes] = field(default=None, repr=False, compare=False)
+    _asset_entries: Mapping[tuple[str, str], CEVoiceAsset] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
+    _bundle_asset_entries: Mapping[str, CEVoiceAsset] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
 
     @classmethod
     def open(cls, path: Union[str, Path]) -> CEVoice:
@@ -79,6 +106,11 @@ class CEVoice:
         """
         bundle_path = Path(path)
         with bundle_path.open("rb") as stream:
+            prefix = stream.read(V4_HEADER.size)
+            if len(prefix) >= len(V4_MAGIC) and prefix[: len(V4_MAGIC)] == V4_MAGIC:
+                if len(prefix) >= V4_HEADER.size and prefix[7] != 0:
+                    return cls._open_v4(bundle_path, prefix, stream.read())
+            stream.seek(0)
             magic, version, metadata_length = _read_header(stream)
             if magic not in {MAGIC, LEGACY_MAGIC}:
                 raise CEVoiceError("invalid CEVOICE magic")
@@ -104,6 +136,33 @@ class CEVoice:
             _validate_metadata(bundle_path, metadata, payload_offset)
 
         return cls(bundle_path, metadata, payload_offset)
+
+    @classmethod
+    def _open_v4(
+        cls,
+        path: Path,
+        header: bytes,
+        stored_payload: bytes,
+    ) -> CEVoice:
+        """Open a CECHAR v4 archive after its fixed header was identified."""
+        magic, version, compression = V4_HEADER.unpack(header)
+        if magic != V4_MAGIC:
+            raise CEVoiceError("invalid CECHAR v4 magic")
+        if version != V4_VERSION:
+            raise CEVoiceError(f"unsupported CECHAR version {version}")
+        if compression not in V4_COMPRESSION_MODES:
+            raise CEVoiceError(f"unsupported CECHAR compression mode {compression}")
+
+        payload = _decompress_v4_payload(stored_payload, compression)
+        metadata, asset_entries, bundle_asset_entries = _parse_v4_payload(payload)
+        return cls(
+            path,
+            metadata,
+            V4_HEADER.size,
+            payload,
+            asset_entries,
+            bundle_asset_entries,
+        )
 
     @property
     def voices(self) -> VoiceManifest:  # noqa
@@ -145,6 +204,14 @@ class CEVoice:
         Raises:
             KeyError: The specified voice name does not have this kind of asset.
         """
+        if self._asset_entries:
+            try:
+                return self._asset_entries[(voice, kind)]
+            except KeyError as error:
+                raise KeyError(
+                    f"asset '{kind}' for voice '{voice}' not found"
+                ) from error
+
         try:
             assets = cast(dict[str, Manifest], self.voices[voice]["assets"])
             raw_asset = assets[kind]
@@ -181,6 +248,12 @@ class CEVoice:
         Raises:
             KeyError: Raised when the named bundle asset does not exist.
         """
+        if self._bundle_asset_entries:
+            try:
+                return self._bundle_asset_entries[name]
+            except KeyError as error:
+                raise KeyError(f"bundle asset '{name}' not found") from error
+
         try:
             raw_asset = self.assets[name]
         except KeyError as error:
@@ -207,9 +280,7 @@ class CEVoice:
             CEVoiceError: The asset was truncated, or its checksum validation failed.
         """
         asset = self.asset(voice, kind)
-        with self.path.open("rb") as stream:
-            stream.seek(self.payload_offset + asset.offset)
-            data = stream.read(asset.length)
+        data = self._read_asset_bytes(asset)
 
         if len(data) != asset.length:
             raise CEVoiceError(f"truncated asset '{kind}' for voice '{voice}'")
@@ -232,15 +303,21 @@ class CEVoice:
             CEVoiceError: Raised when the asset is truncated or fails checksum validation.
         """
         asset = self.bundle_asset(name)
-        with self.path.open("rb") as stream:
-            stream.seek(self.payload_offset + asset.offset)
-            data = stream.read(asset.length)
+        data = self._read_asset_bytes(asset)
 
         if len(data) != asset.length:
             raise CEVoiceError(f"truncated bundle asset '{name}'")
         if hashlib.sha256(data).hexdigest().casefold() != asset.sha256.casefold():
             raise CEVoiceError(f"checksum mismatch for bundle asset '{name}'")
         return data
+
+    def _read_asset_bytes(self, asset: CEVoiceAsset) -> bytes:
+        """Read an asset from either a legacy file payload or a v4 buffer."""
+        if self._payload is not None:
+            return self._payload[asset.offset : asset.offset + asset.length]
+        with self.path.open("rb") as stream:
+            stream.seek(self.payload_offset + asset.offset)
+            return stream.read(asset.length)
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,7 +419,7 @@ def write_cevoice(
         voices: The voice files to bundle into this CEVOICE/CECHAR package.
         metadata: The metadata to bundle into this CEVOICE/CECHAR package.
         voice_metadata: Extra metadata stored beside each voice's assets.
-        bundle_assets: Extra top-level payload assets such as CECHAR v3 persona Markdown.
+        bundle_assets: Extra top-level payload assets such as legacy Persona Markdown.
 
     Returns:
         Path: The path to the created CEVOICE/CECHAR package.
@@ -414,6 +491,600 @@ def write_cevoice(
         stream.write(metadata_bytes)
         stream.write(payload)
     return output_path
+
+
+def write_cechar_v4(
+    path: Union[str, Path],
+    voices: Mapping[str, Mapping[str, Union[bytes, str, Path]]],
+    metadata: Optional[Mapping[str, ManifestValue]] = None,
+    voice_metadata: Optional[Mapping[str, Mapping[str, ManifestValue]]] = None,
+    bundle_assets: Optional[Mapping[str, Union[bytes, str, Path]]] = None,
+    compression: int = V4_COMPRESSION_NONE,
+) -> Path:
+    """Write a CECHAR v4 archive with a name-only JSON manifest and jump table.
+
+    Args:
+        path: The CECHAR v4 package to save as.
+        voices: The voice files to bundle into the package.
+        metadata: The semantic package metadata to bundle into the package.
+        voice_metadata: Extra metadata stored beside each voice's assets.
+        bundle_assets: Persona Markdown files stored as top-level assets.
+        compression: One of the CECHAR v4 compression mode constants.
+
+    Returns:
+        Path: The path to the created CECHAR v4 package.
+
+    Raises:
+        CEVoiceError: The package data cannot be represented or validated as CECHAR v4.
+    """
+    if compression not in V4_COMPRESSION_MODES:
+        raise CEVoiceError(f"unsupported CECHAR compression mode {compression}")
+
+    unknown_voice_metadata = set(voice_metadata or {}) - set(voices)
+    if unknown_voice_metadata:
+        unknown = sorted(unknown_voice_metadata)[0]  # noqa: FURB192
+        raise CEVoiceError(f"voice metadata provided for unknown voice '{unknown}'")
+
+    payload = bytearray()
+    file_entries: list[dict[str, str]] = []
+    manifest_voices: VoiceManifest = {}
+    for voice, assets in voices.items():
+        _validate_v4_name(voice, "voice")
+        manifest_assets: dict[str, ManifestValue] = {}
+        for kind, source in assets.items():
+            if kind not in ALLOWED_ASSET_KINDS:
+                raise CEVoiceError(
+                    f"unsupported asset kind '{kind}' for voice '{voice}'"
+                )
+            name = f"{voice}.{kind}"
+            data = _read_source(source)
+            _validate_v4_file_data(name, data)
+            payload.extend(data)
+            file_entries.append(
+                {"name": name, "sha256": hashlib.sha256(data).hexdigest()}
+            )
+            manifest_assets[kind] = name
+
+        voice_entry = dict((voice_metadata or {}).get(voice, {}))
+        voice_entry["assets"] = cast(ManifestValue, manifest_assets)
+        manifest_voices[voice] = voice_entry
+
+    manifest_bundle_assets: dict[str, ManifestValue] = {}
+    for name, source in (bundle_assets or {}).items():
+        _validate_v4_name(name, "bundle asset")
+        if Path(name).suffix.lower() != ".md":
+            raise CEVoiceError(f"unsupported bundle asset '{name}'")
+        if Path(name).name not in SUPPORTED_PERSONA_FILENAMES:
+            raise CEVoiceError(f"unsupported bundle asset '{name}'")
+        data = _read_source(source)
+        _validate_v4_file_data(name, data)
+        payload.extend(data)
+        file_entries.append({"name": name, "sha256": hashlib.sha256(data).hexdigest()})
+        manifest_bundle_assets[name] = name
+
+    manifest = dict(metadata or {})
+    manifest["format"] = FORMAT_NAME
+    manifest["version"] = V4_VERSION
+    manifest["files"] = cast(
+        ManifestValue,
+        cast(list[ManifestValue], file_entries),
+    )
+    manifest["voices"] = cast(ManifestValue, manifest_voices)
+    if manifest_bundle_assets:
+        manifest["assets"] = cast(ManifestValue, manifest_bundle_assets)
+    else:
+        manifest.pop("assets", None)
+
+    metadata_bytes = json.dumps(
+        manifest,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    if len(metadata_bytes) > 0xFFFFFFFF or len(file_entries) > 0xFFFFFFFF:
+        raise CEVoiceError("CECHAR v4 metadata exceeds uint32 limits")
+
+    table_size = 4 + len(metadata_bytes) + 4 + V4_FILE_ENTRY.size * len(file_entries)
+    if table_size + len(payload) > 0xFFFFFFFF:
+        raise CEVoiceError("CECHAR v4 payload exceeds uint32 limits")
+
+    logical_payload = bytearray()
+    logical_payload.extend(struct.pack("<I", len(metadata_bytes)))
+    logical_payload.extend(metadata_bytes)
+    logical_payload.extend(struct.pack("<I", len(file_entries)))
+    offset = table_size
+    for entry in file_entries:
+        data = _read_v4_entry_data(entry["name"], voices, bundle_assets)
+        logical_payload.extend(V4_FILE_ENTRY.pack(offset, len(data)))
+        offset += len(data)
+    logical_payload.extend(payload)
+
+    stored_payload = _compress_v4_payload(bytes(logical_payload), compression)
+    output_path = Path(path)
+    with output_path.open("wb") as stream:
+        stream.write(V4_HEADER.pack(V4_MAGIC, V4_VERSION, compression))
+        stream.write(stored_payload)
+    return output_path
+
+
+def _read_v4_entry_data(
+    name: str,
+    voices: Mapping[str, Mapping[str, Union[bytes, str, Path]]],
+    bundle_assets: Optional[Mapping[str, Union[bytes, str, Path]]],
+) -> bytes:
+    """Read one v4 entry again in canonical manifest order."""
+    for voice, assets in voices.items():
+        for kind, source in assets.items():
+            if name == f"{voice}.{kind}":
+                return _read_source(source)
+    if bundle_assets is not None and name in bundle_assets:
+        return _read_source(bundle_assets[name])
+    raise CEVoiceError(f"missing CECHAR v4 file data for '{name}'")
+
+
+def _validate_v4_file_data(name: str, data: bytes) -> None:
+    """Validate one file before placing it into a CECHAR v4 archive."""
+    suffix = Path(name).suffix.lower()
+    if suffix not in V4_ALLOWED_ASSET_SUFFIXES:
+        raise CEVoiceError(f"unsupported CECHAR v4 asset extension '{suffix}'")
+    if suffix == ".md" and Path(name).name not in SUPPORTED_PERSONA_FILENAMES:
+        raise CEVoiceError(f"unsupported CECHAR v4 persona asset '{name}'")
+    if suffix == ".wav":
+        _validate_v4_wav(name, data)
+    elif suffix == ".pt":
+        _validate_v4_embedding(name, data)
+    else:
+        _validate_v4_persona_markdown(name, data)
+
+
+def _compress_v4_payload(payload: bytes, compression: int) -> bytes:
+    """Compress one logical v4 payload using its selected storage codec."""
+    if compression == V4_COMPRESSION_NONE:
+        return payload
+    if compression == V4_COMPRESSION_GZIP:
+        return gzip.compress(payload)
+    if compression == V4_COMPRESSION_ZSTANDARD:
+        try:
+            import zstandard  # type: ignore[import-not-found]
+        except ImportError as error:
+            raise CEVoiceError("Zstandard compression is unavailable") from error
+        return zstandard.ZstdCompressor().compress(payload)
+    if compression == V4_COMPRESSION_XZ:
+        return lzma.compress(payload)
+    if compression == V4_COMPRESSION_OPENZL:
+        try:
+            import openzl.ext as zl  # type: ignore[import-not-found]
+        except ImportError as error:
+            raise CEVoiceError("OpenZL compression is unavailable") from error
+        compressor = zl.Compressor()
+        compressor.select_starting_graph(zl.graphs.Compress()(compressor))
+        context = zl.CCtx()
+        context.ref_compressor(compressor)
+        context.set_parameter(zl.CParam.FormatVersion, zl.MAX_FORMAT_VERSION)
+        return bytes(context.compress([zl.Input(zl.Type.Serial, payload)]))
+    raise CEVoiceError(f"unsupported CECHAR compression mode {compression}")
+
+
+def _decompress_v4_payload(stored_payload: bytes, compression: int) -> bytes:
+    """Decompress one complete CECHAR v4 stored payload."""
+    try:
+        if compression == V4_COMPRESSION_NONE:
+            return stored_payload
+        if compression == V4_COMPRESSION_GZIP:
+            return gzip.decompress(stored_payload)
+        if compression == V4_COMPRESSION_ZSTANDARD:
+            try:
+                import zstandard  # type: ignore[import-not-found]
+            except ImportError as error:
+                raise CEVoiceError("Zstandard compression is unavailable") from error
+            return zstandard.ZstdDecompressor().decompress(stored_payload)
+        if compression == V4_COMPRESSION_XZ:
+            return lzma.decompress(stored_payload)
+        if compression == V4_COMPRESSION_OPENZL:
+            try:
+                import openzl.ext as zl  # type: ignore[import-not-found]
+            except ImportError as error:
+                raise CEVoiceError("OpenZL compression is unavailable") from error
+            outputs = zl.DCtx().decompress(stored_payload)
+            if len(outputs) != 1 or outputs[0].type != zl.Type.Serial:
+                raise CEVoiceError("invalid OpenZL CECHAR v4 payload")
+            return bytes(outputs[0].content.as_bytes())
+    except CEVoiceError:
+        raise
+    except Exception as error:
+        raise CEVoiceError("invalid compressed CECHAR v4 payload") from error
+    raise CEVoiceError(f"unsupported CECHAR compression mode {compression}")
+
+
+def _parse_v4_payload(
+    payload: bytes,
+) -> tuple[
+    Manifest,
+    dict[tuple[str, str], CEVoiceAsset],
+    dict[str, CEVoiceAsset],
+]:
+    """Parse, validate, and index one decompressed CECHAR v4 payload."""
+    if len(payload) < 4:
+        raise CEVoiceError("truncated CECHAR v4 metadata length")
+    metadata_length = struct.unpack_from("<I", payload)[0]
+    metadata_start = 4
+    metadata_end = metadata_start + metadata_length
+    if metadata_end > len(payload):
+        raise CEVoiceError("truncated CECHAR v4 metadata")
+    metadata_bytes = payload[metadata_start:metadata_end]
+    if metadata_bytes.startswith(b"\xef\xbb\xbf"):
+        raise CEVoiceError("CECHAR v4 metadata must not contain a byte-order mark")
+    try:
+        metadata = json.loads(metadata_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CEVoiceError("invalid CECHAR v4 metadata") from error
+    if not isinstance(metadata, dict):
+        raise CEVoiceError("CECHAR v4 metadata root must be an object")
+    if metadata.get("format") != FORMAT_NAME or metadata.get("version") != V4_VERSION:
+        raise CEVoiceError("CECHAR v4 metadata format/version mismatch")
+
+    file_list = metadata.get("files")
+    if not isinstance(file_list, list):
+        raise CEVoiceError("CECHAR v4 metadata files must be a list")
+    file_count_offset = metadata_end
+    if len(payload) < file_count_offset + 4:
+        raise CEVoiceError("truncated CECHAR v4 file count")
+    file_count = struct.unpack_from("<I", payload, file_count_offset)[0]
+    if len(file_list) != file_count:
+        raise CEVoiceError("CECHAR v4 metadata file count mismatch")
+
+    jump_table_start = file_count_offset + 4
+    jump_table_end = jump_table_start + V4_FILE_ENTRY.size * file_count
+    if jump_table_end > len(payload):
+        raise CEVoiceError("truncated CECHAR v4 jump table")
+
+    file_names: list[str] = []
+    file_digests: list[Optional[str]] = []
+    for item in file_list:
+        if not isinstance(item, dict):
+            raise CEVoiceError("CECHAR v4 file entry must be an object")
+        if "offset" in item or "length" in item:
+            raise CEVoiceError("CECHAR v4 file entries must not store physical offsets")
+        name = item.get("name")
+        if not isinstance(name, str):
+            raise CEVoiceError("CECHAR v4 file entry must contain a name")
+        _validate_v4_name(name, "file")
+        suffix = Path(name).suffix.lower()
+        if suffix not in V4_ALLOWED_ASSET_SUFFIXES:
+            raise CEVoiceError(f"unsupported CECHAR v4 asset extension '{suffix}'")
+        if suffix == ".md" and Path(name).name not in SUPPORTED_PERSONA_FILENAMES:
+            raise CEVoiceError(f"unsupported CECHAR v4 persona asset '{name}'")
+        if name.casefold() in {existing.casefold() for existing in file_names}:
+            raise CEVoiceError(f"duplicate CECHAR v4 file name '{name}'")
+        digest = item.get("sha256")
+        if digest is not None and not _is_sha256(digest):
+            raise CEVoiceError(f"invalid CECHAR v4 checksum for '{name}'")
+        file_names.append(name)
+        file_digests.append(digest.casefold() if isinstance(digest, str) else None)
+
+    entries: dict[str, CEVoiceAsset] = {}
+    ranges: list[tuple[int, int, str]] = []
+    for index, name in enumerate(file_names):
+        offset, length = V4_FILE_ENTRY.unpack_from(
+            payload, jump_table_start + index * 8
+        )
+        if (
+            offset < jump_table_end
+            or offset > len(payload)
+            or length > len(payload) - offset
+        ):
+            raise CEVoiceError(
+                f"CECHAR v4 file range for '{name}' is outside the payload"
+            )
+        end = offset + length
+        ranges.append((offset, end, name))
+        data = payload[offset:end]
+        digest = hashlib.sha256(data).hexdigest()
+        declared_digest = file_digests[index]
+        if declared_digest is not None and digest.casefold() != declared_digest:
+            raise CEVoiceError(f"checksum mismatch for CECHAR v4 file '{name}'")
+        entries[name] = CEVoiceAsset(offset, length, digest)
+
+    for first, second in zip(sorted(ranges), sorted(ranges)[1:]):
+        if second[0] < first[1]:
+            raise CEVoiceError(
+                f"overlapping CECHAR v4 file ranges '{first[2]}' and '{second[2]}'"
+            )
+
+    _validate_v4_assets(payload, entries)
+    normalized_metadata = _normalize_v4_metadata(metadata, entries)
+    asset_entries, bundle_asset_entries = _index_v4_manifest(
+        normalized_metadata,
+        entries,
+    )
+    return normalized_metadata, asset_entries, bundle_asset_entries
+
+
+def _normalize_v4_metadata(
+    metadata: dict,
+    entries: Mapping[str, CEVoiceAsset],
+) -> Manifest:
+    """Normalize v4 file references into the runtime's existing manifest shape."""
+    normalized = cast(Manifest, metadata)
+    raw_voices = normalized.get("voices")
+    if raw_voices is None:
+        derived_voices: VoiceManifest = {}
+        for name in entries:
+            suffix = Path(name).suffix.lower()
+            if suffix not in {".wav", ".pt"}:
+                continue
+            voice = Path(name).stem
+            voice_entry = derived_voices.setdefault(voice, {})
+            assets = cast(
+                dict[str, ManifestValue], voice_entry.setdefault("assets", {})
+            )
+            assets[suffix[1:]] = name
+        normalized["voices"] = cast(ManifestValue, derived_voices)
+    elif not isinstance(raw_voices, dict):
+        raise CEVoiceError("CECHAR v4 metadata voices must be an object")
+
+    raw_assets = normalized.get("assets")
+    if raw_assets is None:
+        normalized["assets"] = cast(
+            ManifestValue,
+            {name: name for name in entries if Path(name).suffix.lower() == ".md"},
+        )
+    elif not isinstance(raw_assets, dict):
+        raise CEVoiceError("CECHAR v4 metadata assets must be an object")
+    return normalized
+
+
+def _index_v4_manifest(
+    metadata: Manifest,
+    entries: Mapping[str, CEVoiceAsset],
+) -> tuple[dict[tuple[str, str], CEVoiceAsset], dict[str, CEVoiceAsset]]:
+    """Resolve name-only v4 manifest references to validated jump-table entries."""
+    indexed_voices: dict[tuple[str, str], CEVoiceAsset] = {}
+    voices = metadata.get("voices")
+    if not isinstance(voices, dict):
+        raise CEVoiceError("CECHAR v4 metadata voices must be an object")
+    voices = cast(dict[str, Manifest], voices)
+    _validate_v4_semantic_metadata(metadata, voices)
+    for voice, voice_data in voices.items():
+        if not isinstance(voice, str) or not isinstance(voice_data, dict):
+            raise CEVoiceError("invalid CECHAR v4 voice entry")
+        assets = voice_data.get("assets")
+        if not isinstance(assets, dict):
+            raise CEVoiceError(f"voice '{voice}' assets must be an object")
+        for kind, reference in assets.items():
+            if kind not in ALLOWED_ASSET_KINDS:
+                raise CEVoiceError(
+                    f"unsupported asset kind '{kind}' for voice '{voice}'"
+                )
+            name = _v4_reference_name(reference, f"voice '{voice}' asset '{kind}'")
+            if name not in entries or Path(name).suffix.lower() != f".{kind}":
+                raise CEVoiceError(f"missing CECHAR v4 asset '{name}'")
+            indexed_voices[(voice, kind)] = entries[name]
+
+    indexed_bundle_assets: dict[str, CEVoiceAsset] = {}
+    raw_assets = metadata.get("assets")
+    if not isinstance(raw_assets, dict):
+        raise CEVoiceError("CECHAR v4 metadata assets must be an object")
+    for name, reference in raw_assets.items():
+        if not isinstance(name, str):
+            raise CEVoiceError("invalid CECHAR v4 bundle asset name")
+        referenced_name = _v4_reference_name(reference, f"bundle asset '{name}'")
+        if referenced_name != name or referenced_name not in entries:
+            raise CEVoiceError(f"missing CECHAR v4 bundle asset '{name}'")
+        indexed_bundle_assets[name] = entries[referenced_name]
+    return indexed_voices, indexed_bundle_assets
+
+
+def _validate_v4_semantic_metadata(
+    metadata: Manifest,
+    voices: Mapping[str, Manifest],
+) -> None:
+    """Validate v4 metadata fields that describe runtime voice selection."""
+    default_voice = metadata.get("default_voice")
+    if default_voice is not None and default_voice not in voices:
+        raise CEVoiceError("metadata default_voice must name a defined voice")
+
+    voice_order = metadata.get("voice_order")
+    if voice_order is not None:
+        if not isinstance(voice_order, list) or not all(
+            isinstance(voice, str) for voice in voice_order
+        ):
+            raise CEVoiceError("metadata voice_order must be a list of voice names")
+        order = cast(list[str], voice_order)
+        if len(set(order)) != len(order):
+            raise CEVoiceError("metadata voice_order must not contain duplicates")
+        if any(voice not in voices for voice in order):
+            raise CEVoiceError("metadata voice_order must only name defined voices")
+        order.extend(voice for voice in voices if voice not in order)
+
+    theme = metadata.get("theme")
+    if theme is not None:
+        if not isinstance(theme, dict):
+            raise CEVoiceError("metadata theme must be an object")
+        if (
+            theme.get("faded_accent") is None
+            and theme.get("sleeping_color") is not None
+        ):
+            theme["faded_accent"] = str(theme.get("sleeping_color", "#9c88ce"))
+        for key in ("background", "accent", "glow_color", "faded_accent"):
+            value = theme.get(key)
+            if key in {"glow_color", "faded_accent"} and value is None:
+                continue
+            if not _is_hex_color(value):
+                raise CEVoiceError(f"metadata theme '{key}' must be a hex color")
+
+    persona = metadata.get("persona")
+    if persona is not None:
+        _validate_persona_metadata(persona)
+
+    for voice, voice_data in voices.items():
+        if not isinstance(voice, str) or not isinstance(voice_data, dict):
+            raise CEVoiceError("invalid voice entry")
+        _validate_v4_name(voice, "voice")
+        cfg_scale = voice_data.get("cfg_scale")
+        if cfg_scale is not None and (
+            not isinstance(cfg_scale, (int, float))
+            or isinstance(cfg_scale, bool)
+            or cfg_scale <= 0
+        ):
+            raise CEVoiceError(f"voice '{voice}' cfg_scale must be a positive number")
+        reference_text = voice_data.get("reference_text")
+        if reference_text is not None and (
+            not isinstance(reference_text, str) or not reference_text.strip()
+        ):
+            raise CEVoiceError(
+                f"voice '{voice}' reference_text must be a non-empty string"
+            )
+        voice_persona = voice_data.get("persona")
+        if voice_persona is not None:
+            _validate_persona_metadata(voice_persona)
+
+
+def _v4_reference_name(value: ManifestValue, field_name: str) -> str:
+    """Read a v4 logical file name while rejecting physical table fields."""
+    name: object
+    if isinstance(value, str):
+        name = value
+    elif isinstance(value, dict):
+        if "offset" in value or "length" in value:
+            raise CEVoiceError(f"{field_name} must not store physical offsets")
+        name = value.get("file")
+        if not isinstance(name, str):
+            name = value.get("name")
+    else:
+        name = None
+    if not isinstance(name, str):
+        raise CEVoiceError(f"{field_name} must reference a file name")
+    _validate_v4_name(name, field_name)
+    return name
+
+
+def _validate_v4_name(value: object, field_name: str) -> None:
+    """Validate one CECHAR v4 logical name against traversal and null-byte rules."""
+    if not isinstance(value, str) or not value or "\0" in value:
+        raise CEVoiceError(f"invalid CECHAR v4 {field_name} name")
+    if "\\" in value or value.startswith("/") or value.endswith("/"):
+        raise CEVoiceError(f"invalid CECHAR v4 {field_name} name '{value}'")
+    parts = value.split("/")
+    if any(not part or part in {".", ".."} for part in parts):
+        raise CEVoiceError(f"invalid CECHAR v4 {field_name} name '{value}'")
+
+
+def _validate_v4_assets(
+    payload: bytes,
+    entries: Mapping[str, CEVoiceAsset],
+) -> None:
+    """Validate each v4 asset according to its extension."""
+    for name, entry in entries.items():
+        data = payload[entry.offset : entry.offset + entry.length]
+        suffix = Path(name).suffix.lower()
+        if suffix == ".wav":
+            _validate_v4_wav(name, data)
+        elif suffix == ".pt":
+            _validate_v4_embedding(name, data)
+        elif suffix == ".md":
+            _validate_v4_persona_markdown(name, data)
+
+
+def _validate_v4_wav(name: str, data: bytes) -> None:
+    """Validate one canonical CECHAR v4 PCM WAV asset."""
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise CEVoiceError(f"invalid CECHAR v4 WAV asset '{name}'")
+    fmt_data: Optional[bytes] = None
+    has_data_chunk = False
+    cursor = 12
+    while cursor + 8 <= len(data):
+        chunk_id = data[cursor : cursor + 4]
+        chunk_length = struct.unpack_from("<I", data, cursor + 4)[0]
+        chunk_start = cursor + 8
+        chunk_end = chunk_start + chunk_length
+        if chunk_end > len(data):
+            raise CEVoiceError(f"invalid CECHAR v4 WAV asset '{name}'")
+        if chunk_id == b"fmt " and fmt_data is None:
+            fmt_data = data[chunk_start:chunk_end]
+        if chunk_id == b"data":
+            has_data_chunk = True
+        cursor = chunk_end + (chunk_length & 1)
+    if fmt_data is None or len(fmt_data) < 16 or not has_data_chunk:
+        raise CEVoiceError(f"invalid CECHAR v4 WAV asset '{name}'")
+    audio_format, channels, sample_rate, byte_rate, block_align, bits = struct.unpack(
+        "<HHIIHH", fmt_data[:16]
+    )
+    if (audio_format, channels, sample_rate, bits) != (1, 1, 24000, 16):
+        raise CEVoiceError(f"invalid CECHAR v4 WAV properties for '{name}'")
+    if (
+        byte_rate != sample_rate * channels * bits // 8
+        or block_align != channels * bits // 8
+    ):
+        raise CEVoiceError(f"invalid CECHAR v4 WAV properties for '{name}'")
+    try:
+        with wave.open(io.BytesIO(data), "rb") as wav_file:
+            if (
+                wav_file.getnchannels() != 1
+                or wav_file.getframerate() != 24000
+                or wav_file.getsampwidth() != 2
+                or wav_file.getcomptype() != "NONE"
+            ):
+                raise CEVoiceError(f"invalid CECHAR v4 WAV properties for '{name}'")
+    except (EOFError, wave.Error) as error:
+        raise CEVoiceError(f"invalid CECHAR v4 WAV asset '{name}'") from error
+
+
+def _validate_v4_embedding(name: str, data: bytes) -> None:
+    """Validate one restricted tensor-only CECHAR v4 voice embedding."""
+    try:
+        import torch
+
+        value = torch.load(io.BytesIO(data), map_location="cpu", weights_only=True)
+    except Exception as error:
+        raise CEVoiceError(f"invalid CECHAR v4 PT asset '{name}'") from error
+    if isinstance(value, dict):
+        if set(value) != {"speaker_embedding"}:
+            raise CEVoiceError(f"invalid CECHAR v4 PT keys for '{name}'")
+        value = value["speaker_embedding"]
+    if not isinstance(value, torch.Tensor):
+        raise CEVoiceError(f"invalid CECHAR v4 PT asset '{name}'")
+    if (
+        value.dtype != torch.float32
+        or value.numel() != 2048
+        or value.ndim not in {1, 2}
+    ):
+        raise CEVoiceError(f"invalid CECHAR v4 PT shape or dtype for '{name}'")
+    if value.ndim == 2 and value.shape != (1, 2048):
+        raise CEVoiceError(f"invalid CECHAR v4 PT shape for '{name}'")
+    if value.ndim == 1 and value.shape != (2048,):
+        raise CEVoiceError(f"invalid CECHAR v4 PT shape for '{name}'")
+    if not bool(torch.isfinite(value).all()):
+        raise CEVoiceError(f"invalid CECHAR v4 PT values for '{name}'")
+
+
+_V4_FORBIDDEN_PERSONA_FIELD = re.compile(
+    r"(?im)^\s*(?:agent|agents|capabilities|filesystem|network|process|shell|"
+    r"tools?|permissions?|exec(?:ute)?|code)\s*[:=]"
+)
+
+
+def _validate_v4_persona_markdown(name: str, data: bytes) -> None:
+    """Validate a CECHAR v4 Persona Markdown asset as inert character text."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise CEVoiceError(f"invalid CECHAR v4 Persona Markdown '{name}'") from error
+    if not text.strip() or "\0" in text or "```" in text:
+        raise CEVoiceError(f"invalid CECHAR v4 Persona Markdown '{name}'")
+    if _V4_FORBIDDEN_PERSONA_FIELD.search(text):
+        raise CEVoiceError(f"unsupported CECHAR v4 Persona declaration in '{name}'")
+    if re.search(r"(?im)^\s*(?:[$>]\s*)?(?:powershell|cmd(?:\.exe)?|bash|sh)\b", text):
+        raise CEVoiceError(f"executable CECHAR v4 Persona content in '{name}'")
+
+
+def _is_sha256(value: object) -> bool:
+    """Return whether a value is a hexadecimal SHA-256 digest."""
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdefABCDEF" for character in value)
+    )
 
 
 def _read_header(stream: BinaryIO) -> tuple[bytes, int, int]:
@@ -836,7 +1507,7 @@ def persona_files_from_manifest(
 
 
 def persona_files_from_bundle(bundle: CEVoice) -> dict[str, str]:
-    """Return whitelisted CECHAR v3 persona Markdown stored as bundle assets.
+    """Return whitelisted CECHAR Persona Markdown stored as bundle assets.
 
     Args:
         bundle: The CEVOICE/CECHAR package to inspect.

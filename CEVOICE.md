@@ -1,8 +1,9 @@
 # CEVOICE
 
-`CEVOICE` is Celune's voice-pack container format. Current bundles are written with
-the `CECHAR` v3 schema, while older `CECHAR` v2 and legacy `CEVOICE` v1 bundles
-remain readable. A
+`CEVOICE` is Celune's voice-pack container format. The bundled default pack uses
+the `CECHAR` v4 schema. Older `CECHAR` v2/v3 and legacy `CEVOICE` v1 bundles
+remain readable, and `write_cevoice()` remains available for producing those
+legacy-compatible bundles. Use `write_cechar_v4()` for new v4 archives. A
 `.cevoice` file stores:
 
 - a small fixed-size binary header
@@ -18,7 +19,24 @@ The canonical implementation lives in `celune/cevoice.py`.
 
 ## File layout
 
-Each bundle is written as:
+CECHAR v4 bundles are written as:
+
+| Region | Size | Description |
+| --- | ---: | --- |
+| Header | 9 bytes | `struct.Struct("<7sBB")` |
+| Stored payload | variable | uncompressed or one complete compressed stream |
+
+The decompressed v4 payload is:
+
+| Region | Size | Description |
+| --- | ---: | --- |
+| Metadata length | 4 bytes | Little-endian unsigned length |
+| Metadata | variable | UTF-8 JSON with a name-only `files` list |
+| File count | 4 bytes | Little-endian unsigned count |
+| Jump table | 8 bytes per file | Little-endian offset and length pairs |
+| File data | variable | Assets in manifest order |
+
+Legacy CECHAR v2/v3 bundles use the older layout:
 
 | Region | Size | Description |
 | --- | ---: | --- |
@@ -26,13 +44,15 @@ Each bundle is written as:
 | Metadata | variable | UTF-8 JSON |
 | Payload | variable | concatenated asset bytes |
 
-The header fields for newly written bundles are:
+### CECHAR v4 header
+
+The v4 header fields are:
 
 | Field | Type | Value |
 | --- | --- | --- |
-| `magic` | `8s` | `b"CECHAR\0\0"` |
-| `version` | `H` | `3` |
-| `metadata_length` | `I` | byte length of the JSON metadata |
+| `magic` | `7s` | `b"CECHAR\0"` |
+| `version` | `B` | `4` |
+| `compression` | `B` | `0` none, `1` gzip, `2` Zstandard, `3` XZ, `4` OpenZL |
 
 Celune also accepts legacy bundles with:
 
@@ -41,7 +61,9 @@ Celune also accepts legacy bundles with:
 | `magic` | `8s` | `b"CEVOICE\0"` |
 | `version` | `H` | `1` |
 
-Asset offsets are relative to the start of the payload, not the start of the file.
+V4 asset offsets are relative to the start of the decompressed logical payload,
+not the start of the file. Physical offsets and lengths are never stored in v4
+JSON metadata.
 
 ## Metadata schema
 
@@ -153,12 +175,22 @@ Supported top-level bundle Markdown assets are:
 - `boundaries.md`
 - `examples.md`
 
-In CECHAR v3, those `.md` files live in the payload alongside `wav` and `pt`
-data and are indexed from the top-level `assets` manifest table.
+In legacy CECHAR v3, those `.md` files live in the payload alongside `wav` and
+`pt` data and are indexed from the top-level `assets` manifest table. In v4,
+they are entries in the shared name-only `files` manifest and point into the
+binary jump table.
 
 Validation rules enforced by Celune:
 
-- `format`/`version` must be either `"CECHAR"` / `2` or `3`, or legacy `"CEVOICE"` / `1`
+- legacy `format`/`version` must be either `"CECHAR"` / `2` or `3`, or `"CEVOICE"` / `1`
+- v4 `format`/`version` must be `"CECHAR"` / `4`
+- v4 compression must be one of `0`, `1`, `2`, `3`, or `4`
+- v4 metadata must contain a `files` list whose length equals the binary file count
+- v4 file names must be unique, safe logical names with `.wav`, `.pt`, or supported `.md` extensions
+- v4 jump-table ranges must be inside the decompressed payload and must not overlap
+- v4 WAV files must be mono, signed 16-bit PCM at 24 kHz
+- v4 PT files must be restricted tensor-only 2048-element float32 embeddings
+- v4 Persona Markdown must be UTF-8 inert character text without unsupported capability declarations or executable code
 - `voices` must be an object
 - `default_voice`, when present, must name a defined voice
 - `voice_order`, when present, must be a duplicate-free list of defined voice names
@@ -176,8 +208,8 @@ Validation rules enforced by Celune:
 - voice names and asset kinds may not contain path separators and may not be `""`, `"."`, or `".."`
 - only `wav` and `pt` asset kinds are supported
 - only supported persona `.md` filenames may appear in top-level `assets`
-- every asset entry needs a non-negative integer `offset`, a non-negative integer `length`, and a 64-character SHA-256 digest
-- each asset must fit inside the payload region
+- legacy asset entries need a non-negative integer `offset`, a non-negative integer `length`, and a 64-character SHA-256 digest
+- legacy assets must fit inside the payload region
 
 ## How Celune uses a bundle
 

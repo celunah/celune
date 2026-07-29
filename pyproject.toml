@@ -36,6 +36,7 @@ dependencies = [
     "pyrubberband",
     "soundfile",
     "sounddevice",
+    "zstandard",
     # Explicitly used by the self-analysis pass, used as a dependency elsewhere.
     "librosa",
 
