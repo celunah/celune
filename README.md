@@ -5,14 +5,13 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12%2F3.13-cebaff) ![License](https://img.shields.io/badge/License-MIT-cebaff) ![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff) ![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
 
-Celune is a real-time AI TTS character engine which can be used for a variety of use cases.
+Celune is a conversational character engine with agentic features.
 
-Whether it's roleplay, PA systems, or something else, it can do it all.
+You can use it to speak. You can use it to talk. You can also use it to manage.
 
-It has been designed to provide fast, high-quality voice generation, even on consumer-grade hardware.
+No matter what you want to do, it is there to help you.
 
-It was proudly made in 🇵🇱 for your listening pleasure.
-
+It was proudly made in 🇵🇱 for the finest of uses.
 ## Features
 
 - Real-time buffered speech generation pipeline
@@ -24,6 +23,8 @@ It was proudly made in 🇵🇱 for your listening pleasure.
 - Configurable character voices via CEVOICE voice packs
 - Characters can respond back to you
 - Can voice change into character voices
+- Automatic memory saving
+- Agentic capabilities with tools
 
 ## Global operation modes
 
