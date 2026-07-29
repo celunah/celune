@@ -23,6 +23,7 @@ from celune.celune import Celune
 from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
 from celune.constants import PipelineStates
 from celune.dataclasses.pipeline import AudioInputRequest
+from celune.persona.impl import compact_persona_history
 from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
 from celune.typing.aliases import AudioChunk
 from celune.typing.common import JSON, JSONSerializable
@@ -2370,6 +2371,77 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         )
         self.assertIn(
             "The archive is stored in the attic.", engine.persona_session_summary
+        )
+        self.assertTrue(
+            engine.persona_session_summary.startswith("Conversation context:")
+        )
+        self.assertNotIn("Earlier summary:", engine.persona_session_summary)
+        self.assertNotIn("user:", engine.persona_session_summary)
+        self.assertNotIn("assistant:", engine.persona_session_summary)
+
+    def test_persona_history_summary_does_not_nest_previous_summary(self) -> None:
+        """Verify repeated compaction removes wrappers and duplicate summary labels."""
+        engine = make_pipeline_engine()
+        engine.config = {
+            "persona": {
+                "memory": {
+                    "max_short_term_messages": 1,
+                    "context_compaction_keep_recent_messages": 1,
+                    "context_summary_max_characters": 240,
+                }
+            }
+        }
+        engine.persona_session_summary = (
+            "<conversation_summary>Earlier summary: Earlier summary: "
+            "The archive is stored in the attic.</conversation_summary>"
+        )
+        engine.persona_history = [
+            {"role": "user", "content": "The archive is stored in the attic."},
+            {"role": "assistant", "content": "I will remember the archive location."},
+        ]
+
+        compact_persona_history(cast(Celune, engine))
+
+        self.assertEqual(engine.persona_session_summary.count("archive"), 1)
+        self.assertTrue(
+            engine.persona_session_summary.startswith("Conversation context:")
+        )
+        self.assertNotIn("Earlier summary:", engine.persona_session_summary)
+        self.assertNotIn("<conversation_summary>", engine.persona_session_summary)
+        self.assertNotIn("</conversation_summary>", engine.persona_session_summary)
+
+    def test_persona_history_prefers_neutral_vlm_summary(self) -> None:
+        """Verify compaction stores the VLM summary instead of raw conversation turns."""
+        engine = make_pipeline_engine()
+        engine.config = {
+            "persona": {
+                "memory": {
+                    "max_short_term_messages": 1,
+                    "context_compaction_keep_recent_messages": 1,
+                    "context_summary_max_characters": 240,
+                }
+            }
+        }
+        engine.persona_session_summary = "Earlier context."
+        engine.persona_history = [
+            {"role": "user", "content": "The TTS response was cut off."},
+            {"role": "assistant", "content": "I will keep that in mind."},
+        ]
+        summarize_history = mock.Mock(
+            return_value="The conversation concerns a TTS cutoff."
+        )
+        engine.vision = SimpleNamespace(summarize_history=summarize_history)
+
+        compact_persona_history(cast(Celune, engine))
+
+        summarize_history.assert_called_once_with(
+            [{"role": "user", "content": "The TTS response was cut off."}],
+            "Earlier context.",
+            240,
+        )
+        self.assertEqual(
+            engine.persona_session_summary,
+            "Conversation context: The conversation concerns a TTS cutoff.",
         )
 
     def test_think_persists_explicit_memory_before_persona_reply(self) -> None:

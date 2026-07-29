@@ -1898,7 +1898,6 @@ def think(engine: Celune, request: str) -> bool:
                 {"role": "assistant", "content": spoken_text},
             ]
         )
-        compact_persona_history(engine)
 
     queued = queue_speech(
         engine,
@@ -1906,6 +1905,8 @@ def think(engine: Celune, request: str) -> bool:
         save=False,
         display_text=spoken_text,
     )
+    if isinstance(history, list):
+        compact_persona_history(engine)
     _classify_persona_memories(engine, request)
     return queued
 

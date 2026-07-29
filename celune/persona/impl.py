@@ -4,6 +4,7 @@
 import contextlib
 import io
 import os
+import re
 from collections.abc import Generator, Mapping
 from typing import Optional
 
@@ -38,6 +39,22 @@ from .capabilities import PersonaCapabilities
 from .runtime import PersonaRuntime, request_from_json, response_to_json
 
 PERSONA_QUANTIZATION = "4bit"
+_CONVERSATION_SUMMARY_SYSTEM_PROMPT = (
+    "You are a neutral conversation summarizer. Do not roleplay, imitate a "
+    "character, answer the user, or use a character's speaking style. Summarize "
+    "the supplied conversation in concise factual prose. Preserve important "
+    "facts, decisions, preferences, unresolved issues, and relevant emotional "
+    "context. Ignore greetings and filler. Output only the summary prose, with "
+    "no XML tags, role labels, or heading."
+)
+_SUMMARY_PREFIX = "Conversation context:"
+_SUMMARY_SPLIT_RE = re.compile(r"(?:\r?\n+|(?<=[.!?])\s+|;\s+)")
+_SUMMARY_WRAPPER_RE = re.compile(r"</?(?:conversation_summary|summary)>", re.IGNORECASE)
+_SUMMARY_LABEL_RE = re.compile(
+    r"^\s*(?:summary|earlier summary|conversation summary|conversation context|"
+    r"user|assistant|celune)\s*:\s*",
+    re.IGNORECASE,
+)
 
 
 class PersonaClient:
@@ -108,6 +125,62 @@ class PersonaClient:
             PersonaClientResponse: The classifier response using the local Persona model.
         """
         return self.post(json)
+
+    def summarize_history(
+        self,
+        messages: list[JSON],
+        previous_summary: str = "",
+        maximum_characters: int = 1200,
+    ) -> str:
+        """Summarize conversation context without the CEVOICE persona prompt.
+
+        Args:
+            messages: Older conversation turns that are being compacted.
+            previous_summary: The summary produced by the previous compaction pass.
+            maximum_characters: Maximum desired length of the returned summary.
+
+        Returns:
+            str: Neutral summary prose returned by the active Persona model.
+        """
+        context_sections: list[str] = []
+        if previous_summary.strip():
+            context_sections.append(f"Existing summary:\n{previous_summary.strip()}")
+        if messages:
+            turns = "\n".join(
+                f"{message.get('role', 'unknown')}: {message.get('content', '')}"
+                for message in messages
+            )
+            context_sections.append(f"Conversation turns:\n{turns}")
+        context = "\n\n".join(context_sections).strip()
+        if not context:
+            return ""
+
+        response = self.post(
+            {
+                "format": "celune_conversation_summary",
+                "format_version": 1,
+                "model": persona_model_id(self.config),
+                "quantization": persona_quantization(self.config or {}),
+                "quantized": True,
+                "system": _CONVERSATION_SUMMARY_SYSTEM_PROMPT,
+                "user": context,
+                "request": context,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": _CONVERSATION_SUMMARY_SYSTEM_PROMPT,
+                    },
+                    {"role": "user", "content": context},
+                ],
+                "max_new_tokens": max(64, min(240, maximum_characters // 3)),
+                "temperature": 0.0,
+                "top_p": 1.0,
+                "repetition_penalty": 1.0,
+            }
+        )
+        payload = response.json()
+        summary = payload.get("response", payload.get("text", ""))
+        return summary.strip() if isinstance(summary, str) else ""
 
     def close(self) -> None:
         """Release Persona runtime state."""
@@ -434,11 +507,109 @@ def persona_session_summary(engine: PersonaEngineView) -> str:
     return summary.strip() if isinstance(summary, str) else ""
 
 
+def _summary_fragments(text: str) -> list[str]:
+    """Extract clean, sentence-sized fragments from one summary source."""
+    cleaned = _SUMMARY_WRAPPER_RE.sub(" ", text)
+    fragments: list[str] = []
+    for raw_fragment in _SUMMARY_SPLIT_RE.split(cleaned):
+        fragment = raw_fragment.strip()
+        while True:
+            unlabeled = _SUMMARY_LABEL_RE.sub("", fragment)
+            if unlabeled == fragment:
+                break
+            fragment = unlabeled.strip()
+        fragment = " ".join(fragment.split()).strip(" -:;")
+        if len(fragment) >= 12:
+            fragments.append(fragment)
+    return fragments
+
+
+def _summary_fragment_key(fragment: str) -> str:
+    """Normalize one summary fragment for duplicate detection."""
+    return " ".join(fragment.casefold().strip(".!?").split())
+
+
+def _build_persona_summary(
+    previous_summary: str,
+    old_messages: list[dict[str, str]],
+    maximum_characters: int,
+) -> str:
+    """Build a bounded deterministic fallback digest without recursive nesting."""
+    sources: list[str] = []
+    if previous_summary:
+        sources.append(previous_summary)
+    sources.extend(
+        content
+        for message in old_messages
+        for content in [message.get("content", "")]
+        if isinstance(content, str)
+    )
+
+    fragments: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        for fragment in _summary_fragments(source):
+            key = _summary_fragment_key(fragment)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            fragments.append(fragment)
+
+    if not fragments:
+        return ""
+
+    prefix_length = len(_SUMMARY_PREFIX) + 1
+    available = max(0, maximum_characters - prefix_length)
+    selected: list[str] = []
+    used = 0
+    for fragment in fragments:
+        separator_length = 1 if selected else 0
+        remaining = available - used - separator_length
+        if remaining < 12:
+            break
+        if len(fragment) > remaining:
+            fragment = f"{fragment[: max(0, remaining - 3)].rstrip()}..."
+        selected.append(fragment)
+        used += separator_length + len(fragment)
+
+    return f"{_SUMMARY_PREFIX} {' '.join(selected)}".strip()
+
+
+def _vlm_persona_summary(
+    engine: PersonaEngineView,
+    previous_summary: str,
+    old_messages: list[dict[str, str]],
+    maximum_characters: int,
+) -> str:
+    """Ask the active Persona VLM for a neutral summary when supported."""
+    vision = getattr(engine, "vision", None)
+    summarize_history = getattr(vision, "summarize_history", None)
+    if not callable(summarize_history):
+        return ""
+
+    try:
+        generated = summarize_history(
+            old_messages,
+            previous_summary,
+            maximum_characters,
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+    if not isinstance(generated, str) or not generated.strip():
+        return ""
+
+    return _build_persona_summary(
+        "",
+        [{"role": "assistant", "content": generated}],
+        maximum_characters,
+    )
+
+
 def compact_persona_history(engine: PersonaEngineView) -> None:
-    """Compact older Persona turns into a bounded session summary.
+    """Compact older Persona turns through a neutral VLM summary request.
 
     Args:
-        engine: Celune-like runtime whose Persona history should be bounded.
+        engine: Celune-like runtime whose Persona history should be summarized.
     """
     history = getattr(engine, "persona_history", None)
     if not isinstance(history, list):
@@ -466,13 +637,9 @@ def compact_persona_history(engine: PersonaEngineView) -> None:
         keep_recent = min(limit, 8)
     keep_count = max(1, min(limit, int(keep_recent)))
 
-    old_messages = history[:-keep_count]
-    summary_parts: list[str] = []
     previous_summary = persona_session_summary(engine)
-    if previous_summary:
-        summary_parts.append(f"Earlier summary: {previous_summary}")
-
-    for message in old_messages:
+    old_messages: list[dict[str, str]] = []
+    for message in history[:-keep_count]:
         if not isinstance(message, dict):
             continue
         role = message.get("role")
@@ -482,9 +649,7 @@ def compact_persona_history(engine: PersonaEngineView) -> None:
         normalized = " ".join(content.split())
         if not normalized:
             continue
-        if len(normalized) > 240:
-            normalized = f"{normalized[:237].rstrip()}..."
-        summary_parts.append(f"{role}: {normalized}")
+        old_messages.append({"role": role, "content": normalized})
 
     maximum_characters = memory.get("context_summary_max_characters", 1200)
     if isinstance(maximum_characters, bool) or not isinstance(
@@ -492,9 +657,12 @@ def compact_persona_history(engine: PersonaEngineView) -> None:
     ):
         maximum_characters = 1200
     maximum_characters = max(240, int(maximum_characters))
-    summary = " ".join(summary_parts).strip()
-    if len(summary) > maximum_characters:
-        summary = f"{summary[: maximum_characters - 3].rstrip()}..."
+    summary = _vlm_persona_summary(
+        engine,
+        previous_summary,
+        old_messages,
+        maximum_characters,
+    ) or _build_persona_summary(previous_summary, old_messages, maximum_characters)
 
     setattr(engine, "persona_session_summary", summary)
     del history[:-keep_count]

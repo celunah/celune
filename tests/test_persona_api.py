@@ -9,6 +9,7 @@ from unittest import TestCase, mock
 from celune.constants import PERSONA_MODEL_REVISION
 from celune.persona import impl, runtime
 from celune.typing.aliases import RecordedKwargValue
+from celune.typing.common import JSON
 from celune.utils import discard
 
 
@@ -492,3 +493,26 @@ class PersonaApiTests(TestCase):
                 ("[PERSONA] warn 4bit", "warning"),
             ],
         )
+
+    def test_persona_client_summarizes_without_character_prompt(self) -> None:
+        """Verify conversation summaries use a neutral VLM request contract."""
+        client = impl.PersonaClient(config={"persona": {"model_id": "fixture/model"}})
+        response = mock.Mock()
+        response.json.return_value = {"response": "The user reported a TTS cutoff."}
+
+        with mock.patch.object(client, "post", return_value=response) as post:
+            summary = client.summarize_history(
+                [{"role": "user", "content": "The TTS cut off."}],
+                "The conversation concerns speech output.",
+                300,
+            )
+
+        payload = cast(JSON, post.call_args.args[0])
+        system = cast(str, payload["system"])
+        user = cast(str, payload["user"])
+        self.assertEqual(summary, "The user reported a TTS cutoff.")
+        self.assertIn("neutral conversation summarizer", system)
+        self.assertNotIn("CEVOICE", system)
+        self.assertNotIn("active character", system)
+        self.assertIn("Existing summary:", user)
+        self.assertIn("Conversation turns:", user)
