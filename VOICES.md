@@ -4,28 +4,32 @@ This document describes how Celune's voice identities were created, selected, an
 
 ## Who is Celune
 
+This is only a simplified explanation. More details are included in her lore.
+
 Celune by nature appears to be a young female of approximately 28 years of age, who speaks with a low contralto tone.
 
 Her average pitch range during speech is ~170 Hz. This is reflected across all four of her tones, however her Upbeat tone may modulate more than the rest, contributing to a higher perceived pitch of approx. 210 Hz.
 
 The character personality is loosely based on Japanese-style philosophies, and the connected UX practices follow a Korean style. When she speaks, she tends to be slightly hesitant and keeps her responses brief, while naturally pausing in her speech. The interpretation is left to the user to decipher.
 
-She has no defined look. Treat Celune as a presence, rather than a person.
+A copy of the "Book of Celune" containing canonical lore information will soon be included, with a canonical presence model slated for release in Celune 6.0.0. The release date is still pending.
 
 ## Pronunciation glossary
 
 Celune can be pronounced in one of two ways:
 
-- English-style: Seh-LOON (IPA: /sɛˈluːn/)
+- English-style: Seh-LOON (IPA: /sɛˈluːn/, \[ˌsɛˈluːn\])
 - French-style: Say-LUNE or See-LUNE, approximation: Say-L(Y)OON or See-L(Y)OON, (IPA: /seɪˈlyn/ or /seˈlyn/)
+
+Phonetic IPA forms of Celune are only available for the canonical English way of saying her name. French-style IPA is left simplified.
 
 Parts in brackets may not be said equally by all speakers, as they're not native English sounds.
 
-The name is derived from the author's username.
+Her name was made by appending a "Ce-" prefix from "celestial" onto the French word "lune", meaning "moon".
 
 ## Models
 
-All TTS models voice cloning from samples found in your CEVOICE file.
+All TTS models voice cloning from samples found in your CEVOICE or CECHAR voice pack.
 
 Celune native models were removed as of version 4.0.0. If you wish to use them, please downgrade Celune to an older version.
 

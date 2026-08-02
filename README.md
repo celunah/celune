@@ -12,6 +12,7 @@ You can use it to speak. You can use it to talk. You can also use it to manage.
 No matter what you want to do, it is there to help you.
 
 It was proudly made in 🇵🇱 for the finest of uses.
+
 ## Features
 
 - Real-time buffered speech generation pipeline
@@ -409,3 +410,5 @@ It can be accessed via `/ui` on Celune's exposed API URL.
 > *"Your voice, your way."*
 
 ![Celune 88x31 badge](./resources/branding/celune_88x31_206.png "enlightened by Celune")
+
+Need a quick and easy shortlink to spread Celune to the public? [Copy link](https://go.lunah.site/celune)
