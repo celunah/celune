@@ -18,7 +18,7 @@ permissions:
 jobs:
   python-checks:
     name: Anti AI Slop & Vibe Coding Checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
 
     steps:
       - name: Checkout repository
@@ -76,9 +76,6 @@ jobs:
       - name: Sync dependencies
         run: uv sync --dev
 
-      - name: Install Nuitka into project environment
-        run: uv pip install --python .venv/bin/python Nuitka
-
       - name: Install appimagetool
         run: |
           wget -O /tmp/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
@@ -114,10 +111,6 @@ jobs:
         shell: powershell
         run: uv sync --dev
 
-      - name: Install Nuitka into project environment
-        shell: powershell
-        run: uv pip install --python .venv\Scripts\python.exe Nuitka
-
       - name: Build Windows launcher artifacts
         shell: powershell
         run: |
@@ -134,7 +127,7 @@ jobs:
 
   notify-failure:
     name: Comment on CI Failure
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     needs:
       - python-checks
       - launcher-build-linux
