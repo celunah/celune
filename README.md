@@ -246,14 +246,10 @@ uv --version
 
 # Create environment
 # Celune expects Python 3.12 or 3.13.
-# Use --extra [backend names] to specify backend support groups to install,
-# or --all-extras to install all backend support groups.
-# You must specify at least one backend support group, or else Celune won't work.
-#
-# Install a single backend
-uv sync --extra qwen3
-# Install all backends
-uv sync --all-extras
+# The core environment contains Celune's shared requirements.
+uv sync
+# The selected backend is installed automatically into Celune's AppData
+# environment the first time it is used.
 
 # Run
 # Command Prompt users

@@ -116,9 +116,9 @@ api = [
     "pydantic",
 ]
 
-# Which backend do you want to choose? Choose and install any of the following optional dependency groups.
-# You need at least one of these to start Celune.
-# Try `uv sync --extra <your-backend-name>` or `uv sync --all-extras` to install all backends.
+# These optional groups are retained for development and legacy in-process runs.
+# Normal Celune runs install the selected backend into its own AppData environment
+# from the registry in `celune.backends.environment`.
 #
 # The original Qwen-based classic Celune backend. Balanced sound quality and speed.
 qwen3 = [

@@ -6,14 +6,18 @@ from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 from typing import Optional, Union
 
+from .base import CeluneBackend
+from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
 from ...i18n import string
 from ...typing.backends import BackendModel
-from .base import CeluneBackend
 
 __all__ = [
     "BACKENDS",
+    "BACKEND_MANIFESTS",
+    "BackendManifest",
     "BackendModel",
     "CeluneBackend",
+    "backend_manifest",
     "get_version",
     "resolve_backend",
 ]
@@ -50,6 +54,7 @@ def resolve_backend(
     backend_name: Union[str, type[CeluneBackend], CeluneBackend],
     log: Optional[Callable[[str, str], None]] = None,
     fatal: Optional[Callable[[], None]] = None,
+    isolated: bool = False,
     **backend_kwargs,
 ) -> CeluneBackend:
     """Resolve a backend specification into a backend instance.
@@ -58,6 +63,7 @@ def resolve_backend(
         backend_name: A backend name, backend class, or backend instance.
         log: Optional log callback to expose during backend construction.
         fatal: Optional fatal callback to expose during backend construction.
+        isolated: Whether to construct a worker-backed backend in its private environment.
         backend_kwargs: Backend-specific constructor options.
 
     Returns:
@@ -89,6 +95,16 @@ def resolve_backend(
                     available=", ".join(BACKENDS.keys()),
                 )
             ) from e
+
+        if isolated and key in BACKEND_MANIFESTS:
+            from ..remote import RemoteBackendProxy
+
+            return RemoteBackendProxy(
+                BACKEND_MANIFESTS[key],
+                log=log,
+                fatal=fatal,
+                **backend_kwargs,
+            )
 
         module = import_module(module_name)
         backend_cls = getattr(module, class_name)

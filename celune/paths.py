@@ -4,6 +4,7 @@
 import os
 import shutil
 import sys
+import sysconfig
 from pathlib import Path
 from typing import Optional
 
@@ -183,6 +184,21 @@ def voices_data_dir(create: bool = False) -> Path:
     return path
 
 
+def backend_environments_dir(create: bool = False) -> Path:
+    """Return the directory containing isolated backend environments.
+
+    Args:
+        create: Whether this directory should be created before being returned.
+
+    Returns:
+        Path: The Celune-local backend environment directory.
+    """
+    path = app_data_dir(create=create) / "backends"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def config_path(create_parent: bool = False) -> Path:
     """Return the active user configuration file path.
 
@@ -253,6 +269,34 @@ def project_root() -> Path:
         return _compiled_project_root()
 
     return Path(__file__).resolve().parent.parent
+
+
+def core_python_executable() -> Path:
+    """Return the Python interpreter that owns Celune's core environment."""
+    if running_compiled():
+        interpreter_name = "python.exe" if os.name == "nt" else "python"
+        return (
+            project_root()
+            / ".venv"
+            / ("Scripts" if os.name == "nt" else "bin")
+            / interpreter_name
+        )
+
+    return Path(sys.executable).resolve()
+
+
+def core_site_packages_dir() -> Path:
+    """Return the site-packages directory for Celune's core environment."""
+    if not running_compiled():
+        return Path(sysconfig.get_paths()["purelib"]).resolve()
+
+    interpreter = core_python_executable()
+    virtualenv = interpreter.parent.parent
+    if os.name == "nt":
+        return virtualenv / "Lib" / "site-packages"
+
+    python_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    return virtualenv / "lib" / python_version / "site-packages"
 
 
 def default_config_path() -> Path:

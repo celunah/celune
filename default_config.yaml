@@ -9,6 +9,9 @@
 # seed-vc = VC backend, converts speech rather than generating it
 backend: null
 
+# install each selected TTS backend into its own user-local environment
+isolated_backends: true
+
 # GPT-SoVITS settings
 #
 # Celune downloads the official GPT-SoVITS source into its user-data directory

@@ -1,0 +1,307 @@
+# SPDX-License-Identifier: MIT
+"""Proxy objects for backends running in isolated Python processes."""
+
+import json
+import os
+import subprocess
+import threading
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import suppress
+from dataclasses import dataclass
+from typing import IO, Optional, cast
+
+from .environment import (
+    BackendEnvironment,
+    BackendEnvironmentManager,
+    BackendManifest,
+)
+from .tts.base import CeluneBackend
+from .worker_protocol import (
+    WorkerProtocolError,
+    receive_message,
+    send_message,
+)
+from .vc.base import CeluneVCBackend
+from ..paths import core_site_packages_dir, project_root
+from ..typing.aliases import AudioChunk
+from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+
+__all__ = ["RemoteBackendProxy", "RemoteModelHandle", "RemoteVCBackendProxy"]
+
+
+@dataclass(frozen=True)
+class RemoteModelHandle:
+    """Reference to a model owned by a backend worker process."""
+
+    identifier: int
+
+
+class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
+    """Expose one backend worker through the normal Celune TTS interface."""
+
+    def __init__(
+        self,
+        manifest: BackendManifest,
+        log: Callable[[str, str], None],
+        fatal: Optional[Callable[[], None]] = None,
+        environment_manager: Optional[BackendEnvironmentManager] = None,
+        **backend_kwargs: object,
+    ) -> None:
+        self._manifest = manifest
+        self._environment_manager = environment_manager or BackendEnvironmentManager()
+        self._process: Optional[subprocess.Popen[bytes]] = None
+        self._protocol_lock = threading.Lock()
+        self._stderr_thread: Optional[threading.Thread] = None
+        self._worker_stderr: list[str] = []
+        self._worker_stderr_lock = threading.Lock()
+        environment = self._environment_manager.ensure(manifest)
+        try:
+            self._start_worker(environment, log, backend_kwargs)
+            super().__init__(log=log, fatal=fatal)
+            self._load_description()
+        except Exception:
+            self.close()
+            raise
+
+    def _start_worker(
+        self,
+        environment: BackendEnvironment,
+        log: Callable[[str, str], None],
+        backend_kwargs: Mapping[str, object],
+    ) -> None:
+        """Start the worker process and forward its stderr logs."""
+        python_path = core_site_packages_dir()
+        environment_variables = os.environ.copy()
+        project_path = str(project_root())
+        existing_python_path = environment_variables.get("PYTHONPATH")
+        environment_variables["PYTHONPATH"] = os.pathsep.join(
+            item for item in (project_path, existing_python_path) if item
+        )
+        self._process = subprocess.Popen(  # pylint: disable=R1732
+            [
+                str(environment.python),
+                str(project_root() / "celune" / "backend_worker_bootstrap.py"),
+                str(python_path),
+                "--backend",
+                self._manifest.backend_id,
+                "--backend-kwargs",
+                json.dumps(backend_kwargs),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=environment_variables,
+        )
+        if self._process.stderr is not None:
+            self._stderr_thread = threading.Thread(
+                target=self._read_worker_logs,
+                args=(self._process.stderr, log),
+                daemon=True,
+            )
+            self._stderr_thread.start()
+
+    def _read_worker_logs(
+        self,
+        stream: IO[bytes],
+        log: Callable[[str, str], None],
+    ) -> None:
+        """Forward worker stderr lines to Celune's logging callback."""
+        for line in iter(stream.readline, b""):
+            text = line.decode("utf-8", errors="replace").rstrip()
+            if text:
+                with self._worker_stderr_lock:
+                    self._worker_stderr.append(text)
+                log(text, "info")
+
+    def _worker_error_detail(self) -> str:
+        """Return recent worker stderr for a failed protocol operation."""
+        with self._worker_stderr_lock:
+            recent_lines = self._worker_stderr[-20:]
+        return "\n".join(recent_lines)
+
+    def _load_description(self) -> None:
+        """Load static backend metadata from the worker."""
+        description = cast(Mapping[str, object], self._request("describe"))
+        self.name = cast(str, description["name"])
+        self.chunk_rate = cast(float, description["chunk_rate"])
+        self.supported_languages = cast(
+            tuple[str, ...], description["supported_languages"]
+        )
+        self.voice_models = cast(
+            Optional[Mapping[str, str]], description["voice_models"]
+        )
+        self.default_voice = cast(Optional[str], description["default_voice"])
+        self.model_name = cast(Optional[str], description["model_name"])
+        self._remote_voices = cast(list[str], description["voices"])
+        self.clone_model_id = cast(Optional[str], description["clone_model_id"])
+        self.uses_voice_bundles = cast(bool, description["uses_voice_bundles"])
+        self.max_new_tokens = cast(int, description["max_new_tokens"])
+        self.is_fake = cast(bool, description["is_fake"])
+
+    def _request(self, operation: str, **arguments: object) -> object:
+        """Send one request and return its response value."""
+        process = self._process
+        if process is None or process.poll() is not None:
+            raise RuntimeError(
+                f"backend worker '{self._manifest.backend_id}' is not running"
+            )
+        if process.stdin is None or process.stdout is None:
+            raise RuntimeError("backend worker protocol streams are unavailable")
+        with self._protocol_lock:
+            send_message(
+                process.stdin, {"operation": operation, "arguments": arguments}
+            )
+            try:
+                response = cast(Mapping[str, object], receive_message(process.stdout))
+            except WorkerProtocolError as error:
+                detail = self._worker_error_detail()
+                if detail:
+                    raise WorkerProtocolError(f"{error}:\n{detail}") from error
+                raise
+        if not response.get("ok", False):
+            raise RuntimeError(
+                cast(str, response.get("error", "backend worker failed"))
+            )
+        return response.get("value")
+
+    def _stream_request(
+        self,
+        operation: str,
+        **arguments: object,
+    ) -> Iterator[object]:
+        """Send one streaming request and yield worker values."""
+        process = self._process
+        if process is None or process.poll() is not None:
+            raise RuntimeError(
+                f"backend worker '{self._manifest.backend_id}' is not running"
+            )
+        if process.stdin is None or process.stdout is None:
+            raise RuntimeError("backend worker protocol streams are unavailable")
+        with self._protocol_lock:
+            send_message(
+                process.stdin, {"operation": operation, "arguments": arguments}
+            )
+            while True:
+                try:
+                    response = cast(
+                        Mapping[str, object], receive_message(process.stdout)
+                    )
+                except WorkerProtocolError as error:
+                    detail = self._worker_error_detail()
+                    if detail:
+                        raise WorkerProtocolError(f"{error}:\n{detail}") from error
+                    raise
+                if not response.get("ok", False):
+                    raise RuntimeError(
+                        cast(str, response.get("error", "backend worker failed"))
+                    )
+                if response.get("done", False):
+                    return
+                if response.get("stream", False):
+                    yield response.get("value")
+
+    def model_is_available_locally(
+        self, model: str, lang: Optional[str] = None
+    ) -> tuple[bool, Optional[str]]:
+        """Check model availability inside the worker environment."""
+        value = self._request("model_is_available_locally", model=model, lang=lang)
+        return cast(tuple[bool, Optional[str]], value)
+
+    @property
+    def voices(self) -> list[str]:
+        """Return voice names reported by the worker backend."""
+        return list(self._remote_voices)
+
+    def load_model(self, model_id: str, **kwargs: object) -> RemoteModelHandle:
+        """Load a model in the worker and return an opaque handle."""
+        value = self._request("load_model", model_id=model_id, **kwargs)
+        return RemoteModelHandle(cast(int, value))
+
+    def preload_models(self) -> None:
+        """Ensure backend models are available inside the worker environment."""
+        self._request("preload_models")
+
+    def unload_model(self) -> None:
+        """Unload worker-side models and clear the local handle."""
+        self._request("unload_model")
+        self.model = None
+
+    def generate_stream(
+        self,
+        model: RemoteModelHandle,
+        **kwargs: object,
+    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
+        """Generate audio by streaming worker results through the proxy."""
+        arguments = dict(kwargs)
+        arguments["model_id"] = model.identifier
+        for value in self._stream_request("generate_stream", **arguments):
+            yield cast(tuple[AudioChunk, int, Optional[dict]], value)
+
+    def resolve_generation_language(self, lang: Optional[str]) -> Optional[str]:
+        """Resolve a language using the worker backend implementation."""
+        return cast(
+            Optional[str],
+            self._request("call", method="resolve_generation_language", lang=lang),
+        )
+
+    def should_reload_for_language(self, lang: Optional[str]) -> bool:
+        """Ask the worker whether a language change needs a model reload."""
+        return cast(
+            bool,
+            self._request("call", method="should_reload_for_language", lang=lang),
+        )
+
+    def close(self) -> None:
+        """Stop the worker process and release its model resources."""
+        process = self._process
+        if process is None:
+            return
+        if process.poll() is None and process.stdin is not None:
+            with self._protocol_lock:
+                with suppress(OSError, BrokenPipeError):
+                    send_message(process.stdin, {"operation": "shutdown"})
+        try:
+            if process.poll() is None:
+                process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            process.wait(timeout=5)
+        self._process = None
+
+
+class RemoteVCBackendProxy(CeluneVCBackend):
+    """Expose a voice-conversion worker through the VC backend interface."""
+
+    def __init__(
+        self,
+        manifest: BackendManifest,
+        log: Callable[[str, str], None],
+        environment_manager: Optional[BackendEnvironmentManager] = None,
+    ) -> None:
+        self._worker = RemoteBackendProxy(
+            manifest,
+            log=log,
+            environment_manager=environment_manager,
+        )
+        super().__init__(log=log)
+        self.name = self._worker.name
+        self.is_fake = self._worker.is_fake
+
+    def preload_models(self) -> None:
+        """Ensure voice-conversion assets are available in the worker."""
+        self._worker.preload_models()
+
+    def unload_model(self) -> None:
+        """Release voice-conversion assets in the worker."""
+        self._worker.unload_model()
+
+    def convert(self, request: VoiceConversionRequest) -> AudioOutput:
+        """Convert audio in the isolated voice-conversion worker."""
+        return cast(
+            AudioOutput,
+            self._worker._request("convert", request=request),
+        )
+
+    def close(self) -> None:
+        """Stop the voice-conversion worker process."""
+        self._worker.close()

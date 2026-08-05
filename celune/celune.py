@@ -397,6 +397,11 @@ class Celune(CeluneStateAccessors):
         self._pipeline_state.playback_done.set()
 
         self.config = config
+        self._isolated_backends = config_bool(
+            config,
+            "CELUNE_ISOLATED_BACKENDS",
+            "isolated_backends",
+        )
         set_locale(_configured_locale(config) or get_system_locale())
         self.mode: OperationMode = resolve_operation_mode(config)
         self.input_mode = _resolve_input_mode(config, input_mode)
@@ -504,7 +509,7 @@ class Celune(CeluneStateAccessors):
                     resolved_tts_backend,
                 )
                 self._backend_kwargs = dict(backend_kwargs)
-            self.backend = resolve_backend(
+            self.backend = self._resolve_tts_backend(
                 resolved_tts_backend,
                 log=self.log_callback,
                 fatal=self.fatal,
@@ -543,7 +548,7 @@ class Celune(CeluneStateAccessors):
                         Union[str, type[CeluneVCBackend]],
                         resolved_vc_backend,
                     )
-                self.vc_backend = resolve_vc_backend(
+                self.vc_backend = self._resolve_vc_backend(
                     resolved_vc_backend,
                     log=self.log_callback,
                 )
@@ -771,12 +776,12 @@ class Celune(CeluneStateAccessors):
     ) -> None:
         """Reject backend instances that bypass preset-specific runtime limits."""
         if (
-            isinstance(backend, Qwen3)
-            and backend.clone_model_id != preset.qwen3_clone_model_id
+            backend.name == "qwen3"
+            and getattr(backend, "clone_model_id", None) != preset.qwen3_clone_model_id
         ):
             raise BackendError(
                 f"backend '{backend.name}' is not available with model "
-                f"'{backend.clone_model_id}' for VRAM tier '{preset.tier}'"
+                f"'{getattr(backend, 'clone_model_id', None)}' for VRAM tier '{preset.tier}'"
             )
 
     def is_voice_conversion_mode(self) -> bool:
@@ -928,7 +933,7 @@ class Celune(CeluneStateAccessors):
         if self._backend_spec is None:
             return False
 
-        self.backend = resolve_backend(
+        self.backend = self._resolve_tts_backend(
             self._backend_spec,
             log=self.log_callback,
             fatal=self.fatal,
@@ -938,12 +943,26 @@ class Celune(CeluneStateAccessors):
         self.tts_backend = self.backend.name
         return True
 
+    def _resolve_tts_backend(
+        self,
+        backend_spec: TTSBackendSpec,
+        **backend_kwargs,
+    ) -> CeluneBackend:
+        """Resolve one TTS backend using the configured process isolation mode."""
+        if self._isolated_backends:
+            return resolve_backend(
+                backend_spec,
+                isolated=True,
+                **backend_kwargs,
+            )
+        return resolve_backend(backend_spec, **backend_kwargs)
+
     def _recreate_vc_backend(self) -> bool:
         """Rebuild the VC backend from its original constructor recipe."""
         if self._vc_backend_spec is None:
             return False
 
-        self.vc_backend = resolve_vc_backend(
+        self.vc_backend = self._resolve_vc_backend(
             self._vc_backend_spec,
             log=self.log_callback,
         )
@@ -953,6 +972,20 @@ class Celune(CeluneStateAccessors):
             setattr(self.vc_backend, "f0_condition", self.vc_f0_condition)
         self.voice_conversion_backend = self.vc_backend.name
         return True
+
+    def _resolve_vc_backend(
+        self,
+        backend_spec: VCBackendSpec,
+        **backend_kwargs,
+    ) -> CeluneVCBackend:
+        """Resolve one VC backend using the configured process isolation mode."""
+        if self._isolated_backends:
+            return resolve_vc_backend(
+                backend_spec,
+                isolated=True,
+                **backend_kwargs,
+            )
+        return resolve_vc_backend(backend_spec, **backend_kwargs)
 
     def _restorable_vc_backend_spec(
         self,
@@ -1071,7 +1104,7 @@ class Celune(CeluneStateAccessors):
 
     def _rebuild_reload_snapshot_runtime(self, snapshot: _ReloadSnapshot) -> None:
         """Recreate the previous backend runtime from a rollback snapshot."""
-        restored_backend = resolve_backend(
+        restored_backend = self._resolve_tts_backend(
             snapshot.restorable_backend_spec,
             log=self.log_callback,
             fatal=self.fatal,
@@ -1098,7 +1131,7 @@ class Celune(CeluneStateAccessors):
         if snapshot.restorable_vc_backend_spec is None:
             return
 
-        restored_vc_backend = resolve_vc_backend(
+        restored_vc_backend = self._resolve_vc_backend(
             snapshot.restorable_vc_backend_spec,
             log=self.log_callback,
         )
@@ -1220,7 +1253,7 @@ class Celune(CeluneStateAccessors):
             previous_voice = snapshot.current_voice
 
             if backend_target == "tts":
-                candidate_backend = resolve_backend(
+                candidate_backend = self._resolve_tts_backend(
                     cast(TTSBackendSpec, normalized_backend_spec),
                     log=self.log_callback,
                     fatal=self.fatal,
@@ -1281,7 +1314,7 @@ class Celune(CeluneStateAccessors):
                 )
                 self._backend_kwargs = dict(candidate_kwargs)
             else:
-                candidate_vc_backend = resolve_vc_backend(
+                candidate_vc_backend = self._resolve_vc_backend(
                     cast(VCBackendSpec, normalized_backend_spec),
                     log=self.log_callback,
                 )
@@ -2438,7 +2471,8 @@ class Celune(CeluneStateAccessors):
         """
         backend = self.backend
         return not (
-            isinstance(backend, Qwen3) and backend.clone_model_id == QWEN3_0_6B_MODEL
+            backend.name == "qwen3"
+            and getattr(backend, "clone_model_id", None) == QWEN3_0_6B_MODEL
         )
 
     def effective_voice_prompt(self) -> Optional[str]:
