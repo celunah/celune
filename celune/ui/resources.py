@@ -229,9 +229,9 @@ def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[st
     if celune is not None:
         if getattr(celune, "input_mode", "text_to_speech") == "voice_conversion":
             pages.append(string("ui.footer_toggle_recording"))
-        elif getattr(celune, "vision", None) is not None and persona_talkback_enabled(
-            celune.config
-        ):
+        elif getattr(
+            celune, "persona_ready", getattr(celune, "vision", None) is not None
+        ) and persona_talkback_enabled(celune.config):
             pages.append(string("ui.footer_voice_input"))
 
         active_theme = theme_name

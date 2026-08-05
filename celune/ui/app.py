@@ -1566,7 +1566,10 @@ class CeluneUI(App):
 
     def _persona_loaded(self) -> bool:
         """Return whether the attached Celune instance currently has Persona."""
-        return bool(getattr(self.celune, "vision", None))
+        persona_ready = getattr(self.celune, "persona_ready", None)
+        if persona_ready is None:
+            return bool(getattr(self.celune, "vision", None))
+        return bool(persona_ready)
 
     def _refresh_persona_availability(self) -> None:
         """Refresh Persona availability in the background for placeholder text."""

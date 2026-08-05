@@ -816,6 +816,54 @@ class Celune(CeluneStateAccessors):
 
         return create_persona_client(self.config, log_dev=self.log_dev)
 
+    def _start_persona_background_load(self) -> None:
+        """Load Persona after TTS startup without blocking speech readiness."""
+        vision = self.vision
+        if vision is None or self.persona_ready or self.persona_loading:
+            return
+
+        self.persona_loading = True
+        self.log(string("celune.initializing_persona"))
+        thread = threading.Thread(
+            target=self._load_persona_background,
+            args=(vision,),
+            daemon=True,
+        )
+        self._persona_load_thread = thread
+        thread.start()
+
+    def _load_persona_background(self, vision: PersonaClient) -> None:
+        """Load Persona in the background and publish its ready state."""
+        try:
+            vision.load(
+                persona_model_id(self.config),
+                persona_quantization(self.config),
+            )
+        except Exception as e:
+            self.log(string("celune.persona_not_initialized"), "warning")
+            self.log(string("celune.speech_only_mode"), "warning")
+            self.log(format_error(e, self.dev), "warning")
+            with self._model_lock:
+                if self.vision is vision:
+                    self.vision = None
+                self.persona_ready = False
+                self.persona_loading = False
+            vision.close()
+        else:
+            with self._model_lock:
+                should_close = self.exit_requested or self.vision is not vision
+                self.persona_ready = not should_close
+                self.persona_loading = False
+
+            if should_close:
+                vision.close()
+            else:
+                self.log(string("celune.persona_initialized"))
+                self.change_input_state_callback(locked=False)
+        finally:
+            if self._persona_load_thread is threading.current_thread():
+                setattr(self, "_persona_load_thread", None)
+
     def _close_stream(self, abort: bool = False) -> None:
         """Close the current audio stream if one exists."""
         close_stream(self, abort=abort)
@@ -824,6 +872,15 @@ class Celune(CeluneStateAccessors):
         """Release Persona runtime state and clear the active client."""
         vision = self.vision
         self.vision = None
+        self.persona_ready = False
+        self.persona_loading = False
+        persona_thread = self._persona_load_thread
+        setattr(self, "_persona_load_thread", None)
+        if (
+            persona_thread is not None
+            and persona_thread is not threading.current_thread()
+        ):
+            persona_thread.join(timeout=2)
         if vision is not None:
             with contextlib.suppress(Exception):
                 vision.close()
@@ -1635,6 +1692,7 @@ class Celune(CeluneStateAccessors):
                         and persona_enabled(self.config)
                     ):
                         self.vision = self._persona_conn()
+                        self.persona_ready = False
 
                     self.loaded = True
                     self.sleeping = False
@@ -1703,20 +1761,8 @@ class Celune(CeluneStateAccessors):
                 vision = self.vision
                 if vision is None:
                     return
-
-                try:
-                    vision.load(
-                        persona_model_id(self.config),
-                        persona_quantization(self.config),
-                    )
-                except Exception as e:
-                    self.log(string("celune.persona_not_initialized"), "warning")
-                    self.log(string("celune.speech_only_mode"), "warning")
-                    self.log(format_error(e, self.dev), "warning")
-                    with self._model_lock:
-                        if self.vision is vision:
-                            self.vision = None
-                    vision.close()
+                self.persona_loading = True
+                self._load_persona_background(vision)
         except Exception as e:
             self.log(format_error(e, self.dev), "error")
         finally:
@@ -2626,22 +2672,6 @@ class Celune(CeluneStateAccessors):
                     raise
                 return False
 
-        if self.vision is not None:
-            self.log(string("celune.initializing_persona"))
-            try:
-                self.vision.load(
-                    persona_model_id(self.config),
-                    persona_quantization(self.config),
-                )
-            except Exception as e:
-                self.log(string("celune.persona_not_initialized"), "warning")
-                self.log(string("celune.speech_only_mode"), "warning")
-                self.log(format_error(e, self.dev), "warning")
-                self.vision.close()
-                self.vision = None
-            else:
-                self.log(string("celune.persona_initialized"))
-
         pipeline_thread = threading.Thread(target=self._run_pipeline_jobs, daemon=True)
         self._generation_thread = None
         self._playback_thread = pipeline_thread
@@ -2679,12 +2709,14 @@ class Celune(CeluneStateAccessors):
                 raise BackendError("warmup failed")
             return False
 
+        self._start_persona_background_load()
+
         if self.use_normalization:
             self.load_normalizer()
 
         self._start_configured_api()
 
-        if persona_enabled(self.config) and not persona_is_available():
+        if persona_enabled(self.config) and self.vision is None:
             self.log(
                 string("celune.personas_unavailable", app_name=APP_NAME),
                 "warning",
@@ -2855,7 +2887,7 @@ class Celune(CeluneStateAccessors):
                 self.log(string("celune.normalization_unavailable"), "warning")
                 self.progress_callback(0, 1)
 
-        if self.vision is not None:
+        if self.persona_ready:
             # we don't need to normalize out of the VLM
             return
 
@@ -3151,11 +3183,18 @@ class Celune(CeluneStateAccessors):
                 self.cur_state = "thinking"
                 self.progress_callback(None, None)
 
-                if not self.vision:
+                if self.persona_loading:
+                    self.say(text)
+                    continue
+
+                if not self.persona_ready and not self.vision:
                     self.vision = self._persona_conn()
                     if not self.vision:
                         self.say(text)
                         continue
+                    self.persona_ready = True
+                elif not self.persona_ready:
+                    self.persona_ready = True
 
                 if not think_pipeline(self, text):
                     self.log(string("celune.say_instead"), "warning")
