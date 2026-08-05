@@ -22,6 +22,8 @@ from ..persona.impl import PersonaClient
 from ..typing.aliases import AudioChunks
 from ..typing.backends import BackendModel
 from ..typing.celune import (
+    CaptionCallback,
+    CaptionTimingCallback,
     ErrorCallback,
     IdleCallback,
     InputStateCallback,
@@ -50,6 +52,9 @@ class CeluneCallbackState:
     change_input_state_callback: InputStateCallback
     change_voice_lock_state_callback: VoiceLockStateCallback
     progress_callback: ProgressCallback
+    caption_progress_callback: ProgressCallback
+    caption_callback: CaptionCallback
+    caption_timing_callback: CaptionTimingCallback
 
 
 @dataclass
@@ -191,6 +196,13 @@ CELUNE_FORWARDED_PROPERTIES = (
         "change_voice_lock_state_callback",
     ),
     ForwardedPropertySpec("progress_callback", "_callbacks", "progress_callback"),
+    ForwardedPropertySpec(
+        "caption_progress_callback", "_callbacks", "caption_progress_callback"
+    ),
+    ForwardedPropertySpec("caption_callback", "_callbacks", "caption_callback"),
+    ForwardedPropertySpec(
+        "caption_timing_callback", "_callbacks", "caption_timing_callback"
+    ),
     ForwardedPropertySpec("config", "_backend_state", "config"),
     ForwardedPropertySpec("_backend_spec", "_backend_state", "backend_spec"),
     ForwardedPropertySpec("_backend_kwargs", "_backend_state", "backend_kwargs"),

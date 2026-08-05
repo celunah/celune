@@ -72,9 +72,19 @@ CELUNE_CSS = """
         tint: transparent;
     }
 
-    #logs, #controls, #bottom, #header-container, #progress {
+    #logs, #controls, #bottom, #header-container, #caption, #progress {
         margin-left: 2;
         margin-right: 2;
+    }
+
+    #caption {
+        display: none;
+        height: 1;
+        width: 1fr;
+        color: $primary;
+        text-align: center;
+        content-align: center middle;
+        overflow-x: hidden;
     }
 
     #bottom {

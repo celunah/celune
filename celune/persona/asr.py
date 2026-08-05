@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union, cast
 
 import numpy as np
+import torch
 
 from ..dsp import resample_audio
 from ..typing.aliases import AudioChunk
@@ -26,6 +29,15 @@ if TYPE_CHECKING:
 DEFAULT_PERSONA_SPEECH_MODEL_ID = "openai/whisper-large-v3-turbo"
 PERSONA_SPEECH_END_DELAY_SECONDS = 1.5
 WHISPER_SAMPLE_RATE = 16000
+
+
+@dataclass(frozen=True)
+class WhisperSegment:
+    """One timestamped segment returned by Whisper."""
+
+    text: str
+    start: float
+    end: float
 
 
 class WhisperTranscriber:
@@ -50,7 +62,6 @@ class WhisperTranscriber:
             if self._processor is not None and self._model is not None:
                 return
 
-            import torch
             from transformers import (
                 AutoModelForSpeechSeq2Seq,
                 AutoProcessor,
@@ -89,10 +100,9 @@ class WhisperTranscriber:
         self,
         audio: AudioChunk,
         sample_rate: int,
-    ) -> str:
+        return_segments: bool = False,
+    ) -> Union[str, tuple[WhisperSegment, ...]]:
         """Prepare audio, generate Whisper tokens, and decode the transcript."""
-        import torch
-
         self._load_model()
         processor = self._processor
         model = self._model
@@ -121,9 +131,72 @@ class WhisperTranscriber:
                 model_inputs["language"] = self.language
 
         with torch.inference_mode():
-            generated_ids = model.generate(**model_inputs)
+            if return_segments:
+                generated = model.generate(
+                    **model_inputs,
+                    return_timestamps=True,
+                    return_segments=True,
+                )
+            else:
+                generated = model.generate(**model_inputs)
+
+        if return_segments:
+            return self._decode_segments(processor, generated)
+
+        generated_ids = cast(torch.Tensor, generated)
         decoded = processor.batch_decode(generated_ids, skip_special_tokens=True)
         return decoded[0].strip() if decoded else ""
+
+    @staticmethod
+    def _decode_segments(
+        processor: _WhisperProcessor,
+        generated: object,
+    ) -> tuple[WhisperSegment, ...]:
+        """Extract timestamped text segments from a Whisper generation result."""
+        if not isinstance(generated, Mapping):
+            return ()
+        raw_segments = generated.get("segments")
+        if not isinstance(raw_segments, Sequence) or not raw_segments:
+            return ()
+        first_batch = raw_segments[0]
+        if not isinstance(first_batch, Sequence):
+            return ()
+
+        segments: list[WhisperSegment] = []
+        for raw_segment in first_batch:
+            if not isinstance(raw_segment, Mapping):
+                continue
+            start = raw_segment.get("start")
+            end = raw_segment.get("end")
+            tokens = raw_segment.get("tokens")
+            start_value = WhisperTranscriber._timestamp_value(start)
+            end_value = WhisperTranscriber._timestamp_value(end)
+            if start_value is None or end_value is None:
+                continue
+            text = ""
+            if tokens is not None:
+                decoded = processor.batch_decode(
+                    cast(torch.Tensor, tokens),
+                    skip_special_tokens=True,
+                )
+                if decoded:
+                    text = decoded[0].strip()
+            if text and end_value > start_value:
+                segments.append(
+                    WhisperSegment(text=text, start=start_value, end=end_value)
+                )
+        return tuple(segments)
+
+    @staticmethod
+    def _timestamp_value(value: object) -> Optional[float]:
+        """Convert a Python or tensor scalar into a timestamp."""
+        if isinstance(value, (int, float)):
+            return float(value)
+        item = getattr(value, "item", None)
+        if not callable(item):
+            return None
+        converted = item()
+        return float(converted) if isinstance(converted, (int, float)) else None
 
     def transcribe(
         self,
@@ -163,4 +236,49 @@ class WhisperTranscriber:
                 np.mean(resampled, axis=1, dtype=np.float32),
                 dtype=np.float32,
             )
-        return self._decode(mono_audio, WHISPER_SAMPLE_RATE)
+        decoded = self._decode(mono_audio, WHISPER_SAMPLE_RATE)
+        return decoded if isinstance(decoded, str) else ""
+
+    def transcribe_segments(
+        self,
+        audio: AudioChunk,
+        sample_rate: int,
+    ) -> tuple[WhisperSegment, ...]:
+        """Transcribe speech and return timestamped Whisper segments.
+
+        Args:
+            audio: Mono or multichannel audio samples.
+            sample_rate: Sample rate of the audio in hertz.
+
+        Returns:
+            tuple[WhisperSegment, ...]: Timestamped speech segments, or an empty
+                tuple when Whisper does not provide segment timestamps.
+
+        Raises:
+            ValueError: If the audio is not one- or two-dimensional.
+        """
+        if len(audio) <= 0:
+            return ()
+
+        mono_audio = np.asarray(audio, dtype=np.float32)
+        if mono_audio.ndim == 2:
+            mono_audio = np.asarray(
+                np.mean(mono_audio, axis=1, dtype=np.float32),
+                dtype=np.float32,
+            )
+        if mono_audio.ndim != 1:
+            raise ValueError("Whisper speech input must be mono audio")
+        if sample_rate != WHISPER_SAMPLE_RATE:
+            mono_audio = np.asarray(
+                resample_audio(mono_audio, sample_rate, WHISPER_SAMPLE_RATE),
+                dtype=np.float32,
+            )
+        try:
+            result = self._decode(
+                mono_audio,
+                WHISPER_SAMPLE_RATE,
+                return_segments=True,
+            )
+        except (RuntimeError, TypeError, ValueError):
+            return ()
+        return result if isinstance(result, tuple) else ()

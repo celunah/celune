@@ -207,7 +207,10 @@ class _WhisperModel(Protocol):
     def eval(self) -> None:
         """Switch the model to evaluation mode."""
 
-    def generate(self, **kwargs: Union[Tensor, str]) -> Tensor:
+    def generate(
+        self,
+        **kwargs: Union[Tensor, str, bool, int, float],
+    ) -> Union[Tensor, Mapping[str, object]]:
         """Generate token IDs from prepared Whisper inputs.
 
         Args:

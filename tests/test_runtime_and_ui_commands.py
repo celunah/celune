@@ -6,6 +6,7 @@ import queue
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import warnings
 from pathlib import Path
@@ -15,7 +16,7 @@ from unittest import TestCase, mock
 
 import numpy as np
 from textual import events
-from textual.widgets import Button, Label, RichLog, TextArea
+from textual.widgets import Button, Label, ProgressBar, RichLog, TextArea
 
 from celune import colors, runtime
 from celune.backends.tts.qwen3 import Qwen3
@@ -712,6 +713,7 @@ class UIStartupTests(TestCase):
             "#input": TextArea(),
             "#status": Label(),
             "#resources": Label(),
+            "#caption": Label(),
             "#style": Button(),
             "#vc-mode": Button(),
             "#vc-pitch": Button(),
@@ -769,6 +771,7 @@ class UIStartupTests(TestCase):
             "#input": TextArea(),
             "#status": Label(),
             "#resources": Label(),
+            "#caption": Label(),
             "#style": Button(),
             "#vc-mode": Button(),
             "#vc-pitch": Button(),
@@ -790,6 +793,7 @@ class UIStartupTests(TestCase):
                 change_input_state_callback=None,
                 change_voice_lock_state_callback=None,
                 progress_callback=None,
+                caption_callback=None,
                 glow=SimpleNamespace(fatal=lambda: None),
             ),
         )
@@ -848,6 +852,8 @@ class UIStartupTests(TestCase):
             )
             self.assertIs(ui.celune.progress_callback.__self__, ui)
             self.assertIs(ui.celune.progress_callback.__func__, CeluneUI.safe_progress)
+            self.assertIs(ui.celune.caption_callback.__self__, ui)
+            self.assertIs(ui.celune.caption_callback.__func__, CeluneUI.tts_caption)
         finally:
             ui.disable_runtime_log_capture()
             sys.stdout = original_stdout
@@ -2483,6 +2489,69 @@ class UIStartupTests(TestCase):
         ui.advance_status_marquee()
 
         self.assertEqual(first, fake_status.rendered)
+
+    def test_speech_caption_reveals_words_with_audio_progress(self) -> None:
+        """Verify speech captions reveal words and restore the progress bar."""
+
+        class FakeCaption:
+            """Small caption widget test double."""
+
+            is_attached = False
+
+            def __init__(self) -> None:
+                self.display = False
+                self.styles = SimpleNamespace(opacity=1.0)
+                self.rendered = ""
+
+            def update(self, value: str) -> None:
+                """Capture the visible caption words."""
+                self.rendered = value
+
+        class FakeProgressBar:
+            """Small progress bar test double."""
+
+            is_attached = False
+
+            def __init__(self) -> None:
+                self.display = True
+                self.styles = SimpleNamespace(opacity=1.0)
+
+        ui = CeluneUI()
+        caption = FakeCaption()
+        ui.caption = cast(Label, caption)
+        ui.progress_bar = cast(ProgressBar, FakeProgressBar())
+
+        ui.tts_caption("One two three")
+        ui.safe_caption_progress(1, 3)
+        self.assertEqual(caption.rendered, "One")
+        ui.safe_caption_progress(2, 3)
+        self.assertEqual(caption.rendered, "One two")
+        ui.safe_caption_progress(3, 3)
+        self.assertEqual(caption.rendered, "One two three")
+
+        ui.tts_idle()
+        self.assertFalse(ui._caption_active)
+        self.assertFalse(caption.display)
+        self.assertTrue(cast(FakeProgressBar, ui.progress_bar).display)
+
+        with mock.patch.object(ui, "_animate_opacity") as animate_opacity:
+            ui.tts_idle()
+        animate_opacity.assert_not_called()
+        self.assertEqual(cast(FakeProgressBar, ui.progress_bar).styles.opacity, 1.0)
+
+        attached_progress = FakeProgressBar()
+        attached_progress.is_attached = True
+        with mock.patch.object(
+            ui, "set_timer", side_effect=lambda _delay, callback: callback()
+        ):
+            ui._animate_opacity(cast(ProgressBar, attached_progress), 0.0)
+        self.assertEqual(attached_progress.styles.opacity, 0.0)
+
+        with mock.patch.object(ui, "call_from_thread") as call_from_thread:
+            worker = threading.Thread(target=ui._hide_caption_widgets)
+            worker.start()
+            worker.join()
+        call_from_thread.assert_called_once_with(ui._hide_caption_widgets)
 
     def test_status_ticker_recovers_active_playback_status(self) -> None:
         """Verify the TUI ticker displays the active playback-source status."""

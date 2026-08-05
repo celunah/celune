@@ -7,8 +7,10 @@ import ctypes
 import datetime
 import itertools
 import logging
+import math
 import os
 import queue as queue_module
+import re
 import shlex
 import signal
 import sys
@@ -54,6 +56,7 @@ from ..paths import config_path, main_window_log_path
 from ..persona.asr import (
     DEFAULT_PERSONA_SPEECH_MODEL_ID,
     PERSONA_SPEECH_END_DELAY_SECONDS,
+    WhisperSegment,
     WhisperTranscriber,
 )
 from ..persona.impl import (
@@ -118,6 +121,8 @@ _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
     }
 )
 
+_CAPTION_FADE_SECONDS = 0.36
+
 
 def _device_scalar_int(value: Optional[AudioDeviceScalar], default: int) -> int:
     """Return one audio-device metadata value as an integer when possible."""
@@ -148,6 +153,7 @@ class CeluneUIWidgetState:
     vc_pitch_button: Optional[Button] = None
     status: Optional[Label] = None
     resources: Optional[Label] = None
+    caption: Optional[Label] = None
     progress_bar: Optional[ProgressBar] = None
     header: Optional[Label] = None
     header_lines: tuple[Label, ...] = ()  # noqa
@@ -252,6 +258,18 @@ class CeluneUIInteractionState:
     persona_recording_transcriber: Optional[WhisperTranscriber] = None
     persona_recording_worker: Optional[threading.Thread] = None
     persona_recording_last_partial_at: float = 0.0
+    caption_text: str = ""
+    caption_words: tuple[str, ...] = ()
+    caption_sentences: tuple[tuple[str, ...], ...] = ()
+    caption_timings: tuple[tuple[float, float], ...] = ()
+    caption_audio_duration: float = 0.0
+    caption_rendered_text: str = ""
+    caption_transcriber: Optional[WhisperTranscriber] = None
+    caption_visible_words: int = 0
+    caption_progress: float = 0.0
+    caption_active: bool = False
+    caption_transition_token: int = 0
+    caption_timers: list[Timer] = field(default_factory=list)
     sleep_timer: Optional[Timer] = None
     tutorial_token: int = 0
     tutorial_active: bool = False
@@ -317,6 +335,7 @@ class CeluneUI(App):
     vc_pitch_button = _forward_ui_property("_widgets", "vc_pitch_button")
     status = _forward_ui_property("_widgets", "status")
     resources = _forward_ui_property("_widgets", "resources")
+    caption = _forward_ui_property("_widgets", "caption")
     progress_bar = _forward_ui_property("_widgets", "progress_bar")
     header = _forward_ui_property("_widgets", "header")
     header_lines = _forward_ui_property("_widgets", "header_lines")
@@ -487,6 +506,28 @@ class CeluneUI(App):
     _persona_recording_last_partial_at = _forward_ui_property(
         "_interaction_state", "persona_recording_last_partial_at"
     )
+    _caption_text = _forward_ui_property("_interaction_state", "caption_text")
+    _caption_words = _forward_ui_property("_interaction_state", "caption_words")
+    _caption_sentences = _forward_ui_property("_interaction_state", "caption_sentences")
+    _caption_timings = _forward_ui_property("_interaction_state", "caption_timings")
+    _caption_audio_duration = _forward_ui_property(
+        "_interaction_state", "caption_audio_duration"
+    )
+    _caption_rendered_text = _forward_ui_property(
+        "_interaction_state", "caption_rendered_text"
+    )
+    _caption_transcriber = _forward_ui_property(
+        "_interaction_state", "caption_transcriber"
+    )
+    _caption_visible_words = _forward_ui_property(
+        "_interaction_state", "caption_visible_words"
+    )
+    _caption_progress = _forward_ui_property("_interaction_state", "caption_progress")
+    _caption_active = _forward_ui_property("_interaction_state", "caption_active")
+    _caption_transition_token = _forward_ui_property(
+        "_interaction_state", "caption_transition_token"
+    )
+    _caption_timers = _forward_ui_property("_interaction_state", "caption_timers")
     _sleep_timer = _forward_ui_property("_interaction_state", "sleep_timer")
     _tutorial_token = _forward_ui_property("_interaction_state", "tutorial_token")
     _tutorial_active = _forward_ui_property("_interaction_state", "tutorial_active")
@@ -648,6 +689,10 @@ class CeluneUI(App):
             self.progress_bar.styles.color = None
             self.progress_bar.styles.background = None
             repaint(self.progress_bar)
+        if self.caption is not None and hasattr(self.caption, "styles"):
+            self.caption.styles.color = None
+            self.caption.styles.background = None
+            repaint(self.caption)
 
     def _wrap_runtime_fatal_glow(self) -> None:
         """Mirror runtime fatal glow events into the UI fatal theme flag."""
@@ -681,6 +726,9 @@ class CeluneUI(App):
         self.celune.change_input_state_callback = self.change_input_state
         self.celune.change_voice_lock_state_callback = self.change_voice_lock_state
         self.celune.progress_callback = self.safe_progress
+        self.celune.caption_progress_callback = self.safe_caption_progress
+        self.celune.caption_callback = self.tts_caption
+        self.celune.caption_timing_callback = self.tts_caption_timing
 
     def _is_ui_test_mode(self) -> bool:
         """Return whether the attached runtime is the interactive fake-backend UI test mode."""
@@ -886,6 +934,7 @@ class CeluneUI(App):
                 yield Label(APP_NAME, id="header")
                 yield Label("", classes="line")
             yield RichLog(id="logs", wrap=True, markup=False)
+            yield Label("", id="caption", markup=False)
             yield ProgressBar(
                 id="progress", show_percentage=False, show_eta=False, total=1
             )
@@ -973,6 +1022,7 @@ class CeluneUI(App):
         self.input_box = self.query_one("#input", TextArea)
         self.status = self.query_one("#status", Label)
         self.resources = self.query_one("#resources", Label)
+        self.caption = self.query_one("#caption", Label)
         self.style_button = self.query_one("#style", Button)
         self.vc_mode_button = self.query_one("#vc-mode", Button)
         self.vc_pitch_button = self.query_one("#vc-pitch", Button)
@@ -1391,6 +1441,161 @@ class CeluneUI(App):
             self.change_voice_lock_state(locked=True)
             self.error(string("ui.app_could_not_start", app_name=APP_NAME))
 
+    @staticmethod
+    def _caption_sentence_timings(
+        sentences: tuple[tuple[str, ...], ...],
+        segments: tuple[WhisperSegment, ...],
+        audio_duration: float,
+    ) -> tuple[tuple[float, float], ...]:
+        """Map Whisper segment timing onto the displayed sentence boundaries."""
+        if not sentences or not segments or audio_duration <= 0.0:
+            return ()
+
+        segment_word_counts = [
+            max(1, len(segment.text.split())) for segment in segments
+        ]
+        total_segment_words = sum(segment_word_counts)
+        total_caption_words = sum(len(sentence) for sentence in sentences)
+        if total_segment_words <= 0 or total_caption_words <= 0:
+            return ()
+
+        timings: list[tuple[float, float]] = []
+        segment_index = 0
+        segment_start_word = 0
+        previous_boundary = max(0.0, segments[0].start)
+        caption_words_seen = 0
+        for sentence in sentences:
+            caption_words_seen += len(sentence)
+            target_word = caption_words_seen * total_segment_words / total_caption_words
+            while (
+                segment_index < len(segments) - 1
+                and target_word
+                > segment_start_word + segment_word_counts[segment_index]
+            ):
+                segment_start_word += segment_word_counts[segment_index]
+                segment_index += 1
+
+            segment = segments[segment_index]
+            segment_words = segment_word_counts[segment_index]
+            within_segment = max(0.0, target_word - segment_start_word)
+            boundary = segment.start + (
+                min(1.0, within_segment / segment_words) * (segment.end - segment.start)
+            )
+            boundary = max(previous_boundary, min(audio_duration, boundary))
+            timings.append((previous_boundary, boundary))
+            previous_boundary = boundary
+        return tuple(timings)
+
+    def tts_caption_timing(
+        self,
+        caption: str,
+        audio: AudioChunk,
+        sample_rate: int,
+    ) -> None:
+        """Refine the active caption timing from Whisper's audio timestamps."""
+        if self.cur_state == "exiting" or not caption or len(audio) <= 0:
+            return
+
+        audio_copy = np.asarray(audio, dtype=np.float32).copy()
+        token = self._caption_transition_token
+        duration = len(audio_copy) / max(sample_rate, 1)
+
+        def analyze() -> None:
+            try:
+                transcriber = (
+                    self._caption_transcriber or self._persona_recording_transcriber
+                )
+                if transcriber is None:
+                    if self.celune is None or not persona_enabled(self.celune.config):
+                        return
+                    model_id = getattr(self, "_persona_speech_model_id", None)
+                    language_getter = getattr(self, "_persona_speech_language", None)
+                    if not callable(model_id) or not callable(language_getter):
+                        return
+                    model_id_getter = cast(Callable[[], str], model_id)
+                    language_value_getter = cast(
+                        Callable[[], Optional[str]], language_getter
+                    )
+                    transcriber = WhisperTranscriber(
+                        model_id_getter(),
+                        language=language_value_getter(),
+                    )
+                    self._caption_transcriber = transcriber
+                segments = transcriber.transcribe_segments(audio_copy, sample_rate)
+            except Exception:
+                return
+            timings = self._caption_sentence_timings(
+                self._caption_sentences,
+                segments,
+                duration,
+            )
+            if not timings:
+                return
+
+            def update() -> None:
+                if (
+                    token != self._caption_transition_token
+                    or not self._caption_active
+                    or caption != self._caption_text
+                ):
+                    return
+                self._caption_timings = timings
+                self._caption_audio_duration = duration
+                visible_sentence, visible_words = self._caption_words_for_progress(
+                    self._caption_progress
+                )
+                rendered_text = " ".join(visible_sentence)
+                self._caption_visible_words = visible_words
+                self._caption_rendered_text = rendered_text
+                if self.caption is not None:
+                    self.caption.update(rendered_text)
+
+            with contextlib.suppress(LookupError, RuntimeError, ScreenStackError):
+                self._run_on_ui_thread(update)
+
+        threading.Thread(target=analyze, daemon=True).start()
+
+    def _caption_words_for_progress(
+        self,
+        fraction: float,
+    ) -> tuple[tuple[str, ...], int]:
+        """Return the current sentence words and total revealed word count."""
+        if self._caption_timings and self._caption_audio_duration > 0.0:
+            elapsed = fraction * self._caption_audio_duration
+            revealed_words = 0
+            for index, sentence in enumerate(self._caption_sentences):
+                start, end = self._caption_timings[
+                    min(index, len(self._caption_timings) - 1)
+                ]
+                if elapsed >= end:
+                    revealed_words += len(sentence)
+                    continue
+                if elapsed < start:
+                    break
+                local_fraction = (elapsed - start) / max(end - start, 1e-6)
+                visible_words = min(
+                    len(sentence),
+                    math.ceil(max(0.0, min(1.0, local_fraction)) * len(sentence)),
+                )
+                return sentence[:visible_words], revealed_words + visible_words
+            return (
+                self._caption_sentences[-1] if self._caption_sentences else (),
+                revealed_words,
+            )
+
+        visible_words = min(
+            len(self._caption_words),
+            math.ceil(fraction * len(self._caption_words)),
+        )
+        remaining_words = visible_words
+        visible_sentence: tuple[str, ...] = ()
+        for sentence in self._caption_sentences:
+            if remaining_words <= len(sentence):
+                visible_sentence = sentence[:remaining_words]
+                break
+            remaining_words -= len(sentence)
+        return visible_sentence, visible_words
+
     def safe_progress(
         self, progress: Optional[float], total: Optional[float] = None
     ) -> None:
@@ -1400,7 +1605,10 @@ class CeluneUI(App):
             progress: Current progress, or ``None`` for an indeterminate bar.
             total: Total progress, or ``None`` for an indeterminate bar.
         """
-        if self.cur_state == "exiting" or self.progress_bar is None:
+        if self.cur_state == "exiting":
+            return
+
+        if self.progress_bar is None:
             return
 
         def update() -> None:
@@ -1408,6 +1616,199 @@ class CeluneUI(App):
                 total=total,
                 progress=0 if progress is None else progress,
             )
+
+        self._run_on_ui_thread(update)
+
+    def safe_caption_progress(
+        self, progress: Optional[float], total: Optional[float] = None
+    ) -> None:
+        """Update the active caption from speech-only playback progress."""
+        if self.cur_state == "exiting" or not self._caption_active:
+            return
+
+        def update_caption() -> None:
+            if not self._caption_active or total is None or total <= 0:
+                return
+            current = 0.0 if progress is None else progress
+            fraction = max(0.0, min(1.0, current / total))
+            self._caption_progress = max(self._caption_progress, fraction)
+            visible_sentence, visible_words = self._caption_words_for_progress(
+                self._caption_progress
+            )
+            rendered_text = " ".join(visible_sentence)
+            if (
+                visible_words == self._caption_visible_words
+                and rendered_text == self._caption_rendered_text
+            ):
+                return
+            self._caption_visible_words = visible_words
+            self._caption_rendered_text = rendered_text
+            if self.caption is not None:
+                self.caption.update(rendered_text)
+
+        self._run_on_ui_thread(update_caption)
+
+    def _animate_opacity(
+        self,
+        widget: Widget,
+        opacity: float,
+        on_complete: Optional[Callable[[], None]] = None,
+        token: Optional[int] = None,
+    ) -> None:
+        """Fade one widget through its mutable CSS opacity property."""
+        callback = on_complete or (lambda: None)
+        if not getattr(widget, "is_attached", False):
+            widget.styles.opacity = opacity
+            callback()
+            return
+
+        start_opacity = widget.styles.opacity
+        steps = 6
+        frame_delay = _CAPTION_FADE_SECONDS / steps
+
+        def animate_frame(index: int) -> None:
+            if token is not None and token != self._caption_transition_token:
+                return
+            progress = min(1.0, index / steps)
+            widget.styles.opacity = start_opacity + (opacity - start_opacity) * progress
+            if index >= steps:
+                callback()
+                return
+            timer = self.set_timer(frame_delay, lambda: animate_frame(index + 1))
+            if timer is not None:
+                self._caption_timers.append(timer)
+
+        animate_frame(0)
+
+    def _clear_caption_timers(self) -> None:
+        """Stop pending caption fade timers before starting a new transition."""
+        for timer in self._caption_timers:
+            timer.stop()
+        self._caption_timers.clear()
+
+    def _show_caption_widgets(self) -> None:
+        """Fade the caption in while fading the playback bar out."""
+        if self.caption is None or self.progress_bar is None:
+            return
+
+        token = self._caption_transition_token
+        self.caption.display = False
+        self.caption.styles.height = 1
+        self.caption.styles.opacity = 0.0
+        self.progress_bar.display = True
+        self.progress_bar.styles.opacity = 1.0
+
+        def hide_progress_bar() -> None:
+            if self._caption_transition_token == token and self._caption_active:
+                self.progress_bar.display = False
+                self.caption.display = True
+                self.caption.styles.height = 1
+                self._animate_opacity(self.caption, 1.0, token=token)
+
+        self._animate_opacity(
+            self.progress_bar,
+            0.0,
+            hide_progress_bar,
+            token=token,
+        )
+
+    def _hide_caption_widgets(self) -> None:
+        """Fade the completed caption away and restore the playback bar."""
+        if self.cur_state == "exiting":
+            return
+        if threading.current_thread() is not threading.main_thread():
+            with contextlib.suppress(LookupError, RuntimeError, ScreenStackError):
+                self.call_from_thread(self._hide_caption_widgets)
+            return
+
+        self._clear_caption_timers()
+        self._caption_transition_token += 1
+        caption_active = self._caption_active
+        self._caption_active = False
+        if self.caption is None or self.progress_bar is None:
+            self._caption_active = False
+            self._caption_text = ""
+            self._caption_words = ()
+            self._caption_sentences = ()
+            self._caption_timings = ()
+            self._caption_audio_duration = 0.0
+            self._caption_rendered_text = ""
+            return
+
+        if not caption_active:
+            self.caption.display = False
+            self.caption.styles.height = 0
+            self.caption.styles.opacity = 0.0
+            self.progress_bar.display = True
+            self.progress_bar.styles.opacity = 1.0
+            self._caption_text = ""
+            self._caption_words = ()
+            self._caption_sentences = ()
+            self._caption_timings = ()
+            self._caption_audio_duration = 0.0
+            self._caption_rendered_text = ""
+            return
+
+        token = self._caption_transition_token
+        self.caption.styles.height = 1
+
+        def restore_progress_bar() -> None:
+            if self._caption_transition_token != token:
+                return
+            self.caption.display = False
+            self.caption.styles.height = 0
+            self.caption.styles.opacity = 0.0
+            self.progress_bar.display = True
+            self.progress_bar.styles.opacity = 0.0
+            self._animate_opacity(self.progress_bar, 1.0, token=token)
+            self._caption_text = ""
+            self._caption_words = ()
+            self._caption_sentences = ()
+            self._caption_timings = ()
+            self._caption_audio_duration = 0.0
+            self._caption_rendered_text = ""
+            self._caption_visible_words = 0
+            self._caption_progress = 0.0
+
+        self._animate_opacity(
+            self.caption,
+            0.0,
+            restore_progress_bar,
+            token=token,
+        )
+
+    def tts_caption(self, caption: Optional[str]) -> None:
+        """Show a speech caption and reveal its words with played-audio progress."""
+        if self.cur_state == "exiting" or not caption:
+            return
+
+        sentences = tuple(
+            tuple(sentence.split())
+            for sentence in re.split(
+                r"(?:(?<=[.!?])\s+|\n+)",
+                caption.strip(),
+            )
+            if sentence.strip()
+        )
+        words = tuple(word for sentence in sentences for word in sentence)
+        if not words:
+            return
+
+        def update() -> None:
+            self._clear_caption_timers()
+            self._caption_transition_token += 1
+            self._caption_text = caption
+            self._caption_words = words
+            self._caption_sentences = sentences
+            self._caption_timings = ()
+            self._caption_audio_duration = 0.0
+            self._caption_rendered_text = ""
+            self._caption_visible_words = 0
+            self._caption_progress = 0.0
+            self._caption_active = True
+            if self.caption is not None:
+                self.caption.update("")
+            self._show_caption_widgets()
 
         self._run_on_ui_thread(update)
 
@@ -3288,6 +3689,7 @@ class CeluneUI(App):
 
     def on_unmount(self) -> None:
         """Unload Celune."""
+        self._clear_caption_timers()
         self._write_terminal_escape(
             f"\x1b]2;{string('osc.exiting', app_name=APP_NAME)}\x07"
         )
@@ -3303,6 +3705,7 @@ class CeluneUI(App):
 
     def tts_idle(self) -> None:
         """Reset UI state after Celune stops talking."""
+        self._hide_caption_widgets()
         if self.cur_state in {"exiting", "error"} or not self.celune_ready:
             if self.input_box is not None:
                 self.input_box.placeholder = string("ui.wait_placeholder")
@@ -3353,6 +3756,7 @@ class CeluneUI(App):
         """
         if self.cur_state == "exiting":
             return
+        self._hide_caption_widgets()
         self.safe_status(error, "error")
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:

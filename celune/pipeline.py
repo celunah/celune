@@ -812,6 +812,26 @@ def _update_playback_progress(
     engine._playback_progress_last_source_id = source_id
     engine.progress_callback(min(played_frames, total_frames), total_frames)
 
+    speech_ids = [
+        active_source_id
+        for active_source_id in active_ids
+        if meta.get(active_source_id, {}).get("kind") == "speech"
+    ]
+    if not speech_ids:
+        return
+    speech_meta = meta.get(max(speech_ids))
+    if not isinstance(speech_meta, dict):
+        return
+    caption_progress_callback = getattr(engine, "caption_progress_callback", None)
+    if callable(caption_progress_callback):
+        caption_progress_callback(
+            min(
+                float(speech_meta.get("played_frames", 0.0)),
+                float(speech_meta.get("total_frames", 0.0)),
+            ),
+            float(speech_meta.get("total_frames", 0.0)),
+        )
+
 
 def _active_speech_source_ids(
     source_buffers: dict[int, deque[tuple[AudioChunk, Optional[SpeechTiming]]]],
@@ -911,6 +931,7 @@ def _flush_buffered_speech_chunks(
     speech_timing: SpeechTiming,
     pushed_audio: bool,
     stream_queue: Optional[SpeechStreamQueue],
+    caption_text: Optional[str] = None,
 ) -> bool:
     """Queue buffered speech chunks without merging them into a larger copy."""
     if not buffer:
@@ -934,6 +955,9 @@ def _flush_buffered_speech_chunks(
 
     buffer.clear()
     if not pushed_audio:
+        caption_callback = getattr(engine, "caption_callback", None)
+        if caption_text is not None and callable(caption_callback):
+            caption_callback(caption_text)
         _set_playback_source_status(engine, source_id, string("status.speaking"))
         engine.cur_state = "speaking"
         engine.queue_avail_callback()
@@ -2978,6 +3002,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                                 speech_timing,
                                 pushed_audio,
                                 stream_queue,
+                                caption_text=display_text,
                             )
                             buffered_speech_len = 0.0
 
@@ -3047,6 +3072,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                     speech_timing,
                     pushed_audio,
                     stream_queue,
+                    caption_text=display_text,
                 )
 
             engine.log(string("pipeline.generation_done"))
@@ -3067,7 +3093,6 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                             stream_queue.put(tail.copy())
                         if queued_tail:
                             buffer.append(tail)
-                        if save_output:
                             full_audio.append(tail)
 
                 engine.reverb.reset()
@@ -3109,6 +3134,16 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                     )
                 if is_silent and silence_tier == 1:
                     engine.log(string("pipeline.may_be_silent"), "warning")
+
+                caption_timing_callback = getattr(
+                    engine, "caption_timing_callback", None
+                )
+                if full_audio and callable(caption_timing_callback):
+                    caption_timing_callback(
+                        display_text,
+                        np.concatenate(full_audio),
+                        BASE_SR,
+                    )
 
                 engine.total_generated_speech_seconds += speech_len
 

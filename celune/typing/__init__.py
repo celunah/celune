@@ -21,6 +21,8 @@ if TYPE_CHECKING:
         ModelT,
     )
     from .celune import (
+        CaptionCallback,
+        CaptionTimingCallback,
         ErrorCallback,
         Generative,
         IdleCallback,
@@ -102,6 +104,8 @@ _MODULE_EXPORTS = {
     "AudioQueueItem": "pipeline",
     "BackendModel": "backends",
     "CallerInfo": "utils",
+    "CaptionCallback": "celune",
+    "CaptionTimingCallback": "celune",
     "CeluneBaseUI": "ui",
     "CeluneHeadlessBaseUI": "ui",
     "CeluneTextualUI": "ui",
@@ -178,6 +182,8 @@ __all__ = [
     "AudioQueueItem",
     "BackendModel",
     "CallerInfo",
+    "CaptionCallback",
+    "CaptionTimingCallback",
     "CeluneBaseUI",
     "CeluneHeadlessBaseUI",
     "CeluneTextualUI",

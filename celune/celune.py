@@ -118,7 +118,10 @@ from .pipeline import (
 )
 from .runtime import log_runtime_banner, validate_runtime
 from .typing.backends import BackendModel
+from .typing.aliases import AudioChunk
 from .typing.celune import (
+    CaptionCallback,
+    CaptionTimingCallback,
     CeluneStateAccessors,
     CoreBackendSpec,
     Generative,
@@ -360,6 +363,9 @@ class Celune(CeluneStateAccessors):
         change_input_state_callback: Optional[InputStateCallback] = None,
         change_voice_lock_state_callback: Optional[VoiceLockStateCallback] = None,
         progress_callback: Optional[ProgressCallback] = None,
+        caption_progress_callback: Optional[ProgressCallback] = None,
+        caption_callback: Optional[CaptionCallback] = None,
+        caption_timing_callback: Optional[CaptionTimingCallback] = None,
         dev: bool = False,
     ) -> None:
         if Celune._instance is not None:
@@ -379,6 +385,13 @@ class Celune(CeluneStateAccessors):
                 change_voice_lock_state_callback or self._noop_voice_lock_state
             ),
             progress_callback=(progress_callback or self._noop_progress),
+            caption_progress_callback=(
+                caption_progress_callback or self._noop_progress
+            ),
+            caption_callback=(caption_callback or self._noop_caption),
+            caption_timing_callback=(
+                caption_timing_callback or self._noop_caption_timing
+            ),
         )
         self._event_dispatcher = EventDispatcher(log_warning=self.log, dev=dev)
 
@@ -653,6 +666,18 @@ class Celune(CeluneStateAccessors):
     @staticmethod
     def _noop_progress(progress: Optional[float], total: Optional[float]) -> None:
         """Discard a progress callback."""
+
+    @staticmethod
+    def _noop_caption(caption: Optional[str]) -> None:
+        """Discard a speech caption update."""
+
+    @staticmethod
+    def _noop_caption_timing(
+        caption: str,
+        audio: AudioChunk,
+        sample_rate: int,
+    ) -> None:
+        """Discard generated speech caption timing input."""
 
     def _enter_fatal_error_state(self) -> None:
         """Mark the runtime as unrecoverably failed before fatal handlers run."""

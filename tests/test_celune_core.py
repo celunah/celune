@@ -78,6 +78,9 @@ class CeluneCoreTests(TestCase):
             change_input_state_callback=celune._noop_input_state,
             change_voice_lock_state_callback=celune._noop_voice_lock_state,
             progress_callback=celune._noop_progress,
+            caption_progress_callback=celune._noop_progress,
+            caption_callback=celune._noop_caption,
+            caption_timing_callback=celune._noop_caption_timing,
         )
         celune._backend_state = CeluneBackendState(
             config={},

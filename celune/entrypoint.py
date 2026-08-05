@@ -1231,6 +1231,9 @@ def start(verbose: bool = False, testing: bool = False) -> None:
                 change_input_state_callback=ui.change_input_state,
                 change_voice_lock_state_callback=ui.change_voice_lock_state,
                 progress_callback=ui.safe_progress,
+                caption_progress_callback=ui.safe_caption_progress,
+                caption_callback=ui.tts_caption,
+                caption_timing_callback=ui.tts_caption_timing,
                 dev=dev,
                 config=config,
             )

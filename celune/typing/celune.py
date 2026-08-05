@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from ..dsp import StreamingPedalboardReverb
     from ..extensions.manager import CeluneExtensionManager
     from ..persona.impl import PersonaClient
-    from .aliases import AudioChunks
+    from .aliases import AudioChunk, AudioChunks
 
 
 type GenerationKwarg = Union[torch.Tensor, int, bool, None]
@@ -174,6 +174,27 @@ class ProgressCallback(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
+class CaptionCallback(Protocol):
+    """Callback accepting the active speech caption, or ``None`` when finished."""
+
+    def __call__(self, caption: Optional[str]) -> None:
+        """Handle a speech caption lifecycle update."""
+        raise NotImplementedError("protocol not defined")
+
+
+class CaptionTimingCallback(Protocol):
+    """Callback receiving generated speech for optional caption timing."""
+
+    def __call__(
+        self,
+        caption: str,
+        audio: AudioChunk,
+        sample_rate: int,
+    ) -> None:
+        """Analyze generated speech to refine caption timing."""
+        raise NotImplementedError("protocol not defined")
+
+
 type ErrorCallback = Callable[[str], None]
 type IdleCallback = Callable[[], None]
 type QueueAvailableCallback = Callable[[], None]
@@ -197,6 +218,9 @@ class CeluneStateAccessors:
     change_input_state_callback: InputStateCallback
     change_voice_lock_state_callback: VoiceLockStateCallback
     progress_callback: ProgressCallback
+    caption_progress_callback: ProgressCallback
+    caption_callback: CaptionCallback
+    caption_timing_callback: CaptionTimingCallback
     config: Config
     _backend_spec: Optional[TTSBackendRecipe]
     _backend_kwargs: dict[str, JSONSerializable]
