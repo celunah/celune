@@ -126,7 +126,7 @@ class BackendTests(TestCase):
 
         with (
             mock.patch(
-                "celune.backends.tts.gpt_sovits.app_data_dir",
+                "celune.backends.tts.gpt_sovits.runtime_data_dir",
                 return_value=expected_root.parent,
             ),
             mock.patch.object(GPTSoVITS, "_candidate_roots", return_value=iter(())),

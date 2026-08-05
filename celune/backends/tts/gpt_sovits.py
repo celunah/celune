@@ -27,9 +27,9 @@ from huggingface_hub import snapshot_download
 from ...cevoice import CEVoiceLoader, default_loader
 from ...i18n import string
 from ...paths import (
-    app_data_dir,
     huggingface_hub_cache_dir,
     project_root,
+    runtime_data_dir,
 )
 from ...typing.aliases import AudioChunk, AudioChunkNonNormalized, RuntimeValue
 from ...typing.backends import GPTSoVITSPipeline, _GPTSoVITSConfig
@@ -207,7 +207,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
     @classmethod
     def _managed_source_root(cls, create: bool = False) -> Path:
         """Return the Celune-managed GPT-SoVITS source directory."""
-        return app_data_dir(create=create) / cls._managed_source_dir_name
+        return runtime_data_dir(create=create) / cls._managed_source_dir_name
 
     @staticmethod
     def _source_is_available(root: Path) -> bool:
@@ -476,7 +476,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         """Download NLTK resources required by GPT-SoVITS English frontend."""
         import nltk
 
-        data_dir = app_data_dir(create=True) / "nltk_data"
+        data_dir = runtime_data_dir(create=True) / "nltk_data"
         data_dir.mkdir(parents=True, exist_ok=True)
         data_path = str(data_dir)
         if data_path not in nltk.data.path:
@@ -497,7 +497,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
 
     def _ensure_fast_langdetect_data(self) -> None:
         """Download the GPT-SoVITS language-detection model into Celune data."""
-        cache_dir = app_data_dir(create=True) / "fast_langdetect"
+        cache_dir = runtime_data_dir(create=True) / "fast_langdetect"
         cache_dir.mkdir(parents=True, exist_ok=True)
         model_path = cache_dir / self._fast_langdetect_model_name
 

@@ -22,7 +22,7 @@ from celune import REVISION, __tagline__, __version__
 from celune.constants import APP_NAME, APP_SLUG, ExitCodes
 from celune.i18n import string
 from celune.watchdog import launcher_loss_requested, start_watchdog
-from celune.paths import project_root, running_compiled
+from celune.paths import migrate_legacy_app_data, project_root, running_compiled
 from celune.updater import apply_update_and_restart
 
 
@@ -1070,6 +1070,7 @@ def start(verbose: bool = False, testing: bool = False) -> None:
     runtime = _load_runtime()
 
     try:
+        migrate_legacy_app_data()
         if testing:
             _print_startup_diagnostic(string("cli.startup_creating_ui"))
             ui = runtime.CeluneUI()

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Runtime filesystem paths and global Hugging Face runtime setup for Celune."""
 
+import contextlib
 import os
 import shutil
 import sys
@@ -16,6 +17,12 @@ _REPO_MARKERS = ("celune", "default_config.yaml", "pyproject.toml")
 _HF_HOME_ENV = "HF_HOME"
 _HF_HUB_CACHE_ENV = "HF_HUB_CACHE"
 _HF_HUB_DISABLE_PROGRESS_BARS_ENV = "HF_HUB_DISABLE_PROGRESS_BARS"
+_LEGACY_APP_DATA_MIGRATIONS = (
+    ("backends", ("environments",)),
+    ("fast_langdetect", ("runtime", "fast_langdetect")),
+    ("gpt_sovits", ("runtime", "gpt_sovits")),
+    ("nltk_data", ("runtime", "nltk_data")),
+)
 
 
 def running_compiled() -> bool:
@@ -69,6 +76,21 @@ def persona_data_dir(create: bool = False) -> Path:
         Path: The Persona directory inside Celune's user data directory.
     """
     path = app_data_dir(create=create) / "persona"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def runtime_data_dir(create: bool = False) -> Path:
+    """Return Celune's directory for runtime-owned loose data.
+
+    Args:
+        create: Whether this directory should be created before being returned.
+
+    Returns:
+        Path: Celune's runtime data directory.
+    """
+    path = app_data_dir(create=create) / "runtime"
     if create:
         path.mkdir(parents=True, exist_ok=True)
     return path
@@ -193,10 +215,45 @@ def backend_environments_dir(create: bool = False) -> Path:
     Returns:
         Path: The Celune-local backend environment directory.
     """
-    path = app_data_dir(create=create) / "backends"
+    path = app_data_dir(create=create) / "environments"
     if create:
         path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _merge_directory_contents(source: Path, destination: Path) -> None:
+    """Move non-conflicting contents from one directory into another."""
+    destination.mkdir(parents=True, exist_ok=True)
+    for child in source.iterdir():
+        target = destination / child.name
+        if target.exists():
+            if child.is_dir() and target.is_dir():
+                _merge_directory_contents(child, target)
+            continue
+        shutil.move(str(child), str(target))
+
+    with contextlib.suppress(OSError):
+        source.rmdir()
+
+
+def migrate_legacy_app_data() -> None:
+    """Move legacy loose data into Celune's organized AppData layout.
+
+    Existing destination files and directories are preserved. When a destination
+    already exists, only non-conflicting legacy contents are moved, so an
+    interrupted migration can safely resume on the next startup.
+    """
+    root = app_data_dir()
+    for source_name, destination_parts in _LEGACY_APP_DATA_MIGRATIONS:
+        source = root / source_name
+        destination = root.joinpath(*destination_parts)
+        if not source.is_dir():
+            continue
+        if not destination.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(destination))
+        elif source.is_dir() and destination.is_dir():
+            _merge_directory_contents(source, destination)
 
 
 def config_path(create_parent: bool = False) -> Path:

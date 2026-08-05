@@ -15,13 +15,16 @@ from textual.widgets import RichLog
 from celune.cevoice import bundled_voices_dir, default_bundle_path
 from celune.constants import APP_SLUG
 from celune.paths import (
+    backend_environments_dir,
     configure_huggingface_cache_environment,
     configure_huggingface_runtime,
     ensure_config_path,
     huggingface_home_dir,
     huggingface_hub_cache_dir,
+    migrate_legacy_app_data,
     persona_data_dir,
     project_root,
+    runtime_data_dir,
     running_compiled,
     voices_data_dir,
 )
@@ -83,6 +86,46 @@ class RuntimePathTests(TestCase):
 
         with mock.patch("celune.paths.user_data_dir", return_value="C:/runtime-data"):
             self.assertEqual(voices_data_dir(), expected)
+
+    def test_runtime_and_environment_dirs_use_organized_app_data_paths(self) -> None:
+        """Verify loose runtime data and backend environments use dedicated folders."""
+        expected_root = Path("C:/runtime-data")
+
+        with mock.patch("celune.paths.user_data_dir", return_value="C:/runtime-data"):
+            self.assertEqual(runtime_data_dir(), expected_root / "runtime")
+            self.assertEqual(
+                backend_environments_dir(),
+                expected_root / "environments",
+            )
+
+    def test_migrate_legacy_app_data_moves_existing_directories(self) -> None:
+        """Verify legacy loose data is moved without overwriting new data."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            legacy_directories = {
+                "backends": ("mini", "environment-marker.txt"),
+                "fast_langdetect": ("model-marker.txt",),
+                "gpt_sovits": ("source-marker.txt",),
+                "nltk_data": ("resource-marker.txt",),
+            }
+            for name, parts in legacy_directories.items():
+                path = root / name / Path(*parts)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(name, encoding="utf-8")
+
+            with mock.patch("celune.paths.user_data_dir", return_value=temp_dir):
+                migrate_legacy_app_data()
+                migrate_legacy_app_data()
+
+            self.assertEqual(
+                (root / "environments" / "mini" / "environment-marker.txt").read_text(
+                    encoding="utf-8"
+                ),
+                "backends",
+            )
+            for name in ("fast_langdetect", "gpt_sovits", "nltk_data"):
+                self.assertTrue((root / "runtime" / name).is_dir())
+                self.assertFalse((root / name).exists())
 
     def test_huggingface_cache_dirs_live_in_runtime_data(self) -> None:
         """Verify Celune's default Hugging Face caches live under user data."""

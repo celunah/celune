@@ -71,10 +71,10 @@ from .dsp import (
 from .exceptions import NotAvailableError
 from .i18n import string
 from .paths import (
-    app_data_dir,
     outputs_dir,
     project_root,
     running_compiled,
+    temp_data_dir,
 )
 from .persona.emotion import PersonaEmotionAnalyzer
 from .persona.capabilities import PersonaCapabilities
@@ -944,7 +944,7 @@ def _flush_buffered_speech_chunks(
 
 def _youtube_sfx_temp_path() -> pathlib.Path:
     """Return the fixed temporary WAV path used for URL-backed SFX playback."""
-    return app_data_dir(create=True) / "temp" / "temporary_audio.wav"
+    return temp_data_dir(create=True) / "temporary_audio.wav"
 
 
 def _is_youtube_sfx_url(value: str) -> bool:

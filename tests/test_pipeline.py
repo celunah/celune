@@ -631,7 +631,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 )
 
             with (
-                mock.patch("celune.pipeline.app_data_dir", return_value=temp_root),
+                mock.patch(
+                    "celune.pipeline.temp_data_dir", return_value=temp_root / "temp"
+                ),
                 mock.patch(
                     "celune.pipeline.importlib_util.find_spec",
                     return_value=ModuleSpec("yt_dlp", loader=None),
@@ -670,7 +672,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
 
             with (
-                mock.patch("celune.pipeline.app_data_dir", return_value=temp_root),
+                mock.patch(
+                    "celune.pipeline.temp_data_dir", return_value=temp_root / "temp"
+                ),
                 mock.patch(
                     "celune.pipeline.importlib_util.find_spec",
                     return_value=ModuleSpec("yt_dlp", loader=None),
@@ -707,7 +711,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             temp_root = Path(temp_dir)
 
             with (
-                mock.patch("celune.pipeline.app_data_dir", return_value=temp_root),
+                mock.patch(
+                    "celune.pipeline.temp_data_dir", return_value=temp_root / "temp"
+                ),
                 mock.patch(
                     "celune.pipeline.importlib_util.find_spec",
                     return_value=ModuleSpec("yt_dlp", loader=None),
@@ -749,7 +755,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             temp_root = Path(temp_dir)
 
             with (
-                mock.patch("celune.pipeline.app_data_dir", return_value=temp_root),
+                mock.patch(
+                    "celune.pipeline.temp_data_dir", return_value=temp_root / "temp"
+                ),
                 mock.patch(
                     "celune.pipeline.importlib_util.find_spec",
                     return_value=ModuleSpec("yt_dlp", loader=None),
@@ -790,7 +798,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             )
 
             with (
-                mock.patch("celune.pipeline.app_data_dir", return_value=temp_root),
+                mock.patch(
+                    "celune.pipeline.temp_data_dir", return_value=temp_root / "temp"
+                ),
                 mock.patch(
                     "celune.pipeline.importlib_util.find_spec",
                     return_value=ModuleSpec("yt_dlp", loader=None),
