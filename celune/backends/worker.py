@@ -114,7 +114,10 @@ def _run_request(
         return {"ok": True, "value": method(**arguments)}, next_model_id
     if operation == "generate_stream":
         model_id = cast(int, arguments.pop("model_id"))
-        generator = backend.generate_stream(models[model_id], **arguments)
+        model = models.get(model_id)
+        if model is None:
+            raise ValueError(f"backend worker has no loaded model ID: {model_id}")
+        generator = backend.generate_stream(model, **arguments)
         for chunk in generator:
             send_message(
                 sys.stdout.buffer, {"ok": True, "stream": True, "value": chunk}

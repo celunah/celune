@@ -966,8 +966,10 @@ class CeluneCoreTests(TestCase):
         ):
             Celune(config={"vram": "low"}, tts_backend=backend)
 
-    def test_think_reconnects_to_persona_before_speech_fallback(self) -> None:
-        """Verify stale Celune instances reconnect to Persona on the next think call.
+    def test_think_reconnects_and_starts_persona_loading_before_speech_fallback(
+        self,
+    ) -> None:
+        """Verify stale Celune instances reconnect and start loading Persona on the next think call.
 
         Raises:
             AssertionError: Persona reconnect behavior changes unexpectedly.
@@ -979,24 +981,30 @@ class CeluneCoreTests(TestCase):
         client = mock.Mock()
         celune._persona_conn = mock.Mock(return_value=client)
         with (
-            mock.patch("celune.celune.think_pipeline", return_value=True) as think,
+            mock.patch("celune.celune.think_pipeline") as think,
             mock.patch.object(celune, "say", return_value=False) as say,
+            mock.patch.object(celune, "_start_persona_background_load") as start_load,
         ):
             self.assertEqual(celune.think("hello"), True)
+
             persona_thread = celune._persona_thread
             self.assertIsNotNone(persona_thread)
             assert persona_thread is not None
             persona_thread.join(timeout=2)
+            self.assertFalse(persona_thread.is_alive())
 
         self.assertIs(celune.vision, client)
-        think.assert_called_once_with(celune, "hello")
-        say.assert_not_called()
+        celune._persona_conn.assert_called_once_with()
+        start_load.assert_called_once_with()
+        say.assert_called_once_with("hello")
+        think.assert_not_called()
 
     def test_think_queues_requests_while_persona_is_speaking(self) -> None:
         """Verify Persona requests submitted during playback run after the active reply."""
         celune = self._make_celune({})
         celune.error_callback = mock.Mock()
         celune.vision = mock.Mock()
+        celune.persona_ready = True
         celune.locked = True
         celune.cur_state = "speaking"
         celune.playback_done.clear()

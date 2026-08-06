@@ -65,10 +65,10 @@ _EXPLICIT_MEMORY_PATTERNS = (
     r"^(?:please\s+)?bear\s+in\s+mind(?:\s+that)?\s*[:,-]?\s*(.+)$",
     (
         r"^(?:please\s+)?(?:make|take)\s+(?:a\s+)?note"
-        r"(?:\s+(?:that|of)(?:\s+(?:this|that))?|\s+(?:this|that))?"
+        r"\b(?:\s+(?:that|of)(?:\s+(?:this|that))?|\s+(?:this|that))?"
         r"\s*[:,-]?\s*(.+)$"
     ),
-    r"^(?:please\s+)?note(?:\s+(?:that|of)(?:\s+(?:this|that))?|\s+(?:this|that))?\s*[:,-]?\s*(.+)$",
+    r"^(?:please\s+)?note\b(?:\s+(?:that|of)(?:\s+(?:this|that))?|\s+(?:this|that))?\s*[:,-]?\s*(.+)$",
     r"^(?:please\s+)?(?:save|store)\s+(?:this|that)(?:\s+(?:in|to)\s+(?:your\s+)?memory)?\s*[:,-]?\s*(.+)$",
     r"^(?:please\s+)?add\s+(?:this|that)\s+to\s+(?:your\s+)?memory\s*[:,-]?\s*(.+)$",
     r"^(?:please\s+)?keep(?:\s+(?:this|that))?\s+on\s+record\s*[:,-]?\s*(.+)$",

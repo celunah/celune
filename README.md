@@ -7,7 +7,7 @@
 
 Celune is a conversational character engine with agentic features.
 
-You can use it to speak. You can use it to talk. You can also use it to manage.
+You can use it to speak, use it to talk, or even use it to manage.
 
 No matter what you want to do, it is there to help you.
 
@@ -17,7 +17,7 @@ It was proudly made in 🇵🇱 for the finest of uses.
 
 - Real-time buffered speech generation pipeline
 - Distinct default voice styles: calm, balanced, bold, upbeat
-- Multiple operation modes: frontend, API and extensions
+- Multiple operation modes: speak, converse and agent
 - Stable long-form narration with low risk of drifting
 - Native audio controls & effects via built-in DSP
 - Optimized GPU inference where possible
@@ -39,7 +39,7 @@ mode: converse  # speak|converse|agent
 
 - `speak` uses only Celune's speech features. It is best suited for performance use. It does not use any extra features.
 - `converse` uses Persona, allowing you to talk with any characters you've set up with Celune.
-- `agent` turns Celune into a conversational local agent, allowing her to perform actions on your computer while speaking hack as needed.
+- `agent` turns Celune into a conversational local agent, allowing her to perform actions on your computer while speaking as needed.
 
 Persona can be used with both LLMs and VLMs, but vision features and image uploads are not available with text-only language models. If uncertain, use a vision-language model.
 

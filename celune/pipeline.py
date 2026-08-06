@@ -1362,8 +1362,10 @@ def _persona_emotion_analyzer(engine: Celune) -> Optional[PersonaEmotionAnalyzer
             else PersonaEmotionAnalyzer()
         )
 
-    if isinstance(existing, PersonaEmotionAnalyzer):
-        analyzer = existing
+    if isinstance(existing, PersonaEmotionAnalyzer) and existing is not analyzer:
+        existing.user_weight = analyzer.user_weight
+        existing.assistant_weight = analyzer.assistant_weight
+        existing.history_decay_power = analyzer.history_decay_power
 
     vision = getattr(engine, "vision", None)
     get_capabilities = getattr(vision, "capabilities", None)
@@ -1561,7 +1563,10 @@ def _classify_persona_memories(engine: Celune, request: str) -> None:
         log_dev = getattr(engine, "log_dev", None)
         if callable(log_dev):
             log_dev(
-                f"Persona memory classifier failed: {format_error(error, engine.dev)}"
+                string(
+                    "pipeline.persona_memory_classifier_failed",
+                    error=format_error(error, engine.dev),
+                )
             )
 
 

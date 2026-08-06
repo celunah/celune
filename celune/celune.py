@@ -1001,16 +1001,14 @@ class Celune(CeluneStateAccessors):
     def _resolve_vc_backend(
         self,
         backend_spec: VCBackendSpec,
-        **backend_kwargs,
+        log: Optional[MessageCallback] = None,
     ) -> CeluneVCBackend:
         """Resolve one VC backend using the configured process isolation mode."""
-        if self._isolated_backends:
-            return resolve_vc_backend(
-                backend_spec,
-                isolated=True,
-                **backend_kwargs,
-            )
-        return resolve_vc_backend(backend_spec, **backend_kwargs)
+        return resolve_vc_backend(
+            backend_spec,
+            log=log,
+            isolated=self._isolated_backends,
+        )
 
     def _restorable_vc_backend_spec(
         self,
@@ -2946,8 +2944,7 @@ class Celune(CeluneStateAccessors):
                 self.log(string("celune.normalization_unavailable"), "warning")
                 self.progress_callback(0, 1)
 
-        if self.persona_ready:
-            # we don't need to normalize out of the VLM
+        if self.persona_ready or self.persona_loading:
             return
 
         thread = threading.Thread(target=_worker, daemon=True)
@@ -3246,14 +3243,15 @@ class Celune(CeluneStateAccessors):
                     self.say(text)
                     continue
 
-                if not self.persona_ready and not self.vision:
-                    self.vision = self._persona_conn()
-                    if not self.vision:
+                if not self.persona_ready:
+                    if self.vision is None:
+                        self.vision = self._persona_conn()
+                    if self.vision is None:
                         self.say(text)
                         continue
-                    self.persona_ready = True
-                elif not self.persona_ready:
-                    self.persona_ready = True
+                    self._start_persona_background_load()
+                    self.say(text)
+                    continue
 
                 if not think_pipeline(self, text):
                     self.log(string("celune.say_instead"), "warning")

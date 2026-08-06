@@ -781,5 +781,6 @@ def normalize_special_characters(text: str) -> str:
         }
     )
 
-    normalized = text.translate(special_char_mappings)
+    # remove cases of " : " in speeches when an em-dash or en-dash was sanitized
+    normalized = re.sub(r"\s:", "", text.translate(special_char_mappings))
     return re.sub(r"\s{2,}", " ", normalized)

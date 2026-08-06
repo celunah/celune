@@ -116,6 +116,10 @@ api = [
     "pydantic",
 ]
 
+openzl = [
+    "openzl",
+]
+
 # These optional groups are retained for development and legacy in-process runs.
 # Normal Celune runs install the selected backend into its own AppData environment
 # from the registry in `celune.backends.environment`.

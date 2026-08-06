@@ -527,10 +527,12 @@ def write_cechar_v4(
 
     payload = bytearray()
     file_entries: list[dict[str, str]] = []
+    file_lengths: list[int] = []
     manifest_voices: VoiceManifest = {}
     for voice, assets in voices.items():
         _validate_v4_name(voice, "voice")
         manifest_assets: dict[str, ManifestValue] = {}
+        seen_names: set[str] = set()
         for kind, source in assets.items():
             if kind not in ALLOWED_ASSET_KINDS:
                 raise CEVoiceError(
@@ -540,9 +542,16 @@ def write_cechar_v4(
             data = _read_source(source)
             _validate_v4_file_data(name, data)
             payload.extend(data)
+
+            folded = name.casefold()
+            if folded in seen_names:
+                raise CEVoiceError(f"{name} already exists")
+            seen_names.add(folded)
+
             file_entries.append(
                 {"name": name, "sha256": hashlib.sha256(data).hexdigest()}
             )
+            file_lengths.append(len(data))
             manifest_assets[kind] = name
 
         voice_entry = dict((voice_metadata or {}).get(voice, {}))
@@ -560,6 +569,7 @@ def write_cechar_v4(
         _validate_v4_file_data(name, data)
         payload.extend(data)
         file_entries.append({"name": name, "sha256": hashlib.sha256(data).hexdigest()})
+        file_lengths.append(len(data))
         manifest_bundle_assets[name] = name
 
     manifest = dict(metadata or {})
@@ -593,10 +603,9 @@ def write_cechar_v4(
     logical_payload.extend(metadata_bytes)
     logical_payload.extend(struct.pack("<I", len(file_entries)))
     offset = table_size
-    for entry in file_entries:
-        data = _read_v4_entry_data(entry["name"], voices, bundle_assets)
-        logical_payload.extend(V4_FILE_ENTRY.pack(offset, len(data)))
-        offset += len(data)
+    for length in file_lengths:
+        logical_payload.extend(V4_FILE_ENTRY.pack(offset, length))
+        offset += length
     logical_payload.extend(payload)
 
     stored_payload = _compress_v4_payload(bytes(logical_payload), compression)
@@ -605,21 +614,6 @@ def write_cechar_v4(
         stream.write(V4_HEADER.pack(V4_MAGIC, V4_VERSION, compression))
         stream.write(stored_payload)
     return output_path
-
-
-def _read_v4_entry_data(
-    name: str,
-    voices: Mapping[str, Mapping[str, Union[bytes, str, Path]]],
-    bundle_assets: Optional[Mapping[str, Union[bytes, str, Path]]],
-) -> bytes:
-    """Read one v4 entry again in canonical manifest order."""
-    for voice, assets in voices.items():
-        for kind, source in assets.items():
-            if name == f"{voice}.{kind}":
-                return _read_source(source)
-    if bundle_assets is not None and name in bundle_assets:
-        return _read_source(bundle_assets[name])
-    raise CEVoiceError(f"missing CECHAR v4 file data for '{name}'")
 
 
 def _validate_v4_file_data(name: str, data: bytes) -> None:
@@ -1034,7 +1028,9 @@ def _validate_v4_embedding(name: str, data: bytes) -> None:
     """Validate one restricted tensor-only CECHAR v4 voice embedding."""
     try:
         import torch
-
+    except ModuleNotFoundError as error:
+        raise CEVoiceError("PyTorch not found, can't validate .pt assets") from error
+    try:
         value = torch.load(io.BytesIO(data), map_location="cpu", weights_only=True)
     except Exception as error:
         raise CEVoiceError(f"invalid CECHAR v4 PT asset '{name}'") from error

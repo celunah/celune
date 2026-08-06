@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import threading
+from collections import deque
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from .worker_protocol import (
 )
 from .vc.base import CeluneVCBackend
 from ..paths import core_site_packages_dir, project_root
+from ..i18n import string
 from ..typing.aliases import AudioChunk
 from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
@@ -52,7 +54,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self._process: Optional[subprocess.Popen[bytes]] = None
         self._protocol_lock = threading.Lock()
         self._stderr_thread: Optional[threading.Thread] = None
-        self._worker_stderr: list[str] = []
+        self._worker_stderr: deque[str] = deque(maxlen=200)
         self._worker_stderr_lock = threading.Lock()
         environment = self._environment_manager.ensure(manifest)
         try:
@@ -108,15 +110,26 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Forward worker stderr lines to Celune's logging callback."""
         for line in iter(stream.readline, b""):
             text = line.decode("utf-8", errors="replace").rstrip()
-            if text:
-                with self._worker_stderr_lock:
-                    self._worker_stderr.append(text)
-                log(text, "info")
+            if not text:
+                continue
+            with self._worker_stderr_lock:
+                self._worker_stderr.append(text)
+            severity, _, message = self._split_worker_log(text)
+            log(message, severity)
+
+    @staticmethod
+    def _split_worker_log(text: str) -> tuple[str, bool, str]:
+        """Split one worker log line into its severity and message."""
+        if text.startswith("[") and "] " in text:
+            severity, _, message = text[1:].partition("] ")
+            if severity in {"info", "warning", "error"}:
+                return severity, True, message
+        return "info", False, text
 
     def _worker_error_detail(self) -> str:
         """Return recent worker stderr for a failed protocol operation."""
         with self._worker_stderr_lock:
-            recent_lines = self._worker_stderr[-20:]
+            recent_lines = list(self._worker_stderr)[-20:]
         return "\n".join(recent_lines)
 
     def _load_description(self) -> None:
@@ -143,10 +156,13 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         process = self._process
         if process is None or process.poll() is not None:
             raise RuntimeError(
-                f"backend worker '{self._manifest.backend_id}' is not running"
+                string(
+                    "backends.worker_not_running",
+                    backend=self._manifest.backend_id,
+                )
             )
         if process.stdin is None or process.stdout is None:
-            raise RuntimeError("backend worker protocol streams are unavailable")
+            raise RuntimeError(string("backends.worker_streams_unavailable"))
         with self._protocol_lock:
             send_message(
                 process.stdin, {"operation": operation, "arguments": arguments}
@@ -181,24 +197,46 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             send_message(
                 process.stdin, {"operation": operation, "arguments": arguments}
             )
+            completed = False
+            try:
+                while True:
+                    response = self._read_stream_frame(process)
+                    if response.get("done", False):
+                        completed = True
+                        return
+                    if response.get("stream", False):
+                        yield response.get("value")
+            finally:
+                if not completed:
+                    self._drain_stream(process)
+
+    def _read_stream_frame(
+        self,
+        process: subprocess.Popen[bytes],
+    ) -> Mapping[str, object]:
+        """Read one streaming frame and raise on worker-reported failures."""
+        assert process.stdout is not None
+        try:
+            response = cast(Mapping[str, object], receive_message(process.stdout))
+        except WorkerProtocolError as error:
+            detail = self._worker_error_detail()
+            if detail:
+                raise WorkerProtocolError(f"{error}:\n{detail}") from error
+            raise
+        if not response.get("ok", False):
+            raise RuntimeError(
+                cast(str, response.get("error", "backend worker failed"))
+            )
+        return response
+
+    def _drain_stream(self, process: subprocess.Popen[bytes]) -> None:
+        """Consume remaining stream frames so the next request stays aligned."""
+        assert process.stdout is not None
+        with suppress(WorkerProtocolError, OSError):
             while True:
-                try:
-                    response = cast(
-                        Mapping[str, object], receive_message(process.stdout)
-                    )
-                except WorkerProtocolError as error:
-                    detail = self._worker_error_detail()
-                    if detail:
-                        raise WorkerProtocolError(f"{error}:\n{detail}") from error
-                    raise
-                if not response.get("ok", False):
-                    raise RuntimeError(
-                        cast(str, response.get("error", "backend worker failed"))
-                    )
-                if response.get("done", False):
+                response = cast(Mapping[str, object], receive_message(process.stdout))
+                if response.get("done", False) or not response.get("ok", True):
                     return
-                if response.get("stream", False):
-                    yield response.get("value")
 
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
@@ -256,6 +294,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         process = self._process
         if process is None:
             return
+        self._process = None
         if process.poll() is None and process.stdin is not None:
             with self._protocol_lock:
                 with suppress(OSError, BrokenPipeError):
@@ -265,8 +304,23 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             process.terminate()
-            process.wait(timeout=5)
-        self._process = None
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                with suppress(subprocess.TimeoutExpired):
+                    process.wait(timeout=5)
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                with suppress(OSError):
+                    stream.close()
+        stderr_thread = self._stderr_thread
+        self._stderr_thread = None
+        if (
+            stderr_thread is not None
+            and stderr_thread is not threading.current_thread()
+        ):
+            stderr_thread.join(timeout=2)
 
 
 class RemoteVCBackendProxy(CeluneVCBackend):

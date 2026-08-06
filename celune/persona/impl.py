@@ -48,7 +48,9 @@ _CONVERSATION_SUMMARY_SYSTEM_PROMPT = (
     "no XML tags, role labels, or heading."
 )
 _SUMMARY_PREFIX = "Conversation context:"
-_SUMMARY_SPLIT_RE = re.compile(r"(?:\r?\n+|(?<=[.!?])\s+|;\s+)")
+_SUMMARY_SPLIT_RE = re.compile(
+    r"(?:\r?\n+|(?<=[.!?\u3002\uff01\uff1f\u061f])\s*|[;\uff1b]\s*)"
+)
 _SUMMARY_WRAPPER_RE = re.compile(r"</?(?:conversation_summary|summary)>", re.IGNORECASE)
 _SUMMARY_LABEL_RE = re.compile(
     r"^\s*(?:summary|earlier summary|conversation summary|conversation context|"
@@ -147,7 +149,7 @@ class PersonaClient:
             context_sections.append(f"Existing summary:\n{previous_summary.strip()}")
         if messages:
             turns = "\n".join(
-                f"{message.get('role', 'unknown')}: {message.get('content', '')}"
+                f"{message.get('role', 'unknown')}: {' '.join(str(message.get('content', '')).split())}"
                 for message in messages
             )
             context_sections.append(f"Conversation turns:\n{turns}")
@@ -535,15 +537,15 @@ def _build_persona_summary(
     maximum_characters: int,
 ) -> str:
     """Build a bounded deterministic fallback digest without recursive nesting."""
-    sources: list[str] = []
-    if previous_summary:
-        sources.append(previous_summary)
-    sources.extend(
+    sources: list[str] = [
         content
         for message in old_messages
         for content in [message.get("content", "")]
         if isinstance(content, str)
-    )
+    ]
+
+    if previous_summary:
+        sources.append(previous_summary)
 
     fragments: list[str] = []
     seen: set[str] = set()

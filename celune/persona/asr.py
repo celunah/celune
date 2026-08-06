@@ -269,8 +269,11 @@ class WhisperTranscriber:
         if mono_audio.ndim != 1:
             raise ValueError("Whisper speech input must be mono audio")
         if sample_rate != WHISPER_SAMPLE_RATE:
+            resampled = resample_audio(mono_audio, sample_rate, WHISPER_SAMPLE_RATE)
             mono_audio = np.asarray(
-                resample_audio(mono_audio, sample_rate, WHISPER_SAMPLE_RATE),
+                np.mean(resampled, axis=1, dtype=np.float32)
+                if np.asarray(resampled).ndim == 2
+                else resampled,
                 dtype=np.float32,
             )
         try:

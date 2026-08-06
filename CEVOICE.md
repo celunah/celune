@@ -186,6 +186,8 @@ Validation rules enforced by Celune:
 - v4 `format`/`version` must be `"CECHAR"` / `4`
 - v4 compression must be one of `0`, `1`, `2`, `3`, or `4`
 - v4 metadata must contain a `files` list whose length equals the binary file count
+- v4 metadata JSON must not begin with a UTF-8 byte-order mark
+- v4 `files` entries must not contain `offset` or `length` fields
 - v4 file names must be unique, safe logical names with `.wav`, `.pt`, or supported `.md` extensions
 - v4 jump-table ranges must be inside the decompressed payload and must not overlap
 - v4 WAV files must be mono, signed 16-bit PCM at 24 kHz
@@ -432,7 +434,7 @@ Celune's bundled `default.cevoice` uses:
 - `default_voice`: `balanced`
 - `voice_order`: `balanced`, `calm`, `bold`, `upbeat`
 - `theme`: `background`, `accent`, `glow_color`, and `faded_accent`
-- top-level `assets`: CECHAR v3-style prompt source material for the bundled character
+- top-level `assets`: CECHAR v4-style prompt source material for the bundled character
 - `soul.md`: shared character continuity and relationship guidance
 - per-voice `persona`: response-style refinements layered onto the shared character
 - `cfg_scale`: `2.4` for `balanced`, `bold`, and `upbeat`; `3.0` for `calm`
