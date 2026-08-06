@@ -28,7 +28,9 @@ Never inspect, populate, or rely on the host Hugging Face cache. Do not use a gl
 The installed `qwen_tts` package currently exposes:
 
 ```python
-model = Qwen3TTSModel.from_pretrained(snapshot_path, device_map="cuda:0", torch_dtype=...)
+model = Qwen3TTSModel.from_pretrained(
+    snapshot_path, device_map="cuda:0", torch_dtype=...
+)
 wavs, sample_rate = model.generate_voice_design(
     text=preview_text,
     instruct=voice_instruction,

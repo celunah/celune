@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, Final, Optional, Union, cast
 
+import numpy as np
+
 from .exceptions import CEVoiceError
 from .paths import project_root, temp_data_dir, voices_data_dir
 from .typing.cevoice import Manifest, ManifestValue, VoiceManifest
@@ -655,7 +657,9 @@ def _compress_v4_payload(payload: bytes, compression: int) -> bytes:
         context = zl.CCtx()
         context.ref_compressor(compressor)
         context.set_parameter(zl.CParam.FormatVersion, zl.MAX_FORMAT_VERSION)
-        return bytes(context.compress([zl.Input(zl.Type.Serial, payload)]))
+        return context.compress(
+            [zl.Input(zl.Type.Serial, np.frombuffer(payload, dtype=np.uint8))]
+        )
     raise CEVoiceError(f"unsupported CECHAR compression mode {compression}")
 
 
@@ -682,7 +686,7 @@ def _decompress_v4_payload(stored_payload: bytes, compression: int) -> bytes:
             outputs = zl.DCtx().decompress(stored_payload)
             if len(outputs) != 1 or outputs[0].type != zl.Type.Serial:
                 raise CEVoiceError("invalid OpenZL CECHAR v4 payload")
-            return bytes(outputs[0].content.as_bytes())
+            return outputs[0].content.as_bytes()
     except CEVoiceError:
         raise
     except Exception as error:
