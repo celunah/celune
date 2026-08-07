@@ -18,7 +18,7 @@ permissions:
 jobs:
   python-checks:
     name: Anti AI Slop & Vibe Coding Checks
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
@@ -132,7 +132,16 @@ jobs:
       - python-checks
       - launcher-build-linux
       - launcher-build-windows
-    if: ${{ always() && contains(join(needs.*.result, ','), 'failure') }}
+
+    if: >-
+      ${{
+        always() &&
+        (
+          needs.python-checks.result != 'success' ||
+          needs.launcher-build-linux.result != 'success' ||
+          needs.launcher-build-windows.result != 'success'
+        )
+      }}
 
     steps:
       - name: Comment on pull request or commit
@@ -140,7 +149,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHA: ${{ github.sha }}
           EVENT_NAME: ${{ github.event_name }}
@@ -148,19 +156,41 @@ jobs:
           PYTHON_CHECKS_RESULT: ${{ needs.python-checks.result }}
           LINUX_BUILD_RESULT: ${{ needs.launcher-build-linux.result }}
           WINDOWS_BUILD_RESULT: ${{ needs.launcher-build-windows.result }}
+
         run: |
           failed_jobs=""
-          if [ "$PYTHON_CHECKS_RESULT" = "failure" ]; then
-            failed_jobs="${failed_jobs}- Anti AI Slop & Vibe Coding Checks failed"$'\n'
-          fi
-          if [ "$LINUX_BUILD_RESULT" = "failure" ]; then
-            failed_jobs="${failed_jobs}- Linux Launcher Build failed"$'\n'
-          fi
-          if [ "$WINDOWS_BUILD_RESULT" = "failure" ]; then
-            failed_jobs="${failed_jobs}- Windows Launcher Build failed"$'\n'
-          fi
+          successful_jobs=""
 
-          body="$(printf "Detected potential slop in commit \`%s\`.\n\nThe following jobs have failed:\n%s\nPlease check the logs and unslop your code: %s\n" "$SHA" "$failed_jobs" "$RUN_URL")"
+          add_result() {
+            name="$1"
+            result="$2"
+
+            if [ "$result" = "success" ]; then
+              successful_jobs="${successful_jobs}- ${name}: success"$'\n'
+            else
+              failed_jobs="${failed_jobs}- ${name}: ${result}"$'\n'
+            fi
+          }
+
+          add_result \
+            "Anti AI Slop & Vibe Coding Checks" \
+            "$PYTHON_CHECKS_RESULT"
+
+          add_result \
+            "Linux Launcher Build" \
+            "$LINUX_BUILD_RESULT"
+
+          add_result \
+            "Windows Launcher Build" \
+            "$WINDOWS_BUILD_RESULT"
+
+          body="$(printf \
+            "Detected potential slop or an incomplete CI run in commit \`%s\`.\n\nFailed or incomplete checks:\n%s\nSuccessful checks:\n%s\nPlease check the logs and unslop your code:\n%s\n" \
+            "$SHA" \
+            "$failed_jobs" \
+            "$successful_jobs" \
+            "$RUN_URL"
+          )"
 
           if [ "$EVENT_NAME" = "pull_request" ]; then
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$body"
