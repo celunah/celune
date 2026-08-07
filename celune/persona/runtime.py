@@ -330,6 +330,10 @@ class PersonaBackend:
 
         message_dicts = [_payload_from_message(message) for message in messages]
         used_vision = _messages_have_vision(message_dicts)
+        inputs = None
+        model_inputs = None
+        output_ids = None
+        new_ids = None
         try:
             inputs = self._build_inputs(message_dicts)
             model_inputs = {

@@ -158,7 +158,7 @@ def _load_transformer_text_embedder(model_name: str) -> Optional[EmbeddingBacken
         tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
 
         if tokenizer is None:
-            raise ValueError("tokenizer not available")
+            raise RuntimeError("tokenizer not available")
 
         model = cast(
             PreTrainedModel,

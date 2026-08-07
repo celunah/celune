@@ -180,7 +180,7 @@ Make sure to only modify user-facing strings (both normal and dev mode strings),
 
 ## Python and Environment
 
-* Supported Python versions are 3.12 and 3.13.
+* Supported Python versions are 3.12, 3.13 and 3.14.
 * Use `uv` for environment management.
 * Ensure the environment was set up with `--all-extras --dev` to prevent any missing packages from causing issues later on.
 * Do not use `pip` directly unless explicitly required. If you need to run `pip` alone, do it so with `uv pip` instead.

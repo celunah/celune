@@ -10,6 +10,10 @@ class ExtensionError(Exception):
     """General extension exception."""
 
 
+class TaskSubscriptionClosed(RuntimeError, CeluneError):
+    """A task subscription was closed."""
+
+
 class RuntimeCheckError(RuntimeError, CeluneError):
     """Celune's runtime checks have failed."""
 

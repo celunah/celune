@@ -65,7 +65,7 @@ def load_normalizer_components(
     )
 
     if tokenizer is None:
-        raise ValueError("CeluneNorm tokenizer not available")
+        raise RuntimeError("CeluneNorm tokenizer not available")
 
     device = normalizer_device(config)
     supported_dispatch = {"auto", "balanced", "balanced_low_0", "sequential"}

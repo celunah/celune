@@ -108,7 +108,7 @@ def _restart_linux_audio() -> None:
                 raise _command_error(result)
             return
 
-    raise RuntimeError("No active PipeWire or PulseAudio server was found")
+    raise RuntimeError("no active audio server was found")
 
 
 def restart_audio_server() -> None:

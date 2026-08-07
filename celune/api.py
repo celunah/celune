@@ -57,6 +57,7 @@ from .celune import Celune
 from .cevoice import default_loader
 from .constants import APP_NAME, BASE_SR
 from .dsp import resample_audio
+from .exceptions import TaskSubscriptionClosed
 from .i18n import string
 from .paths import main_window_log_path, project_root
 from .pipeline import (
@@ -137,10 +138,6 @@ class TaskCommandResponse(BaseModel):
     command: Optional[TaskCommandName] = None
     accepted: bool
     status: str
-
-
-class TaskSubscriptionClosed(RuntimeError):
-    """Raised internally when an API task subscription is closed."""
 
 
 @dataclass
