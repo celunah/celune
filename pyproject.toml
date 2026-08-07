@@ -95,7 +95,7 @@ dev = [
     "pylint",
     # Docstrings matter, so everyone can read the code more easily.
     "docstr-coverage",
-    "ruff",
+    "ruff==0.15.15",
     # How many useless functions do we have?
     "vulture",
     # This package is required to compile Celune into a properly packaged binary, bypassing the need to run Python.

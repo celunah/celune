@@ -210,15 +210,17 @@ def validate_runtime(
         )
         log(f"{APP_NAME}'s performance may be impacted.", "warning")
 
-    cuda_version_tuple = tuple(map(int, cuda_version.split(".")))
-    if cuda_version_tuple != (12, 8):
-        log(
-            f"{APP_NAME} only supports CUDA 12.8, found version {torch.version.cuda}.",
-            "error",
-        )
-        set_state("error")
-        error("Incompatible CUDA version")
-        return False
+    is_zluda = backend == "ZLUDA"
+    if not is_zluda:
+        cuda_version_tuple = tuple(map(int, cuda_version.split(".")))
+        if cuda_version_tuple != (12, 8):
+            log(
+                f"{APP_NAME} only supports CUDA 12.8, found version {torch.version.cuda}.",
+                "error",
+            )
+            set_state("error")
+            error("Incompatible CUDA version")
+            return False
 
     cuda_avail = torch.cuda.is_available()
     log(f"CUDA available: {cuda_avail}", "info")
@@ -233,26 +235,45 @@ def validate_runtime(
 
     for i in range(devices):
         gpu = torch.cuda.get_device_name(i)
-        major, minor = torch.cuda.get_device_capability(i)
-        try:
+        if is_zluda:
             log(
-                f"GPU {i}: {gpu} ({cuda_architecture((major, minor))}) - CUDA capability: {major}.{minor}",
+                f"GPU {i}: {gpu} (ZLUDA-compatible)",
                 "info",
             )
-        except (ValueError, NotImplementedError):
-            log(
-                f"GPU {i}: {gpu} (not supported) - CUDA capability: {major}.{minor}",
-                "info",
-            )
-            log(f"{APP_NAME} does not support this GPU.", "error")
-            log(f"{APP_NAME} requires Ampere or newer.", "error")
-            log(
-                "If you have another supported GPU, set CUDA_VISIBLE_DEVICES appropriately.",
-                "error",
-            )
-            set_state("error")
-            error("Unsupported GPU")
-            return False
+        else:
+            try:
+                major, minor = torch.cuda.get_device_capability(i)
+            except (ValueError, NotImplementedError):
+                log(
+                    f"GPU {i}: {gpu} (could not determine capability) - CUDA capability: N/A",
+                    "info",
+                )
+                log(
+                    f"{APP_NAME} could not determine capabilities of this GPU.", "error"
+                )
+                set_state("error")
+                error("Could not determine CUDA capabilities")
+                return False
+
+            try:
+                log(
+                    f"GPU {i}: {gpu} ({cuda_architecture((major, minor))}) - CUDA capability: {major}.{minor}",
+                    "info",
+                )
+            except (ValueError, NotImplementedError):
+                log(
+                    f"GPU {i}: {gpu} (not supported) - CUDA capability: {major}.{minor}",
+                    "info",
+                )
+                log(f"{APP_NAME} does not support this GPU.", "error")
+                log(f"{APP_NAME} requires Ampere or newer.", "error")
+                log(
+                    "If you have another supported GPU, set CUDA_VISIBLE_DEVICES appropriately.",
+                    "error",
+                )
+                set_state("error")
+                error("Unsupported GPU")
+                return False
 
         try:
             log(f"Testing GPU {i}...", "info")
