@@ -60,11 +60,12 @@ def load_normalizer_components(
     if available:
         log("Normalizer is already available in cache", "info")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_ref, extra_special_tokens={})
-    tokenizer.add_special_tokens(
-        {"additional_special_tokens": list(NORMALIZER_SPECIAL_TOKENS)},
-        replace_additional_special_tokens=False,
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_ref, extra_special_tokens=list(NORMALIZER_SPECIAL_TOKENS)
     )
+
+    if tokenizer is None:
+        raise ValueError("CeluneNorm tokenizer not available")
 
     device = normalizer_device(config)
     supported_dispatch = {"auto", "balanced", "balanced_low_0", "sequential"}

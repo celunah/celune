@@ -3,31 +3,26 @@ name = "celune"
 version = "5.0.0"
 description = "Real-time AI TTS character engine for all use cases"
 readme = "README.md"
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.12,<3.15"
 authors = [
     { name = "@celunah" }
 ]
 
 dependencies = [
     # AI stack
-    # Please, only use CUDA 12.8.
-    "torch==2.11.0+cu128",
-    "torchaudio==2.11.0+cu128",
+    # Wow, up to date!
+    "torch==2.13.0+cu130",
+    "torchaudio==2.11.0+cu130",
     # This package is not required if you want to use Persona in text-only mode,
     # or Celune operates in speech-only mode.
-    "torchvision==0.26.0+cu128",
+    "torchvision==0.28.0+cu130",
     # If not installed, Hugging Face falls back to the older Git LFS way of downloading models.
     "hf-xet",
     "accelerate",
     "bitsandbytes",
     "qwen-vl-utils",
-    # Qwen3 does not support newer versions of Hugging Face libraries at this time.
-    # Celune will use Transformers 4.x for the time being.
-    "huggingface-hub>=0.36,<1.0.0",
-    "transformers>=4.56,<5.0.0",
-    # For later usage in VoxCPM2, if the optimization path is fixed.
-    # "triton>=3.6.0; sys_platform == 'linux'",
-    # "triton-windows>=3.6.0; sys_platform == 'win32'",
+    "huggingface-hub",
+    "transformers>=5.0.0,<6.0.0",
 
     # Audio processing
     "numpy",
@@ -74,15 +69,14 @@ celune = ["assets/*.wav", "lang/*.json"]
 [tool.setuptools.data-files]
 voices = ["voices/*.cevoice"]
 
-# "CUDA 13.0 does exist, but I probably should wait a little more." - she says.
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu128" }]
-torchaudio = [{ index = "pytorch-cu128" }]
-torchvision = [{ index = "pytorch-cu128" }]
+torch = [{ index = "pytorch-cu130" }]
+torchaudio = [{ index = "pytorch-cu130" }]
+torchvision = [{ index = "pytorch-cu130" }]
 
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [dependency-groups]
@@ -91,13 +85,14 @@ dev = [
     # Is there any faster unit test-specific library to use here?
     "pytest",
     # "I really hate pyright." - she says.
-    "pyrefly",
+    "pyrefly>=1.2.0",
     "pylint",
     # Docstrings matter, so everyone can read the code more easily.
     "docstr-coverage",
     "ruff==0.15.15",
     # How many useless functions do we have?
     "vulture",
+    "loguru",
     # This package is required to compile Celune into a properly packaged binary, bypassing the need to run Python.
     # Canonically pinned, I know. 412 is her number, Nuitka happened to be on that version.
     "nuitka==4.1.2",
@@ -114,88 +109,87 @@ api = [
 	"fastapi",
     "python-multipart",
     "pydantic",
+    "gradio",
 ]
 
+# Install to use OpenZL-compressed CECHAR v4 packages in Celune.
 openzl = [
     "openzl",
 ]
 
-# These optional groups are retained for development and legacy in-process runs.
-# Normal Celune runs install the selected backend into its own AppData environment
-# from the registry in `celune.backends.environment`.
+# These dependency groups are currently handled internally by Celune backends and the Celune core no longer
+# depends on them. Explicit installation is not required anymore, so the groups have been commented out.
 #
 # The original Qwen-based classic Celune backend. Balanced sound quality and speed.
-qwen3 = [
-    # Celune sounds best with faster-qwen3-tts 0.2.4.
-    # To match this version's behavior in 0.2.5 or newer, you may need to set non_streaming_mode=True.
-    # This parameter is ambiguously named, it doesn't actually disable streaming mode.
-    # If it did, Celune would have a problem operating.
-    "faster-qwen3-tts>=0.2.4",
-]
+# qwen3 = [
+#     # Celune sounds best with faster-qwen3-tts 0.2.4.
+#     # To match this version's behavior in 0.2.5 or newer, you may need to set non_streaming_mode=True.
+#     # This parameter is ambiguously named, it doesn't actually disable streaming mode.
+#     # If it did, Celune would have a problem operating.
+#     "faster-qwen3-tts>=0.2.4",
+# ]
 
 # A high-end diffusion based Celune backend with high fidelity and expressiveness. Slower, but way more expressive.
-voxcpm2 = [
-    # Celune requires a streaming-capable version of the voxcpm library. Versions newer than 1.5.0 support it, however
-    # VoxCPM2 may require at least version 2.0.0.
-    "voxcpm>=2.0.0",
-]
+# voxcpm2 = [
+#     # Celune requires a streaming-capable version of the voxcpm library. Versions newer than 1.5.0 support it, however
+#     # VoxCPM2 may require at least version 2.0.0.
+#     "voxcpm>=2.0.0",
+# ]
 
 # An alternative diffusion based Celune backend with high fidelity and speaker similarity.
 # Slowest, but very speaker accurate.
-dotstts = [
-    # Celune's dots.tts backend uses a forked version that removes an unnecessary requirement that may
-    # fail to build on Windows systems. Do not try to use the upstream package.
-    "dots.tts @ git+https://github.com/celunah/dots.tts",
-]
+# dotstts = [
+#     # Celune's dots.tts backend uses a forked version that removes an unnecessary requirement that may
+#     # fail to build on Windows systems. Do not try to use the upstream package.
+#     "dots.tts @ git+https://github.com/celunah/dots.tts",
+# ]
 
 # A cheap on compute Celune backend providing an exceptional sound quality. Fastest, with an exceptional sound quality
 # to size ratio.
-mini = [
-    "pocket-tts>=2.1.0",
-]
+# mini = [
+#     "pocket-tts>=2.1.0",
+# ]
 
 # An experimental Celune backend supporting the entire GPT-SoVITS family: v1, v2/Pro/ProPlus, v3, and v4.
 # Fast, but may not work with certain voices and experiences accent drift to a varying amount, with v4 the least.
 # It does not use a library. Celune reimplements the system directly, using more dependencies.
-gpt-sovits = [
-    "cn2an",
-    "ffmpeg-python",
-    "g2p-en",
-    "g2pk2",
-    "jieba-fast",
-    "ko-pron",
-    "opencc",
-    "peft<0.18.0",
-    "pypinyin",
-    "pytorch-lightning>=2.4",
-    "pyopenjtalk>=0.4.1",
-    "rotary-embedding-torch",
-    "split-lang",
-    "tojyutping",
-    "torchmetrics<=1.5",
-    "wordsegment",
-    "x-transformers",
-]
+# gpt-sovits = [
+#     "cn2an",
+#     "ffmpeg-python",
+#     "g2p-en",
+#     "g2pk2",
+#     "jieba-fast",
+#     "ko-pron",
+#     "opencc",
+#     "peft<0.18.0",
+#     "pypinyin",
+#     "pytorch-lightning>=2.4",
+#     "pyopenjtalk>=0.4.1",
+#     "rotary-embedding-torch",
+#     "split-lang",
+#     "tojyutping",
+#     "torchmetrics<=1.5",
+#     "wordsegment",
+#     "x-transformers",
+# ]
 
 # A voice conversion backend allowing you to speak in your character voices directly. It does not use TTS, using it
 # will disable TTS features.
-seed-vc = [
-    # Celune's SeedVC backend uses a forked version that turns hard pins into "this or newer", allowing Celune
-    # to resolve it under NumPy v2. Do not try to use the upstream package, it uses an unsupported version of NumPy.
-    "seed-vc @ git+https://github.com/celunah/seed-vc.git",
-]
+# seed-vc = [
+#     # Celune's SeedVC backend uses a forked version that turns hard pins into "this or newer", allowing Celune
+#     # to resolve it under NumPy v2. Do not try to use the upstream package, it uses an unsupported version of NumPy.
+#     "seed-vc @ git+https://github.com/celunah/seed-vc.git",
+# ]
 
 # Optional AI VAD for live voice conversion capture.
 live-vc-ai = [
     "silero-vad",
 ]
 
+# CI specific options
+# Don't touch it, unless you want SLOP!
 [tool.pytest.ini_options]
 filterwarnings = [
-     # 'sentencepiece' imports cause these warnings, this package is used by Celune Mini.
-     "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
-     "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
-     "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
      # 'silero-vad' uses old legacy PyTorch JIT syntax.
      "ignore:`torch.jit.load` is deprecated\\. Please switch to `torch.export`\\.:DeprecationWarning",
      # Celune's deprecated extension syntax is being exercised in the test suite, causing these warnings.
@@ -205,4 +199,66 @@ filterwarnings = [
 ]
 
 [tool.ruff.lint]
-ignore=["RUF100", "UP007", "UP045", "BLE001", "I001", "B008"]
+ignore=[
+    "RUF100",  # unused-noqa
+    "UP007",   # non-pep604-annotation-union
+    "UP045",  # non-pep604-annotation-optional
+    "BLE001",  # blind-except
+    "I001",  # unsorted imports
+    "B008",  # function-call-in-default-argument
+]
+
+[tool.pylint.main]
+disable=[
+    "W0201",  # attribute-defined-outside-init
+    "W0212",  # protected-access
+    "W0511",  # fixme
+    "W0603",  # global-statement
+    "W0621",  # redefined-outer-name
+    "W0718",  # broad-exception-caught
+    "R0401",  # cyclic-import
+    "R0801",  # duplicate-code
+    "R0902",  # too-many-instance-attributes
+    "R0903",  # too-few-public-methods
+    "R0904",  # too-many-public-methods
+    "R0911",  # too-many-return-statements
+    "R0912",  # too-many-branches
+    "R0913",  # too-many-arguments
+    "R0914",  # too-many-locals
+    "R0915",  # too-many-statements
+    "R0916",  # too-many-boolean-expressions
+    "R0917",  # too-many-positional-arguments
+    "R1702",  # too-many-nested-blocks
+    "C0103",  # invalid-name
+    "C0114",  # missing-module-docstring
+    "C0302",  # too-many-lines
+    "C0415",  # import-outside-toplevel
+]
+
+ignore-paths=[
+    "celune/backends/tts",
+    "celune/backends/vc",
+]
+
+[tool.pylint.format]
+max-line-length = 120
+
+
+[tool.pyrefly]
+project-includes = [
+    "celune",
+    "tests",
+    "scripts",
+    "main.py",
+    "setup.py",
+]
+
+project-excludes = [
+    "celune/backends/tts/**",
+    "celune/backends/vc/**",
+    ".uv-cache",
+]
+
+search-path = ["."]
+python-version = "3.14"
+min-severity = "warn"

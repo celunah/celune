@@ -19,7 +19,7 @@ CI_PATHS = (
     (".",),
     (".",),
     ("celune", "tests"),
-    ("celune", "tests", "scripts"),
+    (),
     ("tests",),
 )
 

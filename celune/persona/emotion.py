@@ -308,7 +308,7 @@ class PersonaEmotionAnalyzer:
             attention_mask = cast(Optional[torch.Tensor], encoded.get("attention_mask"))
             pooled = _last_token_hidden_state(last_hidden, attention_mask)
             normalized = torch.nn.functional.normalize(pooled, p=2, dim=1)
-            embeddings = normalized.cpu().numpy().astype(np.float32)
+            embeddings = normalized.to(device="cpu", dtype=torch.float32).numpy()
             self.last_error = ""
         except (RuntimeError, AssertionError, ValueError, OSError, KeyError) as error:
             self._failed = True

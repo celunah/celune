@@ -23,7 +23,6 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from . import __version__
 from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
-from .backends.tts.qwen3 import Qwen3
 from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
 from .cevoice import (
     CEVoicePersona,
@@ -483,10 +482,16 @@ class Celune(CeluneStateAccessors):
                     "warning",
                 )
 
-        if not isinstance(tts_backend, CeluneBackend) and (
-            (isinstance(tts_backend, str) and tts_backend.strip().lower() == "qwen3")
-            or (isinstance(tts_backend, type) and issubclass(tts_backend, Qwen3))
-        ):
+        # please for the love of god do not import backend-specific deps here
+        raw_name = getattr(backend, "name", None)
+        backend_name = (
+            backend.strip().lower()
+            if isinstance(backend, str)
+            else raw_name
+            if isinstance(raw_name, str)
+            else None
+        )
+        if backend_name == "qwen3":
             backend_kwargs["x_vector_only"] = config_bool(
                 config,
                 "CELUNE_QWEN3_X_VECTOR_ONLY",
@@ -1036,12 +1041,18 @@ class Celune(CeluneStateAccessors):
     ) -> dict[str, JSONSerializable]:
         """Return constructor kwargs needed to instantiate one backend specification."""
         backend_kwargs: dict[str, JSONSerializable] = {}
+        raw_name = getattr(backend_spec, "name", None)
+        backend_name = (
+            backend_spec.strip().lower()
+            if isinstance(backend_spec, str)
+            else raw_name
+            if isinstance(raw_name, str)
+            else None
+        )
         if isinstance(backend_spec, CeluneBackend):
             return backend_kwargs
 
-        if (
-            isinstance(backend_spec, str) and backend_spec.strip().lower() == "qwen3"
-        ) or (isinstance(backend_spec, type) and issubclass(backend_spec, Qwen3)):
+        if backend_name == "qwen3":
             preset = resolve_vram_preset(self.config)
             backend_kwargs["x_vector_only"] = config_bool(
                 self.config,
@@ -3094,7 +3105,12 @@ class Celune(CeluneStateAccessors):
                         eos_token_id=tokenizer.eos_token_id,
                     )
 
-                input_ids = cast(torch.Tensor, inputs["input_ids"])  # noqa
+                input_ids = inputs["input_ids"]  # noqa
+
+                if not isinstance(input_ids, torch.Tensor):
+                    self.log("celune.normalizer_output_not_tensor", "warning")
+                    return None
+
                 prompt_len = input_ids.shape[1]
                 new_ids = output_ids[0][prompt_len:]
 

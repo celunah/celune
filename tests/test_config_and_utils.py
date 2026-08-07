@@ -8,7 +8,7 @@ from typing import Literal, Optional, cast
 from unittest import TestCase, mock
 
 from celune import config, utils
-from celune.typing.common import JSONSerializable
+from celune.typing.common import JSONSerializable, JSON
 
 
 class ConfigTests(TestCase):
@@ -372,7 +372,7 @@ class ConfigTests(TestCase):
             "api": {"enabled": False, "port": 9999},
             "theme": "light",
         }
-        defaults = {
+        defaults: JSON = {
             "backend": None,
             "api": {
                 "enabled": True,

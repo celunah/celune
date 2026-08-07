@@ -188,8 +188,8 @@ class BackendTests(TestCase):
             trimmed = backend._trim_reference_silence(source)
 
             self.assertNotEqual(trimmed, source)
-            self.assertGreaterEqual(float(sf.info(trimmed).duration), 4.0)
-            self.assertLess(float(sf.info(trimmed).duration), 5.0)
+            self.assertGreaterEqual(sf.info(trimmed).duration, 4.0)
+            self.assertLess(sf.info(trimmed).duration, 5.0)
             self.assertIn(trimmed, backend._truncated_reference_paths)
 
     def test_gpt_sovits_refreshes_prompt_cache_after_voice_change(self) -> None:

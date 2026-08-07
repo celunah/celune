@@ -42,7 +42,7 @@ jobs:
 
       - name: Type check
         run: |
-          uv run pyrefly check celune tests main.py
+          uv run pyrefly check
 
       - name: Check docstring coverage
         run: |

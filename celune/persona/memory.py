@@ -15,7 +15,12 @@ from typing import Optional, Union, cast
 import numpy as np
 import torch
 import torch.nn.functional as f
-from transformers import AutoModel, AutoTokenizer
+from transformers import (
+    AutoModel,
+    AutoTokenizer,
+    PreTrainedModel,
+    PreTrainedTokenizerBase,
+)
 
 from ..constants import PERSONA_MEMORY_EMBEDDING_MODEL
 from ..paths import persona_data_dir
@@ -151,14 +156,21 @@ def _load_transformer_text_embedder(model_name: str) -> Optional[EmbeddingBacken
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
-        model = AutoModel.from_pretrained(model_name, local_files_only=True)
+
+        if tokenizer is None:
+            raise ValueError("tokenizer not available")
+
+        model = cast(
+            PreTrainedModel,
+            AutoModel.from_pretrained(model_name, local_files_only=True),
+        )
         model.eval()
         model.to(torch.device("cpu"))
     except (RuntimeError, AssertionError, ValueError, OSError):
         _FAILED_EMBEDDING_MODELS.add(model_name)
         return None
 
-    backend = (tokenizer, model)
+    backend: EmbeddingBackend = (tokenizer, model)
     _EMBEDDING_BACKENDS[model_name] = backend
     return backend
 
@@ -173,6 +185,8 @@ def _compute_text_embeddings(
         return None
 
     tokenizer, model = backend
+    tokenizer = cast(PreTrainedTokenizerBase, tokenizer)
+
     try:
         encoded = tokenizer(
             list(texts),

@@ -14,7 +14,6 @@ from urllib.parse import urlparse
 import soundfile as sf
 
 from ..audio import restart_audio_server
-from ..backends.tts.qwen3 import Qwen3
 from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..constants import APP_NAME
 from ..exceptions import InvalidExtensionError
@@ -666,7 +665,8 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         return
     if command == "xvectoronly":
         backend = ui.celune.backend
-        if not isinstance(backend, Qwen3):
+        # uses the backend's name, preventing a core dependency on Qwen
+        if backend.name != "qwen3":
             ui.safe_log(string("commands.xvectoronly_qwen3_only"), "warning")
             return
 
@@ -682,14 +682,15 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             )
             return
 
-        backend.x_vector_only = value == "true"
-        state = string(
-            "commands.state_enabled"
-            if backend.x_vector_only
-            else "commands.state_disabled"
-        )
-        ui.safe_log(string("commands.qwen3_identity_only_cloning", state=state))
-        return
+        if hasattr(backend, "x_vector_only"):
+            backend.x_vector_only = value == "true"
+            state = string(
+                "commands.state_enabled"
+                if backend.x_vector_only
+                else "commands.state_disabled"
+            )
+            ui.safe_log(string("commands.qwen3_identity_only_cloning", state=state))
+            return
     if command == "play":
         if not args:
             ui.safe_log(string("commands.usage_play"), "warning")

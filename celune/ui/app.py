@@ -118,6 +118,11 @@ _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
         "generation flags are not valid and may be ignored:",
         "it/s]",
         "s/it]",
+        "inputs will be cast",
+        "Ignoring clean_up_tokenization_spaces=True for BPE tokenizer",
+        "You are sending unauthenticated requests",
+        "triton not found",
+        "A custom logits processor of type",
     }
 )
 

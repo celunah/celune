@@ -53,10 +53,8 @@ class ModelingTests(TestCase):
 
         self.assertIs(loaded_tokenizer, tokenizer)
         self.assertIs(loaded_llm, llm)
-        tokenizer_loader.assert_called_once_with("local-model", extra_special_tokens={})
-        tokenizer.add_special_tokens.assert_called_once_with(
-            {"additional_special_tokens": list(modeling.NORMALIZER_SPECIAL_TOKENS)},
-            replace_additional_special_tokens=False,
+        tokenizer_loader.assert_called_once_with(
+            "local-model", extra_special_tokens=list(modeling.NORMALIZER_SPECIAL_TOKENS)
         )
         model_loader.assert_called_once_with(
             "local-model",

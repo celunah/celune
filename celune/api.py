@@ -1835,7 +1835,7 @@ def _decode_uploaded_audio(
 ) -> tuple[AudioChunk, int]:
     """Decode uploaded audio bytes into float32 audio and a source sample rate."""
     audio, sample_rate = sf.read(io.BytesIO(data), dtype="float32")
-    return np.asarray(audio, dtype=np.float32), int(sample_rate)
+    return np.asarray(audio, dtype=np.float32), sample_rate
 
 
 def _normalize_webui_audio_input(
@@ -2116,6 +2116,7 @@ def _webui_cycle_voice() -> tuple[
 
 
 def _build_webui() -> gr.Blocks:
+    # pylint: disable=E1101
     """Create the browser UI mounted by the API."""
     _configure_webui_theme()
     with gr.Blocks(
@@ -2238,27 +2239,28 @@ def _build_webui() -> gr.Blocks:
                 elem_id="celune-audio",
             )
             timer = gr.Timer(value=WEBUI_POLL_INTERVAL_SECONDS)
-        timer.tick(  # pylint: disable=E1101
+
+        timer.tick(  # type: ignore[missing-attribute]
             _webui_snapshot,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
             show_progress="hidden",
         )
-        timer.tick(  # pylint: disable=E1101
+        timer.tick(  # type: ignore[missing-attribute]
             _webui_vc_controls_update,
             outputs=[source_audio, vc_pitch_shift, vc_mode, convert_button],
             show_progress="hidden",
         )
-        demo.load(  # pylint: disable=E1101
+        demo.load(  # type: ignore[missing-attribute]
             _webui_snapshot,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
             show_progress="hidden",
         )
-        demo.load(  # pylint: disable=E1101
+        demo.load(  # type: ignore[missing-attribute]
             _webui_vc_controls_update,
             outputs=[source_audio, vc_pitch_shift, vc_mode, convert_button],
             show_progress="hidden",
         )
-        input_box.submit(  # pylint: disable=E1101
+        input_box.submit(  # type: ignore[missing-attribute]
             _webui_speak,
             inputs=[input_box],
             outputs=[
@@ -2272,7 +2274,7 @@ def _build_webui() -> gr.Blocks:
             ],
             show_progress="hidden",
         )
-        send_button.click(  # pylint: disable=E1101
+        send_button.click(  # type: ignore[missing-attribute]
             _webui_speak,
             inputs=[input_box],
             outputs=[
@@ -2286,12 +2288,12 @@ def _build_webui() -> gr.Blocks:
             ],
             show_progress="hidden",
         )
-        voice_button.click(  # pylint: disable=E1101
+        voice_button.click(  # type: ignore[missing-attribute]
             _webui_cycle_voice,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
             show_progress="hidden",
         )
-        convert_button.click(  # pylint: disable=E1101
+        convert_button.click(  # type: ignore[missing-attribute]
             _webui_convert_audio,
             inputs=[source_audio, vc_pitch_shift, vc_mode],
             outputs=[

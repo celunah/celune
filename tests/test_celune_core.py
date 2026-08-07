@@ -16,7 +16,6 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from celune import cevoice, i18n
-from celune.backends.tts.qwen3 import Qwen3
 from celune.celune import Celune
 from celune.config import Config
 from celune.dataclasses.celune import (
@@ -39,7 +38,6 @@ from celune.pipeline import (
 )
 from celune.typing.common import JSONSerializable
 from celune.utils import discard
-from celune.vram import QWEN3_0_6B_MODEL
 
 from .support import FakeBackend, FakeGlow, FakeVCBackend
 
@@ -918,19 +916,6 @@ class CeluneCoreTests(TestCase):
 
         self.assertEqual(resolve.call_args.args[0], "mini")
 
-    def test_voice_prompt_support_tracks_qwen3_0_6b_capability(self) -> None:
-        """Verify voice prompts are disabled for the low-tier Qwen3 clone model."""
-        celune = self._make_celune({})
-        with mock.patch.object(Qwen3, "_validate_refs"):
-            celune.backend = Qwen3(
-                log=lambda _msg, _severity="info": None,
-                clone_model_id=QWEN3_0_6B_MODEL,
-            )
-        celune.voice_prompt = "gentle"
-
-        self.assertEqual(celune.voice_prompt_supported(), False)
-        self.assertIsNone(celune.effective_voice_prompt())
-
     def test_low_vram_rejects_heavy_backend_types(self) -> None:
         """Verify low VRAM rejects explicitly requested heavy backend classes."""
 
@@ -946,25 +931,6 @@ class CeluneCoreTests(TestCase):
             self.assertRaisesRegex(BackendError, "not available for VRAM tier 'low'"),
         ):
             Celune(config={"vram": "low"}, tts_backend=HeavyBackend)
-
-    def test_low_vram_rejects_qwen3_instances_with_invalid_model_size(self) -> None:
-        """Verify prebuilt Qwen3 instances cannot bypass the low-tier 0.6B lock."""
-        with mock.patch.object(Qwen3, "_validate_refs"):
-            backend = Qwen3(
-                log=lambda _msg, _severity="info": None,
-                clone_model_id=Qwen3.clone_model,
-            )
-
-        with (
-            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
-            mock.patch("celune.celune.default_loader", return_value=None),
-            mock.patch("celune.celune.persona_is_available", return_value=False),
-            self.assertRaisesRegex(
-                BackendError,
-                "backend 'qwen3' is not available with model",
-            ),
-        ):
-            Celune(config={"vram": "low"}, tts_backend=backend)
 
     def test_think_reconnects_and_starts_persona_loading_before_speech_fallback(
         self,

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal, Optional, cast
+from typing import Literal, Optional
 
 from .config import config_value
 from .typing.common import JSONSerializable
@@ -46,7 +46,7 @@ def resolve_operation_mode(
         if normalized in _LEGACY_INPUT_MODES:
             candidate = None
         elif normalized in OPERATION_MODES:
-            resolved = cast(OperationMode, normalized)
+            resolved = normalized
             if resolved == "agent" and AGENT_MODE_REDIRECT_TARGET is not None:
                 return AGENT_MODE_REDIRECT_TARGET
             return resolved

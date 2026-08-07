@@ -137,11 +137,17 @@ class PersonaBackend:
         self.unload()
         revision = remote_code_model_revision(model_id)
 
-        config = AutoConfig.from_pretrained(
-            model_id,
-            trust_remote_code=True,
-            revision=revision,
-        )
+        if revision is not None:
+            config = AutoConfig.from_pretrained(
+                model_id,
+                trust_remote_code=True,
+                revision=revision,
+            )
+        else:
+            config = AutoConfig.from_pretrained(
+                model_id,
+                trust_remote_code=True,
+            )
         model_type = getattr(config, "model_type", N_A_STR)
         wanted_type = "qwen3_vl"
 
@@ -167,6 +173,18 @@ class PersonaBackend:
                         bnb_4bit_compute_dtype=torch.bfloat16,
                         bnb_4bit_use_double_quant=True,
                     ),
+                )
+                if revision is not None
+                else Qwen3VLForConditionalGeneration.from_pretrained(
+                    model_id,
+                    trust_remote_code=True,
+                    device_map="auto",
+                    quantization_config=BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_compute_dtype=torch.bfloat16,
+                        bnb_4bit_use_double_quant=True,
+                    ),
                 ),
             )
         elif normalized in {"8bit", "bnb8", "bitsandbytes-8bit"}:
@@ -180,6 +198,13 @@ class PersonaBackend:
                     revision=revision,
                     device_map="auto",
                     quantization_config=BitsAndBytesConfig(load_in_8bit=True),
+                )
+                if revision is not None
+                else Qwen3VLForConditionalGeneration.from_pretrained(
+                    model_id,
+                    trust_remote_code=True,
+                    device_map="auto",
+                    quantization_config=BitsAndBytesConfig(load_in_8bit=True),
                 ),
             )
         elif normalized in {"none", "false", "off", "disabled"}:
@@ -189,6 +214,13 @@ class PersonaBackend:
                     model_id,
                     trust_remote_code=True,
                     revision=revision,
+                    device_map="auto",
+                    dtype=torch.bfloat16,
+                )
+                if revision is not None
+                else Qwen3VLForConditionalGeneration.from_pretrained(
+                    model_id,
+                    trust_remote_code=True,
                     device_map="auto",
                     dtype=torch.bfloat16,
                 ),
@@ -298,14 +330,10 @@ class PersonaBackend:
 
         message_dicts = [_payload_from_message(message) for message in messages]
         used_vision = _messages_have_vision(message_dicts)
-        inputs: Optional[BatchEncoding] = None
-        model_inputs: Optional[dict[str, torch.Tensor]] = None
-        output_ids: Optional[torch.Tensor] = None
-        new_ids: Optional[torch.Tensor] = None
         try:
             inputs = self._build_inputs(message_dicts)
             model_inputs = {
-                str(key): cast(torch.Tensor, value)  # noqa
+                key: cast(torch.Tensor, value)  # noqa
                 for key, value in dict(inputs).items()
             }
             generation_kwargs: dict[str, int] = {}

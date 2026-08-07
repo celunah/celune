@@ -38,6 +38,13 @@ Do not hardcode strings, colors, ports, paths, app names, status labels, or repe
 
 Only hardcode or redefine values when importing the existing value would create a circular import, break architecture, create excessive coupling, or otherwise be impractical.
 
+## Dependency Management
+
+When writing new code, ensure that non-backend files do not import any backend specific packages, e.g. `faster_qwen3_tts`, and only use Celune core packages.
+
+Refer to `pyproject.toml` to check what packages the Celune core actually requires.
+
+
 ## CI and Validation
 
 Note: Do not run CI if the current diff made no logical changes to any Python files within Celune. Proceed only if you made changes that would actually require running validations.
@@ -247,6 +254,10 @@ When documenting licensing, distinguish between:
 Do not claim third-party models are covered by Celune's MIT license.
 
 When documenting commands, use the canonical project commands from the README.
+
+## Markdown Files
+
+When reading Markdown found in the project, ignore `about-celune.md`. This file does not contain factual information related to the project, and is solely Celune's canonical lore. Do not generate reviews, warnings or errors related to it.
 
 ## Testing Behavior
 

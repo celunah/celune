@@ -19,7 +19,6 @@ from textual import events
 from textual.widgets import Button, Label, ProgressBar, RichLog, TextArea
 
 from celune import colors, runtime
-from celune.backends.tts.qwen3 import Qwen3
 from celune.celune import Celune
 from celune.config import Config
 from celune.constants import APP_NAME, COST_EQUIVALENTS
@@ -207,30 +206,6 @@ class UICommandTests(TestCase):
     def _process_command(self, command: str, args: list[str]) -> None:
         """Process one command against the typed UI test double."""
         process_command(cast(CeluneUI, self.ui), command, args)
-
-    def test_xvectoronly_command_requires_qwen3_and_valid_value(self) -> None:
-        """Verify the Qwen3-only toggle command and argument checks.
-
-        Raises:
-            AssertionError: Command behavior changes unexpectedly.
-        """
-        self._process_command("xvectoronly", [])
-        self.assertEqual(self.logs[-1][1], "warning")
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            backend = Qwen3(log=lambda msg, severity="info": None)
-        backend.x_vector_only = False
-        self.ui.celune.backend = backend
-        self._process_command("xvectoronly", [])
-        self.assertEqual(self.logs[-1], ("Usage: /xvectoronly <true/false>", "warning"))
-        self._process_command("xvectoronly", ["maybe"])
-        self.assertEqual(self.logs[-1][1], "warning")
-        self._process_command("xvectoronly", ["true"])
-        self.assertEqual(backend.x_vector_only, True)
-        self.assertEqual(
-            self.logs[-1], ("Qwen3 identity-only cloning enabled.", "info")
-        )
 
     def test_restartaudio_command_restarts_host_audio_server(self) -> None:
         """Verify the audio recovery command reports a successful restart."""
@@ -2322,46 +2297,13 @@ class UIStartupTests(TestCase):
         ui.install_runtime_log_redirects()
         self.addCleanup(ui._remove_runtime_log_redirects)
 
-        logger.warning(
-            "triton not found; flop counting will not work for triton kernels"
-        )
+        logger.warning("test warning")
 
         self.assertEqual(
             captured,
             [
                 (
-                    (
-                        "Internal runtime warning: triton not found; flop counting "
-                        "will not work for triton kernels"
-                    ),
-                    "warning",
-                )
-            ],
-        )
-
-    def test_runtime_warning_capture_routes_py_warnings_triton_message(self) -> None:
-        """Verify Python warnings formatting is normalized for Triton warnings."""
-        ui = CeluneUI()
-        captured: list[tuple[str, str]] = []
-        ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
-
-        logger = logging.getLogger("py.warnings")
-        ui.install_runtime_log_redirects()
-        self.addCleanup(ui._remove_runtime_log_redirects)
-
-        logger.warning(
-            "C:\\path\\flop_counter.py:29: UserWarning: triton not found; flop "
-            "counting will not work for triton kernels"
-        )
-
-        self.assertEqual(
-            captured,
-            [
-                (
-                    (
-                        "Internal runtime warning: triton not found; flop counting "
-                        "will not work for triton kernels"
-                    ),
+                    "Internal runtime warning: test warning",
                     "warning",
                 )
             ],

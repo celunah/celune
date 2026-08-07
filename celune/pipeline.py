@@ -429,7 +429,7 @@ def _saved_output_speech_seconds() -> float:
     pattern = f"{APP_SLUG}_speech_*.flac"
     for path in output_dir.glob(pattern):
         try:
-            total_seconds += float(sf.info(path).duration)
+            total_seconds += sf.info(path).duration
         except (OSError, RuntimeError, TypeError, ValueError):
             continue
 

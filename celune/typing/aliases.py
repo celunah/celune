@@ -15,12 +15,14 @@ import sounddevice as sd
 from .common import JSONSerializable
 
 if TYPE_CHECKING:
-    # noinspection PyPep8Naming
     from torch import Tensor
+
+    # noinspection PyPep8Naming
     from torch import device as Device
+
+    # noinspection PyPep8Naming
     from torch import dtype as DType
-    from transformers.modeling_utils import PreTrainedModel  # noqa
-    from transformers.tokenization_utils_base import PreTrainedTokenizerBase  # noqa
+    from transformers import SentencePieceBackend, TokenizersBackend, PreTrainedModel
 
     # noinspection PyUnresolvedReferences
     from .events import EventPayload
@@ -57,7 +59,8 @@ type DevLogCallback = Callable[[str, str], None]
 type _DispatcherCallback = Callable[["EventPayload"], None]
 type DispatcherCallback = _DispatcherCallback
 type EmbeddingVector = npt.NDArray[np.float32]  # noqa
-type _EmbeddingBackend = tuple["PreTrainedTokenizerBase", "PreTrainedModel"]
+type TokenizerBackend = Union[SentencePieceBackend, TokenizersBackend]
+type _EmbeddingBackend = tuple[TokenizerBackend, PreTrainedModel]
 type EmbeddingBackend = _EmbeddingBackend
 
 type _AudioDeviceScalar = Union[bool, int, float, str]
@@ -80,9 +83,9 @@ type _RecordedKwargValue = Optional[
         bool,
         bytes,
         list[bytes],
-        "Tensor",
-        "DType",
-        "Device",
+        Tensor,
+        DType,
+        Device,
     ]
 ]
 type RecordedKwargValue = _RecordedKwargValue
