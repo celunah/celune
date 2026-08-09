@@ -264,7 +264,7 @@ def _exclusive_lock(path: Path, timeout: float) -> Generator[None, None, None]:
         handle = path.open("a+b")
         try:
             if os.name == "nt":
-                import msvcrt
+                import msvcrt  # pylint: disable=E0401
 
                 handle.seek(0, os.SEEK_END)
                 if handle.tell() == 0:
@@ -290,7 +290,7 @@ def _exclusive_lock(path: Path, timeout: float) -> Generator[None, None, None]:
     finally:
         with suppress(OSError):
             if os.name == "nt":
-                import msvcrt
+                import msvcrt  # pylint: disable=E0401
 
                 handle.seek(0)
                 msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)

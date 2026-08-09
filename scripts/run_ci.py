@@ -3,6 +3,7 @@
 
 import subprocess
 import sys
+import signal
 from typing import Optional
 
 from tqdm.contrib import tzip
@@ -93,6 +94,22 @@ for cmd, paths in tzip(
         _run_uv_command(*cmd, *paths)
     except subprocess.CalledProcessError as failed:
         cmds_failed += 1
+
+        exit_code = failed.returncode
+        if exit_code >= 127:
+            signal_name = signal.Signals(exit_code % 128).name
+
+            if signal_name in (
+                "SIGILL",
+                "SIGSEGV",
+                "SIGABRT",
+                "SIGBUS",
+            ):
+                print(f"Caught a fatal signal {signal_name} ({exit_code % 128})")
+                print("CI cannot continue.")
+                print()
+                raise RuntimeError(f"fatal signal {signal_name}") from failed
+
         if failed.stdout:
             total_errors.append(failed.stdout)
         if failed.stderr:

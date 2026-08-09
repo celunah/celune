@@ -27,7 +27,8 @@ dependencies = [
     # Audio processing
     "numpy",
     "scipy",
-    "pedalboard",
+    # Pedalboard 0.9.20 and above require AVX-512
+    "pedalboard==0.9.19",
     "pyrubberband",
     "soundfile",
     "sounddevice",
@@ -233,6 +234,7 @@ disable=[
     "C0114",  # missing-module-docstring
     "C0302",  # too-many-lines
     "C0415",  # import-outside-toplevel
+    "I1101",  # c-extension-no-member
 ]
 
 ignore-paths=[
