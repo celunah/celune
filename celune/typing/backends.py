@@ -3,14 +3,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import TYPE_CHECKING, Protocol, TypeVar
+from collections.abc import Iterator, Mapping
+from typing import TYPE_CHECKING, Optional, Protocol, TypeVar, TypedDict
 
+import numpy as np
 import torch
+
+from .aliases import AudioChunk
+from .common import JSON, JSONSerializable
 
 if TYPE_CHECKING:
     from .aliases import RuntimeValue, SeedVCArgument, SeedVCGenerator
-    from .common import JSONSerializable
+    from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 
 class BackendModel(Protocol):
@@ -19,6 +23,25 @@ class BackendModel(Protocol):
 
 ModelT = TypeVar("ModelT", bound=BackendModel)
 type MiniPromptState = dict[str, dict[str, torch.Tensor]]
+type BackendArgumentValue = JSONSerializable
+type BackendArguments = dict[str, BackendArgumentValue]
+type BackendGeneration = tuple[AudioChunk, int, Optional[JSON]]
+
+
+class BackendDescription(TypedDict):
+    """Static metadata exchanged by an isolated backend worker."""
+
+    name: str
+    chunk_rate: float
+    supported_languages: tuple[str, ...]
+    voice_models: Optional[Mapping[str, str]]
+    default_voice: Optional[str]
+    model_name: Optional[str]
+    voices: list[str]
+    clone_model_id: Optional[str]
+    uses_voice_bundles: bool
+    max_new_tokens: int
+    is_fake: bool
 
 
 class MiniModel(Protocol):
@@ -98,3 +121,69 @@ class _SeedVCWrapper(Protocol):
         Returns:
             SeedVCGenerator: A generator whose return value is the converted waveform.
         """
+
+
+class _BackendRuntime(Protocol):
+    """Runtime method surface used by the generic worker loop."""
+
+    def model_is_available_locally(
+        self,
+        **kwargs: BackendArgumentValue,
+    ) -> tuple[bool, Optional[str]]:
+        """Return whether a model is available."""
+
+    def preload_models(self) -> None:
+        """Preload backend models."""
+
+    def load_model(self, **kwargs: BackendArgumentValue) -> BackendModel:
+        """Load one backend model."""
+
+    def unload_model(self) -> None:
+        """Unload backend models."""
+
+    def generate_stream(
+        self,
+        model: BackendModel,
+        **kwargs: BackendArgumentValue,
+    ) -> Iterator[BackendGeneration]:
+        """Generate streamed backend audio."""
+
+    def convert(self, request: VoiceConversionRequest) -> AudioOutput:
+        """Convert one voice-conversion request."""
+
+
+class _LoguruLogger(Protocol):
+    """Subset of Loguru's logger interface used by the DotsTTS backend."""
+
+    def disable(self, name: str) -> None:
+        """Disable one logger namespace."""
+
+    def enable(self, name: str) -> None:
+        """Enable one logger namespace."""
+
+
+class _SeedVCRealtimeModule(Protocol):
+    """Subset of Seed-VC's real-time module used by its backend."""
+
+    device: torch.device
+    fp16: bool
+
+    def load_models(self, args: object) -> tuple[object, ...]:
+        """Load Seed-VC's native real-time model set."""
+
+    def custom_infer(
+        self,
+        model_set: tuple[object, ...],
+        reference_wav: np.ndarray,
+        new_reference_wav_name: str,
+        input_wav_res: torch.Tensor,
+        block_frame_16k: int,
+        skip_head: int,
+        skip_tail: int,
+        return_length: int,
+        diffusion_steps: int,
+        inference_cfg_rate: float,
+        max_prompt_length: float,
+        cd_difference: float = 2.0,
+    ) -> torch.Tensor:
+        """Convert one rolling input buffer through Seed-VC's live path."""

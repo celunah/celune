@@ -28,6 +28,7 @@ from celune.dataclasses.celune import (
     CeluneVoiceState,
 )
 from celune.exceptions import BackendError, WarmupError
+from celune.persona.emotion import PersonaEmotionAnalyzer
 from celune.persona.impl import persona_quantization
 from celune.pipeline import close as close_pipeline
 from celune.pipeline import (
@@ -946,10 +947,24 @@ class CeluneCoreTests(TestCase):
         celune.cur_state = "idle"
         client = mock.Mock()
         celune._persona_conn = mock.Mock(return_value=client)
+        call_order: list[str] = []
+
+        def record_say(text: str) -> bool:
+            call_order.append("say")
+            discard(text)
+            return False
+
+        def record_start_load() -> None:
+            call_order.append("start_load")
+
         with (
             mock.patch("celune.celune.think_pipeline") as think,
-            mock.patch.object(celune, "say", return_value=False) as say,
-            mock.patch.object(celune, "_start_persona_background_load") as start_load,
+            mock.patch.object(celune, "say", side_effect=record_say) as say,
+            mock.patch.object(
+                celune,
+                "_start_persona_background_load",
+                side_effect=record_start_load,
+            ) as start_load,
         ):
             self.assertEqual(celune.think("hello"), True)
 
@@ -963,6 +978,7 @@ class CeluneCoreTests(TestCase):
         celune._persona_conn.assert_called_once_with()
         start_load.assert_called_once_with()
         say.assert_called_once_with("hello")
+        self.assertEqual(call_order, ["start_load", "say"])
         think.assert_not_called()
 
     def test_think_queues_requests_while_persona_is_speaking(self) -> None:
@@ -996,6 +1012,36 @@ class CeluneCoreTests(TestCase):
 
         self.assertEqual(calls, ["first queued", "second queued"])
         self.assertEqual(celune._persona_queue.empty(), True)
+
+    def test_unload_persona_state_clears_the_bound_emotion_analyzer(self) -> None:
+        """Verify Persona teardown does not retain VLM references through emotion analysis."""
+        celune = self._make_celune({})
+        celune.vision = mock.Mock()
+        analyzer = PersonaEmotionAnalyzer()
+        clear_vlm = mock.patch.object(analyzer, "clear_vlm", wraps=analyzer.clear_vlm)
+        clear_vlm_mock = clear_vlm.start()
+        self.addCleanup(clear_vlm.stop)
+        setattr(celune, "persona_emotion_analyzer", analyzer)
+
+        celune._unload_persona_state()
+
+        clear_vlm_mock.assert_called_once_with()
+        self.assertIsNone(getattr(celune, "persona_emotion_analyzer"))
+
+    def test_reset_persona_conversation_clears_history_summary_and_attachments(
+        self,
+    ) -> None:
+        """Verify a character transition cannot reuse old Persona context."""
+        celune = self._make_celune({})
+        celune.persona_history = [{"role": "user", "content": "old context"}]
+        celune.persona_session_summary = "old summary"
+        celune.persona_attachments = [{"path": "old.png", "kind": "image"}]
+
+        celune._reset_persona_conversation()
+
+        self.assertEqual(celune.persona_history, [])
+        self.assertEqual(celune.persona_session_summary, "")
+        self.assertEqual(celune.persona_attachments, [])
 
     def test_setup_extensions_exposes_think_to_extension_context(self) -> None:
         """Verify extension context receives Celune's think entrypoint.

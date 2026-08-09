@@ -2,6 +2,7 @@
 """Tests for CEVOICE parsing, writing, loading, and fallback behavior."""
 
 import copy
+import gzip
 import json
 import shutil
 import tempfile
@@ -201,6 +202,15 @@ class CEVoiceTests(TestCase):
 
         with self.assertRaisesRegex(CEVoiceError, "format/version mismatch"):
             cevoice.CEVoice.open(self.path)
+
+    def test_v4_decompression_rejects_payloads_over_the_logical_limit(self) -> None:
+        """Verify compressed CECHAR v4 payloads are bounded before parsing."""
+        with mock.patch.object(cevoice, "V4_MAX_DECOMPRESSED_BYTES", 3):
+            with self.assertRaisesRegex(CEVoiceError, "too large"):
+                cevoice._decompress_v4_payload(
+                    gzip.compress(b"four"),
+                    cevoice.V4_COMPRESSION_GZIP,
+                )
 
     # any types here are resolved dynamically
     def test_asset_checksums_are_case_insensitive(self) -> None:

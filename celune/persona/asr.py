@@ -13,7 +13,13 @@ import torch
 
 from ..dsp import resample_audio
 from ..typing.aliases import AudioChunk
-from ..typing.persona import _WhisperModel, _WhisperProcessor
+from ..typing.persona import (
+    WhisperGenerationPayload,
+    WhisperScalar,
+    WhisperSegmentPayload,
+    _WhisperModel,
+    _WhisperProcessor,
+)
 from ..typing.persona import (  # pylint: disable=W0611
     _WhisperProcessorOutput,  # noqa: F401
 )
@@ -32,12 +38,22 @@ WHISPER_SAMPLE_RATE = 16000
 
 
 @dataclass(frozen=True)
+class WhisperWord:
+    """One Whisper-aligned word with audio-relative timestamps."""
+
+    text: str
+    start: float
+    end: float
+
+
+@dataclass(frozen=True)
 class WhisperSegment:
     """One timestamped segment returned by Whisper."""
 
     text: str
     start: float
     end: float
+    words: tuple[WhisperWord, ...] = ()
 
 
 class WhisperTranscriber:
@@ -136,12 +152,16 @@ class WhisperTranscriber:
                     **model_inputs,
                     return_timestamps=True,
                     return_segments=True,
+                    return_token_timestamps=True,
                 )
             else:
                 generated = model.generate(**model_inputs)
 
         if return_segments:
-            return self._decode_segments(processor, generated)
+            return self._decode_segments(
+                processor,
+                cast(WhisperGenerationPayload, generated),
+            )
 
         generated_ids = cast(torch.Tensor, generated)
         decoded = processor.batch_decode(generated_ids, skip_special_tokens=True)
@@ -150,7 +170,7 @@ class WhisperTranscriber:
     @staticmethod
     def _decode_segments(
         processor: _WhisperProcessor,
-        generated: object,
+        generated: WhisperGenerationPayload,
     ) -> tuple[WhisperSegment, ...]:
         """Extract timestamped text segments from a Whisper generation result."""
         if not isinstance(generated, Mapping):
@@ -158,44 +178,158 @@ class WhisperTranscriber:
         raw_segments = generated.get("segments")
         if not isinstance(raw_segments, Sequence) or not raw_segments:
             return ()
-        first_batch = raw_segments[0]
-        if not isinstance(first_batch, Sequence):
-            return ()
+        if isinstance(raw_segments[0], Mapping):
+            segment_items = raw_segments
+        else:
+            first_batch = raw_segments[0]
+            if not isinstance(first_batch, Sequence):
+                return ()
+            segment_items = first_batch
 
         segments: list[WhisperSegment] = []
-        for raw_segment in first_batch:
+        for raw_segment in segment_items:
             if not isinstance(raw_segment, Mapping):
                 continue
-            start = raw_segment.get("start")
-            end = raw_segment.get("end")
-            tokens = raw_segment.get("tokens")
+            segment = raw_segment
+            start = segment.get("start")
+            end = segment.get("end")
+            tokens = segment.get("tokens")
             start_value = WhisperTranscriber._timestamp_value(start)
             end_value = WhisperTranscriber._timestamp_value(end)
             if start_value is None or end_value is None:
                 continue
             text = ""
             if tokens is not None:
-                decoded = processor.batch_decode(
-                    cast(torch.Tensor, tokens),
-                    skip_special_tokens=True,
-                )
+                try:
+                    token_tensor = torch.as_tensor(tokens)
+                    if token_tensor.ndim == 1:
+                        token_tensor = token_tensor.unsqueeze(0)
+                    decoded = processor.batch_decode(
+                        token_tensor,
+                        skip_special_tokens=True,
+                    )
+                except (RuntimeError, TypeError, ValueError):
+                    decoded = []
                 if decoded:
                     text = decoded[0].strip()
             if text and end_value > start_value:
+                words = WhisperTranscriber._decode_words(
+                    processor,
+                    segment,
+                    start_value,
+                    end_value,
+                )
                 segments.append(
-                    WhisperSegment(text=text, start=start_value, end=end_value)
+                    WhisperSegment(
+                        text=text,
+                        start=start_value,
+                        end=end_value,
+                        words=words,
+                    )
                 )
         return tuple(segments)
 
     @staticmethod
-    def _timestamp_value(value: object) -> Optional[float]:
+    def _decode_words(
+        processor: _WhisperProcessor,
+        raw_segment: WhisperSegmentPayload,
+        segment_start: float,
+        segment_end: float,
+    ) -> tuple[WhisperWord, ...]:
+        """Group Whisper token timestamps into word-level timing ranges."""
+        tokens = raw_segment.get("tokens")
+        indexes = raw_segment.get("idxs")
+        result = raw_segment.get("result")
+        if not isinstance(indexes, Sequence) or len(indexes) < 2:
+            return ()
+        if not isinstance(result, Mapping):
+            return ()
+
+        token_timestamps = result.get("token_timestamps")
+        if token_timestamps is None or tokens is None:
+            return ()
+
+        try:
+            start_index = int(indexes[0])
+            end_index = int(indexes[1])
+            timestamp_values = cast(
+                Sequence[WhisperScalar], token_timestamps[start_index:end_index]
+            )
+            token_values = cast(Sequence[WhisperScalar], tokens)
+            if len(token_values) != len(timestamp_values):
+                return ()
+        except (IndexError, TypeError, ValueError):
+            return ()
+
+        tokenizer = getattr(processor, "tokenizer", None)
+        decode_token = getattr(tokenizer, "decode", None)
+        if not callable(decode_token):
+            return ()
+
+        words: list[WhisperWord] = []
+        current_text = ""
+        current_start: Optional[float] = None
+
+        for token, timestamp in zip(token_values, timestamp_values):
+            token_id = WhisperTranscriber._timestamp_value(token)
+            timestamp_value = WhisperTranscriber._timestamp_value(timestamp)
+            if token_id is None or timestamp_value is None:
+                continue
+
+            try:
+                token_text = decode_token(
+                    [int(token_id)],
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False,
+                )
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(token_text, str) or not token_text:
+                continue
+
+            timestamp_value = max(
+                segment_start,
+                min(segment_end, timestamp_value),
+            )
+            starts_word = bool(current_text) and token_text[:1].isspace()
+            if starts_word:
+                words.append(
+                    WhisperWord(
+                        text=current_text.strip(),
+                        start=max(segment_start, current_start or segment_start),
+                        end=max(
+                            segment_start,
+                            current_start or segment_start,
+                            timestamp_value,
+                        ),
+                    )
+                )
+                current_text = ""
+                current_start = None
+
+            if current_start is None:
+                current_start = max(segment_start, timestamp_value)
+            current_text += token_text
+
+        if current_text.strip():
+            words.append(
+                WhisperWord(
+                    text=current_text.strip(),
+                    start=max(segment_start, current_start or segment_start),
+                    end=max(segment_start, current_start or segment_start, segment_end),
+                )
+            )
+
+        return tuple(word for word in words if word.text and word.end >= word.start)
+
+    @staticmethod
+    def _timestamp_value(value: Optional[WhisperScalar]) -> Optional[float]:
         """Convert a Python or tensor scalar into a timestamp."""
-        if isinstance(value, (int, float)):
+        if isinstance(value, (int, float, np.number)):
             return float(value)
-        item = getattr(value, "item", None)
-        if not callable(item):
+        if value is None or not isinstance(value, torch.Tensor):
             return None
-        converted = item()
+        converted = value.item()
         return float(converted) if isinstance(converted, (int, float)) else None
 
     def transcribe(

@@ -50,6 +50,7 @@ V4_COMPRESSION_ZSTANDARD: Final[int] = 2
 V4_COMPRESSION_XZ: Final[int] = 3
 V4_COMPRESSION_OPENZL: Final[int] = 4
 V4_COMPRESSION_MODES: Final[frozenset[int]] = frozenset(range(5))
+V4_MAX_DECOMPRESSED_BYTES: Final[int] = 0xFFFFFFFF
 ALLOWED_ASSET_KINDS = {"wav", "pt"}
 V4_ALLOWED_ASSET_SUFFIXES: Final[frozenset[str]] = frozenset({".wav", ".pt", ".md"})
 SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
@@ -665,28 +666,51 @@ def _compress_v4_payload(payload: bytes, compression: int) -> bytes:
 
 def _decompress_v4_payload(stored_payload: bytes, compression: int) -> bytes:
     """Decompress one complete CECHAR v4 stored payload."""
+
+    def _check_size(payload: bytes) -> bytes:
+        """Reject a logical payload larger than the v4 offset range."""
+        if len(payload) > V4_MAX_DECOMPRESSED_BYTES:
+            raise CEVoiceError("CECHAR v4 decompressed payload is too large")
+        return payload
+
     try:
         if compression == V4_COMPRESSION_NONE:
-            return stored_payload
+            return _check_size(stored_payload)
         if compression == V4_COMPRESSION_GZIP:
-            return gzip.decompress(stored_payload)
+            with gzip.GzipFile(fileobj=io.BytesIO(stored_payload)) as handle:
+                return _check_size(handle.read(V4_MAX_DECOMPRESSED_BYTES + 1))
         if compression == V4_COMPRESSION_ZSTANDARD:
             try:
                 import zstandard  # type: ignore[import-not-found]
             except ImportError as error:
                 raise CEVoiceError("Zstandard compression is unavailable") from error
-            return zstandard.ZstdDecompressor().decompress(stored_payload)
+            return _check_size(
+                zstandard.ZstdDecompressor().decompress(
+                    stored_payload,
+                    max_output_size=V4_MAX_DECOMPRESSED_BYTES + 1,
+                )
+            )
         if compression == V4_COMPRESSION_XZ:
-            return lzma.decompress(stored_payload)
+            return _check_size(
+                lzma.LZMADecompressor().decompress(
+                    stored_payload,
+                    max_length=V4_MAX_DECOMPRESSED_BYTES + 1,
+                )
+            )
         if compression == V4_COMPRESSION_OPENZL:
             try:
                 import openzl.ext as zl  # type: ignore[import-not-found]
             except ImportError as error:
                 raise CEVoiceError("OpenZL compression is unavailable") from error
+            frame_info = zl.FrameInfo(stored_payload)
+            if frame_info.num_outputs != 1:
+                raise CEVoiceError("invalid OpenZL CECHAR v4 payload")
+            if frame_info.output_content_size(0) > V4_MAX_DECOMPRESSED_BYTES:
+                raise CEVoiceError("CECHAR v4 decompressed payload is too large")
             outputs = zl.DCtx().decompress(stored_payload)
             if len(outputs) != 1 or outputs[0].type != zl.Type.Serial:
                 raise CEVoiceError("invalid OpenZL CECHAR v4 payload")
-            return outputs[0].content.as_bytes()
+            return _check_size(outputs[0].content.as_bytes())
     except CEVoiceError:
         raise
     except Exception as error:
@@ -940,24 +964,24 @@ def _validate_v4_semantic_metadata(
 
 def _v4_reference_name(value: ManifestValue, field_name: str) -> str:
     """Read a v4 logical file name while rejecting physical table fields."""
-    name: object
+    name: Optional[str] = None
     if isinstance(value, str):
         name = value
     elif isinstance(value, dict):
         if "offset" in value or "length" in value:
             raise CEVoiceError(f"{field_name} must not store physical offsets")
-        name = value.get("file")
-        if not isinstance(name, str):
-            name = value.get("name")
-    else:
-        name = None
+        candidate = value.get("file")
+        if not isinstance(candidate, str):
+            candidate = value.get("name")
+        if isinstance(candidate, str):
+            name = candidate
     if not isinstance(name, str):
         raise CEVoiceError(f"{field_name} must reference a file name")
     _validate_v4_name(name, field_name)
     return name
 
 
-def _validate_v4_name(value: object, field_name: str) -> None:
+def _validate_v4_name(value: ManifestValue, field_name: str) -> None:
     """Validate one CECHAR v4 logical name against traversal and null-byte rules."""
     if not isinstance(value, str) or not value or "\0" in value:
         raise CEVoiceError(f"invalid CECHAR v4 {field_name} name")
@@ -1078,7 +1102,7 @@ def _validate_v4_persona_markdown(name: str, data: bytes) -> None:
         raise CEVoiceError(f"executable CECHAR v4 Persona content in '{name}'")
 
 
-def _is_sha256(value: object) -> bool:
+def _is_sha256(value: ManifestValue) -> bool:
     """Return whether a value is a hexadecimal SHA-256 digest."""
     return (
         isinstance(value, str)

@@ -34,14 +34,17 @@ PERSONA_MEMORY_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 # this model is used to infer conversation emotion and derive Persona's target response mood
 PERSONA_EMOTION_MODEL = "lunahr/emotispace-128"
 
-# this model is loaded by Celune, and used to control the persona
-PERSONA_MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
-PERSONA_MODEL_REVISION = "ebb281ec70b05090aa6165b016eac8ec08e71b17"
+# These models are available to Persona, mapped to their pinned revisions.
+PERSONA_DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
+PERSONA_MODELS = {
+    PERSONA_DEFAULT_MODEL_ID: "ebb281ec70b05090aa6165b016eac8ec08e71b17",
+    "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated": "ce72a7c22aacb493fb94478de3bfbe834c61844a",
+}
 PERSONA_HISTORY_MESSAGES = 20
 
 REMOTE_CODE_MODEL_REVISIONS = {
     VOICE_EMBEDDING_MODEL: VOICE_EMBEDDING_MODEL_REVISION,
-    PERSONA_MODEL_ID: PERSONA_MODEL_REVISION,
+    **PERSONA_MODELS,
 }
 
 

@@ -4,12 +4,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal, Optional
+from typing import Optional
 
 from .config import config_value
 from .typing.common import JSONSerializable
-
-OperationMode = Literal["speak", "converse", "agent"]
+from .typing.modes import OperationMode
 
 OPERATION_MODES: tuple[OperationMode, ...] = ("speak", "converse", "agent")
 _LEGACY_INPUT_MODES = {"text_to_speech", "tts", "voice_conversion", "revoice"}

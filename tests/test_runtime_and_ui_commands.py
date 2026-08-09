@@ -28,6 +28,7 @@ from celune.ui import app as ui_app
 from celune.ui import resources as ui_resources
 from celune.ui import terminal as ui_terminal
 from celune.ui.app import CeluneUI
+from celune.persona.asr import WhisperSegment, WhisperWord
 from celune.ui.commands import attachment_source, process_command
 from celune.ui.headless import CeluneHeadlessUI
 from celune.ui.theme import severity_color
@@ -2494,6 +2495,29 @@ class UIStartupTests(TestCase):
             worker.start()
             worker.join()
         call_from_thread.assert_called_once_with(ui._hide_caption_widgets)
+
+    def test_speech_caption_uses_word_timestamps(self) -> None:
+        """Verify captions use Whisper word boundaries instead of sentence interpolation."""
+        segments = (
+            WhisperSegment(
+                text="One two three",
+                start=0.0,
+                end=3.0,
+                words=(
+                    WhisperWord("One", 0.0, 0.4),
+                    WhisperWord("two", 0.8, 1.4),
+                    WhisperWord("three", 1.9, 2.8),
+                ),
+            ),
+        )
+
+        timings = CeluneUI._caption_word_timing_ranges(
+            ("One", "two", "three"),
+            segments,
+            3.0,
+        )
+
+        self.assertEqual(timings, ((0.0, 0.4), (0.8, 1.4), (1.9, 2.8)))
 
     def test_status_ticker_recovers_active_playback_status(self) -> None:
         """Verify the TUI ticker displays the active playback-source status."""

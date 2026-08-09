@@ -3,13 +3,19 @@
 
 from collections.abc import Mapping
 
-from .contracts import (
+from ..typing.agent import (
     AgentContext,
     AgentOutput,
     AgentRequest,
     AgentResponseCallback,
     AgentSession,
     AgentTool,
+    NeedleToolCall,
+    NeedleToolCatalog,
+    NeedleToolDefinition,
+    NeedleToolParameter,
+    NeedleToolParameterSpec,
+    NeedleToolSelection,
     ToolCall,
     ToolResult,
 )
@@ -35,5 +41,11 @@ __all__ = [
     "AgentTool",
     "ToolCall",
     "ToolResult",
+    "NeedleToolCall",
+    "NeedleToolCatalog",
+    "NeedleToolDefinition",
+    "NeedleToolParameter",
+    "NeedleToolParameterSpec",
+    "NeedleToolSelection",
     "agent_mode_enabled",
 ]

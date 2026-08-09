@@ -5,6 +5,8 @@ import pickle
 import struct
 from typing import IO
 
+from ..typing.worker import WorkerMessage
+
 __all__ = ["WorkerProtocolError", "receive_message", "send_message"]
 
 _FRAME_HEADER = struct.Struct("!I")
@@ -15,7 +17,7 @@ class WorkerProtocolError(RuntimeError):
     """Raised when a backend worker sends an invalid or incomplete frame."""
 
 
-def send_message(stream: IO[bytes], message: object) -> None:
+def send_message(stream: IO[bytes], message: WorkerMessage) -> None:
     """Write one length-prefixed pickle message to a worker stream."""
     payload = pickle.dumps(message, protocol=pickle.HIGHEST_PROTOCOL)
     if len(payload) > _MAX_FRAME_SIZE:
@@ -25,7 +27,7 @@ def send_message(stream: IO[bytes], message: object) -> None:
     stream.flush()
 
 
-def receive_message(stream: IO[bytes]) -> object:
+def receive_message(stream: IO[bytes]) -> WorkerMessage:
     """Read one length-prefixed pickle message from a worker stream."""
     header = _read_exact(stream, _FRAME_HEADER.size)
     (payload_size,) = _FRAME_HEADER.unpack(header)

@@ -19,8 +19,8 @@ VC_PITCH_SHIFT_MAX = 3
 VC_VAD_RMS_THRESHOLD = 0.005
 VC_VAD_HANGOVER_SECONDS = 0.3
 VC_VAD_PREROLL_SECONDS = 0.18
-VC_LIVE_CHUNK_SECONDS = 1.5
-VC_LIVE_CHUNK_OVERLAP_SECONDS = VC_LIVE_CHUNK_SECONDS / 5
+VC_LIVE_CHUNK_SECONDS = 0.18
+VC_LIVE_CHUNK_OVERLAP_SECONDS = 0.0
 
 _LIVE_VAD_TARGET_SAMPLE_RATE = 16000
 _LIVE_VAD_FRAME_SAMPLES = 512
@@ -128,8 +128,10 @@ def vc_live_chunk_overlap_frames(sample_rate: int) -> int:
         sample_rate: Sample rate used by the live VC input stream.
 
     Returns:
-        int: How many tail frames to retain for the next live VC chunk.
+        int: Zero because Seed-VC's native live path owns crossfade alignment.
     """
+    if VC_LIVE_CHUNK_OVERLAP_SECONDS <= 0:
+        return 0
     return max(1, int(sample_rate * VC_LIVE_CHUNK_OVERLAP_SECONDS))
 
 

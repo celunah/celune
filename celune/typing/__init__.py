@@ -5,6 +5,22 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .agent import (
+        AgentContext,
+        AgentOutput,
+        AgentRequest,
+        AgentResponseCallback,
+        AgentSession,
+        AgentTool,
+        NeedleToolCall,
+        NeedleToolCatalog,
+        NeedleToolDefinition,
+        NeedleToolParameter,
+        NeedleToolParameterSpec,
+        NeedleToolSelection,
+        ToolCall,
+        ToolResult,
+    )
     from .analysis import (
         EmbeddingModel,
         EmbeddingOutput,
@@ -15,6 +31,10 @@ if TYPE_CHECKING:
         VoiceMatch,
     )
     from .backends import (
+        BackendArgumentValue,
+        BackendArguments,
+        BackendDescription,
+        BackendGeneration,
         BackendModel,
         MiniModel,
         MiniPromptState,
@@ -51,6 +71,7 @@ if TYPE_CHECKING:
         VideoMetadataScalar,
         VramTier,
     )
+    from .modes import OperationMode
     from .extensions import (
         DevLogCallable,
         GetStateCallable,
@@ -98,10 +119,28 @@ if TYPE_CHECKING:
         CallerInfo,
         LanguageResult,
     )
+    from .worker import (
+        WorkerArguments,
+        WorkerMessage,
+        WorkerMessageValue,
+        WorkerRequest,
+        WorkerResponse,
+        WorkerValue,
+    )
 
 _MODULE_EXPORTS = {
+    "AgentContext": "agent",
+    "AgentOutput": "agent",
+    "AgentRequest": "agent",
+    "AgentResponseCallback": "agent",
+    "AgentSession": "agent",
+    "AgentTool": "agent",
     "AudioChunk": "pipeline",
     "AudioQueueItem": "pipeline",
+    "BackendArgumentValue": "backends",
+    "BackendArguments": "backends",
+    "BackendDescription": "backends",
+    "BackendGeneration": "backends",
     "BackendModel": "backends",
     "CallerInfo": "utils",
     "CaptionCallback": "celune",
@@ -138,6 +177,13 @@ _MODULE_EXPORTS = {
     "ModelGenerateKwargValue": "persona",
     "ModelT": "backends",
     "NormalizerTokenizer": "celune",
+    "NeedleToolCall": "agent",
+    "NeedleToolCatalog": "agent",
+    "NeedleToolDefinition": "agent",
+    "NeedleToolParameter": "agent",
+    "NeedleToolParameterSpec": "agent",
+    "NeedleToolSelection": "agent",
+    "OperationMode": "modes",
     "PersonaModel": "persona",
     "PersonaProcessor": "persona",
     "PersonaTokenizer": "persona",
@@ -161,6 +207,8 @@ _MODULE_EXPORTS = {
     "TextQueueItem": "pipeline",
     "TextContentItem": "persona",
     "ThinkCallable": "extensions",
+    "ToolCall": "agent",
+    "ToolResult": "agent",
     "VideoContentItem": "persona",
     "VideoInputWithMetadata": "persona",
     "VideoMetadata": "persona",
@@ -173,13 +221,35 @@ _MODULE_EXPORTS = {
     "VoiceMatch": "analysis",
     "VramTier": "common",
     "WaitUntilReadyCallable": "extensions",
+    "WorkerArguments": "worker",
+    "WorkerMessage": "worker",
+    "WorkerMessageValue": "worker",
+    "WorkerRequest": "worker",
+    "WorkerResponse": "worker",
+    "WorkerValue": "worker",
 }
 
 __all__ = [
     "JSON",
     "RGB",
+    "AgentContext",
+    "AgentOutput",
+    "AgentRequest",
+    "AgentResponseCallback",
+    "AgentSession",
+    "AgentTool",
+    "NeedleToolCall",
+    "NeedleToolCatalog",
+    "NeedleToolDefinition",
+    "NeedleToolParameter",
+    "NeedleToolParameterSpec",
+    "NeedleToolSelection",
     "AudioChunk",
     "AudioQueueItem",
+    "BackendArgumentValue",
+    "BackendArguments",
+    "BackendDescription",
+    "BackendGeneration",
     "BackendModel",
     "CallerInfo",
     "CaptionCallback",
@@ -215,6 +285,7 @@ __all__ = [
     "ModelGenerateKwargValue",
     "ModelT",
     "NormalizerTokenizer",
+    "OperationMode",
     "PersonaModel",
     "PersonaProcessor",
     "PersonaTokenizer",
@@ -237,6 +308,8 @@ __all__ = [
     "TextContentItem",
     "TextQueueItem",
     "ThinkCallable",
+    "ToolCall",
+    "ToolResult",
     "VideoContentItem",
     "VideoInputWithMetadata",
     "VideoMetadata",
@@ -249,6 +322,12 @@ __all__ = [
     "VoiceMatch",
     "VramTier",
     "WaitUntilReadyCallable",
+    "WorkerArguments",
+    "WorkerMessage",
+    "WorkerMessageValue",
+    "WorkerRequest",
+    "WorkerResponse",
+    "WorkerValue",
 ]
 
 

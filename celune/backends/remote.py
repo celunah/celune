@@ -6,7 +6,7 @@ import os
 import subprocess
 import threading
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import IO, Optional, cast
@@ -23,9 +23,15 @@ from .worker_protocol import (
     send_message,
 )
 from .vc.base import CeluneVCBackend
-from ..paths import core_site_packages_dir, project_root
+from ..paths import project_root
 from ..i18n import string
-from ..typing.aliases import AudioChunk
+from ..typing.backends import (
+    BackendArgumentValue,
+    BackendArguments,
+    BackendDescription,
+    BackendGeneration,
+)
+from ..typing.worker import WorkerResponse, WorkerValue
 from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["RemoteBackendProxy", "RemoteModelHandle", "RemoteVCBackendProxy"]
@@ -47,10 +53,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         log: Callable[[str, str], None],
         fatal: Optional[Callable[[], None]] = None,
         environment_manager: Optional[BackendEnvironmentManager] = None,
-        **backend_kwargs: object,
+        **backend_kwargs: BackendArgumentValue,
     ) -> None:
         self._manifest = manifest
         self._environment_manager = environment_manager or BackendEnvironmentManager()
+        self._fatal_callback = fatal
         self._process: Optional[subprocess.Popen[bytes]] = None
         self._protocol_lock = threading.Lock()
         self._stderr_thread: Optional[threading.Thread] = None
@@ -69,11 +76,15 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self,
         environment: BackendEnvironment,
         log: Callable[[str, str], None],
-        backend_kwargs: Mapping[str, object],
+        backend_kwargs: BackendArguments,
     ) -> None:
         """Start the worker process and forward its stderr logs."""
-        python_path = core_site_packages_dir()
         environment_variables = os.environ.copy()
+        # The compiled launcher sets PYTHONHOME for Celune's core runtime. A
+        # backend worker may use a different Python installation, so inheriting
+        # that value can mix the core interpreter's stdlib with the worker's
+        # runtime modules.
+        environment_variables.pop("PYTHONHOME", None)
         project_path = str(project_root())
         existing_python_path = environment_variables.get("PYTHONPATH")
         environment_variables["PYTHONPATH"] = os.pathsep.join(
@@ -83,7 +94,6 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             [
                 str(environment.python),
                 str(project_root() / "celune" / "backend_worker_bootstrap.py"),
-                str(python_path),
                 "--backend",
                 self._manifest.backend_id,
                 "--backend-kwargs",
@@ -132,26 +142,43 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             recent_lines = list(self._worker_stderr)[-20:]
         return "\n".join(recent_lines)
 
+    def _notify_fatal(self) -> None:
+        """Forward one worker fatal notification to the Celune runtime."""
+        if self._fatal_callback is not None:
+            self._fatal_callback()
+
+    def _read_response(self, process: subprocess.Popen[bytes]) -> WorkerResponse:
+        """Read responses while handling out-of-band worker notifications."""
+        assert process.stdout is not None
+        while True:
+            try:
+                response = cast(WorkerResponse, receive_message(process.stdout))
+            except WorkerProtocolError as error:
+                detail = self._worker_error_detail()
+                if detail:
+                    raise WorkerProtocolError(f"{error}:\n{detail}") from error
+                raise
+            if response.get("fatal", False):
+                self._notify_fatal()
+                continue
+            return response
+
     def _load_description(self) -> None:
         """Load static backend metadata from the worker."""
-        description = cast(Mapping[str, object], self._request("describe"))
-        self.name = cast(str, description["name"])
-        self.chunk_rate = cast(float, description["chunk_rate"])
-        self.supported_languages = cast(
-            tuple[str, ...], description["supported_languages"]
-        )
-        self.voice_models = cast(
-            Optional[Mapping[str, str]], description["voice_models"]
-        )
-        self.default_voice = cast(Optional[str], description["default_voice"])
-        self.model_name = cast(Optional[str], description["model_name"])
-        self._remote_voices = cast(list[str], description["voices"])
-        self.clone_model_id = cast(Optional[str], description["clone_model_id"])
-        self.uses_voice_bundles = cast(bool, description["uses_voice_bundles"])
-        self.max_new_tokens = cast(int, description["max_new_tokens"])
-        self.is_fake = cast(bool, description["is_fake"])
+        description = cast(BackendDescription, self._request("describe"))
+        self.name = description["name"]
+        self.chunk_rate = description["chunk_rate"]
+        self.supported_languages = description["supported_languages"]
+        self.voice_models = description["voice_models"]
+        self.default_voice = description["default_voice"]
+        self.model_name = description["model_name"]
+        self._remote_voices = description["voices"]
+        self.clone_model_id = description["clone_model_id"]
+        self.uses_voice_bundles = description["uses_voice_bundles"]
+        self.max_new_tokens = description["max_new_tokens"]
+        self.is_fake = description["is_fake"]
 
-    def _request(self, operation: str, **arguments: object) -> object:
+    def _request(self, operation: str, **arguments: WorkerValue) -> WorkerValue:
         """Send one request and return its response value."""
         process = self._process
         if process is None or process.poll() is not None:
@@ -167,24 +194,16 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             send_message(
                 process.stdin, {"operation": operation, "arguments": arguments}
             )
-            try:
-                response = cast(Mapping[str, object], receive_message(process.stdout))
-            except WorkerProtocolError as error:
-                detail = self._worker_error_detail()
-                if detail:
-                    raise WorkerProtocolError(f"{error}:\n{detail}") from error
-                raise
+            response = self._read_response(process)
         if not response.get("ok", False):
-            raise RuntimeError(
-                cast(str, response.get("error", "backend worker failed"))
-            )
+            raise RuntimeError(response.get("error", "backend worker failed"))
         return response.get("value")
 
     def _stream_request(
         self,
         operation: str,
-        **arguments: object,
-    ) -> Iterator[object]:
+        **arguments: WorkerValue,
+    ) -> Iterator[WorkerValue]:
         """Send one streaming request and yield worker values."""
         process = self._process
         if process is None or process.poll() is not None:
@@ -213,20 +232,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     def _read_stream_frame(
         self,
         process: subprocess.Popen[bytes],
-    ) -> Mapping[str, object]:
+    ) -> WorkerResponse:
         """Read one streaming frame and raise on worker-reported failures."""
-        assert process.stdout is not None
-        try:
-            response = cast(Mapping[str, object], receive_message(process.stdout))
-        except WorkerProtocolError as error:
-            detail = self._worker_error_detail()
-            if detail:
-                raise WorkerProtocolError(f"{error}:\n{detail}") from error
-            raise
+        response = self._read_response(process)
         if not response.get("ok", False):
-            raise RuntimeError(
-                cast(str, response.get("error", "backend worker failed"))
-            )
+            raise RuntimeError(response.get("error", "backend worker failed"))
         return response
 
     def _drain_stream(self, process: subprocess.Popen[bytes]) -> None:
@@ -234,7 +244,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         assert process.stdout is not None
         with suppress(WorkerProtocolError, OSError):
             while True:
-                response = cast(Mapping[str, object], receive_message(process.stdout))
+                response = self._read_response(process)
                 if response.get("done", False) or not response.get("ok", True):
                     return
 
@@ -250,7 +260,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Return voice names reported by the worker backend."""
         return list(self._remote_voices)
 
-    def load_model(self, model_id: str, **kwargs: object) -> RemoteModelHandle:
+    def load_model(
+        self,
+        model_id: str,
+        **kwargs: BackendArgumentValue,
+    ) -> RemoteModelHandle:
         """Load a model in the worker and return an opaque handle."""
         value = self._request("load_model", model_id=model_id, **kwargs)
         return RemoteModelHandle(cast(int, value))
@@ -267,13 +281,13 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     def generate_stream(
         self,
         model: RemoteModelHandle,
-        **kwargs: object,
-    ) -> Iterator[tuple[AudioChunk, int, Optional[dict]]]:
+        **kwargs: BackendArgumentValue,
+    ) -> Iterator[BackendGeneration]:
         """Generate audio by streaming worker results through the proxy."""
         arguments = dict(kwargs)
         arguments["model_id"] = model.identifier
         for value in self._stream_request("generate_stream", **arguments):
-            yield cast(tuple[AudioChunk, int, Optional[dict]], value)
+            yield cast(BackendGeneration, value)
 
     def resolve_generation_language(self, lang: Optional[str]) -> Optional[str]:
         """Resolve a language using the worker backend implementation."""
@@ -355,6 +369,17 @@ class RemoteVCBackendProxy(CeluneVCBackend):
             AudioOutput,
             self._worker._request("convert", request=request),
         )
+
+    def convert_live(self, request: VoiceConversionRequest) -> AudioOutput:
+        """Convert one block through the isolated backend's live session."""
+        return cast(
+            AudioOutput,
+            self._worker._request("call", method="convert_live", request=request),
+        )
+
+    def stop_live(self) -> None:
+        """Reset the isolated backend's live conversion session."""
+        self._worker._request("call", method="stop_live")
 
     def close(self) -> None:
         """Stop the voice-conversion worker process."""

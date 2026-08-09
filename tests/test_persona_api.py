@@ -6,7 +6,10 @@ from types import SimpleNamespace
 from typing import Optional, Union, cast
 from unittest import TestCase, mock
 
-from celune.constants import PERSONA_MODEL_REVISION
+from celune.constants import (
+    PERSONA_DEFAULT_MODEL_ID,
+    PERSONA_MODELS,
+)
 from celune.persona import impl, runtime
 from celune.typing.aliases import RecordedKwargValue
 from celune.typing.common import JSON
@@ -317,12 +320,12 @@ class PersonaApiTests(TestCase):
         loaders["config_loader"].assert_called_once_with(
             "Qwen/Qwen3-VL-4B-Instruct",
             trust_remote_code=True,
-            revision=PERSONA_MODEL_REVISION,
+            revision=PERSONA_MODELS[PERSONA_DEFAULT_MODEL_ID],
         )
         loaders["processor_loader"].assert_called_once_with(
             "Qwen/Qwen3-VL-4B-Instruct",
             trust_remote_code=True,
-            revision=PERSONA_MODEL_REVISION,
+            revision=PERSONA_MODELS[PERSONA_DEFAULT_MODEL_ID],
         )
         loaders["model_loader"].assert_called_once()
         self.assertEqual(
@@ -333,7 +336,7 @@ class PersonaApiTests(TestCase):
             loaders["model_loader"].call_args.kwargs,
             {
                 "trust_remote_code": True,
-                "revision": PERSONA_MODEL_REVISION,
+                "revision": PERSONA_MODELS[PERSONA_DEFAULT_MODEL_ID],
                 "device_map": "auto",
                 "dtype": runtime.torch.bfloat16,
             },
@@ -343,6 +346,26 @@ class PersonaApiTests(TestCase):
         self.assertIs(backend.processor, fake_processor)
         self.assertIs(backend.tokenizer, fake_tokenizer)
         self.assertTrue(backend.supports_vision)
+
+    def test_trusted_model_revision_allows_abliterated_qwen_vl_model(self) -> None:
+        """Verify the pinned abliterated Qwen VL derivative is trusted."""
+        self.assertEqual(
+            runtime.PersonaBackend._trusted_model_revision(
+                "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated"
+            ),
+            PERSONA_MODELS["huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated"],
+        )
+
+    def test_load_rejects_unpinned_remote_code_models(self) -> None:
+        """Verify Persona never loads an unknown model with remote code enabled."""
+        backend = runtime.PersonaBackend()
+        with (
+            mock.patch.object(runtime, "AutoConfig") as config_loader,
+            self.assertRaisesRegex(ValueError, "not trusted or pinned"),
+        ):
+            backend.load("untrusted/example", "none")
+
+        config_loader.from_pretrained.assert_not_called()
 
     def test_load_treats_multimodal_processor_as_vision_capable(self) -> None:
         """Verify multimodal processors are accepted even without chat templates."""

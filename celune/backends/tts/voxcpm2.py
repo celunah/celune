@@ -5,10 +5,13 @@ import contextlib
 import os
 import time
 from collections.abc import Callable, Generator, Iterator, Mapping
-from typing import Optional
+from typing import Optional, Union
 
 import numpy as np
+import torch
 from voxcpm import VoxCPM
+from transformers import AutoTokenizer
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import BASE_SR
@@ -16,6 +19,23 @@ from ...typing.aliases import AudioChunk, AudioChunks
 from ...utils import custom_assert
 from . import get_version
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
+
+
+class _VoxCPMTextTokenizer:
+    """Adapt the checkpoint tokenizer to VoxCPM2's list-returning interface."""
+
+    def __init__(self, tokenizer: PreTrainedTokenizerBase) -> None:
+        self._tokenizer = tokenizer
+
+    def __call__(self, text: str) -> list[int]:
+        """Tokenize text without adding tokenizer-wrapper special tokens."""
+        return [
+            int(token_id)
+            for token_id in self._tokenizer.encode(
+                text,
+                add_special_tokens=False,
+            )
+        ]
 
 
 class VoxCPM2(CeluneBackend[VoxCPM]):
@@ -145,6 +165,33 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
 
     suppress_backend_output = _suppress_backend_output
 
+    @staticmethod
+    def _to_numpy_audio(chunk: Union[torch.Tensor, np.ndarray]) -> AudioChunk:
+        """Convert one VoxCPM tensor chunk to a one-dimensional audio array."""
+        if isinstance(chunk, torch.Tensor):
+            audio = chunk.detach().float().cpu().numpy()
+        else:
+            audio = chunk
+        return np.asarray(audio, dtype=np.float32).reshape(-1)
+
+    @staticmethod
+    def _install_checkpoint_tokenizer(
+        model: Optional[VoxCPM],
+        snapshot_path: Optional[str],
+    ) -> None:
+        """Install VoxCPM2's checkpoint tokenizer after the package loader runs."""
+        if model is None or snapshot_path is None:
+            return
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            snapshot_path,
+            local_files_only=True,
+            trust_remote_code=True,
+        )
+        runtime = getattr(model, "tts_model", None)
+        if runtime is not None and hasattr(runtime, "text_tokenizer"):
+            runtime.text_tokenizer = _VoxCPMTextTokenizer(tokenizer)
+
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
     ) -> tuple[bool, Optional[str]]:
@@ -203,6 +250,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                     load_denoiser=kwargs.get("load_denoiser", False),
                     optimize=kwargs.get("optimize", False),
                 )
+                self._install_checkpoint_tokenizer(self.model, path)
 
             return self.model
 
@@ -213,6 +261,8 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                 load_denoiser=kwargs.get("load_denoiser", False),
                 optimize=kwargs.get("optimize", False),
             )
+            _, path = self.model_is_available_locally(model_id)
+            self._install_checkpoint_tokenizer(self.model, path)
         return self.model
 
     def generate_stream(
@@ -278,6 +328,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             )
 
         chunks_per_batch = max(1, round(chunk_size / (1 / self.chunk_rate)))
+        sample_rate = int(getattr(model, "sample_rate", BASE_SR))
 
         stream = None
         try:
@@ -301,7 +352,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                 for chunk in stream:
                     if first_chunk_time is None:
                         first_chunk_time = time.monotonic()
-                    batch.append(chunk)
+                    batch.append(self._to_numpy_audio(chunk))
 
                     if len(batch) < chunks_per_batch:
                         continue
@@ -310,7 +361,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                         total_steps += pending_steps
                         yield (
                             pending_audio,
-                            BASE_SR,
+                            sample_rate,
                             {
                                 "backend": self.name,
                                 "chunk_index": chunk_index,
@@ -331,7 +382,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                         total_steps += pending_steps
                         yield (
                             pending_audio,
-                            BASE_SR,
+                            sample_rate,
                             {
                                 "backend": self.name,
                                 "chunk_index": chunk_index,
@@ -346,7 +397,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                     total_steps += len(batch)
                     yield (
                         np.concatenate(batch),
-                        BASE_SR,
+                        sample_rate,
                         {
                             "backend": self.name,
                             "chunk_index": chunk_index,
@@ -361,7 +412,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                     total_steps += pending_steps
                     yield (
                         pending_audio,
-                        BASE_SR,
+                        sample_rate,
                         {
                             "backend": self.name,
                             "chunk_index": chunk_index,

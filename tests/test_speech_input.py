@@ -10,6 +10,7 @@ import numpy as np
 from textual import events
 
 from celune.persona.asr import WhisperTranscriber
+from celune.typing.persona import _WhisperProcessor
 from celune.ui.app import CeluneUI
 
 
@@ -68,6 +69,62 @@ class SpeechInputTests(TestCase):
         self.assertEqual(fake_processor.call_args.args[0].shape, (1600,))
         self.assertEqual(fake_processor.call_args.kwargs["sampling_rate"], 16000)
         self.assertEqual(fake_model.generate.call_args.kwargs["task"], "transcribe")
+
+    def test_whisper_word_timestamps_are_grouped_from_token_timestamps(self) -> None:
+        """Verify token timestamps are grouped into the words Whisper decoded."""
+        processor = SimpleNamespace(
+            tokenizer=SimpleNamespace(
+                decode=lambda tokens, **_kwargs: {
+                    1: "Hello",
+                    2: ",",
+                    3: " world",
+                    4: " again",
+                }[tokens[0]]
+            )
+        )
+        raw_segment = {
+            "tokens": np.asarray([1, 2, 3, 4]),
+            "idxs": [0, 4],
+            "result": {"token_timestamps": np.asarray([0.1, 0.3, 0.5, 0.8])},
+        }
+
+        words = WhisperTranscriber._decode_words(
+            cast(_WhisperProcessor, processor),
+            raw_segment,
+            0.0,
+            1.0,
+        )
+
+        self.assertEqual(
+            [(word.text, word.start, word.end) for word in words],
+            [("Hello,", 0.1, 0.5), ("world", 0.5, 0.8), ("again", 0.8, 1.0)],
+        )
+
+    def test_whisper_segments_decode_one_dimensional_tokens_as_one_sequence(
+        self,
+    ) -> None:
+        """Verify one segment's token tensor is decoded as a complete sequence."""
+        observed_shapes: list[tuple[int, ...]] = []
+
+        def batch_decode(tokens, **_kwargs) -> list[str]:
+            observed_shapes.append(tuple(tokens.shape))
+            return ["hello world"]
+
+        processor = SimpleNamespace(batch_decode=batch_decode)
+        generated = {
+            "segments": [[{"start": 0.0, "end": 1.0, "tokens": np.asarray([1, 2])}]]
+        }
+
+        segments = WhisperTranscriber._decode_segments(
+            cast(_WhisperProcessor, processor),
+            generated,
+        )
+
+        self.assertEqual(observed_shapes, [(1, 2)])
+        self.assertEqual(
+            [(segment.text, segment.start, segment.end) for segment in segments],
+            [("hello world", 0.0, 1.0)],
+        )
 
     @staticmethod
     def test_ctrl_r_routes_persona_and_vc_to_separate_recorders() -> None:

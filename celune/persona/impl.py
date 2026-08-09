@@ -18,8 +18,8 @@ from ..config import Config
 from ..constants import (
     DEFAULT_PERSONA_CONTEXT,
     DEFAULT_PERSONA_DESCRIPTION,
+    PERSONA_DEFAULT_MODEL_ID,
     PERSONA_HISTORY_MESSAGES,
-    PERSONA_MODEL_ID,
 )
 from ..modes import (
     has_explicit_operation_mode,
@@ -782,7 +782,7 @@ def persona_model_id(config: Optional[Mapping[str, JSONSerializable]] = None) ->
         if isinstance(configured, str) and configured.strip():
             return configured.strip()
 
-    return PERSONA_MODEL_ID
+    return PERSONA_DEFAULT_MODEL_ID
 
 
 def persona_is_available() -> bool:

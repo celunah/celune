@@ -122,11 +122,11 @@ openzl = [
 #
 # The original Qwen-based classic Celune backend. Balanced sound quality and speed.
 # qwen3 = [
-#     # Celune sounds best with faster-qwen3-tts 0.2.4.
-#     # To match this version's behavior in 0.2.5 or newer, you may need to set non_streaming_mode=True.
+#     # Celune sounds best with faster-qwen3-tts 0.2.6.
+#     # To match this version's behavior in newer releases, you may need to set non_streaming_mode=True.
 #     # This parameter is ambiguously named, it doesn't actually disable streaming mode.
 #     # If it did, Celune would have a problem operating.
-#     "faster-qwen3-tts>=0.2.4",
+#     "faster-qwen3-tts==0.2.6",
 # ]
 
 # A high-end diffusion based Celune backend with high fidelity and expressiveness. Slower, but way more expressive.

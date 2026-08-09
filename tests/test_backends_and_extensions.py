@@ -437,6 +437,58 @@ class BackendTests(TestCase):
         self.assertEqual(captured["f0_condition"], False)
         self.assertEqual(captured["pitch_shift"], 0)
 
+    def test_seedvc_live_backend_uses_native_session_without_offline_wrapper(
+        self,
+    ) -> None:
+        """Verify live VC sends blocks to Seed-VC's native session directly."""
+        backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
+        source = np.ones((8640, 2), dtype=np.float32)
+        reference = Path("reference.wav")
+        request = VoiceConversionRequest(
+            source_audio=source,
+            sample_rate=48000,
+            target_references=(reference,),
+            label="live fixture",
+        )
+        realtime_module = ModuleType("seed_vc.real_time")
+        model_set = (
+            "model",
+            "semantic",
+            "vocoder",
+            "campplus",
+            "mel",
+            {"sampling_rate": 22050},
+        )
+
+        with (
+            mock.patch.object(
+                backend,
+                "_get_live_runtime",
+                return_value=(realtime_module, model_set),
+            ),
+            mock.patch.object(backend, "_initialize_live_session") as initialize,
+            mock.patch.object(
+                backend,
+                "_convert_live_audio",
+                return_value=np.array([0.1, -0.1], dtype=np.float32),
+            ) as convert,
+        ):
+            output = backend.convert_live(request)
+
+        initialize.assert_called_once_with(
+            realtime_module,
+            model_set,
+            reference,
+            48000,
+        )
+        convert.assert_called_once_with(source, 48000)
+        self.assertEqual(output.sample_rate, 48000)
+        self.assertEqual(output.label, "live fixture")
+        np.testing.assert_array_equal(
+            output.audio,
+            np.array([0.1, -0.1], dtype=np.float32),
+        )
+
     def test_seedvc_backend_uses_configured_pitch_shift_for_wrapper_requests(
         self,
     ) -> None:
@@ -679,6 +731,37 @@ class BackendTests(TestCase):
                 )
 
             self.assertEqual(model.cfg_value, 4.2)
+
+    def test_voxcpm2_uses_the_checkpoint_tokenizer_interface(self) -> None:
+        """Verify VoxCPM2 receives expanded IDs without tokenizer special tokens."""
+        with mock_voxcpm_backend():
+            voxcpm2 = importlib.import_module("celune.backends.tts.voxcpm2")
+            tokenizer = mock.Mock()
+            tokenizer.encode.return_value = [11, 12]
+            model = SimpleNamespace(
+                tts_model=SimpleNamespace(text_tokenizer=mock.Mock())
+            )
+
+            with mock.patch.object(
+                voxcpm2.AutoTokenizer,
+                "from_pretrained",
+                return_value=tokenizer,
+            ) as loader:
+                voxcpm2.VoxCPM2._install_checkpoint_tokenizer(
+                    model,
+                    "C:/cached/VoxCPM2",
+                )
+
+            loader.assert_called_once_with(
+                "C:/cached/VoxCPM2",
+                local_files_only=True,
+                trust_remote_code=True,
+            )
+            self.assertEqual(model.tts_model.text_tokenizer("hello"), [11, 12])
+            tokenizer.encode.assert_called_once_with(
+                "hello",
+                add_special_tokens=False,
+            )
 
     @staticmethod
     def test_voxcpm2_requires_reference_text_for_valid_voice_identifiers() -> None:

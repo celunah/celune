@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: MIT
 """Celune audio processing functions."""
 
-import math
 from collections.abc import Callable, Iterable
 
 import numpy as np
 from pedalboard import Pedalboard, PitchShift, Reverb
-from scipy.signal import butter, resample_poly, sosfilt
+from scipy.signal import butter, sosfilt
 
+from .audio_resampling import resample_audio as _resample_array
 from .constants import BASE_SR, UtteranceLoudnessTier
 from .exceptions import AudioMismatchError, BadAudioError
 from .typing.aliases import AudioChunk
@@ -34,13 +34,7 @@ def _resample_audio(
     if source_sr == target_sr:
         return audio
 
-    factor = math.gcd(source_sr, target_sr)
-    up = target_sr // factor
-    down = source_sr // factor
-
-    return np.ascontiguousarray(
-        resample_poly(audio, up=up, down=down, axis=0), dtype=np.float32
-    )
+    return _resample_array(audio, source_sr, target_sr)
 
 
 def _make_stereo(audio: AudioChunk) -> AudioChunk:

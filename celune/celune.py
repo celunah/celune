@@ -81,6 +81,7 @@ from .persona.impl import (
     persona_model_id,
     persona_quantization,
 )
+from .persona.emotion import PersonaEmotionAnalyzer
 from .pipeline import (
     acquire_pipeline,
     clear_queue,
@@ -96,6 +97,7 @@ from .pipeline import (
     release_pipeline,
     saved_output_speech_seconds,
     split_text,
+    stop_live_audio_input,
 )
 from .pipeline import (
     close as close_pipeline,
@@ -853,18 +855,19 @@ class Celune(CeluneStateAccessors):
 
     def _start_persona_background_load(self) -> None:
         """Load Persona after TTS startup without blocking speech readiness."""
-        vision = self.vision
-        if vision is None or self.persona_ready or self.persona_loading:
-            return
+        with self._model_lock:
+            vision = self.vision
+            if vision is None or self.persona_ready or self.persona_loading:
+                return
 
-        self.persona_loading = True
+            self.persona_loading = True
+            thread = threading.Thread(
+                target=self._load_persona_background,
+                args=(vision,),
+                daemon=True,
+            )
+            self._persona_load_thread = thread
         self.log(string("celune.initializing_persona"))
-        thread = threading.Thread(
-            target=self._load_persona_background,
-            args=(vision,),
-            daemon=True,
-        )
-        self._persona_load_thread = thread
         thread.start()
 
     def _load_persona_background(self, vision: PersonaClient) -> None:
@@ -896,8 +899,9 @@ class Celune(CeluneStateAccessors):
                 self.log(string("celune.persona_initialized"))
                 self.change_input_state_callback(locked=False)
         finally:
-            if self._persona_load_thread is threading.current_thread():
-                setattr(self, "_persona_load_thread", None)
+            with self._model_lock:
+                if self._persona_load_thread is threading.current_thread():
+                    setattr(self, "_persona_load_thread", None)
 
     def _close_stream(self, abort: bool = False) -> None:
         """Close the current audio stream if one exists."""
@@ -905,12 +909,17 @@ class Celune(CeluneStateAccessors):
 
     def _unload_persona_state(self) -> None:
         """Release Persona runtime state and clear the active client."""
-        vision = self.vision
-        self.vision = None
-        self.persona_ready = False
-        self.persona_loading = False
-        persona_thread = self._persona_load_thread
-        setattr(self, "_persona_load_thread", None)
+        with self._model_lock:
+            vision = self.vision
+            self.vision = None
+            self.persona_ready = False
+            self.persona_loading = False
+            persona_thread = self._persona_load_thread
+            setattr(self, "_persona_load_thread", None)
+            analyzer = getattr(self, "persona_emotion_analyzer", None)
+            if isinstance(analyzer, PersonaEmotionAnalyzer):
+                analyzer.clear_vlm()
+            setattr(self, "persona_emotion_analyzer", None)
         if (
             persona_thread is not None
             and persona_thread is not threading.current_thread()
@@ -1508,6 +1517,11 @@ class Celune(CeluneStateAccessors):
             self.current_character_persona = candidate_persona
             self.voice_bundle_is_default = candidate_bundle_is_default
 
+            if snapshot.current_character != self.current_character or str(
+                previous_bundle
+            ) != str(active_bundle_path()):
+                self._reset_persona_conversation()
+
             if not self._is_voice_conversion_mode():
                 model, model_name = self._load_backend_voice_runtime(
                     self.backend,
@@ -1825,10 +1839,11 @@ class Celune(CeluneStateAccessors):
                 if not unload["persona"] or not persona_enabled(self.config):
                     return
 
-                vision = self.vision
-                if vision is None:
-                    return
-                self.persona_loading = True
+                with self._model_lock:
+                    vision = self.vision
+                    if vision is None or self.persona_ready or self.persona_loading:
+                        return
+                    self.persona_loading = True
                 self._load_persona_background(vision)
         except Exception as e:
             self.log(format_error(e, self.dev), "error")
@@ -1843,6 +1858,12 @@ class Celune(CeluneStateAccessors):
             voices: The list of available voice names.
         """
         self.voices = voices
+
+    def _reset_persona_conversation(self) -> None:
+        """Clear Persona conversation context when its character changes."""
+        self.persona_history.clear()
+        self.persona_session_summary = ""
+        self.persona_attachments.clear()
 
     def load_voice_bundle(self, bundle: Optional[Union[str, Path]] = None) -> bool:
         """Select and load a CEVOICE bundle into Celune's active voice set.
@@ -1863,6 +1884,8 @@ class Celune(CeluneStateAccessors):
         select_voice_bundle(bundle)
         loader = default_loader()
         if loader is None:
+            if previous_bundle_path is not None or previous_character is not None:
+                self._reset_persona_conversation()
             self.current_character_persona = None
             self.current_character = None
             self.voice_bundle_is_default = True
@@ -1907,6 +1930,11 @@ class Celune(CeluneStateAccessors):
             if voices
             else None
         )
+        if (
+            previous_bundle_path != new_bundle_path
+            or previous_character != self.current_character
+        ):
+            self._reset_persona_conversation()
         self._emit_character_event_transition(
             previous_character,
             previous_bundle_path,
@@ -2955,8 +2983,9 @@ class Celune(CeluneStateAccessors):
                 self.log(string("celune.normalization_unavailable"), "warning")
                 self.progress_callback(0, 1)
 
-        if self.persona_ready or self.persona_loading:
-            return
+        with self._model_lock:
+            if self.persona_ready or self.persona_loading:
+                return
 
         thread = threading.Thread(target=_worker, daemon=True)
         thread.start()
@@ -3255,14 +3284,22 @@ class Celune(CeluneStateAccessors):
                 self.cur_state = "thinking"
                 self.progress_callback(None, None)
 
-                if self.persona_loading:
+                with self._model_lock:
+                    persona_loading = self.persona_loading
+                    persona_ready = self.persona_ready
+                    vision = self.vision
+
+                if persona_loading:
                     self.say(text)
                     continue
 
-                if not self.persona_ready:
-                    if self.vision is None:
-                        self.vision = self._persona_conn()
-                    if self.vision is None:
+                if not persona_ready:
+                    if vision is None:
+                        with self._model_lock:
+                            if self.vision is None:
+                                self.vision = self._persona_conn()
+                            vision = self.vision
+                    if vision is None:
                         self.say(text)
                         continue
                     self._start_persona_background_load()
@@ -3453,6 +3490,40 @@ class Celune(CeluneStateAccessors):
                 f0_condition=f0_condition,
             ),
         )
+
+    def convert_live_audio(
+        self,
+        audio: npt.NDArray[np.float32],
+        sample_rate: int,
+        label: str = "audio input",
+        pitch_shift: Optional[int] = None,
+        f0_condition: Optional[bool] = None,
+    ) -> Optional[AudioOutput]:
+        """Convert one low-latency live block through the active VC backend."""
+        if not self._is_voice_conversion_mode():
+            return self.convert_audio(
+                audio,
+                sample_rate,
+                label=label,
+                pitch_shift=pitch_shift,
+                f0_condition=f0_condition,
+            )
+
+        return convert_audio_input(
+            self,
+            AudioInputRequest(
+                audio=np.asarray(audio, dtype=np.float32),
+                sample_rate=sample_rate,
+                label=label,
+                pitch_shift=pitch_shift,
+                f0_condition=f0_condition,
+            ),
+            live=True,
+        )
+
+    def stop_live_audio(self) -> None:
+        """Reset any state held by the active live voice-conversion backend."""
+        stop_live_audio_input(self)
 
     def play(self, sound_path: str, keep: bool = False, volume: float = 1.0) -> bool:
         """Play a sound via Celune's pipeline.

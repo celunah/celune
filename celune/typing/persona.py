@@ -6,6 +6,8 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Literal, Optional, Protocol, TypedDict, Union
 
+import numpy as np
+import numpy.typing as npt
 import torch
 from transformers.tokenization_utils_base import BatchEncoding
 
@@ -23,6 +25,30 @@ type Role = Literal["system", "user", "assistant"]
 type VisionInput = Union[JSONSerializable, torch.Tensor, bytes, memoryview]
 type ProcessorKwargValue = Union[VideoMetadataScalar, Sequence[VideoMetadataScalar]]
 type ModelGenerateKwargValue = Union[torch.Tensor, int, float, bool]
+type WhisperScalar = Union[int, float, np.number, torch.Tensor]
+type WhisperTokenValues = Union[Sequence[WhisperScalar], torch.Tensor, npt.NDArray]
+
+
+class WhisperTokenResult(TypedDict, total=False):
+    """Token-timestamp payload returned for one Whisper segment."""
+
+    token_timestamps: WhisperTokenValues
+
+
+class WhisperSegmentPayload(TypedDict, total=False):
+    """Raw timestamped segment payload returned by Whisper."""
+
+    start: WhisperScalar
+    end: WhisperScalar
+    tokens: WhisperTokenValues
+    idxs: Sequence[WhisperScalar]
+    result: WhisperTokenResult
+
+
+class WhisperGenerationPayload(TypedDict, total=False):
+    """Raw segmented generation payload returned by Whisper."""
+
+    segments: Sequence[Sequence[WhisperSegmentPayload]]
 
 
 class TextContentItem(TypedDict):
@@ -210,7 +236,7 @@ class _WhisperModel(Protocol):
     def generate(
         self,
         **kwargs: Union[Tensor, str, bool, int, float],
-    ) -> Union[Tensor, Mapping[str, object]]:
+    ) -> Union[Tensor, WhisperGenerationPayload]:
         """Generate token IDs from prepared Whisper inputs.
 
         Args:

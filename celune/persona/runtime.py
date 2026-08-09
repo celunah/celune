@@ -18,9 +18,10 @@ from transformers import (
 )
 from transformers.tokenization_utils_base import BatchEncoding
 
+from ..i18n import string
 from ..constants import (
     N_A_STR,
-    PERSONA_MODEL_ID,
+    PERSONA_DEFAULT_MODEL_ID,
     remote_code_model_revision,
 )
 from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
@@ -134,20 +135,13 @@ class PersonaBackend:
         ):
             return
 
+        revision = self._trusted_model_revision(model_id)
         self.unload()
-        revision = remote_code_model_revision(model_id)
-
-        if revision is not None:
-            config = AutoConfig.from_pretrained(
-                model_id,
-                trust_remote_code=True,
-                revision=revision,
-            )
-        else:
-            config = AutoConfig.from_pretrained(
-                model_id,
-                trust_remote_code=True,
-            )
+        config = AutoConfig.from_pretrained(
+            model_id,
+            trust_remote_code=True,
+            revision=revision,
+        )
         model_type = getattr(config, "model_type", N_A_STR)
         wanted_type = "qwen3_vl"
 
@@ -173,18 +167,6 @@ class PersonaBackend:
                         bnb_4bit_compute_dtype=torch.bfloat16,
                         bnb_4bit_use_double_quant=True,
                     ),
-                )
-                if revision is not None
-                else Qwen3VLForConditionalGeneration.from_pretrained(
-                    model_id,
-                    trust_remote_code=True,
-                    device_map="auto",
-                    quantization_config=BitsAndBytesConfig(
-                        load_in_4bit=True,
-                        bnb_4bit_quant_type="nf4",
-                        bnb_4bit_compute_dtype=torch.bfloat16,
-                        bnb_4bit_use_double_quant=True,
-                    ),
                 ),
             )
         elif normalized in {"8bit", "bnb8", "bitsandbytes-8bit"}:
@@ -198,13 +180,6 @@ class PersonaBackend:
                     revision=revision,
                     device_map="auto",
                     quantization_config=BitsAndBytesConfig(load_in_8bit=True),
-                )
-                if revision is not None
-                else Qwen3VLForConditionalGeneration.from_pretrained(
-                    model_id,
-                    trust_remote_code=True,
-                    device_map="auto",
-                    quantization_config=BitsAndBytesConfig(load_in_8bit=True),
                 ),
             )
         elif normalized in {"none", "false", "off", "disabled"}:
@@ -214,13 +189,6 @@ class PersonaBackend:
                     model_id,
                     trust_remote_code=True,
                     revision=revision,
-                    device_map="auto",
-                    dtype=torch.bfloat16,
-                )
-                if revision is not None
-                else Qwen3VLForConditionalGeneration.from_pretrained(
-                    model_id,
-                    trust_remote_code=True,
                     device_map="auto",
                     dtype=torch.bfloat16,
                 ),
@@ -262,6 +230,14 @@ class PersonaBackend:
         self.quantization = quantization
         self.supports_vision = supports_vision
         self.supports_emotion_probes = _model_supports_emotion_probes(model)
+
+    @staticmethod
+    def _trusted_model_revision(model_id: str) -> str:
+        """Return the pinned revision for an allowlisted remote-code model."""
+        revision = remote_code_model_revision(model_id)
+        if revision is None:
+            raise ValueError(string("persona.untrusted_model", model_id=model_id))
+        return revision
 
     def unload(self) -> None:
         """Unload the active Persona model and related processor state."""
@@ -516,7 +492,9 @@ class PersonaRuntime:
         Returns:
             GenerateResponse: A generated Persona response.
         """
-        model_id = request.model or os.getenv("PERSONA_MODEL") or PERSONA_MODEL_ID
+        model_id = (
+            request.model or os.getenv("PERSONA_MODEL") or PERSONA_DEFAULT_MODEL_ID
+        )
         quantization = (
             request.quantization
             or os.getenv("PERSONA_QUANTIZATION")

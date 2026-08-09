@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from importlib import util as importlib_util
 from typing import TYPE_CHECKING, Optional, Union, cast
@@ -122,8 +122,6 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from .celune import Celune
     from .typing.persona import PersonaClientResponse
 
@@ -2024,7 +2022,10 @@ def handle_audio_input(engine: Celune, request: AudioInputRequest) -> bool:
 
 
 def convert_audio_input(
-    engine: Celune, request: AudioInputRequest
+    engine: Celune,
+    request: AudioInputRequest,
+    *,
+    live: bool = False,
 ) -> Optional[AudioOutput]:
     """Run one VC conversion request and return the converted audio output.
 
@@ -2059,21 +2060,29 @@ def convert_audio_input(
                 )
                 target_references = ()
 
-    output = backend.convert(
-        VoiceConversionRequest(
-            source_audio=np.asarray(request.audio, dtype=np.float32),
-            sample_rate=request.sample_rate,
-            target_voice=getattr(engine, "current_voice", None),
-            target_character=getattr(engine, "current_character", None),
-            target_references=target_references,
-            label=request.label,
-            pitch_shift=0,
-            f0_condition=(
-                request.f0_condition
-                if isinstance(request.f0_condition, bool)
-                else getattr(engine, "vc_f0_condition", False)
-            ),
-        )
+    conversion_request = VoiceConversionRequest(
+        source_audio=np.asarray(request.audio, dtype=np.float32),
+        sample_rate=request.sample_rate,
+        target_voice=getattr(engine, "current_voice", None),
+        target_character=getattr(engine, "current_character", None),
+        target_references=target_references,
+        label=request.label,
+        pitch_shift=0,
+        f0_condition=(
+            request.f0_condition
+            if isinstance(request.f0_condition, bool)
+            else getattr(engine, "vc_f0_condition", False)
+        ),
+    )
+    converter = getattr(backend, "convert_live", None) if live else None
+    typed_converter = cast(
+        Callable[[VoiceConversionRequest], AudioOutput],
+        converter,
+    )
+    output = (
+        typed_converter(conversion_request)
+        if callable(converter)
+        else backend.convert(conversion_request)
     )
     resolved_pitch_shift = (
         request.pitch_shift
@@ -2092,6 +2101,14 @@ def convert_audio_input(
         sample_rate=output.sample_rate,
         label=output.label,
     )
+
+
+def stop_live_audio_input(engine: Celune) -> None:
+    """Reset a backend's live voice-conversion session when capture stops."""
+    backend = getattr(engine, "vc_backend", None)
+    stop_live = getattr(backend, "stop_live", None)
+    if callable(stop_live):
+        stop_live()
 
 
 def queue_speech(

@@ -5,7 +5,7 @@ import contextlib
 import os
 import time
 from collections.abc import Callable, Generator, Iterator, Mapping
-from typing import Optional, Protocol, cast
+from typing import Optional, cast
 
 import loguru
 import numpy as np
@@ -14,26 +14,9 @@ from dots_tts.runtime import DotsTtsRuntime
 
 from ...cevoice import CEVoiceLoader, default_loader
 from ...typing.aliases import AudioChunk, AudioChunks
+from ...typing.backends import _LoguruLogger
 from ...utils import custom_assert, discard
 from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
-
-
-class _LoguruLogger(Protocol):
-    """Subset of Loguru's logger interface used by the backend noise suppressor."""
-
-    def disable(self, name: str) -> None:
-        """Disable one logger namespace.
-
-        Args:
-            name: Logger namespace that should be silenced temporarily.
-        """
-
-    def enable(self, name: str) -> None:
-        """Enable one logger namespace.
-
-        Args:
-            name: Logger namespace that should be re-enabled after suppression.
-        """
 
 
 class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):

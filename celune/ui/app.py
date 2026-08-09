@@ -50,6 +50,7 @@ from ..celune import Celune
 from ..cevoice import default_loader
 from ..config import format_audio_device_name, resolve_audio_device_with_info
 from ..constants import APP_NAME, CRASH_LINES, SIGTSTP
+from ..dataclasses.pipeline import AudioOutput
 from ..i18n import string
 from ..watchdog import launcher_loss_requested
 from ..paths import config_path, main_window_log_path
@@ -243,6 +244,7 @@ class CeluneUIInteractionState:
     vc_recording_previous_rms: float = 0.0
     vc_recording_sample_rate: int = 0
     vc_recording_silence_frames: int = 0
+    vc_recording_speech_started: bool = False
     vc_recording_submission_queue: Optional[
         queue_module.Queue[Optional[tuple[AudioChunk, int, str, bool]]]  # noqa
     ] = None
@@ -266,7 +268,7 @@ class CeluneUIInteractionState:
     caption_text: str = ""
     caption_words: tuple[str, ...] = ()
     caption_sentences: tuple[tuple[str, ...], ...] = ()
-    caption_timings: tuple[tuple[float, float], ...] = ()
+    caption_word_timings: tuple[tuple[float, float], ...] = ()
     caption_audio_duration: float = 0.0
     caption_rendered_text: str = ""
     caption_transcriber: Optional[WhisperTranscriber] = None
@@ -463,6 +465,9 @@ class CeluneUI(App):
     _vc_recording_silence_frames = _forward_ui_property(
         "_interaction_state", "vc_recording_silence_frames"
     )
+    _vc_recording_speech_started = _forward_ui_property(
+        "_interaction_state", "vc_recording_speech_started"
+    )
     _vc_recording_submission_queue = _forward_ui_property(
         "_interaction_state", "vc_recording_submission_queue"
     )
@@ -514,7 +519,9 @@ class CeluneUI(App):
     _caption_text = _forward_ui_property("_interaction_state", "caption_text")
     _caption_words = _forward_ui_property("_interaction_state", "caption_words")
     _caption_sentences = _forward_ui_property("_interaction_state", "caption_sentences")
-    _caption_timings = _forward_ui_property("_interaction_state", "caption_timings")
+    _caption_word_timings = _forward_ui_property(
+        "_interaction_state", "caption_word_timings"
+    )
     _caption_audio_duration = _forward_ui_property(
         "_interaction_state", "caption_audio_duration"
     )
@@ -1447,49 +1454,62 @@ class CeluneUI(App):
             self.error(string("ui.app_could_not_start", app_name=APP_NAME))
 
     @staticmethod
-    def _caption_sentence_timings(
-        sentences: tuple[tuple[str, ...], ...],
+    def _caption_word_timing_ranges(
+        words: tuple[str, ...],
         segments: tuple[WhisperSegment, ...],
         audio_duration: float,
     ) -> tuple[tuple[float, float], ...]:
-        """Map Whisper segment timing onto the displayed sentence boundaries."""
-        if not sentences or not segments or audio_duration <= 0.0:
+        """Map Whisper word timestamps onto the displayed caption words."""
+        if not words or not segments or audio_duration <= 0.0:
             return ()
 
-        segment_word_counts = [
-            max(1, len(segment.text.split())) for segment in segments
+        whisper_words = [
+            word
+            for segment in segments
+            for word in segment.words
+            if word.text and word.end >= word.start
         ]
-        total_segment_words = sum(segment_word_counts)
-        total_caption_words = sum(len(sentence) for sentence in sentences)
-        if total_segment_words <= 0 or total_caption_words <= 0:
+        if not whisper_words:
             return ()
 
-        timings: list[tuple[float, float]] = []
-        segment_index = 0
-        segment_start_word = 0
-        previous_boundary = max(0.0, segments[0].start)
-        caption_words_seen = 0
-        for sentence in sentences:
-            caption_words_seen += len(sentence)
-            target_word = caption_words_seen * total_segment_words / total_caption_words
-            while (
-                segment_index < len(segments) - 1
-                and target_word
-                > segment_start_word + segment_word_counts[segment_index]
-            ):
-                segment_start_word += segment_word_counts[segment_index]
-                segment_index += 1
+        def normalize(value: str) -> str:
+            return re.sub(r"[^\w]+", "", value.casefold())
 
-            segment = segments[segment_index]
-            segment_words = segment_word_counts[segment_index]
-            within_segment = max(0.0, target_word - segment_start_word)
-            boundary = segment.start + (
-                min(1.0, within_segment / segment_words) * (segment.end - segment.start)
-            )
-            boundary = max(previous_boundary, min(audio_duration, boundary))
-            timings.append((previous_boundary, boundary))
-            previous_boundary = boundary
-        return tuple(timings)
+        caption_keys = [normalize(word) for word in words]
+        whisper_keys = [normalize(word.text) for word in whisper_words]
+        assigned: list[Optional[int]] = [None] * len(words)
+        whisper_index = 0
+        for caption_index, caption_key in enumerate(caption_keys):
+            if not caption_key:
+                continue
+            for candidate in range(
+                whisper_index,
+                min(len(whisper_words), whisper_index + 5),
+            ):
+                if caption_key == whisper_keys[candidate]:
+                    assigned[caption_index] = candidate
+                    whisper_index = candidate + 1
+                    break
+
+        ranges: list[tuple[float, float]] = []
+        for index, assigned_index in enumerate(assigned):
+            if assigned_index is None:
+                assigned_index = round(
+                    index * (len(whisper_words) - 1) / max(len(words) - 1, 1)
+                )
+            word = whisper_words[assigned_index]
+            start = max(0.0, min(audio_duration, word.start))
+            end = max(start, min(audio_duration, word.end))
+            ranges.append((start, end))
+
+        previous_end = 0.0
+        normalized_ranges: list[tuple[float, float]] = []
+        for start, end in ranges:
+            start = max(previous_end, start)
+            end = max(start, end)
+            normalized_ranges.append((start, end))
+            previous_end = end
+        return tuple(normalized_ranges)
 
     def tts_caption_timing(
         self,
@@ -1529,12 +1549,12 @@ class CeluneUI(App):
                 segments = transcriber.transcribe_segments(audio_copy, sample_rate)
             except Exception:
                 return
-            timings = self._caption_sentence_timings(
-                self._caption_sentences,
+            word_timings = self._caption_word_timing_ranges(
+                self._caption_words,
                 segments,
                 duration,
             )
-            if not timings:
+            if not word_timings:
                 return
 
             def update() -> None:
@@ -1544,7 +1564,7 @@ class CeluneUI(App):
                     or caption != self._caption_text
                 ):
                     return
-                self._caption_timings = timings
+                self._caption_word_timings = word_timings
                 self._caption_audio_duration = duration
                 visible_sentence, visible_words = self._caption_words_for_progress(
                     self._caption_progress
@@ -1565,24 +1585,20 @@ class CeluneUI(App):
         fraction: float,
     ) -> tuple[tuple[str, ...], int]:
         """Return the current sentence words and total revealed word count."""
-        if self._caption_timings and self._caption_audio_duration > 0.0:
+        if (
+            self._caption_word_timings
+            and len(self._caption_word_timings) == len(self._caption_words)
+            and self._caption_audio_duration > 0.0
+        ):
             elapsed = fraction * self._caption_audio_duration
-            revealed_words = 0
-            for index, sentence in enumerate(self._caption_sentences):
-                start, end = self._caption_timings[
-                    min(index, len(self._caption_timings) - 1)
-                ]
-                if elapsed >= end:
-                    revealed_words += len(sentence)
-                    continue
-                if elapsed < start:
-                    break
-                local_fraction = (elapsed - start) / max(end - start, 1e-6)
-                visible_words = min(
-                    len(sentence),
-                    math.ceil(max(0.0, min(1.0, local_fraction)) * len(sentence)),
-                )
-                return sentence[:visible_words], revealed_words + visible_words
+            revealed_words = sum(
+                elapsed >= start for start, _end in self._caption_word_timings
+            )
+            remaining_words = revealed_words
+            for sentence in self._caption_sentences:
+                if remaining_words <= len(sentence):
+                    return sentence[:remaining_words], revealed_words
+                remaining_words -= len(sentence)
             return (
                 self._caption_sentences[-1] if self._caption_sentences else (),
                 revealed_words,
@@ -1636,7 +1652,7 @@ class CeluneUI(App):
                 return
             current = 0.0 if progress is None else progress
             fraction = max(0.0, min(1.0, current / total))
-            self._caption_progress = max(self._caption_progress, fraction)
+            self._caption_progress = fraction
             visible_sentence, visible_words = self._caption_words_for_progress(
                 self._caption_progress
             )
@@ -1735,7 +1751,7 @@ class CeluneUI(App):
             self._caption_text = ""
             self._caption_words = ()
             self._caption_sentences = ()
-            self._caption_timings = ()
+            self._caption_word_timings = ()
             self._caption_audio_duration = 0.0
             self._caption_rendered_text = ""
             return
@@ -1749,7 +1765,7 @@ class CeluneUI(App):
             self._caption_text = ""
             self._caption_words = ()
             self._caption_sentences = ()
-            self._caption_timings = ()
+            self._caption_word_timings = ()
             self._caption_audio_duration = 0.0
             self._caption_rendered_text = ""
             return
@@ -1769,7 +1785,7 @@ class CeluneUI(App):
             self._caption_text = ""
             self._caption_words = ()
             self._caption_sentences = ()
-            self._caption_timings = ()
+            self._caption_word_timings = ()
             self._caption_audio_duration = 0.0
             self._caption_rendered_text = ""
             self._caption_visible_words = 0
@@ -1805,7 +1821,7 @@ class CeluneUI(App):
             self._caption_text = caption
             self._caption_words = words
             self._caption_sentences = sentences
-            self._caption_timings = ()
+            self._caption_word_timings = ()
             self._caption_audio_duration = 0.0
             self._caption_rendered_text = ""
             self._caption_visible_words = 0
@@ -2813,6 +2829,7 @@ class CeluneUI(App):
         self._vc_recording_preroll_frames = 0
         self._vc_recording_previous_rms = 0.0
         self._vc_recording_silence_frames = 0
+        self._vc_recording_speech_started = False
         self._vc_recording_submission_queue = None
         self._vc_recording_stop_thread = None
         self._vc_recording_worker = None
@@ -2863,6 +2880,15 @@ class CeluneUI(App):
         with contextlib.suppress(Exception):
             stream.close()
 
+    def _stop_live_vc_backend(self) -> None:
+        """Reset the active backend's native live conversion state."""
+        if self.celune is None:
+            return
+        stop_live = getattr(self.celune, "stop_live_audio", None)
+        if callable(stop_live):
+            with contextlib.suppress(Exception):
+                stop_live()
+
     @staticmethod
     def _join_vc_recording_threads(
         stop_thread: Optional[threading.Thread],
@@ -2894,6 +2920,7 @@ class CeluneUI(App):
             ) = self._stop_vc_recording_stream()
             self._finish_vc_submission_queue(submission_queue)
         self._shutdown_vc_stream(stream)
+        self._stop_live_vc_backend()
         self._join_vc_recording_threads(stop_thread, worker)
 
         if announce:
@@ -2928,6 +2955,7 @@ class CeluneUI(App):
                 else None,
             )
         self._shutdown_vc_stream(stream)
+        self._stop_live_vc_backend()
         self._join_vc_recording_threads(stop_thread, worker)
 
         self.safe_log(string("ui.recording_stopped_feedback", label=label), "warning")
@@ -3001,9 +3029,7 @@ class CeluneUI(App):
         )
         channel_count = 2 if channels >= 2 else 1
         vad_hangover_frames = self._vc_vad_hangover_frames(sample_rate)
-        vad_preroll_frames = self._vc_vad_preroll_frames(sample_rate)
         live_chunk_frames = self._vc_live_chunk_frames(sample_rate)
-        live_chunk_overlap_frames = self._vc_live_chunk_overlap_frames(sample_rate)
         ai_vad = create_live_voice_activity_detector(input_config)
         submission_queue: queue_module.Queue[
             Optional[tuple[AudioChunk, int, str, bool]]
@@ -3069,7 +3095,13 @@ class CeluneUI(App):
                 try:
                     if self.celune is None:
                         continue
-                    converted = self.celune.convert_audio(
+                    converter = getattr(self.celune, "convert_live_audio", None)
+                    if not callable(converter):
+                        converter = self.celune.convert_audio
+                    converted = cast(
+                        Callable[..., Optional[AudioOutput]],
+                        converter,
+                    )(
                         audio,
                         queued_sample_rate,
                         label=queued_label,
@@ -3137,45 +3169,28 @@ class CeluneUI(App):
                 self._vc_recording_previous_rms = current_rms
                 self._vc_recording_captured_frames += len(callback_audio)
 
-                buffered_audio: Optional[AudioChunk] = None
+                live_audio: Optional[AudioChunk] = None
                 if voice_detected:
-                    if self._vc_recording_buffered_frames <= 0:
-                        self._prepend_vc_preroll_locked()
+                    self._vc_recording_speech_started = True
                     self._vc_recording_silence_frames = 0
-                    self._vc_recording_chunks.append(callback_audio)
-                    self._vc_recording_buffered_frames += len(callback_audio)
-                    self._clear_vc_preroll_locked()
-                    if self._vc_recording_buffered_frames >= live_chunk_frames:
-                        buffered_audio = self._flush_vc_recording_chunk_locked(
-                            keep_tail_frames=live_chunk_overlap_frames,
-                        )
-                elif self._vc_recording_buffered_frames > 0:
+                    live_audio = callback_audio
+                elif self._vc_recording_speech_started:
                     self._vc_recording_silence_frames += len(callback_audio)
                     if self._vc_recording_silence_frames <= vad_hangover_frames:
-                        self._vc_recording_chunks.append(callback_audio)
-                        self._vc_recording_buffered_frames += len(callback_audio)
+                        live_audio = callback_audio
                     else:
-                        buffered_audio = self._flush_vc_recording_chunk_locked()
+                        self._vc_recording_speech_started = False
                         self._vc_recording_silence_frames = 0
-                        self._append_vc_preroll_audio_locked(
-                            callback_audio,
-                            vad_preroll_frames,
-                        )
                         if ai_vad is not None:
                             ai_vad.reset()
-                else:
-                    self._append_vc_preroll_audio_locked(
-                        callback_audio,
-                        vad_preroll_frames,
-                    )
 
                 if (
-                    buffered_audio is not None
+                    live_audio is not None
                     and self._vc_recording_submission_queue is not None
                 ):
                     self._enqueue_vc_submission_chunk(
                         self._vc_recording_submission_queue,
-                        (buffered_audio, sample_rate, label, False),
+                        (live_audio, sample_rate, label, False),
                     )
 
         try:
@@ -3185,6 +3200,7 @@ class CeluneUI(App):
                 dtype="float32",
                 callback=callback,
                 device=input_device,
+                blocksize=live_chunk_frames,
             )
             stream.start()
         except Exception as e:
@@ -3210,6 +3226,7 @@ class CeluneUI(App):
             self._vc_recording_preroll_frames = 0
             self._vc_recording_previous_rms = 0.0
             self._vc_recording_silence_frames = 0
+            self._vc_recording_speech_started = False
             self._vc_recording_submission_queue = submission_queue
             self._vc_recording_stop_thread = None
             self._vc_recording_worker = worker
@@ -3249,6 +3266,7 @@ class CeluneUI(App):
                     else None,
                 )
             self._shutdown_vc_stream(stream)
+            self._stop_live_vc_backend()
             self._join_vc_recording_threads(stop_thread, worker)
 
             self.safe_log(string("ui.recording_stopped", label=label), "info")
@@ -3282,6 +3300,7 @@ class CeluneUI(App):
             ) = self._stop_vc_recording_stream()
             self._finish_vc_submission_queue(submission_queue)
         self._shutdown_vc_stream(stream)
+        self._stop_live_vc_backend()
         self._join_vc_recording_threads(stop_thread, worker)
 
     def tts_voice_changed(self, name: str) -> None:

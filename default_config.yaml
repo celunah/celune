@@ -25,8 +25,9 @@ gpt_sovits_t2s_weights_path: null
 
 # Qwen3 TTS settings
 #
-# x-vectors make Celune adhere to the reference more strongly
-qwen3_x_vector_only: true
+# Full reference conditioning preserves the reference prosody and expression.
+# Set this to true when stronger speaker identity matters more than expression.
+qwen3_x_vector_only: false
 
 # CEVOICE voice selection
 #
