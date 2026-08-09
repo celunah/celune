@@ -3,7 +3,7 @@
 
 ---
 
-![Python](https://img.shields.io/badge/Python-3.12–3.14-cebaff) ![License](https://img.shields.io/badge/License-MIT-cebaff) ![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff) ![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
+![Python](https://img.shields.io/badge/Python-3.12–3.14-cebaff) ![License](https://img.shields.io/badge/License-Apache%202.0-cebaff) ![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff) ![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
 
 Celune is a conversational character engine with agentic features.
 
@@ -68,7 +68,7 @@ Celune never was, and will never become an "AI slop" project.
 
 ## License note
 
-Celune is licensed under the [MIT license](https://opensource.org/license/mit), but the software may download certain models from [Hugging Face](https://huggingface.co) that are of varying licenses, such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.), [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS), [GPL-3.0](https://opensource.org/license/gpl-3.0) (SeedVC), as well as Celune's own license: MIT (Whisper, Silero VAD, etc.). Users of Celune are expected to read and comply with any applicable license terms for the models they intend to use.
+Celune is licensed under the [MIT license](https://opensource.org/license/mit) for Celune 4.3.2 and older, Apache 2.0 starting from Celune 5.0, but the software may download certain models from [Hugging Face](https://huggingface.co) that are of varying licenses, such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.), [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS), [GPL-3.0](https://opensource.org/license/gpl-3.0) (SeedVC), as well as Celune's own license: MIT (Whisper, Silero VAD, etc.). Users of Celune are expected to read and comply with any applicable license terms for the models they intend to use.
 
 ## Voices & samples
 
