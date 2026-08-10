@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Typed lifecycle ownership for Celune's future local-only agent runtime."""
 
 from __future__ import annotations

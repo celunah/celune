@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Worker entrypoint for running one backend in its private environment."""
 
 import sys

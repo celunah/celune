@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Shared runtime helpers for Celune voice conversion."""
 
 import contextlib

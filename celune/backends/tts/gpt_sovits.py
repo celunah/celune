@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """GPT-SoVITS backend implementation for Celune."""
 
 import contextlib
