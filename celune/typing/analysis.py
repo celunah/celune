@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Analysis-specific protocols and type aliases."""
 
 from collections.abc import Mapping
