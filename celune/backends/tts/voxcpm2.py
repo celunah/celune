@@ -9,9 +9,8 @@ from typing import Optional, Union
 
 import numpy as np
 import torch
+from transformers import LlamaTokenizerFast
 from voxcpm import VoxCPM
-from transformers import AutoTokenizer
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import BASE_SR
@@ -24,17 +23,27 @@ from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 class _VoxCPMTextTokenizer:
     """Adapt the checkpoint tokenizer to VoxCPM2's list-returning interface."""
 
-    def __init__(self, tokenizer: PreTrainedTokenizerBase) -> None:
+    def __init__(self, tokenizer: LlamaTokenizerFast) -> None:
         self._tokenizer = tokenizer
+        self._multichar_tokens = {
+            token
+            for token in tokenizer.vocab
+            if len(token) >= 2 and all("\u4e00" <= char <= "\u9fff" for char in token)
+        }
 
     def __call__(self, text: str) -> list[int]:
-        """Tokenize text without adding tokenizer-wrapper special tokens."""
+        """Tokenize text while splitting multicharacter Chinese tokens."""
+        tokens = self._tokenizer.tokenize(text)
+        processed: list[str] = []
+        for token in tokens:
+            clean_token = token.replace("▁", "")
+            if clean_token in self._multichar_tokens:
+                processed.extend(clean_token)
+            else:
+                processed.append(token)
         return [
             int(token_id)
-            for token_id in self._tokenizer.encode(
-                text,
-                add_special_tokens=False,
-            )
+            for token_id in self._tokenizer.convert_tokens_to_ids(processed)
         ]
 
 
@@ -166,15 +175,6 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
     suppress_backend_output = _suppress_backend_output
 
     @staticmethod
-    def _to_numpy_audio(chunk: Union[torch.Tensor, np.ndarray]) -> AudioChunk:
-        """Convert one VoxCPM tensor chunk to a one-dimensional audio array."""
-        if isinstance(chunk, torch.Tensor):
-            audio = chunk.detach().float().cpu().numpy()
-        else:
-            audio = chunk
-        return np.asarray(audio, dtype=np.float32).reshape(-1)
-
-    @staticmethod
     def _install_checkpoint_tokenizer(
         model: Optional[VoxCPM],
         snapshot_path: Optional[str],
@@ -183,14 +183,22 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         if model is None or snapshot_path is None:
             return
 
-        tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer = LlamaTokenizerFast.from_pretrained(
             snapshot_path,
             local_files_only=True,
-            trust_remote_code=True,
         )
         runtime = getattr(model, "tts_model", None)
         if runtime is not None and hasattr(runtime, "text_tokenizer"):
             runtime.text_tokenizer = _VoxCPMTextTokenizer(tokenizer)
+
+    @staticmethod
+    def _to_numpy_audio(chunk: Union[torch.Tensor, np.ndarray]) -> AudioChunk:
+        """Convert one VoxCPM tensor chunk to a one-dimensional audio array."""
+        if isinstance(chunk, torch.Tensor):
+            audio = chunk.detach().float().cpu().numpy()
+        else:
+            audio = chunk
+        return np.asarray(audio, dtype=np.float32).reshape(-1)
 
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None

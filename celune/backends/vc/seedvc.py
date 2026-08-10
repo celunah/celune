@@ -6,10 +6,11 @@ import gc
 import importlib
 import importlib.metadata
 import importlib.util
+import os
 import sys
 import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from pathlib import Path
 from types import ModuleType, SimpleNamespace, TracebackType
 from typing import Optional, cast
@@ -121,6 +122,14 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         self._wrapper_lock = threading.Lock()
 
     @staticmethod
+    @contextlib.contextmanager
+    def _suppress_native_stdout() -> Generator[None, None, None]:
+        """Keep native Seed-VC diagnostics away from the worker protocol stream."""
+        with open(os.devnull, "w", encoding="utf-8") as native_stdout:
+            with contextlib.redirect_stdout(native_stdout):
+                yield
+
+    @staticmethod
     def _seedvc_huggingface_cache_dir(create: bool = False) -> Path:
         """Return the shared Hugging Face cache directory used for Seed-VC assets."""
         return huggingface_hub_cache_dir(create=create)
@@ -196,7 +205,20 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                     fp16=device.type == "cuda",
                 )
                 self.log(string("seedvc.loading_live_models"), "info")
-                model_set = realtime_module.load_models(args)
+                source_file = getattr(realtime_module, "__file__", None)
+                source_root = (
+                    Path(source_file).resolve().parent
+                    if isinstance(source_file, str)
+                    else None
+                )
+                previous_cwd = Path.cwd()
+                try:
+                    if source_root is not None and source_root.is_dir():
+                        os.chdir(source_root)
+                    with self._suppress_native_stdout():
+                        model_set = realtime_module.load_models(args)
+                finally:
+                    os.chdir(previous_cwd)
                 self._live_module = realtime_module
                 self._live_model_set = model_set
             return self._live_module, self._live_model_set
@@ -216,7 +238,8 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                 except (ImportError, ModuleNotFoundError, ValueError):
                     module = None
                 if module is not None:
-                    imported = __import__(module_name, fromlist=["*"])
+                    with cls._suppress_native_stdout():
+                        imported = __import__(module_name, fromlist=["*"])
                     return cast(_SeedVCRealtimeModule, imported)
             raise ImportError(string("seedvc.live_path_required"))
 
@@ -229,7 +252,8 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         source_root = str(script_path.parent)
         sys.path.insert(0, source_root)
         try:
-            spec.loader.exec_module(module)
+            with cls._suppress_native_stdout():
+                spec.loader.exec_module(module)
         finally:
             with contextlib.suppress(ValueError):
                 sys.path.remove(source_root)
@@ -513,20 +537,21 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             self._live_model_sample_rate,
             16000,
         ).squeeze(0)
-        output = self._live_module.custom_infer(
-            self._live_model_set,
-            self._live_reference_wav,
-            str(self._live_reference_path),
-            input_wav_res,
-            self._live_block_frame_16k,
-            self._live_skip_head,
-            self._live_skip_tail,
-            self._live_return_length,
-            _LIVE_DIFFUSION_STEPS,
-            _LIVE_INFERENCE_CFG_RATE,
-            _LIVE_MAX_PROMPT_SECONDS,
-            _LIVE_CONTEXT_DIFFERENCE_SECONDS,
-        )
+        with self._suppress_native_stdout():
+            output = self._live_module.custom_infer(
+                self._live_model_set,
+                self._live_reference_wav,
+                str(self._live_reference_path),
+                input_wav_res,
+                self._live_block_frame_16k,
+                self._live_skip_head,
+                self._live_skip_tail,
+                self._live_return_length,
+                _LIVE_DIFFUSION_STEPS,
+                _LIVE_INFERENCE_CFG_RATE,
+                _LIVE_MAX_PROMPT_SECONDS,
+                _LIVE_CONTEXT_DIFFERENCE_SECONDS,
+            )
         return np.asarray(
             self._apply_live_sola(output).detach().cpu().numpy(),
             dtype=np.float32,

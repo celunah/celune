@@ -80,10 +80,8 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     ) -> None:
         """Start the worker process and forward its stderr logs."""
         environment_variables = os.environ.copy()
-        # The compiled launcher sets PYTHONHOME for Celune's core runtime. A
-        # backend worker may use a different Python installation, so inheriting
-        # that value can mix the core interpreter's stdlib with the worker's
-        # runtime modules.
+        # discard inherited pip and uv variables so Celune's base configuration
+        # cannot affect dependency resolution for Celune backends
         environment_variables.pop("PYTHONHOME", None)
         project_path = str(project_root())
         existing_python_path = environment_variables.get("PYTHONPATH")

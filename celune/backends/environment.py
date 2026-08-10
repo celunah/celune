@@ -32,7 +32,10 @@ _WORKER_HUGGINGFACE_REQUIREMENTS = (
     "huggingface-hub>=0.36,<1.0.0",
     "transformers>=4.56,<5.0.0",
     "lingua-language-detector>=2.2.0,<3.0.0",
+    "librosa==0.11.0",
+    "llvmlite==0.47.0",
     "numpy",
+    "numba==0.65.1",
     "pillow",
     "platformdirs",
     "psutil",
@@ -40,45 +43,14 @@ _WORKER_HUGGINGFACE_REQUIREMENTS = (
     "soundfile",
     "zstandard",
 )
+_MAIN_BRANCH_PYTORCH_REQUIREMENTS = (
+    "torch==2.11.0+cu128",
+    "torchaudio==2.11.0+cu128",
+    "torchvision==0.26.0+cu128",
+)
 _PYTORCH_INDEX_URLS = (
     "https://pypi.org/simple",
-    "https://download.pytorch.org/whl/cu130",
-)
-_QWEN3_RUNTIME_REQUIREMENTS = (
-    "accelerate==1.12.0",
-    "einops",
-    "onnxruntime",
-    "scipy",
-    "sox",
-    "torch>=2.5.1",
-    "torchaudio",
-    "transformers==4.57.3",
-)
-_VOXCPM2_RUNTIME_REQUIREMENTS = (
-    "einops",
-    "pydantic",
-    "scipy",
-    "safetensors",
-    "torch>=2.5.0",
-    "torchcodec",
-    "torchaudio>=2.5.0",
-    "tqdm",
-)
-_DOTSTTS_RUNTIME_REQUIREMENTS = (
-    "einops",
-    "langcodes[data]",
-    "loguru",
-    "numpy>=2.2.6",
-    "pydantic>=2.12.5,<3",
-    "PyYAML>=6.0.3",
-    "safetensors>=0.8.0rc0",
-    "scipy",
-    "soundfile>=0.13.1",
-    "torch>=2.8.0",
-    "torchaudio>=2.8.0",
-    "torchdiffeq",
-    "tqdm",
-    "transformers>=4.57.0",
+    "https://download.pytorch.org/whl/cu128",
 )
 _UV_OPERATION_TIMEOUT_SECONDS = 900.0
 _DEFAULT_BACKEND_PYTHON = "3.13"
@@ -97,8 +69,6 @@ class BackendManifest:
     runtime: Optional[str] = None
     index_urls: tuple[str, ...] = ()
     revision: int = 1
-    no_deps_requirements: tuple[str, ...] = ()
-    install_librosa_compat: bool = False
 
     def fingerprint(self) -> str:
         """Return the stable environment fingerprint for this manifest."""
@@ -150,73 +120,74 @@ BACKEND_MANIFESTS = {
     "mini": BackendManifest(
         backend_id="mini",
         kind="tts",
-        requirements=(*_WORKER_HUGGINGFACE_REQUIREMENTS, "pocket-tts>=2.1.0"),
+        requirements=(
+            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
+            *_WORKER_HUGGINGFACE_REQUIREMENTS,
+            "pocket-tts>=2.1.0",
+        ),
         backend_module="celune.backends.tts.mini",
         backend_class="Mini",
+        index_urls=_PYTORCH_INDEX_URLS,
     ),
     "qwen3": BackendManifest(
         backend_id="qwen3",
         kind="tts",
         requirements=(
+            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
-            *_QWEN3_RUNTIME_REQUIREMENTS,
+            "faster-qwen3-tts>=0.2.4",
         ),
         backend_module="celune.backends.tts.qwen3",
         backend_class="Qwen3",
         index_urls=_PYTORCH_INDEX_URLS,
-        no_deps_requirements=(
-            "faster-qwen3-tts==0.2.6",
-            "qwen-tts==0.1.1",
-        ),
-        install_librosa_compat=True,
     ),
     "dotstts": BackendManifest(
         backend_id="dotstts",
         kind="tts",
         requirements=(
+            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
-            *_DOTSTTS_RUNTIME_REQUIREMENTS,
+            "dots.tts @ git+https://github.com/celunah/dots.tts",
         ),
         backend_module="celune.backends.tts.dotstts",
         backend_class="DotsTtsMF",
         python="3.12",
         index_urls=_PYTORCH_INDEX_URLS,
-        no_deps_requirements=(
-            "dots.tts @ git+https://github.com/celunah/dots.tts@main",
-        ),
-        install_librosa_compat=True,
     ),
     "voxcpm2": BackendManifest(
         backend_id="voxcpm2",
         kind="tts",
         requirements=(
+            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
-            *_VOXCPM2_RUNTIME_REQUIREMENTS,
+            "voxcpm>=2.0.0",
         ),
         backend_module="celune.backends.tts.voxcpm2",
         backend_class="VoxCPM2",
         python="3.12",
         index_urls=_PYTORCH_INDEX_URLS,
-        no_deps_requirements=("voxcpm>=2.0.0",),
-        install_librosa_compat=True,
     ),
     "gpt-sovits": BackendManifest(
         backend_id="gpt-sovits",
         kind="tts",
         requirements=(
+            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
             "cn2an",
             "ffmpeg-python",
             "g2p-en",
             "g2pk2",
+            "jieba",
             "jieba-fast",
             "ko-pron",
+            "matplotlib",
             "opencc",
             "peft<0.18.0",
             "pypinyin",
             "pytorch-lightning>=2.4",
             "pyopenjtalk>=0.4.1",
             "rotary-embedding-torch",
+            "split-lang",
             "tojyutping",
             "torchmetrics<=1.5",
             "wordsegment",
@@ -230,6 +201,7 @@ BACKEND_MANIFESTS = {
         backend_id="seed-vc",
         kind="vc",
         requirements=(
+            *_MAIN_BRANCH_PYTORCH_REQUIREMENTS,
             *_WORKER_HUGGINGFACE_REQUIREMENTS,
             "seed-vc @ git+https://github.com/celunah/seed-vc.git",
         ),
@@ -368,12 +340,19 @@ class BackendEnvironmentManager:
                 install_arguments = [
                     "pip",
                     "install",
+                    "--no-config",
+                    "--no-cache",
                     "--python",
                     str(self._python_path(virtualenv)),
                 ]
                 if manifest.index_urls:
                     install_arguments.extend(
-                        ["--index-url", manifest.index_urls[0]]
+                        [
+                            "--index-strategy",
+                            "unsafe-best-match",
+                            "--index-url",
+                            manifest.index_urls[0],
+                        ]
                         + [
                             item
                             for index_url in manifest.index_urls[1:]
@@ -381,12 +360,6 @@ class BackendEnvironmentManager:
                         ]
                     )
                 self._run_uv(*install_arguments, *manifest.requirements)
-                if manifest.no_deps_requirements:
-                    self._run_uv(
-                        *install_arguments,
-                        "--no-deps",
-                        *manifest.no_deps_requirements,
-                    )
                 metadata = {
                     "manifest": asdict(manifest),
                     "fingerprint": manifest.fingerprint(),
@@ -419,10 +392,20 @@ class BackendEnvironmentManager:
         """Run one uv operation and convert failures into backend errors."""
         assert self.uv_executable is not None
         environment = os.environ.copy()
-        # The compiled launcher sets PYTHONHOME for Celune's core runtime. uv
-        # may create a backend build environment with another Python version,
-        # so it must not pass the core interpreter home into that environment.
-        environment.pop("PYTHONHOME", None)
+        # The compiled launcher and its host environment may carry core Python
+        # or package-manager settings into uv. Those settings can constrain
+        # backend resolution, so the isolated installer must not inherit them.
+        for variable in tuple(environment):
+            if variable.startswith(("PIP_", "UV_")):
+                environment.pop(variable, None)
+        for variable in (
+            "PYTHONHOME",
+            "PYTHONPATH",
+            "PYTHONUSERBASE",
+            "PYTHONNOUSERSITE",
+            "VIRTUAL_ENV",
+        ):
+            environment.pop(variable, None)
         try:
             subprocess.run(
                 [self.uv_executable, *arguments],

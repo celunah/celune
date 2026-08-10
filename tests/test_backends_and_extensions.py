@@ -3,6 +3,7 @@
 
 import contextlib
 import importlib
+import io
 import re
 import sys
 import tempfile
@@ -33,7 +34,7 @@ from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.extensions.manager import CeluneExtensionManager
 from celune.i18n import string
 from celune.typing.aliases import AudioChunk
-from celune.typing.backends import BackendModel
+from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
 from celune.utils import discard
 
 from .support import (
@@ -489,6 +490,76 @@ class BackendTests(TestCase):
             np.array([0.1, -0.1], dtype=np.float32),
         )
 
+    def test_seedvc_live_loader_uses_the_module_source_directory(self) -> None:
+        """Verify native Seed-VC relative resources resolve from its package root."""
+        backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
+        module = ModuleType("seed_vc.real_time")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_root = Path(temp_dir)
+            source_file = source_root / "real-time-gui.py"
+            source_file.touch()
+            module.__file__ = str(source_file)
+            captured: dict[str, Path] = {}
+            load_count = 0
+
+            def load_models(_args: SimpleNamespace) -> tuple[object, ...]:
+                """Capture the working directory used by native model loading."""
+                nonlocal load_count
+                load_count += 1
+                captured["cwd"] = Path.cwd()
+                return ("model", "semantic", "vocoder", "campplus", "mel", {})
+
+            setattr(module, "load_models", load_models)
+            captured_stdout = io.StringIO()
+            with (
+                contextlib.redirect_stdout(captured_stdout),
+                mock.patch.object(backend, "_load_live_module", return_value=module),
+            ):
+                backend._get_live_runtime()
+                backend._get_live_runtime()
+
+        self.assertEqual(captured["cwd"], source_root)
+        self.assertEqual(load_count, 1)
+        self.assertEqual(captured_stdout.getvalue(), "")
+
+    def test_seedvc_live_inference_keeps_native_stdout_off_the_worker_stream(
+        self,
+    ) -> None:
+        """Verify native live inference diagnostics cannot corrupt worker framing."""
+        backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
+        module = ModuleType("seed_vc.real_time")
+
+        def custom_infer(*_args: object) -> torch.Tensor:
+            """Emit the diagnostic that the native implementation writes during inference."""
+            print("target_lengths: tensor([1])")
+            return torch.zeros(4)
+
+        setattr(module, "custom_infer", custom_infer)
+        backend._live_module = cast(_SeedVCRealtimeModule, module)
+        backend._live_model_set = ("model",)
+        backend._live_reference_path = Path("reference.wav")
+        backend._live_reference_wav = np.zeros(4, dtype=np.float32)
+        backend._live_model_sample_rate = 22050
+        backend._live_block_frame = 4
+        backend._live_block_frame_16k = 1
+        backend._live_input_wav = torch.zeros(4)
+        captured_stdout = io.StringIO()
+
+        with (
+            contextlib.redirect_stdout(captured_stdout),
+            mock.patch.object(
+                backend,
+                "_apply_live_sola",
+                return_value=torch.zeros(4),
+            ),
+        ):
+            output = backend._convert_live_block(
+                np.zeros(4, dtype=np.float32),
+            )
+
+        self.assertEqual(captured_stdout.getvalue(), "")
+        self.assertEqual(output.shape, (4,))
+
     def test_seedvc_backend_uses_configured_pitch_shift_for_wrapper_requests(
         self,
     ) -> None:
@@ -732,36 +803,23 @@ class BackendTests(TestCase):
 
             self.assertEqual(model.cfg_value, 4.2)
 
-    def test_voxcpm2_uses_the_checkpoint_tokenizer_interface(self) -> None:
-        """Verify VoxCPM2 receives expanded IDs without tokenizer special tokens."""
-        with mock_voxcpm_backend():
-            voxcpm2 = importlib.import_module("celune.backends.tts.voxcpm2")
+    def test_voxcpm2_reloads_the_checkpoint_tokenizer(self) -> None:
+        """Verify VoxCPM2 replaces its package loader's incompatible tokenizer."""
+        with mock_voxcpm_backend() as voxcpm2_cls:
             tokenizer = mock.Mock()
-            tokenizer.encode.return_value = [11, 12]
-            model = SimpleNamespace(
-                tts_model=SimpleNamespace(text_tokenizer=mock.Mock())
-            )
-
-            with mock.patch.object(
-                voxcpm2.AutoTokenizer,
-                "from_pretrained",
+            tokenizer.vocab = {"hello": 11}
+            model = SimpleNamespace(tts_model=SimpleNamespace(text_tokenizer=None))
+            with mock.patch(
+                "celune.backends.tts.voxcpm2.LlamaTokenizerFast.from_pretrained",
                 return_value=tokenizer,
-            ) as loader:
-                voxcpm2.VoxCPM2._install_checkpoint_tokenizer(
-                    model,
-                    "C:/cached/VoxCPM2",
-                )
+            ):
+                voxcpm2_cls._install_checkpoint_tokenizer(model, "snapshot")
 
-            loader.assert_called_once_with(
-                "C:/cached/VoxCPM2",
-                local_files_only=True,
-                trust_remote_code=True,
-            )
-            self.assertEqual(model.tts_model.text_tokenizer("hello"), [11, 12])
-            tokenizer.encode.assert_called_once_with(
-                "hello",
-                add_special_tokens=False,
-            )
+            tokenizer.tokenize.return_value = ["hello"]
+            tokenizer.convert_tokens_to_ids.return_value = [11]
+            self.assertEqual(model.tts_model.text_tokenizer("hello"), [11])
+            tokenizer.tokenize.assert_called_once_with("hello")
+            tokenizer.convert_tokens_to_ids.assert_called_once_with(["hello"])
 
     @staticmethod
     def test_voxcpm2_requires_reference_text_for_valid_voice_identifiers() -> None:
@@ -1063,6 +1121,31 @@ class BackendTests(TestCase):
                 list(backend.generate_stream(model, text="hello", voice="calm"))
 
             self.assertEqual(model.prompt_text, "Pack reference.")
+
+    def test_dotstts_reloads_the_tokenizer_with_the_mistral_regex_fix(self) -> None:
+        """Verify dots.tts applies Transformers' Mistral tokenizer compatibility flag."""
+        with mock_dotstts_backend() as dotstts_cls:
+            tokenizer = object()
+            model = SimpleNamespace(
+                pretrained_path=Path("snapshot"),
+                model=SimpleNamespace(
+                    tokenizer=object(),
+                    core=SimpleNamespace(tokenizer=object()),
+                ),
+            )
+            with mock.patch(
+                "celune.backends.tts.dotstts.AutoTokenizer.from_pretrained",
+                return_value=tokenizer,
+            ) as load_tokenizer:
+                dotstts_cls._fix_checkpoint_tokenizer(model)
+
+            load_tokenizer.assert_called_once_with(
+                "snapshot",
+                local_files_only=True,
+                fix_mistral_regex=True,
+            )
+            self.assertIs(model.model.tokenizer, tokenizer)
+            self.assertIs(model.model.core.tokenizer, tokenizer)
 
     def test_dotstts_uses_truncated_reference_wav_when_present(self) -> None:
         """Verify dots.tts passes reference audio through the shared truncation hook."""

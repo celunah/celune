@@ -11,6 +11,7 @@ import loguru
 import numpy as np
 import torch
 from dots_tts.runtime import DotsTtsRuntime
+from transformers import AutoTokenizer
 
 from ...cevoice import CEVoiceLoader, default_loader
 from ...typing.aliases import AudioChunk, AudioChunks
@@ -169,6 +170,17 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
 
     suppress_backend_output = _suppress_backend_output
 
+    @staticmethod
+    def _fix_checkpoint_tokenizer(model: DotsTtsRuntime) -> None:
+        """Reload dots.tts's tokenizer with Transformers' Mistral regex fix."""
+        tokenizer = AutoTokenizer.from_pretrained(
+            str(model.pretrained_path),
+            local_files_only=True,
+            fix_mistral_regex=True,
+        )
+        model.model.tokenizer = tokenizer
+        model.model.core.tokenizer = tokenizer
+
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
     ) -> tuple[bool, Optional[str]]:
@@ -222,6 +234,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                 optimize=optimize,
                 max_generate_length=max_generate_length,
             )
+            self._fix_checkpoint_tokenizer(self.model)
 
         return self.model
 

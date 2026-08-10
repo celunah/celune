@@ -35,10 +35,6 @@ def _load_backend(
     kwargs: BackendArguments,
 ) -> _BackendRuntime:
     """Import and construct the backend described by one manifest."""
-    if manifest.install_librosa_compat:
-        from .audio_compat import install_librosa_compat
-
-        install_librosa_compat()
     module = importlib.import_module(manifest.backend_module)
     backend_class = getattr(module, manifest.backend_class)
     if manifest.kind == "vc":
