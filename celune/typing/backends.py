@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Backend-facing protocols and type aliases."""
 
 from __future__ import annotations

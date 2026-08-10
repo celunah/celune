@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for Persona character app-data paths and Markdown overrides."""
 
 import tempfile

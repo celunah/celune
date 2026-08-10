@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for CEVOICE parsing, writing, loading, and fallback behavior."""
 
 import copy

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Types for Celune's isolated backend worker protocol."""
 
 from __future__ import annotations
