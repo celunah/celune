@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for Celune core behavior without real models or GPU work."""
 
 import contextlib

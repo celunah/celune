@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Public package surface for the Celune character engine.
 
 Importing :mod:`celune` exposes the main :class:`Celune` engine together with

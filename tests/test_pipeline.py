@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for pipeline helpers that do not perform real synthesis."""
 
 import json as _json

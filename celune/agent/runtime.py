@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Placeholder lifecycle contract for Celune's future agent runtime."""
 
 from __future__ import annotations
