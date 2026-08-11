@@ -262,6 +262,7 @@ class EngineEventIntegrationTests(TestCase):
 
         celune.cur_state = "speaking"
         celune.close()
+        celune.close()
 
         self.assertEqual(state_events[-1].old_state, "init")
         self.assertEqual(state_events[-1].new_state, "speaking")

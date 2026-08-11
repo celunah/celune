@@ -76,6 +76,32 @@ void launcher_reset_terminal_state(void) {
     SetConsoleCtrlHandler(ignore_console_interrupt, FALSE);
 }
 
+void launcher_prepare_failure_output(void) {
+    HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    COORD line_start;
+    DWORD line_width;
+    DWORD written;
+
+    if (output == INVALID_HANDLE_VALUE ||
+        !GetConsoleScreenBufferInfo(output, &info)) {
+        return;
+    }
+
+    line_start.X = info.srWindow.Left;
+    line_start.Y = info.srWindow.Bottom;
+    line_width = (DWORD)(info.srWindow.Right - info.srWindow.Left + 1);
+    FillConsoleOutputCharacter(output, ' ', line_width, line_start, &written);
+    FillConsoleOutputAttribute(
+        output,
+        info.wAttributes,
+        line_width,
+        line_start,
+        &written
+    );
+    SetConsoleCursorPosition(output, line_start);
+}
+
 void launcher_wait_after_failure(void) {
     fputs("\nPress any key to exit.\n", stderr);
     fflush(stderr);

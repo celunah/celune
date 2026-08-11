@@ -19,6 +19,7 @@ int launcher_startup_was_interrupted(void);
 void launcher_report_failure(int return_code);
 void launcher_setup_terminal(void);
 void launcher_reset_terminal_state(void);
+void launcher_prepare_failure_output(void);
 void launcher_wait_after_failure(void);
 void launcher_restore_child_terminal(void);
 

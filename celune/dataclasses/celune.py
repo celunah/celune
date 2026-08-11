@@ -159,6 +159,7 @@ class CeluneAudioState:
 class CeluneRuntimeState:
     """Top-level lifecycle and runtime integration state."""
 
+    closed: bool = False
     regenerate: bool = False
     locked: bool = True
     loaded: bool = False
@@ -345,6 +346,7 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("_last_flavor", "_runtime_state", "last_flavor"),
     ForwardedPropertySpec("_ready_announced", "_runtime_state", "ready_announced"),
     ForwardedPropertySpec("_reload_pending", "_runtime_state", "reload_pending"),
+    ForwardedPropertySpec("_closed", "_runtime_state", "closed"),
     ForwardedPropertySpec("cur_state", "_runtime_state", "cur_state"),
     ForwardedPropertySpec("is_in_tutorial", "_runtime_state", "is_in_tutorial"),
     ForwardedPropertySpec("extension_manager", "_runtime_state", "extension_manager"),

@@ -34,6 +34,7 @@ int main(int argc, char **argv) {
 
     if (return_code != 0 || launcher_startup_was_interrupted()) {
         launcher_reset_terminal_state();
+        launcher_prepare_failure_output();
         launcher_report_failure(return_code);
         launcher_wait_after_failure();
         return return_code;

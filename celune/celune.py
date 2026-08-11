@@ -3595,6 +3595,10 @@ class Celune(CeluneStateAccessors):
 
     def close(self) -> None:
         """Shut off Celune and release loaded runtime state."""
+        with self._model_lock:
+            if self._closed:
+                return
+            self._closed = True
         self._emit_event("shutdown", ShutdownEvent(celune=self))
         try:
             close_pipeline(self)

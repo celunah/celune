@@ -295,6 +295,7 @@ class CeluneStateAccessors:
     sleeping: bool
     _last_flavor: Optional[str]
     _ready_announced: bool
+    _closed: bool
     is_in_tutorial: bool
     extension_manager: Optional[CeluneExtensionManager]
     glow: AudioRGBGlow
