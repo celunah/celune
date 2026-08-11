@@ -6,13 +6,15 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import unittest
+from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from unittest import mock
 
-from celune.backends import environment, remote
+from celune.backends import environment, remote, worker
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendEnvironment,
@@ -24,6 +26,7 @@ from celune.backends.environment import (
 )
 from celune.backends.tts import resolve_backend
 from celune.backends.worker_protocol import receive_message, send_message
+from celune.typing.backends import BackendModel, _BackendRuntime
 from celune.typing import WorkerMessage
 
 
@@ -87,6 +90,7 @@ class BackendEnvironmentTests(unittest.TestCase):
         self.assertIn("jieba", BACKEND_MANIFESTS["gpt-sovits"].requirements)
         self.assertIn("split-lang", BACKEND_MANIFESTS["gpt-sovits"].requirements)
         self.assertIn("matplotlib", BACKEND_MANIFESTS["gpt-sovits"].requirements)
+        self.assertIn("torchcodec", BACKEND_MANIFESTS["gpt-sovits"].requirements)
 
     def test_fingerprint_changes_when_requirements_change(self) -> None:
         """Verify dependency changes select a different environment directory."""
@@ -294,6 +298,102 @@ class BackendEnvironmentTests(unittest.TestCase):
         stream.seek(0)
         self.assertEqual(receive_message(stream), message)
 
+    def test_worker_stream_uses_protocol_stdout_during_backend_redirects(self) -> None:
+        """Verify backend stdout redirection cannot discard streamed protocol frames."""
+
+        class FakeBackend:
+            """Backend whose stream represents one generated audio frame."""
+
+            @staticmethod
+            def generate_stream(model: object, **kwargs: object):
+                """Yield one protocol-compatible fake audio frame."""
+                del model, kwargs
+                yield (b"audio", 48000, None)
+
+        protocol_stream = io.BytesIO()
+        with (
+            mock.patch("sys.stdout", io.StringIO()),
+            mock.patch.object(worker, "_WORKER_STDERR", io.StringIO()),
+        ):
+            response, _ = worker._run_request(
+                cast(_BackendRuntime, FakeBackend()),
+                {"operation": "generate_stream", "arguments": {"model_id": 1}},
+                {1: object()},
+                2,
+                protocol_stream,
+            )
+            send_message(protocol_stream, cast(WorkerMessage, response))
+
+        self.assertTrue(response["done"])
+        protocol_stream.seek(0)
+        frame = receive_message(protocol_stream)
+        self.assertTrue(frame["stream"])
+        self.assertEqual(frame["value"], (b"audio", 48000, None))
+        self.assertTrue(receive_message(protocol_stream)["done"])
+
+    def test_worker_unload_closes_runtime_models(self) -> None:
+        """Verify worker unload releases models stored outside the backend object."""
+
+        class FakeModel:
+            """Runtime stand-in that records whether the worker closed it."""
+
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                """Record worker-owned runtime cleanup."""
+                self.closed = True
+
+        class FakeBackend:
+            """Backend stand-in whose unload hook does not own the model table."""
+
+            def unload_model(self) -> None:
+                """Leave model-table cleanup to the worker."""
+
+            @staticmethod
+            def load_model(**_kwargs: object) -> FakeModel:
+                """Return one runtime owned by the worker model table."""
+                return FakeModel()
+
+        models: dict[int, BackendModel] = {}
+        loaded, next_model_id = worker._run_request(
+            cast(_BackendRuntime, FakeBackend()),
+            {"operation": "load_model", "arguments": {}},
+            models,
+            1,
+            io.BytesIO(),
+        )
+        model = cast(FakeModel, models[1])
+
+        unloaded, _ = worker._run_request(
+            cast(_BackendRuntime, FakeBackend()),
+            {"operation": "unload_model", "arguments": {}},
+            models,
+            next_model_id,
+            io.BytesIO(),
+        )
+
+        self.assertTrue(loaded["ok"])
+        self.assertTrue(unloaded["ok"])
+        self.assertTrue(model.closed)
+        self.assertEqual(models, {})
+
+    def test_worker_unload_ignores_broken_model_attribute_lookup(self) -> None:
+        """Verify torn-down Torch-like models cannot break worker cleanup."""
+
+        class PartiallyTornDownModel:
+            """Model stand-in whose Torch-style lookup is no longer usable."""
+
+            def __getattribute__(self, name: str) -> object:
+                if name in {"close", "unload"}:
+                    raise TypeError("argument of type 'NoneType' is not iterable")
+                return super().__getattribute__(name)
+
+        models: dict[int, BackendModel] = {1: PartiallyTornDownModel()}
+        worker._release_worker_models(models)
+
+        self.assertEqual(models, {})
+
     def test_remote_proxy_handles_fatal_frames_out_of_band(self) -> None:
         """Verify fatal worker notifications do not consume the response frame."""
         stream = io.BytesIO()
@@ -310,6 +410,81 @@ class BackendEnvironmentTests(unittest.TestCase):
 
         callback.assert_called_once_with()
         self.assertEqual(response["value"], "ready")
+
+    def test_remote_proxy_recreates_worker_builtin_exception_types(self) -> None:
+        """Verify worker ValueErrors remain ValueErrors across the proxy boundary."""
+        error = remote._worker_exception("builtins.ValueError", "bad input")
+
+        self.assertIsInstance(error, ValueError)
+        self.assertEqual(str(error), "bad input")
+
+    def test_remote_proxy_does_not_drain_after_consuming_worker_error_frame(
+        self,
+    ) -> None:
+        """Verify worker errors reach the caller without waiting for a done frame."""
+        stream = io.BytesIO()
+        send_message(
+            stream,
+            cast(
+                WorkerMessage,
+                {
+                    "ok": False,
+                    "error": "missing codec",
+                    "error_type": "builtins.ImportError",
+                },
+            ),
+        )
+        stream.seek(0)
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy._manifest = BackendManifest("fake", "tts", (), "module", "Backend")
+        proxy._process = cast(
+            subprocess.Popen[bytes],
+            SimpleNamespace(
+                stdin=io.BytesIO(),
+                stdout=stream,
+                poll=lambda: None,
+            ),
+        )
+        proxy._protocol_lock = threading.Lock()
+        proxy._log_callback = mock.Mock()
+
+        with mock.patch.object(proxy, "_drain_stream") as drain:
+            with self.assertRaisesRegex(ImportError, "missing codec"):
+                list(proxy._stream_request("generate_stream"))
+
+        drain.assert_not_called()
+
+    def test_remote_proxy_classifies_worker_tracebacks_as_errors(self) -> None:
+        """Verify raw worker traceback lines are not forwarded as informational logs."""
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy._worker_stderr = deque()
+        proxy._worker_stderr_lock = threading.Lock()
+        log = mock.Mock()
+        stream = io.BytesIO(
+            b"Traceback (most recent call last):\n"
+            b'  File "backend.py", line 1, in load\n'
+            b"ImportError: missing codec\n"
+            b"[INFO] worker still alive\n"
+        )
+
+        proxy._read_worker_logs(stream, log)
+
+        self.assertEqual(
+            [call.args[1] for call in log.call_args_list],
+            ["error", "error", "error", "info"],
+        )
+
+    def test_remote_proxy_uses_backend_error_for_unknown_worker_exception_types(
+        self,
+    ) -> None:
+        """Verify unknown backend exception classes retain their qualified name."""
+        error = remote._worker_exception("backend_pkg.ModelError", "generation failed")
+
+        self.assertIsInstance(error, remote.BackendError)
+        self.assertEqual(
+            str(error),
+            "backend_pkg.ModelError: generation failed",
+        )
 
     def test_remote_proxy_does_not_inherit_core_pythonhome(self) -> None:
         """Verify workers do not mix the core and backend Python runtimes."""

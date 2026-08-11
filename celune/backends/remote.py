@@ -1,16 +1,29 @@
 # SPDX-License-Identifier: MIT
 """Proxy objects for backends running in isolated Python processes."""
 
-import json
 import os
-import subprocess
+import json
+import builtins
 import threading
+import subprocess
 from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import IO, Optional, cast
 
+from .. import exceptions as celune_exceptions
+from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+from ..exceptions import BackendError
+from ..i18n import string
+from ..paths import project_root
+from ..typing.backends import (
+    BackendArgumentValue,
+    BackendArguments,
+    BackendDescription,
+    BackendGeneration,
+)
+from ..typing.worker import WorkerResponse, WorkerValue
 from .environment import (
     BackendEnvironment,
     BackendEnvironmentManager,
@@ -23,18 +36,28 @@ from .worker_protocol import (
     send_message,
 )
 from .vc.base import CeluneVCBackend
-from ..paths import project_root
-from ..i18n import string
-from ..typing.backends import (
-    BackendArgumentValue,
-    BackendArguments,
-    BackendDescription,
-    BackendGeneration,
-)
-from ..typing.worker import WorkerResponse, WorkerValue
-from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["RemoteBackendProxy", "RemoteModelHandle", "RemoteVCBackendProxy"]
+
+
+def _worker_exception(error_type: Optional[str], message: str) -> Exception:
+    """Recreate a safe built-in or Celune exception reported by a worker."""
+    if error_type:
+        module_name, _, class_name = error_type.rpartition(".")
+        namespace: Optional[object] = None
+        if module_name == "builtins":
+            namespace = builtins
+        elif module_name == "celune.exceptions":
+            namespace = celune_exceptions
+        if namespace is not None:
+            candidate = getattr(namespace, class_name, None)
+            if isinstance(candidate, type) and issubclass(candidate, Exception):
+                try:
+                    return candidate(message)
+                except Exception:
+                    pass
+        return BackendError(f"{error_type}: {message}")
+    return BackendError(message)
 
 
 @dataclass(frozen=True)
@@ -58,6 +81,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self._manifest = manifest
         self._environment_manager = environment_manager or BackendEnvironmentManager()
         self._fatal_callback = fatal
+        self._log_callback = log
         self._process: Optional[subprocess.Popen[bytes]] = None
         self._protocol_lock = threading.Lock()
         self._stderr_thread: Optional[threading.Thread] = None
@@ -116,13 +140,20 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         log: Callable[[str, str], None],
     ) -> None:
         """Forward worker stderr lines to Celune's logging callback."""
+        traceback_active = False
         for line in iter(stream.readline, b""):
             text = line.decode("utf-8", errors="replace").rstrip()
             if not text:
                 continue
             with self._worker_stderr_lock:
                 self._worker_stderr.append(text)
-            severity, _, message = self._split_worker_log(text)
+            severity, explicit, message = self._split_worker_log(text)
+            if text.startswith("Traceback (most recent call last):"):
+                traceback_active = True
+            if traceback_active and not explicit:
+                severity = "error"
+            if traceback_active and self._is_traceback_exception_line(text):
+                traceback_active = False
             log(message, severity)
 
     @staticmethod
@@ -133,6 +164,41 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             if severity in {"info", "warning", "error"}:
                 return severity, True, message
         return "info", False, text
+
+    @staticmethod
+    def _is_traceback_exception_line(text: str) -> bool:
+        """Return whether one worker stderr line contains a traceback's final exception."""
+        if text.startswith(("Traceback", "File ", "During ", "The above ")):
+            return False
+        return text.startswith(
+            (
+                "ArithmeticError:",
+                "AssertionError:",
+                "AttributeError:",
+                "EOFError:",
+                "FileExistsError:",
+                "FileNotFoundError:",
+                "ImportError:",
+                "IndexError:",
+                "KeyError:",
+                "LookupError:",
+                "MemoryError:",
+                "ModuleNotFoundError:",
+                "NameError:",
+                "NotImplementedError:",
+                "OSError:",
+                "OverflowError:",
+                "RuntimeError:",
+                "StopIteration:",
+                "SyntaxError:",
+                "SystemError:",
+                "TypeError:",
+                "UnboundLocalError:",
+                "UnicodeError:",
+                "ValueError:",
+                "ZeroDivisionError:",
+            )
+        )
 
     def _worker_error_detail(self) -> str:
         """Return recent worker stderr for a failed protocol operation."""
@@ -194,7 +260,10 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             )
             response = self._read_response(process)
         if not response.get("ok", False):
-            raise RuntimeError(response.get("error", "backend worker failed"))
+            raise _worker_exception(
+                response.get("error_type"),
+                response.get("error", "backend worker failed"),
+            )
         return response.get("value")
 
     def _stream_request(
@@ -215,13 +284,28 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 process.stdin, {"operation": operation, "arguments": arguments}
             )
             completed = False
+            stream_frame_count = 0
             try:
                 while True:
-                    response = self._read_stream_frame(process)
+                    try:
+                        response = self._read_stream_frame(process)
+                    except Exception:
+                        completed = True
+                        raise
                     if response.get("done", False):
+                        self._log_callback(
+                            f"[STREAM] proxy completed frames={stream_frame_count}",
+                            "info",
+                        )
                         completed = True
                         return
                     if response.get("stream", False):
+                        stream_frame_count += 1
+                        if stream_frame_count <= 3:
+                            self._log_callback(
+                                f"[STREAM] proxy received frame={stream_frame_count}",
+                                "info",
+                            )
                         yield response.get("value")
             finally:
                 if not completed:
@@ -234,7 +318,10 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Read one streaming frame and raise on worker-reported failures."""
         response = self._read_response(process)
         if not response.get("ok", False):
-            raise RuntimeError(response.get("error", "backend worker failed"))
+            raise _worker_exception(
+                response.get("error_type"),
+                response.get("error", "backend worker failed"),
+            )
         return response
 
     def _drain_stream(self, process: subprocess.Popen[bytes]) -> None:

@@ -314,6 +314,24 @@ def _release_loaded_object(value: ReleasableObject) -> None:
             unload()
 
 
+def _dispose_backend(
+    backend: Union[CeluneBackend, CeluneVCBackend],
+) -> None:
+    """Unload one backend and close its worker process when supported."""
+    try:
+        backend.unload_model()
+    finally:
+        _close_backend(backend)
+
+
+def _close_backend(backend: Union[CeluneBackend, CeluneVCBackend]) -> None:
+    """Close one backend process without repeating model unloading."""
+    close = getattr(backend, "close", None)
+    if callable(close):
+        with contextlib.suppress(Exception):
+            close()
+
+
 class Celune(CeluneStateAccessors):
     """The character engine for Celune."""
 
@@ -942,19 +960,29 @@ class Celune(CeluneStateAccessors):
             _release_loaded_object(tokenizer)
 
     def unload_runtime_state(
-        self, include_normalizer: bool = False, include_vc: bool = True
+        self,
+        include_normalizer: bool = False,
+        include_vc: bool = True,
+        close_backends: bool = False,
     ) -> None:
         """Unload unused models to regain memory.
 
         Args:
             include_normalizer: Whether to also unload the normalization model and tokenizer.
             include_vc: Whether to also unload the voice-conversion backend runtime.
+            close_backends: Whether to terminate isolated backend workers after unloading.
         """
         discard(self, "model")
 
-        self.backend.unload_model()
+        if close_backends:
+            _dispose_backend(self.backend)
+        else:
+            self.backend.unload_model()
         if include_vc and self.vc_backend is not None:
-            self.vc_backend.unload_model()
+            if close_backends:
+                _dispose_backend(self.vc_backend)
+            else:
+                self.vc_backend.unload_model()
 
         if include_normalizer:
             self._unload_normalizer_components()
@@ -972,14 +1000,16 @@ class Celune(CeluneStateAccessors):
         if self._backend_spec is None:
             return False
 
-        self.backend = self._resolve_tts_backend(
+        candidate_backend = self._resolve_tts_backend(
             self._backend_spec,
             log=self.log_callback,
             fatal=self.fatal,
             **self._backend_kwargs,
         )
-        self.backend.bind_fatal(self.fatal)
-        self.tts_backend = self.backend.name
+        candidate_backend.bind_fatal(self.fatal)
+        _close_backend(self.backend)
+        self.backend = candidate_backend
+        self.tts_backend = candidate_backend.name
         return True
 
     def _resolve_tts_backend(
@@ -1001,15 +1031,19 @@ class Celune(CeluneStateAccessors):
         if self._vc_backend_spec is None:
             return False
 
-        self.vc_backend = self._resolve_vc_backend(
+        candidate_backend = self._resolve_vc_backend(
             self._vc_backend_spec,
             log=self.log_callback,
         )
-        if hasattr(self.vc_backend, "pitch_shift"):
-            setattr(self.vc_backend, "pitch_shift", self.vc_pitch_shift)
-        if hasattr(self.vc_backend, "f0_condition"):
-            setattr(self.vc_backend, "f0_condition", self.vc_f0_condition)
-        self.voice_conversion_backend = self.vc_backend.name
+        if hasattr(candidate_backend, "pitch_shift"):
+            setattr(candidate_backend, "pitch_shift", self.vc_pitch_shift)
+        if hasattr(candidate_backend, "f0_condition"):
+            setattr(candidate_backend, "f0_condition", self.vc_f0_condition)
+        previous_backend = self.vc_backend
+        if previous_backend is not None:
+            _close_backend(previous_backend)
+        self.vc_backend = candidate_backend
+        self.voice_conversion_backend = candidate_backend.name
         return True
 
     def _resolve_vc_backend(
@@ -1306,6 +1340,10 @@ class Celune(CeluneStateAccessors):
                 self._validate_backend_against_preset(candidate_backend, preset)
                 if candidate_backend.uses_voice_bundles:
                     candidate_backend.validate_refs()
+                if previous_vc_backend is not None:
+                    _dispose_backend(previous_vc_backend)
+                if previous_backend is not candidate_backend:
+                    _dispose_backend(previous_backend)
                 candidate_backend.preload_models()
 
                 (
@@ -1317,11 +1355,6 @@ class Celune(CeluneStateAccessors):
                 ) = self._resolve_voice_state(candidate_backend, preferred_voice)
                 if candidate_voice is None:
                     raise BackendError("no voices found")
-
-                if previous_vc_backend is not None:
-                    previous_vc_backend.unload_model()
-                if previous_backend is not candidate_backend:
-                    previous_backend.unload_model()
 
                 model, model_name = self._load_backend_voice_runtime(
                     candidate_backend,
@@ -1369,15 +1402,14 @@ class Celune(CeluneStateAccessors):
                         "f0_condition",
                         self.vc_f0_condition,
                     )
-                candidate_vc_backend.preload_models()
-
                 if previous_backend is not None:
-                    previous_backend.unload_model()
+                    _dispose_backend(previous_backend)
                 if (
                     previous_vc_backend is not None
                     and previous_vc_backend is not candidate_vc_backend
                 ):
-                    previous_vc_backend.unload_model()
+                    _dispose_backend(previous_vc_backend)
+                candidate_vc_backend.preload_models()
 
                 self.vc_backend = candidate_vc_backend
                 self._vc_backend_spec = (
@@ -1430,7 +1462,7 @@ class Celune(CeluneStateAccessors):
                 and snapshot is not None
                 and candidate_backend is not snapshot.backend
             ):
-                candidate_backend.unload_model()
+                _dispose_backend(candidate_backend)
             elif (
                 candidate_model is not None
                 and snapshot is not None
@@ -1442,7 +1474,7 @@ class Celune(CeluneStateAccessors):
                 and snapshot is not None
                 and candidate_vc_backend is not snapshot.vc_backend
             ):
-                candidate_vc_backend.unload_model()
+                _dispose_backend(candidate_vc_backend)
             if snapshot is not None:
                 if snapshot.input_mode == "voice_conversion":
                     if (
@@ -1706,13 +1738,14 @@ class Celune(CeluneStateAccessors):
                 self.unload_runtime_state(
                     include_normalizer=unload["normalizer"],
                     include_vc=unload["vc"],
+                    close_backends=True,
                 )
                 self.model_name = ""
             elif unload["normalizer"]:
                 self.unload_normalizer_state()
 
             if unload["vc"] and not unload["tts"] and self.vc_backend is not None:
-                self.vc_backend.unload_model()
+                _dispose_backend(self.vc_backend)
 
         self.model_ready.set()
         return True
@@ -1831,6 +1864,8 @@ class Celune(CeluneStateAccessors):
                     with self._model_lock:
                         if self.exit_requested or self.sleeping:
                             return
+                        if self._recreate_vc_backend():
+                            self.log_dev("[SLEEP] Recreated VC backend")
                         self.vc_backend.preload_models()
 
                 if unload["normalizer"] and self.use_normalization:

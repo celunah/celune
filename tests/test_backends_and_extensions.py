@@ -139,6 +139,28 @@ class BackendTests(TestCase):
 
         download.assert_called_once_with(expected_root)
 
+    def test_gpt_sovits_auto_selects_a_streaming_variant(self) -> None:
+        """Verify automatic GPT-SoVITS selection accepts fragment-streaming variants."""
+        backend = GPTSoVITS.__new__(GPTSoVITS)
+        backend._custom_t2s_weights_path = None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            snapshot = Path(temp_dir)
+            for relative_path in (
+                "chinese-hubert-base/config.json",
+                "chinese-roberta-wwm-ext-large/config.json",
+                "s1v3.ckpt",
+                "v2Pro/s2Gv2Pro.pth",
+                "sv/pretrained_eres2netv2w24s4ep4.ckpt",
+                "gsv-v4-pretrained/s2Gv4.pth",
+                "gsv-v4-pretrained/vocoder.pth",
+            ):
+                target = snapshot / relative_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.touch()
+
+            self.assertEqual(backend._select_variant(snapshot, None), "v2Pro")
+            self.assertEqual(backend._select_variant(snapshot, "v4"), "v4")
+
     def test_gpt_sovits_converts_integer_pcm_to_float_audio(self) -> None:
         """Verify GPT-SoVITS int16 PCM is scaled to Celune's float audio range."""
         pcm = np.array([-32768, 0, 32767], dtype=np.int16)
@@ -530,8 +552,9 @@ class BackendTests(TestCase):
         module = ModuleType("seed_vc.real_time")
 
         def custom_infer(*_args: object) -> torch.Tensor:
-            """Emit the diagnostic that the native implementation writes during inference."""
+            """Emit diagnostics that the native implementation writes during inference."""
             print("target_lengths: tensor([1])")
+            print("0%| | 0/10", file=sys.stderr)
             return torch.zeros(4)
 
         setattr(module, "custom_infer", custom_infer)
@@ -544,9 +567,11 @@ class BackendTests(TestCase):
         backend._live_block_frame_16k = 1
         backend._live_input_wav = torch.zeros(4)
         captured_stdout = io.StringIO()
+        captured_stderr = io.StringIO()
 
         with (
             contextlib.redirect_stdout(captured_stdout),
+            contextlib.redirect_stderr(captured_stderr),
             mock.patch.object(
                 backend,
                 "_apply_live_sola",
@@ -558,6 +583,7 @@ class BackendTests(TestCase):
             )
 
         self.assertEqual(captured_stdout.getvalue(), "")
+        self.assertEqual(captured_stderr.getvalue(), "")
         self.assertEqual(output.shape, (4,))
 
     def test_seedvc_backend_uses_configured_pitch_shift_for_wrapper_requests(
@@ -807,19 +833,16 @@ class BackendTests(TestCase):
         """Verify VoxCPM2 replaces its package loader's incompatible tokenizer."""
         with mock_voxcpm_backend() as voxcpm2_cls:
             tokenizer = mock.Mock()
-            tokenizer.vocab = {"hello": 11}
             model = SimpleNamespace(tts_model=SimpleNamespace(text_tokenizer=None))
             with mock.patch(
-                "celune.backends.tts.voxcpm2.LlamaTokenizerFast.from_pretrained",
+                "celune.backends.tts.voxcpm2.AutoTokenizer.from_pretrained",
                 return_value=tokenizer,
             ):
                 voxcpm2_cls._install_checkpoint_tokenizer(model, "snapshot")
 
-            tokenizer.tokenize.return_value = ["hello"]
-            tokenizer.convert_tokens_to_ids.return_value = [11]
+            tokenizer.encode.return_value = [11]
             self.assertEqual(model.tts_model.text_tokenizer("hello"), [11])
-            tokenizer.tokenize.assert_called_once_with("hello")
-            tokenizer.convert_tokens_to_ids.assert_called_once_with(["hello"])
+            tokenizer.encode.assert_called_once_with("hello", add_special_tokens=False)
 
     @staticmethod
     def test_voxcpm2_requires_reference_text_for_valid_voice_identifiers() -> None:

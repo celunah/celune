@@ -117,10 +117,12 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
 
     _variant_order: tuple[str, ...] = (
         "v2ProPlus",
-        "v4",
         "v2Pro",
+        "v4",
         "v3",
     )
+    _streaming_variants = frozenset(("v2Pro", "v2ProPlus", "v3", "v4"))
+    _fragment_streaming_variants = frozenset(("v3", "v4"))
     _variant_aliases: Mapping[str, str] = {
         "v2pro": "v2Pro",
         "v2proplus": "v2ProPlus",
@@ -980,6 +982,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             self.current_seed = secrets.randbits(32)
             self._apply_seed()
         seed = self.current_seed
+        fragment_streaming = model.variant in self._fragment_streaming_variants
         request: dict[str, JSONSerializable] = {
             "text": text,
             "text_lang": language,
@@ -996,11 +999,11 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             "speed_factor": 1.0,
             "fragment_interval": 0.3,
             "seed": seed,
-            "parallel_infer": False,
+            "parallel_infer": True,
             "repetition_penalty": repetition_penalty,
             "sample_steps": 32,
-            "return_fragment": True,
-            "streaming_mode": False,
+            "return_fragment": fragment_streaming,
+            "streaming_mode": not fragment_streaming,
             "overlap_length": 2,
             "min_chunk_length": 16,
         }

@@ -2825,6 +2825,8 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
             engine.smart_buffer_target_seconds = smart_buffer_target_seconds
             speech_timing = SpeechTiming(start_time)
             pushed_audio = False
+            stream_frame_count = 0
+            accepted_stream_frame_count = 0
 
             # these generation parameters are fixed and do not change
             # this only applies to Qwen3-TTS, other backends discard this
@@ -2939,6 +2941,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                         top_p=generation_params["top_p"],
                         repetition_penalty=generation_params["repetition_penalty"],
                     ):
+                        stream_frame_count += 1
                         if timing is not None:
                             last_timing = timing
                         if engine.exit_requested:
@@ -2965,8 +2968,22 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                         audio_chunk = to_48khz(
                             np.asarray(audio_chunk, dtype=np.float32), sr
                         )
+                        if (
+                            stream_frame_count <= 3
+                            or audio_chunk.size == 0
+                            or not np.any(audio_chunk)
+                        ):
+                            engine.log_dev(
+                                f"[STREAM] core received frame={stream_frame_count} "
+                                f"samples={audio_chunk.size} sample_rate={sr} "
+                                f"nonzero={bool(np.any(audio_chunk)) if audio_chunk.size else False}"
+                            )
                         if audio_chunk.size == 0 or not np.any(audio_chunk):
+                            engine.log_dev(
+                                f"[STREAM] core discarded frame={stream_frame_count}"
+                            )
                             continue
+                        accepted_stream_frame_count += 1
 
                         if engine.speed != 1.0 and engine.can_use_rubberband:
                             try:
@@ -3044,6 +3061,11 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 text = " ".join(generated_text_parts)
 
             generation_time = _monotonic_time() - start_time
+
+            engine.log_dev(
+                f"[STREAM] core totals received={stream_frame_count} "
+                f"accepted={accepted_stream_frame_count}"
+            )
 
             if engine.exit_requested:
                 if stream_queue is not None:

@@ -9,7 +9,8 @@ from typing import Optional, Union
 
 import numpy as np
 import torch
-from transformers import LlamaTokenizerFast
+from transformers import AutoTokenizer
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from voxcpm import VoxCPM
 
 from ...cevoice import CEVoiceLoader, default_loader
@@ -23,27 +24,17 @@ from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
 class _VoxCPMTextTokenizer:
     """Adapt the checkpoint tokenizer to VoxCPM2's list-returning interface."""
 
-    def __init__(self, tokenizer: LlamaTokenizerFast) -> None:
+    def __init__(self, tokenizer: PreTrainedTokenizerBase) -> None:
         self._tokenizer = tokenizer
-        self._multichar_tokens = {
-            token
-            for token in tokenizer.vocab
-            if len(token) >= 2 and all("\u4e00" <= char <= "\u9fff" for char in token)
-        }
 
     def __call__(self, text: str) -> list[int]:
-        """Tokenize text while splitting multicharacter Chinese tokens."""
-        tokens = self._tokenizer.tokenize(text)
-        processed: list[str] = []
-        for token in tokens:
-            clean_token = token.replace("▁", "")
-            if clean_token in self._multichar_tokens:
-                processed.extend(clean_token)
-            else:
-                processed.append(token)
+        """Tokenize text without adding tokenizer-wrapper special tokens."""
         return [
             int(token_id)
-            for token_id in self._tokenizer.convert_tokens_to_ids(processed)
+            for token_id in self._tokenizer.encode(
+                text,
+                add_special_tokens=False,
+            )
         ]
 
 
@@ -183,9 +174,10 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         if model is None or snapshot_path is None:
             return
 
-        tokenizer = LlamaTokenizerFast.from_pretrained(
+        tokenizer = AutoTokenizer.from_pretrained(
             snapshot_path,
             local_files_only=True,
+            trust_remote_code=True,
         )
         runtime = getattr(model, "tts_model", None)
         if runtime is not None and hasattr(runtime, "text_tokenizer"):
@@ -358,9 +350,12 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
                 first_chunk_time: Optional[float] = None
 
                 for chunk in stream:
+                    audio = self._to_numpy_audio(chunk)
+                    if audio.size == 0:
+                        continue
                     if first_chunk_time is None:
                         first_chunk_time = time.monotonic()
-                    batch.append(self._to_numpy_audio(chunk))
+                    batch.append(audio)
 
                     if len(batch) < chunks_per_batch:
                         continue

@@ -190,6 +190,7 @@ BACKEND_MANIFESTS = {
             "split-lang",
             "tojyutping",
             "torchmetrics<=1.5",
+            "torchcodec",
             "wordsegment",
             "x-transformers",
         ),

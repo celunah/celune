@@ -38,6 +38,7 @@ class WorkerResponse(TypedDict, total=False):
     ok: bool
     value: WorkerValue
     error: str
+    error_type: str
     stream: bool
     done: bool
     fatal: bool

@@ -1552,6 +1552,7 @@ class UIStartupTests(TestCase):
         """Verify live VC prepends a short preroll so VAD onset is not clipped."""
         ui = CeluneUI()
         self.addCleanup(setattr, CeluneUI, "_instance", None)
+        converted_chunks: list[np.ndarray] = []
         ui.celune = cast(
             Celune,
             SimpleNamespace(
@@ -1559,7 +1560,10 @@ class UIStartupTests(TestCase):
                 vc_backend=SimpleNamespace(),
                 convert_audio=mock.Mock(
                     side_effect=lambda audio, sample_rate, label=None, **_kwargs: (
-                        SimpleNamespace(
+                        converted_chunks.append(
+                            np.asarray(audio, dtype=np.float32).copy()
+                        )
+                        or SimpleNamespace(
                             audio=np.asarray(audio, dtype=np.float32).copy(),
                             sample_rate=sample_rate,
                             label=label or "Stereo Mix",
@@ -1635,6 +1639,11 @@ class UIStartupTests(TestCase):
                 stop=mock.Mock(),
             )
             ui.on_key(cast(events.Key, stop_event))
+
+        self.assertTrue(converted_chunks)
+        self.assertGreaterEqual(len(converted_chunks[0]), 3000)
+        self.assertAlmostEqual(float(converted_chunks[0][0, 0]), 0.004)
+        self.assertAlmostEqual(float(converted_chunks[0][-1, 0]), 0.05)
 
     def test_vc_recording_flushes_active_speech_before_end_of_phrase(self) -> None:
         """Verify live VC can submit one mid-speech chunk before silence arrives."""

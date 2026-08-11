@@ -5,7 +5,7 @@ import contextlib
 import os
 import time
 from collections.abc import Callable, Generator, Iterator, Mapping
-from typing import Optional, cast
+from typing import Optional, Union, cast
 
 import loguru
 import numpy as np
@@ -239,9 +239,12 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
         return self.model
 
     @staticmethod
-    def _to_numpy_audio(chunk: torch.Tensor) -> AudioChunk:
+    def _to_numpy_audio(chunk: Union[torch.Tensor, np.ndarray]) -> AudioChunk:
         """Convert one streamed torch chunk to a Celune-compatible audio array."""
-        audio = chunk.detach().float().cpu().numpy()
+        if isinstance(chunk, torch.Tensor):
+            audio = chunk.detach().float().cpu().numpy()
+        else:
+            audio = chunk
         audio = np.asarray(audio, dtype=np.float32).reshape(-1)
         return audio
 
@@ -318,9 +321,12 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                 first_chunk_time: Optional[float] = None
 
                 for chunk in stream:
+                    audio = self._to_numpy_audio(chunk)
+                    if audio.size == 0:
+                        continue
                     if first_chunk_time is None:
                         first_chunk_time = time.monotonic()
-                    batch.append(self._to_numpy_audio(chunk))
+                    batch.append(audio)
                     if len(batch) < chunk_size:
                         continue
 

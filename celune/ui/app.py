@@ -3029,6 +3029,7 @@ class CeluneUI(App):
         )
         channel_count = 2 if channels >= 2 else 1
         vad_hangover_frames = self._vc_vad_hangover_frames(sample_rate)
+        vad_preroll_frames = self._vc_vad_preroll_frames(sample_rate)
         live_chunk_frames = self._vc_live_chunk_frames(sample_rate)
         ai_vad = create_live_voice_activity_detector(input_config)
         submission_queue: queue_module.Queue[
@@ -3171,9 +3172,15 @@ class CeluneUI(App):
 
                 live_audio: Optional[AudioChunk] = None
                 if voice_detected:
+                    if not self._vc_recording_speech_started:
+                        self._prepend_vc_preroll_locked()
+                        self._vc_recording_chunks.append(callback_audio)
+                        self._vc_recording_buffered_frames += len(callback_audio)
+                        live_audio = self._flush_vc_recording_buffer_locked()
+                    else:
+                        live_audio = callback_audio
                     self._vc_recording_speech_started = True
                     self._vc_recording_silence_frames = 0
-                    live_audio = callback_audio
                 elif self._vc_recording_speech_started:
                     self._vc_recording_silence_frames += len(callback_audio)
                     if self._vc_recording_silence_frames <= vad_hangover_frames:
@@ -3183,6 +3190,15 @@ class CeluneUI(App):
                         self._vc_recording_silence_frames = 0
                         if ai_vad is not None:
                             ai_vad.reset()
+                        self._append_vc_preroll_audio_locked(
+                            callback_audio,
+                            vad_preroll_frames,
+                        )
+                else:
+                    self._append_vc_preroll_audio_locked(
+                        callback_audio,
+                        vad_preroll_frames,
+                    )
 
                 if (
                     live_audio is not None

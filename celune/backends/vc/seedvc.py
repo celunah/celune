@@ -124,9 +124,12 @@ class CeluneSeedVCBackend(CeluneVCBackend):
     @staticmethod
     @contextlib.contextmanager
     def _suppress_native_stdout() -> Generator[None, None, None]:
-        """Keep native Seed-VC diagnostics away from the worker protocol stream."""
-        with open(os.devnull, "w", encoding="utf-8") as native_stdout:
-            with contextlib.redirect_stdout(native_stdout):
+        """Keep native Seed-VC output away from the worker protocol stream."""
+        with open(os.devnull, "w", encoding="utf-8") as native_output:
+            with (
+                contextlib.redirect_stdout(native_output),
+                contextlib.redirect_stderr(native_output),
+            ):
                 yield
 
     @staticmethod
