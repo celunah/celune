@@ -74,6 +74,7 @@ from ..typing.aliases import (  # pylint: disable=W0611
     AudioChunk,
     AudioChunks,
     AudioDeviceScalar,
+    LogLevel,
     _VCAudioCallback,  # noqa
 )
 from ..utils import (
@@ -1444,7 +1445,7 @@ class CeluneUI(App):
             self.safe_log(
                 string(
                     "ui.init_error",
-                    error=format_error(e, self.celune.dev),
+                    error=format_error(e, getattr(self.celune, "log_level", "info")),
                 ),
                 "error",
             )
@@ -2073,14 +2074,26 @@ class CeluneUI(App):
 
         self._run_on_ui_thread(update)
 
-    def safe_log(self, msg: str, severity: str = "info") -> None:
+    def safe_log(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
         """Log a message.
 
         Args:
             msg: The log line to append.
             severity: The log severity level.
+            loglevel: The minimum configured log level required to append the line.
         """
         if self.cur_state == "exiting":
+            return
+
+        levels = {"info": 0, "verbose": 1, "debug": 2}
+        active_log_level = getattr(self.celune, "log_level", "info")
+        if levels.get(active_log_level, 0) < levels.get(loglevel, 0):
             return
 
         if severity not in colors.SEVERITY_COLORS["celune"]:
@@ -2116,8 +2129,7 @@ class CeluneUI(App):
             msg: The log line to append.
             severity: The log severity level.
         """
-        if self.celune.dev:
-            self.safe_log(msg, severity)
+        self.safe_log(msg, severity, loglevel="verbose")
 
     def _is_voice_conversion_mode(self) -> bool:
         """Return whether the attached Celune instance is running in VC mode."""
@@ -2305,7 +2317,9 @@ class CeluneUI(App):
             self.safe_log(
                 string(
                     "ui.persona_transcription_failed",
-                    error=format_error(error, self.celune.dev),
+                    error=format_error(
+                        error, getattr(self.celune, "log_level", "info")
+                    ),
                 ),
                 "error",
             )
@@ -2357,7 +2371,9 @@ class CeluneUI(App):
                 self.safe_log(
                     string(
                         "ui.persona_transcription_failed",
-                        error=format_error(error, self.celune.dev),
+                        error=format_error(
+                            error, getattr(self.celune, "log_level", "info")
+                        ),
                     ),
                     "warning",
                 )
@@ -2437,7 +2453,7 @@ class CeluneUI(App):
             self.safe_log(
                 string(
                     "ui.recording_open_input_failed",
-                    error=format_error(exc, self.celune.dev),
+                    error=format_error(exc, getattr(self.celune, "log_level", "info")),
                 ),
                 "error",
             )
@@ -2566,7 +2582,7 @@ class CeluneUI(App):
                 string(
                     "ui.recording_start_failed",
                     label=string("ui.audio_input_label"),
-                    error=format_error(exc, self.celune.dev),
+                    error=format_error(exc, getattr(self.celune, "log_level", "info")),
                 ),
                 "error",
             )
@@ -3009,7 +3025,7 @@ class CeluneUI(App):
             self.safe_log(
                 string(
                     "ui.recording_open_input_failed",
-                    error=format_error(e, self.celune.dev),
+                    error=format_error(e, getattr(self.celune, "log_level", "info")),
                 ),
                 "error",
             )
@@ -3133,7 +3149,9 @@ class CeluneUI(App):
                         string(
                             "ui.recording_stream_chunk_failed",
                             label=queued_label,
-                            error=format_error(exc, self.celune.dev),
+                            error=format_error(
+                                exc, getattr(self.celune, "log_level", "info")
+                            ),
                         ),
                         "warning",
                     )
@@ -3224,7 +3242,7 @@ class CeluneUI(App):
                 string(
                     "ui.recording_start_failed",
                     label=label,
-                    error=format_error(e, self.celune.dev),
+                    error=format_error(e, getattr(self.celune, "log_level", "info")),
                 ),
                 "error",
             )
@@ -3392,9 +3410,10 @@ class CeluneUI(App):
         if self.celune.config.get("ipa") is False:
             ipa_decoded, unmatched = replace_ipa(to_say, strict=True)
             if unmatched > 0:
-                self.safe_log_dev(
+                self.safe_log(
                     f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
                     "warning",
+                    loglevel="verbose",
                 )
 
             self.celune.say(ipa_decoded, display_text=to_say)
@@ -3459,9 +3478,10 @@ class CeluneUI(App):
             if self.celune.config.get("ipa") is False:
                 ipa_decoded, unmatched = replace_ipa(text, strict=True)
                 if unmatched > 0:
-                    self.safe_log_dev(
+                    self.safe_log(
                         f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
                         "warning",
+                        loglevel="verbose",
                     )
                 handled = self.celune.say(ipa_decoded, display_text=text)
             else:
@@ -3544,7 +3564,9 @@ class CeluneUI(App):
                     self.safe_log(
                         string(
                             "ui.tutorial_stop_failed",
-                            error=format_error(exc, self.celune.dev),
+                            error=format_error(
+                                exc, getattr(self.celune, "log_level", "info")
+                            ),
                         ),
                         "error",
                     )

@@ -20,6 +20,7 @@ from ..dsp import StreamingPedalboardReverb
 from ..extensions.manager import CeluneExtensionManager
 from ..persona.impl import PersonaClient
 from ..typing.aliases import AudioChunks
+from ..typing.aliases import LogLevel
 from ..typing.backends import BackendModel
 from ..typing.celune import (
     CaptionCallback,
@@ -74,7 +75,7 @@ class CeluneBackendState:
     input_mode: str = "text_to_speech"
     chunk_size: int = 0
     language: str = "Auto"
-    dev: bool = False
+    log_level: LogLevel = "info"
     use_normalization: bool = False
 
 
@@ -221,7 +222,7 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("input_mode", "_backend_state", "input_mode"),
     ForwardedPropertySpec("chunk_size", "_backend_state", "chunk_size"),
     ForwardedPropertySpec("language", "_backend_state", "language"),
-    ForwardedPropertySpec("dev", "_backend_state", "dev"),
+    ForwardedPropertySpec("log_level", "_backend_state", "log_level"),
     ForwardedPropertySpec("use_normalization", "_backend_state", "use_normalization"),
     ForwardedPropertySpec("model", "_model_state", "model"),
     ForwardedPropertySpec("model_name", "_model_state", "model_name"),

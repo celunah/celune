@@ -12,6 +12,7 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
 from .common import Config, JSONSerializable
+from .aliases import LogLevel
 
 if TYPE_CHECKING:
     import queue
@@ -143,9 +144,15 @@ class NormalizerTokenizer(Protocol):
 
 
 class MessageCallback(Protocol):
-    """Callback accepting a message and optional severity."""
+    """Callback accepting a message, severity, and log-level threshold."""
 
-    def __call__(self, msg: str, severity: str = "info") -> None:
+    def __call__(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
         """Handle a message emitted by Celune."""
         raise NotImplementedError("protocol not defined")
 
@@ -235,7 +242,7 @@ class CeluneStateAccessors:
     input_mode: str
     chunk_size: int
     language: str
-    dev: bool
+    log_level: LogLevel
     use_normalization: bool
     model: Optional[BackendModel]
     model_name: str

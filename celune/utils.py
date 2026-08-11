@@ -13,7 +13,7 @@ import time
 import traceback
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any, Literal, Optional, TextIO, overload
+from typing import Any, Literal, Optional, TextIO, Union, overload
 
 import psutil
 from lingua import (  # pylint: disable=E0611
@@ -24,6 +24,7 @@ from lingua import (  # pylint: disable=E0611
 from .constants import REFERENCE_NEW_MOON
 from .paths import traceback_path
 from .terminal import supports_ansi as terminal_supports_ansi
+from .typing.aliases import LogLevel
 from .typing.utils import CallerInfo, LanguageResult
 
 _LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_spoken_languages().build()
@@ -269,17 +270,17 @@ def supports_ansi(stream: Optional[TextIO] = None) -> bool:
     return terminal_supports_ansi(stream)
 
 
-def format_error(e: Exception, dev: bool) -> str:
+def format_error(e: Exception, log_level: Union[LogLevel, bool]) -> str:
     """Format an error message.
 
     Args:
         e: The exception to format.
-        dev: Whether developer mode is enabled.
+        log_level: The active log level, or the legacy developer flag.
 
     Returns:
         str: Either the full traceback or the exception text.
     """
-    if dev:
+    if log_level is True or log_level in {"verbose", "debug"}:
         trace = "".join(traceback.format_exception(type(e), e, e.__traceback__))
         with open(traceback_path(create_parent=True), "w", encoding="utf-8") as f:
             f.write(trace)

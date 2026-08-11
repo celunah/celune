@@ -103,10 +103,11 @@ class ManagerEventTests(TestCase):
 
     def setUp(self) -> None:
         self.logs: list[tuple[str, str]] = []
-        self.dev_logs: list[tuple[str, str]] = []
         self.context = CeluneContext(
-            log=lambda msg, severity="info": self.logs.append((msg, severity)),
-            log_dev=lambda msg, severity="info": self.dev_logs.append((msg, severity)),
+            log=lambda msg, severity="info", **kwargs: self.logs.append(
+                (msg, severity)
+            ),
+            log_level="verbose",
             say=lambda text, save=True, display_text=None: True,
             think=lambda text: True,
             play=lambda sound_path, keep=False, volume=1.0: True,

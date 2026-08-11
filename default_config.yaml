@@ -36,11 +36,12 @@ qwen3_x_vector_only: false
 # step by step instructions
 voice_bundle: default
 
-# developer mode
+# logging
 #
-# this will enable verbose logging, detailed tracebacks,
-# and auto-voice analysis upon end of utterance
-dev: false
+# info = normal status information
+# verbose = advanced runtime information
+# debug = low-level engine and IPC diagnostics
+log_level: info
 
 # locale
 #

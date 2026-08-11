@@ -503,7 +503,11 @@ class BackendEnvironmentTests(unittest.TestCase):
                 remote.subprocess, "Popen", return_value=process
             ) as popen,
         ):
-            proxy._start_worker(environment, lambda _message, _severity: None, {})
+            proxy._start_worker(
+                environment,
+                lambda msg, severity="info", *, loglevel="info": None,
+                {},
+            )
 
         self.assertNotIn("PYTHONHOME", popen.call_args.kwargs["env"])
         self.assertIn("C:/existing", popen.call_args.kwargs["env"]["PYTHONPATH"])

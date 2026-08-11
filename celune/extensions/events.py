@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Optional, TypeVar, cast, overload
 
-from ..typing.aliases import DispatcherCallback
+from ..typing.aliases import DispatcherCallback, LogLevel
 from ..typing.events import (
     AudioEndEventCallback,
     AudioStartEventCallback,
@@ -95,10 +95,12 @@ class EventDispatcher:
         self,
         *,
         log_warning: Callable[[str, str], None],
-        dev: bool = False,
+        log_level: LogLevel = "info",
+        log_debug: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._log_warning = log_warning
-        self._dev = dev
+        self._log_level = log_level
+        self._log_debug = log_debug
         self._lock = threading.RLock()
         self._callbacks: dict[EventName, list[DispatcherCallback]] = defaultdict(list)
         self._owners: dict[tuple[EventName, DispatcherCallback], str] = {}
@@ -245,6 +247,9 @@ class EventDispatcher:
             self._owners[(event_name, typed_callback)] = (
                 owner_name or self._describe_callback(typed_callback)
             )
+        self._debug(
+            f"[EVENT] subscribed name={event_name} owner={self._owners[(event_name, typed_callback)]}"
+        )
 
     @overload
     def unsubscribe(
@@ -375,6 +380,9 @@ class EventDispatcher:
             self._owners.pop((event_name, typed_callback), None)
             if not callbacks:
                 self._callbacks.pop(event_name, None)
+        self._debug(
+            f"[EVENT] unsubscribed name={event_name} callback={self._describe_callback(typed_callback)}"
+        )
 
     @overload
     def emit(self, event_name: Literal["ready"], event: ReadyEvent) -> None: ...
@@ -468,18 +476,39 @@ class EventDispatcher:
                 for callback in callbacks
             }
 
+        self._debug(
+            f"[EVENT] dispatch name={event_name} callbacks={len(callbacks)} "
+            f"payload={type(event).__name__}"
+        )
+
         for callback in callbacks:
+            owner_name = owners.get(callback, self._describe_callback(callback))
+            self._debug(f"[EVENT] invoke name={event_name} owner={owner_name}")
             try:
                 callback(event)
             except Exception as exc:
-                owner_name = owners.get(callback, self._describe_callback(callback))
                 self._log_warning(
                     (
                         f"[Core] Event callback failed for '{event_name}' in "
-                        f"'{owner_name}': {format_error(exc, self._dev)}"
+                        f"'{owner_name}': {format_error(exc, self._log_level)}"
                     ),
                     "warning",
                 )
+                self._debug(
+                    f"[EVENT] callback_error name={event_name} owner={owner_name} "
+                    f"error={type(exc).__name__}"
+                )
+            else:
+                self._debug(
+                    f"[EVENT] callback_complete name={event_name} owner={owner_name}"
+                )
+
+        self._debug(f"[EVENT] dispatch_complete name={event_name}")
+
+    def _debug(self, message: str) -> None:
+        """Emit a low-level dispatcher trace when one was configured."""
+        if self._log_debug is not None:
+            self._log_debug(message)
 
     @staticmethod
     def validate_event_name(event_name: EventName) -> None:

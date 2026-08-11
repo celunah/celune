@@ -10,6 +10,7 @@ import sounddevice as sd
 
 from .constants import APP_NAME
 from .i18n import string
+from .typing.aliases import LogLevel
 from .typing.common import Config, JSONSerializable
 from .typing.config import (
     AudioDeviceConfig,
@@ -20,6 +21,18 @@ from .typing.config import (
 )
 
 ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
+LOG_LEVELS: tuple[LogLevel, ...] = ("info", "verbose", "debug")
+
+
+def normalize_log_level(value: object, default: LogLevel = "info") -> LogLevel:
+    """Return one supported log level, falling back when the value is invalid."""
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in LOG_LEVELS:
+            return normalized  # type: ignore[return-value]
+    return default
+
+
 WINDOWS_AUDIO_HOSTAPIS: dict[str, str] = {
     "wasapi": "Windows WASAPI",
     "directsound": "Windows DirectSound",
@@ -81,6 +94,21 @@ def config_bool(
         bool: The resolved boolean setting.
     """
     return env_bool(env_name, bool(config_value(config, config_key, default)))
+
+
+def config_log_level(
+    config: Optional[Mapping[str, JSONSerializable]],
+    env_name: str = "CELUNE_LOG_LEVEL",
+    config_key: str = "log_level",
+    default: LogLevel = "info",
+) -> LogLevel:
+    """Resolve one configured Celune log level."""
+    raw_value = os.getenv(env_name)
+    if raw_value is None:
+        configured = config_value(config, config_key, default)
+        raw_value = configured if isinstance(configured, str) else default
+
+    return normalize_log_level(raw_value, default)
 
 
 def config_audio_device(

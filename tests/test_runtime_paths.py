@@ -253,7 +253,7 @@ class RuntimePathTests(TestCase):
                 raise RuntimeError("boom")
             except RuntimeError as exc:
                 with mock.patch("celune.utils.traceback_path", return_value=trace_path):
-                    output = format_error(exc, dev=True)
+                    output = format_error(exc, log_level="debug")
 
                 self.assertIn("RuntimeError: boom", output)
                 self.assertTrue(trace_path.exists())
@@ -280,7 +280,7 @@ class RuntimePathTests(TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             trace_path = Path(temp_dir) / f"{APP_SLUG}_traceback.txt"
             with mock.patch("celune.utils.traceback_path", return_value=trace_path):
-                output = format_error(captured, dev=True)
+                output = format_error(captured, log_level="debug")
 
         self.assertIn("RuntimeError: deferred boom", output)
         self.assertNotIn("NoneType: None", output)

@@ -100,7 +100,7 @@ class CeluneCoreTests(TestCase):
         celune._voice_reload_active = False
         celune._event_dispatcher = type(celune._event_dispatcher)(
             log_warning=celune.log,
-            dev=False,
+            log_level="info",
         )
         glow = FakeGlow("#cebaff", celune=celune)
         setattr(celune, "glow", glow)
@@ -536,9 +536,9 @@ class CeluneCoreTests(TestCase):
                 create_client.call_args.args[0],
                 {"vram": "high", "persona": {"enabled": True}},
             )
-            log_dev = create_client.call_args.kwargs["log_dev"]
-            self.assertIs(getattr(log_dev, "__self__", None), celune)
-            self.assertIs(getattr(log_dev, "__func__", None), Celune.log_dev)
+            log = create_client.call_args.kwargs["log"]
+            self.assertIs(getattr(log, "__self__", None), celune)
+            self.assertIs(getattr(log, "__func__", None), Celune.log)
             available.assert_called_once_with()
             celune.close()
             client.close.assert_called_once_with()
@@ -714,8 +714,8 @@ class CeluneCoreTests(TestCase):
         celune.cur_state = "idle"
         celune.backend.model_id_for_voice = mock.Mock(return_value="shared-model")
         statuses: list[tuple[str, str]] = []
-        celune.status_callback = lambda msg, severity="info": statuses.append(
-            (msg, severity)
+        celune.status_callback = lambda msg, severity="info", *, loglevel="info": (
+            statuses.append((msg, severity))
         )
         celune.voice_changed_callback = mock.Mock()
 
@@ -740,8 +740,8 @@ class CeluneCoreTests(TestCase):
         celune.backend.load_model = mock.Mock(return_value={"model": "unused"})
         celune._warmup = mock.Mock(return_value=True)
         statuses: list[tuple[str, str]] = []
-        celune.status_callback = lambda msg, severity="info": statuses.append(
-            (msg, severity)
+        celune.status_callback = lambda msg, severity="info", *, loglevel="info": (
+            statuses.append((msg, severity))
         )
         celune.voice_changed_callback = mock.Mock()
 
@@ -1060,8 +1060,8 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(think("hello"), True)
         celune.think.assert_called_once_with("hello")
 
-    def test_logging_waiting_and_api_settings_cover_edge_cases(self) -> None:
-        """Verify logging gates, readiness checks, and API fallbacks.
+    def test_logging_levels_waiting_and_api_settings_cover_edge_cases(self) -> None:
+        """Verify log-level gates, readiness checks, and API fallbacks.
 
         Raises:
             AssertionError: Core utility behavior changes unexpectedly.
@@ -1070,14 +1070,21 @@ class CeluneCoreTests(TestCase):
         celune = self._make_celune(
             {"api": {"port": "bad", "rate_limit_per_minute": "bad"}}
         )
-        celune.log_callback = lambda msg, severity="info": logs.append((msg, severity))
+        celune.log_callback = lambda msg, severity="info", *, loglevel="info": (
+            logs.append((msg, severity))
+        )
         celune.log("hello")
         self.assertEqual(logs[-1], ("hello", "info"))
-        celune.log_dev("hidden")
+        celune.log("hidden", loglevel="verbose")
         self.assertEqual(len(logs), 1)
-        celune.dev = True
-        celune.log_dev("visible")
+        celune.log_level = "verbose"
+        celune.log("visible", loglevel="verbose")
         self.assertEqual(logs[-1], ("visible", "info"))
+        celune.log("hidden debug", loglevel="debug")
+        self.assertEqual(logs[-1], ("visible", "info"))
+        celune.log_level = "debug"
+        celune.log("visible debug", loglevel="debug")
+        self.assertEqual(logs[-1], ("visible debug", "info"))
 
         celune.loaded = False
         self.assertEqual(celune.wait_until_idle(timeout=0), False)

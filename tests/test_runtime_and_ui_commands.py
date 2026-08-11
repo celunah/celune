@@ -24,6 +24,7 @@ from celune.config import Config
 from celune.constants import APP_NAME, COST_EQUIVALENTS
 from celune.i18n import string
 from celune.typing.common import JSONSerializable
+from celune.typing.aliases import LogLevel
 from celune.ui import app as ui_app
 from celune.ui import resources as ui_resources
 from celune.ui import terminal as ui_terminal
@@ -99,7 +100,13 @@ class RuntimeTests(TestCase):
         errors: list[str] = []
         states: list[str] = []
 
-        def log(msg: str, severity: str) -> None:
+        def log(
+            msg: str,
+            severity: str = "info",
+            *,
+            loglevel: LogLevel = "info",
+        ) -> None:
+            _ = loglevel
             logs.append((msg, severity))
 
         with (
@@ -115,7 +122,7 @@ class RuntimeTests(TestCase):
                     states.append,
                     False,
                     lambda exc, dev: str(exc),
-                    False,
+                    "info",
                     "qwen3",
                 ),
                 False,
@@ -129,7 +136,13 @@ class RuntimeTests(TestCase):
         errors: list[str] = []
         states: list[str] = []
 
-        def log(msg: str, severity: str) -> None:
+        def log(
+            msg: str,
+            severity: str = "info",
+            *,
+            loglevel: LogLevel = "info",
+        ) -> None:
+            _ = loglevel
             logs.append((msg, severity))
 
         with (
@@ -145,7 +158,7 @@ class RuntimeTests(TestCase):
                     states.append,
                     False,
                     lambda exc, dev: str(exc),
-                    False,
+                    "info",
                     "mini",
                 ),
                 True,
@@ -180,7 +193,7 @@ class UICommandTests(TestCase):
         self.logs: list[tuple[str, str]] = []
         self.ui = SimpleNamespace()
         self.ui.input_box = SimpleNamespace(load_text=lambda text: None)
-        self.ui.safe_log = lambda msg, severity="info": self.logs.append(
+        self.ui.safe_log = lambda msg, severity="info", **kwargs: self.logs.append(
             (msg, severity)
         )
         self.ui.safe_log_dev = self.ui.safe_log
@@ -2300,7 +2313,9 @@ class UIStartupTests(TestCase):
         """Verify external Python logger warnings are routed into the UI logs."""
         ui = CeluneUI()
         captured: list[tuple[str, str]] = []
-        ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
+        ui.safe_log = lambda msg, severity="info", **kwargs: captured.append(
+            (msg, severity)
+        )
 
         logger = logging.getLogger("torch.utils.flop_counter")
 
@@ -2323,7 +2338,9 @@ class UIStartupTests(TestCase):
         """Verify Hugging Face logger errors are routed into the UI log widget."""
         ui = CeluneUI()
         captured: list[tuple[str, str]] = []
-        ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
+        ui.safe_log = lambda msg, severity="info", **kwargs: captured.append(
+            (msg, severity)
+        )
 
         logger = logging.getLogger("huggingface_hub")
         ui.install_runtime_log_redirects()
@@ -2350,7 +2367,9 @@ class UIStartupTests(TestCase):
         """Verify arbitrary external loggers are captured without per-backend wiring."""
         ui = CeluneUI()
         captured: list[tuple[str, str]] = []
-        ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
+        ui.safe_log = lambda msg, severity="info", **kwargs: captured.append(
+            (msg, severity)
+        )
 
         logger = logging.getLogger("some.third_party.backend")
 
@@ -2368,7 +2387,9 @@ class UIStartupTests(TestCase):
         """Verify runtime logger redirection honors the shared suppression list."""
         ui = CeluneUI()
         captured: list[tuple[str, str]] = []
-        ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
+        ui.safe_log = lambda msg, severity="info", **kwargs: captured.append(
+            (msg, severity)
+        )
 
         logger = logging.getLogger("some.third_party.backend")
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 import unittest.mock
 from collections.abc import Callable, Generator, Hashable
 from enum import Enum
-from typing import TYPE_CHECKING, Optional, Protocol, Union
+from typing import TYPE_CHECKING, Literal, Optional, Protocol, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -55,7 +55,23 @@ type SeedVCGenerator = Generator[
     Optional[AudioChunk], None, AudioChunk  # noqa
 ]
 
-type DevLogCallback = Callable[[str, str], None]
+type LogLevel = Literal["info", "verbose", "debug"]
+
+
+class LogCallback(Protocol):
+    """Callback receiving a message and its display severity."""
+
+    def __call__(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
+        """Receive one log message."""
+
+
+type DevLogCallback = LogCallback
 type _DispatcherCallback = Callable[["EventPayload"], None]
 type DispatcherCallback = _DispatcherCallback
 type EmbeddingVector = npt.NDArray[np.float32]  # noqa

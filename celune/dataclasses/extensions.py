@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Optional, Union
 
 from .. import __version__
 from ..typing.common import JSONSerializable
+from ..typing.aliases import LogLevel
 from ..typing.extensions import (
-    DevLogCallable,
     GetStateCallable,
     LogCallable,
     PlayCallable,
@@ -32,7 +32,6 @@ class CeluneContext:
     """Celune's extension context."""
 
     log: LogCallable
-    log_dev: DevLogCallable
     say: SayCallable
     think: ThinkCallable
     play: PlayCallable
@@ -47,7 +46,7 @@ class CeluneContext:
     name: str = "Celune"
     version: str = CELUNE_VERSION
     shared: dict[str, JSONSerializable] = field(default_factory=dict)
-    dev: bool = False
+    log_level: LogLevel = "info"
 
     def expose(self, key: str, value: JSONSerializable) -> None:
         """Expose a shared object.

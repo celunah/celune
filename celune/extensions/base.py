@@ -54,14 +54,21 @@ class CeluneExtension(ABC):
             f"{self.__class__.__name__}.invoke() is not implemented"
         )
 
-    def log(self, msg: str, severity: str = "info") -> None:
+    def log(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: str = "info",
+    ) -> None:
         """Log to Celune's logs.
 
         Args:
             msg: The message to append to Celune's log output.
             severity: The message severity level.
+            loglevel: The minimum configured log level required to append the line.
         """
-        self.ctx.log(f"[{self.name}] {msg}", severity)
+        self.ctx.log(f"[{self.name}] {msg}", severity, loglevel=loglevel)  # type: ignore[arg-type]
 
     def say(
         self,

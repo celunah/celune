@@ -15,6 +15,7 @@ from .backends.vc import CeluneVCBackend
 from .constants import APP_NAME
 from .i18n import string
 from .utils import cuda_architecture, format_number
+from .typing.aliases import LogCallback, LogLevel
 
 
 def log_runtime_banner(
@@ -128,12 +129,12 @@ def _run_compute_test(device: Union[torch.device, str]) -> torch.Tensor:
 
 
 def validate_runtime(
-    log: Callable[[str, str], None],
+    log: LogCallback,
     error: Callable[[str], None],
     set_state: Callable[[str], None],
     glow_connect_failed: bool,
-    format_error: Callable[[Exception, bool], str],
-    dev: bool,
+    format_error: Callable[[Exception, Union[LogLevel, bool]], str],
+    log_level: LogLevel,
     backend_name: str = "qwen3",
 ) -> bool:
     """Validate the app's Python, CUDA, and GPU environment.
@@ -144,7 +145,7 @@ def validate_runtime(
         set_state: Callback used to update the app runtime state.
         glow_connect_failed: Whether the OpenRGB glow backend failed to connect.
         format_error: Error formatter used for exception messages.
-        dev: Whether developer mode is enabled.
+        log_level: The active Celune log level.
         backend_name: The active app backend name selected for this session.
 
     Returns:
@@ -257,15 +258,19 @@ def validate_runtime(
         try:
             log(f"Testing GPU {i}...", "info")
             vtensor = _run_compute_test(f"cuda:{i}")
-            if dev:
+            if log_level != "info":
                 log(
                     f"Compute test for GPU {i} succeeded, result: {format_number(float(vtensor.item()))}",
                     "info",
+                    loglevel="verbose",
                 )
             else:
                 log(f"Compute test for GPU {i} succeeded", "info")
         except Exception as e:
-            log(f"Compute test for GPU {i} failed: {format_error(e, dev)}", "warning")
+            log(
+                f"Compute test for GPU {i} failed: {format_error(e, log_level)}",
+                "warning",
+            )
 
             # decrement device count if tests fail
             devices -= 1

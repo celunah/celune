@@ -4,23 +4,21 @@
 from typing import Optional, Protocol, runtime_checkable
 
 from ..exceptions import IncompleteExtensionError
+from .aliases import LogLevel
 
 
 @runtime_checkable
 class LogCallable(Protocol):
     """Extension callable logging annotation."""
 
-    def __call__(self, msg: str, severity: str = "info") -> None:
+    def __call__(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
         """Emit a log message."""
-        raise IncompleteExtensionError("protocol not defined")
-
-
-@runtime_checkable
-class DevLogCallable(Protocol):
-    """Extension callable developer logging annotation."""
-
-    def __call__(self, msg: str, severity: str = "info") -> None:
-        """Emit a developer log message."""
         raise IncompleteExtensionError("protocol not defined")
 
 

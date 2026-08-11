@@ -73,7 +73,6 @@ if TYPE_CHECKING:
     )
     from .modes import OperationMode
     from .extensions import (
-        DevLogCallable,
         GetStateCallable,
         LogCallable,
         PlayCallable,
@@ -152,7 +151,6 @@ _MODULE_EXPORTS = {
     "ChatTemplateRenderer": "persona",
     "Config": "common",
     "ContentItem": "persona",
-    "DevLogCallable": "extensions",
     "EmbeddingModel": "analysis",
     "EmbeddingOutput": "analysis",
     "EmbeddingPayload": "analysis",
@@ -261,7 +259,6 @@ __all__ = [
     "ChatTemplateRenderer",
     "Config",
     "ContentItem",
-    "DevLogCallable",
     "EmbeddingModel",
     "EmbeddingOutput",
     "EmbeddingPayload",

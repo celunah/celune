@@ -20,6 +20,7 @@ from typing import Optional
 
 from celune import REVISION, __tagline__, __version__
 from celune.constants import APP_NAME, APP_SLUG, ExitCodes
+from celune.config import config_log_level, normalize_log_level
 from celune.i18n import string
 from celune.watchdog import launcher_loss_requested, start_watchdog
 from celune.paths import migrate_legacy_app_data, project_root, running_compiled
@@ -32,7 +33,7 @@ def _env_flag(name: str) -> bool:
 
 
 # refer to the app configuration for details on these parameters
-INITIAL_DEV = _env_flag("CELUNE_DEV")
+INITIAL_LOG_LEVEL = normalize_log_level(os.getenv("CELUNE_LOG_LEVEL", "info"))
 INITIAL_HEADLESS = _env_flag("CELUNE_HEADLESS")
 INITIAL_BACKEND = os.getenv("CELUNE_BACKEND")
 
@@ -64,7 +65,7 @@ def _startup_diagnostics_enabled(force: bool = False) -> bool:
     return (
         force
         or _FORCE_STARTUP_DIAGNOSTICS
-        or INITIAL_DEV
+        or INITIAL_LOG_LEVEL != "info"
         or _env_flag("CELUNE_BOOT_DIAGNOSTICS")
     )
 
@@ -162,7 +163,7 @@ def _load_runtime() -> SimpleNamespace:
         if package.name is not None:
             _print_dependency_setup_help(package.name)
 
-        if INITIAL_DEV:
+        if INITIAL_LOG_LEVEL != "info":
             with contextlib.suppress(ModuleNotFoundError):
                 from rich.traceback import install
 
@@ -1052,11 +1053,14 @@ def _close_existing_celune_processes(runtime: SimpleNamespace) -> None:
             sys.exit(EXIT_CODES.EXIT_ALREADY_RUNNING.value)
 
 
-def start(verbose: bool = False, testing: bool = False) -> None:
+def start(
+    log_level: Optional[str] = None,
+    testing: bool = False,
+) -> None:
     """Instantiate and start the app.
 
     Args:
-        verbose: Whether the app should be started in verbose (developer) mode.
+        log_level: Optional startup log level override.
         testing: Whether the app should be started in UI test mode.
 
     Raises:
@@ -1065,7 +1069,7 @@ def start(verbose: bool = False, testing: bool = False) -> None:
     """
     global _FORCE_STARTUP_DIAGNOSTICS
 
-    _FORCE_STARTUP_DIAGNOSTICS = verbose
+    _FORCE_STARTUP_DIAGNOSTICS = log_level not in {None, "info"}
     _print_startup_diagnostic(string("cli.startup_begin", app_name=APP_NAME))
     runtime = _load_runtime()
 
@@ -1120,7 +1124,9 @@ def start(verbose: bool = False, testing: bool = False) -> None:
                 runtime.yaml.safe_dump(config, cfg, sort_keys=False)
             print(string("cli.config_updated_defaults", app_name=APP_NAME))
 
-        dev = verbose or runtime.config_bool(config, "CELUNE_DEV", "dev")
+        active_log_level = normalize_log_level(
+            log_level if log_level is not None else config_log_level(config)
+        )
         headless = runtime.config_bool(config, "CELUNE_HEADLESS", "headless")
         configured_backend = INITIAL_BACKEND or runtime.config_value(config, "backend")
         backend = configured_backend if isinstance(configured_backend, str) else None
@@ -1234,7 +1240,7 @@ def start(verbose: bool = False, testing: bool = False) -> None:
                 caption_progress_callback=ui.safe_caption_progress,
                 caption_callback=ui.tts_caption,
                 caption_timing_callback=ui.tts_caption_timing,
-                dev=dev,
+                log_level=active_log_level,
                 config=config,
             )
             ui.celune = celune
@@ -1248,7 +1254,7 @@ def start(verbose: bool = False, testing: bool = False) -> None:
                 tts_backend=backend,
                 log_callback=ui_headless.headless_log,
                 error_callback=ui_headless.headless_error,
-                dev=dev,
+                log_level=active_log_level,
                 config=config,
             )
             ui_headless.celune = celune
@@ -1280,7 +1286,7 @@ def start(verbose: bool = False, testing: bool = False) -> None:
             sys.stderr = stderr
 
             print(string("cli.internal_error_running", app_name=APP_NAME))
-            if INITIAL_DEV:
+            if INITIAL_LOG_LEVEL != "info":
                 with contextlib.suppress(ModuleNotFoundError):
                     from rich.traceback import install
 
@@ -1367,16 +1373,37 @@ def main(argv: Optional[list[str]] = None) -> None:
     if not args:
         start()
     elif args[0] in {"start", "run"}:
-        allowed_args = {"--verbose", "-v", "--test", "-t"}
-        if any(arg not in allowed_args for arg in args[1:]):
+        allowed_args = {"--verbose", "-v", "--debug", "--test", "-t"}
+        value_args = [arg for arg in args[1:] if arg.startswith("--log-level=")]
+        if any(arg not in allowed_args for arg in args[1:] if arg not in value_args):
             print(string("cli.invalid_argument"))
             print()
             print(string("cli.start_usage", program=resolved_argv[0], command=args[0]))
             print(string("cli.start_description", app_name=APP_NAME))
             sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
-        verbose = any(arg in {"--verbose", "-v"} for arg in args[1:])
+        requested_levels = [
+            arg.partition("=")[2] for arg in value_args if arg.partition("=")[2]
+        ]
+        if len(requested_levels) > 1:
+            print(string("cli.invalid_argument"))
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+        if (
+            requested_levels
+            and normalize_log_level(requested_levels[0]) != requested_levels[0].lower()
+        ):
+            print(string("cli.invalid_argument"))
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+        requested_log_level = (
+            requested_levels[0]
+            if requested_levels
+            else "debug"
+            if "--debug" in args[1:]
+            else "verbose"
+            if any(arg in {"--verbose", "-v"} for arg in args[1:])
+            else None
+        )
         testing = any(arg in {"--test", "-t"} for arg in args[1:])
-        start(verbose=verbose, testing=testing)
+        start(log_level=requested_log_level, testing=testing)
     elif args[0] == "config":
         handle_config(args[1:], resolved_argv[0])
     elif args[0] == "doctor":

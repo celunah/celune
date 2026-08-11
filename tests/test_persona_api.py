@@ -493,11 +493,11 @@ class PersonaApiTests(TestCase):
         sync.assert_called_once_with()
         empty_cache.assert_called_once_with()
 
-    def test_persona_client_routes_backend_output_to_dev_logs(self) -> None:
-        """Verify Persona backend stdout/stderr is captured into developer logs."""
+    def test_persona_client_routes_backend_output_to_verbose_logs(self) -> None:
+        """Verify Persona backend stdout/stderr is captured into verbose logs."""
         logs: list[tuple[str, str]] = []
         client = impl.PersonaClient(
-            log_dev=lambda msg, severity="info": logs.append((msg, severity))
+            log=lambda msg, severity="info", **kwargs: logs.append((msg, severity))
         )
 
         with mock.patch.object(

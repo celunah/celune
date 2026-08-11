@@ -144,7 +144,9 @@ def tutorial(ui: CeluneUI) -> None:
                     ui.safe_log(
                         string(
                             "commands.tutorial_playback_failed",
-                            error=format_error(exc, ui.celune.dev),
+                            error=format_error(
+                                exc, getattr(ui.celune, "log_level", "info")
+                            ),
                         ),
                         "warning",
                     )
@@ -160,7 +162,7 @@ def tutorial(ui: CeluneUI) -> None:
             ui.safe_log(
                 string(
                     "commands.tutorial_failed",
-                    error=format_error(e, ui.celune.dev),
+                    error=format_error(e, getattr(ui.celune, "log_level", "info")),
                 ),
                 "warning",
             )
@@ -462,7 +464,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 ui.safe_log(
                     string(
                         "commands.backend_switch_failed",
-                        error=format_error(exc, ui.celune.dev),
+                        error=format_error(
+                            exc, getattr(ui.celune, "log_level", "info")
+                        ),
                     ),
                     "error",
                 )
@@ -485,7 +489,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 ui.safe_log(
                     string(
                         "commands.backend_switch_failed",
-                        error=format_error(exc, ui.celune.dev),
+                        error=format_error(
+                            exc, getattr(ui.celune, "log_level", "info")
+                        ),
                     ),
                     "error",
                 )
@@ -525,7 +531,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 ui.safe_log(
                     string(
                         "commands.character_switch_failed",
-                        error=format_error(exc, ui.celune.dev),
+                        error=format_error(
+                            exc, getattr(ui.celune, "log_level", "info")
+                        ),
                     ),
                     "error",
                 )
@@ -548,7 +556,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 ui.safe_log(
                     string(
                         "commands.character_switch_failed",
-                        error=format_error(exc, ui.celune.dev),
+                        error=format_error(
+                            exc, getattr(ui.celune, "log_level", "info")
+                        ),
                     ),
                     "error",
                 )
@@ -588,7 +598,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 ui.safe_log(
                     string(
                         "commands.vc_decode_failed",
-                        error=format_error(exc, ui.celune.dev),
+                        error=format_error(
+                            exc, getattr(ui.celune, "log_level", "info")
+                        ),
                     ),
                     "error",
                 )
@@ -731,7 +743,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     ui.safe_log(
                         string(
                             "commands.cannot_play_audio",
-                            error=format_error(exc, ui.celune.dev),
+                            error=format_error(
+                                exc, getattr(ui.celune, "log_level", "info")
+                            ),
                         ),
                         "error",
                     )
@@ -741,7 +755,7 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.safe_log(
                 string(
                     "commands.cannot_play_file",
-                    error=format_error(e, ui.celune.dev),
+                    error=format_error(e, getattr(ui.celune, "log_level", "info")),
                 ),
                 "error",
             )
@@ -851,17 +865,11 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         if ui.celune.config.get("ipa") is False:
             ipa_decoded, unmatched = replace_ipa(raw_text, strict=True)
             if unmatched > 0:
-                safe_log_dev = getattr(ui, "safe_log_dev", None)
-                if callable(safe_log_dev):
-                    safe_log_dev(
-                        string("commands.unmatched_ipa", count=unmatched),
-                        "warning",
-                    )
-                else:
-                    ui.safe_log(
-                        string("commands.unmatched_ipa", count=unmatched),
-                        "warning",
-                    )
+                ui.safe_log(
+                    string("commands.unmatched_ipa", count=unmatched),
+                    "warning",
+                    loglevel="verbose",
+                )
 
             ui.celune.say(ipa_decoded, display_text=raw_text)
         else:
@@ -913,7 +921,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 ui.safe_log(
                     string(
                         "commands.stop_failed",
-                        error=format_error(exc, ui.celune.dev),
+                        error=format_error(
+                            exc, getattr(ui.celune, "log_level", "info")
+                        ),
                     ),
                     "error",
                 )
@@ -930,7 +940,9 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 ui.safe_log(
                     string(
                         "commands.stop_failed",
-                        error=format_error(exc, ui.celune.dev),
+                        error=format_error(
+                            exc, getattr(ui.celune, "log_level", "info")
+                        ),
                     ),
                     "error",
                 )

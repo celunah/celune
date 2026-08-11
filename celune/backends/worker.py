@@ -19,6 +19,7 @@ from ..typing.backends import (
     BackendModel,
     _BackendRuntime,
 )
+from ..typing.aliases import LogLevel
 from ..typing.worker import WorkerMessage, WorkerRequest, WorkerResponse, WorkerValue
 
 _WORKER_STDERR = sys.stderr
@@ -66,9 +67,15 @@ def _describe(backend: _BackendRuntime) -> BackendDescription:
     )
 
 
-def _worker_log(message: str, severity: str = "info") -> None:
+def _worker_log(
+    message: str,
+    severity: str = "info",
+    *,
+    loglevel: LogLevel = "info",
+) -> None:
     """Write backend logs away from the binary protocol stream."""
-    print(f"[{severity}] {message}", file=_WORKER_STDERR, flush=True)
+    prefix = f"[{severity}]" if loglevel == "info" else f"[{loglevel}][{severity}]"
+    print(f"{prefix} {message}", file=_WORKER_STDERR, flush=True)
 
 
 def _error_response(error: Exception) -> WorkerResponse:
@@ -143,6 +150,10 @@ def _run_request(
     """Run one backend request and return its response and next model ID."""
     operation = request.get("operation")
     arguments = request.get("arguments", {})
+    _worker_log(
+        f"[IPC] request operation={operation} arguments={tuple(arguments)}",
+        loglevel="debug",
+    )
     if operation == "describe":
         return {"ok": True, "value": _describe(backend)}, next_model_id
     if operation == "model_is_available_locally":
@@ -192,10 +203,14 @@ def _run_request(
             if stream_frame_count <= 3:
                 _worker_log(
                     f"[STREAM] worker emitted frame={stream_frame_count} "
-                    f"{_stream_value_summary(chunk)}"
+                    f"{_stream_value_summary(chunk)}",
+                    loglevel="debug",
                 )
             send_message(protocol_stream, {"ok": True, "stream": True, "value": chunk})
-        _worker_log(f"[STREAM] worker completed frames={stream_frame_count}")
+        _worker_log(
+            f"[STREAM] worker completed frames={stream_frame_count}",
+            loglevel="debug",
+        )
         return {"ok": True, "done": True}, next_model_id
     raise ValueError(f"unknown backend worker operation: {operation}")
 
@@ -237,6 +252,16 @@ def main() -> int:
             )
         except Exception as error:
             response = _error_response(error)
+            _worker_log(
+                f"[IPC] response operation={request.get('operation')} "
+                f"ok=False error={type(error).__name__}",
+                "error",
+            )
+        else:
+            _worker_log(
+                f"[IPC] response operation={request.get('operation')} ok=True",
+                loglevel="debug",
+            )
         send_message(protocol_stream, cast(WorkerMessage, response))
 
 

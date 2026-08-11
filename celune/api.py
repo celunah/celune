@@ -65,7 +65,7 @@ from .pipeline import (
     current_playback_status,
     prepare_playback_audio,
 )
-from .typing.aliases import AudioChunk, AudioChunks
+from .typing.aliases import AudioChunk, AudioChunks, LogLevel
 from .typing.api import (
     TaskCommandName,
     TaskEventName,
@@ -1181,15 +1181,25 @@ def _wrap_celune_callbacks(celune: Celune) -> None:
     original_input_state = celune.change_input_state_callback
     original_voice_lock_state = celune.change_voice_lock_state_callback
 
-    def wrapped_log(msg: str, severity: str = "info") -> None:
+    def wrapped_log(
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
         _publish_active_task_log(msg, severity)
         _append_webui_log(msg, severity)
-        original_log(msg, severity)
+        original_log(msg, severity, loglevel=loglevel)
 
-    def wrapped_status(msg: str, severity: str = "info") -> None:
+    def wrapped_status(
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
         _publish_active_task_log(msg, severity)
         _set_webui_status(msg, severity, source="callback")
-        original_status(msg, severity)
+        original_status(msg, severity, loglevel=loglevel)
 
     def wrapped_error(msg: str) -> None:
         _publish_active_task_log(
@@ -1948,7 +1958,10 @@ def _webui_speak(
         yield snapshot[0], audio_value, *snapshot[1:]
     except Exception as e:
         _append_webui_log(
-            string("webui.error", error=format_error(e, celune.dev)),
+            string(
+                "webui.error",
+                error=format_error(e, getattr(celune, "log_level", "info")),
+            ),
             "error",
         )
         snapshot = _webui_submit_snapshot("")
@@ -2020,7 +2033,10 @@ def _webui_convert_audio(
         )
     except Exception as e:
         _append_webui_log(
-            string("webui.error", error=format_error(e, celune.dev)),
+            string(
+                "webui.error",
+                error=format_error(e, getattr(celune, "log_level", "info")),
+            ),
             "error",
         )
         logs_html, status_html, resources_html, voice_update, send_update, _input = (
@@ -2625,7 +2641,12 @@ def think(body: ThinkRequest) -> JSONResponse:
         think right now.
     """
     celune = require_celune()
-    api_log("THINK", body.content if celune.dev else "[content protected]")
+    api_log(
+        "THINK",
+        body.content
+        if getattr(celune, "log_level", "info") != "info"
+        else "[content protected]",
+    )
     if not celune.think(body.content):
         return JSONResponse(
             status_code=409,
@@ -3021,7 +3042,10 @@ def start_api(
                 celune.log(string("api.port_in_use", port=port), "warning")
             else:
                 celune.log(
-                    string("api.could_not_start", error=format_error(e, celune.dev)),
+                    string(
+                        "api.could_not_start",
+                        error=format_error(e, getattr(celune, "log_level", "info")),
+                    ),
                     "warning",
                 )
 

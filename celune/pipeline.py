@@ -555,7 +555,10 @@ def acquire_pipeline(engine: Celune, action: str) -> bool:
         bool: ``True`` when the pipeline was claimed, otherwise ``False``.
     """
     with engine.say_lock:
-        engine.log_dev(f"[LOCK] acquire requested by {action}, locked={engine.locked}")
+        engine.log(
+            f"[LOCK] acquire requested by {action}, locked={engine.locked}",
+            loglevel="verbose",
+        )
         if engine.locked:
             engine.log(
                 string("pipeline.busy_action", action=action, app_name=APP_NAME),
@@ -568,7 +571,11 @@ def acquire_pipeline(engine: Celune, action: str) -> bool:
         if action != "play readiness signal":
             engine._ready_announced = False
         engine.playback_done.clear()
-        engine.log_dev(f"[LOCK] acquired by {action}")
+        engine.log(
+            f"[LOCK] acquired by {action} text_queue={engine.text_queue.qsize()} "
+            f"audio_queue={engine.audio_queue.qsize()}",
+            loglevel="debug",
+        )
         return True
 
 
@@ -585,7 +592,12 @@ def release_pipeline(engine: Celune, playback_idle: bool = True) -> None:
             engine.playback_done.set()
             if engine.cur_state != "error":
                 engine.cur_state = "idle"
-        engine.log_dev("[LOCK] released")
+        engine.log("[LOCK] released", loglevel="verbose")
+        engine.log(
+            f"[LOCK] release_complete playback_done={engine.playback_done.is_set()} "
+            f"text_queue={engine.text_queue.qsize()} audio_queue={engine.audio_queue.qsize()}",
+            loglevel="debug",
+        )
 
 
 def _next_playback_source_id(engine: Celune) -> int:
@@ -725,6 +737,12 @@ def _queue_playback_chunk(
             timing=timing,
             generation=expected_generation,
         )
+    )
+    engine.log(
+        f"[QUEUE] playback_chunk source={source_id} samples={len(audio)} "
+        f"sample_rate={sample_rate} generation={expected_generation} "
+        f"audio_queue={engine.audio_queue.qsize()}",
+        loglevel="debug",
     )
     return True
 
@@ -918,6 +936,12 @@ def _queue_playback_done(
             analysis_audio=analysis_audio,
             generation=expected_generation,
         )
+    )
+    engine.log(
+        f"[QUEUE] playback_done source={source_id} generation={expected_generation} "
+        f"release_pipeline={release_pipeline_when_finished} "
+        f"notify_idle={notify_idle_when_finished} audio_queue={engine.audio_queue.qsize()}",
+        loglevel="debug",
     )
     return True
 
@@ -1405,9 +1429,9 @@ def _persona_mood_or_state(
             if analyzer.last_error.strip()
             else "Persona emotion analysis fell back to Neutral."
         )
-        log_dev = getattr(engine, "log_dev", None)
-        if callable(log_dev):
-            log_dev(emotion_warning, "warning")
+        log = getattr(engine, "log", None)
+        if callable(log):
+            log(emotion_warning, "warning", loglevel="verbose")
         return "Neutral."
     return summary.target_state
 
@@ -1558,13 +1582,14 @@ def _classify_persona_memories(engine: Celune, request: str) -> None:
                 explicit=False,
             )
     except Exception as error:
-        log_dev = getattr(engine, "log_dev", None)
-        if callable(log_dev):
-            log_dev(
+        log = getattr(engine, "log", None)
+        if callable(log):
+            log(
                 string(
                     "pipeline.persona_memory_classifier_failed",
-                    error=format_error(error, engine.dev),
-                )
+                    error=format_error(error, engine.log_level),
+                ),
+                loglevel="verbose",
             )
 
 
@@ -1904,7 +1929,7 @@ def think(engine: Celune, request: str) -> bool:
         engine.log(
             string(
                 "pipeline.persona_request_failed",
-                error=format_error(e, engine.dev),
+                error=format_error(e, engine.log_level),
             ),
             "warning",
         )
@@ -2014,9 +2039,10 @@ def handle_audio_input(engine: Celune, request: AudioInputRequest) -> bool:
             reset_ready_announcement=request.reset_ready_announcement,
         )
 
-    engine.log_dev(
+    engine.log(
         "Audio input was accepted but ignored because the current mode is text-to-speech only."
-        f" label={request.label!r} sample_rate={request.sample_rate} shape={audio.shape!r}"
+        f" label={request.label!r} sample_rate={request.sample_rate} shape={audio.shape!r}",
+        loglevel="verbose",
     )
     return True
 
@@ -2054,7 +2080,7 @@ def convert_audio_input(
                 engine.log(
                     string(
                         "pipeline.vc_reference_load_failed",
-                        error=format_error(e, getattr(engine, "dev", False)),
+                        error=format_error(e, getattr(engine, "log_level", "info")),
                     ),
                     "warning",
                 )
@@ -2257,6 +2283,13 @@ def _queue_speech_after_ready(
                     normalize=engine.use_normalization,
                     generation=engine.speech_generation,
                 )
+            )
+            engine.log(
+                f"[QUEUE] speech generation={engine.speech_generation} "
+                f"text_chars={len(text)} language={requested_language} "
+                f"stream_queue={stream_queue is not None} "
+                f"text_queue={engine.text_queue.qsize()}",
+                loglevel="debug",
             )
         engine.status_callback(string("status.generating"))
         engine.progress_callback(None, None)
@@ -2815,6 +2848,12 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
 
             start_time = _monotonic_time()
             engine.log(f"[GEN] {display_text}")
+            engine.log(
+                f"[GEN] start generation={item.generation} text_chars={len(text)} "
+                f"backend={getattr(engine.backend, 'name', type(engine.backend).__name__)} "
+                f"model={getattr(engine, 'model_name', '')!s} language={request_language}",
+                loglevel="debug",
+            )
             speech_len = 0.0
             buffered_speech_len = 0.0
             smart_buffer_target_seconds = _smart_buffer_target_seconds(
@@ -2867,8 +2906,10 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                     normalized = engine.normalize(chunk_text)
                     if normalized is not None:
                         if normalized == chunk_text:
-                            engine.log_dev(
-                                "This input is already normalized.", "warning"
+                            engine.log(
+                                "This input is already normalized.",
+                                "warning",
+                                loglevel="verbose",
                             )
                         else:
                             differences = sum(
@@ -2915,8 +2956,9 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                             )
 
                         model_id = engine.backend.model_id_for_voice(active_voice)
-                        engine.log_dev(
-                            f"[RELOAD] Loading {model_id} for language: {target_language!s}"
+                        engine.log(
+                            f"[RELOAD] Loading {model_id} for language: {target_language!s}",
+                            loglevel="verbose",
                         )
                         engine.backend.unload_model()
                         engine.model = engine.backend.load_model(
@@ -2973,14 +3015,16 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                             or audio_chunk.size == 0
                             or not np.any(audio_chunk)
                         ):
-                            engine.log_dev(
+                            engine.log(
                                 f"[STREAM] core received frame={stream_frame_count} "
                                 f"samples={audio_chunk.size} sample_rate={sr} "
-                                f"nonzero={bool(np.any(audio_chunk)) if audio_chunk.size else False}"
+                                f"nonzero={bool(np.any(audio_chunk)) if audio_chunk.size else False}",
+                                loglevel="debug",
                             )
                         if audio_chunk.size == 0 or not np.any(audio_chunk):
-                            engine.log_dev(
-                                f"[STREAM] core discarded frame={stream_frame_count}"
+                            engine.log(
+                                f"[STREAM] core discarded frame={stream_frame_count}",
+                                loglevel="debug",
                             )
                             continue
                         accepted_stream_frame_count += 1
@@ -3062,9 +3106,17 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
 
             generation_time = _monotonic_time() - start_time
 
-            engine.log_dev(
+            engine.log(
+                f"[GEN] stream_complete generation={request_generation} "
+                f"seconds={speech_len:.3f} elapsed={generation_time:.3f} "
+                f"buffered={buffered_speech_len:.3f}",
+                loglevel="debug",
+            )
+
+            engine.log(
                 f"[STREAM] core totals received={stream_frame_count} "
-                f"accepted={accepted_stream_frame_count}"
+                f"accepted={accepted_stream_frame_count}",
+                loglevel="debug",
             )
 
             if engine.exit_requested:
@@ -3212,7 +3264,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                             engine.log(
                                 string(
                                     "pipeline.outputs_create_failed",
-                                    error=format_error(e, engine.dev),
+                                    error=format_error(e, engine.log_level),
                                 ),
                                 "warning",
                             )
@@ -3245,7 +3297,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                             engine.log(
                                 string(
                                     "pipeline.flac_save_failed",
-                                    error=format_error(e, engine.dev),
+                                    error=format_error(e, engine.log_level),
                                 ),
                                 "warning",
                             )
@@ -3270,7 +3322,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
             engine.log(
                 string(
                     "pipeline.gen_error",
-                    error=format_error(e, engine.dev),
+                    error=format_error(e, engine.log_level),
                 ),
                 "error",
             )
@@ -3353,9 +3405,10 @@ def _ensure_playback_stream(engine: Celune, sample_rate: int) -> bool:
             output_device_key,
             "output",
         )
-        engine.log_dev(
+        engine.log(
             f"[PLAY] resolved {output_device_key}={engine.config.get(output_device_key)!r} "
-            f"audio_api={engine.config.get('audio_api')!r} -> {output_device!r}"
+            f"audio_api={engine.config.get('audio_api')!r} -> {output_device!r}",
+            loglevel="verbose",
         )
         engine.current_sr = sample_rate
         engine.stream = sd.OutputStream(
@@ -3369,7 +3422,7 @@ def _ensure_playback_stream(engine: Celune, sample_rate: int) -> bool:
             raise NotAvailableError("audio stream is not available")
         engine.stream.start()
         engine._audio_unavailable = False
-        engine.log_dev(f"[PLAY] started stream at {sample_rate} Hz")
+        engine.log(f"[PLAY] started stream at {sample_rate} Hz", loglevel="verbose")
         return True
     except ValueError as error:
         if not getattr(engine, "audio_unavailable", False):
@@ -3423,8 +3476,12 @@ def _finalize_playback_idle(
         engine._last_flavor = choice
         engine.log(string("pipeline.just_type", choice=choice))
     else:
-        if engine.dev and saved_path is not None and analysis_audio is not None:
-            engine.log_dev("Analyzing...")
+        if (
+            engine.log_level != "info"
+            and saved_path is not None
+            and analysis_audio is not None
+        ):
+            engine.log("Analyzing...", loglevel="verbose")
             saved = pathlib.Path(saved_path)
             run_async(
                 analyze_voice_audio,
@@ -3698,7 +3755,10 @@ async def playback_worker_job(engine: Celune) -> None:
                 await asyncio.to_thread(stream.write, mixed)
                 _update_playback_progress(engine, source_buffers)
             except Exception as e:
-                engine.log(f"[PLAY ERROR] {format_error(e, engine.dev)}", "error")
+                engine.log(
+                    f"[PLAY ERROR] {format_error(e, engine.log_level)}",
+                    "error",
+                )
                 engine.error_callback(string("pipeline.playback_error"))
                 await asyncio.to_thread(close_stream, engine, True)
                 engine._stream = None

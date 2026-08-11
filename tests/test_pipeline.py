@@ -438,7 +438,6 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         """Verify engine-level audio input is a safe explicit no-op in TTS mode."""
         engine = make_pipeline_engine()
         engine.log = mock.Mock()
-        engine.log_dev = mock.Mock()
         engine.loaded = True
         engine.locked = False
         engine.cur_state = "idle"
@@ -451,8 +450,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertEqual(engine.text_queue.empty(), True)
         self.assertEqual(engine.audio_queue.empty(), True)
         self.assertEqual(engine.cur_state, "idle")
-        engine.log.assert_not_called()
-        engine.log_dev.assert_called_once()
+        engine.log.assert_called_once()
+        self.assertEqual(engine.log.call_args.kwargs["loglevel"], "verbose")
 
     def test_handle_audio_input_routes_to_vc_backend_in_voice_conversion_mode(
         self,
@@ -2191,13 +2190,15 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         analyzer.assert_not_called()
 
     def test_persona_context_logs_emotion_fallback_reason(self) -> None:
-        """Verify emotion-analysis failures are surfaced in developer logs."""
+        """Verify emotion-analysis failures are surfaced in verbose logs."""
         engine = make_pipeline_engine()
         engine.config = {}
         engine.current_character = "Fixture"
         engine.current_voice = "balanced"
         captured: list[tuple[str, str]] = []
-        engine.log_dev = lambda msg, severity="info": captured.append((msg, severity))
+        engine.log = lambda msg, severity="info", **kwargs: captured.append(
+            (msg, severity)
+        )
 
         fake_analyzer = SimpleNamespace(
             last_error="lunahr/emotispace-128 could not be loaded",

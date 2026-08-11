@@ -23,6 +23,7 @@ from ..typing.backends import (
     BackendDescription,
     BackendGeneration,
 )
+from ..typing.aliases import LogCallback, LogLevel
 from ..typing.worker import WorkerResponse, WorkerValue
 from .environment import (
     BackendEnvironment,
@@ -38,6 +39,21 @@ from .worker_protocol import (
 from .vc.base import CeluneVCBackend
 
 __all__ = ["RemoteBackendProxy", "RemoteModelHandle", "RemoteVCBackendProxy"]
+
+
+def _emit_log(
+    callback: Callable[..., None],
+    message: str,
+    severity: str = "info",
+    loglevel: LogLevel = "info",
+) -> None:
+    """Call a log callback while retaining compatibility with two-argument hooks."""
+    try:
+        callback(message, severity, loglevel=loglevel)
+    except TypeError as error:
+        if "loglevel" not in str(error):
+            raise
+        callback(message, severity)
 
 
 def _worker_exception(error_type: Optional[str], message: str) -> Exception:
@@ -73,7 +89,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     def __init__(
         self,
         manifest: BackendManifest,
-        log: Callable[[str, str], None],
+        log: LogCallback,
         fatal: Optional[Callable[[], None]] = None,
         environment_manager: Optional[BackendEnvironmentManager] = None,
         **backend_kwargs: BackendArgumentValue,
@@ -99,7 +115,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     def _start_worker(
         self,
         environment: BackendEnvironment,
-        log: Callable[[str, str], None],
+        log: LogCallback,
         backend_kwargs: BackendArguments,
     ) -> None:
         """Start the worker process and forward its stderr logs."""
@@ -126,6 +142,12 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             stderr=subprocess.PIPE,
             env=environment_variables,
         )
+        _emit_log(
+            log,
+            f"[IPC] worker started backend={self._manifest.backend_id} "
+            f"pid={getattr(self._process, 'pid', None)} python={environment.python}",
+            loglevel="debug",
+        )
         if self._process.stderr is not None:
             self._stderr_thread = threading.Thread(
                 target=self._read_worker_logs,
@@ -137,7 +159,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     def _read_worker_logs(
         self,
         stream: IO[bytes],
-        log: Callable[[str, str], None],
+        log: LogCallback,
     ) -> None:
         """Forward worker stderr lines to Celune's logging callback."""
         traceback_active = False
@@ -147,23 +169,36 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 continue
             with self._worker_stderr_lock:
                 self._worker_stderr.append(text)
-            severity, explicit, message = self._split_worker_log(text)
+            severity, explicit, message, loglevel = self._split_worker_log(text)
             if text.startswith("Traceback (most recent call last):"):
                 traceback_active = True
             if traceback_active and not explicit:
                 severity = "error"
             if traceback_active and self._is_traceback_exception_line(text):
                 traceback_active = False
-            log(message, severity)
+            _emit_log(log, message, severity, loglevel)
 
     @staticmethod
-    def _split_worker_log(text: str) -> tuple[str, bool, str]:
+    def _split_worker_log(text: str) -> tuple[str, bool, str, LogLevel]:
         """Split one worker log line into its severity and message."""
-        if text.startswith("[") and "] " in text:
-            severity, _, message = text[1:].partition("] ")
-            if severity in {"info", "warning", "error"}:
-                return severity, True, message
-        return "info", False, text
+        if text.startswith("["):
+            first, separator, remainder = text[1:].partition("]")
+            if separator and first in {"info", "warning", "error"}:
+                if remainder.startswith(" "):
+                    return first, True, remainder[1:], "info"
+            if (
+                separator
+                and first in {"verbose", "debug"}
+                and remainder.startswith("[")
+            ):
+                severity, severity_separator, message = remainder[1:].partition("]")
+                if (
+                    severity_separator
+                    and severity in {"info", "warning", "error"}
+                    and message.startswith(" ")
+                ):
+                    return severity, True, message[1:], first
+        return "info", False, text, "info"
 
     @staticmethod
     def _is_traceback_exception_line(text: str) -> bool:
@@ -223,8 +258,23 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     raise WorkerProtocolError(f"{error}:\n{detail}") from error
                 raise
             if response.get("fatal", False):
+                log_callback = getattr(self, "_log_callback", None)
+                if log_callback is not None:
+                    _emit_log(
+                        log_callback,
+                        "[IPC] received fatal worker notification",
+                        loglevel="debug",
+                    )
                 self._notify_fatal()
                 continue
+            log_callback = getattr(self, "_log_callback", None)
+            if log_callback is not None:
+                _emit_log(
+                    log_callback,
+                    f"[IPC] received response ok={response.get('ok')} "
+                    f"stream={response.get('stream', False)} done={response.get('done', False)}",
+                    loglevel="debug",
+                )
             return response
 
     def _load_description(self) -> None:
@@ -255,6 +305,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         if process.stdin is None or process.stdout is None:
             raise RuntimeError(string("backends.worker_streams_unavailable"))
         with self._protocol_lock:
+            _emit_log(
+                self._log_callback,
+                f"[IPC] send operation={operation} arguments={tuple(arguments)}",
+                loglevel="debug",
+            )
             send_message(
                 process.stdin, {"operation": operation, "arguments": arguments}
             )
@@ -280,6 +335,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         if process.stdin is None or process.stdout is None:
             raise RuntimeError("backend worker protocol streams are unavailable")
         with self._protocol_lock:
+            _emit_log(
+                self._log_callback,
+                f"[IPC] send_stream operation={operation} arguments={tuple(arguments)}",
+                loglevel="debug",
+            )
             send_message(
                 process.stdin, {"operation": operation, "arguments": arguments}
             )
@@ -293,22 +353,32 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                         completed = True
                         raise
                     if response.get("done", False):
-                        self._log_callback(
+                        _emit_log(
+                            self._log_callback,
                             f"[STREAM] proxy completed frames={stream_frame_count}",
                             "info",
+                            loglevel="debug",
                         )
                         completed = True
                         return
                     if response.get("stream", False):
                         stream_frame_count += 1
                         if stream_frame_count <= 3:
-                            self._log_callback(
+                            _emit_log(
+                                self._log_callback,
                                 f"[STREAM] proxy received frame={stream_frame_count}",
                                 "info",
+                                loglevel="debug",
                             )
                         yield response.get("value")
             finally:
                 if not completed:
+                    _emit_log(
+                        self._log_callback,
+                        f"[IPC] draining incomplete stream operation={operation} "
+                        f"frames={stream_frame_count}",
+                        loglevel="debug",
+                    )
                     self._drain_stream(process)
 
     def _read_stream_frame(
@@ -393,6 +463,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         process = self._process
         if process is None:
             return
+        _emit_log(
+            self._log_callback,
+            f"[IPC] closing worker backend={self._manifest.backend_id} pid={process.pid}",
+            loglevel="debug",
+        )
         self._process = None
         if process.poll() is None and process.stdin is not None:
             with self._protocol_lock:
@@ -428,7 +503,7 @@ class RemoteVCBackendProxy(CeluneVCBackend):
     def __init__(
         self,
         manifest: BackendManifest,
-        log: Callable[[str, str], None],
+        log: LogCallback,
         environment_manager: Optional[BackendEnvironmentManager] = None,
     ) -> None:
         self._worker = RemoteBackendProxy(

@@ -26,7 +26,7 @@ from ..modes import (
     mode_allows_persona,
     resolve_operation_mode,
 )
-from ..typing.aliases import DevLogCallback
+from ..typing.aliases import LogCallback
 from ..typing.common import JSON, JSONSerializable
 from ..typing.persona import (
     PersonaClientResponse,
@@ -65,16 +65,17 @@ class PersonaClient:
     def __init__(
         self,
         config: Optional[Mapping[str, JSONSerializable]] = None,
-        log_dev: Optional[DevLogCallback] = None,
+        log: Optional[LogCallback] = None,
+        log_dev: Optional[LogCallback] = None,
     ) -> None:
         self.runtime = PersonaRuntime(config=config)
         self.config = config
-        self.log_dev = log_dev
+        self.log = log or log_dev
 
     @contextlib.contextmanager
     def _capture_backend_output(self) -> Generator[None, None, None]:
         """Route Persona backend stdout/stderr into Celune developer logs."""
-        if self.log_dev is None:
+        if self.log is None:
             yield
             return
 
@@ -85,7 +86,7 @@ class PersonaClient:
         for line in stderr_buffer.getvalue().splitlines():
             text = line.strip()
             if text:
-                self.log_dev(f"[PERSONA] {text}", "warning")
+                self.log(f"[PERSONA] {text}", "warning", loglevel="verbose")
 
     def load(
         self,
@@ -800,13 +801,14 @@ def persona_is_available() -> bool:
 
 def create_persona_client(
     config: Optional[Mapping[str, JSONSerializable]] = None,
-    log_dev: Optional[DevLogCallback] = None,
+    log: Optional[LogCallback] = None,
+    log_dev: Optional[LogCallback] = None,
 ) -> Optional[PersonaClient]:
     """Create a Celune-managed in-process Persona client when enabled.
 
     Args:
         config: Celune's current configuration.
-        log_dev: The logging callback to Celune's UI.
+        log: The logging callback to Celune's UI.
 
     Returns:
         Optional[PersonaClient]: ``PersonaClient`` if Persona is enabled, else ``None``.
@@ -817,4 +819,4 @@ def create_persona_client(
     if not persona_is_available():
         return None
 
-    return PersonaClient(config=config, log_dev=log_dev)
+    return PersonaClient(config=config, log=log, log_dev=log_dev)

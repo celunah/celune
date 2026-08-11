@@ -254,6 +254,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.config = {}
     engine.input_mode = "text_to_speech"
     engine.language = "Auto"
+    engine.log_level = "info"
     engine.current_voice = "balanced"
     engine.current_character = None
     engine.persona_attachments = []
@@ -289,8 +290,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine._playback_generation = 0
     engine.kept_sfx_audio = None
     engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
-    engine.log = lambda msg, severity="info": messages.append((msg, severity))
-    engine.log_dev = lambda msg, severity="info": messages.append((msg, severity))
+    engine.log = lambda msg, severity="info", **kwargs: messages.append((msg, severity))
     engine.error_callback = errors.append
     engine.status_callback = lambda msg, severity="info": statuses.append(
         (msg, severity)
