@@ -10,9 +10,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import ModuleType
-from unittest import mock
-
-from .support import CeluneTestCase
+from unittest import TestCase, mock
 
 
 def _load_cac_module():
@@ -53,7 +51,7 @@ def _load_cac_module():
 cac = _load_cac_module()
 
 
-class TestCACScript(CeluneTestCase):
+class CACScriptTests(TestCase):
     """Verify the CEVOICE helper script supports simple and wizard modes."""
 
     def test_simple_mode_prompts_for_reference_text_when_not_provided(self) -> None:
@@ -76,7 +74,7 @@ class TestCACScript(CeluneTestCase):
             ):
                 exit_code = cac.main(["Nova", str(wav_path)])
 
-        assert exit_code == 0
+        self.assertEqual(exit_code, 0)
         ask_required_text.assert_called_once_with(
             "Enter reference transcript for the WAV file",
             "A reference transcript is required.",
@@ -92,7 +90,7 @@ class TestCACScript(CeluneTestCase):
             },
             {cac.DEFAULT_SIMPLE_VOICE_NAME: {"reference_text": "Hello from Nova."}},
         )
-        assert "Saved voice pack to Nova.cevoice" in stdout.getvalue()
+        self.assertIn("Saved voice pack to Nova.cevoice", stdout.getvalue())
 
     def test_simple_mode_accepts_reference_text_argument(self) -> None:
         """Verify simple mode can also take the reference transcript on the command line."""
@@ -112,7 +110,7 @@ class TestCACScript(CeluneTestCase):
             ):
                 exit_code = cac.main(["Nova", str(wav_path), "Hello from Nova."])
 
-        assert exit_code == 0
+        self.assertEqual(exit_code, 0)
         ask_required_text.assert_not_called()
         normalize_reference_wav_asset.assert_called_once_with(wav_path)
         write_cevoice.assert_called_once_with(
@@ -131,8 +129,8 @@ class TestCACScript(CeluneTestCase):
         with contextlib.redirect_stdout(io.StringIO()) as stdout:
             exit_code = cac.main(["Nova", "missing.wav", "Hello from Nova."])
 
-        assert exit_code == 1
-        assert "Error: File not found:" in stdout.getvalue()
+        self.assertEqual(exit_code, 1)
+        self.assertIn("Error: File not found:", stdout.getvalue())
 
     def test_create_cevoice_normalizes_reference_wav_assets(self) -> None:
         """Verify CEVOICE creation normalizes WAV assets before bundling them."""
@@ -162,7 +160,7 @@ class TestCACScript(CeluneTestCase):
         ):
             output_path = cac.create_cevoice(data)
 
-        assert output_path == Path("Nova.cevoice")
+        self.assertEqual(output_path, Path("Nova.cevoice"))
         normalize_reference_wav_asset.assert_called_once_with(wav_path)
         write_cevoice.assert_called_once_with(
             Path("Nova.cevoice"),
@@ -180,5 +178,5 @@ class TestCACScript(CeluneTestCase):
         with mock.patch.object(cac, "wizard") as wizard:
             exit_code = cac.main([])
 
-        assert exit_code == 0
+        self.assertEqual(exit_code, 0)
         wizard.assert_called_once_with()

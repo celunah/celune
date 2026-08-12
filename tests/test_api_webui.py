@@ -5,7 +5,7 @@ import asyncio
 from queue import Queue
 from types import SimpleNamespace
 from typing import cast
-from unittest import mock
+from unittest import TestCase, mock
 
 import numpy as np
 from starlette.requests import Request
@@ -16,14 +16,11 @@ from celune.celune import Celune
 from celune.i18n import string
 from celune.pipeline import SpeechStreamQueue
 
-from .support import CeluneTestCase
 
-
-class TestApiWebUI(CeluneTestCase):
+class ApiWebUITests(TestCase):
     """Tests for the mounted Gradio browser UI helpers."""
 
     def setUp(self) -> None:
-        """Snapshot global WebUI state before each test."""
         self.previous_celune = api.bound_celune
         self.previous_status_text = api.webui_status_text
         self.previous_status_severity = api.webui_status_severity
@@ -54,7 +51,6 @@ class TestApiWebUI(CeluneTestCase):
         api.set_webui_status("Starting up")
 
     def tearDown(self) -> None:
-        """Restore global WebUI state after each test."""
         api.bound_celune = self.previous_celune
         api.webui_status_text = self.previous_status_text
         api.webui_status_severity = self.previous_status_severity
@@ -96,16 +92,16 @@ class TestApiWebUI(CeluneTestCase):
     def test_root_redirects_to_browser_ui(self) -> None:
         """Verify the fallback root now forwards users to the browser UI."""
         response = api.root()
-        assert response.status_code == 307
-        assert response.headers["location"] == "/ui"
+        self.assertEqual(response.status_code, 307)
+        self.assertEqual(response.headers["location"], "/ui")
 
     def test_browser_ui_requests_bypass_api_security_detection(self) -> None:
         """Verify mounted browser UI paths are recognized by the API middleware."""
         ui_request = self._request("/ui/assets/index.js")
         api_request = self._request("/v1/version")
 
-        assert api.is_browser_ui_request(ui_request)
-        assert not api.is_browser_ui_request(api_request)
+        self.assertEqual(api.is_browser_ui_request(ui_request), True)
+        self.assertEqual(api.is_browser_ui_request(api_request), False)
 
     def test_api_security_allows_public_read_only_routes_without_token(self) -> None:
         """Verify safe read-only routes stay reachable even when API auth is enabled."""
@@ -118,7 +114,7 @@ class TestApiWebUI(CeluneTestCase):
                     self._passthrough_response,
                 )
             )
-            assert response.status_code == 200, path
+            self.assertEqual(response.status_code, 200, path)
 
     def test_api_security_requires_token_for_generating_routes(self) -> None:
         """Verify protected API routes still reject unauthenticated requests."""
@@ -131,8 +127,8 @@ class TestApiWebUI(CeluneTestCase):
             )
         )
 
-        assert response.status_code == 401
-        assert response.headers["WWW-Authenticate"] == "Bearer"
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
 
     def test_webui_snapshot_uses_bound_celune_state(self) -> None:
         """Verify the browser snapshot mirrors current logs, status, and voice state."""
@@ -162,15 +158,15 @@ class TestApiWebUI(CeluneTestCase):
                 input_update,
             ) = api.webui_snapshot()
 
-        assert "Ready to speak." in logs_html
-        assert "--celune-ui-accent:" in status_html
-        assert "style=" in logs_html
-        assert "Idle" in status_html
-        assert "10.66/11.94" in resources_html
-        assert voice_update["value"] == "Balanced"
-        assert voice_update["interactive"]
-        assert send_update["interactive"]
-        assert input_update["interactive"]
+        self.assertIn("Ready to speak.", logs_html)
+        self.assertIn("--celune-ui-accent:", status_html)
+        self.assertIn("style=", logs_html)
+        self.assertIn("Idle", status_html)
+        self.assertIn("10.66/11.94", resources_html)
+        self.assertEqual(voice_update["value"], "Balanced")
+        self.assertEqual(voice_update["interactive"], True)
+        self.assertEqual(send_update["interactive"], True)
+        self.assertEqual(input_update["interactive"], True)
 
     def test_webui_wrapped_callbacks_mirror_input_and_voice_lock_state(self) -> None:
         """Verify callback-driven lock state changes are reflected in the browser UI."""
@@ -200,10 +196,10 @@ class TestApiWebUI(CeluneTestCase):
             _logs, _status, _resources, voice_update, send_update, input_update = (
                 api.webui_snapshot()
             )
-        assert not input_update["interactive"]
-        assert input_update["placeholder"] == "Please wait"
-        assert not send_update["interactive"]
-        assert not voice_update["interactive"]
+        self.assertEqual(input_update["interactive"], False)
+        self.assertEqual(input_update["placeholder"], "Please wait")
+        self.assertEqual(send_update["interactive"], False)
+        self.assertEqual(voice_update["interactive"], False)
 
         celune.change_input_state_callback(False)
         celune.change_voice_lock_state_callback(False)
@@ -219,10 +215,12 @@ class TestApiWebUI(CeluneTestCase):
                 send_update2,
                 input_update2,
             ) = api.webui_snapshot()
-        assert input_update2["interactive"]
-        assert input_update2["placeholder"] == string("webui.input_placeholder")
-        assert send_update2["interactive"]
-        assert voice_update2["interactive"]
+        self.assertEqual(input_update2["interactive"], True)
+        self.assertEqual(
+            input_update2["placeholder"], string("webui.input_placeholder")
+        )
+        self.assertEqual(send_update2["interactive"], True)
+        self.assertEqual(voice_update2["interactive"], True)
 
     def test_webui_snapshot_shows_tutorial_placeholder(self) -> None:
         """Verify tutorial state uses the tutorial placeholder in the browser UI."""
@@ -247,10 +245,12 @@ class TestApiWebUI(CeluneTestCase):
             _logs, _status, _resources, voice_update, send_update, input_update = (
                 api.webui_snapshot()
             )
-        assert not input_update["interactive"]
-        assert input_update["placeholder"] == string("webui.tutorial_placeholder")
-        assert not send_update["interactive"]
-        assert not voice_update["interactive"]
+        self.assertEqual(input_update["interactive"], False)
+        self.assertEqual(
+            input_update["placeholder"], string("webui.tutorial_placeholder")
+        )
+        self.assertEqual(send_update["interactive"], False)
+        self.assertEqual(voice_update["interactive"], False)
 
     def test_webui_snapshot_uses_voice_changer_placeholder_in_vc_mode(self) -> None:
         """Verify VC mode uses the same voice-changer placeholder as the TUI."""
@@ -275,7 +275,9 @@ class TestApiWebUI(CeluneTestCase):
                 api.webui_snapshot()
             )
 
-        assert input_update["placeholder"] == string("webui.voice_changer_placeholder")
+        self.assertEqual(
+            input_update["placeholder"], string("webui.voice_changer_placeholder")
+        )
 
     def test_webui_vc_controls_disable_outside_voice_conversion_mode(self) -> None:
         """Verify VC controls are disabled while Celune is in the normal TTS mode."""
@@ -290,10 +292,10 @@ class TestApiWebUI(CeluneTestCase):
             api._webui_vc_controls_update()
         )
 
-        assert not source_update["interactive"]
-        assert not pitch_update["interactive"]
-        assert not mode_update["interactive"]
-        assert not button_update["interactive"]
+        self.assertEqual(source_update["interactive"], False)
+        self.assertEqual(pitch_update["interactive"], False)
+        self.assertEqual(mode_update["interactive"], False)
+        self.assertEqual(button_update["interactive"], False)
 
     def test_webui_vc_controls_enable_in_voice_conversion_mode(self) -> None:
         """Verify VC controls become interactive when the engine is in VC mode."""
@@ -308,10 +310,10 @@ class TestApiWebUI(CeluneTestCase):
             api._webui_vc_controls_update()
         )
 
-        assert source_update["interactive"]
-        assert pitch_update["interactive"]
-        assert mode_update["interactive"]
-        assert button_update["interactive"]
+        self.assertEqual(source_update["interactive"], True)
+        self.assertEqual(pitch_update["interactive"], True)
+        self.assertEqual(mode_update["interactive"], True)
+        self.assertEqual(button_update["interactive"], True)
 
     def test_webui_snapshot_keeps_failed_no_voice_runtime_locked(self) -> None:
         """Verify a failed no-voice runtime stays in an error/locked browser state."""
@@ -337,18 +339,18 @@ class TestApiWebUI(CeluneTestCase):
                 api.webui_snapshot()
             )
 
-        assert f"{api.APP_NAME} could not start" in status_html
-        assert voice_update["value"] == "No voice set"
-        assert not voice_update["interactive"]
-        assert not send_update["interactive"]
-        assert not input_update["interactive"]
+        self.assertIn(f"{api.APP_NAME} could not start", status_html)
+        self.assertEqual(voice_update["value"], "No voice set")
+        self.assertEqual(voice_update["interactive"], False)
+        self.assertEqual(send_update["interactive"], False)
+        self.assertEqual(input_update["interactive"], False)
 
     def test_seeded_logs_strip_persisted_time_prefix(self) -> None:
         """Verify persisted log timestamps do not show up in the browser log view."""
         stripped = api.strip_webui_log_prefix(
             "[2026-06-11T14:22:01] [WARNING] Something happened"
         )
-        assert stripped == "Something happened"
+        self.assertEqual(stripped, "Something happened")
 
     def test_webui_theme_style_uses_cevoice_theme_metadata(self) -> None:
         """Verify browser CSS variables are derived from CEVOICE theme metadata."""
@@ -367,45 +369,48 @@ class TestApiWebUI(CeluneTestCase):
         with mock.patch("celune.api.default_loader", return_value=loader):
             api.configure_webui_theme()
 
-        assert "--celune-background: #112233;" in api.webui_theme_style
-        assert "--celune-sleeping: #556677;" in api.webui_theme_style
-        assert "--celune-primary:" in api.webui_theme_style
-        assert "--celune-error:" in api.webui_theme_style
-        assert "--celune-ui-accent:" in api.webui_theme_style
-        assert "--celune-ui-bg:" in api.webui_theme_style
-        assert 'rel="icon"' in api.WEBUI_HEAD
+        self.assertIn("--celune-background: #112233;", api.webui_theme_style)
+        self.assertIn("--celune-sleeping: #556677;", api.webui_theme_style)
+        self.assertIn("--celune-primary:", api.webui_theme_style)
+        self.assertIn("--celune-error:", api.webui_theme_style)
+        self.assertIn("--celune-ui-accent:", api.webui_theme_style)
+        self.assertIn("--celune-ui-bg:", api.webui_theme_style)
+        self.assertIn('rel="icon"', api.WEBUI_HEAD)
 
     def test_webui_css_keeps_log_panel_flexible(self) -> None:
         """Verify the stylesheet keeps the log panel as the growable shell region."""
-        assert "#celune-log-panel" in api.WEBUI_CSS
-        assert "flex: 1 1 auto;" in api.WEBUI_CSS
-        assert "min-height: 0;" in api.WEBUI_CSS
-        assert '.standard-player input[type="range"]' in api.WEBUI_CSS
-        assert ".minimal-audio-player button:hover" in api.WEBUI_CSS
-        assert ".toast-body.error" in api.WEBUI_CSS
-        assert ".toast-message-text.error::before" in api.WEBUI_CSS
-        assert 'content: "Celune is currently unavailable.";' in api.WEBUI_CSS
-        assert (
-            "@media (max-width: 768px), (any-pointer: coarse), (hover: none)"
-            in api.WEBUI_CSS
+        self.assertIn("#celune-log-panel", api.WEBUI_CSS)
+        self.assertIn("flex: 1 1 auto;", api.WEBUI_CSS)
+        self.assertIn("min-height: 0;", api.WEBUI_CSS)
+        self.assertIn('.standard-player input[type="range"]', api.WEBUI_CSS)
+        self.assertIn(".minimal-audio-player button:hover", api.WEBUI_CSS)
+        self.assertIn(".toast-body.error", api.WEBUI_CSS)
+        self.assertIn(".toast-message-text.error::before", api.WEBUI_CSS)
+        self.assertIn('content: "Celune is currently unavailable.";', api.WEBUI_CSS)
+        self.assertIn(
+            "@media (max-width: 768px), (any-pointer: coarse), (hover: none)",
+            api.WEBUI_CSS,
         )
-        assert "margin-top: auto;" not in api.WEBUI_CSS
+        self.assertNotIn("margin-top: auto;", api.WEBUI_CSS)
 
     def test_webui_audio_waveform_options_follow_primary_color(self) -> None:
         """Verify Gradio audio waveform colors are driven by Celune's primary color."""
         options = api._webui_audio_waveform_options()
 
-        assert (
-            options.waveform_progress_color
-            == api.colors.SEVERITY_COLORS["celune"]["info"]
+        self.assertEqual(
+            options.waveform_progress_color,
+            api.colors.SEVERITY_COLORS["celune"]["info"],
         )
-        assert options.trim_region_color == api.colors.SEVERITY_COLORS["celune"]["info"]
+        self.assertEqual(
+            options.trim_region_color,
+            api.colors.SEVERITY_COLORS["celune"]["info"],
+        )
 
     def test_webui_head_installs_log_autoscroll(self) -> None:
         """Verify the WebUI head installs auto-scroll behavior for the log pane."""
-        assert "#celune-log-panel pre" in api.WEBUI_HEAD
-        assert "MutationObserver" in api.WEBUI_HEAD
-        assert "scrollTop = logElement.scrollHeight" in api.WEBUI_HEAD
+        self.assertIn("#celune-log-panel pre", api.WEBUI_HEAD)
+        self.assertIn("MutationObserver", api.WEBUI_HEAD)
+        self.assertIn("scrollTop = logElement.scrollHeight", api.WEBUI_HEAD)
 
     def test_webui_probe_logs_sleep_transition(self) -> None:
         """Verify the browser log mirrors the sleep transition message."""
@@ -429,8 +434,8 @@ class TestApiWebUI(CeluneTestCase):
                 api.webui_snapshot()
             )
 
-        assert "currently sleeping. Type anything to wake up." in logs_html
-        assert "Sleeping" in status_html
+        self.assertIn("currently sleeping. Type anything to wake up.", logs_html)
+        self.assertIn("Sleeping", status_html)
 
     def test_webui_probe_does_not_immediately_override_callback_status(self) -> None:
         """Verify fast callback statuses remain visible through the next probe."""
@@ -460,7 +465,7 @@ class TestApiWebUI(CeluneTestCase):
         ):
             _logs, status_html, _resources, _voice, _send, _input = api.webui_snapshot()
 
-        assert "Normalizing" in status_html
+        self.assertIn("Normalizing", status_html)
 
     def test_webui_probe_prefers_active_playback_status(self) -> None:
         """Verify active playback status remains visible over generic speaking state."""
@@ -487,7 +492,7 @@ class TestApiWebUI(CeluneTestCase):
         ):
             _logs, status_html, _resources, _voice, _send, _input = api.webui_snapshot()
 
-        assert "Playing fixture.wav" in status_html
+        self.assertIn("Playing fixture.wav", status_html)
 
     def test_webui_probe_reconciles_stale_speaking_status_after_sleep(self) -> None:
         """Verify sleeping runtime state overrides a late speaking callback."""
@@ -513,8 +518,8 @@ class TestApiWebUI(CeluneTestCase):
                 api.webui_snapshot()
             )
 
-        assert "currently sleeping. Type anything to wake up." in logs_html
-        assert "Sleeping" in status_html
+        self.assertIn("currently sleeping. Type anything to wake up.", logs_html)
+        self.assertIn("Sleeping", status_html)
 
     def test_webui_slash_command_uses_main_ui_command_path(self) -> None:
         """Verify slash commands are delegated into the main UI command handler."""
@@ -526,17 +531,17 @@ class TestApiWebUI(CeluneTestCase):
             updates = list(api.webui_speak("/help"))
 
         ui.process_command.assert_called_once_with("help", [])
-        assert len(updates) == 1
-        assert updates[0][0]["value"] == ""
-        assert updates[0][1] is None
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0][0]["value"], "")
+        self.assertIsNone(updates[0][1])
 
     def test_webui_slash_command_warns_without_main_ui(self) -> None:
         """Verify slash commands warn instead of speaking when no main UI exists."""
         with mock.patch("celune.api.CeluneUI._instance", None):
             updates = list(api.webui_speak("/help"))
 
-        assert len(updates) == 1
-        assert "must be running to run commands" in updates[0][2]
+        self.assertEqual(len(updates), 1)
+        self.assertIn("must be running to run commands", updates[0][2])
 
     def test_webui_speak_returns_browser_audio_after_generation(self) -> None:
         """Verify the browser submit handler returns one browser audio payload."""
@@ -567,17 +572,17 @@ class TestApiWebUI(CeluneTestCase):
         ):
             updates = list(api.webui_speak("hello"))
 
-        assert len(updates) >= 2
+        self.assertGreaterEqual(len(updates), 2)
         first_input, first_audio, *_first_rest = updates[0]
         second_input, second_audio, *_second_rest = updates[1]
 
-        assert first_input["value"] == ""
-        assert first_audio is None
-        assert second_input["value"] == ""
-        assert isinstance(second_audio, tuple)
+        self.assertEqual(first_input["value"], "")
+        self.assertIsNone(first_audio)
+        self.assertEqual(second_input["value"], "")
+        self.assertIsInstance(second_audio, tuple)
         sample_rate, array = cast(tuple[int, np.ndarray], second_audio)
-        assert sample_rate == 48000
-        assert array.shape == (8, 2)
+        self.assertEqual(sample_rate, 48000)
+        self.assertEqual(array.shape, (8, 2))
 
     def test_webui_speak_wakes_sleeping_celune_before_speaking(self) -> None:
         """Verify browser submit wakes Celune first, then continues into speech."""
@@ -616,14 +621,14 @@ class TestApiWebUI(CeluneTestCase):
         ):
             updates = list(api.webui_speak("wake me"))
 
-        assert len(updates) >= 3
-        assert calls == ["wake", "say:wake me"]
-        assert updates[0][0]["value"] == "wake me"
-        assert updates[0][1] is None
-        assert updates[-1][0]["value"] == ""
+        self.assertGreaterEqual(len(updates), 3)
+        self.assertEqual(calls, ["wake", "say:wake me"])
+        self.assertEqual(updates[0][0]["value"], "wake me")
+        self.assertIsNone(updates[0][1])
+        self.assertEqual(updates[-1][0]["value"], "")
         final_audio = updates[-1][1]
-        assert isinstance(final_audio, tuple)
-        assert cast(tuple[int, np.ndarray], final_audio)[0] == 48000
+        self.assertIsInstance(final_audio, tuple)
+        self.assertEqual(cast(tuple[int, np.ndarray], final_audio)[0], 48000)
 
     def test_webui_cycle_voice_uses_async_runtime_switch(self) -> None:
         """Verify browser voice cycling goes through the async runtime method."""
@@ -651,7 +656,7 @@ class TestApiWebUI(CeluneTestCase):
         ):
             _snapshot = api._webui_cycle_voice()
 
-        assert calls == ["calm"]
+        self.assertEqual(calls, ["calm"])
 
     def test_webui_convert_audio_returns_browser_audio_after_conversion(self) -> None:
         """Verify browser audio conversion returns one playable Celune-format payload."""
@@ -686,12 +691,12 @@ class TestApiWebUI(CeluneTestCase):
                 "sing",
             )
 
-        assert source_value is None
-        assert isinstance(browser_audio, tuple)
+        self.assertIsNone(source_value)
+        self.assertIsInstance(browser_audio, tuple)
         sample_rate, array = cast(tuple[int, np.ndarray], browser_audio)
-        assert sample_rate == 48000
-        assert array.shape == (20, 2)
-        assert browser_audio[0] == 48000
+        self.assertEqual(sample_rate, 48000)
+        self.assertEqual(array.shape, (20, 2))
+        self.assertEqual(browser_audio[0], 48000)
         celune_convert_audio = cast(mock.Mock, api.bound_celune.convert_audio)
         celune_convert_audio.assert_called_once_with(
             mock.ANY,
@@ -740,12 +745,12 @@ class TestApiWebUI(CeluneTestCase):
                 (44100, source_pcm)
             )
 
-        assert isinstance(browser_audio, tuple)
+        self.assertIsInstance(browser_audio, tuple)
         normalized = captured_audio["audio"]
-        assert normalized.dtype == np.float32
-        assert np.max(np.abs(normalized)) <= 1.0
-        assert round(abs(float(normalized[0, 0]) - 32767 / 32768), 5) == 0
-        assert float(normalized[0, 1]) == -1.0
+        self.assertEqual(normalized.dtype, np.float32)
+        self.assertTrue(np.max(np.abs(normalized)) <= 1.0)
+        self.assertAlmostEqual(float(normalized[0, 0]), 32767 / 32768, places=5)
+        self.assertEqual(float(normalized[0, 1]), -1.0)
 
     def test_webui_convert_audio_rejects_text_to_speech_mode(self) -> None:
         """Verify browser audio conversion is unavailable outside VC mode."""
@@ -770,10 +775,10 @@ class TestApiWebUI(CeluneTestCase):
                 (44100, np.zeros((8, 2), dtype=np.float32))
             )
 
-        assert source_value is not None
-        assert source_value[0] == 44100
-        assert browser_audio is None
-        assert string("webui.conversion_only_in_vc_mode") in logs_html
+        self.assertIsNotNone(source_value)
+        self.assertEqual(source_value[0], 44100)
+        self.assertIsNone(browser_audio)
+        self.assertIn(string("webui.conversion_only_in_vc_mode"), logs_html)
 
     def test_build_webui_exposes_tts_and_vc_tabs(self) -> None:
         """Verify the browser UI separates TTS and VC into distinct tabs."""
@@ -785,10 +790,10 @@ class TestApiWebUI(CeluneTestCase):
             if component.get("type") == "tabitem"
         ]
 
-        assert tab_labels == [
-            string("webui.tts_tab_label"),
-            string("webui.vc_tab_label"),
-        ]
+        self.assertEqual(
+            tab_labels,
+            [string("webui.tts_tab_label"), string("webui.vc_tab_label")],
+        )
 
     def test_webui_snapshot_probes_runtime_status_and_rotates_resources(self) -> None:
         """Verify footer polling refreshes status and rotates the resource page."""
@@ -813,10 +818,10 @@ class TestApiWebUI(CeluneTestCase):
             _logs1, status1, resources1, _voice1, _send1, _input1 = api.webui_snapshot()
             _logs2, status2, resources2, _voice2, _send2, _input2 = api.webui_snapshot()
 
-        assert "Speaking" in status1
-        assert "Speaking" in status2
-        assert "VRAM: first" in resources1
-        assert "Friday, June 11, 2026" in resources2
+        self.assertIn("Speaking", status1)
+        self.assertIn("Speaking", status2)
+        self.assertIn("VRAM: first", resources1)
+        self.assertIn("Friday, June 11, 2026", resources2)
 
     def test_webui_runtime_theme_keeps_normal_palette_for_error_status(self) -> None:
         """Verify browser error statuses no longer switch the full UI palette."""
@@ -824,10 +829,10 @@ class TestApiWebUI(CeluneTestCase):
 
         theme_html = api.webui_theme_html()
 
-        assert (
-            api.colors.THEME.background or api.colors.DEFAULT_BACKGROUND
-        ) in theme_html
-        assert api.colors.ERROR_BACKGROUND not in theme_html
+        self.assertIn(
+            api.colors.THEME.background or api.colors.DEFAULT_BACKGROUND, theme_html
+        )
+        self.assertNotIn(api.colors.ERROR_BACKGROUND, theme_html)
 
     def test_webui_nonfatal_error_status_keeps_normal_theme(self) -> None:
         """Verify non-fatal browser errors do not switch the UI into the fatal palette."""
@@ -835,10 +840,10 @@ class TestApiWebUI(CeluneTestCase):
 
         theme_html = api.webui_theme_html()
 
-        assert (
-            api.colors.THEME.background or api.colors.DEFAULT_BACKGROUND
-        ) in theme_html
-        assert api.colors.ERROR_BACKGROUND not in theme_html
+        self.assertIn(
+            api.colors.THEME.background or api.colors.DEFAULT_BACKGROUND, theme_html
+        )
+        self.assertNotIn(api.colors.ERROR_BACKGROUND, theme_html)
 
     def test_webui_wrapped_fatal_glow_requests_api_shutdown(self) -> None:
         """Verify fatal glow stops the API/WebUI surface instead of tinting it red."""
@@ -867,9 +872,9 @@ class TestApiWebUI(CeluneTestCase):
         api.wrap_celune_callbacks(celune)
         celune.glow.fatal()
 
-        assert api.bound_celune is None
-        assert api.current_api_server.should_exit
-        assert api.current_api_server.force_exit
+        self.assertIsNone(api.bound_celune)
+        self.assertTrue(api.current_api_server.should_exit)
+        self.assertTrue(api.current_api_server.force_exit)
 
     @staticmethod
     def test_start_api_reports_when_port_is_already_in_use() -> None:

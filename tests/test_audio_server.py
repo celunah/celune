@@ -2,16 +2,12 @@
 """Tests for host audio-server restart helpers."""
 
 import subprocess
-from unittest import mock
-
-import pytest
+from unittest import TestCase, mock
 
 from celune import audio
 
-from .support import CeluneTestCase
 
-
-class TestAudioServer(CeluneTestCase):
+class AudioServerTests(TestCase):
     """Verify platform-specific audio-server restart commands."""
 
     @staticmethod
@@ -35,12 +31,12 @@ class TestAudioServer(CeluneTestCase):
             audio.restart_audio_server()
 
         command = run_command.call_args.args[0]
-        assert command[0] == "powershell.exe"
+        self.assertEqual(command[0], "powershell.exe")
         script = command[-1]
-        assert "Start-Process" in script
-        assert "-Verb RunAs" in script
-        assert "-WindowStyle Hidden" in script
-        assert "Restart-Service -Name Audiosrv -Force" in script
+        self.assertIn("Start-Process", script)
+        self.assertIn("-Verb RunAs", script)
+        self.assertIn("-WindowStyle Hidden", script)
+        self.assertIn("Restart-Service -Name Audiosrv -Force", script)
 
     def test_linux_restarts_active_user_audio_units(self) -> None:
         """Verify Linux restarts active PipeWire-related user units together."""
@@ -67,12 +63,14 @@ class TestAudioServer(CeluneTestCase):
         ):
             audio.restart_audio_server()
 
-        assert run_command.call_args.args[0][2:] == (
-            "restart",
-            "pipewire.service",
-            "pipewire-pulse.service",
+        self.assertEqual(
+            run_command.call_args.args[0][2:],
+            ("restart", "pipewire.service", "pipewire-pulse.service"),
         )
-        assert run_command.call_args.args[0][0:3] == ("systemctl", "--user", "restart")
+        self.assertEqual(
+            run_command.call_args.args[0][0:3],
+            ("systemctl", "--user", "restart"),
+        )
 
     def test_linux_uses_pulseaudio_fallback(self) -> None:
         """Verify Linux can stop a running PulseAudio server without systemd user units."""
@@ -97,13 +95,15 @@ class TestAudioServer(CeluneTestCase):
         ):
             audio.restart_audio_server()
 
-        assert run_command.call_args.args[0] == ("/usr/bin/pulseaudio", "--kill")
+        self.assertEqual(
+            run_command.call_args.args[0], ("/usr/bin/pulseaudio", "--kill")
+        )
 
     def test_unsupported_platform_reports_error(self) -> None:
         """Verify unsupported platforms fail explicitly."""
         with (
             mock.patch.object(audio.os, "name", "posix"),
             mock.patch.object(audio.sys, "platform", "darwin"),
-            pytest.raises(RuntimeError, match="unsupported platform"),
+            self.assertRaisesRegex(RuntimeError, "unsupported platform"),
         ):
             audio.restart_audio_server()

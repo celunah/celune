@@ -4,20 +4,17 @@
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Optional, cast
-from unittest import mock
+from unittest import TestCase, mock
 
 import numpy as np
-import pytest
 from textual import events
 
 from celune.persona.asr import WhisperTranscriber
 from celune.typing.persona import _WhisperProcessor
 from celune.ui.app import CeluneUI
 
-from .support import CeluneTestCase
 
-
-class TestSpeechInput(CeluneTestCase):
+class SpeechInputTests(TestCase):
     """Verify Persona speech-input routing and transcription helpers."""
 
     def tearDown(self) -> None:
@@ -52,12 +49,12 @@ class TestSpeechInput(CeluneTestCase):
         ):
             transcriber = WhisperTranscriber("openai/whisper-small")
 
-            assert (
+            self.assertEqual(
                 transcriber.transcribe(
                     np.ones((4800, 2), dtype=np.float32),
                     48000,
-                )
-                == "hello"
+                ),
+                "hello",
             )
 
         model_factory.assert_called_once_with(
@@ -68,10 +65,10 @@ class TestSpeechInput(CeluneTestCase):
             device_map="auto",
         )
         processor_factory.assert_called_once_with("openai/whisper-small")
-        assert fake_processor.call_args.args[0].ndim == 1
-        assert fake_processor.call_args.args[0].shape == (1600,)
-        assert fake_processor.call_args.kwargs["sampling_rate"] == 16000
-        assert fake_model.generate.call_args.kwargs["task"] == "transcribe"
+        self.assertEqual(fake_processor.call_args.args[0].ndim, 1)
+        self.assertEqual(fake_processor.call_args.args[0].shape, (1600,))
+        self.assertEqual(fake_processor.call_args.kwargs["sampling_rate"], 16000)
+        self.assertEqual(fake_model.generate.call_args.kwargs["task"], "transcribe")
 
     def test_whisper_word_timestamps_are_grouped_from_token_timestamps(self) -> None:
         """Verify token timestamps are grouped into the words Whisper decoded."""
@@ -98,11 +95,10 @@ class TestSpeechInput(CeluneTestCase):
             1.0,
         )
 
-        assert [(word.text, word.start, word.end) for word in words] == [
-            ("Hello,", 0.1, 0.5),
-            ("world", 0.5, 0.8),
-            ("again", 0.8, 1.0),
-        ]
+        self.assertEqual(
+            [(word.text, word.start, word.end) for word in words],
+            [("Hello,", 0.1, 0.5), ("world", 0.5, 0.8), ("again", 0.8, 1.0)],
+        )
 
     def test_whisper_segments_decode_one_dimensional_tokens_as_one_sequence(
         self,
@@ -124,10 +120,11 @@ class TestSpeechInput(CeluneTestCase):
             generated,
         )
 
-        assert observed_shapes == [(1, 2)]
-        assert [(segment.text, segment.start, segment.end) for segment in segments] == [
-            ("hello world", 0.0, 1.0)
-        ]
+        self.assertEqual(observed_shapes, [(1, 2)])
+        self.assertEqual(
+            [(segment.text, segment.start, segment.end) for segment in segments],
+            [("hello world", 0.0, 1.0)],
+        )
 
     @staticmethod
     def test_ctrl_r_routes_persona_and_vc_to_separate_recorders() -> None:
@@ -227,11 +224,11 @@ class TestSpeechInput(CeluneTestCase):
             ),
             mock.patch("celune.ui.app.WhisperTranscriber", return_value=transcriber),
         ):
-            assert ui._start_persona_recording()
+            self.assertEqual(ui._start_persona_recording(), True)
             worker = ui._persona_recording_worker
 
             if captured_callback is None:
-                pytest.fail("Persona recording callback was not registered")
+                self.fail("Persona recording callback was not registered")
             else:
                 captured_callback(
                     np.ones((1600, 1), dtype=np.float32), 1600, None, None

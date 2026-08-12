@@ -7,9 +7,8 @@ import tempfile
 import threading
 from pathlib import Path
 from typing import Optional, cast
-from unittest import mock
+from unittest import TestCase, mock
 
-import pytest
 import yaml
 from textual.widgets import RichLog
 
@@ -25,18 +24,16 @@ from celune.paths import (
     migrate_legacy_app_data,
     persona_data_dir,
     project_root,
-    running_compiled,
     runtime_data_dir,
+    running_compiled,
     voices_data_dir,
 )
 from celune.persona.memory import default_memory_dir
 from celune.ui.app import CeluneUI, UILogMessage
 from celune.utils import discard, format_error
 
-from .support import CeluneTestCase
 
-
-class TestRuntimePath(CeluneTestCase):
+class RuntimePathTests(TestCase):
     """Verify runtime files are written into the user data directory."""
 
     @staticmethod
@@ -74,29 +71,32 @@ class TestRuntimePath(CeluneTestCase):
         with mock.patch(
             "celune.persona.memory.persona_data_dir", return_value=expected
         ):
-            assert default_memory_dir() == expected
+            self.assertEqual(default_memory_dir(), expected)
 
     def test_persona_data_dir_uses_runtime_persona_directory(self) -> None:
         """Verify Persona character data lives below the shared app-data directory."""
         expected = Path("C:/runtime-data/persona")
 
         with mock.patch("celune.paths.user_data_dir", return_value="C:/runtime-data"):
-            assert persona_data_dir() == expected
+            self.assertEqual(persona_data_dir(), expected)
 
     def test_voices_data_dir_uses_runtime_voice_pack_directory(self) -> None:
         """Verify voice packs use a sibling directory in Celune's app data."""
         expected = Path("C:/runtime-data/voices")
 
         with mock.patch("celune.paths.user_data_dir", return_value="C:/runtime-data"):
-            assert voices_data_dir() == expected
+            self.assertEqual(voices_data_dir(), expected)
 
     def test_runtime_and_environment_dirs_use_organized_app_data_paths(self) -> None:
         """Verify loose runtime data and backend environments use dedicated folders."""
         expected_root = Path("C:/runtime-data")
 
         with mock.patch("celune.paths.user_data_dir", return_value="C:/runtime-data"):
-            assert runtime_data_dir() == expected_root / "runtime"
-            assert backend_environments_dir() == expected_root / "environments"
+            self.assertEqual(runtime_data_dir(), expected_root / "runtime")
+            self.assertEqual(
+                backend_environments_dir(),
+                expected_root / "environments",
+            )
 
     def test_migrate_legacy_app_data_moves_existing_directories(self) -> None:
         """Verify legacy loose data is moved without overwriting new data."""
@@ -117,20 +117,29 @@ class TestRuntimePath(CeluneTestCase):
                 migrate_legacy_app_data()
                 migrate_legacy_app_data()
 
-            assert (
-                root / "environments" / "mini" / "environment-marker.txt"
-            ).read_text(encoding="utf-8") == "backends"
+            self.assertEqual(
+                (root / "environments" / "mini" / "environment-marker.txt").read_text(
+                    encoding="utf-8"
+                ),
+                "backends",
+            )
             for name in ("fast_langdetect", "gpt_sovits", "nltk_data"):
-                assert (root / "runtime" / name).is_dir()
-                assert not (root / name).exists()
+                self.assertTrue((root / "runtime" / name).is_dir())
+                self.assertFalse((root / name).exists())
 
     def test_huggingface_cache_dirs_live_in_runtime_data(self) -> None:
         """Verify Celune's default Hugging Face caches live under user data."""
         expected_root = Path("C:/runtime-data")
 
         with mock.patch("celune.paths.user_data_dir", return_value=str(expected_root)):
-            assert huggingface_home_dir() == expected_root / "huggingface"
-            assert huggingface_hub_cache_dir() == expected_root / "huggingface" / "hub"
+            self.assertEqual(
+                huggingface_home_dir(),
+                expected_root / "huggingface",
+            )
+            self.assertEqual(
+                huggingface_hub_cache_dir(),
+                expected_root / "huggingface" / "hub",
+            )
 
     def test_huggingface_cache_environment_defaults_to_runtime_data(self) -> None:
         """Verify Celune points Hugging Face caches at the runtime data directory."""
@@ -143,9 +152,13 @@ class TestRuntimePath(CeluneTestCase):
         ):
             configure_huggingface_cache_environment()
 
-            assert os.environ["HF_HOME"] == str(expected_root / "huggingface")
-            assert os.environ["HF_HUB_CACHE"] == str(
-                expected_root / "huggingface" / "hub"
+            self.assertEqual(
+                os.environ["HF_HOME"],
+                str(expected_root / "huggingface"),
+            )
+            self.assertEqual(
+                os.environ["HF_HUB_CACHE"],
+                str(expected_root / "huggingface" / "hub"),
             )
 
     def test_huggingface_cache_environment_respects_existing_overrides(self) -> None:
@@ -160,8 +173,8 @@ class TestRuntimePath(CeluneTestCase):
             mock.patch.dict(os.environ, existing.copy(), clear=True),
         ):
             configure_huggingface_cache_environment()
-            assert os.environ["HF_HOME"] == existing["HF_HOME"]
-            assert os.environ["HF_HUB_CACHE"] == existing["HF_HUB_CACHE"]
+            self.assertEqual(os.environ["HF_HOME"], existing["HF_HOME"])
+            self.assertEqual(os.environ["HF_HUB_CACHE"], existing["HF_HUB_CACHE"])
 
     def test_huggingface_cache_environment_skips_source_tree_imports(self) -> None:
         """Verify source-tree runs keep the host Hugging Face cache defaults."""
@@ -170,8 +183,8 @@ class TestRuntimePath(CeluneTestCase):
             mock.patch.dict(os.environ, {}, clear=True),
         ):
             configure_huggingface_cache_environment()
-            assert "HF_HOME" not in os.environ
-            assert "HF_HUB_CACHE" not in os.environ
+            self.assertNotIn("HF_HOME", os.environ)
+            self.assertNotIn("HF_HUB_CACHE", os.environ)
 
     def test_huggingface_cache_environment_clears_celune_portable_defaults(
         self,
@@ -192,8 +205,8 @@ class TestRuntimePath(CeluneTestCase):
             ),
         ):
             configure_huggingface_cache_environment()
-            assert "HF_HOME" not in os.environ
-            assert "HF_HUB_CACHE" not in os.environ
+            self.assertNotIn("HF_HOME", os.environ)
+            self.assertNotIn("HF_HUB_CACHE", os.environ)
 
     def test_huggingface_cache_environment_keeps_non_celune_overrides(
         self,
@@ -209,8 +222,8 @@ class TestRuntimePath(CeluneTestCase):
             mock.patch.dict(os.environ, existing.copy(), clear=True),
         ):
             configure_huggingface_cache_environment()
-            assert os.environ["HF_HOME"] == existing["HF_HOME"]
-            assert os.environ["HF_HUB_CACHE"] == existing["HF_HUB_CACHE"]
+            self.assertEqual(os.environ["HF_HOME"], existing["HF_HOME"])
+            self.assertEqual(os.environ["HF_HUB_CACHE"], existing["HF_HUB_CACHE"])
 
     def test_huggingface_runtime_disables_global_progress_bars(self) -> None:
         """Verify Celune suppresses Hugging Face progress bars without muting logs."""
@@ -222,7 +235,7 @@ class TestRuntimePath(CeluneTestCase):
             mock.patch.dict(os.environ, {}, clear=True),
         ):
             configure_huggingface_runtime()
-            assert os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] == "1"
+            self.assertEqual(os.environ["HF_HUB_DISABLE_PROGRESS_BARS"], "1")
 
         disable_transformers.assert_called_once_with()
         disable_hub.assert_called_once_with()
@@ -242,9 +255,11 @@ class TestRuntimePath(CeluneTestCase):
                 with mock.patch("celune.utils.traceback_path", return_value=trace_path):
                     output = format_error(exc, log_level="debug")
 
-                assert "RuntimeError: boom" in output
-                assert trace_path.exists()
-                assert "RuntimeError: boom" in trace_path.read_text(encoding="utf-8")
+                self.assertIn("RuntimeError: boom", output)
+                self.assertTrue(trace_path.exists())
+                self.assertIn(
+                    "RuntimeError: boom", trace_path.read_text(encoding="utf-8")
+                )
 
     def test_format_error_keeps_traceback_after_exception_handler_returns(self) -> None:
         """Verify deferred UI error formatting does not report a blank traceback.
@@ -260,15 +275,15 @@ class TestRuntimePath(CeluneTestCase):
             captured = exc
 
         if captured is None:
-            pytest.fail("The test exception was not captured")
+            self.fail("The test exception was not captured")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             trace_path = Path(temp_dir) / f"{APP_SLUG}_traceback.txt"
             with mock.patch("celune.utils.traceback_path", return_value=trace_path):
                 output = format_error(captured, log_level="debug")
 
-        assert "RuntimeError: deferred boom" in output
-        assert "NoneType: None" not in output
+        self.assertIn("RuntimeError: deferred boom", output)
+        self.assertNotIn("NoneType: None", output)
 
     def test_safe_log_persists_main_window_copy(self) -> None:
         """Verify UI log messages are mirrored into the runtime log file."""
@@ -284,8 +299,8 @@ class TestRuntimePath(CeluneTestCase):
 
             persisted = ui._log_file_path.read_text(encoding="utf-8")
 
-        assert "[INFO] Hello from Celune" in persisted
-        assert "[WARNING] Something odd happened" in persisted
+        self.assertIn("[INFO] Hello from Celune", persisted)
+        self.assertIn("[WARNING] Something odd happened", persisted)
 
     def test_safe_log_from_worker_posts_without_waiting_for_ui_thread(self) -> None:
         """Verify background logging queues a message without a synchronous UI callback."""
@@ -299,13 +314,13 @@ class TestRuntimePath(CeluneTestCase):
         worker.start()
         worker.join(timeout=1.0)
 
-        assert not worker.is_alive()
+        self.assertFalse(worker.is_alive())
         ui.post_message.assert_called_once()
         ui.call_from_thread.assert_not_called()
         message = ui.post_message.call_args.args[0]
-        assert isinstance(message, UILogMessage)
-        assert message.message == "worker log"
-        assert UILogMessage.handler_name == "on_uilog_message"
+        self.assertIsInstance(message, UILogMessage)
+        self.assertEqual(message.message, "worker log")
+        self.assertEqual(UILogMessage.handler_name, "on_uilog_message")
 
     def test_ensure_config_path_prefers_legacy_repo_config(self) -> None:
         """Verify first-run config creation prefers the historical repo-root config."""
@@ -330,9 +345,9 @@ class TestRuntimePath(CeluneTestCase):
             )
 
             saved = yaml.safe_load(created_path.read_text(encoding="utf-8"))
-            assert was_created
-            assert saved["theme"] == "light"
-            assert saved["headless"]
+            self.assertTrue(was_created)
+            self.assertEqual(saved["theme"], "light")
+            self.assertEqual(saved["headless"], True)
 
     def test_running_compiled_detects_compiled_main_module(self) -> None:
         """Verify compiled-mode detection checks the active main module."""
@@ -343,7 +358,7 @@ class TestRuntimePath(CeluneTestCase):
         # the type errors are suppressed because they are Nuitka specific
         try:
             main_module.__compiled__ = True  # type: ignore[missing-attribute]
-            assert running_compiled()
+            self.assertTrue(running_compiled())
         finally:
             if had_attr:
                 main_module.__compiled__ = original  # type: ignore[missing-attribute]
@@ -363,11 +378,15 @@ class TestRuntimePath(CeluneTestCase):
                 return_value=Path("C:/runtime-data/voices"),
             ),
         ):
-            assert project_root() == expected_root
-            assert default_bundle_path() == Path(
-                "C:/runtime-data/voices/default.cevoice"
+            self.assertEqual(project_root(), expected_root)
+            self.assertEqual(
+                default_bundle_path(),
+                Path("C:/runtime-data/voices/default.cevoice"),
             )
-            assert bundled_voices_dir() == Path("C:/runtime-data/voices")
+            self.assertEqual(
+                bundled_voices_dir(),
+                Path("C:/runtime-data/voices"),
+            )
 
     def test_compiled_project_root_uses_repo_parent_when_running_from_bin(self) -> None:
         """Verify compiled launches from bin/ still resolve the repository root."""
@@ -391,7 +410,8 @@ class TestRuntimePath(CeluneTestCase):
                 return_value=Path("C:/runtime-data/voices"),
             ),
         ):
-            assert project_root() == expected_root
-            assert default_bundle_path() == Path(
-                "C:/runtime-data/voices/default.cevoice"
+            self.assertEqual(project_root(), expected_root)
+            self.assertEqual(
+                default_bundle_path(),
+                Path("C:/runtime-data/voices/default.cevoice"),
             )

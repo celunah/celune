@@ -7,8 +7,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-
-from .support import CeluneTestCase
+from unittest import TestCase
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT / "scripts" / "update_docstrings.py"
@@ -19,7 +18,7 @@ sys.modules[SPEC.name] = UPDATE_DOCSTRINGS
 SPEC.loader.exec_module(UPDATE_DOCSTRINGS)
 
 
-class TestUpdateDocstrings(CeluneTestCase):
+class UpdateDocstringsTests(TestCase):
     """Verify nested docstring rewriting behavior."""
 
     def test_existing_docstrings_are_not_reformatted(self) -> None:
@@ -31,7 +30,7 @@ class TestUpdateDocstrings(CeluneTestCase):
 
         replacements = UPDATE_DOCSTRINGS.collect_replacements(source, ast.parse(source))
 
-        assert replacements == []
+        self.assertEqual(replacements, [])
 
     def test_placeholder_docstrings_are_rewritten(self) -> None:
         """Verify placeholder docstrings remain eligible for generation."""
@@ -46,7 +45,7 @@ class TestUpdateDocstrings(CeluneTestCase):
 
         replacements = UPDATE_DOCSTRINGS.collect_replacements(source, ast.parse(source))
 
-        assert len(replacements) == 1
+        self.assertEqual(len(replacements), 1)
 
     def test_rewrite_preserves_crlf_line_endings(self) -> None:
         """Verify a real placeholder rewrite does not normalize repository line endings."""
@@ -63,10 +62,10 @@ class TestUpdateDocstrings(CeluneTestCase):
             path = Path(temporary_directory) / "example.py"
             path.write_bytes(source.encode())
 
-            assert UPDATE_DOCSTRINGS.rewrite_file(path)
+            self.assertTrue(UPDATE_DOCSTRINGS.rewrite_file(path))
             updated = path.read_bytes()
 
-        assert b"\n" not in updated.replace(b"\r\n", b"")
+        self.assertNotIn(b"\n", updated.replace(b"\r\n", b""))
 
     def test_local_class_methods_keep_their_docstrings(self) -> None:
         """Verify methods on classes defined inside functions are preserved."""
@@ -110,14 +109,22 @@ class TestUpdateDocstrings(CeluneTestCase):
                 + updated[replacement.end :]
             )
 
-        assert 'def raise_for_status() -> None:\n            """' in updated
-        assert 'def json() -> JSONSerializable:\n            """' in updated
-        assert 'def post(self, json: JSON) -> FakeResponse:\n            """' in updated
-        assert "def raise_for_status() -> None:\n            pass" not in updated
-        assert "def json() -> JSONSerializable:\n            pass" not in updated
-        assert (
-            "def post(self, json: JSON) -> FakeResponse:\n            pass"
-            not in updated
+        self.assertIn(
+            'def raise_for_status() -> None:\n            """',
+            updated,
+        )
+        self.assertIn(
+            'def json() -> JSONSerializable:\n            """',
+            updated,
+        )
+        self.assertIn(
+            'def post(self, json: JSON) -> FakeResponse:\n            """',
+            updated,
+        )
+        self.assertNotIn("def raise_for_status() -> None:\n            pass", updated)
+        self.assertNotIn("def json() -> JSONSerializable:\n            pass", updated)
+        self.assertNotIn(
+            "def post(self, json: JSON) -> FakeResponse:\n            pass", updated
         )
 
     def test_public_docstring_wraps_generated_lines_to_max_width(self) -> None:
@@ -153,4 +160,4 @@ class TestUpdateDocstrings(CeluneTestCase):
 
         docstring = UPDATE_DOCSTRINGS.public_docstring(function, "    ", parsed)
 
-        assert all(len(line) <= 120 for line in docstring.splitlines())
+        self.assertTrue(all(len(line) <= 120 for line in docstring.splitlines()))

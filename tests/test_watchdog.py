@@ -1,17 +1,13 @@
 # SPDX-License-Identifier: MIT
 
 import os
-from unittest import mock
-
-import pytest
+from unittest import TestCase, mock
 
 from celune import watchdog
 from celune.constants import ExitCodes
 
-from .support import CeluneTestCase
 
-
-class TestWatchdog(CeluneTestCase):
+class WatchdogTests(TestCase):
     """Verify the launcher-loss watchdog's process-facing behavior."""
 
     def setUp(self) -> None:
@@ -20,7 +16,7 @@ class TestWatchdog(CeluneTestCase):
 
     def test_launcher_lost_exit_code_is_eight(self) -> None:
         """Verify launcher loss uses the reserved exit code eight."""
-        assert ExitCodes.EXIT_LAUNCHER_LOST.value == 8
+        self.assertEqual(ExitCodes.EXIT_LAUNCHER_LOST.value, 8)
 
     def test_posix_pipe_eof_exits_with_launcher_lost_code(self) -> None:
         """Verify EOF on the launcher pipe invokes the immediate exit path."""
@@ -32,7 +28,7 @@ class TestWatchdog(CeluneTestCase):
             "_request_launcher_lost",
             side_effect=RuntimeError("launcher lost"),
         ) as exit_launcher_lost:
-            with pytest.raises(RuntimeError, match="launcher lost"):
+            with self.assertRaisesRegex(RuntimeError, "launcher lost"):
                 watchdog._watch_posix_pipe(str(read_fd))
 
         exit_launcher_lost.assert_called_once_with()
@@ -44,7 +40,7 @@ class TestWatchdog(CeluneTestCase):
 
         watchdog._watch_posix_pipe(str(read_fd))
 
-        assert watchdog.launcher_loss_requested()
+        self.assertTrue(watchdog.launcher_loss_requested())
 
     @staticmethod
     def test_watchdog_starts_for_configured_posix_pipe() -> None:

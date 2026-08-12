@@ -8,17 +8,13 @@ import shutil
 import tempfile
 from pathlib import Path
 from typing import cast
-from unittest import mock
-
-import pytest
+from unittest import TestCase, mock
 
 from celune import cevoice
 from celune.exceptions import CEVoiceError
 
-from .support import CeluneTestCase
 
-
-class TestCEVoice(CeluneTestCase):
+class CEVoiceTests(TestCase):
     """Tests for CEVOICE bundle serialization and loader behavior."""
 
     def setUp(self) -> None:
@@ -114,42 +110,54 @@ class TestCEVoice(CeluneTestCase):
             AssertionError: CEVOICE behavior changes unexpectedly.
         """
         bundle = self._write_bundle()
-        assert bundle.metadata["format"] == "CECHAR"
-        assert bundle.metadata["version"] == 3
-        assert bundle.voice_order == ("bold", "balanced")
-        assert bundle.voices["balanced"]["cfg_scale"] == 2.4
-        assert bundle.voices["balanced"]["reference_text"] == "Balanced reference."
-        persona = cevoice.persona_metadata_from_manifest(bundle.metadata)
-        assert persona is not None
-        assert persona is not None
-        assert persona.identity.name == "Fixture"
-        assert persona.identity.profile == "A watchful archivist with a dry wit."
-        assert persona.speaking_style == "Measured, observant, and slightly playful."
-        assert persona.example_dialogue == (
-            "User: i think i fixed it",
-            "Fixture: Sounds like you finally wrestled it into behaving.",
+        self.assertEqual(bundle.metadata["format"], "CECHAR")
+        self.assertEqual(bundle.metadata["version"], 3)
+        self.assertEqual(bundle.voice_order, ("bold", "balanced"))
+        self.assertEqual(bundle.voices["balanced"]["cfg_scale"], 2.4)
+        self.assertEqual(
+            bundle.voices["balanced"]["reference_text"], "Balanced reference."
         )
-        assert cevoice.persona_files_from_manifest(bundle.metadata) == {}
-        assert cevoice.persona_files_from_bundle(bundle) == {}
-        assert persona.style.warmth == "high"
+        persona = cevoice.persona_metadata_from_manifest(bundle.metadata)
+        self.assertIsNotNone(persona)
+        assert persona is not None
+        self.assertEqual(persona.identity.name, "Fixture")
+        self.assertEqual(
+            persona.identity.profile, "A watchful archivist with a dry wit."
+        )
+        self.assertEqual(
+            persona.speaking_style, "Measured, observant, and slightly playful."
+        )
+        self.assertEqual(
+            persona.example_dialogue,
+            (
+                "User: i think i fixed it",
+                "Fixture: Sounds like you finally wrestled it into behaving.",
+            ),
+        )
+        self.assertEqual(cevoice.persona_files_from_manifest(bundle.metadata), {})
+        self.assertEqual(cevoice.persona_files_from_bundle(bundle), {})
+        self.assertEqual(persona.style.warmth, "high")
         voice_persona = cevoice.persona_metadata_from_voice(bundle, "bold")
+        self.assertIsNotNone(voice_persona)
         assert voice_persona is not None
-        assert voice_persona is not None
-        assert voice_persona.speaking_style == "More playful and energetic."
-        assert voice_persona.style.enthusiasm == "high"
-        assert cevoice.bundle_character_name(bundle) == "Fixture"
-        assert bundle.read_asset("balanced", "wav") == b"wav"
+        self.assertEqual(voice_persona.speaking_style, "More playful and energetic.")
+        self.assertEqual(voice_persona.style.enthusiasm, "high")
+        self.assertEqual(
+            cevoice.bundle_character_name(bundle),
+            "Fixture",
+        )
+        self.assertEqual(bundle.read_asset("balanced", "wav"), b"wav")
         loader = cevoice.CEVoiceLoader(bundle)
         self.addCleanup(loader.close)
         path = loader.materialize("balanced", "wav")
-        assert path.read_bytes() == b"wav"
-        assert loader.materialize("balanced", "wav") == path
+        self.assertEqual(path.read_bytes(), b"wav")
+        self.assertEqual(loader.materialize("balanced", "wav"), path)
 
         magic, version, _ = cevoice.HEADER.unpack(
             self.path.read_bytes()[: cevoice.HEADER.size]
         )
-        assert magic == cevoice.MAGIC
-        assert version == cevoice.VERSION
+        self.assertEqual(magic, cevoice.MAGIC)
+        self.assertEqual(version, cevoice.VERSION)
 
     def test_materialize_recreates_missing_cached_asset_after_cleanup(self) -> None:
         """Verify cached CEVOICE temp assets are rebuilt if cleanup removed them."""
@@ -158,14 +166,14 @@ class TestCEVoice(CeluneTestCase):
         self.addCleanup(loader.close)
 
         first_path = loader.materialize("balanced", "wav")
-        assert first_path.read_bytes() == b"wav"
+        self.assertEqual(first_path.read_bytes(), b"wav")
 
         shutil.rmtree(first_path.parent)
         rebuilt_path = loader.materialize("balanced", "wav")
 
-        assert rebuilt_path == first_path
-        assert rebuilt_path.is_file()
-        assert rebuilt_path.read_bytes() == b"wav"
+        self.assertEqual(rebuilt_path, first_path)
+        self.assertTrue(rebuilt_path.is_file())
+        self.assertEqual(rebuilt_path.read_bytes(), b"wav")
 
     def test_cechar_v2_bundle_remains_loadable(self) -> None:
         """Verify CECHAR v2 bundles still open after the CECHAR v3 upgrade."""
@@ -180,10 +188,10 @@ class TestCEVoice(CeluneTestCase):
 
         reopened = cevoice.CEVoice.open(self.path)
 
-        assert reopened.metadata["format"] == "CECHAR"
-        assert reopened.metadata["version"] == 2
-        assert reopened.voice_order == ("bold", "balanced")
-        assert reopened.read_asset("balanced", "wav") == b"wav"
+        self.assertEqual(reopened.metadata["format"], "CECHAR")
+        self.assertEqual(reopened.metadata["version"], 2)
+        self.assertEqual(reopened.voice_order, ("bold", "balanced"))
+        self.assertEqual(reopened.read_asset("balanced", "wav"), b"wav")
 
     def test_cechar_header_and_manifest_versions_must_match(self) -> None:
         """Reject a CECHAR v2 header carrying a CECHAR v3 manifest."""
@@ -192,13 +200,13 @@ class TestCEVoice(CeluneTestCase):
         metadata["version"] = 3
         self._rewrite_bundle_header_and_metadata(cevoice.MAGIC, 2, metadata)
 
-        with pytest.raises(CEVoiceError, match="format/version mismatch"):
+        with self.assertRaisesRegex(CEVoiceError, "format/version mismatch"):
             cevoice.CEVoice.open(self.path)
 
     def test_v4_decompression_rejects_payloads_over_the_logical_limit(self) -> None:
         """Verify compressed CECHAR v4 payloads are bounded before parsing."""
         with mock.patch.object(cevoice, "V4_MAX_DECOMPRESSED_BYTES", 3):
-            with pytest.raises(CEVoiceError, match="too large"):
+            with self.assertRaisesRegex(CEVoiceError, "too large"):
                 cevoice._decompress_v4_payload(
                     gzip.compress(b"four"),
                     cevoice.V4_COMPRESSION_GZIP,
@@ -218,7 +226,7 @@ class TestCEVoice(CeluneTestCase):
 
         reopened = cevoice.CEVoice.open(self.path)
 
-        assert reopened.read_asset("balanced", "wav") == b"wav"
+        self.assertEqual(reopened.read_asset("balanced", "wav"), b"wav")
 
     def test_legacy_cevoice_v1_bundle_remains_loadable(self) -> None:
         """Verify legacy CEVOICE v1 bundles still open after the schema rename."""
@@ -234,10 +242,10 @@ class TestCEVoice(CeluneTestCase):
 
         reopened = cevoice.CEVoice.open(self.path)
 
-        assert reopened.metadata["format"] == "CEVOICE"
-        assert reopened.metadata["version"] == 1
-        assert reopened.voice_order == ("bold", "balanced")
-        assert reopened.read_asset("balanced", "wav") == b"wav"
+        self.assertEqual(reopened.metadata["format"], "CEVOICE")
+        self.assertEqual(reopened.metadata["version"], 1)
+        self.assertEqual(reopened.voice_order, ("bold", "balanced"))
+        self.assertEqual(reopened.read_asset("balanced", "wav"), b"wav")
 
     def test_asset_lookup_and_checksum_failures_are_reported(self) -> None:
         """Verify missing assets and checksum corruption are reported.
@@ -246,13 +254,13 @@ class TestCEVoice(CeluneTestCase):
             AssertionError: CEVOICE failure handling changes unexpectedly.
         """
         bundle = self._write_bundle()
-        with pytest.raises(KeyError, match="asset 'pt'"):
+        with self.assertRaisesRegex(KeyError, "asset 'pt'"):
             bundle.asset("bold", "pt")
 
         raw = self.path.read_bytes()
         self.path.write_bytes(raw[:-1] + b"x")
         broken = cevoice.CEVoice.open(self.path)
-        with pytest.raises(CEVoiceError, match="checksum mismatch"):
+        with self.assertRaisesRegex(CEVoiceError, "checksum mismatch"):
             broken.read_asset("bold", "wav")
 
     def test_invalid_metadata_is_rejected(self) -> None:
@@ -262,17 +270,19 @@ class TestCEVoice(CeluneTestCase):
             AssertionError: Metadata validation behavior changes unexpectedly.
         """
         bundle = self._write_bundle()
-        assert (
-            cast(dict[str, str], bundle.metadata["theme"])["faded_accent"] == "#8866cc"
+        self.assertEqual(
+            cast(dict[str, str], bundle.metadata["theme"])["faded_accent"],
+            "#8866cc",
         )
-        assert (
-            cast(dict[str, str], bundle.metadata["persona"])["speaking_style"]
-            == "Measured, observant, and slightly playful."
+        self.assertEqual(
+            cast(dict[str, str], bundle.metadata["persona"])["speaking_style"],
+            "Measured, observant, and slightly playful.",
         )
 
         bundle = self._write_legacy_sleeping_color_bundle()
-        assert (
-            cast(dict[str, str], bundle.metadata["theme"])["faded_accent"] == "#8866cc"
+        self.assertEqual(
+            cast(dict[str, str], bundle.metadata["theme"])["faded_accent"],
+            "#8866cc",
         )
 
     def test_persona_files_from_manifest_only_returns_supported_markdown(self) -> None:
@@ -287,10 +297,13 @@ class TestCEVoice(CeluneTestCase):
 
         files = cevoice.persona_files_from_manifest(metadata)
 
-        assert files == {
-            "identity.md": "Identity text.",
-            "soul.md": "Soul text.",
-        }
+        self.assertEqual(
+            files,
+            {
+                "identity.md": "Identity text.",
+                "soul.md": "Soul text.",
+            },
+        )
 
     # any types here are resolved dynamically
     def test_bundle_assets_can_store_supported_persona_markdown(self) -> None:
@@ -308,38 +321,43 @@ class TestCEVoice(CeluneTestCase):
 
         bundle = cevoice.CEVoice.open(self.path)
 
-        assert bundle.read_bundle_asset("identity.md") == b"Name: Fixture\n\nArchivist."
-        assert cevoice.persona_files_from_bundle(bundle) == {
-            "identity.md": "Name: Fixture\n\nArchivist.",
-            "speech_style.md": "Measured and steady.",
-        }
+        self.assertEqual(
+            bundle.read_bundle_asset("identity.md"), b"Name: Fixture\n\nArchivist."
+        )
+        self.assertEqual(
+            cevoice.persona_files_from_bundle(bundle),
+            {
+                "identity.md": "Name: Fixture\n\nArchivist.",
+                "speech_style.md": "Measured and steady.",
+            },
+        )
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
         metadata["default_voice"] = "missing"
         self._rewrite_metadata(metadata)
-        with pytest.raises(CEVoiceError, match="default_voice"):
+        with self.assertRaisesRegex(CEVoiceError, "default_voice"):
             cevoice.CEVoice.open(self.path)
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
         metadata["voice_order"] = ["bold", "bold"]
         self._rewrite_metadata(metadata)
-        with pytest.raises(CEVoiceError, match="duplicates"):
+        with self.assertRaisesRegex(CEVoiceError, "duplicates"):
             cevoice.CEVoice.open(self.path)
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
         metadata["theme"] = {"background": "#101010", "accent": "blue"}
         self._rewrite_metadata(metadata)
-        with pytest.raises(CEVoiceError, match="hex color"):
+        with self.assertRaisesRegex(CEVoiceError, "hex color"):
             cevoice.CEVoice.open(self.path)
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
         metadata["persona"] = {"style": {"warmth": 3}}
         self._rewrite_metadata(metadata)
-        with pytest.raises(CEVoiceError, match="persona style 'warmth'"):
+        with self.assertRaisesRegex(CEVoiceError, "persona style 'warmth'"):
             cevoice.CEVoice.open(self.path)
 
         bundle = self._write_bundle()
@@ -347,7 +365,7 @@ class TestCEVoice(CeluneTestCase):
         voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
         voices["balanced"]["cfg_scale"] = 0
         self._rewrite_metadata(metadata)
-        with pytest.raises(CEVoiceError, match="cfg_scale"):
+        with self.assertRaisesRegex(CEVoiceError, "cfg_scale"):
             cevoice.CEVoice.open(self.path)
 
         bundle = self._write_bundle()
@@ -355,7 +373,7 @@ class TestCEVoice(CeluneTestCase):
         voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
         voices["balanced"]["reference_text"] = " "
         self._rewrite_metadata(metadata)
-        with pytest.raises(CEVoiceError, match="reference_text"):
+        with self.assertRaisesRegex(CEVoiceError, "reference_text"):
             cevoice.CEVoice.open(self.path)
 
         bundle = self._write_bundle()
@@ -363,7 +381,7 @@ class TestCEVoice(CeluneTestCase):
         voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
         del voices["balanced"]["reference_text"]
         self._rewrite_metadata(metadata)
-        with pytest.raises(CEVoiceError, match="reference_text is required"):
+        with self.assertRaisesRegex(CEVoiceError, "reference_text is required"):
             cevoice.CEVoice.open(self.path)
 
         bundle = self._write_bundle()
@@ -376,7 +394,7 @@ class TestCEVoice(CeluneTestCase):
             "sha256": "0" * 64,
         }
         self._rewrite_metadata(metadata)
-        with pytest.raises(CEVoiceError, match="unsupported asset kind"):
+        with self.assertRaisesRegex(CEVoiceError, "unsupported asset kind"):
             cevoice.CEVoice.open(self.path)
 
     def _write_legacy_sleeping_color_bundle(self) -> cevoice.CEVoice:
@@ -411,25 +429,25 @@ class TestCEVoice(CeluneTestCase):
         cevoice.select_voice_bundle(self.path)
         logs: list[tuple[str, str]] = []
         loader = cevoice.default_loader()
-        assert loader is not None
+        self.assertIsNotNone(loader)
 
         def log(msg: str, severity: str) -> None:
             logs.append((msg, severity))
 
-        assert cevoice.announce_default_bundle(log) == "Fixture"
-        assert logs == [("Loading voice pack: Fixture", "info")]
-        assert cevoice.announce_default_bundle(log) is None
+        self.assertEqual(cevoice.announce_default_bundle(log), "Fixture")
+        self.assertEqual(logs, [("Loading voice pack: Fixture", "info")])
+        self.assertIsNone(cevoice.announce_default_bundle(log))
 
         cevoice.select_voice_bundle(self.temp_dir / "missing.cevoice")
-        assert cevoice.default_loader() is None
-        assert cevoice.announce_default_bundle(log) is None
+        self.assertIsNone(cevoice.default_loader())
+        self.assertIsNone(cevoice.announce_default_bundle(log))
 
         invalid_path = self.temp_dir / "invalid.cevoice"
         invalid_path.write_bytes(b"bad")
         cevoice.select_voice_bundle(invalid_path)
-        assert cevoice.default_loader() is None
-        assert cevoice.announce_default_bundle(log) is None
-        assert logs[-1][1] == "warning"
+        self.assertIsNone(cevoice.default_loader())
+        self.assertIsNone(cevoice.announce_default_bundle(log))
+        self.assertEqual(logs[-1][1], "warning")
 
     def test_missing_named_bundle_falls_back_to_default_bundle(self) -> None:
         """Verify absent named bundles load the built-in default before refs.
@@ -447,23 +465,26 @@ class TestCEVoice(CeluneTestCase):
         ):
             loader = cevoice.default_loader()
             logs: list[tuple[str, str]] = []
-            assert (
+            self.assertEqual(
                 cevoice.announce_default_bundle(
                     lambda msg, severity: logs.append((msg, severity))
-                )
-                == "Fixture"
+                ),
+                "Fixture",
             )
 
-        assert loader is not None
+        self.assertIsNotNone(loader)
         if loader is not None:
-            assert loader.bundle.metadata["name"] == "Fixture"
-        assert logs == [
-            (
-                "Voice pack missing not found, using default pack instead.",
-                "warning",
-            ),
-            ("Loading voice pack: Fixture", "info"),
-        ]
+            self.assertEqual(loader.bundle.metadata["name"], "Fixture")
+        self.assertEqual(
+            logs,
+            [
+                (
+                    "Voice pack missing not found, using default pack instead.",
+                    "warning",
+                ),
+                ("Loading voice pack: Fixture", "info"),
+            ],
+        )
 
     def test_named_bundle_resolution_uses_top_level_voices_directory(self) -> None:
         """Verify bare bundle names resolve from the user-local voices directory.
@@ -473,8 +494,8 @@ class TestCEVoice(CeluneTestCase):
         """
         expected = self.temp_dir / "voices" / "fixture.cevoice"
         with mock.patch("celune.cevoice.voices_data_dir", return_value=expected.parent):
-            assert cevoice.resolve_bundle_path("fixture") == expected
-            assert cevoice.resolve_bundle_path("fixture.cevoice") == expected
+            self.assertEqual(cevoice.resolve_bundle_path("fixture"), expected)
+            self.assertEqual(cevoice.resolve_bundle_path("fixture.cevoice"), expected)
 
     def test_bundled_voices_are_copied_to_user_data_on_first_use(self) -> None:
         """Verify repository voice packs are copied to user data once."""
@@ -494,9 +515,9 @@ class TestCEVoice(CeluneTestCase):
                 return_value=user_dir,
             ),
         ):
-            assert cevoice.bundled_voices_dir() == user_dir
+            self.assertEqual(cevoice.bundled_voices_dir(), user_dir)
 
-        assert (user_dir / "default.cevoice").read_bytes() == b"default"
+        self.assertEqual((user_dir / "default.cevoice").read_bytes(), b"default")
 
     def test_missing_selected_and_default_bundles_report_no_compatible_pack(
         self,
@@ -514,15 +535,14 @@ class TestCEVoice(CeluneTestCase):
             "celune.cevoice.default_bundle_path",
             return_value=missing_default,
         ):
-            assert cevoice.default_loader() is None
-            assert (
+            self.assertIsNone(cevoice.default_loader())
+            self.assertIsNone(
                 cevoice.announce_default_bundle(
                     lambda msg, severity: logs.append((msg, severity))
                 )
-                is None
             )
 
-        assert logs[-1][1] == "warning"
+        self.assertEqual(logs[-1][1], "warning")
 
     def test_materialize_rejects_unsafe_names(self) -> None:
         """Verify unsafe voice and asset names cannot be materialized.
@@ -532,9 +552,9 @@ class TestCEVoice(CeluneTestCase):
         """
         loader = cevoice.CEVoiceLoader(self._write_bundle())
         self.addCleanup(loader.close)
-        with pytest.raises(CEVoiceError, match="invalid voice name"):
+        with self.assertRaisesRegex(CEVoiceError, "invalid voice name"):
             loader.materialize("../bad", "wav")
-        with pytest.raises(CEVoiceError, match="invalid asset kind"):
+        with self.assertRaisesRegex(CEVoiceError, "invalid asset kind"):
             loader.materialize("balanced", "../wav")
 
     def _rewrite_metadata(self, metadata: dict) -> None:

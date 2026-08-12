@@ -6,16 +6,12 @@ import json
 import subprocess
 import tempfile
 from pathlib import Path
-from unittest import mock
-
-import pytest
+from unittest import TestCase, mock
 
 from celune import i18n, namedays, updater
 
-from .support import CeluneTestCase
 
-
-class TestNameDay(CeluneTestCase):
+class NameDayTests(TestCase):
     """Tests for name-day lookup helpers."""
 
     def test_lookup_helpers_cover_supported_inputs(self) -> None:
@@ -24,26 +20,25 @@ class TestNameDay(CeluneTestCase):
         Raises:
             AssertionError: Name-day lookup behavior changes unexpectedly.
         """
-        assert namedays.get_names(5, 16) == ["Andrew", "Simon"]
-        assert namedays.get_names_for_date(datetime.date(2026, 5, 16)) == [
-            "Andrew",
-            "Simon",
-        ]
-        assert namedays.get_names_for_date("2026-05-16") == ["Andrew", "Simon"]
-        assert namedays.get_names_for_date("05-16") == ["Andrew", "Simon"]
-        assert namedays.has_name_day("andrew", "05-16")
-        assert "10-21" in namedays.find_dates_for_name("Celine")
-        with pytest.raises(TypeError):
+        self.assertEqual(namedays.get_names(5, 16), ["Andrew", "Simon"])
+        self.assertEqual(
+            namedays.get_names_for_date(datetime.date(2026, 5, 16)),
+            ["Andrew", "Simon"],
+        )
+        self.assertEqual(namedays.get_names_for_date("2026-05-16"), ["Andrew", "Simon"])
+        self.assertEqual(namedays.get_names_for_date("05-16"), ["Andrew", "Simon"])
+        self.assertEqual(namedays.has_name_day("andrew", "05-16"), True)
+        self.assertIn("10-21", namedays.find_dates_for_name("Celine"))
+        with self.assertRaises(TypeError):
             namedays.get_names_for_date(123)  # type: ignore[arg-type]
-        with pytest.raises(ValueError):
+        with self.assertRaises(ValueError):
             namedays.get_names_for_date("bad-date")
 
 
-class TestI18n(CeluneTestCase):
+class I18nTests(TestCase):
     """Tests for localization fallback behavior."""
 
     def tearDown(self) -> None:
-        """Restore the process locale after each localization test."""
         i18n.set_locale("en")
 
     def test_string_falls_back_and_formats_values(self) -> None:
@@ -57,8 +52,8 @@ class TestI18n(CeluneTestCase):
             i18n.STRINGS["en"] = {"hello": "Hello {name}"}
             i18n.STRINGS["pl"] = {}
             i18n.set_locale("pl")
-            assert i18n.string("hello", name="Celune") == "Hello Celune"
-            assert i18n.string("missing") == "missing"
+            self.assertEqual(i18n.string("hello", name="Celune"), "Hello Celune")
+            self.assertEqual(i18n.string("missing"), "missing")
         finally:
             i18n.STRINGS.clear()
             i18n.STRINGS.update(original)
@@ -73,7 +68,7 @@ class TestI18n(CeluneTestCase):
         try:
             i18n.STRINGS["en"] = {"hello": "Hello"}
             i18n.set_locale("en-US")
-            assert i18n.string("hello") == "Hello"
+            self.assertEqual(i18n.string("hello"), "Hello")
         finally:
             i18n.STRINGS.clear()
             i18n.STRINGS.update(original)
@@ -88,7 +83,7 @@ class TestI18n(CeluneTestCase):
             with mock.patch(
                 "celune.i18n._locale.getlocale", return_value=("pl_PL", None)
             ):
-                assert i18n.get_system_locale() == "pl"
+                self.assertEqual(i18n.get_system_locale(), "pl")
         finally:
             i18n.STRINGS.clear()
             i18n.STRINGS.update(original)
@@ -110,14 +105,14 @@ class TestI18n(CeluneTestCase):
                 ),
                 mock.patch("sys.stderr.write") as stderr_write,
             ):
-                assert i18n.get_system_locale() == "en"
+                self.assertEqual(i18n.get_system_locale(), "en")
             stderr_write.assert_not_called()
         finally:
             i18n.STRINGS.clear()
             i18n.STRINGS.update(original)
 
 
-class TestUpdater(CeluneTestCase):
+class UpdaterTests(TestCase):
     """Tests for pure updater decision logic."""
 
     def test_version_helpers_order_tags(self) -> None:
@@ -126,13 +121,13 @@ class TestUpdater(CeluneTestCase):
         Raises:
             AssertionError: Version helper behavior changes unexpectedly.
         """
-        assert updater.normalize_tag("refs/tags/v4.0.0") == "4.0.0"
-        assert updater.short_revision("abcdef123") == "abcdef1"
-        assert updater.short_revision("") == "unknown"
-        assert updater.is_newer_version_tag("9.9.9", "4.0.0")
-        assert not updater.is_newer_version_tag("4.0.0", "4.0.0")
-        assert not updater.is_newer_version_tag("nightly", "4.0.0")
-        assert updater.is_newer_version_tag("4.0.0", "4.0.0-rc.1")
+        self.assertEqual(updater.normalize_tag("refs/tags/v4.0.0"), "4.0.0")
+        self.assertEqual(updater.short_revision("abcdef123"), "abcdef1")
+        self.assertEqual(updater.short_revision(""), "unknown")
+        self.assertEqual(updater.is_newer_version_tag("9.9.9", "4.0.0"), True)
+        self.assertEqual(updater.is_newer_version_tag("4.0.0", "4.0.0"), False)
+        self.assertEqual(updater.is_newer_version_tag("nightly", "4.0.0"), False)
+        self.assertEqual(updater.is_newer_version_tag("4.0.0", "4.0.0-rc.1"), True)
 
     def test_latest_release_ignores_non_semver_releases(self) -> None:
         """Verify only published SemVer releases with no draft flag are considered."""
@@ -145,10 +140,10 @@ class TestUpdater(CeluneTestCase):
 
         with mock.patch("celune.updater._latest_release", return_value=release_info):
             release = updater._latest_release()
-        assert release is not None
+        self.assertIsNotNone(release)
         if release is not None:
-            assert release.version == "4.5.0"
-            assert release.asset_url == "https://example.com/celune.zip"
+            self.assertEqual(release.version, "4.5.0")
+            self.assertEqual(release.asset_url, "https://example.com/celune.zip")
 
     def test_check_for_update_returns_none_for_dirty_worktree(self) -> None:
         """Verify dirty repositories suppress update prompts.
@@ -161,7 +156,7 @@ class TestUpdater(CeluneTestCase):
             mock.patch("celune.updater._current_branch", return_value="main"),
             mock.patch("celune.updater._has_local_changes", return_value=True),
         ):
-            assert updater.check_for_update() is None
+            self.assertIsNone(updater.check_for_update())
 
     def test_check_for_update_builds_update_info_from_release(self) -> None:
         """Verify update metadata comes from a newer SemVer release with an asset."""
@@ -186,11 +181,11 @@ class TestUpdater(CeluneTestCase):
             update = updater.check_for_update()
 
         if not updater.FORCE_DISABLE_UPDATES:
-            assert update is not None
+            self.assertIsNotNone(update)
             if update is not None:
-                assert update.local_revision == "aaaaaaa"
-                assert update.latest_revision == "bbbbbbb"
-                assert update.latest_version == "4.4.0"
+                self.assertEqual(update.local_revision, "aaaaaaa")
+                self.assertEqual(update.latest_revision, "bbbbbbb")
+                self.assertEqual(update.latest_version, "4.4.0")
 
     def test_check_for_update_ignores_release_without_platform_zip(self) -> None:
         """Verify a release without the current-platform ZIP does not prompt updates."""
@@ -211,7 +206,7 @@ class TestUpdater(CeluneTestCase):
                 ),
             ),
         ):
-            assert updater.check_for_update() is None
+            self.assertIsNone(updater.check_for_update())
 
     def test_check_for_update_compiled_uses_bundle_checksums(self) -> None:
         """Verify compiled update detection compares bundle checksums against artifact metadata."""
@@ -264,11 +259,11 @@ class TestUpdater(CeluneTestCase):
                 update = updater.check_for_update()
 
         if not updater.FORCE_DISABLE_UPDATES:
-            assert update is not None
+            self.assertIsNotNone(update)
             if update is not None:
-                assert update.local_revision == "aaaaaaa"
-                assert update.latest_revision == "bbbbbbb"
-                assert update.latest_version == "4.2.0"
+                self.assertEqual(update.local_revision, "aaaaaaa")
+                self.assertEqual(update.latest_revision, "bbbbbbb")
+                self.assertEqual(update.latest_version, "4.2.0")
 
     def test_check_for_update_compiled_returns_none_when_bundle_matches_remote(
         self,
@@ -316,7 +311,7 @@ class TestUpdater(CeluneTestCase):
                 ),
                 mock.patch("celune.updater._is_git_checkout", return_value=False),
             ):
-                assert updater.check_for_update() is None
+                self.assertIsNone(updater.check_for_update())
 
     def test_check_for_update_compiled_ignores_rebuilt_same_release(self) -> None:
         """Verify a rebuilt artifact does not prompt for the same local release."""
@@ -365,7 +360,7 @@ class TestUpdater(CeluneTestCase):
                 ),
                 mock.patch("celune.updater._is_git_checkout", return_value=False),
             ):
-                assert updater.check_for_update() is None
+                self.assertIsNone(updater.check_for_update())
 
     def test_update_to_latest_rejects_unsafe_states(self) -> None:
         """Verify unsafe repository states reject automatic updates.
@@ -375,14 +370,14 @@ class TestUpdater(CeluneTestCase):
         """
         with (
             mock.patch("celune.updater._is_git_checkout", return_value=False),
-            pytest.raises(updater.UpdateError, match="did not find"),
+            self.assertRaisesRegex(updater.UpdateError, "did not find"),
         ):
             updater.update_to_latest()
 
         with (
             mock.patch("celune.updater._is_git_checkout", return_value=True),
             mock.patch("celune.updater._has_local_changes", return_value=True),
-            pytest.raises(updater.UpdateError, match="not committed"),
+            self.assertRaisesRegex(updater.UpdateError, "not committed"),
         ):
             updater.update_to_latest()
 
@@ -393,6 +388,6 @@ class TestUpdater(CeluneTestCase):
                 "celune.updater._current_branch",
                 side_effect=subprocess.TimeoutExpired("git", 5),
             ),
-            pytest.raises(updater.UpdateError, match="timed out"),
+            self.assertRaisesRegex(updater.UpdateError, "timed out"),
         ):
             updater.update_to_latest()

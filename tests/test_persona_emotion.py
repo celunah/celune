@@ -4,6 +4,7 @@
 from collections.abc import Sequence
 from types import SimpleNamespace
 from typing import Optional, Union
+from unittest import TestCase
 
 import numpy as np
 import torch
@@ -19,8 +20,6 @@ from celune.persona.emotion import (
 )
 from celune.typing.persona import ModelGenerateKwargValue
 from celune.utils import discard
-
-from .support import CeluneTestCase
 
 
 class StubPersonaEmotionAnalyzer(PersonaEmotionAnalyzer):
@@ -111,7 +110,7 @@ class FakePersonaModel:
         """Evaluate mock tokens."""
 
 
-class TestPersonaEmotion(CeluneTestCase):
+class PersonaEmotionTests(TestCase):
     """Verify weighted Persona emotion blending stays stable."""
 
     @staticmethod
@@ -156,12 +155,12 @@ class TestPersonaEmotion(CeluneTestCase):
         )
 
         assert state is not None
-        assert state.target_label == "sadness"
-        assert "gently reassuring" in state.target_state
-        assert "Emotion direction: sadness" in state.target_state
-        assert "Response behavior:" in state.target_state
-        assert state.target_intensity > 0.0
-        assert state.user_label == "sadness"
+        self.assertEqual(state.target_label, "sadness")
+        self.assertIn("gently reassuring", state.target_state)
+        self.assertIn("Emotion direction: sadness", state.target_state)
+        self.assertIn("Response behavior:", state.target_state)
+        self.assertGreater(state.target_intensity, 0.0)
+        self.assertEqual(state.user_label, "sadness")
 
     def test_positive_target_is_mirrored_softly(self) -> None:
         """Verify positive blends preserve the feeling but soften the delivery."""
@@ -182,8 +181,8 @@ class TestPersonaEmotion(CeluneTestCase):
         )
 
         assert state is not None
-        assert state.target_label == "joy"
-        assert "softly joyful" in state.target_state
+        self.assertEqual(state.target_label, "joy")
+        self.assertIn("softly joyful", state.target_state)
 
     def test_generic_huggingface_labels_remap_to_goemotions_by_index(self) -> None:
         """Verify generic LABEL_n configs do not leak placeholder names into Persona state."""
@@ -200,7 +199,7 @@ class TestPersonaEmotion(CeluneTestCase):
 
         labels = PersonaEmotionAnalyzer._resolve_labels(config)
 
-        assert labels == GOEMOTIONS_LABELS
+        self.assertEqual(labels, GOEMOTIONS_LABELS)
 
     def test_live_vlm_hidden_states_produce_emotion_vectors(self) -> None:
         """Verify emotion probing reuses the loaded Persona VLM backend."""
@@ -211,12 +210,14 @@ class TestPersonaEmotion(CeluneTestCase):
         analyzer.bind_vlm(tokenizer, model)
         analyses = analyzer.analyze_texts(("The user is curious.",))
 
+        self.assertIsNotNone(analyses)
         assert analyses is not None
-        assert analyses is not None
-        assert model.calls == 1
-        assert round(abs(float(np.linalg.norm(analyses[0].embedding)) - 1.0), 5) == 0
-        assert analyzer._prototype_embeddings() is not None
-        assert model.calls > 1
+        self.assertEqual(model.calls, 1)
+        self.assertAlmostEqual(
+            float(np.linalg.norm(analyses[0].embedding)), 1.0, places=5
+        )
+        self.assertEqual(analyzer._prototype_embeddings() is not None, True)
+        self.assertGreater(model.calls, 1)
 
     def test_emotion_vectors_map_back_to_existing_labels(self) -> None:
         """Verify contrastive floating-point vectors retain label mapping."""
@@ -234,4 +235,4 @@ class TestPersonaEmotion(CeluneTestCase):
             directions,
         )
 
-        assert scores["sadness"] > scores["joy"]
+        self.assertGreater(scores["sadness"], scores["joy"])

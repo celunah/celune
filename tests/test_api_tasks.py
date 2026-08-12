@@ -4,18 +4,16 @@
 import asyncio
 from types import SimpleNamespace
 from typing import Literal, Optional, cast
+from unittest import TestCase
 
-import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from celune import api
 from celune.celune import Celune
 
-from .support import CeluneTestCase
 
-
-class TestApiTaskWebSocket(CeluneTestCase):
+class ApiTaskWebSocketTests(TestCase):
     """Verify task event history, live subscriptions, and cancellation routing."""
 
     def setUp(self) -> None:
@@ -77,14 +75,12 @@ class TestApiTaskWebSocket(CeluneTestCase):
             client.websocket_connect(f"/v1/ws/tasks/{job_id}") as websocket,
         ):
             events = [websocket.receive_json() for _ in range(4)]
-            assert [event["event"] for event in events] == [
-                "started",
-                "progress",
-                "log",
-                "completed",
-            ]
-            assert all(event["task_id"] == job_id for event in events)
-            with pytest.raises(WebSocketDisconnect):
+            self.assertEqual(
+                [event["event"] for event in events],
+                ["started", "progress", "log", "completed"],
+            )
+            self.assertTrue(all(event["task_id"] == job_id for event in events))
+            with self.assertRaises(WebSocketDisconnect):
                 websocket.receive_json()
 
     def test_client_can_connect_after_task_started(self) -> None:
@@ -96,7 +92,7 @@ class TestApiTaskWebSocket(CeluneTestCase):
             TestClient(api.api) as client,
             client.websocket_connect(f"/v1/ws/tasks/{job_id}") as websocket,
         ):
-            assert websocket.receive_json()["event"] == "started"
+            self.assertEqual(websocket.receive_json()["event"], "started")
             api._update_speech_job(job_id, status="failed", error="hidden")
             api._publish_task_event(
                 job_id,
@@ -109,8 +105,8 @@ class TestApiTaskWebSocket(CeluneTestCase):
             )
             failed = websocket.receive_json()
 
-        assert failed["event"] == "failed"
-        assert "hidden" not in failed.values()
+        self.assertEqual(failed["event"], "failed")
+        self.assertNotIn("hidden", failed.values())
 
     def test_client_disconnect_does_not_cancel_underlying_task(self) -> None:
         """Verify closing a subscription leaves Core task state untouched."""
@@ -123,8 +119,8 @@ class TestApiTaskWebSocket(CeluneTestCase):
         ):
             websocket.receive_json()
 
-        assert api.speech_jobs[job_id].status == "running"
-        assert api.speech_jobs[job_id].subscriptions == []
+        self.assertEqual(api.speech_jobs[job_id].status, "running")
+        self.assertEqual(api.speech_jobs[job_id].subscriptions, [])
 
     def test_websocket_streams_failure_and_cancellation_terminal_events(self) -> None:
         """Verify failed and canceled tasks use typed terminal event names."""
@@ -142,8 +138,8 @@ class TestApiTaskWebSocket(CeluneTestCase):
                 TestClient(api.api) as client,
                 client.websocket_connect(f"/v1/ws/tasks/{job_id}") as websocket,
             ):
-                assert websocket.receive_json()["event"] == "started"
-                assert websocket.receive_json()["event"] == terminal
+                self.assertEqual(websocket.receive_json()["event"], "started")
+                self.assertEqual(websocket.receive_json()["event"], terminal)
 
     def test_http_cancellation_calls_core_and_publishes_cancelled(self) -> None:
         """Verify explicit HTTP cancellation delegates to the Core cancellation method."""
@@ -167,7 +163,7 @@ class TestApiTaskWebSocket(CeluneTestCase):
         finally:
             api.bound_celune = previous_celune
 
-        assert calls == ["stop"]
-        assert isinstance(response, api.TaskCancelResponse)
-        assert api.speech_jobs[job_id].status == "cancelled"
-        assert api.speech_jobs[job_id].events[-1].event == "cancelled"
+        self.assertEqual(calls, ["stop"])
+        self.assertIsInstance(response, api.TaskCancelResponse)
+        self.assertEqual(api.speech_jobs[job_id].status, "cancelled")
+        self.assertEqual(api.speech_jobs[job_id].events[-1].event, "cancelled")

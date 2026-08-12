@@ -2,20 +2,17 @@
 """Tests for pure analysis helpers and RGB glow math."""
 
 from pathlib import Path
-from unittest import mock
+from unittest import TestCase, mock
 
 import numpy as np
-import pytest
 
 from celune import analysis
 from celune.chroma import AudioRGBGlow
 from celune.colors import RGB
 from celune.constants import N_A_NUMERIC
 
-from .support import CeluneTestCase
 
-
-class TestAnalysis(CeluneTestCase):
+class AnalysisTests(TestCase):
     """Tests for deterministic analysis helper behavior."""
 
     def test_embedding_similarity_and_drift_helpers_validate_inputs(self) -> None:
@@ -26,24 +23,24 @@ class TestAnalysis(CeluneTestCase):
         """
         embedding = np.ones(2048, dtype=np.float32)
         converted = analysis.embedding_tensor_to_numpy(embedding)
-        assert converted.shape == (2048,)
+        self.assertEqual(converted.shape, (2048,))
 
-        with pytest.raises(ValueError, match="2048-size"):
+        with self.assertRaisesRegex(ValueError, "2048-size"):
             analysis.embedding_tensor_to_numpy(np.ones(3, dtype=np.float32))
 
         cosine, percent = analysis.cosine_similarity_percent(embedding, embedding)
-        assert round(abs(cosine - 1.0), 7) == 0
-        assert round(abs(percent - 100.0), 7) == 0
-        with pytest.raises(ValueError, match="norm is zero"):
+        self.assertAlmostEqual(cosine, 1.0)
+        self.assertAlmostEqual(percent, 100.0)
+        with self.assertRaisesRegex(ValueError, "norm is zero"):
             analysis.cosine_similarity_percent(
                 np.zeros(2048, dtype=np.float32),
                 embedding,
             )
 
-        assert analysis.voice_drift_level(2.0) == "stable"
-        assert analysis.voice_drift_level(5.0) == "expressive"
-        assert analysis.voice_drift_level(8.0) == "weak"
-        assert analysis.voice_drift_level(12.0) == "wrong"
+        self.assertEqual(analysis.voice_drift_level(2.0), "stable")
+        self.assertEqual(analysis.voice_drift_level(5.0), "expressive")
+        self.assertEqual(analysis.voice_drift_level(8.0), "weak")
+        self.assertEqual(analysis.voice_drift_level(12.0), "wrong")
 
     def test_traits_and_assessment_cover_speech_and_empty_audio_paths(self) -> None:
         """Check trait and assessment output for empty voice extraction data.
@@ -70,11 +67,11 @@ class TestAnalysis(CeluneTestCase):
             "pause_ratio": 1.0,
         }
         traits = analysis.compute_traits(metrics)
-        assert set(traits.values()) == {0.0}
+        self.assertEqual(set(traits.values()), {0.0})
         assessment = analysis.generate_assessment(metrics, traits)
-        assert "No voicings found." in assessment[1]
-        assert "Mean pitch could not be determined" in assessment[3]
-        assert "high pause ratio" in assessment[-1].lower()
+        self.assertIn("No voicings found.", assessment[1])
+        self.assertIn("Mean pitch could not be determined", assessment[3])
+        self.assertIn("high pause ratio", assessment[-1].lower())
 
     @mock.patch("celune.analysis.librosa.stft", return_value=np.ones((4, 2)))
     @mock.patch(
@@ -129,16 +126,18 @@ class TestAnalysis(CeluneTestCase):
         )
         expected_voiced_f0 = np.array([100.0, 200.0, 300.0], dtype=np.float32)
 
-        assert metrics["pitch_mean_hz"] == 200.0
-        assert metrics["pitch_median_hz"] == 200.0
-        assert (
-            round(abs(metrics["pitch_std_hz"] - float(np.std(expected_voiced_f0))), 6)
-            == 0
+        self.assertEqual(metrics["pitch_mean_hz"], 200.0)
+        self.assertEqual(metrics["pitch_median_hz"], 200.0)
+        self.assertAlmostEqual(
+            metrics["pitch_std_hz"],
+            float(np.std(expected_voiced_f0)),
+            places=6,
         )
-        assert metrics["pitch_peak_hz"] == 300.0
-        assert (
-            round(abs(metrics["pitch_variance"] - float(np.var(expected_voiced_f0))), 6)
-            == 0
+        self.assertEqual(metrics["pitch_peak_hz"], 300.0)
+        self.assertAlmostEqual(
+            metrics["pitch_variance"],
+            float(np.var(expected_voiced_f0)),
+            places=6,
         )
 
     @mock.patch("celune.analysis.default_loader", return_value=None)
@@ -150,7 +149,7 @@ class TestAnalysis(CeluneTestCase):
         Args:
             _default_loader: A mock default loader.
         """
-        assert analysis.available_reference_voices() == []
+        self.assertEqual(analysis.available_reference_voices(), [])
 
     @mock.patch("celune.analysis.default_loader", return_value=None)
     def test_reference_embedding_load_requires_bundle(
@@ -161,7 +160,7 @@ class TestAnalysis(CeluneTestCase):
         Args:
             _default_loader: A mock default loader.
         """
-        with pytest.raises(FileNotFoundError, match="no compatible CEVOICE/CECHAR"):
+        with self.assertRaisesRegex(FileNotFoundError, "no compatible CEVOICE/CECHAR"):
             analysis.load_reference_embedding("balanced")
 
     @mock.patch("celune.analysis.torch.load")
@@ -182,12 +181,12 @@ class TestAnalysis(CeluneTestCase):
         with mock.patch("celune.analysis.default_loader", return_value=fake_loader):
             embedding = analysis.load_reference_embedding("balanced")
 
-        assert embedding.shape == (2048,)
+        self.assertEqual(embedding.shape, (2048,))
         fake_loader.materialize.assert_called_once_with("balanced", "pt")
         torch_load.assert_called_once_with(materialized, map_location="cpu")
 
 
-class TestChroma(CeluneTestCase):
+class ChromaTests(TestCase):
     """Tests for pure RGB glow helper behavior."""
 
     def test_pure_glow_helpers_process_audio_without_devices(self) -> None:
@@ -198,15 +197,15 @@ class TestChroma(CeluneTestCase):
         """
         stereo = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
         mono = AudioRGBGlow.to_mono(stereo)
-        assert np.array_equal(mono, np.array([0.5, 0.5], dtype=np.float32))
+        self.assertTrue(np.array_equal(mono, np.array([0.5, 0.5], dtype=np.float32)))
 
         fixed = AudioRGBGlow.fix_color_rendering((255, 255, 255))
-        assert len(fixed) == 3
-        assert max(fixed) <= 255
+        self.assertEqual(len(fixed), 3)
+        self.assertLessEqual(max(fixed), 255)
 
         glow = AudioRGBGlow(celune=None, color="#ffffff")
-        assert glow.speech_level(np.zeros((0, 2), dtype=np.float32)) == 0.0
-        assert glow.speech_level(stereo) > 0.0
+        self.assertEqual(glow.speech_level(np.zeros((0, 2), dtype=np.float32)), 0.0)
+        self.assertGreater(glow.speech_level(stereo), 0.0)
 
     def test_sleep_and_wake_preserve_prior_brightness_target(self) -> None:
         """Verify sleep dimming stores and restores the earlier brightness target."""
@@ -218,14 +217,14 @@ class TestChroma(CeluneTestCase):
 
         glow.sleep()
 
-        assert glow._state == "sleeping"
-        assert round(abs(glow._sleep_restore_brightness - 0.6), 7) == 0
-        assert round(abs(glow._target_brightness - glow.idle_brightness * 0.25), 7) == 0
+        self.assertEqual(glow._state, "sleeping")
+        self.assertAlmostEqual(glow._sleep_restore_brightness, 0.6)
+        self.assertAlmostEqual(glow._target_brightness, glow.idle_brightness * 0.25)
 
         glow.wake()
 
-        assert glow._state == "waking"
-        assert round(abs(glow._target_brightness - 0.6), 7) == 0
+        self.assertEqual(glow._state, "waking")
+        self.assertAlmostEqual(glow._target_brightness, 0.6)
 
     def test_sleeping_glow_ignores_audio_reactivity(self) -> None:
         """Verify queued audio cannot knock the glow out of its sleeping state."""
@@ -236,8 +235,8 @@ class TestChroma(CeluneTestCase):
 
         glow.process_glow_chunk(np.ones((64, 2), dtype=np.float32), 0.0)
 
-        assert glow._state == "sleeping"
-        assert round(abs(glow._target_brightness - sleeping_target), 7) == 0
+        self.assertEqual(glow._state, "sleeping")
+        self.assertAlmostEqual(glow._target_brightness, sleeping_target)
 
     def test_glow_target_follows_smoothed_audio_rms_without_snapping_to_max(
         self,
@@ -250,11 +249,11 @@ class TestChroma(CeluneTestCase):
 
         glow.process_glow_chunk(quiet, 0.0)
         quiet_target = glow._target_brightness
-        assert quiet_target == glow.idle_brightness
-        assert quiet_target < glow.max_brightness
+        self.assertEqual(quiet_target, glow.idle_brightness)
+        self.assertLess(quiet_target, glow.max_brightness)
 
         glow.process_glow_chunk(peak, 0.1)
-        assert glow._target_brightness < glow.max_brightness
+        self.assertLess(glow._target_brightness, glow.max_brightness)
 
     def test_glow_worker_uses_audio_target_without_fixed_pulse_logic(self) -> None:
         """Verify the normal glow branch follows audio target directly."""
@@ -277,8 +276,8 @@ class TestChroma(CeluneTestCase):
         with mock.patch("celune.chroma.time.sleep", side_effect=stop_after_two_sleeps):
             glow.run()
 
-        assert len(writes) >= 1
-        assert glow._current_brightness > glow.idle_brightness
+        self.assertGreaterEqual(len(writes), 1)
+        self.assertGreater(glow._current_brightness, glow.idle_brightness)
 
     def test_reset_audio_reactivity_clears_pending_audio_and_restores_idle(
         self,
@@ -294,7 +293,7 @@ class TestChroma(CeluneTestCase):
 
         glow.reset_audio_reactivity()
 
-        assert len(glow._scheduled_chunks) == 0
-        assert glow._smoothed_level == 0.0
-        assert glow._state == "normal"
-        assert round(abs(glow._target_brightness - glow.idle_brightness), 7) == 0
+        self.assertEqual(len(glow._scheduled_chunks), 0)
+        self.assertEqual(glow._smoothed_level, 0.0)
+        self.assertEqual(glow._state, "normal")
+        self.assertAlmostEqual(glow._target_brightness, glow.idle_brightness)

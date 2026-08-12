@@ -2,23 +2,19 @@
 """Tests for color and DSP helpers."""
 
 from typing import cast
-from unittest import mock
+from unittest import TestCase, mock
 
 import numpy as np
-import pytest
 
 from celune import colors, dsp
 from celune.constants import UtteranceLoudnessTier
 from celune.exceptions import AudioMismatchError, BadAudioError
 
-from .support import CeluneTestCase
 
-
-class TestColor(CeluneTestCase):
+class ColorTests(TestCase):
     """Tests for generated Celune theme palettes."""
 
     def tearDown(self) -> None:
-        """Reset shared audio-reactivity state after each color test."""
         colors.configure_theme()
 
     def test_default_and_custom_theme_palettes_are_configured(self) -> None:
@@ -28,32 +24,34 @@ class TestColor(CeluneTestCase):
             AssertionError: Theme behavior changes unexpectedly.
         """
         colors.configure_theme()
-        assert colors.THEME.primary == "#cebaff"
-        assert colors.THEME_LIGHT.background == "#ece8ff"
+        self.assertEqual(colors.THEME.primary, "#cebaff")
+        self.assertEqual(colors.THEME_LIGHT.background, "#ece8ff")
 
         colors.configure_theme("#101010", "#222222")
-        assert colors.THEME.background == "#101010"
-        assert (
+        self.assertEqual(colors.THEME.background, "#101010")
+        self.assertGreaterEqual(
             colors.contrast_ratio(
                 colors.THEME.primary,
                 cast(str, colors.THEME.background),
-            )
-            >= 4.5
+            ),
+            4.5,
         )
-        assert colors.SEVERITY_COLORS["celune"]["info"] == colors.THEME.primary
-        assert colors.SEVERITY_COLORS["celune"]["sleeping"] == "#9c88ce"
-        assert colors.SEVERITY_COLORS["celune_light"]["sleeping"] == "#6d5f90"
+        self.assertEqual(
+            colors.SEVERITY_COLORS["celune"]["info"],
+            colors.THEME.primary,
+        )
+        self.assertEqual(colors.SEVERITY_COLORS["celune"]["sleeping"], "#9c88ce")
+        self.assertEqual(colors.SEVERITY_COLORS["celune_light"]["sleeping"], "#6d5f90")
 
         colors.configure_theme("#101010", "#222222", "#8866cc")
-        assert colors.SEVERITY_COLORS["celune"]["sleeping"] == "#8866cc"
-        assert colors.SEVERITY_COLORS["celune_light"]["sleeping"] == "#7558af"
+        self.assertEqual(colors.SEVERITY_COLORS["celune"]["sleeping"], "#8866cc")
+        self.assertEqual(colors.SEVERITY_COLORS["celune_light"]["sleeping"], "#7558af")
 
 
-class TestDsp(CeluneTestCase):
+class DspTests(TestCase):
     """Tests for lightweight DSP helpers."""
 
     def tearDown(self) -> None:
-        """Reset shared audio-reactivity state after each DSP test."""
         dsp._SIGNAL_CACHE.clear()
 
     def test_make_stereo_and_resampling_validate_audio(self) -> None:
@@ -64,14 +62,14 @@ class TestDsp(CeluneTestCase):
         """
         mono = np.array([0.0, 1.0], dtype=np.float32)
         stereo = dsp.make_stereo(mono)
-        assert stereo.shape == (2, 2)
-        assert np.array_equal(stereo[:, 0], mono)
+        self.assertEqual(stereo.shape, (2, 2))
+        self.assertTrue(np.array_equal(stereo[:, 0], mono))
 
-        with pytest.raises(AudioMismatchError):
+        with self.assertRaises(AudioMismatchError):
             dsp.make_stereo(np.zeros((2, 3), dtype=np.float32))
-        with pytest.raises(BadAudioError):
+        with self.assertRaises(BadAudioError):
             dsp.resample_audio(stereo, 0)
-        assert dsp.resample_audio(stereo, 48000).shape == (2, 2)
+        self.assertEqual(dsp.resample_audio(stereo, 48000).shape, (2, 2))
 
     def test_soften_split_and_silence_detection(self) -> None:
         """Verify softening, chunk splitting, and loudness tiers.
@@ -81,19 +79,25 @@ class TestDsp(CeluneTestCase):
         """
         audio = np.ones((10, 2), dtype=np.float32)
         softened = dsp.soften(audio.copy(), sr=10, duration=0.2, start_gain=0.5)
-        assert float(softened[0, 0]) == pytest.approx(0.5)
+        self.assertAlmostEqual(float(softened[0, 0]), 0.5)
         chunks = list(dsp.split(np.zeros((20, 2), dtype=np.float32), 10, 5))
-        assert [len(chunk) for chunk in chunks] == [4, 4, 4, 4, 4]
+        self.assertEqual([len(chunk) for chunk in chunks], [4, 4, 4, 4, 4])
 
         silent = np.zeros((4, 2), dtype=np.float32)
         suspicious = np.full((4, 2), 0.005, dtype=np.float32)
         normal = np.full((4, 2), 0.1, dtype=np.float32)
-        assert dsp.is_silent_utterance(silent) == (True, UtteranceLoudnessTier.SILENT)
-        assert dsp.is_silent_utterance(suspicious) == (
-            True,
-            UtteranceLoudnessTier.SUSPICIOUS,
+        self.assertEqual(
+            dsp.is_silent_utterance(silent),
+            (True, UtteranceLoudnessTier.SILENT),
         )
-        assert dsp.is_silent_utterance(normal) == (False, UtteranceLoudnessTier.NORMAL)
+        self.assertEqual(
+            dsp.is_silent_utterance(suspicious),
+            (True, UtteranceLoudnessTier.SUSPICIOUS),
+        )
+        self.assertEqual(
+            dsp.is_silent_utterance(normal),
+            (False, UtteranceLoudnessTier.NORMAL),
+        )
 
     def test_pad_generates_rms_normalized_stereo_with_silence(self) -> None:
         """Verify soft pad synthesis, RMS normalization, and silence padding."""
@@ -113,25 +117,31 @@ class TestDsp(CeluneTestCase):
             trailing_silence_seconds=trailing_samples / sample_rate,
         )
 
-        assert audio.shape == (280, 2)
-        assert audio.dtype == np.float32
-        assert np.all(audio[:leading_samples] == 0)
-        assert np.all(audio[-trailing_samples:] == 0)
+        self.assertEqual(audio.shape, (280, 2))
+        self.assertEqual(audio.dtype, np.float32)
+        self.assertTrue(np.all(audio[:leading_samples] == 0))
+        self.assertTrue(np.all(audio[-trailing_samples:] == 0))
 
         audible = audio[leading_samples:-trailing_samples]
         rms = np.sqrt(np.mean(np.square(audible), dtype=np.float64))
         expected_rms = 10 ** (target_dbfs / 20)
-        assert float(rms) == pytest.approx(expected_rms)
-        assert float(np.max(np.abs(audio))) <= 0.95
+        self.assertAlmostEqual(float(rms), expected_rms, places=6)
+        self.assertLessEqual(float(np.max(np.abs(audio))), 0.95)
 
-        with pytest.raises(BadAudioError):
+        with self.assertRaises(BadAudioError):
             dsp.pad_note((), duration=0.25, sample_rate=sample_rate)
 
     def test_transpose_frequencies_uses_equal_tempered_intervals(self) -> None:
         """Verify semitone transposition without waveform pitch shifting."""
-        assert dsp._transpose_frequencies((440.0,), 0) == (440.0,)
-        assert dsp._transpose_frequencies((440.0,), 12)[0] == pytest.approx(880.0)
-        assert dsp._transpose_frequencies((440.0,), -12)[0] == pytest.approx(220.0)
+        self.assertEqual(dsp._transpose_frequencies((440.0,), 0), (440.0,))
+        self.assertAlmostEqual(
+            dsp._transpose_frequencies((440.0,), 12)[0],
+            880.0,
+        )
+        self.assertAlmostEqual(
+            dsp._transpose_frequencies((440.0,), -12)[0],
+            220.0,
+        )
 
     def test_ui_signal_helpers_reuse_cached_audio(self) -> None:
         """Verify UI signal helpers reuse immutable cached buffers."""
@@ -153,15 +163,15 @@ class TestDsp(CeluneTestCase):
             error_first = dsp.error_signal()
             error_second = dsp.error_signal()
 
-        assert readiness_first is readiness_second
-        assert sleeping_first is sleeping_second
-        assert working_first is working_second
-        assert error_first is error_second
-        assert not readiness_first.flags.writeable
-        assert error_first.shape == (4, 2)
-        assert float(np.max(np.abs(error_first))) == pytest.approx(1.0)
-        assert load.call_count == 1
-        assert generate.call_count == 3
+        self.assertIs(readiness_first, readiness_second)
+        self.assertIs(sleeping_first, sleeping_second)
+        self.assertIs(working_first, working_second)
+        self.assertIs(error_first, error_second)
+        self.assertFalse(readiness_first.flags.writeable)
+        self.assertEqual(error_first.shape, (4, 2))
+        self.assertAlmostEqual(float(np.max(np.abs(error_first))), 1.0)
+        self.assertEqual(load.call_count, 1)
+        self.assertEqual(generate.call_count, 3)
 
     def test_reverb_strength_reduces_dry_level_to_preserve_headroom(self) -> None:
         """Verify stronger reverb keeps the combined dry/wet gain under control."""
@@ -169,11 +179,14 @@ class TestDsp(CeluneTestCase):
 
         reverb.strength = 0.0
         reverb.update_params()
-        assert reverb.reverb.wet_level == pytest.approx(0.0)
-        assert reverb.reverb.dry_level == pytest.approx(1.0)
+        self.assertAlmostEqual(reverb.reverb.wet_level, 0.0)
+        self.assertAlmostEqual(reverb.reverb.dry_level, 1.0)
 
         reverb.strength = 1.0
         reverb.update_params()
-        assert reverb.reverb.wet_level == pytest.approx(0.16)
-        assert reverb.reverb.dry_level == pytest.approx(0.84)
-        assert reverb.reverb.wet_level + reverb.reverb.dry_level <= 1.0
+        self.assertAlmostEqual(reverb.reverb.wet_level, 0.16)
+        self.assertAlmostEqual(reverb.reverb.dry_level, 0.84)
+        self.assertLessEqual(
+            reverb.reverb.wet_level + reverb.reverb.dry_level,
+            1.0,
+        )
