@@ -25,37 +25,37 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install portaudio19-dev
+        run: python3 scripts/ci_warnings.py -- bash -c "sudo apt-get update && sudo apt-get install portaudio19-dev"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
       - name: Sync dependencies
-        run: uv sync --dev --all-extras
+        run: python3 scripts/ci_warnings.py -- uv sync --dev --all-extras
 
       - name: Verify formatting
-        run: uv run ruff format --check .
+        run: python3 scripts/ci_warnings.py -- uv run ruff format --check .
 
       - name: Run lint
         run: |
-          uv run pylint celune tests main.py
+          python3 scripts/ci_warnings.py -- uv run pylint celune tests main.py
 
       - name: Type check
         run: |
-          uv run pyrefly check
+          python3 scripts/ci_warnings.py -- uv run pyrefly check
 
       - name: Check docstring coverage
         run: |
-          uv run docstr-coverage -i -P --fail-under 80 celune tests main.py || {
+          python3 scripts/ci_warnings.py -- uv run docstr-coverage -i -P --fail-under 80 celune tests main.py || {
             echo "::warning::Docstring coverage is below 80%. Try adding more missing docstrings."
           }
 
       - name: Run unit tests
-        run: uv run pytest -v tests
+        run: python3 scripts/ci_warnings.py -- uv run pytest -v tests
 
       - name: Import smoke test
         run: |
-          uv run python -c "import celune; print(dir(celune))"
+          python3 scripts/ci_warnings.py -- uv run python -c "import celune; print(dir(celune))"
 
   launcher-build-linux:
     name: Linux Launcher Build
@@ -74,17 +74,15 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Sync dependencies
-        run: uv sync --dev
+        run: python3 scripts/ci_warnings.py -- uv sync --dev
 
       - name: Install appimagetool
         run: |
-          wget -O /tmp/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x /tmp/appimagetool
-          sudo mv /tmp/appimagetool /usr/local/bin/appimagetool
+          python3 ./scripts/ci_warnings.py -- bash -c "wget -O /tmp/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage && chmod +x /tmp/appimagetool && sudo mv /tmp/appimagetool /usr/local/bin/appimagetool"
 
       - name: Build Linux launcher artifacts
         run: |
-          bash ./scripts/build_nuitka.sh
+          python3 ./scripts/ci_warnings.py -- bash ./scripts/build_nuitka.sh
           test -x bin/celune
           test -x bin/celune-bin
           test -f bin/celune.AppImage
@@ -109,12 +107,12 @@ jobs:
 
       - name: Sync dependencies
         shell: powershell
-        run: uv sync --dev
+        run: python .\scripts\ci_warnings.py -- uv sync --dev
 
       - name: Build Windows launcher artifacts
         shell: powershell
         run: |
-          powershell -ExecutionPolicy Bypass -File .\scripts\build_nuitka.ps1
+          python .\scripts\ci_warnings.py -- powershell -ExecutionPolicy Bypass -File .\scripts\build_nuitka.ps1
           if (!(Test-Path .\bin\celune.exe)) { throw "bin/celune.exe not found" }
           if (!(Test-Path .\bin\celune-bin.exe)) { throw "bin/celune-bin.exe not found" }
           if (!(Test-Path .\bin\Celune-win-x64.zip)) { throw "bin/Celune-win-x64.zip not found" }
