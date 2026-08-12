@@ -2,13 +2,17 @@
 """Tests for the launcher-loss watchdog."""
 
 import os
-from unittest import TestCase, mock
+from unittest import mock
+
+import pytest
 
 from celune import watchdog
 from celune.constants import ExitCodes
 
+from .support import CeluneTestCase
 
-class WatchdogTests(TestCase):
+
+class TestWatchdog(CeluneTestCase):
     """Verify the launcher-loss watchdog's process-facing behavior."""
 
     def setUp(self) -> None:
@@ -17,7 +21,7 @@ class WatchdogTests(TestCase):
 
     def test_launcher_lost_exit_code_is_eight(self) -> None:
         """Verify launcher loss uses the reserved exit code eight."""
-        self.assertEqual(ExitCodes.EXIT_LAUNCHER_LOST.value, 8)
+        assert ExitCodes.EXIT_LAUNCHER_LOST.value == 8
 
     def test_posix_pipe_eof_exits_with_launcher_lost_code(self) -> None:
         """Verify EOF on the launcher pipe invokes the immediate exit path."""
@@ -43,7 +47,7 @@ class WatchdogTests(TestCase):
 
         watchdog._watch_posix_pipe(str(read_fd))
 
-        self.assertTrue(watchdog.launcher_loss_requested())
+        assert watchdog.launcher_loss_requested()
 
     @staticmethod
     def test_watchdog_starts_for_configured_posix_pipe() -> None:

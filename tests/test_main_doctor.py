@@ -5,14 +5,18 @@ import contextlib
 import io
 from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
-from unittest import TestCase, mock
+from unittest import mock
+
+import pytest
 
 import main
+
+from .support import CeluneTestCase
 
 entrypoint = main.load_entrypoint_module()
 
 
-class DoctorCommandTests(TestCase):
+class TestDoctorCommand(CeluneTestCase):
     """Verify `celune doctor` works without booting the full app."""
 
     @staticmethod
@@ -62,7 +66,7 @@ class DoctorCommandTests(TestCase):
         ) as import_module:
             backend = entrypoint._load_ui_test_backend()
 
-        self.assertIs(backend, fake_support.FakeBackend)
+        assert backend is fake_support.FakeBackend
         import_module.assert_called_once_with("tests.support")
 
     def test_main_reports_unsupported_python_before_loading_entrypoint(self) -> None:
@@ -71,16 +75,16 @@ class DoctorCommandTests(TestCase):
             mock.patch.object(main.sys, "version_info", (3, 11, 9)),
             mock.patch.object(main, "_load_entrypoint_module") as load_entrypoint,
             contextlib.redirect_stdout(io.StringIO()) as stdout,
-            self.assertRaises(SystemExit) as exit_info,
+            pytest.raises(SystemExit) as exit_info,
         ):
             main.main(["celune", "doctor"])
 
-        self.assertEqual(exit_info.exception.code, 6)
+        assert exit_info.value.code == 6
         load_entrypoint.assert_not_called()
         output = stdout.getvalue()
-        self.assertIn("will not run on Python 3.11.9", output)
-        self.assertIn("use at least Python 3.12", output)
-        self.assertIn("doctor", output)
+        assert "will not run on Python 3.11.9" in output
+        assert "use at least Python 3.12" in output
+        assert "doctor" in output
 
     def test_main_routes_doctor_without_starting_app(self) -> None:
         """Verify the doctor branch exits through `run_doctor` instead of `start()`."""
@@ -88,11 +92,11 @@ class DoctorCommandTests(TestCase):
             mock.patch.object(
                 entrypoint, "main", side_effect=SystemExit(7)
             ) as entry_main,
-            self.assertRaises(SystemExit) as exit_info,
+            pytest.raises(SystemExit) as exit_info,
         ):
             main.main(["celune", "doctor"])
 
-        self.assertEqual(exit_info.exception.code, 7)
+        assert exit_info.value.code == 7
         entry_main.assert_called_once_with(["celune", "doctor"])
 
     def test_run_doctor_fix_invokes_repo_setup(self) -> None:
@@ -107,7 +111,7 @@ class DoctorCommandTests(TestCase):
             run.return_value.returncode = 0
             exit_code = entrypoint.run_doctor(["celune", "doctor", "--fix"])
 
-        self.assertEqual(exit_code, 0)
+        assert exit_code == 0
         run.assert_called_once_with(
             [str(entrypoint.doctor_running_python()), str(entrypoint.SETUP_PATH)],
             cwd=entrypoint.PROJECT_ROOT,
@@ -132,27 +136,26 @@ class DoctorCommandTests(TestCase):
             run.return_value.returncode = 0
             exit_code = entrypoint.run_doctor(["celune", "doctor", "--fix"])
 
-        self.assertEqual(exit_code, 0)
+        assert exit_code == 0
 
         run.assert_called_once()
         args, kwargs = run.call_args
         command = args[0]
 
-        self.assertEqual(
-            PureWindowsPath(command[0]),
-            PureWindowsPath(r"C:\repo\.venv\Scripts\python.exe"),
+        assert PureWindowsPath(command[0]) == PureWindowsPath(
+            r"C:\repo\.venv\Scripts\python.exe"
         )
-        self.assertEqual(command[1], str(entrypoint.SETUP_PATH))
-        self.assertEqual(kwargs["cwd"], entrypoint.PROJECT_ROOT)
-        self.assertFalse(kwargs["check"])
+        assert command[1] == str(entrypoint.SETUP_PATH)
+        assert kwargs["cwd"] == entrypoint.PROJECT_ROOT
+        assert not kwargs["check"]
 
     def test_run_doctor_rejects_unknown_args(self) -> None:
         """Verify unsupported doctor flags produce usage output and a CLI error code."""
         with contextlib.redirect_stdout(io.StringIO()) as stdout:
             exit_code = entrypoint.run_doctor(["celune", "doctor", "--mystery"])
 
-        self.assertEqual(exit_code, entrypoint.EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
-        self.assertIn("Usage: celune doctor [--fix]", stdout.getvalue())
+        assert exit_code == entrypoint.EXIT_CODES.EXIT_UNKNOWN_ARGS.value
+        assert "Usage: celune doctor [--fix]" in stdout.getvalue()
 
     def test_run_doctor_returns_failure_when_required_checks_fail(self) -> None:
         """Verify failed doctor checks propagate a failing exit status."""
@@ -167,10 +170,10 @@ class DoctorCommandTests(TestCase):
         ):
             exit_code = entrypoint.run_doctor(["celune", "doctor"])
 
-        self.assertEqual(exit_code, entrypoint.EXIT_CODES.EXIT_FAILURE.value)
+        assert exit_code == entrypoint.EXIT_CODES.EXIT_FAILURE.value
         output = stdout.getvalue()
-        self.assertIn("[FAIL] uv: not found", output)
-        self.assertIn("Summary:", output)
+        assert "[FAIL] uv: not found" in output
+        assert "Summary:" in output
 
     def test_run_doctor_reports_warning_only_state(self) -> None:
         """Verify warning-only doctor results do not masquerade as a clean pass."""
@@ -189,10 +192,10 @@ class DoctorCommandTests(TestCase):
         ):
             exit_code = entrypoint.run_doctor(["celune", "doctor"])
 
-        self.assertEqual(exit_code, 0)
+        assert exit_code == 0
         output = stdout.getvalue()
-        self.assertIn("[WARN] Accelerator backend", output)
-        self.assertIn("performance may be impacted", output)
+        assert "[WARN] Accelerator backend" in output
+        assert "performance may be impacted" in output
 
     def test_doctor_checks_warn_when_running_outside_project_venv(self) -> None:
         """Verify doctor prefers the project virtual environment over system Python."""
@@ -233,9 +236,9 @@ class DoctorCommandTests(TestCase):
         python_env = next(
             check for check in checks if check.label == "Python environment"
         )
-        self.assertFalse(python_env.ok)
-        self.assertEqual(python_env.severity, "warning")
-        self.assertIn("system interpreter", python_env.detail)
+        assert not python_env.ok
+        assert python_env.severity == "warning"
+        assert "system interpreter" in python_env.detail
 
     def test_doctor_torch_details_detects_zluda_and_runs_compute_test(self) -> None:
         """Verify doctor mirrors the app's ZLUDA warning and CUDA compute smoke test."""
@@ -261,7 +264,7 @@ class DoctorCommandTests(TestCase):
             checks = entrypoint.doctor_torch_details()
 
         by_label = {check.label: check for check in checks}
-        self.assertEqual(by_label["Accelerator backend"].severity, "warning")
-        self.assertIn("ZLUDA", by_label["Accelerator backend"].detail)
-        self.assertTrue(by_label["CUDA compute test"].ok)
-        self.assertEqual(by_label["CUDA compute test"].detail, "Succeeded on cuda:0")
+        assert by_label["Accelerator backend"].severity == "warning"
+        assert "ZLUDA" in by_label["Accelerator backend"].detail
+        assert by_label["CUDA compute test"].ok
+        assert by_label["CUDA compute test"].detail == "Succeeded on cuda:0"
