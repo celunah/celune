@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Emotion analysis helpers for Persona conversation state."""
 
 from __future__ import annotations

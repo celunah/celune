@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Capability declarations for loaded Persona architectures."""
 
 from dataclasses import dataclass

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Tests for lightweight data, localization, and update helpers."""
 
 import datetime

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Automatic setup utility.
 
 No, this is not a setuptools remnant, this is the app bootstrapper.

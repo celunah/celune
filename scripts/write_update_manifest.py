@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Write update metadata for a compiled Celune bundle."""
 
 from __future__ import annotations

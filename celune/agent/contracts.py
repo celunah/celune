@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Compatibility exports for the relocated agent type definitions."""
 
 from ..typing.agent import (

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Global Celune operation modes and their feature gates."""
 
 from __future__ import annotations

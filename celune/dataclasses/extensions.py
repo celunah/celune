@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Extension-facing dataclasses."""
 
 from collections.abc import Callable

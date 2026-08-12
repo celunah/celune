@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Grouped Celune runtime state containers and property specs."""
 
 import queue

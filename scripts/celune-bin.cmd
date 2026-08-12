@@ -1,4 +1,4 @@
-REM SPDX-License-Identifier: Apache-2.0
+REM SPDX-License-Identifier: MIT
 
 @echo off
 setlocal

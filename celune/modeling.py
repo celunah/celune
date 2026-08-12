@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Normalizer loading helpers for Celune."""
 
 from collections.abc import Callable, Mapping

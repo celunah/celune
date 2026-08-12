@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Tests for the CEVOICE creation helper script."""
 
 from __future__ import annotations
