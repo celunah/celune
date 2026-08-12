@@ -9,7 +9,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from contextlib import suppress
-from typing import Optional, cast
+from typing import cast
 
 
 TIMEOUT = 300
@@ -64,14 +64,11 @@ def stop_process_tree(process: subprocess.Popen[str]) -> None:
         kill_process_group,
     )
 
-    process_group: Optional[int] = None
+    process_group_id = process.pid
     try:
-        process_group = get_process_group_fn(process.pid)
+        process_group_id = get_process_group_fn(process.pid)
     except ProcessLookupError:
         return
-    if process_group is None:
-        return
-    process_group_id = cast(int, process_group)
 
     sigterm = cast(int, getattr(signal, "SIGTERM", signal.SIGINT))
     sigkill = cast(int, getattr(signal, "SIGKILL", sigterm))
