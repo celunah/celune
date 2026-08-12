@@ -585,6 +585,30 @@ class UIStartupTests(TestCase):
         CeluneUI._instance = None
         CeluneHeadlessUI._instance = None
 
+    def test_tts_log_preserves_backend_log_level_filtering(self) -> None:
+        """Verify isolated backend debug logs stay hidden at the info level."""
+        ui = CeluneUI()
+        ui.celune = cast(Celune, SimpleNamespace(log_level="info"))
+        ui.safe_log = mock.Mock()
+
+        ui.tts_log("hidden", loglevel="debug")
+        ui.safe_log.assert_not_called()
+
+        ui.tts_log("visible", loglevel="info")
+        ui.safe_log.assert_called_once_with("visible", "info", loglevel="info")
+
+    def test_headless_log_preserves_backend_log_level_filtering(self) -> None:
+        """Verify headless isolated backend logs honor the configured level."""
+        ui = CeluneHeadlessUI({"headless_nocolor": True})
+        ui.celune = cast(Celune, SimpleNamespace(log_level="info"))
+
+        with mock.patch("builtins.print") as print_output:
+            ui.headless_log("hidden", loglevel="debug")
+            print_output.assert_not_called()
+
+            ui.headless_log("visible", loglevel="info")
+            print_output.assert_called_once()
+
     def test_crossfade_vc_overlap_keeps_mono_audio_one_dimensional(self) -> None:
         """Verify mono live VC overlap crossfades stay valid 1D audio."""
         ui = CeluneUI()

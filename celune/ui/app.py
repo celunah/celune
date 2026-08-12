@@ -3453,17 +3453,24 @@ class CeluneUI(App):
 
             self.call_from_thread(update)
 
-    def tts_log(self, msg: str, severity: str = "info") -> None:
+    def tts_log(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
         """Handle log messages coming from Celune.
 
         Args:
             msg: The log message emitted by Celune.
             severity: The log severity level.
+            loglevel: The minimum configured log level required to display the message.
         """
         if self.cur_state == "exiting":
             return
 
-        self.safe_log(msg, severity)
+        self.safe_log(msg, severity, loglevel=loglevel)
 
     def process_command(self, command: str, args: list[str]) -> None:
         """Process Celune control commands.

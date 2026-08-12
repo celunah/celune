@@ -13,6 +13,7 @@ from ..celune import Celune
 from ..config import Config, config_bool
 from ..constants import APP_NAME, SIGTSTP
 from ..i18n import string
+from ..typing.aliases import LogLevel
 from ..watchdog import launcher_loss_requested
 from ..utils import discard
 
@@ -71,13 +72,25 @@ class CeluneHeadlessUI:
         # sleeping severity does not have a match in the VGA palette
         return self.colors["magenta"]
 
-    def headless_log(self, msg: str, severity: str = "info") -> None:
+    def headless_log(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
         """Log to the headless interface.
 
         Args:
             msg: The log message to print.
             severity: The log severity level.
+            loglevel: The minimum configured log level required to display the message.
         """
+        levels = {"info": 0, "verbose": 1, "debug": 2}
+        active_log_level = getattr(self.celune, "log_level", "info")
+        if levels.get(active_log_level, 0) < levels.get(loglevel, 0):
+            return
+
         prefix = ""
         if severity == "warning":
             prefix = string("headless.warn_prefix")
