@@ -90,6 +90,7 @@ from ..utils import (
 from ..vc import (
     VC_PITCH_SHIFT_MAX,
     VC_PITCH_SHIFT_MIN,
+    LiveVoiceActivityDetector,
     clamp_vc_pitch_shift,
     create_live_voice_activity_detector,
     vc_input_has_voice,
@@ -258,6 +259,7 @@ class CeluneUIInteractionState:
     vc_recording_stream: Optional[sd.InputStream] = None
     vc_recording_stop_thread: Optional[threading.Thread] = None
     vc_recording_worker: Optional[threading.Thread] = None
+    vc_recording_vad: Optional[LiveVoiceActivityDetector] = None
     persona_recording_chunks: AudioChunks = field(default_factory=list)
     persona_recording_lock: threading.Lock = field(default_factory=threading.Lock)
     persona_recording_queue: Optional[
@@ -271,6 +273,7 @@ class CeluneUIInteractionState:
     persona_recording_text_prefix: str = ""
     persona_recording_transcriber: Optional[WhisperTranscriber] = None
     persona_recording_worker: Optional[threading.Thread] = None
+    persona_recording_vad: Optional[LiveVoiceActivityDetector] = None
     persona_recording_last_partial_at: float = 0.0
     caption_text: str = ""
     caption_words: tuple[str, ...] = ()
@@ -487,6 +490,7 @@ class CeluneUI(App):
     _vc_recording_worker = _forward_ui_property(
         "_interaction_state", "vc_recording_worker"
     )
+    _vc_recording_vad = _forward_ui_property("_interaction_state", "vc_recording_vad")
     _persona_recording_chunks = _forward_ui_property(
         "_interaction_state", "persona_recording_chunks"
     )
@@ -519,6 +523,9 @@ class CeluneUI(App):
     )
     _persona_recording_worker = _forward_ui_property(
         "_interaction_state", "persona_recording_worker"
+    )
+    _persona_recording_vad = _forward_ui_property(
+        "_interaction_state", "persona_recording_vad"
     )
     _persona_recording_last_partial_at = _forward_ui_property(
         "_interaction_state", "persona_recording_last_partial_at"
@@ -2389,9 +2396,11 @@ class CeluneUI(App):
 
             with self._persona_recording_lock:
                 stream = self._persona_recording_stream
+                vad = self._persona_recording_vad
                 self._persona_recording_stream = None
                 self._persona_recording_queue = None
                 self._persona_recording_worker = None
+                self._persona_recording_vad = None
                 self._persona_recording_transcriber = None
                 self._persona_recording_chunks = []
                 self._persona_recording_stop_requested = False
@@ -2399,6 +2408,7 @@ class CeluneUI(App):
                 self._persona_recording_silence_frames = 0
 
             self._shutdown_vc_stream(stream)
+            self._close_live_vad(vad)
             self._run_on_ui_thread(
                 lambda: self._complete_persona_transcription(
                     transcript,  # noqa: B023
@@ -2562,6 +2572,7 @@ class CeluneUI(App):
                 self._persona_recording_stream = stream
                 self._persona_recording_queue = recording_queue
                 self._persona_recording_worker = worker
+                self._persona_recording_vad = ai_vad
                 self._persona_recording_transcriber = transcriber
                 self._persona_recording_sample_rate = sample_rate
                 self._persona_recording_chunks = []
@@ -2575,13 +2586,16 @@ class CeluneUI(App):
         except Exception as exc:
             with self._persona_recording_lock:
                 stream = self._persona_recording_stream
+                vad = self._persona_recording_vad or ai_vad
                 self._persona_recording_stream = None
                 self._persona_recording_queue = None
                 self._persona_recording_worker = None
+                self._persona_recording_vad = None
                 self._persona_recording_transcriber = None
                 self._persona_recording_chunks = []
                 self._persona_recording_stop_requested = True
             self._shutdown_vc_stream(stream)
+            self._close_live_vad(vad)
             if worker is not None and worker.is_alive():
                 worker.join(timeout=2.0)
             self.safe_log(
@@ -2613,11 +2627,13 @@ class CeluneUI(App):
         """Stop Persona microphone capture without submitting a final utterance."""
         with self._persona_recording_lock:
             stream = self._persona_recording_stream
+            vad = self._persona_recording_vad
             recording_queue = self._persona_recording_queue
             worker = self._persona_recording_worker
             self._persona_recording_stream = None
             self._persona_recording_queue = None
             self._persona_recording_worker = None
+            self._persona_recording_vad = None
             self._persona_recording_transcriber = None
             self._persona_recording_chunks = []
             self._persona_recording_stop_requested = True
@@ -2630,6 +2646,7 @@ class CeluneUI(App):
                 with contextlib.suppress(queue_module.Full):
                     recording_queue.put_nowait((np.zeros(0, dtype=np.float32), True))
         self._shutdown_vc_stream(stream)
+        self._close_live_vad(vad)
         if worker is not None and worker is not threading.current_thread():
             worker.join(timeout=2.0)
 
@@ -2858,6 +2875,8 @@ class CeluneUI(App):
 
     def _clear_vc_recording_state(self) -> None:
         """Clear transient VC recording buffers after stop or cancel."""
+        vad = self._vc_recording_vad
+        self._close_live_vad(vad)
         self._vc_recording_stream = None
         self._vc_recording_chunks = []
         self._vc_recording_buffered_frames = 0
@@ -2874,6 +2893,7 @@ class CeluneUI(App):
         self._vc_recording_submission_queue = None
         self._vc_recording_stop_thread = None
         self._vc_recording_worker = None
+        self._vc_recording_vad = None
 
     def _stop_vc_recording_stream(
         self,
@@ -2920,6 +2940,14 @@ class CeluneUI(App):
             stream.stop()
         with contextlib.suppress(Exception):
             stream.close()
+
+    @staticmethod
+    def _close_live_vad(vad: Optional[LiveVoiceActivityDetector]) -> None:
+        """Stop one optional live VAD while preserving lightweight test doubles."""
+        close = getattr(vad, "close", None)
+        if callable(close):
+            with contextlib.suppress(Exception):
+                close()
 
     def _stop_live_vc_backend(self) -> None:
         """Reset the active backend's native live conversion state."""
@@ -3307,6 +3335,7 @@ class CeluneUI(App):
                 self._vc_recording_submission_queue = submission_queue
                 self._vc_recording_stop_thread = None
                 self._vc_recording_worker = worker
+                self._vc_recording_vad = ai_vad
 
             stream.start()
         except Exception as e:

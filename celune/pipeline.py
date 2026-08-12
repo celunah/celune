@@ -886,9 +886,14 @@ def _apply_source_gain(
     speech_active: bool,
     block_seconds: float,
     engine: Celune,
+    source_meta: Optional[dict[str, Union[str, float]]] = None,
 ) -> AudioChunk:
     """Apply ducking and smooth gain ramps for one mixer source block."""
-    meta = _playback_source_meta(engine).get(source_id)
+    meta = (
+        _playback_source_meta(engine).get(source_id)
+        if source_meta is None
+        else source_meta
+    )
     if not isinstance(meta, dict):
         return audio
 
@@ -3053,10 +3058,11 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                         audio_chunk = to_48khz(
                             np.asarray(audio_chunk, dtype=np.float32), sr
                         )
+                        has_audio = bool(audio_chunk.size and np.any(audio_chunk))
                         if (
                             stream_frame_count <= 3
                             or audio_chunk.size == 0
-                            or not np.any(audio_chunk)
+                            or not has_audio
                         ):
                             engine.log(
                                 string(
@@ -3064,15 +3070,11 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                                     frame=stream_frame_count,
                                     samples=audio_chunk.size,
                                     sample_rate=sr,
-                                    nonzero=(
-                                        bool(np.any(audio_chunk))
-                                        if audio_chunk.size
-                                        else False
-                                    ),
+                                    nonzero=has_audio,
                                 ),
                                 loglevel="debug",
                             )
-                        if audio_chunk.size == 0 or not np.any(audio_chunk):
+                        if not has_audio:
                             engine.log(
                                 string(
                                     "pipeline.stream_frame_discarded",
@@ -3255,10 +3257,9 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 engine.reverb.reset()
                 is_silent = False
                 silence_tier = 0
-                if full_audio:
-                    is_silent, silence_tier = is_silent_utterance(
-                        np.concatenate(full_audio)
-                    )
+                full_audio_array = np.concatenate(full_audio) if full_audio else None
+                if full_audio_array is not None:
+                    is_silent, silence_tier = is_silent_utterance(full_audio_array)
 
                 if is_silent and silence_tier == 2:
                     if item.silent_retry_count < _MAX_SILENT_UTTERANCE_RETRIES:
@@ -3295,17 +3296,17 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 caption_timing_callback = getattr(
                     engine, "caption_timing_callback", None
                 )
-                if full_audio and callable(caption_timing_callback):
+                if full_audio_array is not None and callable(caption_timing_callback):
                     caption_timing_callback(
                         display_text,
-                        np.concatenate(full_audio),
+                        full_audio_array,
                         BASE_SR,
                     )
 
                 engine.total_generated_speech_seconds += speech_len
 
-                if save_output and full_audio:
-                    wav = np.concatenate(full_audio)
+                if save_output and full_audio_array is not None:
+                    wav = full_audio_array
                     analysis_audio = wav.copy()
                     if kept_sfx_audio is not None:
                         wav = np.concatenate([*kept_sfx_audio, wav])
@@ -3765,7 +3766,11 @@ async def playback_worker_job(engine: Celune) -> None:
             if not ready_ids:
                 break
 
-            speech_active = bool(_active_speech_source_ids(source_buffers, engine))
+            playback_meta = _playback_source_meta(engine)
+            speech_active = any(
+                playback_meta.get(source_id, {}).get("kind") == "speech"
+                for source_id in ready_ids
+            )
             block_len = min(
                 len(source_buffers[source_id][0][0]) for source_id in ready_ids
             )
@@ -3781,6 +3786,7 @@ async def playback_worker_job(engine: Celune) -> None:
                     speech_active=speech_active,
                     block_seconds=block_len / BASE_SR,
                     engine=engine,
+                    source_meta=playback_meta.get(source_id),
                 )
                 mixed += block_audio
                 if timing_to_log is None and timing is not None:
@@ -3794,7 +3800,7 @@ async def playback_worker_job(engine: Celune) -> None:
                         None,
                     )
 
-                source_meta = _playback_source_meta(engine).get(source_id)
+                source_meta = playback_meta.get(source_id)
                 if isinstance(source_meta, dict):
                     source_meta["played_frames"] = float(
                         source_meta.get("played_frames", 0.0)

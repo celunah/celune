@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: MIT
 """Shared runtime helpers for Celune voice conversion."""
 
+import contextlib
 import importlib
+import queue as queue_module
+import threading
 from collections.abc import Mapping
 from typing import Optional, cast
 
@@ -70,7 +73,7 @@ def vc_input_rms(audio: AudioChunk) -> float:
     """
     if audio.size == 0:
         return 0.0
-    return float(np.sqrt(np.mean(np.square(audio), dtype=np.float64)))
+    return float(np.sqrt(np.mean(np.square(audio), dtype=np.float32)))
 
 
 def vc_vad_hangover_frames(sample_rate: int) -> int:
@@ -171,11 +174,10 @@ def _resample_audio(
 
 def _torch_probability(output: torch.Tensor) -> float:
     """Convert one model output tensor into a scalar probability."""
-    values = output.detach().cpu().numpy()
-    values = np.asarray(values, dtype=np.float32).reshape(-1)
-    if values.size <= 0:
+    values = output.detach().reshape(-1)
+    if values.numel() <= 0:
         return 0.0
-    return float(values[-1])
+    return float(values[-1].item())
 
 
 class LiveVoiceActivityDetector:
@@ -197,18 +199,134 @@ class LiveVoiceActivityDetector:
         self.frame_samples = frame_samples
         self._pending = np.zeros(0, dtype=np.float32)
         self._speech_active = False
+        self._state_lock = threading.Lock()
+        self._model_lock = threading.Lock()
+        self._generation = 0
+        self._input_queue: queue_module.Queue[Optional[tuple[AudioChunk, int]]] = (
+            queue_module.Queue(maxsize=2)
+        )
+        self._stop_event = threading.Event()
+        self._worker: Optional[threading.Thread] = None
 
         reset_states = getattr(self.model, "reset_states", None)
         if callable(reset_states):
             reset_states()
+
+    def _ensure_worker(self) -> None:
+        """Start the detector worker lazily when live audio first arrives."""
+        worker = self._worker
+        if worker is not None and worker.is_alive():
+            return
+
+        self._stop_event.clear()
+        self._worker = threading.Thread(
+            target=self._run,
+            name="celune-live-vad",
+            daemon=True,
+        )
+        self._worker.start()
+
+    def _reset_locked(self) -> None:
+        """Reset detector buffers while holding the state lock."""
+        self._pending = np.zeros(0, dtype=np.float32)
+        self._speech_active = False
+
+    def _reset_model(self) -> None:
+        """Reset the model's streaming state outside the audio callback."""
+        reset_states = getattr(self.model, "reset_states", None)
+        if callable(reset_states):
+            reset_states()
+
+    def _process_audio(self, audio: AudioChunk, sample_rate: int) -> None:
+        """Process one queued callback buffer on the detector worker."""
+        mono_audio = _normalize_live_audio(audio)
+        resampled = _resample_audio(
+            mono_audio,
+            sample_rate,
+            self.target_sample_rate,
+        )
+        with self._state_lock:
+            if self._pending.size > 0:
+                resampled = np.concatenate((self._pending, resampled))
+            generation = self._generation
+            speech_active = self._speech_active
+
+            complete_frames = (
+                len(resampled) // self.frame_samples
+            ) * self.frame_samples
+            if complete_frames <= 0:
+                self._pending = resampled
+                return
+
+        with self._model_lock, torch.inference_mode():
+            for start in range(0, complete_frames, self.frame_samples):
+                frame = resampled[start : start + self.frame_samples]
+                probability = _torch_probability(
+                    self.model(
+                        torch.from_numpy(frame),
+                        self.target_sample_rate,
+                    )
+                )
+                if speech_active:
+                    if probability < self.negative_threshold:
+                        speech_active = False
+                elif probability >= self.threshold:
+                    speech_active = True
+
+        with self._state_lock:
+            if generation != self._generation:
+                return
+            self._speech_active = speech_active
+            self._pending = np.asarray(resampled[complete_frames:], dtype=np.float32)
+
+    def _run(self) -> None:
+        """Consume microphone buffers without running inference in PortAudio."""
+        while not self._stop_event.is_set():
+            item = self._input_queue.get()
+            if item is None:
+                if self._stop_event.is_set():
+                    return
+                with self._model_lock:
+                    self._reset_model()
+                continue
+            audio, sample_rate = item
+            try:
+                self._process_audio(audio, sample_rate)
+            except (RuntimeError, AssertionError, ValueError):
+                with self._state_lock:
+                    self._reset_locked()
+                    self._speech_active = vc_input_has_voice(audio)
+                with self._model_lock:
+                    self._reset_model()
 
     def reset(self) -> None:
         """Reset buffered audio and the streaming detector state."""
-        self._pending = np.zeros(0, dtype=np.float32)
-        self._speech_active = False
-        reset_states = getattr(self.model, "reset_states", None)
-        if callable(reset_states):
-            reset_states()
+        with self._state_lock:
+            self._generation += 1
+            self._reset_locked()
+
+        worker = self._worker
+        if worker is None or not worker.is_alive():
+            self._reset_model()
+            return
+
+        with contextlib.suppress(queue_module.Full):
+            self._input_queue.put_nowait(None)
+            return
+        with contextlib.suppress(queue_module.Empty):
+            self._input_queue.get_nowait()
+        with contextlib.suppress(queue_module.Full):
+            self._input_queue.put_nowait(None)
+
+    def close(self) -> None:
+        """Stop the detector worker and release its queued callback buffers."""
+        self._stop_event.set()
+        with contextlib.suppress(queue_module.Full):
+            self._input_queue.put_nowait(None)
+        worker = self._worker
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(timeout=1.0)
+        self._worker = None
 
     def has_voice(
         self,
@@ -224,40 +342,17 @@ class LiveVoiceActivityDetector:
         Returns:
             bool: Whether speech appears active in the current callback window.
         """
-        mono_audio = _normalize_live_audio(audio)
-        resampled = _resample_audio(
-            mono_audio,
-            sample_rate,
-            self.target_sample_rate,
-        )
-        if self._pending.size > 0:
-            resampled = np.concatenate((self._pending, resampled))
-
-        complete_frames = (len(resampled) // self.frame_samples) * self.frame_samples
-        if complete_frames <= 0:
-            self._pending = resampled
+        self._ensure_worker()
+        queued_audio = np.asarray(audio, dtype=np.float32)
+        try:
+            self._input_queue.put_nowait((queued_audio, sample_rate))
+        except queue_module.Full:
+            with contextlib.suppress(queue_module.Empty):
+                self._input_queue.get_nowait()
+            with contextlib.suppress(queue_module.Full):
+                self._input_queue.put_nowait((queued_audio, sample_rate))
+        with self._state_lock:
             return self._speech_active
-
-        had_speech = self._speech_active
-        for start in range(0, complete_frames, self.frame_samples):
-            frame = np.asarray(
-                resampled[start : start + self.frame_samples],
-                dtype=np.float32,
-            )
-            probability = _torch_probability(
-                self.model(
-                    torch.from_numpy(frame),
-                    self.target_sample_rate,
-                )
-            )
-            if self._speech_active:
-                if probability < self.negative_threshold:
-                    self._speech_active = False
-            elif probability >= self.threshold:
-                self._speech_active = True
-
-        self._pending = np.asarray(resampled[complete_frames:], dtype=np.float32)
-        return had_speech or self._speech_active
 
 
 def create_live_voice_activity_detector(

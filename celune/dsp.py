@@ -2,6 +2,7 @@
 """Celune audio processing functions."""
 
 from collections.abc import Callable, Iterable
+from typing import Optional
 
 import numpy as np
 from pedalboard import Pedalboard, PitchShift, Reverb
@@ -350,6 +351,7 @@ class StreamingPedalboardReverb:
     def __init__(self) -> None:
         self.strength = 0.0
         self._first_chunk = True
+        self._last_strength: Optional[float] = None
 
         # default Celune reverb, with strength control
         self.reverb = Reverb(
@@ -364,7 +366,11 @@ class StreamingPedalboardReverb:
 
     def _update_params(self):
         """Update reverb strength."""
-        s = np.clip(self.strength, 0.0, 1.0)
+        s = float(np.clip(self.strength, 0.0, 1.0))
+        if self._last_strength == s:
+            return
+
+        self._last_strength = s
 
         wet = 0.16 * (s**2)
         dry = 1.0 - wet

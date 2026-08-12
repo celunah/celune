@@ -18,7 +18,6 @@ from openrgb.utils import RGBColor
 
 from .colors import ERROR, RGB
 from .constants import BASE_SR
-from .dsp import split
 from .utils import discard, is_celune_day, lunar_info, range_interpolated, to_rgb
 
 if TYPE_CHECKING:
@@ -56,6 +55,7 @@ class AudioRGBGlow:
 
         self._scheduled_chunks = deque()
         self.fps = 60
+        self._last_device_rgb: Optional[RGB] = None
 
         self.transition_rate = 0.02
         self.color_transition_rate = 0.08
@@ -227,13 +227,13 @@ class AudioRGBGlow:
         if not self.start():
             return
 
-        chunk_seconds = 1.0 / float(self.fps)
-        chunks = split(audio, BASE_SR, chunk_seconds)
+        frames = max(1, int(round(BASE_SR / max(self.fps, 1))))
         now = time.monotonic()
         offset = 0.0
 
         with self._lock:
-            for chunk in chunks:
+            for start in range(0, len(audio), frames):
+                chunk = audio[start : start + frames]
                 duration = chunk.shape[0] / float(BASE_SR)
                 self._scheduled_chunks.append((now + offset, chunk))
                 offset += duration
@@ -316,7 +316,7 @@ class AudioRGBGlow:
         if audio.size == 0:
             return 0.0
 
-        rms = float(np.sqrt(np.mean(np.square(audio), dtype=np.float64)))
+        rms = float(np.sqrt(np.mean(np.square(audio), dtype=np.float32)))
         level = np.clip(rms * self.input_gain, 0.0, 1.0)
         level = float(np.log1p(6.0 * level) / np.log1p(6.0))
         level = level ** (1.0 / self.gamma)
@@ -325,7 +325,11 @@ class AudioRGBGlow:
     def _set_all_devices(self, rgb: Union[RGB, AudioChunkBroad]) -> None:
         """Apply color to all registered OpenRGB devices."""
         rgb = np.clip(rgb, 0, 255).astype(int)
-        color = RGBColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        current_rgb = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        if current_rgb == self._last_device_rgb:
+            return
+        self._last_device_rgb = current_rgb
+        color = RGBColor(*current_rgb)
         for device in self.devices:
             with contextlib.suppress(Exception):
                 device.set_color(color, fast=self.fast)

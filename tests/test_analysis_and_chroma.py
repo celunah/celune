@@ -9,7 +9,7 @@ import numpy as np
 from celune import analysis
 from celune.chroma import AudioRGBGlow
 from celune.colors import RGB
-from celune.constants import N_A_NUMERIC
+from celune.constants import BASE_SR, N_A_NUMERIC
 
 
 class AnalysisTests(TestCase):
@@ -237,6 +237,17 @@ class ChromaTests(TestCase):
 
         self.assertEqual(glow._state, "sleeping")
         self.assertAlmostEqual(glow._target_brightness, sleeping_target)
+
+    def test_schedule_uses_one_chunk_per_display_frame(self) -> None:
+        """Verify glow scheduling does not subdivide frames into tiny chunks."""
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
+        glow.start = mock.Mock(return_value=True)
+        audio = np.zeros((BASE_SR, 2), dtype=np.float32)
+
+        glow.schedule(audio)
+
+        self.assertEqual(len(glow._scheduled_chunks), glow.fps)
+        self.assertEqual(len(glow._scheduled_chunks[0][1]), BASE_SR // glow.fps)
 
     def test_glow_target_follows_smoothed_audio_rms_without_snapping_to_max(
         self,
