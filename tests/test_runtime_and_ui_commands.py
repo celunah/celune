@@ -2001,6 +2001,27 @@ class TestUIStartup(CeluneTestCase):
         ui.update_resources = mock.Mock()
         captured_callback: Optional[ui_app._VCAudioCallback] = None
 
+        class FakeAIVAD:
+            """Tiny AI VAD stub with a deterministic speech onset."""
+
+            def has_voice(self, audio: np.ndarray, sample_rate: int) -> bool:
+                """Report only the loud synthetic buffer as speech.
+
+                Args:
+                    audio: Input audio block inspected by the fake detector.
+                    sample_rate: Input audio sample rate.
+
+                Returns:
+                    bool: Whether the fake detector considers speech active.
+                """
+                del sample_rate
+                return float(np.max(np.abs(audio))) >= 0.05
+
+            def reset(self) -> None:
+                """Reset the fake detector state."""
+
+        fake_vad = FakeAIVAD()
+
         def invoke_captured_callback(
             callback: ui_app._VCAudioCallback,
             audio: np.ndarray,
@@ -2030,7 +2051,7 @@ class TestUIStartup(CeluneTestCase):
         with (
             mock.patch(
                 "celune.ui.app.create_live_voice_activity_detector",
-                return_value=None,
+                return_value=fake_vad,
             ),
             mock.patch(
                 "celune.ui.app.sd.query_devices",
