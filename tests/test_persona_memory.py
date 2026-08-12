@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Tests for Persona long-term memory persistence and retrieval."""
 
 import tempfile

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Celune voice-conversion backend initialization manager."""
 
 from collections.abc import Callable

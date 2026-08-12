@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Persistent long-term memory helpers for the Persona system."""
 
 from __future__ import annotations

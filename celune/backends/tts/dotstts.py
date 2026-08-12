@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """dots.tts MeanFlow backend implementation for Celune."""
 
 import contextlib

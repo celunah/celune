@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Contracts for Celune's future local-only agent mode."""
 
 from collections.abc import Mapping

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """UI protocol definitions."""
 
 from typing import TYPE_CHECKING, Optional, Protocol

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Filesystem helpers for Persona character overrides and debug data."""
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Private framed protocol used by isolated backend worker processes."""
 
 import pickle

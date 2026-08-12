@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Configuration-specific type aliases."""
 
 from collections.abc import Mapping, Sequence

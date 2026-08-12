@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Celune's internal extension event dispatcher and decorators."""
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Core Celune protocols and callback types."""
 
 from __future__ import annotations

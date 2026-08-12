@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Unified Celune type package with lazy re-exports."""
 
 from importlib import import_module

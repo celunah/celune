@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Tests for VRAM preset and backend compatibility rules."""
 
 from unittest import TestCase, mock

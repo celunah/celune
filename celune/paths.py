@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Runtime filesystem paths and global Hugging Face runtime setup for Celune."""
 
 import os

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Shared type aliases moved out of runtime implementation modules."""
 
 from __future__ import annotations
