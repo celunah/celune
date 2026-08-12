@@ -50,35 +50,39 @@ def stop_process_tree(process: subprocess.Popen[str]) -> None:
             process.wait(timeout=GRACE_PERIOD)
         return
 
-    get_process_group = cast(
-        Optional[Callable[[int], int]],
-        getattr(os, "getpgid", None),
-    )
-    kill_process_group = cast(
-        Optional[Callable[[int, int], None]],
-        getattr(os, "killpg", None),
-    )
-    if get_process_group is None or kill_process_group is None:
+    get_process_group = getattr(os, "getpgid", None)
+    kill_process_group = getattr(os, "killpg", None)
+    if not callable(get_process_group) or not callable(kill_process_group):
         process.terminate()
         with suppress(subprocess.TimeoutExpired):
             process.wait(timeout=GRACE_PERIOD)
         return
 
+    get_process_group_fn = cast(Callable[[int], int], get_process_group)
+    kill_process_group_fn = cast(
+        Callable[[int, int], None],
+        kill_process_group,
+    )
+
+    process_group: Optional[int] = None
     try:
-        process_group = get_process_group(process.pid)
+        process_group = get_process_group_fn(process.pid)
     except ProcessLookupError:
         return
+    if process_group is None:
+        return
+    process_group_id = cast(int, process_group)
 
     sigterm = cast(int, getattr(signal, "SIGTERM", signal.SIGINT))
     sigkill = cast(int, getattr(signal, "SIGKILL", sigterm))
     with suppress(ProcessLookupError):
-        kill_process_group(process_group, sigterm)
+        kill_process_group_fn(process_group_id, sigterm)
 
     try:
         process.wait(timeout=GRACE_PERIOD)
     except subprocess.TimeoutExpired:
         with suppress(ProcessLookupError):
-            kill_process_group(process_group, sigkill)
+            kill_process_group_fn(process_group_id, sigkill)
         with suppress(subprocess.TimeoutExpired):
             process.wait(timeout=GRACE_PERIOD)
 
