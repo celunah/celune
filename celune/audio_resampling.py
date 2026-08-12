@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Dependency-light audio resampling shared by Celune runtimes."""
 
 import math

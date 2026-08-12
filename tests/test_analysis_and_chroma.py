@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for pure analysis helpers and RGB glow math."""
 
 from pathlib import Path

@@ -1,5 +1,5 @@
 {
-    "SPDX-License-Identifier": "MIT",
+    "SPDX-License-Identifier": "Apache-2.0",
     "backends.dependencies_install_failed": "Could not install backend dependencies{detail}",
     "backends.environment_lock_timeout": "Timed out waiting for backend environment lock: {path}",
     "backends.environment_not_created": "Backend environment was not created: {path}",

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Frontend layer."""
 
 # UI runtime dependencies are declared under TYPE_CHECKING and populated lazily
