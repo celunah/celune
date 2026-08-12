@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Speech pipeline dataclasses."""
 
 from __future__ import annotations

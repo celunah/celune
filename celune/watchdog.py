@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Request coordinated runtime shutdown when the native launcher disappears."""
 
 import os

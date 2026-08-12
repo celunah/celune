@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """VoxCPM2 backend implementation for Celune."""
 
 import contextlib

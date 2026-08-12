@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Tests for host audio-server restart helpers."""
 
 import subprocess

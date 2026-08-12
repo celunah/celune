@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Shared Persona runtime helpers for Celune-managed generation."""
 
 import contextlib

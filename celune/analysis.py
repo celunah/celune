@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Analyze a WAV file and generate a radar chart plus a text report."""
 
 import contextlib

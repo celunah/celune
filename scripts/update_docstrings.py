@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Recursively populate and convert docstrings to a unified format."""
 
 import ast

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Unified voice-conversion backend abstractions for Celune."""
 
 from abc import ABC, abstractmethod

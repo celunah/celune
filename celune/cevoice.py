@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """CEVOICE/CECHAR bundle writer, parser, and lazy file loader."""
 
 from __future__ import annotations

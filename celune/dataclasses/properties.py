@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Property helpers for grouped Celune runtime state."""
 
 from dataclasses import dataclass

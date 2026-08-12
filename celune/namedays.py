@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Name day list derived from Polish name days, translated to English, and with Polish-only names removed."""
 
 from datetime import date, datetime

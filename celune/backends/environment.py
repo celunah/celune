@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Management of isolated dependency environments for Celune backends."""
 
 import hashlib

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Celune Razer Chroma and OpenRGB-compatible RGB glow effect."""
 
 from __future__ import annotations

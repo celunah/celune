@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Typed event names, payload protocols, and callback aliases for extensions."""
 
 from __future__ import annotations

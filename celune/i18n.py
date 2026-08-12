@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Celune internationalization helpers backed by JSON language files."""
 
 import contextlib

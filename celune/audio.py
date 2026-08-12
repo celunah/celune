@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Helpers for restarting the host operating system's audio server."""
 
 from __future__ import annotations
