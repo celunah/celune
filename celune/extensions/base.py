@@ -7,6 +7,7 @@ from typing import Optional, Union
 
 from ..dataclasses.extensions import CeluneContext
 from ..exceptions import IncompleteExtensionError
+from ..typing.aliases import LogLevel
 
 
 class CeluneExtension(ABC):
@@ -59,7 +60,7 @@ class CeluneExtension(ABC):
         msg: str,
         severity: str = "info",
         *,
-        loglevel: str = "info",
+        loglevel: LogLevel = "info",
     ) -> None:
         """Log to Celune's logs.
 
@@ -68,7 +69,7 @@ class CeluneExtension(ABC):
             severity: The message severity level.
             loglevel: The minimum configured log level required to append the line.
         """
-        self.ctx.log(f"[{self.name}] {msg}", severity, loglevel=loglevel)  # type: ignore[arg-type]
+        self.ctx.log(f"[{self.name}] {msg}", severity, loglevel=loglevel)
 
     def say(
         self,

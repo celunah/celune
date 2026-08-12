@@ -642,18 +642,18 @@ def _doctor_checks() -> list[DoctorCheck]:
         hint=f"{APP_NAME} currently supports Windows and Linux only.",
     )
 
-    python_ok = (3, 12) <= sys.version_info < (3, 14)
+    python_ok = (3, 12) <= sys.version_info < (3, 15)
     python_detail = (
-        f"{platform.python_version()} (supported: 3.12 or 3.13)"
+        f"{platform.python_version()} (supported: 3.12, 3.13, or 3.14)"
         if python_ok
-        else f"{platform.python_version()} (unsupported: expected 3.12 or 3.13)"
+        else f"{platform.python_version()} (unsupported: expected 3.12, 3.13, or 3.14)"
     )
     _doctor_add(
         checks,
         "Python",
         python_ok,
         python_detail,
-        hint=f"{APP_NAME} currently supports Python 3.12 and 3.13.",
+        hint=f"{APP_NAME} currently supports Python 3.12, 3.13, and 3.14.",
     )
 
     for label, path, hint in (
@@ -1072,6 +1072,7 @@ def start(
     _FORCE_STARTUP_DIAGNOSTICS = log_level not in {None, "info"}
     _print_startup_diagnostic(string("cli.startup_begin", app_name=APP_NAME))
     runtime = _load_runtime()
+    active_log_level = normalize_log_level(log_level or INITIAL_LOG_LEVEL)
 
     try:
         migrate_legacy_app_data()
@@ -1286,7 +1287,7 @@ def start(
             sys.stderr = stderr
 
             print(string("cli.internal_error_running", app_name=APP_NAME))
-            if INITIAL_LOG_LEVEL != "info":
+            if active_log_level != "info":
                 with contextlib.suppress(ModuleNotFoundError):
                     from rich.traceback import install
 

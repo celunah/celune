@@ -222,6 +222,40 @@ class ApiWebUITests(TestCase):
         self.assertEqual(send_update2["interactive"], True)
         self.assertEqual(voice_update2["interactive"], True)
 
+    def test_webui_wrapped_callbacks_preserve_legacy_log_signatures(self) -> None:
+        """Verify WebUI callback wrapping still supports two-argument handlers."""
+        log_calls: list[tuple[str, str]] = []
+        status_calls: list[tuple[str, str]] = []
+
+        def legacy_log(message: str, severity: str = "info") -> None:
+            log_calls.append((message, severity))
+
+        def legacy_status(message: str, severity: str = "info") -> None:
+            status_calls.append((message, severity))
+
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced",),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+                log_callback=legacy_log,
+                status_callback=legacy_status,
+                voice_changed_callback=lambda _name: None,
+                change_input_state_callback=lambda _locked: None,
+                change_voice_lock_state_callback=lambda _locked: None,
+            ),
+        )
+        api.bind_celune(celune)
+
+        celune.log_callback("legacy log", "warning", loglevel="debug")
+        celune.status_callback("legacy status", "info", loglevel="verbose")
+
+        self.assertEqual(log_calls, [("legacy log", "warning")])
+        self.assertEqual(status_calls, [("legacy status", "info")])
+
     def test_webui_snapshot_shows_tutorial_placeholder(self) -> None:
         """Verify tutorial state uses the tutorial placeholder in the browser UI."""
         api.bound_celune = cast(

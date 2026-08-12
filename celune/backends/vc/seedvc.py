@@ -37,6 +37,7 @@ _LIVE_CONTEXT_DIFFERENCE_SECONDS = 2.0
 _LIVE_DIFFUSION_STEPS = 10
 _LIVE_INFERENCE_CFG_RATE = 0.7
 _LIVE_MAX_PROMPT_SECONDS = 3.0
+_F0_LIVE_OVERLAP_SECONDS = 0.04
 
 
 class _TemporaryWaveFile:
@@ -119,7 +120,10 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         self._live_sola_buffer: Optional[torch.Tensor] = None
         self._live_fade_in_window: Optional[torch.Tensor] = None
         self._live_fade_out_window: Optional[torch.Tensor] = None
+        self._f0_live_session_key: Optional[tuple[Path, int]] = None
+        self._f0_live_tail = np.zeros(0, dtype=np.float32)
         self._wrapper_lock = threading.Lock()
+        self._f0_live_lock = threading.Lock()
 
     @staticmethod
     @contextlib.contextmanager
@@ -489,7 +493,10 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             or self._live_fade_out_window is None
         ):
             raise RuntimeError(string("seedvc.live_model_invalid"))
-        output = generated.reshape(-1)
+        output = generated.reshape(-1).to(
+            device=self._live_sola_buffer.device,
+            dtype=self._live_sola_buffer.dtype,
+        )
         required = (
             self._live_sola_buffer_frame
             + self._live_sola_search_frame
@@ -512,6 +519,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                     1,
                     self._live_sola_buffer_frame,
                     device=output.device,
+                    dtype=output.dtype,
                 ),
             )
             + 1e-8
@@ -638,6 +646,9 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             self._clear_live_session()
             self._live_module = None
             self._live_model_set = None
+        with self._f0_live_lock:
+            self._f0_live_session_key = None
+            self._f0_live_tail = np.zeros(0, dtype=np.float32)
 
         gc.collect()
         with contextlib.suppress(Exception):
@@ -648,14 +659,59 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                 torch.cuda.empty_cache()
 
     def stop_live(self) -> None:
-        """Reset the native Seed-VC live session without unloading its models."""
+        """Reset live Seed-VC sessions without unloading their models."""
         with self._wrapper_lock:
             self._clear_live_session()
+        with self._f0_live_lock:
+            self._f0_live_session_key = None
+            self._f0_live_tail = np.zeros(0, dtype=np.float32)
 
     def convert_live(self, request: VoiceConversionRequest) -> AudioOutput:
         """Convert one live block through Seed-VC's native real-time path."""
-        if request.f0_condition:
-            return self.convert(request)
+        if self._resolve_f0_condition(request, self.f0_condition):
+            if not request.target_references:
+                raise ValueError(string("seedvc.target_reference_required"))
+
+            reference_path = request.target_references[0]
+            session_key = (reference_path, request.sample_rate)
+            overlap_frames = max(
+                1,
+                int(request.sample_rate * _F0_LIVE_OVERLAP_SECONDS),
+            )
+            with self._f0_live_lock:
+                if self._f0_live_session_key != session_key:
+                    self._f0_live_tail = np.zeros(0, dtype=np.float32)
+                    self._f0_live_session_key = session_key
+
+                source_audio = self._mix_to_mono(request.source_audio)
+                if self._f0_live_tail.size:
+                    source_audio = np.concatenate((self._f0_live_tail, source_audio))
+                output = self.convert(
+                    VoiceConversionRequest(
+                        source_audio=source_audio,
+                        sample_rate=request.sample_rate,
+                        target_voice=request.target_voice,
+                        target_character=request.target_character,
+                        target_references=request.target_references,
+                        label=request.label,
+                        pitch_shift=request.pitch_shift,
+                        f0_condition=True,
+                    )
+                )
+                self._f0_live_tail = np.asarray(
+                    source_audio[-overlap_frames:],
+                    dtype=np.float32,
+                ).copy()
+
+            trim_frames = min(
+                len(output.audio),
+                int(round(overlap_frames * output.sample_rate / request.sample_rate)),
+            )
+            return AudioOutput(
+                audio=np.asarray(output.audio[trim_frames:], dtype=np.float32),
+                sample_rate=output.sample_rate,
+                label=output.label,
+            )
         if not request.target_references:
             raise ValueError(string("seedvc.target_reference_required"))
 

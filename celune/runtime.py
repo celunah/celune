@@ -156,119 +156,161 @@ def validate_runtime(
 
     if sys.version_info < (3, 12) or sys.version_info >= (3, 15):
         log(
-            f"{APP_NAME} does not currently support Python {platform.python_version()}.",
+            string(
+                "runtime.python_unsupported",
+                app_name=APP_NAME,
+                version=platform.python_version(),
+            ),
             "error",
         )
-        log(
-            f"Run `uv sync` in {APP_NAME}'s directory to set up the environment, then restart {APP_NAME}.",
-            "error",
-        )
+        log(string("runtime.python_setup", app_name=APP_NAME), "error")
         set_state("error")
-        error("Incompatible Python version")
+        error(string("runtime.incompatible_python"))
         return False
 
     backend, usable = check_supported_backends()
     if backend == "ZLUDA":
-        log("Current system supports CUDA compatibility mode execution.", "info")
+        log(string("runtime.zluda_supported"), "info")
     else:
-        log(f"Current system supports {backend} execution.", "info")
+        log(string("runtime.backend_supported", backend=backend), "info")
 
     allow_cpu_mini = backend == "CPU" and backend_name.strip().lower() == "mini"
     if allow_cpu_mini:
-        log(f"Proceeding with startup, {APP_NAME} Mini is selected.", "info")
+        log(string("runtime.mini_startup", app_name=APP_NAME), "info")
         usable = True
 
     if not usable:
-        log(f"{APP_NAME} does not currently support {backend} execution.", "error")
+        log(
+            string("runtime.backend_unsupported", app_name=APP_NAME, backend=backend),
+            "error",
+        )
         set_state("error")
-        error("No supported backend found")
+        error(string("runtime.no_supported_backend"))
         return False
 
     if allow_cpu_mini:
         if glow_connect_failed:
             log(
-                "Cannot connect to OpenRGB. Presence features will be disabled.",
+                string("runtime.openrgb_unavailable"),
                 "warning",
             )
         return True
 
     if cuda_version is None:
-        log(f"{APP_NAME} could not find a CUDA-compatible runtime.", "error")
+        log(string("runtime.cuda_missing", app_name=APP_NAME), "error")
 
         if separator and torch_variant == "cpu":
-            log("You currently have a CPU build of PyTorch.", "error")
+            log(string("runtime.pytorch_cpu_build"), "error")
         else:
-            log("You currently have an unsupported build of PyTorch.", "error")
+            log(string("runtime.pytorch_unsupported_build"), "error")
 
         set_state("error")
-        error("No CUDA runtime found")
+        error(string("runtime.no_cuda_runtime"))
         return False
 
     if backend == "ZLUDA":
         log(
-            "Detected a non-NVIDIA card running in CUDA compatibility mode, likely with ZLUDA or similar.",
+            string("runtime.zluda_detected"),
             "warning",
         )
-        log(f"{APP_NAME}'s performance may be impacted.", "warning")
+        log(string("runtime.zluda_performance", app_name=APP_NAME), "warning")
 
     cuda_version_tuple = tuple(map(int, cuda_version.split(".")))
     if cuda_version_tuple not in {(12, 8), (13, 0)}:
         log(
-            f"{APP_NAME} only supports CUDA 12.8 or 13.0, found version {torch.version.cuda}.",
+            string(
+                "runtime.cuda_version_unsupported",
+                app_name=APP_NAME,
+                version=torch.version.cuda,
+            ),
             "error",
         )
         set_state("error")
-        error("Incompatible CUDA version")
+        error(string("runtime.incompatible_cuda"))
         return False
 
     cuda_avail = torch.cuda.is_available()
-    log(f"CUDA available: {cuda_avail}", "info")
+    log(string("runtime.cuda_available", available=cuda_avail), "info")
 
     # devices to test
     devices = torch.cuda.device_count()
     if devices == 0:
-        log("No GPUs found.", "error")
+        log(string("runtime.no_gpus"), "error")
         set_state("error")
-        error("CUDA is not available")
+        error(string("runtime.cuda_unavailable"))
         return False
 
     for i in range(devices):
-        gpu = torch.cuda.get_device_name(i)
-        major, minor = torch.cuda.get_device_capability(i)
+        try:
+            gpu = torch.cuda.get_device_name(i)
+            major, minor = torch.cuda.get_device_capability(i)
+        except Exception as exc:
+            log(
+                string(
+                    "runtime.gpu_capability_failed",
+                    index=i,
+                    error=format_error(exc, log_level),
+                ),
+                "error",
+            )
+            set_state("error")
+            error(string("runtime.unsupported_gpu"))
+            return False
         try:
             log(
-                f"GPU {i}: {gpu} ({cuda_architecture((major, minor))}) - CUDA capability: {major}.{minor}",
+                string(
+                    "runtime.gpu_supported",
+                    index=i,
+                    name=gpu,
+                    architecture=cuda_architecture((major, minor)),
+                    major=major,
+                    minor=minor,
+                ),
                 "info",
             )
         except (ValueError, NotImplementedError):
             log(
-                f"GPU {i}: {gpu} (not supported) - CUDA capability: {major}.{minor}",
+                string(
+                    "runtime.gpu_unsupported",
+                    index=i,
+                    name=gpu,
+                    major=major,
+                    minor=minor,
+                ),
                 "info",
             )
-            log(f"{APP_NAME} does not support this GPU.", "error")
-            log(f"{APP_NAME} requires Ampere or newer.", "error")
+            log(string("runtime.gpu_not_supported", app_name=APP_NAME), "error")
+            log(string("runtime.gpu_ampere_required", app_name=APP_NAME), "error")
             log(
-                "If you have another supported GPU, set CUDA_VISIBLE_DEVICES appropriately.",
+                string("runtime.cuda_visible_devices"),
                 "error",
             )
             set_state("error")
-            error("Unsupported GPU")
+            error(string("runtime.unsupported_gpu"))
             return False
 
         try:
-            log(f"Testing GPU {i}...", "info")
+            log(string("runtime.testing_gpu", index=i), "info")
             vtensor = _run_compute_test(f"cuda:{i}")
             if log_level != "info":
                 log(
-                    f"Compute test for GPU {i} succeeded, result: {format_number(float(vtensor.item()))}",
+                    string(
+                        "runtime.compute_test_success_detail",
+                        index=i,
+                        result=format_number(float(vtensor.item())),
+                    ),
                     "info",
                     loglevel="verbose",
                 )
             else:
-                log(f"Compute test for GPU {i} succeeded", "info")
+                log(string("runtime.compute_test_success", index=i), "info")
         except Exception as e:
             log(
-                f"Compute test for GPU {i} failed: {format_error(e, log_level)}",
+                string(
+                    "runtime.compute_test_failed",
+                    index=i,
+                    error=format_error(e, log_level),
+                ),
                 "warning",
             )
 
@@ -278,7 +320,7 @@ def validate_runtime(
         # usable devices
         if devices == 0:
             log(
-                "GPU tests reported that all GPUs have failed their runtime checks.",
+                string("runtime.all_gpu_tests_failed"),
                 "error",
             )
             return False
@@ -286,10 +328,10 @@ def validate_runtime(
     # found several usable devices
     if devices > 1:
         unused_devices = devices - 1
-        log(f"{unused_devices} working GPUs will not be used.", "warning")
+        log(string("runtime.unused_gpus", count=unused_devices), "warning")
 
     if glow_connect_failed:
-        log("Cannot connect to OpenRGB. Presence features will be disabled.", "warning")
+        log(string("runtime.openrgb_unavailable"), "warning")
 
     try:
         __import__("flash_attn")

@@ -1,18 +1,17 @@
 # SPDX-License-Identifier: MIT
 """Worker entrypoint for running one backend in its private environment."""
 
+import sys
+import json
 import argparse
 import importlib
-import json
-import sys
 import traceback
-from collections.abc import Callable
 from contextlib import suppress
+from collections.abc import Callable
 from typing import IO, Optional, cast
 
-from .environment import BackendManifest, backend_manifest
-from .worker_protocol import receive_message, send_message
 from ..dataclasses.pipeline import VoiceConversionRequest
+from ..i18n import string
 from ..typing.backends import (
     BackendArguments,
     BackendDescription,
@@ -21,6 +20,8 @@ from ..typing.backends import (
 )
 from ..typing.aliases import LogLevel
 from ..typing.worker import WorkerMessage, WorkerRequest, WorkerResponse, WorkerValue
+from .environment import BackendManifest, backend_manifest
+from .worker_protocol import receive_message, send_message
 
 _WORKER_STDERR = sys.stderr
 
@@ -192,7 +193,7 @@ def _run_request(
         model_id = cast(int, arguments.pop("model_id"))
         model = models.get(model_id)
         if model is None:
-            raise ValueError(f"backend worker has no loaded model ID: {model_id}")
+            raise ValueError(string("backends.worker_model_missing", model_id=model_id))
         generator = backend.generate_stream(
             model,
             **cast(BackendArguments, arguments),
@@ -212,7 +213,7 @@ def _run_request(
             loglevel="debug",
         )
         return {"ok": True, "done": True}, next_model_id
-    raise ValueError(f"unknown backend worker operation: {operation}")
+    raise ValueError(string("backends.worker_unknown_operation", operation=operation))
 
 
 def main() -> int:

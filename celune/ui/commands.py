@@ -703,6 +703,8 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             )
             ui.safe_log(string("commands.qwen3_identity_only_cloning", state=state))
             return
+        ui.safe_log(string("commands.xvectoronly_unavailable"), "warning")
+        return
     if command == "play":
         if not args:
             ui.safe_log(string("commands.usage_play"), "warning")

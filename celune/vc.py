@@ -128,7 +128,8 @@ def vc_live_chunk_overlap_frames(sample_rate: int) -> int:
         sample_rate: Sample rate used by the live VC input stream.
 
     Returns:
-        int: Zero because Seed-VC's native live path owns crossfade alignment.
+        int: Zero when no overlap is configured because Seed-VC's native live path
+            owns crossfade alignment; otherwise the configured overlap in frames.
     """
     if VC_LIVE_CHUNK_OVERLAP_SECONDS <= 0:
         return 0

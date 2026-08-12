@@ -129,6 +129,12 @@ _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
 )
 
 _CAPTION_FADE_SECONDS = 0.36
+_VC_FEEDBACK_MIN_CAPTURE_SECONDS = 0.35
+_VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES = 2
+_VC_FEEDBACK_RMS_MIN_PREVIOUS = 0.05
+_VC_FEEDBACK_RMS_MIN_CURRENT = 0.18
+_VC_FEEDBACK_RMS_RISE_RATIO = 2.0
+_VC_FEEDBACK_RMS_RISE_DELTA = 0.08
 
 
 def _device_scalar_int(value: Optional[AudioDeviceScalar], default: int) -> int:
@@ -2636,6 +2642,25 @@ class CeluneUI(App):
         """Return RMS energy for one microphone callback buffer."""
         return vc_input_rms(audio)
 
+    @staticmethod
+    def _vc_feedback_rise_detected(
+        previous_rms: float,
+        current_rms: float,
+    ) -> bool:
+        """Return whether the latest RMS jump looks like runaway feedback."""
+        if previous_rms < _VC_FEEDBACK_RMS_MIN_PREVIOUS:
+            return False
+        if current_rms < _VC_FEEDBACK_RMS_MIN_CURRENT:
+            return False
+        if current_rms < previous_rms * _VC_FEEDBACK_RMS_RISE_RATIO:
+            return False
+        return (current_rms - previous_rms) >= _VC_FEEDBACK_RMS_RISE_DELTA
+
+    @staticmethod
+    def _vc_feedback_min_capture_frames(sample_rate: int) -> int:
+        """Return the minimum capture length before feedback auto-stop is allowed."""
+        return max(1, int(sample_rate * _VC_FEEDBACK_MIN_CAPTURE_SECONDS))
+
     def _request_vc_recording_feedback_stop(self) -> None:
         """Request a feedback-triggered recording stop on a dedicated thread."""
         stop_thread = threading.Thread(
@@ -3170,6 +3195,10 @@ class CeluneUI(App):
 
             callback_audio = np.asarray(indata, dtype=np.float32).copy()
             current_rms = self._vc_input_rms(callback_audio)
+            should_stop_for_feedback = False
+            feedback_min_capture_frames = self._vc_feedback_min_capture_frames(
+                sample_rate
+            )
             if ai_vad is not None:
                 try:
                     voice_detected = ai_vad.has_voice(callback_audio, sample_rate)
@@ -3185,8 +3214,29 @@ class CeluneUI(App):
                 if self._vc_recording_feedback_detected:
                     return
 
+                previous_rms = self._vc_recording_previous_rms
                 self._vc_recording_previous_rms = current_rms
                 self._vc_recording_captured_frames += len(callback_audio)
+
+                suspicious_feedback = (
+                    self._vc_recording_captured_frames >= feedback_min_capture_frames
+                    and self._vc_feedback_rise_detected(previous_rms, current_rms)
+                )
+                if suspicious_feedback:
+                    self._vc_recording_feedback_spike_count += 1
+                else:
+                    self._vc_recording_feedback_spike_count = 0
+
+                if (
+                    self._vc_recording_feedback_spike_count
+                    >= _VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES
+                ):
+                    self._vc_recording_feedback_detected = True
+                    should_stop_for_feedback = True
+
+                if should_stop_for_feedback:
+                    self._request_vc_recording_feedback_stop()
+                    return
 
                 live_audio: Optional[AudioChunk] = None
                 if voice_detected:
@@ -3421,7 +3471,7 @@ class CeluneUI(App):
             ipa_decoded, unmatched = replace_ipa(to_say, strict=True)
             if unmatched > 0:
                 self.safe_log(
-                    f"Found {unmatched} unmatched IPA characters, output may be inaccurate.",
+                    string("commands.unmatched_ipa", count=unmatched),
                     "warning",
                     loglevel="verbose",
                 )

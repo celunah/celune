@@ -242,14 +242,11 @@ class EventDispatcher:
         with self._lock:
             callbacks = self._callbacks[event_name]
             typed_callback = cast(DispatcherCallback, callback)
+            resolved_owner = owner_name or self._describe_callback(typed_callback)
             if typed_callback not in callbacks:
                 callbacks.append(typed_callback)
-            self._owners[(event_name, typed_callback)] = (
-                owner_name or self._describe_callback(typed_callback)
-            )
-        self._debug(
-            f"[EVENT] subscribed name={event_name} owner={self._owners[(event_name, typed_callback)]}"
-        )
+                self._owners[(event_name, typed_callback)] = resolved_owner
+            self._debug(f"[EVENT] subscribed name={event_name} owner={resolved_owner}")
 
     @overload
     def unsubscribe(

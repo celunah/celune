@@ -349,11 +349,12 @@ class PersonaApiTests(TestCase):
 
     def test_trusted_model_revision_allows_abliterated_qwen_vl_model(self) -> None:
         """Verify the pinned abliterated Qwen VL derivative is trusted."""
+        model_id = next(
+            model_id for model_id in PERSONA_MODELS if "abliterated" in model_id
+        )
         self.assertEqual(
-            runtime.PersonaBackend._trusted_model_revision(
-                "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated"
-            ),
-            PERSONA_MODELS["huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated"],
+            runtime.PersonaBackend._trusted_model_revision(model_id),
+            PERSONA_MODELS[model_id],
         )
 
     def test_load_rejects_unpinned_remote_code_models(self) -> None:

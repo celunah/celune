@@ -518,6 +518,7 @@ class BackendTests(TestCase):
         module = ModuleType("seed_vc.real_time")
         with tempfile.TemporaryDirectory() as temp_dir:
             source_root = Path(temp_dir)
+            original_cwd = Path.cwd()
             source_file = source_root / "real-time-gui.py"
             source_file.touch()
             module.__file__ = str(source_file)
@@ -541,6 +542,7 @@ class BackendTests(TestCase):
                 backend._get_live_runtime()
 
         self.assertEqual(captured["cwd"], source_root)
+        self.assertEqual(Path.cwd(), original_cwd)
         self.assertEqual(load_count, 1)
         self.assertEqual(captured_stdout.getvalue(), "")
 

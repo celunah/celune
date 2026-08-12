@@ -9,6 +9,8 @@ import subprocess
 import sys
 from collections.abc import Sequence
 
+from .i18n import string
+
 _WINDOWS_AUDIO_SERVICE = "Audiosrv"
 _WINDOWS_ELEVATED_RESTART_SCRIPT = (
     "$ErrorActionPreference = 'Stop'; "
@@ -108,7 +110,7 @@ def _restart_linux_audio() -> None:
                 raise _command_error(result)
             return
 
-    raise RuntimeError("no active audio server was found")
+    raise RuntimeError(string("audio.no_active_audio_server"))
 
 
 def restart_audio_server() -> None:

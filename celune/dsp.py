@@ -53,7 +53,7 @@ def _make_stereo(audio: AudioChunk) -> AudioChunk:
     else:
         raise AudioMismatchError(f"expected 1D or 2D audio, got {audio.shape}")
 
-    return np.ascontiguousarray(audio, dtype=np.float32)
+    return np.ascontiguousarray(np.clip(audio, -1.0, 1.0), dtype=np.float32)
 
 
 def _to_48khz(audio: AudioChunk, source_sr: int) -> AudioChunk:

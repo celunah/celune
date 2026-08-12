@@ -121,8 +121,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         "v4",
         "v3",
     )
-    _streaming_variants = frozenset(("v2Pro", "v2ProPlus", "v3", "v4"))
-    _fragment_streaming_variants = frozenset(("v3", "v4"))
+    _fragment_streaming_variants: frozenset[str] = frozenset(("v3", "v4"))
     _variant_aliases: Mapping[str, str] = {
         "v2pro": "v2Pro",
         "v2proplus": "v2ProPlus",

@@ -6,6 +6,7 @@ import contextlib
 import datetime
 import errno
 import io
+import inspect
 import json
 import os
 import queue
@@ -98,6 +99,29 @@ webui_logs_seeded = False
 webui_resource_page = 0
 webui_last_resource_advance = 0.0
 webui_last_probed_state: Optional[str] = None
+
+
+def _invoke_message_callback(
+    callback: Callable[..., None],
+    msg: str,
+    severity: str,
+    loglevel: LogLevel,
+) -> None:
+    """Invoke a message callback while preserving legacy two-argument callbacks."""
+    try:
+        signature = inspect.signature(callback)
+    except (TypeError, ValueError):
+        callback(msg, severity, loglevel=loglevel)
+        return
+
+    try:
+        signature.bind(msg, severity, loglevel=loglevel)
+    except TypeError:
+        callback(msg, severity)
+    else:
+        callback(msg, severity, loglevel=loglevel)
+
+
 webui_input_locked = True
 webui_input_placeholder = string("webui.wait_placeholder")
 webui_voice_locked = True
@@ -1189,7 +1213,7 @@ def _wrap_celune_callbacks(celune: Celune) -> None:
     ) -> None:
         _publish_active_task_log(msg, severity)
         _append_webui_log(msg, severity)
-        original_log(msg, severity, loglevel=loglevel)
+        _invoke_message_callback(original_log, msg, severity, loglevel)
 
     def wrapped_status(
         msg: str,
@@ -1199,7 +1223,7 @@ def _wrap_celune_callbacks(celune: Celune) -> None:
     ) -> None:
         _publish_active_task_log(msg, severity)
         _set_webui_status(msg, severity, source="callback")
-        original_status(msg, severity, loglevel=loglevel)
+        _invoke_message_callback(original_status, msg, severity, loglevel)
 
     def wrapped_error(msg: str) -> None:
         _publish_active_task_log(
@@ -2644,8 +2668,8 @@ def think(body: ThinkRequest) -> JSONResponse:
     api_log(
         "THINK",
         body.content
-        if getattr(celune, "log_level", "info") != "info"
-        else "[content protected]",
+        if getattr(celune, "log_level", "info") == "debug"
+        else string("api.content_protected"),
     )
     if not celune.think(body.content):
         return JSONResponse(

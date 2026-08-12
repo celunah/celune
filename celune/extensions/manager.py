@@ -45,6 +45,7 @@ class CeluneExtensionManager:
         self.context = context
         self.dispatcher = dispatcher or EventDispatcher(
             log_warning=context.log,
+            log_debug=lambda message: context.log(message, loglevel="debug"),
             log_level=context.log_level,
         )
         self.extensions: dict[str, CeluneExtension] = {}
@@ -86,7 +87,10 @@ class CeluneExtensionManager:
         self._extension_modules[name] = extension_cls.__module__
         self._register_extension_handlers(instance)
         self._register_legacy_autostart_handler(instance)
-        self.context.log(f"[Core] Registered extension: {name}", loglevel="verbose")
+        self.context.log(
+            string("extensions.registered", name=name),
+            loglevel="verbose",
+        )
         return instance
 
     def unregister(self, name: str) -> None:
@@ -109,7 +113,10 @@ class CeluneExtensionManager:
             if module_registration is not None:
                 self._unregister_owner(module_registration.owner_key)
 
-        self.context.log(f"[Core] Unregistered extension: {name}", loglevel="verbose")
+        self.context.log(
+            string("extensions.unregistered", name=name),
+            loglevel="verbose",
+        )
 
     def unregister_all(self) -> None:
         """Unregister all loaded extensions and auto-registered handlers."""
@@ -146,7 +153,8 @@ class CeluneExtensionManager:
         for name, ext in self.extensions.items():
             if self._uses_legacy_autostart(ext):
                 self.context.log(
-                    f"[Core] Running autostart for: {name}", loglevel="verbose"
+                    string("extensions.autostart_running", name=name),
+                    loglevel="verbose",
                 )
 
                 def runner(e=ext, n=name):
@@ -170,7 +178,10 @@ class CeluneExtensionManager:
                 threading.Thread(target=runner, daemon=True).start()
 
         if not started:
-            self.context.log("[Core] No extensions to autostart.", loglevel="verbose")
+            self.context.log(
+                string("extensions.no_autostart"),
+                loglevel="verbose",
+            )
         else:
             self.auto_started = True
 

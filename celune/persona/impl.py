@@ -21,6 +21,7 @@ from ..constants import (
     PERSONA_DEFAULT_MODEL_ID,
     PERSONA_HISTORY_MESSAGES,
 )
+from ..i18n import string
 from ..modes import (
     has_explicit_operation_mode,
     mode_allows_persona,
@@ -79,14 +80,21 @@ class PersonaClient:
             yield
             return
 
-        stderr_buffer = io.StringIO()
-        with contextlib.redirect_stderr(stderr_buffer):
+        output_buffer = io.StringIO()
+        with (
+            contextlib.redirect_stdout(output_buffer),
+            contextlib.redirect_stderr(output_buffer),
+        ):
             yield
 
-        for line in stderr_buffer.getvalue().splitlines():
+        for line in output_buffer.getvalue().splitlines():
             text = line.strip()
             if text:
-                self.log(f"[PERSONA] {text}", "warning", loglevel="verbose")
+                self.log(
+                    string("persona.backend_diagnostic", message=text),
+                    "warning",
+                    loglevel="verbose",
+                )
 
     def load(
         self,

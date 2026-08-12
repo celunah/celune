@@ -1,10 +1,12 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Dependency-light audio resampling shared by Celune runtimes."""
 
 import math
 
 import numpy as np
 from scipy.signal import resample_poly
+
+from .i18n import string
 
 
 def resample_audio(
@@ -15,6 +17,8 @@ def resample_audio(
     axis: int = 0,
 ) -> np.ndarray:
     """Resample audio with Celune's shared polyphase implementation."""
+    if source_sample_rate <= 0 or target_sample_rate <= 0:
+        raise ValueError(string("audio.sample_rates_positive"))
     if source_sample_rate == target_sample_rate:
         return np.ascontiguousarray(audio, dtype=np.float32)
 

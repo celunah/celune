@@ -17,6 +17,14 @@ if TYPE_CHECKING:
     from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 
+class _SeedVCRealtimeArguments(Protocol):
+    """Arguments required by Seed-VC's native live model loader."""
+
+    checkpoint_path: Optional[str]
+    config_path: Optional[str]
+    fp16: bool
+
+
 class BackendModel(Protocol):
     """Opaque backend model protocol for backend-independent storage."""
 
@@ -168,7 +176,7 @@ class _SeedVCRealtimeModule(Protocol):
     device: torch.device
     fp16: bool
 
-    def load_models(self, args: object) -> tuple[object, ...]:
+    def load_models(self, args: _SeedVCRealtimeArguments) -> tuple[object, ...]:
         """Load Seed-VC's native real-time model set."""
 
     def custom_infer(

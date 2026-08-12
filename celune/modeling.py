@@ -11,6 +11,7 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from .backends.tts import CeluneBackend
 from .constants import NORMALIZER_MODEL_ID
+from .i18n import string
 from .typing.common import JSONSerializable
 from .vram import resolve_vram_preset
 
@@ -65,7 +66,7 @@ def load_normalizer_components(
     )
 
     if tokenizer is None:
-        raise RuntimeError("CeluneNorm tokenizer not available")
+        raise RuntimeError(string("celune.normalizer_tokenizer_unavailable"))
 
     device = normalizer_device(config)
     supported_dispatch = {"auto", "balanced", "balanced_low_0", "sequential"}

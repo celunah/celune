@@ -5,14 +5,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional, Protocol, Union
+from typing import TYPE_CHECKING, Optional, Protocol, Union
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
-from .common import Config, JSONSerializable
 from .aliases import LogLevel
+from .common import Config, JSONSerializable
+from .modes import OperationMode
 
 if TYPE_CHECKING:
     import queue
@@ -238,7 +239,7 @@ class CeluneStateAccessors:
     voice_conversion_backend: str
     vc_pitch_shift: int
     vc_f0_condition: bool
-    mode: Literal["speak", "converse", "agent"]
+    mode: OperationMode
     input_mode: str
     chunk_size: int
     language: str

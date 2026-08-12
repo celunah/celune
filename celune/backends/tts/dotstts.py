@@ -5,11 +5,10 @@ import contextlib
 import os
 import time
 from collections.abc import Callable, Generator, Iterator, Mapping
-from typing import Optional, Union, cast
+from typing import Optional, cast
 
 import loguru
 import numpy as np
-import torch
 from dots_tts.runtime import DotsTtsRuntime
 from transformers import AutoTokenizer
 
@@ -17,7 +16,12 @@ from ...cevoice import CEVoiceLoader, default_loader
 from ...typing.aliases import AudioChunk, AudioChunks
 from ...typing.backends import _LoguruLogger
 from ...utils import custom_assert, discard
-from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
+from .base import (
+    CeluneBackend,
+    _to_numpy_audio as normalize_streamed_audio,
+    cached_hf_snapshot_path,
+    local_hf_offline_mode,
+)
 
 
 class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
@@ -238,15 +242,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
 
         return self.model
 
-    @staticmethod
-    def _to_numpy_audio(chunk: Union[torch.Tensor, np.ndarray]) -> AudioChunk:
-        """Convert one streamed torch chunk to a Celune-compatible audio array."""
-        if isinstance(chunk, torch.Tensor):
-            audio = chunk.detach().float().cpu().numpy()
-        else:
-            audio = chunk
-        audio = np.asarray(audio, dtype=np.float32).reshape(-1)
-        return audio
+    _to_numpy_audio = staticmethod(normalize_streamed_audio)
 
     def generate_stream(
         self, model: DotsTtsRuntime, **kwargs

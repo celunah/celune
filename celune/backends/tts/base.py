@@ -15,6 +15,7 @@ from collections.abc import Callable, Generator, Iterator, Mapping
 from pathlib import Path
 from typing import (
     Optional,
+    Union,
     cast,
 )
 
@@ -42,6 +43,30 @@ __all__ = [
 _HF_HUB_OFFLINE_LOCK = threading.Lock()
 _MAX_REFERENCE_SECONDS = 10.0
 _RUNTIME_PRIMITIVE_TYPES = (str, bytes, bytearray, int, float, bool, type(None))
+
+
+def _to_numpy_audio(chunk: Union[torch.Tensor, np.ndarray]) -> AudioChunk:
+    """Convert one streamed tensor or array to normalized one-dimensional audio."""
+    if isinstance(chunk, torch.Tensor):
+        audio = (
+            chunk.detach().float().cpu().numpy()
+            if chunk.is_floating_point()
+            else chunk.detach().cpu().numpy()
+        )
+    else:
+        audio = np.asarray(chunk)
+
+    if np.issubdtype(audio.dtype, np.integer):
+        limits = np.iinfo(audio.dtype)
+        if np.issubdtype(audio.dtype, np.unsignedinteger):
+            scale = (limits.max + 1) / 2
+            normalized = (audio.astype(np.float32) - scale) / scale
+        else:
+            scale = max(abs(limits.min), abs(limits.max))
+            normalized = audio.astype(np.float32) / scale
+    else:
+        normalized = np.asarray(audio, dtype=np.float32)
+    return np.ascontiguousarray(normalized.reshape(-1), dtype=np.float32)
 
 
 def _call_runtime_hook_if_present(value: RuntimeValue, name: str) -> bool:

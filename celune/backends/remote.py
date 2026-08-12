@@ -2,13 +2,14 @@
 """Proxy objects for backends running in isolated Python processes."""
 
 import os
+import re
 import json
 import builtins
 import threading
 import subprocess
+from contextlib import suppress
 from collections import deque
 from collections.abc import Callable, Iterator
-from contextlib import suppress
 from dataclasses import dataclass
 from typing import IO, Optional, cast
 
@@ -120,8 +121,8 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     ) -> None:
         """Start the worker process and forward its stderr logs."""
         environment_variables = os.environ.copy()
-        # discard inherited pip and uv variables so Celune's base configuration
-        # cannot affect dependency resolution for Celune backends
+        # discard the inherited Python home so the isolated interpreter selects
+        # its own standard library and site-packages.
         environment_variables.pop("PYTHONHOME", None)
         project_path = str(project_root())
         existing_python_path = environment_variables.get("PYTHONPATH")
@@ -205,35 +206,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Return whether one worker stderr line contains a traceback's final exception."""
         if text.startswith(("Traceback", "File ", "During ", "The above ")):
             return False
-        return text.startswith(
-            (
-                "ArithmeticError:",
-                "AssertionError:",
-                "AttributeError:",
-                "EOFError:",
-                "FileExistsError:",
-                "FileNotFoundError:",
-                "ImportError:",
-                "IndexError:",
-                "KeyError:",
-                "LookupError:",
-                "MemoryError:",
-                "ModuleNotFoundError:",
-                "NameError:",
-                "NotImplementedError:",
-                "OSError:",
-                "OverflowError:",
-                "RuntimeError:",
-                "StopIteration:",
-                "SyntaxError:",
-                "SystemError:",
-                "TypeError:",
-                "UnboundLocalError:",
-                "UnicodeError:",
-                "ValueError:",
-                "ZeroDivisionError:",
-            )
-        )
+        return bool(re.match(r"^[A-Za-z_][\w.]*(?:Error|Exception|Interrupt):", text))
 
     def _worker_error_detail(self) -> str:
         """Return recent worker stderr for a failed protocol operation."""
@@ -330,10 +303,13 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         process = self._process
         if process is None or process.poll() is not None:
             raise RuntimeError(
-                f"backend worker '{self._manifest.backend_id}' is not running"
+                string(
+                    "backends.worker_not_running",
+                    backend=self._manifest.backend_id,
+                )
             )
         if process.stdin is None or process.stdout is None:
-            raise RuntimeError("backend worker protocol streams are unavailable")
+            raise RuntimeError(string("backends.worker_streams_unavailable"))
         with self._protocol_lock:
             _emit_log(
                 self._log_callback,

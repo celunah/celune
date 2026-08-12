@@ -775,13 +775,12 @@ def normalize_special_characters(text: str) -> str:
             "\u201e": '"',  # double low quote
             "\u2018": "'",  # left single quote
             "\u2019": "'",  # right single quote
-            "\u2013": ": ",  # en dash
-            "\u2014": ": ",  # em dash
+            "\u2013": "\x00",  # en dash
+            "\u2014": "\x00",  # em dash
             "\u2026": "...",  # ellipsis
             "*": "",  # emphasis asterisks
         }
     )
 
-    # remove cases of " : " in speeches when an em-dash or en-dash was sanitized
-    normalized = re.sub(r"\s:", "", text.translate(special_char_mappings))
+    normalized = text.translate(special_char_mappings).replace("\x00", ": ")
     return re.sub(r"\s{2,}", " ", normalized)

@@ -507,10 +507,10 @@ class Celune(CeluneStateAccessors):
                 )
 
         # please for the love of god do not import backend-specific deps here
-        raw_name = getattr(backend, "name", None)
+        raw_name = getattr(tts_backend, "name", None)
         backend_name = (
-            backend.strip().lower()
-            if isinstance(backend, str)
+            tts_backend.strip().lower()
+            if isinstance(tts_backend, str)
             else raw_name
             if isinstance(raw_name, str)
             else None
@@ -3261,7 +3261,10 @@ class Celune(CeluneStateAccessors):
                 input_ids = inputs["input_ids"]  # noqa
 
                 if not isinstance(input_ids, torch.Tensor):
-                    self.log("celune.normalizer_output_not_tensor", "warning")
+                    self.log(
+                        string("celune.normalizer_output_not_tensor"),
+                        "warning",
+                    )
                     return None
 
                 prompt_len = input_ids.shape[1]

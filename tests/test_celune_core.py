@@ -63,6 +63,20 @@ class CeluneCoreTests(TestCase):
         if celune.vision is not None or celune._persona_load_thread is not None:
             Celune._unload_persona_state(celune)
 
+        persona_thread = getattr(celune, "_persona_thread", None)
+        if (
+            persona_thread is not None
+            and persona_thread is not threading.current_thread()
+        ):
+            persona_thread.join(timeout=2)
+        persona_queue = getattr(celune, "_persona_queue", None)
+        if persona_queue is not None:
+            while True:
+                try:
+                    persona_queue.get_nowait()
+                except queue.Empty:
+                    break
+
         for name in set(celune.__dict__) - cls._cached_instance_keys:
             delattr(celune, name)
 

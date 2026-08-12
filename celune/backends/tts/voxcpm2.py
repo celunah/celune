@@ -5,20 +5,25 @@ import contextlib
 import os
 import time
 from collections.abc import Callable, Generator, Iterator, Mapping
-from typing import Optional, Union
+from typing import Optional
 
 import numpy as np
-import torch
 from transformers import AutoTokenizer
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from voxcpm import VoxCPM
 
 from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import BASE_SR
+from ...i18n import string
 from ...typing.aliases import AudioChunk, AudioChunks
 from ...utils import custom_assert
 from . import get_version
-from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
+from .base import (
+    CeluneBackend,
+    _to_numpy_audio as normalize_streamed_audio,
+    cached_hf_snapshot_path,
+    local_hf_offline_mode,
+)
 
 
 class _VoxCPMTextTokenizer:
@@ -177,20 +182,14 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         tokenizer = AutoTokenizer.from_pretrained(
             snapshot_path,
             local_files_only=True,
-            trust_remote_code=True,
+            trust_remote_code=False,
         )
         runtime = getattr(model, "tts_model", None)
-        if runtime is not None and hasattr(runtime, "text_tokenizer"):
-            runtime.text_tokenizer = _VoxCPMTextTokenizer(tokenizer)
+        if runtime is None or not hasattr(runtime, "text_tokenizer"):
+            raise RuntimeError(string("voxcpm2.tokenizer_unavailable"))
+        runtime.text_tokenizer = _VoxCPMTextTokenizer(tokenizer)
 
-    @staticmethod
-    def _to_numpy_audio(chunk: Union[torch.Tensor, np.ndarray]) -> AudioChunk:
-        """Convert one VoxCPM tensor chunk to a one-dimensional audio array."""
-        if isinstance(chunk, torch.Tensor):
-            audio = chunk.detach().float().cpu().numpy()
-        else:
-            audio = chunk
-        return np.asarray(audio, dtype=np.float32).reshape(-1)
+    _to_numpy_audio = staticmethod(normalize_streamed_audio)
 
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None

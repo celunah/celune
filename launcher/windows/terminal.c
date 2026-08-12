@@ -26,7 +26,7 @@ int launcher_startup_was_interrupted(void) {
 
 void launcher_setup_terminal(void) {
     HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-    HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+    HANDLE output = GetStdHandle(STD_ERROR_HANDLE);
 
     saved_console_modes =
         input != INVALID_HANDLE_VALUE && output != INVALID_HANDLE_VALUE &&

@@ -175,10 +175,12 @@ class BackendEnvironmentTests(unittest.TestCase):
             )
             self.assertEqual(run.call_count, 2)
             install_command = run.call_args_list[1].args[0]
+            strategy_index = install_command.index("--index-strategy")
             self.assertEqual(
-                install_command[7:10],
-                ["--index-strategy", "unsafe-best-match", "--index-url"],
+                install_command[strategy_index + 1],
+                "unsafe-best-match",
             )
+            self.assertIn("--index-url", install_command)
             self.assertFalse(
                 any(
                     path.name.startswith(f"{environment.root.name}.install-")
