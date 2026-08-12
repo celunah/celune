@@ -231,13 +231,18 @@ def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[st
     global _RESOURCE_PAGE_CACHE
 
     backend = celune.backend
-    current_seed = getattr(backend, "current_seed", None)
-    input_mode = getattr(celune, "input_mode", "text_to_speech")
+    raw_current_seed = getattr(backend, "current_seed", None)
+    current_seed = raw_current_seed if isinstance(raw_current_seed, int) else None
+    raw_input_mode = getattr(celune, "input_mode", "text_to_speech")
+    input_mode = raw_input_mode if isinstance(raw_input_mode, str) else "text_to_speech"
     persona_ready = bool(
         getattr(celune, "persona_ready", getattr(celune, "vision", None) is not None)
     )
     tutorial = bool(getattr(celune, "is_in_tutorial", False))
-    configured_theme = celune.config.get("theme", "dark")
+    raw_configured_theme = celune.config.get("theme", "dark")
+    configured_theme = (
+        raw_configured_theme if isinstance(raw_configured_theme, str) else "dark"
+    )
     session_speech_seconds = float(
         getattr(celune, "total_generated_speech_seconds", 0.0)
     )

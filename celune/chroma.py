@@ -227,7 +227,7 @@ class AudioRGBGlow:
         if not self.start():
             return
 
-        frames = max(1, int(round(BASE_SR / max(self.fps, 1))))
+        frames = max(1, round(BASE_SR / max(self.fps, 1)))
         now = time.monotonic()
         offset = 0.0
 
