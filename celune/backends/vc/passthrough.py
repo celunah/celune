@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Passthrough voice-conversion backend for plumbing and tests."""
 
 import numpy as np

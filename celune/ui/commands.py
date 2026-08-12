@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Slash command handling for the Textual UI."""
 
 from __future__ import annotations

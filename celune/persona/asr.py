@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Speech-to-text helpers for Persona microphone input."""
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """API-specific type aliases."""
 
 from typing import Literal, Optional, Union

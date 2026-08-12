@@ -1,115 +1,113 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Run CI automatically."""
+"""Run the Poe CI task and terminate its complete process tree safely."""
 
+from __future__ import annotations
+
+import os
+import signal
 import subprocess
 import sys
-from typing import Optional
-
-from tqdm.contrib import tzip
-
-CI_COMMANDS = (
-    ("ruff", "format", "--check"),
-    ("ruff", "check"),
-    ("pylint",),
-    ("pyrefly", "check"),
-    ("pytest", "-v"),
-)
-
-CI_PATHS = (
-    (".",),
-    (".",),
-    ("celune", "tests"),
-    ("celune", "tests", "scripts"),
-    ("tests",),
-)
-
-cmds_failed = 0
-total_errors = []
-
-_AGENT_ERROR_MARKERS = (
-    "Access is denied",
-    "Permission denied",
-    "Operation not permitted",
-)
+from collections.abc import Callable
+from contextlib import suppress
+from typing import Optional, cast
 
 
-def _agent_permission_marker(output: str) -> Optional[str]:
-    """Return the first permission marker found in command output."""
-    normalized_output = output.lower()
-    for marker in _AGENT_ERROR_MARKERS:
-        if marker.lower() in normalized_output:
-            return marker
-    return None
+TIMEOUT = 300
+GRACE_PERIOD = 2.0
+POE_COMMAND = ["uv", "run", "poe", "ci"]
 
 
-def _run_uv_command(*command: str) -> None:
-    """Run one uv-backed CI command, retrying without cache on permission errors."""
-    base_cmd = ["uv", "run", *command]
-    try:
-        subprocess.run(
-            base_cmd,
-            check=True,
+def _start_process() -> subprocess.Popen[str]:
+    """Start the Poe CI task in a process group that can be terminated as a unit."""
+    if os.name == "nt":
+        return subprocess.Popen(
+            POE_COMMAND,
             text=True,
-            timeout=300,
-            capture_output=True,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )
-        return
-    except subprocess.CalledProcessError as failed_process:
-        combined_output = f"{failed_process.stdout}\n{failed_process.stderr}"
-        marker = _agent_permission_marker(combined_output)
-        if marker is None:
-            raise
 
-    try:
-        subprocess.run(
-            ["uv", "--no-cache", "run", *cmd],
-            check=True,
-            text=True,
-            timeout=300,
-            capture_output=True,
-        )
-    except subprocess.CalledProcessError as failed_process:
-        combined_output = f"{failed_process.stdout}\n{failed_process.stderr}"
-        marker = _agent_permission_marker(combined_output)
-        if marker is not None:
-            raise RuntimeError(
-                f"agent has no permissions to run CI: {marker}"
-            ) from failed_process
-        raise
-
-
-if len(CI_COMMANDS) != len(CI_PATHS):
-    raise RuntimeError(
-        f"CI configuration mismatch: {len(CI_COMMANDS)} commands for {len(CI_PATHS)} path entries"
+    return subprocess.Popen(
+        POE_COMMAND,
+        text=True,
+        start_new_session=True,
     )
 
-for cmd, paths in tzip(
-    CI_COMMANDS,
-    CI_PATHS,
-    desc="Running CI commands",
-    bar_format="{l_bar}{bar} | {n_fmt}/{total_fmt}",
-):
+
+def stop_process_tree(process: subprocess.Popen[str]) -> None:
+    """Terminate Poe and every child process it spawned."""
+    if process.poll() is not None:
+        return
+
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        with suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=GRACE_PERIOD)
+        return
+
+    get_process_group = getattr(os, "getpgid", None)
+    kill_process_group = getattr(os, "killpg", None)
+    if not callable(get_process_group) or not callable(kill_process_group):
+        process.terminate()
+        with suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=GRACE_PERIOD)
+        return
+
+    get_process_group_fn = cast(Callable[[int], int], get_process_group)
+    kill_process_group_fn = cast(
+        Callable[[int, int], None],
+        kill_process_group,
+    )
+
+    process_group: Optional[int] = None
     try:
-        _run_uv_command(*cmd, *paths)
-    except subprocess.CalledProcessError as failed:
-        cmds_failed += 1
-        if failed.stdout:
-            total_errors.append(failed.stdout)
-        if failed.stderr:
-            total_errors.append(failed.stderr)
+        process_group = get_process_group_fn(process.pid)
+    except ProcessLookupError:
+        return
+    if process_group is None:
+        return
+    process_group_id = cast(int, process_group)
+
+    sigterm = cast(int, getattr(signal, "SIGTERM", signal.SIGINT))
+    sigkill = cast(int, getattr(signal, "SIGKILL", sigterm))
+    with suppress(ProcessLookupError):
+        kill_process_group_fn(process_group_id, sigterm)
+
+    try:
+        process.wait(timeout=GRACE_PERIOD)
     except subprocess.TimeoutExpired:
-        cmds_failed += 1
-        total_errors.append(f"{' '.join(cmd)} has timed out")
+        with suppress(ProcessLookupError):
+            kill_process_group_fn(process_group_id, sigkill)
+        with suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=GRACE_PERIOD)
 
 
-if cmds_failed:
-    print()
-    print("######## SLOP DETECTED! ########")
-    print("Are you vibe coding?")
-    print()
-    print(f"{cmds_failed} command(s) failed:")
-    print()
-    print("\n\n".join(total_errors))
-    sys.exit(1)
+def main() -> int:
+    """Run Poe CI and return a shell-compatible status code."""
+    process = _start_process()
+    try:
+        exit_code = process.wait(timeout=TIMEOUT)
+    except KeyboardInterrupt:
+        stop_process_tree(process)
+        print("\nSLOP - Interrupted", flush=True)
+        return 130
+    except subprocess.TimeoutExpired:
+        stop_process_tree(process)
+        print(f"\nSLOP - Timed out after {TIMEOUT} seconds", flush=True)
+        return 1
 
-print("LGTM")
+    if exit_code == 0:
+        print("LGTM - Everything is OK", flush=True)
+    else:
+        print(f"SLOP - Exit code {exit_code}", flush=True)
+
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

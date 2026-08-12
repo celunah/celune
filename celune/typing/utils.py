@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Utility-layer typed dictionaries."""
 
 from typing import TypedDict
