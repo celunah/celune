@@ -4,15 +4,17 @@
 import json
 from types import SimpleNamespace
 from typing import cast
-from unittest import TestCase
 
+import pytest
 from fastapi import HTTPException
 
 from celune import api
 from celune.celune import Celune
 
+from .support import CeluneTestCase
 
-class ApiThinkTests(TestCase):
+
+class TestApiThink(CeluneTestCase):
     """Tests for the ``/v1/think`` API endpoint."""
 
     def test_think_returns_accepted_when_persona_request_starts(self) -> None:
@@ -27,8 +29,8 @@ class ApiThinkTests(TestCase):
             response = api.think(api.ThinkRequest(content="hello"))
             payload = json.loads(bytes(response.body))
 
-            self.assertEqual(response.status_code, 202)
-            self.assertEqual(payload, {"status": "accepted"})
+            assert response.status_code == 202
+            assert payload == {"status": "accepted"}
         finally:
             api.bound_celune = previous_celune
 
@@ -43,8 +45,8 @@ class ApiThinkTests(TestCase):
             response = api.think(api.ThinkRequest(content="hello"))
             payload = json.loads(bytes(response.body))
 
-            self.assertEqual(response.status_code, 409)
-            self.assertEqual(payload["error"], "not_ready")
+            assert response.status_code == 409
+            assert payload["error"] == "not_ready"
         finally:
             api.bound_celune = previous_celune
 
@@ -54,9 +56,9 @@ class ApiThinkTests(TestCase):
 
         try:
             api.bound_celune = None
-            with self.assertRaises(HTTPException) as exc_info:
+            with pytest.raises(HTTPException) as exc_info:
                 api.think(api.ThinkRequest(content="hello"))
 
-            self.assertEqual(exc_info.exception.status_code, 503)
+            assert exc_info.value.status_code == 503
         finally:
             api.bound_celune = previous_celune

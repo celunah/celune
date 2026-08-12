@@ -3227,6 +3227,7 @@ class CeluneUI(App):
                         (live_audio, sample_rate, label, False),
                     )
 
+        stream: Optional[sd.InputStream] = None
         try:
             stream = sd.InputStream(
                 samplerate=sample_rate,
@@ -3236,8 +3237,34 @@ class CeluneUI(App):
                 device=input_device,
                 blocksize=live_chunk_frames,
             )
+
+            # Publish the recording state before starting the stream. PortAudio
+            # may invoke the callback during ``start()``, and that first buffer
+            # must not be discarded as an inactive recording.
+            with self._vc_recording_lock:
+                self._vc_recording_stream = stream
+                self._vc_recording_chunks = []
+                self._vc_recording_buffered_frames = 0
+                self._vc_recording_captured_frames = 0
+                self._vc_recording_feedback_detected = False
+                self._vc_recording_sample_rate = sample_rate
+                self._vc_recording_label = label
+                self._vc_recording_preroll_chunks = []
+                self._vc_recording_preroll_frames = 0
+                self._vc_recording_previous_rms = 0.0
+                self._vc_recording_silence_frames = 0
+                self._vc_recording_speech_started = False
+                self._vc_recording_submission_queue = submission_queue
+                self._vc_recording_stop_thread = None
+                self._vc_recording_worker = worker
+
             stream.start()
         except Exception as e:
+            with self._vc_recording_lock:
+                if self._vc_recording_stream is stream:
+                    self._clear_vc_recording_state()
+                self._finish_vc_submission_queue(submission_queue)
+            self._shutdown_vc_stream(stream)
             self.safe_log(
                 string(
                     "ui.recording_start_failed",
@@ -3247,23 +3274,6 @@ class CeluneUI(App):
                 "error",
             )
             return False
-
-        with self._vc_recording_lock:
-            self._vc_recording_stream = stream
-            self._vc_recording_chunks = []
-            self._vc_recording_buffered_frames = 0
-            self._vc_recording_captured_frames = 0
-            self._vc_recording_feedback_detected = False
-            self._vc_recording_sample_rate = sample_rate
-            self._vc_recording_label = label
-            self._vc_recording_preroll_chunks = []
-            self._vc_recording_preroll_frames = 0
-            self._vc_recording_previous_rms = 0.0
-            self._vc_recording_silence_frames = 0
-            self._vc_recording_speech_started = False
-            self._vc_recording_submission_queue = submission_queue
-            self._vc_recording_stop_thread = None
-            self._vc_recording_worker = worker
 
         worker.start()
         self.safe_log(string("ui.recording_started", label=label), "info")

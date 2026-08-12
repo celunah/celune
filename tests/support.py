@@ -29,6 +29,54 @@ if TYPE_CHECKING:
     from celune.celune import Celune
 
 
+class CeluneTestCase:
+    """Shared pytest lifecycle compatibility for Celune test classes."""
+
+    @classmethod
+    def setup_class(cls) -> None:
+        """Run the legacy class setup hook through pytest."""
+        setup = getattr(cls, "setUpClass", None)
+        if callable(setup):
+            setup()  # pylint: disable=not-callable
+
+    @classmethod
+    def teardown_class(cls) -> None:
+        """Run the legacy class teardown hook through pytest."""
+        teardown = getattr(cls, "tearDownClass", None)
+        if callable(teardown):
+            teardown()  # pylint: disable=not-callable
+
+    def setup_method(self) -> None:
+        """Run the legacy per-test setup hook through pytest."""
+        self._cleanups: list[
+            tuple[Callable[..., None], tuple[object, ...], dict[str, object]]
+        ] = []
+        setup = getattr(self, "setUp", None)
+        if callable(setup):
+            setup()  # pylint: disable=not-callable
+
+    def teardown_method(self) -> None:
+        """Run teardown and registered cleanup callbacks through pytest."""
+        teardown = getattr(self, "tearDown", None)
+        if callable(teardown):
+            teardown()  # pylint: disable=not-callable
+        for function, args, kwargs in reversed(self._cleanups):
+            function(*args, **kwargs)
+
+    def addCleanup(
+        self,
+        function: Callable[..., None],
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        """Register a callback to run after the current test."""
+        self._cleanups.append((function, args, kwargs))
+
+
+class CeluneAsyncTestCase(CeluneTestCase):
+    """Shared pytest lifecycle compatibility for async Celune tests."""
+
+
 class FakeModel(TypedDict):
     """Metadata returned by the fake test backend."""
 
