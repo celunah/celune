@@ -75,19 +75,16 @@ class PersonaClient:
 
     @contextlib.contextmanager
     def _capture_backend_output(self) -> Generator[None, None, None]:
-        """Route Persona backend stdout/stderr into Celune developer logs."""
+        """Route Persona backend stderr into Celune developer logs."""
         if self.log is None:
             yield
             return
 
-        output_buffer = io.StringIO()
-        with (
-            contextlib.redirect_stdout(output_buffer),
-            contextlib.redirect_stderr(output_buffer),
-        ):
+        stderr_buffer = io.StringIO()
+        with contextlib.redirect_stderr(stderr_buffer):
             yield
 
-        for line in output_buffer.getvalue().splitlines():
+        for line in stderr_buffer.getvalue().splitlines():
             text = line.strip()
             if text:
                 self.log(
