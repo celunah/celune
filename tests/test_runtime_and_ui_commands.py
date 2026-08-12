@@ -592,7 +592,8 @@ class UIStartupTests(TestCase):
         ui.safe_log = mock.Mock()
 
         ui.tts_log("hidden", loglevel="debug")
-        ui.safe_log.assert_not_called()
+        ui.safe_log.assert_called_once_with("hidden", "info", loglevel="debug")
+        ui.safe_log.reset_mock()
 
         ui.tts_log("visible", loglevel="info")
         ui.safe_log.assert_called_once_with("visible", "info", loglevel="info")
