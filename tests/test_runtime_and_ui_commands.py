@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Tests for runtime validation and lightweight UI commands."""
 
+import asyncio
 import logging
 import queue
 import subprocess
@@ -16,7 +17,8 @@ from unittest import TestCase, mock
 
 import numpy as np
 from textual import events
-from textual.widgets import Button, Label, ProgressBar, RichLog, TextArea
+from textual.app import App
+from textual.widgets import Button, Label, ProgressBar, RichLog, Static, TextArea
 
 from celune import colors, runtime
 from celune.celune import Celune
@@ -29,7 +31,7 @@ from celune.typing.aliases import LogLevel
 from celune.ui import app as ui_app
 from celune.ui import resources as ui_resources
 from celune.ui import terminal as ui_terminal
-from celune.ui.app import CeluneUI
+from celune.ui.app import CeluneLoadingScreen, CeluneUI
 from celune.persona.asr import WhisperSegment, WhisperWord
 from celune.ui.commands import attachment_source, process_command
 from celune.ui.headless import CeluneHeadlessUI
@@ -605,6 +607,117 @@ class UIStartupTests(TestCase):
         """Reset singleton UI guards after each test."""
         CeluneUI._instance = None
         CeluneHeadlessUI._instance = None
+
+    def test_loading_screen_stores_latest_log_before_mount(self) -> None:
+        """Verify startup log text can arrive before loading widgets mount."""
+        screen = CeluneLoadingScreen()
+
+        screen.set_status_message("Loading backend")
+        screen.set_latest_log_message("Backend initialized")
+        screen.show_error("Backend failed")
+
+        self.assertEqual(screen._status_message, "Loading backend")
+        self.assertEqual(screen._latest_log_message, "Backend initialized")
+        self.assertEqual(screen._error_message, "Backend failed")
+
+    def test_loading_screen_mounts_with_canonical_textual_css(self) -> None:
+        """Verify the loading screen composes and updates in a real Textual app."""
+
+        class Harness(App):
+            """Minimal Textual host for the loading screen smoke test."""
+
+            CSS = ui_app.CELUNE_CSS
+
+            def compose(self):
+                """Compose a root widget beneath the test screen."""
+                yield Static("root")
+
+        async def run_smoke_test() -> None:
+            app = Harness()
+            screen = CeluneLoadingScreen()
+            async with app.run_test(size=(80, 24)) as pilot:
+                await app.push_screen(screen)
+                await pilot.pause()
+                self.assertEqual(
+                    str(screen.query_one("#loading-brand", Static).render()),
+                    APP_NAME,
+                )
+                screen.set_latest_log_message("Backend initialized")
+                self.assertEqual(
+                    str(screen.query_one("#loading-log-message", Static).render()),
+                    "Backend initialized",
+                )
+                self.assertEqual(
+                    str(screen.query_one("#loading-spinner", Static).render()),
+                    "⠋",
+                )
+                log = screen.query_one("#loading-log")
+                log_message = screen.query_one("#loading-log-message")
+                footer = screen.query_one("#loading-footer")
+                starting = screen.query_one("#loading-footer-starting")
+                quit_hint = screen.query_one("#loading-footer-quit", Static)
+                self.assertEqual(log_message.region.y - log.region.y, 2)
+                self.assertEqual(log.region.bottom - log_message.region.bottom, 2)
+                self.assertLessEqual(footer.region.right, 80)
+                self.assertGreaterEqual(starting.region.x, 2)
+                self.assertLessEqual(quit_hint.region.right, 78)
+                self.assertEqual(str(quit_hint.render()), "CTRL+Q to quit")
+
+        asyncio.run(run_smoke_test())
+
+    def test_loading_screen_receives_only_info_level_log_lines(self) -> None:
+        """Verify verbose and debug lines do not replace the loading log message."""
+        ui = CeluneUI()
+        ui.celune = cast(Celune, SimpleNamespace(log_level="debug"))
+        ui.logs = None
+        loading_screen = mock.Mock()
+        ui._loading_screen = loading_screen
+
+        ui.safe_log("debug line", loglevel="debug")
+        ui.safe_log("verbose line", loglevel="verbose")
+        ui.safe_log("info line", loglevel="info")
+
+        loading_screen.set_latest_log_message.assert_called_once_with("info line")
+
+    def test_start_background_init_shows_loading_screen_before_loading_tts(
+        self,
+    ) -> None:
+        """Verify the loading screen is pushed before the engine load worker starts."""
+        ui = CeluneUI()
+
+        with (
+            mock.patch.object(ui, "_show_loading_screen") as show_loading_screen,
+            mock.patch.object(ui, "load_tts") as load_tts,
+        ):
+            ui.start_background_init()
+
+        show_loading_screen.assert_called_once_with()
+        load_tts.assert_called_once_with()
+
+    def test_dismiss_loading_screen_fades_then_pops_screen(self) -> None:
+        """Verify successful initialization removes the loading screen once."""
+        ui = CeluneUI()
+        loading_screen = mock.Mock()
+        ui._loading_screen = loading_screen
+
+        def finish_fade(*_args, on_complete=None, **_kwargs) -> None:
+            if on_complete is not None:
+                on_complete()
+
+        with (
+            mock.patch.object(ui, "_animate_opacity", side_effect=finish_fade) as fade,
+            mock.patch.object(ui, "pop_screen") as pop_screen,
+        ):
+            ui._dismiss_loading_screen()
+
+        self.assertIsNone(ui._loading_screen)
+        fade.assert_called_once_with(
+            loading_screen,
+            0.0,
+            on_complete=mock.ANY,
+            duration=ui_app._LOADING_FADE_SECONDS,
+        )
+        pop_screen.assert_called_once_with()
 
     def test_tts_log_preserves_backend_log_level_filtering(self) -> None:
         """Verify isolated backend debug logs stay hidden at the info level."""

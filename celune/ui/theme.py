@@ -10,6 +10,105 @@ CELUNE_CSS = """
         background: $background;
     }
 
+    CeluneLoadingScreen {
+        align: center middle;
+        background: $background;
+    }
+
+    #loading-center {
+        width: 1fr;
+        height: 1fr;
+        align: center middle;
+    }
+
+    #loading-content {
+        width: 1fr;
+        max-width: 70;
+        height: auto;
+        align: center middle;
+    }
+
+    #loading-brand {
+        width: 1fr;
+        height: 1;
+        color: $foreground;
+        text-align: center;
+        text-style: bold;
+    }
+
+    #loading-state-label {
+        width: 1fr;
+        height: 1;
+        color: $primary;
+        text-align: center;
+        margin-top: 2;
+    }
+
+    #loading-spinner {
+        width: 1fr;
+        height: 1;
+        color: $primary;
+        text-align: center;
+        margin-top: 2;
+    }
+
+    #loading-log {
+        width: 1fr;
+        min-width: 0;
+        height: auto;
+        border-top: solid $secondary;
+        border-bottom: solid $secondary;
+        margin-top: 2;
+        padding: 1 2;
+    }
+
+    #loading-log-message {
+        width: 1fr;
+        min-width: 0;
+        height: auto;
+        color: $foreground;
+    }
+
+    #loading-wait {
+        width: 1fr;
+        height: 1;
+        color: $secondary;
+        text-align: center;
+        margin-top: 2;
+    }
+
+    #loading-error {
+        width: 1fr;
+        height: auto;
+        color: $error;
+        margin-top: 1;
+    }
+
+    #loading-footer {
+        dock: bottom;
+        width: auto;
+        height: 1;
+        margin: 0 0 1 0;
+        color: $secondary;
+        align: center middle;
+    }
+
+    #loading-footer-starting {
+        width: 1fr;
+        min-width: 0;
+        height: 1;
+        margin-left: 2;
+        content-align: left middle;
+    }
+
+    #loading-footer-quit {
+        width: auto;
+        min-width: 14;
+        height: 1;
+        margin-right: 2;
+        content-align: right middle;
+    }
+
     #logs {
         height: 1fr;
         border: round $primary;

@@ -37,13 +37,15 @@ from textual.app import (
     ScreenStackError,
 )
 from textual.color import Color
-from textual.containers import Horizontal, Vertical
+from textual.containers import Center, Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.css.types import EdgeStyle
 from textual.message import Message
+from textual.screen import Screen
 from textual.theme import Theme
 from textual.timer import Timer
 from textual.widget import Widget
-from textual.widgets import Button, Label, ProgressBar, RichLog, TextArea
+from textual.widgets import Button, Label, ProgressBar, RichLog, Static, TextArea
 
 from .. import colors
 from ..celune import Celune
@@ -132,6 +134,7 @@ _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
 )
 
 _CAPTION_FADE_SECONDS = 0.36
+_LOADING_FADE_SECONDS = 1.0
 _VC_FEEDBACK_MIN_CAPTURE_SECONDS = 0.35
 _VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES = 2
 _VC_FEEDBACK_RMS_MIN_PREVIOUS = 0.05
@@ -308,6 +311,121 @@ def _forward_ui_property(container_name: str, field_name: str) -> property:
     return property(getter, setter)
 
 
+class CeluneLoadingScreen(Screen[None]):
+    """Display the centered startup screen while the engine initializes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._spinner_frames = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+        self._spinner_index = 0
+        self._status_message = string("status.initializing")
+        self._latest_log_message = string("ui.loading_waiting_for_log")
+        self._error_message = ""
+
+    def compose(self) -> ComposeResult:
+        """Compose the startup screen widgets.
+
+        Returns:
+            ComposeResult: The loading screen widget tree.
+        """
+        with Center(id="loading-center"):
+            with Vertical(id="loading-content"):
+                yield Static(APP_NAME, id="loading-brand", markup=False)
+                yield Static(
+                    self._status_message,
+                    id="loading-state-label",
+                    markup=False,
+                )
+                with Vertical(id="loading-log"):
+                    yield Static(
+                        self._latest_log_message,
+                        id="loading-log-message",
+                        markup=False,
+                    )
+                yield Static(
+                    self._spinner_frames[0], id="loading-spinner", markup=False
+                )
+                yield Static(
+                    string("ui.loading_wait"),
+                    id="loading-wait",
+                    markup=False,
+                )
+                yield Static(
+                    self._error_message,
+                    id="loading-error",
+                    markup=False,
+                )
+        with Horizontal(id="loading-footer"):
+            yield Static(
+                string("ui.loading_starting", app_name=APP_NAME),
+                id="loading-footer-starting",
+                markup=False,
+            )
+            yield Static(
+                string("ui.loading_quit"),
+                id="loading-footer-quit",
+                markup=False,
+            )
+
+    def on_mount(self) -> None:
+        """Start the ASCII spinner after the screen is mounted."""
+        self._update_error_widget()
+        self.set_interval(0.26, self._advance_spinner)
+
+    def _advance_spinner(self) -> None:
+        """Advance the loading spinner by one ASCII frame."""
+        self._spinner_index = (self._spinner_index + 1) % len(self._spinner_frames)
+        try:
+            self.query_one("#loading-spinner", Static).update(
+                self._spinner_frames[self._spinner_index]
+            )
+        except NoMatches:
+            pass
+
+    def set_latest_log_message(self, message: str) -> None:
+        """Show the latest non-verbose startup log message.
+
+        Args:
+            message: Log message to display below the loading state.
+        """
+        self._latest_log_message = message
+        try:
+            self.query_one("#loading-log-message", Static).update(message)
+        except NoMatches:
+            pass
+
+    def set_status_message(self, message: str) -> None:
+        """Show the current Celune status in the centered state row.
+
+        Args:
+            message: Current status text from the UI status callback.
+        """
+        self._status_message = message
+        try:
+            self.query_one("#loading-state-label", Static).update(message)
+        except NoMatches:
+            pass
+
+    def show_error(self, message: str) -> None:
+        """Show an initialization error without dismissing the screen.
+
+        Args:
+            message: Initialization failure to show to the user.
+        """
+        self._error_message = message
+        self._update_error_widget()
+
+    def _update_error_widget(self) -> None:
+        """Refresh the optional initialization error widget."""
+        try:
+            error = self.query_one("#loading-error", Static)
+        except NoMatches:
+            return
+
+        error.update(self._error_message)
+        error.display = bool(self._error_message)
+
+
 class CeluneUI(App):
     """User interface."""
 
@@ -347,6 +465,7 @@ class CeluneUI(App):
         )
         self._interaction_state = CeluneUIInteractionState()
         self._terminal_status: Optional[tuple[str, str, str]] = None
+        self._loading_screen: Optional[CeluneLoadingScreen] = None
 
         CeluneUI._instance = self
 
@@ -1468,7 +1587,62 @@ class CeluneUI(App):
 
     def start_background_init(self) -> None:
         """Run the initialization function."""
+        self._show_loading_screen()
         self.load_tts()
+
+    def _show_loading_screen(self) -> None:
+        """Push the startup screen above the main UI exactly once."""
+        if self._loading_screen is not None:
+            return
+
+        self._loading_screen = CeluneLoadingScreen()
+        self.push_screen(self._loading_screen)
+
+    def _update_loading_log(self, message: str) -> None:
+        """Forward one useful startup log line to the loading screen.
+
+        Args:
+            message: Non-verbose, non-debug log message to display.
+        """
+        if self._loading_screen is not None:
+            self._loading_screen.set_latest_log_message(message)
+
+    def _show_loading_error(self, message: str) -> None:
+        """Keep the loading screen visible while showing an initialization error.
+
+        Args:
+            message: Initialization error to display.
+        """
+
+        def update() -> None:
+            if self._loading_screen is not None:
+                self._loading_screen.show_error(message)
+
+        self._run_on_ui_thread(update)
+
+    def _dismiss_loading_screen(self) -> None:
+        """Fade out and remove the startup screen after successful loading."""
+
+        def dismiss() -> None:
+            screen = self._loading_screen
+            if screen is None:
+                return
+
+            def pop_screen() -> None:
+                if self._loading_screen is not screen:
+                    return
+                self._loading_screen = None
+                with contextlib.suppress(ScreenStackError):
+                    self.pop_screen()
+
+            self._animate_opacity(
+                screen,
+                0.0,
+                on_complete=pop_screen,
+                duration=_LOADING_FADE_SECONDS,
+            )
+
+        self._run_on_ui_thread(dismiss)
 
     @work(thread=True, exclusive=True)
     def load_tts(self) -> None:
@@ -1483,12 +1657,14 @@ class CeluneUI(App):
                         self.change_input_state(locked=True)
                         self.change_voice_lock_state(locked=True)
                         self.safe_status(string("ui.test_mode_active"))
+                        self._dismiss_loading_screen()
                         return
 
                     self.change_input_state(locked=True)
                     self.change_voice_lock_state(locked=True)
                     self.error(string("ui.app_could_not_start", app_name=APP_NAME))
                     self.cur_state = "error"
+                    self._show_loading_error(string("ui.no_voices_loaded"))
                     return
                 self.celune_voices = itertools.cycle(self.celune_styles)
                 if self.celune.current_voice in self.celune_styles:
@@ -1509,20 +1685,23 @@ class CeluneUI(App):
                 self.safe_log(string("ui.tutorial_prompt", app_name=APP_NAME))
                 self._schedule_sleep_timer()
                 self._set_terminal_status("ready", string("osc.action_idle"))
+                self._dismiss_loading_screen()
             else:
                 self.cur_state = "error"
                 self.change_input_state(locked=True)
                 self.change_voice_lock_state(locked=True)
                 self.error(string("ui.app_could_not_start", app_name=APP_NAME))
+                self._show_loading_error(
+                    string("ui.app_could_not_start", app_name=APP_NAME)
+                )
         except Exception as e:
             self.cur_state = "error"
-            self.safe_log(
-                string(
-                    "ui.init_error",
-                    error=format_error(e, getattr(self.celune, "log_level", "info")),
-                ),
-                "error",
+            error_message = string(
+                "ui.init_error",
+                error=format_error(e, getattr(self.celune, "log_level", "info")),
             )
+            self.safe_log(error_message, "error")
+            self._show_loading_error(error_message)
             self.celune.fatal()
             self.change_input_state(locked=True)
             self.change_voice_lock_state(locked=True)
@@ -1750,8 +1929,17 @@ class CeluneUI(App):
         opacity: float,
         on_complete: Optional[Callable[[], None]] = None,
         token: Optional[int] = None,
+        duration: float = _CAPTION_FADE_SECONDS,
     ) -> None:
-        """Fade one widget through its mutable CSS opacity property."""
+        """Fade one widget through its mutable CSS opacity property.
+
+        Args:
+            widget: Widget whose opacity should be animated.
+            opacity: Target opacity for the widget.
+            on_complete: Optional callback after the final animation frame.
+            token: Optional caption transition token that cancels stale fades.
+            duration: Total fade duration in seconds.
+        """
         callback = on_complete or (lambda: None)
         if not getattr(widget, "is_attached", False):
             widget.styles.opacity = opacity
@@ -1760,7 +1948,7 @@ class CeluneUI(App):
 
         start_opacity = widget.styles.opacity
         steps = 6
-        frame_delay = _CAPTION_FADE_SECONDS / steps
+        frame_delay = duration / steps
 
         def animate_frame(index: int) -> None:
             if token is not None and token != self._caption_transition_token:
@@ -2145,6 +2333,8 @@ class CeluneUI(App):
             self._status_marquee_offset = 0
             self._refresh_theme_text()
             self._update_status_label()
+            if self._loading_screen is not None:
+                self._loading_screen.set_status_message(msg)
             self._set_terminal_status(terminal_state, terminal_action)
             self.update_resources()
 
@@ -2177,6 +2367,8 @@ class CeluneUI(App):
 
         self.log_history.append((msg, severity))
         self._persist_log_entry(msg, severity)
+        if loglevel == "info" and self._loading_screen is not None:
+            self._run_on_ui_thread(lambda: self._update_loading_log(msg))
         if self.logs is None:
             return
 
