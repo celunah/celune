@@ -240,6 +240,8 @@ class CeluneUIInteractionState:
 
     border_pulse_tokens: dict[int, int] = field(default_factory=dict)
     border_pulse_widgets: dict[int, Widget] = field(default_factory=dict)
+    runtime_shutdown_complete: bool = False
+    runtime_shutdown_lock: threading.Lock = field(default_factory=threading.Lock)
     tutorial_timers: list[Timer] = field(default_factory=list)
     vc_recording_buffered_frames: int = 0
     vc_recording_chunks: AudioChunks = field(default_factory=list)
@@ -3862,9 +3864,7 @@ class CeluneUI(App):
         self._write_terminal_escape(
             f"\x1b]2;{string('osc.exiting', app_name=APP_NAME)}\x07"
         )
-        self._shutdown_live_vc_recording()
-        if self.celune is not None:
-            self.celune.close()
+        self._shutdown_runtime()
 
         self.cur_state = "exiting"
         if self._runtime_log_capture_enabled:
@@ -3997,10 +3997,20 @@ class CeluneUI(App):
         # while Python cleanup would tear down the core, we'd rather explicitly tell Celune to shut down
         # before we tell Textual to exit its main loop
         self.cur_state = "exiting"
-        self._shutdown_live_vc_recording()
-        if self.celune is not None:
-            self.celune.close()
+        self._shutdown_runtime()
         self.exit()
+
+    def _shutdown_runtime(self) -> None:
+        """Stop live input and close the core at most once."""
+        with self._interaction_state.runtime_shutdown_lock:
+            if self._interaction_state.runtime_shutdown_complete:
+                return
+            try:
+                self._shutdown_live_vc_recording()
+                if self.celune is not None:
+                    self.celune.close()
+            finally:
+                self._interaction_state.runtime_shutdown_complete = True
 
     def graceful_exit(self) -> None:
         """Exit the UI through the same graceful shutdown path as internal callers."""

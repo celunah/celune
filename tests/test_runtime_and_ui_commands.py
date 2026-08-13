@@ -2120,6 +2120,20 @@ class UIStartupTests(TestCase):
         cast(mock.Mock, ui.celune.close).assert_called_once_with()
         ui.exit.assert_called_once_with()
 
+    def test_runtime_shutdown_is_idempotent(self) -> None:
+        """Verify graceful exit and unmount close the core only once."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui.celune = cast(Celune, SimpleNamespace(close=mock.Mock()))
+        ui._shutdown_live_vc_recording = mock.Mock()
+        ui.exit = mock.Mock()
+
+        ui._graceful_exit()
+        ui.on_unmount()
+
+        ui._shutdown_live_vc_recording.assert_called_once_with()
+        cast(mock.Mock, ui.celune.close).assert_called_once_with()
+
     def test_launcher_loss_uses_graceful_exit_path(self) -> None:
         """Verify a launcher disconnect routes through normal UI cleanup."""
         ui = CeluneUI()
