@@ -1171,13 +1171,14 @@ class CeluneUI(App):
             return "initializing", string("osc.action_loading_voice_pack")
 
         runtime_state = getattr(self.celune, "cur_state", "idle")
-        if msg in {
-            string("status.reloading"),
-            string("status.reloading_backend"),
-            string("status.reloading_character"),
-            string("status.restoring_backend"),
-        }:
-            return "reloading", msg
+        reload_actions = {
+            string("status.reloading"): string("osc.action_reloading"),
+            string("status.reloading_backend"): string("osc.action_loading_backend"),
+            string("status.reloading_character"): string("osc.action_loading_voice"),
+            string("status.restoring_backend"): string("osc.action_restoring"),
+        }
+        if msg in reload_actions:
+            return "reloading", reload_actions[msg]
 
         state_actions = {
             "idle": ("ready", string("osc.action_idle")),
@@ -1186,7 +1187,7 @@ class CeluneUI(App):
             "speaking": ("speaking", string("osc.action_playing_audio")),
             "sleeping": ("sleeping", string("osc.action_idle")),
             "waking": ("initializing", string("osc.action_waking_up")),
-            "reloading": ("reloading", msg),
+            "reloading": ("reloading", string("osc.action_reloading")),
         }
         return state_actions.get(
             runtime_state,

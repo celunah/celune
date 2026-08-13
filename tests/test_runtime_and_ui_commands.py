@@ -52,6 +52,15 @@ class RuntimeTests(TestCase):
         )
         terminal.flush.assert_called_once_with()
 
+    def test_terminal_title_caps_long_dynamic_actions(self) -> None:
+        """Verify long terminal actions cannot crowd out the state glossary."""
+        terminal = mock.Mock()
+
+        set_terminal_title((APP_NAME, "Error", "x" * 200), terminal)
+
+        title_escape = terminal.write.call_args.args[0]
+        assert len(title_escape.removeprefix("\x1b]0;").removesuffix("\x07")) == 40
+
     def test_check_supported_backends_reports_cpu_cuda_and_rocm(self) -> None:
         """Verify backend labels across supported runtime branches.
 

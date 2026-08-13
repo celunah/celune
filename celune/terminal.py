@@ -9,7 +9,7 @@ from typing import IO, Optional, cast
 
 from .i18n import string
 
-_TERMINAL_TITLE_MAX_LENGTH = 160
+_TERMINAL_TITLE_MAX_LENGTH = 40
 _TERMINAL_TITLE_CONTROL_RE = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])"
     r"|[\x00-\x1f\x7f\x80-\x9f\r\n]"
