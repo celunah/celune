@@ -247,8 +247,8 @@ class TestChroma(CeluneTestCase):
 
         glow.schedule(audio)
 
-        self.assertEqual(len(glow._scheduled_chunks), glow.fps)
-        self.assertEqual(len(glow._scheduled_chunks[0][1]), BASE_SR // glow.fps)
+        assert len(glow._scheduled_chunks) == glow.fps
+        assert len(glow._scheduled_chunks[0][1]) == BASE_SR // glow.fps
 
     def test_glow_target_follows_smoothed_audio_rms_without_snapping_to_max(
         self,

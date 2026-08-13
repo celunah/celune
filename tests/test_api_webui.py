@@ -255,8 +255,8 @@ class TestApiWebUI(CeluneTestCase):
         celune.log_callback("legacy log", "warning", loglevel="debug")
         celune.status_callback("legacy status", "info", loglevel="verbose")
 
-        self.assertEqual(log_calls, [("legacy log", "warning")])
-        self.assertEqual(status_calls, [("legacy status", "info")])
+        assert log_calls == [("legacy log", "warning")]
+        assert status_calls == [("legacy status", "info")]
 
     def test_webui_snapshot_shows_tutorial_placeholder(self) -> None:
         """Verify tutorial state uses the tutorial placeholder in the browser UI."""

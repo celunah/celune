@@ -389,10 +389,10 @@ class TestSpeechInput(CeluneTestCase):
                 ),
             ),
         ):
-            self.assertEqual(ui._start_persona_recording(), True)
+            assert ui._start_persona_recording()
 
             if captured_callback is None:
-                self.fail("Persona recording callback was not registered")
+                pytest.fail("Persona recording callback was not registered")
             else:
                 captured_callback(
                     np.zeros((1600, 1), dtype=np.float32), 1600, None, None
@@ -404,9 +404,7 @@ class TestSpeechInput(CeluneTestCase):
 
         ui.celune.think.assert_not_called()
         transcriber.transcribe.assert_not_called()
-        self.assertTrue(
-            any(call.args[1] == "warning" for call in ui.safe_log.call_args_list)
-        )
+        assert any(call.args[1] == "warning" for call in ui.safe_log.call_args_list)
 
     @staticmethod
     def test_persona_transcription_does_not_repeat_reported_error() -> None:
