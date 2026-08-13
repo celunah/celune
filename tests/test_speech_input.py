@@ -313,7 +313,12 @@ class SpeechInputTests(TestCase):
                 "celune.ui.app.create_live_voice_activity_detector", return_value=vad
             ),
             mock.patch("celune.ui.app.WhisperTranscriber", return_value=transcriber),
-            mock.patch("celune.ui.app.time.monotonic", side_effect=monotonic_values),
+            mock.patch(
+                "celune.ui.app.time.monotonic",
+                side_effect=lambda: next(
+                    monotonic_values, PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS
+                ),
+            ),
         ):
             self.assertEqual(ui._start_persona_recording(), True)
 
