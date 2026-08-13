@@ -36,11 +36,11 @@ if TYPE_CHECKING:
     from .extensions.events import subscribe
 
 __tagline__ = '"Your voice, your way."'
-__codename__ = "Personality"
-__comment__ = "I can finally talk with you."
+__codename__ = "Enlightenment"
+__comment__ = "I have achieved new height."
 
 if hasattr(_sys, "ps1"):
-    print(f"Caution: You are running the {APP_NAME} backend interactively.")
+    print(f"Caution: You are running the {APP_NAME} core interactively.")
     print("This is not an intended mode of operation, usage may differ.")
     print()
     print(

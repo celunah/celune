@@ -3,7 +3,7 @@
 
 ---
 
-![Python](https://img.shields.io/badge/Python-3.12%2F3.13-cebaff) ![License](https://img.shields.io/badge/License-MIT-cebaff) ![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff) ![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
+![Python](https://img.shields.io/badge/Python-3.12–3.14-cebaff) ![License](https://img.shields.io/badge/License-MIT-cebaff) ![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff) ![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
 
 Celune is a conversational character engine with agentic features.
 
@@ -47,7 +47,7 @@ Persona can be used with both LLMs and VLMs, but vision features and image uploa
 
 Celune is against the stance of "vibe coding" used in development.
 
-None of the 40,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
+None of the 50,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
 
 All decisions and implementations were reviewed, validated, and approved by human developers.
 
