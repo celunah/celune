@@ -24,6 +24,7 @@ from celune.config import config_log_level, normalize_log_level
 from celune.i18n import string
 from celune.watchdog import launcher_loss_requested, start_watchdog
 from celune.paths import migrate_legacy_app_data, project_root, running_compiled
+from celune.terminal import set_terminal_title
 from celune.updater import apply_update_and_restart
 
 
@@ -1086,8 +1087,13 @@ def start(
             ui.run()
             sys.exit(EXIT_CODES.EXIT_SUCCESS.value)
         if runtime.supports_ansi():
-            sys.stdout.write(f"\x1b]2;{string('osc.starting', app_name=APP_NAME)}\x07")
-            sys.stdout.flush()
+            set_terminal_title(
+                (
+                    APP_NAME,
+                    string("osc.state_initializing"),
+                    string("osc.action_starting"),
+                )
+            )
         date = datetime.datetime.now(datetime.UTC)
         if runtime.has_name_day("Celine", date) and not runtime.env_bool(
             "CELUNE_OVERRIDE_CELINE_DAY"

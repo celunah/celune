@@ -2,9 +2,18 @@
 """Terminal handling helpers for Celune."""
 
 import ctypes
+import re
 import sys
 from collections.abc import Callable
 from typing import IO, Optional, cast
+
+from .i18n import string
+
+_TERMINAL_TITLE_MAX_LENGTH = 160
+_TERMINAL_TITLE_CONTROL_RE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])"
+    r"|[\x00-\x1f\x7f\x80-\x9f\r\n]"
+)
 
 
 def supports_ansi(stream: Optional[IO[str]] = None) -> bool:
@@ -50,3 +59,36 @@ def supports_ansi(stream: Optional[IO[str]] = None) -> bool:
             stdout_handle, mode.value | enable_virtual_terminal_processing
         )
     )
+
+
+def terminal_title_escape(status: tuple[str, str, str]) -> str:
+    """Build an OSC title escape sequence from an app state and action.
+
+    Args:
+        status: Application name, stable state label, and current action.
+
+    Returns:
+        str: The sanitized OSC 0 terminal-title escape sequence.
+    """
+    app_name, state, action = (
+        _TERMINAL_TITLE_CONTROL_RE.sub("", part).strip() for part in status
+    )
+    title = string("osc.title", app_name=app_name, state=state, action=action)
+    if len(title) > _TERMINAL_TITLE_MAX_LENGTH:
+        title = f"{title[: _TERMINAL_TITLE_MAX_LENGTH - 1]}…"
+    return f"\x1b]0;{title}\x07"
+
+
+def set_terminal_title(
+    status: tuple[str, str, str],
+    output: Optional[IO[str]] = None,
+) -> None:
+    """Set the current terminal title to an app state and action.
+
+    Args:
+        status: Application name, stable state label, and current action.
+        output: Terminal stream to receive the escape sequence.
+    """
+    target = sys.stdout if output is None else output
+    target.write(terminal_title_escape(status))
+    target.flush()

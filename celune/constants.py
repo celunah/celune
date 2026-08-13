@@ -2,13 +2,11 @@
 """Shared Celune constants."""
 
 import datetime
-import itertools
 import signal
 from enum import Enum, IntEnum, auto
 from typing import Optional
 
 from ._version import VERSION
-from .i18n import string
 from .typing.common import JSON, JSONSerializable  # noqa: F401  # pylint: disable=W0611
 
 # main app name
@@ -134,15 +132,6 @@ VRAM_REQUIREMENTS = {
     "high": 12,
     "xhigh": 16,
 }
-
-CRASH_LINES = itertools.cycle(
-    [
-        string("osc.crash_1", app_name=APP_NAME),
-        string("osc.crash_2", app_name=APP_NAME),
-        string("osc.crash_3"),
-        string("osc.crash_4"),
-    ]
-)
 
 # equivalent service costs per minute grouped by popular TTS providers
 #

@@ -49,7 +49,7 @@ from .. import colors
 from ..celune import Celune
 from ..cevoice import default_loader
 from ..config import format_audio_device_name, resolve_audio_device_with_info
-from ..constants import APP_NAME, CRASH_LINES, SIGTSTP
+from ..constants import APP_NAME, SIGTSTP
 from ..dataclasses.pipeline import AudioOutput
 from ..i18n import string
 from ..watchdog import launcher_loss_requested
@@ -88,6 +88,7 @@ from ..utils import (
     typing_animation,
     typing_delay,
 )
+from ..terminal import set_terminal_title, terminal_title_escape
 from ..vc import (
     VC_PITCH_SHIFT_MAX,
     VC_PITCH_SHIFT_MIN,
@@ -345,6 +346,7 @@ class CeluneUI(App):
             log_file_path=main_window_log_path(create_parent=True),
         )
         self._interaction_state = CeluneUIInteractionState()
+        self._terminal_status: Optional[tuple[str, str, str]] = None
 
         CeluneUI._instance = self
 
@@ -1089,9 +1091,6 @@ class CeluneUI(App):
             pages = ui_resources.resource_pages(self.celune, self.active_theme_name)
             text = pages[self._resource_page % len(pages)]
 
-            if supports_ansi() and self.celune.cur_state == "error":
-                self._write_terminal_escape(f"\x1b]2;{next(CRASH_LINES)}\x07")
-
             self.resources.update(indent(text, spaces=2, direction="right"))
 
         self._run_on_ui_thread(update)
@@ -1132,6 +1131,67 @@ class CeluneUI(App):
         if self._old_stdout is not None:
             self._old_stdout.write(escape)
             self._old_stdout.flush()
+
+    def _write_terminal_title(self, status: tuple[str, str, str]) -> None:
+        """Write one structured state title to the real terminal."""
+        if self._log_stdout is not None:
+            self._log_stdout.ansi(terminal_title_escape(status))
+            return
+
+        if self._old_stdout is not None:
+            set_terminal_title(status, self._old_stdout)
+
+    def _set_terminal_status(self, state: str, action: str) -> None:
+        """Publish a stable state and action in the terminal title."""
+        status = (APP_NAME, string(f"osc.state_{state}"), action)
+        if getattr(self, "_terminal_status", None) == status:
+            return
+
+        self._terminal_status = status
+
+        def update() -> None:
+            if supports_ansi(self._old_stdout):
+                self._write_terminal_title(status)
+
+        self._run_on_ui_thread(update)
+
+    def _terminal_status_for(self, msg: str, severity: str) -> tuple[str, str]:
+        """Resolve the terminal glossary state and action for one UI status."""
+        if severity == "error":
+            return "error", msg
+        if severity == "warning":
+            return "warning", msg
+
+        if self._persona_recording_active() or self._vc_recording_active():
+            if self._persona_recording_stop_requested:
+                return "recording", string("osc.action_transcribing_speech")
+            return "recording", string("osc.action_listening_microphone")
+
+        if not self.celune_ready:
+            return "initializing", string("osc.action_loading_voice_pack")
+
+        runtime_state = getattr(self.celune, "cur_state", "idle")
+        if msg in {
+            string("status.reloading"),
+            string("status.reloading_backend"),
+            string("status.reloading_character"),
+            string("status.restoring_backend"),
+        }:
+            return "reloading", msg
+
+        state_actions = {
+            "idle": ("ready", string("osc.action_idle")),
+            "thinking": ("thinking", string("osc.action_thinking")),
+            "generating": ("speaking", string("osc.action_generating_audio")),
+            "speaking": ("speaking", string("osc.action_playing_audio")),
+            "sleeping": ("sleeping", string("osc.action_idle")),
+            "waking": ("initializing", string("osc.action_waking_up")),
+            "reloading": ("reloading", msg),
+        }
+        return state_actions.get(
+            runtime_state,
+            ("ready", msg),
+        )
 
     def _install_runtime_log_redirects(self) -> None:
         """Route non-Celune Python logging output into Celune's UI log widget."""
@@ -1447,10 +1507,7 @@ class CeluneUI(App):
                 self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
                 self.safe_log(string("ui.tutorial_prompt", app_name=APP_NAME))
                 self._schedule_sleep_timer()
-                if supports_ansi(self._old_stdout):
-                    self.call_from_thread(
-                        lambda: self._write_terminal_escape(f"\x1b]2;{APP_NAME}\x07")
-                    )
+                self._set_terminal_status("ready", string("osc.action_idle"))
             else:
                 self.cur_state = "error"
                 self.change_input_state(locked=True)
@@ -2080,12 +2137,14 @@ class CeluneUI(App):
             return
 
         self.status_severity = severity
+        terminal_state, terminal_action = self._terminal_status_for(msg, severity)
 
         def update() -> None:
             self._status_text = msg
             self._status_marquee_offset = 0
             self._refresh_theme_text()
             self._update_status_label()
+            self._set_terminal_status(terminal_state, terminal_action)
             self.update_resources()
 
         self._run_on_ui_thread(update)
@@ -3007,6 +3066,7 @@ class CeluneUI(App):
 
         if announce:
             self.safe_log(string("ui.recording_stopped", label=label), "info")
+        self._set_terminal_status("ready", string("osc.action_idle"))
         return True
 
     def _stop_vc_recording_for_feedback(self) -> None:
@@ -3041,6 +3101,7 @@ class CeluneUI(App):
         self._join_vc_recording_threads(stop_thread, worker)
 
         self.safe_log(string("ui.recording_stopped_feedback", label=label), "warning")
+        self._set_terminal_status("ready", string("osc.action_idle"))
         self.update_resources()
 
     def _start_vc_recording(self) -> bool:
@@ -3369,6 +3430,10 @@ class CeluneUI(App):
 
         worker.start()
         self.safe_log(string("ui.recording_started", label=label), "info")
+        self._set_terminal_status(
+            "recording",
+            string("osc.action_listening_microphone"),
+        )
         self.update_resources()
         return True
 
@@ -3406,6 +3471,7 @@ class CeluneUI(App):
             self._join_vc_recording_threads(stop_thread, worker)
 
             self.safe_log(string("ui.recording_stopped", label=label), "info")
+            self._set_terminal_status("ready", string("osc.action_idle"))
             self.update_resources()
             if captured_frames <= 0:
                 self.safe_log(string("ui.recording_empty"), "warning")
@@ -3861,9 +3927,7 @@ class CeluneUI(App):
     def on_unmount(self) -> None:
         """Unload Celune."""
         self._clear_caption_timers()
-        self._write_terminal_escape(
-            f"\x1b]2;{string('osc.exiting', app_name=APP_NAME)}\x07"
-        )
+        self._set_terminal_status("exiting", string("osc.action_exiting"))
         self._shutdown_runtime()
 
         self.cur_state = "exiting"

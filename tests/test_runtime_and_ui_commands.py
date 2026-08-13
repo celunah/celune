@@ -23,6 +23,7 @@ from celune.celune import Celune
 from celune.config import Config
 from celune.constants import APP_NAME, COST_EQUIVALENTS
 from celune.i18n import string
+from celune.terminal import set_terminal_title
 from celune.typing.common import JSONSerializable
 from celune.typing.aliases import LogLevel
 from celune.ui import app as ui_app
@@ -39,6 +40,17 @@ from tests.support import FakeBackend, FakeVCBackend
 
 class RuntimeTests(TestCase):
     """Tests for runtime environment checks."""
+
+    def test_terminal_title_formats_and_sanitizes_status(self) -> None:
+        """Verify structured terminal titles remove control characters."""
+        terminal = mock.Mock()
+
+        set_terminal_title((APP_NAME, "Ready", "Idle\n\x1b[31m"), terminal)
+
+        terminal.write.assert_called_once_with(
+            f"\x1b]0;{APP_NAME} ・ Ready ・ Idle\x07"
+        )
+        terminal.flush.assert_called_once_with()
 
     def test_check_supported_backends_reports_cpu_cuda_and_rocm(self) -> None:
         """Verify backend labels across supported runtime branches.
@@ -1091,7 +1103,7 @@ class UIStartupTests(TestCase):
                 load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
                 load_tts(ui)
 
-            terminal.write.assert_called_with(f"\x1b]2;{APP_NAME}\x07")
+            terminal.write.assert_called_with(f"\x1b]0;{APP_NAME} ・ Ready ・ Idle\x07")
             terminal.flush.assert_called()
         finally:
             sys.stdout = original_stdout
