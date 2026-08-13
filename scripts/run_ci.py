@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 from contextlib import suppress
+from typing import Callable, cast
 
 
 TIMEOUT = 300
@@ -48,20 +49,26 @@ def stop_process_tree(process: subprocess.Popen[str]) -> None:
             process.wait(timeout=GRACE_PERIOD)
         return
 
+    getpgid = cast(Callable[[int], int], getattr(os, "getpgid", None))
+    killpg = cast(Callable[[int, int], None], getattr(os, "killpg", None))
+    sigkill = cast(int, getattr(signal, "SIGKILL", signal.SIGTERM))
+    if getpgid is None or killpg is None:
+        return
+
     process_group_id = process.pid
     try:
-        process_group_id = os.getpgid(process.pid)
+        process_group_id = getpgid(process.pid)
     except ProcessLookupError:
         return
 
     with suppress(ProcessLookupError):
-        os.killpg(process_group_id, signal.SIGTERM)
+        killpg(process_group_id, signal.SIGTERM)
 
     try:
         process.wait(timeout=GRACE_PERIOD)
     except subprocess.TimeoutExpired:
         with suppress(ProcessLookupError):
-            os.killpg(process_group_id, signal.SIGKILL)
+            killpg(process_group_id, sigkill)
         with suppress(subprocess.TimeoutExpired):
             process.wait(timeout=GRACE_PERIOD)
 
