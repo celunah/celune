@@ -57,6 +57,7 @@ from ..paths import config_path, main_window_log_path
 from ..persona.asr import (
     DEFAULT_PERSONA_SPEECH_MODEL_ID,
     PERSONA_SPEECH_END_DELAY_SECONDS,
+    PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
     WhisperSegment,
     WhisperTranscriber,
 )
@@ -2367,10 +2368,11 @@ class CeluneUI(App):
             audio, final = recording_queue.get()
             transcript = ""
             error: Optional[Exception] = None
-            try:
-                transcript = transcriber.transcribe(audio, sample_rate)
-            except Exception as exc:
-                error = exc
+            if audio.size:
+                try:
+                    transcript = transcriber.transcribe(audio, sample_rate)
+                except Exception as exc:
+                    error = exc
 
             if transcript:
                 self._set_persona_recording_text(transcript)
@@ -2497,6 +2499,7 @@ class CeluneUI(App):
             language=self._persona_speech_language(),
         )
         prefix = self.input_box.text.strip() if self.input_box is not None else ""
+        recording_started_at = time.monotonic()
         should_stop = False
 
         def callback(
@@ -2545,6 +2548,14 @@ class CeluneUI(App):
                 if (
                     self._persona_recording_speech_started
                     and self._persona_recording_silence_frames >= vad_hangover_frames
+                ):
+                    self._persona_recording_stop_requested = True
+                    self._queue_persona_recording_item_locked(final=True)
+                    should_stop = True
+                elif (
+                    not self._persona_recording_speech_started
+                    and time.monotonic() - recording_started_at
+                    >= PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS
                 ):
                     self._persona_recording_stop_requested = True
                     self._queue_persona_recording_item_locked(final=True)

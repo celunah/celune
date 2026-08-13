@@ -9,7 +9,10 @@ from unittest import TestCase, mock
 import numpy as np
 from textual import events
 
-from celune.persona.asr import WhisperTranscriber
+from celune.persona.asr import (
+    PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
+    WhisperTranscriber,
+)
 from celune.typing.persona import _WhisperProcessor
 from celune.ui.app import CeluneUI
 
@@ -242,6 +245,91 @@ class SpeechInputTests(TestCase):
 
         ui.celune.think.assert_called_once_with("hello there")
         transcriber.transcribe.assert_called_once()
+
+    def test_persona_recording_times_out_without_speech(self) -> None:
+        """Verify silent Persona recording stops after the no-input timeout."""
+        ui = CeluneUI()
+        ui.cur_state = "idle"
+        ui.input_box = SimpleNamespace(text="", placeholder="", load_text=mock.Mock())
+        ui.style_button = SimpleNamespace(disabled=False)
+        ui.safe_log = mock.Mock()
+        ui.safe_status = mock.Mock()
+        ui.update_resources = mock.Mock()
+        ui._cancel_sleep_timer = mock.Mock()
+        ui.celune = SimpleNamespace(
+            config={
+                "vram": "high",
+                "persona": {"talkback": True, "speech_end_delay_seconds": 0},
+            },
+            dev=False,
+            sleeping=False,
+            cur_state="idle",
+            vc_backend=None,
+            vision=SimpleNamespace(),
+            think=mock.Mock(return_value=True),
+        )
+
+        captured_callback: Optional[Callable[..., None]] = None
+
+        class FakeInputStream:
+            """Small sounddevice input stream test double."""
+
+            def __init__(self, **kwargs) -> None:
+                nonlocal captured_callback
+                captured_callback = cast(Callable[..., None], kwargs["callback"])
+
+            def start(self) -> None:
+                """Start the fake stream."""
+
+            def stop(self) -> None:
+                """Stop the fake stream."""
+
+            def close(self) -> None:
+                """Close the fake stream."""
+
+        vad = SimpleNamespace(has_voice=mock.Mock(return_value=False))
+        transcriber = mock.Mock()
+        monotonic_values = iter((0.0, 0.0, PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS))
+
+        with (
+            mock.patch.object(
+                ui,
+                "call_from_thread",
+                side_effect=lambda callback, *args: callback(*args),
+            ),
+            mock.patch(
+                "celune.ui.app.resolve_audio_device_with_info",
+                return_value=(
+                    "microphone",
+                    {
+                        "max_input_channels": 1,
+                        "default_samplerate": 16000,
+                        "name": "Microphone",
+                    },
+                ),
+            ),
+            mock.patch("celune.ui.app.sd.InputStream", FakeInputStream),
+            mock.patch(
+                "celune.ui.app.create_live_voice_activity_detector", return_value=vad
+            ),
+            mock.patch("celune.ui.app.WhisperTranscriber", return_value=transcriber),
+            mock.patch("celune.ui.app.time.monotonic", side_effect=monotonic_values),
+        ):
+            self.assertEqual(ui._start_persona_recording(), True)
+
+            if captured_callback is None:
+                self.fail("Persona recording callback was not registered")
+            captured_callback(np.zeros((1600, 1), dtype=np.float32), 1600, None, None)
+
+            worker = ui._persona_recording_worker
+            if worker is not None:
+                worker.join(timeout=2.0)
+
+        ui.celune.think.assert_not_called()
+        transcriber.transcribe.assert_not_called()
+        self.assertTrue(
+            any(call.args[1] == "warning" for call in ui.safe_log.call_args_list)
+        )
 
     @staticmethod
     def test_persona_transcription_does_not_repeat_reported_error() -> None:
