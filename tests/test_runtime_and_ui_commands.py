@@ -807,11 +807,15 @@ class TestUIStartup(CeluneTestCase):
         ui.safe_log = mock.Mock()
 
         ui.tts_log("hidden", loglevel="debug")
-        ui.safe_log.assert_called_once_with("hidden", "info", loglevel="debug")
+        assert ui.safe_log.call_args_list == [
+            mock.call("hidden", "info", loglevel="debug")
+        ]
         ui.safe_log.reset_mock()
 
         ui.tts_log("visible", loglevel="info")
-        ui.safe_log.assert_called_once_with("visible", "info", loglevel="info")
+        assert ui.safe_log.call_args_list == [
+            mock.call("visible", "info", loglevel="info")
+        ]
 
     def test_headless_log_preserves_backend_log_level_filtering(self) -> None:
         """Verify headless isolated backend logs honor the configured level."""
