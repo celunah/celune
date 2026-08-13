@@ -319,7 +319,10 @@ class SpeechInputTests(TestCase):
 
             if captured_callback is None:
                 self.fail("Persona recording callback was not registered")
-            captured_callback(np.zeros((1600, 1), dtype=np.float32), 1600, None, None)
+            else:
+                captured_callback(
+                    np.zeros((1600, 1), dtype=np.float32), 1600, None, None
+                )
 
             worker = ui._persona_recording_worker
             if worker is not None:
