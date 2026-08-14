@@ -7,10 +7,16 @@ from ..colors import SEVERITY_COLORS
 CELUNE_CSS = """
     Screen {
         layout: vertical;
+        layers: base loading;
         background: $background;
     }
 
     CeluneLoadingScreen {
+        layer: loading;
+        position: absolute;
+        width: 1fr;
+        height: 1fr;
+        offset: 0 0;
         align: center middle;
         background: $background;
     }
@@ -60,6 +66,15 @@ CELUNE_CSS = """
         border-bottom: solid $secondary;
         margin-top: 2;
         padding: 1 2;
+    }
+
+    #loading-diagnostics {
+        width: 1fr;
+        min-width: 0;
+        height: auto;
+        color: $secondary;
+        margin-bottom: 1;
+        display: none;
     }
 
     #loading-log-message {

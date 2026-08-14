@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Frontend layer."""
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import ctypes
@@ -21,12 +23,8 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Optional, TextIO, Union, cast
+from typing import TYPE_CHECKING, Optional, Protocol, TextIO, Union, cast
 
-import numpy as np
-import numpy.typing as npt
-import sounddevice as sd
-import yaml
 from rich.text import Text
 from textual import events, work
 from textual.app import (
@@ -37,49 +35,23 @@ from textual.app import (
     ScreenStackError,
 )
 from textual.color import Color
-from textual.containers import Center, Horizontal, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.css.types import EdgeStyle
 from textual.message import Message
-from textual.screen import Screen
 from textual.theme import Theme
 from textual.timer import Timer
 from textual.widget import Widget
-from textual.widgets import Button, Label, ProgressBar, RichLog, Static, TextArea
+from textual.widgets import Button, Label, ProgressBar, RichLog, TextArea
 
 from .. import colors
-from ..celune import Celune
-from ..cevoice import default_loader
 from ..config import format_audio_device_name, resolve_audio_device_with_info
 from ..constants import APP_NAME, SIGTSTP
-from ..dataclasses.pipeline import AudioOutput
 from ..i18n import string
 from ..watchdog import launcher_loss_requested
 from ..paths import config_path, main_window_log_path
-from ..persona.asr import (
-    DEFAULT_PERSONA_SPEECH_MODEL_ID,
-    PERSONA_SPEECH_END_DELAY_SECONDS,
-    PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
-    WhisperSegment,
-    WhisperTranscriber,
-)
-from ..persona.impl import (
-    persona_config,
-    persona_enabled,
-    persona_talkback_enabled,
-)
-from ..pipeline import (
-    current_playback_status,
-    finish_streaming_sfx_audio,
-    queue_streaming_sfx_audio,
-)
-from ..typing.aliases import (  # pylint: disable=W0611
-    AudioChunk,
-    AudioChunks,
-    AudioDeviceScalar,
-    LogLevel,
-    _VCAudioCallback,  # noqa
-)
+from ..typing.aliases import AudioDeviceScalar  # noqa: F401
+from ..typing.aliases import _VCAudioCallback  # noqa: F401  # pylint: disable=unused-import
 from ..utils import (
     discard,
     format_error,
@@ -91,24 +63,158 @@ from ..utils import (
     typing_delay,
 )
 from ..terminal import set_terminal_title, terminal_title_escape
-from ..vc import (
-    VC_PITCH_SHIFT_MAX,
-    VC_PITCH_SHIFT_MIN,
-    LiveVoiceActivityDetector,
-    clamp_vc_pitch_shift,
-    create_live_voice_activity_detector,
-    vc_input_has_voice,
-    vc_input_rms,
-    vc_live_chunk_frames,
-    vc_live_chunk_overlap_frames,
-    vc_vad_hangover_frames,
-    vc_vad_preroll_frames,
-)
-from . import resources as ui_resources
-from .commands import process_command as process_ui_command
-from .resources import FOOTER_ROTATE_SECONDS
+from .loading import CeluneLoadingScreen
 from .terminal import LogRedirect, UILogHandler, is_celune_log_record
 from .theme import CELUNE_CSS, severity_color
+
+if TYPE_CHECKING:
+    import numpy as np
+    import numpy.typing as npt
+    import sounddevice as sd
+    import yaml
+
+    from ..celune import Celune
+    from ..cevoice import CEVoiceLoader
+    from ..dataclasses.pipeline import AudioOutput
+    from ..persona.asr import (
+        DEFAULT_PERSONA_SPEECH_MODEL_ID,
+        PERSONA_SPEECH_END_DELAY_SECONDS,
+        PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
+        WhisperSegment,
+        WhisperTranscriber,
+    )
+    from ..persona.impl import (
+        persona_config,
+        persona_enabled,
+        persona_talkback_enabled,
+    )
+    from ..pipeline import (
+        current_playback_status,
+        finish_streaming_sfx_audio,
+        queue_streaming_sfx_audio,
+    )
+    from ..typing.aliases import (
+        AudioChunk,
+        AudioChunks,
+        LogLevel,
+    )
+    from ..vc import (
+        VC_PITCH_SHIFT_MAX,
+        VC_PITCH_SHIFT_MIN,
+        LiveVoiceActivityDetector,
+        clamp_vc_pitch_shift,
+        create_live_voice_activity_detector,
+        vc_input_has_voice,
+        vc_input_rms,
+        vc_live_chunk_frames,
+        vc_live_chunk_overlap_frames,
+        vc_vad_hangover_frames,
+        vc_vad_preroll_frames,
+    )
+    from . import resources as ui_resources
+    from .commands import process_command as process_ui_command
+    from .resources import FOOTER_ROTATE_SECONDS
+
+    class _UIResources(Protocol):
+        """Type-checkable subset of the resource footer module."""
+
+        def prime_usage(self) -> None:
+            """Prime resource usage polling."""
+
+        def resource_pages(
+            self,
+            celune: Celune,
+            theme_name: str,
+        ) -> tuple[str, ...]:
+            """Return the current resource footer pages."""
+
+
+default_loader: Optional[Callable[[], Optional[CEVoiceLoader]]] = None
+ui_resources: Optional[_UIResources] = None
+_RUNTIME_DEPENDENCIES_LOADED = False
+
+
+def _load_ui_runtime_dependencies() -> None:
+    """Load optional UI integrations after the first loading frame is visible."""
+    global _RUNTIME_DEPENDENCIES_LOADED
+    if _RUNTIME_DEPENDENCIES_LOADED:
+        return
+
+    global AudioOutput
+    global DEFAULT_PERSONA_SPEECH_MODEL_ID
+    global FOOTER_ROTATE_SECONDS
+    global LiveVoiceActivityDetector
+    global PERSONA_SPEECH_END_DELAY_SECONDS
+    global PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS
+    global VC_PITCH_SHIFT_MAX
+    global VC_PITCH_SHIFT_MIN
+    global WhisperSegment
+    global WhisperTranscriber
+    global clamp_vc_pitch_shift
+    global create_live_voice_activity_detector
+    global current_playback_status
+    global default_loader
+    global finish_streaming_sfx_audio
+    global np
+    global npt
+    global persona_config
+    global persona_enabled
+    global persona_talkback_enabled
+    global process_ui_command
+    global queue_streaming_sfx_audio
+    global sd
+    global ui_resources
+    global vc_input_has_voice
+    global vc_input_rms
+    global vc_live_chunk_frames
+    global vc_live_chunk_overlap_frames
+    global vc_vad_hangover_frames
+    global vc_vad_preroll_frames
+    global yaml
+
+    import numpy as np
+    import numpy.typing as npt
+    import sounddevice as sd
+    import yaml
+
+    from ..cevoice import default_loader
+    from ..dataclasses.pipeline import AudioOutput
+    from ..persona.asr import (
+        DEFAULT_PERSONA_SPEECH_MODEL_ID,
+        PERSONA_SPEECH_END_DELAY_SECONDS,
+        PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
+        WhisperSegment,
+        WhisperTranscriber,
+    )
+    from ..persona.impl import (
+        persona_config,
+        persona_enabled,
+        persona_talkback_enabled,
+    )
+    from ..pipeline import (
+        current_playback_status,
+        finish_streaming_sfx_audio,
+        queue_streaming_sfx_audio,
+    )
+    from ..vc import (
+        VC_PITCH_SHIFT_MAX,
+        VC_PITCH_SHIFT_MIN,
+        LiveVoiceActivityDetector,
+        clamp_vc_pitch_shift,
+        create_live_voice_activity_detector,
+        vc_input_has_voice,
+        vc_input_rms,
+        vc_live_chunk_frames,
+        vc_live_chunk_overlap_frames,
+        vc_vad_hangover_frames,
+        vc_vad_preroll_frames,
+    )
+    from . import resources as ui_resources
+    from .commands import process_command as process_ui_command
+    from .resources import FOOTER_ROTATE_SECONDS
+
+    _RUNTIME_DEPENDENCIES_LOADED = True
+
 
 _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
     {
@@ -135,6 +241,7 @@ _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
 
 _CAPTION_FADE_SECONDS = 0.36
 _LOADING_FADE_SECONDS = 1.0
+_MAIN_UI_FADE_SECONDS = 0.6
 _VC_FEEDBACK_MIN_CAPTURE_SECONDS = 0.35
 _VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES = 2
 _VC_FEEDBACK_RMS_MIN_PREVIOUS = 0.05
@@ -311,121 +418,6 @@ def _forward_ui_property(container_name: str, field_name: str) -> property:
     return property(getter, setter)
 
 
-class CeluneLoadingScreen(Screen[None]):
-    """Display the centered startup screen while the engine initializes."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._spinner_frames = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
-        self._spinner_index = 0
-        self._status_message = string("status.initializing")
-        self._latest_log_message = string("ui.loading_waiting_for_log")
-        self._error_message = ""
-
-    def compose(self) -> ComposeResult:
-        """Compose the startup screen widgets.
-
-        Returns:
-            ComposeResult: The loading screen widget tree.
-        """
-        with Center(id="loading-center"):
-            with Vertical(id="loading-content"):
-                yield Static(APP_NAME, id="loading-brand", markup=False)
-                yield Static(
-                    self._status_message,
-                    id="loading-state-label",
-                    markup=False,
-                )
-                with Vertical(id="loading-log"):
-                    yield Static(
-                        self._latest_log_message,
-                        id="loading-log-message",
-                        markup=False,
-                    )
-                yield Static(
-                    self._spinner_frames[0], id="loading-spinner", markup=False
-                )
-                yield Static(
-                    string("ui.loading_wait"),
-                    id="loading-wait",
-                    markup=False,
-                )
-                yield Static(
-                    self._error_message,
-                    id="loading-error",
-                    markup=False,
-                )
-        with Horizontal(id="loading-footer"):
-            yield Static(
-                string("ui.loading_starting", app_name=APP_NAME),
-                id="loading-footer-starting",
-                markup=False,
-            )
-            yield Static(
-                string("ui.loading_quit"),
-                id="loading-footer-quit",
-                markup=False,
-            )
-
-    def on_mount(self) -> None:
-        """Start the ASCII spinner after the screen is mounted."""
-        self._update_error_widget()
-        self.set_interval(0.26, self._advance_spinner)
-
-    def _advance_spinner(self) -> None:
-        """Advance the loading spinner by one ASCII frame."""
-        self._spinner_index = (self._spinner_index + 1) % len(self._spinner_frames)
-        try:
-            self.query_one("#loading-spinner", Static).update(
-                self._spinner_frames[self._spinner_index]
-            )
-        except NoMatches:
-            pass
-
-    def set_latest_log_message(self, message: str) -> None:
-        """Show the latest non-verbose startup log message.
-
-        Args:
-            message: Log message to display below the loading state.
-        """
-        self._latest_log_message = message
-        try:
-            self.query_one("#loading-log-message", Static).update(message)
-        except NoMatches:
-            pass
-
-    def set_status_message(self, message: str) -> None:
-        """Show the current Celune status in the centered state row.
-
-        Args:
-            message: Current status text from the UI status callback.
-        """
-        self._status_message = message
-        try:
-            self.query_one("#loading-state-label", Static).update(message)
-        except NoMatches:
-            pass
-
-    def show_error(self, message: str) -> None:
-        """Show an initialization error without dismissing the screen.
-
-        Args:
-            message: Initialization failure to show to the user.
-        """
-        self._error_message = message
-        self._update_error_widget()
-
-    def _update_error_widget(self) -> None:
-        """Refresh the optional initialization error widget."""
-        try:
-            error = self.query_one("#loading-error", Static)
-        except NoMatches:
-            return
-
-        error.update(self._error_message)
-        error.display = bool(self._error_message)
-
-
 class CeluneUI(App):
     """User interface."""
 
@@ -433,7 +425,11 @@ class CeluneUI(App):
     CSS = CELUNE_CSS
     _instance: Optional["CeluneUI"] = None
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        startup_loader: Optional[Callable[[], Celune]] = None,
+        startup_messages: Optional[list[str]] = None,
+    ) -> None:
         super().__init__()
 
         if CeluneUI._instance is not None:
@@ -466,6 +462,9 @@ class CeluneUI(App):
         self._interaction_state = CeluneUIInteractionState()
         self._terminal_status: Optional[tuple[str, str, str]] = None
         self._loading_screen: Optional[CeluneLoadingScreen] = None
+        self._startup_loader = startup_loader
+        self._startup_messages = list(startup_messages or [])
+        self._runtime_intervals_started = False
 
         CeluneUI._instance = self
 
@@ -763,6 +762,61 @@ class CeluneUI(App):
     def _has_celune(self) -> bool:
         """Is the app attached to this UI instance?"""
         return self.celune is not None
+
+    def prepare_theme(self) -> None:
+        """Prepare the selected Celune theme before the first rendered frame."""
+        colors.configure_theme()
+
+        if self._has_celune():
+            loader_factory = default_loader
+            if loader_factory is None:
+                _load_ui_runtime_dependencies()
+                loader_factory = default_loader
+            loader = loader_factory() if loader_factory is not None else None
+            if loader is not None:
+                theme = loader.bundle.metadata.get("theme")
+                if isinstance(theme, dict):
+                    background = theme.get("background")
+                    accent = theme.get("accent")
+                    faded_accent = theme.get("faded_accent")
+                    if faded_accent is None:
+                        faded_accent = theme.get("sleeping_color")
+                    if (
+                        isinstance(background, str)
+                        and isinstance(accent, str)
+                        and (faded_accent is None or isinstance(faded_accent, str))
+                    ):
+                        colors.configure_theme(
+                            background,
+                            accent,
+                            faded_accent,
+                        )
+
+        self._ensure_themes_registered()
+        if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
+            "1",
+            "true",
+            "on",
+            "yes",
+            "enabled",
+        }:
+            self.active_theme_name = "celune_april_fools"
+        else:
+            theme = os.getenv("CELUNE_THEME") or (
+                self.celune.config.get("theme", "dark")
+                if self.celune is not None
+                else "dark"
+            )
+
+            if theme == "dark":
+                self.active_theme_name = "celune"
+            elif theme == "light":
+                self.active_theme_name = "celune_light"
+            else:
+                self.active_theme_name = "celune"
+
+        self.theme = self.active_theme_name
+        self.refresh_css(animate=False)
 
     def _clear_border_pulses(self) -> None:
         """Remove temporary border pulse overrides so CSS can theme them."""
@@ -1100,20 +1154,10 @@ class CeluneUI(App):
             with Horizontal(id="bottom"):
                 yield Label("", id="status")
                 yield Label("", id="resources")
+        yield CeluneLoadingScreen(widget_id="loading-overlay")
 
     def on_mount(self) -> None:
-        """Prepare the UI runtime.
-
-        Raises:
-            RuntimeError: ``CeluneUI`` was run without an instance of ``Celune``.
-        """
-        if not self._has_celune():
-            raise RuntimeError(
-                f"{self.__class__.__name__} requires an instance of {APP_NAME} to be set"
-            )
-
-        colors.configure_theme()
-
+        """Prepare the UI and start deferred runtime initialization."""
         if os.name == "nt":
             self._install_windows_signal_handler()
         else:
@@ -1123,51 +1167,8 @@ class CeluneUI(App):
 
         self.set_interval(0.1, self._check_launcher_loss)
 
-        loader = default_loader()
-        if loader is not None:
-            theme = loader.bundle.metadata.get("theme")
-            if isinstance(theme, dict):
-                background = theme.get("background")
-                accent = theme.get("accent")
-                faded_accent = theme.get("faded_accent")
-                if faded_accent is None:
-                    faded_accent = theme.get("sleeping_color")
-                if (
-                    isinstance(background, str)
-                    and isinstance(accent, str)
-                    and (faded_accent is None or isinstance(faded_accent, str))
-                ):
-                    colors.configure_theme(
-                        background,
-                        accent,
-                        faded_accent,
-                    )
-
-        self._ensure_themes_registered()
-        self._bind_runtime_callbacks()
-        self._wrap_runtime_fatal_glow()
-
-        if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
-            "1",
-            "true",
-            "on",
-            "yes",
-            "enabled",
-        }:
-            self.active_theme_name = "celune_april_fools"
-        else:
-            theme = os.getenv("CELUNE_THEME") or self.celune.config.get("theme", "dark")
-
-            if theme == "dark":
-                self.active_theme_name = "celune"
-            elif theme == "light":
-                self.active_theme_name = "celune_light"
-            else:
-                self.active_theme_name = "celune"
-                self.safe_log(string("ui.invalid_theme_defaulting_dark"), "warning")
-
-        self.theme = self.active_theme_name
-
+        self._loading_screen = self.query_one("#loading-overlay", CeluneLoadingScreen)
+        self._loading_screen.set_startup_messages(self._startup_messages)
         self.logs = self.query_one("#logs", RichLog)
         self.input_box = self.query_one("#input", TextArea)
         self.status = self.query_one("#status", Label)
@@ -1179,22 +1180,98 @@ class CeluneUI(App):
         self.progress_bar = self.query_one("#progress", ProgressBar)
         self.header = self.query_one("#header", Label)
         self.header_lines = tuple(cast(Label, widget) for widget in self.query(".line"))
+
+        self.prepare_theme()
         self.set_focus(None)
         self._refresh_status()
-        self.refresh_vc_controls()
         self._refresh_theme_text()
         self._refresh_logs()
+        self.safe_status(string("status.initializing"))
+        self._show_loading_screen()
+        if self.celune is None and self._startup_loader is not None:
+            self.call_after_refresh(self._start_deferred_runtime)
+        elif self.celune is not None:
+            self.attach_celune(self.celune)
+
+    def _start_deferred_runtime(self) -> None:
+        """Start constructing Celune after the initial loading frame renders."""
+        self.run_worker(self._load_deferred_runtime, thread=True, exclusive=True)
+
+    def receive_startup_diagnostic(self, message: str) -> None:
+        """Display one early startup diagnostic on the loading screen.
+
+        Args:
+            message: Diagnostic emitted while the runtime is being prepared.
+        """
+        self._startup_messages.append(message)
+
+        def update() -> None:
+            if self._loading_screen is not None:
+                self._loading_screen.append_startup_message(message)
+
+        self._run_on_ui_thread(update)
+
+    def _load_deferred_runtime(self) -> None:
+        """Construct the engine and load optional UI integrations off the UI thread."""
+        if self._startup_loader is None:
+            return
+        try:
+            celune = self._startup_loader()
+            _load_ui_runtime_dependencies()
+        except Exception as exc:
+            self.call_from_thread(self._handle_deferred_runtime_error, exc)
+            return
+        self.call_from_thread(self.attach_celune, celune)
+
+    def _handle_deferred_runtime_error(self, error: Exception) -> None:
+        """Show a deferred startup failure without tearing down the UI."""
+        self.cur_state = "error"
+        message = string(
+            "ui.init_error",
+            error=format_error(error, "info"),
+        )
+        self.safe_log(message, "error")
+        self._show_loading_error(message)
+
+    def attach_celune(self, celune: Celune) -> None:
+        """Attach the constructed engine and begin its normal initialization."""
+        if threading.current_thread() is not threading.main_thread():
+            self.call_from_thread(self.attach_celune, celune)
+            return
+        if self.cur_state == "exiting":
+            celune.close()
+            return
+
+        if default_loader is None or ui_resources is None:
+            _load_ui_runtime_dependencies()
+        self.celune = celune
+        self._bind_runtime_callbacks()
+        self.prepare_theme()
+        self._wrap_runtime_fatal_glow()
+        configured_theme = os.getenv("CELUNE_THEME") or self.celune.config.get(
+            "theme", "dark"
+        )
+        if self.active_theme_name == "celune" and configured_theme not in {
+            "dark",
+            "light",
+        }:
+            self.safe_log(string("ui.invalid_theme_defaulting_dark"), "warning")
+        self._refresh_theme_text()
+        self.refresh_vc_controls()
         if not self.celune.backend.is_fake or "pytest" in sys.modules:
             self._enable_runtime_log_capture()
-        ui_resources.prime_usage()
-        self.set_interval(FOOTER_ROTATE_SECONDS, self.advance_resources)
-        self._status_marquee_timer = self.set_interval(
-            0.18, self._advance_status_marquee
-        )
-
-        self.call_after_refresh(self.start_background_init)
-        self.safe_status(string("status.initializing"))
+        resources = ui_resources
+        if resources is None:
+            return
+        resources.prime_usage()
+        if not self._runtime_intervals_started:
+            self.set_interval(FOOTER_ROTATE_SECONDS, self.advance_resources)
+            self._status_marquee_timer = self.set_interval(
+                0.18, self._advance_status_marquee
+            )
+            self._runtime_intervals_started = True
         self.update_resources()
+        self.call_after_refresh(self.start_background_init)
 
     def _check_launcher_loss(self) -> None:
         """Run the normal UI shutdown path after the launcher disconnects."""
@@ -1203,11 +1280,14 @@ class CeluneUI(App):
 
     def update_resources(self) -> None:
         """Refresh the currently selected resource footer page."""
-        if self.cur_state == "exiting" or self.resources is None:
+        if self.cur_state == "exiting" or self.resources is None or self.celune is None:
+            return
+        resources = ui_resources
+        if resources is None:
             return
 
         def update() -> None:
-            pages = ui_resources.resource_pages(self.celune, self.active_theme_name)
+            pages = resources.resource_pages(self.celune, self.active_theme_name)
             text = pages[self._resource_page % len(pages)]
 
             self.resources.update(indent(text, spaces=2, direction="right"))
@@ -1518,9 +1598,12 @@ class CeluneUI(App):
         """Advance the resource footer to the next page and refresh it."""
         if self.cur_state == "exiting" or self.resources is None:
             return
+        resources = ui_resources
+        if resources is None or self.celune is None:
+            return
 
         self._resource_page = (self._resource_page + 1) % len(
-            ui_resources.resource_pages(self.celune, self.active_theme_name)
+            resources.resource_pages(self.celune, self.active_theme_name)
         )
         self.update_resources()
 
@@ -1591,12 +1674,18 @@ class CeluneUI(App):
         self.load_tts()
 
     def _show_loading_screen(self) -> None:
-        """Push the startup screen above the main UI exactly once."""
-        if self._loading_screen is not None:
+        """Reveal the startup overlay already mounted above the main UI."""
+        if self._loading_screen is None:
             return
-
-        self._loading_screen = CeluneLoadingScreen()
-        self.push_screen(self._loading_screen)
+        try:
+            main_container = self.query_one("#container", Vertical)
+        except (NoMatches, ScreenStackError):
+            main_container = None
+        if main_container is not None:
+            main_container.styles.opacity = 0.0
+            main_container.display = False
+        self._loading_screen.styles.opacity = 1.0
+        self._loading_screen.display = True
 
     def _update_loading_log(self, message: str) -> None:
         """Forward one useful startup log line to the loading screen.
@@ -1624,23 +1713,49 @@ class CeluneUI(App):
         """Fade out and remove the startup screen after successful loading."""
 
         def dismiss() -> None:
-            screen = self._loading_screen
-            if screen is None:
+            overlay = self._loading_screen
+            if overlay is None:
                 return
+            main_container: Optional[Vertical] = None
 
-            def pop_screen() -> None:
-                if self._loading_screen is not screen:
+            def reveal_main_ui() -> None:
+                nonlocal main_container
+                if self._loading_screen is not overlay:
                     return
-                self._loading_screen = None
-                with contextlib.suppress(ScreenStackError):
-                    self.pop_screen()
+                try:
+                    main_container = self.query_one("#container", Vertical)
+                except (NoMatches, ScreenStackError):
+                    self.call_after_refresh(fade_overlay)
+                    return
+                main_container.styles.opacity = 0.0
+                main_container.display = True
+                main_container.refresh(layout=True, repaint=True)
+                self.refresh(layout=True, repaint=True)
+                self.call_after_refresh(fade_overlay)
 
-            self._animate_opacity(
-                screen,
-                0.0,
-                on_complete=pop_screen,
-                duration=_LOADING_FADE_SECONDS,
-            )
+            def show_main_ui() -> None:
+                if self._loading_screen is not overlay:
+                    return
+                overlay.display = False
+                if main_container is not None:
+                    self._animate_opacity(
+                        main_container,
+                        1.0,
+                        duration=_MAIN_UI_FADE_SECONDS,
+                    )
+
+            def fade_overlay() -> None:
+                if self._loading_screen is not overlay:
+                    return
+                overlay.animate(
+                    "opacity",
+                    0.0,
+                    duration=_LOADING_FADE_SECONDS,
+                    easing="out_cubic",
+                    on_complete=show_main_ui,
+                )
+
+            self.call_after_refresh(reveal_main_ui)
 
         self._run_on_ui_thread(dismiss)
 
@@ -2690,6 +2805,7 @@ class CeluneUI(App):
 
     def _start_persona_recording(self) -> bool:
         """Start push-to-talk microphone capture for the active Persona."""
+        _load_ui_runtime_dependencies()
         if (
             self.celune is None
             or self._is_voice_conversion_mode()
@@ -3046,6 +3162,7 @@ class CeluneUI(App):
     @staticmethod
     def _vc_input_has_voice(audio: npt.NDArray[np.float32]) -> bool:
         """Return whether one microphone callback likely contains voice activity."""
+        _load_ui_runtime_dependencies()
         return vc_input_has_voice(audio)
 
     @staticmethod
@@ -3053,6 +3170,7 @@ class CeluneUI(App):
         audio: npt.NDArray[np.float32],
     ) -> npt.NDArray[np.float32]:
         """Normalize one VC overlap chunk into valid mono or stereo time-first audio."""
+        _load_ui_runtime_dependencies()
         normalized = np.asarray(audio, dtype=np.float32)
         if normalized.ndim == 1:
             return normalized
@@ -3074,6 +3192,7 @@ class CeluneUI(App):
         current_head: npt.NDArray[np.float32],
     ) -> npt.NDArray[np.float32]:
         """Crossfade two same-rate VC overlap regions into one seamless bridge."""
+        _load_ui_runtime_dependencies()
         overlap_frames = min(len(previous_tail), len(current_head))
         if overlap_frames <= 0:
             return np.zeros((0, 2), dtype=np.float32)
@@ -3299,6 +3418,7 @@ class CeluneUI(App):
 
     def _start_vc_recording(self) -> bool:
         """Start recording from the active system input device for VC."""
+        _load_ui_runtime_dependencies()
         if self.celune is None or not self._is_voice_conversion_mode():
             return False
         if (
@@ -4251,8 +4371,7 @@ class CeluneUI(App):
 
     def _graceful_exit(self) -> None:
         """Exit from Celune gracefully."""
-        # while Python cleanup would tear down the core, we'd rather explicitly tell Celune to shut down
-        # before we tell Textual to exit its main loop
+        # Shut down the core before leaving Textual's main loop.
         self.cur_state = "exiting"
         self._shutdown_runtime()
         self.exit()

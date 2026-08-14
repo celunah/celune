@@ -18,6 +18,7 @@ from unittest import TestCase, mock
 import numpy as np
 from textual import events
 from textual.app import App
+from textual.containers import Vertical
 from textual.widgets import Button, Label, ProgressBar, RichLog, Static, TextArea
 
 from celune import colors, runtime
@@ -42,6 +43,30 @@ from tests.support import FakeBackend, FakeVCBackend
 
 class RuntimeTests(TestCase):
     """Tests for runtime environment checks."""
+
+    def test_entrypoint_runtime_loader_keeps_heavy_imports_deferred(self) -> None:
+        """Verify the pre-UI entrypoint import path stays torch-free."""
+        project_root = Path(__file__).resolve().parents[1]
+        check = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; "
+                    "from celune import entrypoint; "
+                    "entrypoint._load_runtime(); "
+                    "assert 'torch' not in sys.modules; "
+                    "assert 'celune.celune' not in sys.modules; "
+                    "assert 'celune.ui.app' not in sys.modules"
+                ),
+            ],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(check.returncode, 0, check.stderr)
 
     def test_terminal_title_formats_and_sanitizes_status(self) -> None:
         """Verify structured terminal titles remove control characters."""
@@ -620,8 +645,33 @@ class UIStartupTests(TestCase):
         self.assertEqual(screen._latest_log_message, "Backend initialized")
         self.assertEqual(screen._error_message, "Backend failed")
 
+    def test_main_ui_selects_celune_theme_before_rendering_without_engine(self) -> None:
+        """Verify the single UI app has its theme before the engine is attached."""
+        ui = CeluneUI()
+        ui.prepare_theme()
+
+        self.assertIsNone(ui.celune)
+        self.assertEqual(ui.theme, "celune")
+        self.assertEqual(ui.current_theme.name, "celune")
+        self.assertEqual(
+            ui.theme_variables["background"].lower(), colors.THEME.background
+        )
+
+    def test_main_ui_prepares_configured_theme_before_rendering(self) -> None:
+        """Verify the main UI applies the configured theme before ``run``."""
+        ui = CeluneUI()
+        ui.celune = cast(Celune, SimpleNamespace(config={"theme": "light"}))
+
+        with mock.patch("celune.ui.app.default_loader", return_value=None):
+            ui.prepare_theme()
+
+        self.assertEqual(ui.theme, "celune_light")
+        self.assertEqual(ui.current_theme.name, "celune_light")
+
     def test_loading_screen_mounts_with_canonical_textual_css(self) -> None:
         """Verify the loading screen composes and updates in a real Textual app."""
+
+        screen = CeluneLoadingScreen()
 
         class Harness(App):
             """Minimal Textual host for the loading screen smoke test."""
@@ -629,14 +679,12 @@ class UIStartupTests(TestCase):
             CSS = ui_app.CELUNE_CSS
 
             def compose(self):
-                """Compose a root widget beneath the test screen."""
-                yield Static("root")
+                """Compose the loading overlay as the root widget."""
+                yield screen
 
         async def run_smoke_test() -> None:
             app = Harness()
-            screen = CeluneLoadingScreen()
             async with app.run_test(size=(80, 24)) as pilot:
-                await app.push_screen(screen)
                 await pilot.pause()
                 self.assertEqual(
                     str(screen.query_one("#loading-brand", Static).render()),
@@ -646,6 +694,13 @@ class UIStartupTests(TestCase):
                 self.assertEqual(
                     str(screen.query_one("#loading-log-message", Static).render()),
                     "Backend initialized",
+                )
+                screen.set_startup_messages(
+                    ["Creating terminal interface...", "Preparing the core engine..."]
+                )
+                self.assertEqual(
+                    str(screen.query_one("#loading-diagnostics", Static).render()),
+                    "Creating terminal interface...\nPreparing the core engine...",
                 )
                 self.assertEqual(
                     str(screen.query_one("#loading-spinner", Static).render()),
@@ -694,30 +749,59 @@ class UIStartupTests(TestCase):
         show_loading_screen.assert_called_once_with()
         load_tts.assert_called_once_with()
 
-    def test_dismiss_loading_screen_fades_then_pops_screen(self) -> None:
-        """Verify successful initialization removes the loading screen once."""
+    def test_dismiss_loading_screen_fades_then_hides_overlay(self) -> None:
+        """Verify successful initialization hides the overlay in place."""
         ui = CeluneUI()
         loading_screen = mock.Mock()
+        main_container = mock.Mock()
         ui._loading_screen = loading_screen
 
         def finish_fade(*_args, on_complete=None, **_kwargs) -> None:
             if on_complete is not None:
                 on_complete()
 
+        def run_after_refresh(callback) -> None:
+            callback()
+
         with (
-            mock.patch.object(ui, "_animate_opacity", side_effect=finish_fade) as fade,
-            mock.patch.object(ui, "pop_screen") as pop_screen,
+            mock.patch.object(
+                loading_screen,
+                "animate",
+                side_effect=finish_fade,
+            ) as fade,
+            mock.patch.object(
+                ui,
+                "_animate_opacity",
+                side_effect=finish_fade,
+            ) as main_fade,
+            mock.patch.object(
+                ui,
+                "query_one",
+                return_value=main_container,
+            ),
+            mock.patch.object(
+                ui,
+                "call_after_refresh",
+                side_effect=run_after_refresh,
+            ),
         ):
             ui._dismiss_loading_screen()
 
-        self.assertIsNone(ui._loading_screen)
+        assert not loading_screen.display
+        main_container.refresh.assert_called_once_with(layout=True, repaint=True)
         fade.assert_called_once_with(
-            loading_screen,
+            "opacity",
             0.0,
             on_complete=mock.ANY,
             duration=ui_app._LOADING_FADE_SECONDS,
+            easing="out_cubic",
         )
-        pop_screen.assert_called_once_with()
+        main_fade.assert_called_once_with(
+            main_container,
+            1.0,
+            duration=ui_app._MAIN_UI_FADE_SECONDS,
+        )
+        assert loading_screen.display is False
 
     def test_tts_log_preserves_backend_log_level_filtering(self) -> None:
         """Verify isolated backend debug logs stay hidden at the info level."""
@@ -844,19 +928,11 @@ class UIStartupTests(TestCase):
         self.assertEqual(CeluneUI._vc_input_has_voice(quiet_audio), False)
         self.assertEqual(CeluneUI._vc_input_has_voice(voiced_audio), True)
 
-    def test_textual_ui_requires_attached_celune_on_mount(self) -> None:
-        """Verify the Textual UI fails clearly without an attached Celune."""
-        ui = CeluneUI()
-        with self.assertRaisesRegex(
-            RuntimeError,
-            f"CeluneUI requires an instance of {APP_NAME} to be set",
-        ):
-            ui.on_mount()
-
-    def test_textual_ui_mount_enables_stdio_redirects_before_runtime_load(self) -> None:
-        """Verify mount captures startup stdio before Celune begins loading."""
+    def test_textual_ui_can_mount_before_engine_attachment(self) -> None:
+        """Verify the loading frame can mount while the engine is still absent."""
         ui = CeluneUI()
         fake_widgets = {
+            "#container": Vertical(),
             "#logs": RichLog(),
             "#input": TextArea(),
             "#status": Label(),
@@ -867,6 +943,92 @@ class UIStartupTests(TestCase):
             "#vc-pitch": Button(),
             "#progress": SimpleNamespace(update=lambda **_: None),
             "#header": Label(),
+            "#loading-overlay": CeluneLoadingScreen(),
+        }
+        with (
+            mock.patch("celune.ui.app.colors.configure_theme"),
+            mock.patch.object(
+                ui,
+                "query_one",
+                side_effect=lambda selector, *_args: fake_widgets[selector],
+            ),
+            mock.patch.object(ui, "query", return_value=[]),
+            mock.patch.object(ui, "set_interval"),
+            mock.patch.object(ui, "set_focus"),
+            mock.patch.object(ui, "call_after_refresh") as call_after_refresh,
+            mock.patch.object(ui, "safe_status"),
+            mock.patch.object(ui, "_refresh_status"),
+            mock.patch.object(ui, "_refresh_theme_text"),
+            mock.patch.object(ui, "_refresh_logs"),
+        ):
+            ui.on_mount()
+
+        self.assertIsNone(ui.celune)
+        self.assertIsNotNone(ui._loading_screen)
+        if ui._loading_screen is not None:
+            self.assertTrue(ui._loading_screen.display)
+        call_after_refresh.assert_not_called()
+
+    def test_attach_celune_starts_runtime_after_loading_frame(self) -> None:
+        """Verify engine attachment schedules normal loading in the same app."""
+        ui = CeluneUI()
+        fake_celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={},
+                backend=SimpleNamespace(is_fake=True),
+                log_callback=None,
+                status_callback=None,
+                error_callback=None,
+                idle_callback=None,
+                queue_avail_callback=None,
+                voice_changed_callback=None,
+                change_input_state_callback=None,
+                change_voice_lock_state_callback=None,
+                progress_callback=None,
+                caption_callback=None,
+                caption_timing_callback=None,
+                close=lambda: None,
+                glow=SimpleNamespace(fatal=lambda: None),
+            ),
+        )
+        ui._loading_screen = mock.Mock()
+        ui._loading_screen.display = True
+        ui._runtime_intervals_started = True
+
+        with (
+            mock.patch("celune.ui.app.default_loader", return_value=None),
+            mock.patch("celune.ui.app.ui_resources") as resources,
+            mock.patch.object(ui, "_enable_runtime_log_capture"),
+            mock.patch.object(ui, "refresh_vc_controls"),
+            mock.patch.object(ui, "update_resources"),
+            mock.patch.object(ui, "start_background_init") as start_init,
+            mock.patch.object(ui, "_refresh_theme_text"),
+            mock.patch.object(ui, "call_after_refresh") as call_after_refresh,
+        ):
+            ui.attach_celune(fake_celune)
+
+        self.assertIs(ui.celune, fake_celune)
+        self.assertEqual(fake_celune.log_callback, ui.tts_log)
+        resources.prime_usage.assert_called_once_with()
+        call_after_refresh.assert_called_once_with(start_init)
+
+    def test_textual_ui_mount_enables_stdio_redirects_before_runtime_load(self) -> None:
+        """Verify mount captures startup stdio before Celune begins loading."""
+        ui = CeluneUI()
+        fake_widgets = {
+            "#container": Vertical(),
+            "#logs": RichLog(),
+            "#input": TextArea(),
+            "#status": Label(),
+            "#resources": Label(),
+            "#caption": Label(),
+            "#style": Button(),
+            "#vc-mode": Button(),
+            "#vc-pitch": Button(),
+            "#progress": SimpleNamespace(update=lambda **_: None),
+            "#header": Label(),
+            "#loading-overlay": CeluneLoadingScreen(),
         }
         ui.celune = cast(
             Celune,
@@ -915,6 +1077,7 @@ class UIStartupTests(TestCase):
         """Verify an attached runtime adopts the Textual UI callbacks on mount."""
         ui = CeluneUI()
         fake_widgets = {
+            "#container": Vertical(),
             "#logs": RichLog(),
             "#input": TextArea(),
             "#status": Label(),
@@ -925,6 +1088,7 @@ class UIStartupTests(TestCase):
             "#vc-pitch": Button(),
             "#progress": SimpleNamespace(update=lambda **_: None),
             "#header": Label(),
+            "#loading-overlay": CeluneLoadingScreen(),
         }
         ui.celune = cast(
             Celune,

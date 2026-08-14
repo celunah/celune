@@ -254,6 +254,7 @@
     "cli.startup_preparing_core": "Preparing the core engine...",
     "cli.startup_preparing_headless": "Preparing headless mode...",
     "cli.startup_runtime_ready": "Runtime modules loaded.",
+    "cli.startup_runtime_failed": "Celune could not load its runtime.",
     "cli.start_usage": "Usage: {program} {command}",
     "cli.suppress_message_run_with": "To suppress this message, run {app_name} with:",
     "cli.too_many_arguments": "Too many arguments.",

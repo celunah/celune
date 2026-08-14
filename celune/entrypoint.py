@@ -16,7 +16,7 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Optional
+from typing import Callable, Optional
 
 from celune import REVISION, __tagline__, __version__
 from celune.constants import APP_NAME, APP_SLUG, ExitCodes
@@ -48,6 +48,8 @@ SCRIPT_NAME = "main.py"
 EXIT_CODES = ExitCodes
 _RUNTIME: Optional[SimpleNamespace] = None
 _FORCE_STARTUP_DIAGNOSTICS = False
+_STARTUP_DIAGNOSTICS: list[str] = []
+_STARTUP_DIAGNOSTIC_SINK: Optional[Callable[[str], None]] = None
 _CELUNE_PROCESS_NAMES = frozenset(
     {"celune", "celune-bin", "celune-bin.exe", "celune.appimage", "celune.exe"}
 )
@@ -72,11 +74,25 @@ def _startup_diagnostics_enabled(force: bool = False) -> bool:
 
 
 def _print_startup_diagnostic(message: str, force: bool = False) -> None:
-    """Print one early-startup diagnostic line before Textual takes over."""
+    """Queue or forward one early-startup diagnostic line.
+
+    Args:
+        message: Diagnostic text to display during startup.
+        force: Whether to include the diagnostic regardless of log level.
+    """
     if not _startup_diagnostics_enabled(force=force):
         return
 
-    print(string("cli.startup_diagnostic_prefix", message=message), flush=True)
+    _STARTUP_DIAGNOSTICS.append(message)
+    if _STARTUP_DIAGNOSTIC_SINK is not None:
+        _STARTUP_DIAGNOSTIC_SINK(message)
+
+
+def _flush_startup_diagnostics() -> None:
+    """Print queued startup diagnostics for non-interactive startup paths."""
+    for message in _STARTUP_DIAGNOSTICS:
+        print(string("cli.startup_diagnostic_prefix", message=message), flush=True)
+    _STARTUP_DIAGNOSTICS.clear()
 
 
 def normalize_argv0(argv: Optional[list[str]] = None) -> list[str]:
@@ -124,7 +140,7 @@ def _print_dependency_setup_help(package_name: str) -> None:
 
 
 def _load_runtime() -> SimpleNamespace:
-    """Import runtime-heavy modules only when a startup path needs them."""
+    """Import lightweight CLI helpers without importing the engine or UI."""
     global _RUNTIME
     if _RUNTIME is not None:
         return _RUNTIME
@@ -137,7 +153,6 @@ def _load_runtime() -> SimpleNamespace:
         import psutil
         import yaml
 
-        from celune.celune import Celune
         from celune.config import (
             config_bool,
             config_value,
@@ -151,13 +166,7 @@ def _load_runtime() -> SimpleNamespace:
             default_config_path,
             ensure_config_path,
         )
-        from celune.ui import (
-            CeluneHeadlessBaseUI,
-            CeluneHeadlessUI,
-            CeluneTextualUI,
-            CeluneUI,
-            SelectMenu,
-        )
+        from celune.ui import SelectMenu
         from celune.updater import check_for_update, update_to_latest
         from celune.utils import detected_ide, indent, supports_ansi, title_case
     except ModuleNotFoundError as package:
@@ -181,16 +190,11 @@ def _load_runtime() -> SimpleNamespace:
         __version__=__version__,
         REVISION=REVISION,
         __tagline__=__tagline__,
-        Celune=Celune,
         No=No,
         UpdateError=UpdateError,
         has_name_day=has_name_day,
         check_for_update=check_for_update,
         update_to_latest=update_to_latest,
-        CeluneUI=CeluneUI,
-        CeluneHeadlessUI=CeluneHeadlessUI,
-        CeluneHeadlessBaseUI=CeluneHeadlessBaseUI,
-        CeluneTextualUI=CeluneTextualUI,
         SelectMenu=SelectMenu,
         config_bool=config_bool,
         config_value=config_value,
@@ -207,6 +211,43 @@ def _load_runtime() -> SimpleNamespace:
     )
     _print_startup_diagnostic(string("cli.startup_runtime_ready"))
     return _RUNTIME
+
+
+def _load_core_runtime() -> SimpleNamespace:
+    """Import the engine and full UI runtime when it is needed."""
+    runtime = _load_runtime()
+    if hasattr(runtime, "Celune"):
+        return runtime
+
+    try:
+        from celune.celune import Celune
+        from celune.ui import (
+            CeluneHeadlessBaseUI,
+            CeluneHeadlessUI,
+            CeluneTextualUI,
+            CeluneUI,
+        )
+    except ModuleNotFoundError as package:
+        if package.name is not None:
+            _print_dependency_setup_help(package.name)
+
+        if INITIAL_LOG_LEVEL != "info":
+            with contextlib.suppress(ModuleNotFoundError):
+                from rich.traceback import install
+
+                install()
+
+            raise
+
+        sys.exit(EXIT_CODES.EXIT_MISSING_DEPENDENCIES.value)
+
+    runtime.Celune = Celune
+    runtime.CeluneUI = CeluneUI
+    runtime.CeluneHeadlessUI = CeluneHeadlessUI
+    runtime.CeluneHeadlessBaseUI = CeluneHeadlessBaseUI
+    runtime.CeluneTextualUI = CeluneTextualUI
+    _print_startup_diagnostic(string("cli.startup_runtime_ready"))
+    return runtime
 
 
 @dataclass
@@ -1069,6 +1110,7 @@ def start(
         Exception: Re-raised after printing a traceback in developer mode.
     """
     global _FORCE_STARTUP_DIAGNOSTICS
+    global _STARTUP_DIAGNOSTIC_SINK
 
     _FORCE_STARTUP_DIAGNOSTICS = log_level not in {None, "info"}
     _print_startup_diagnostic(string("cli.startup_begin", app_name=APP_NAME))
@@ -1078,13 +1120,19 @@ def start(
     try:
         migrate_legacy_app_data()
         if testing:
+            runtime = _load_core_runtime()
             _print_startup_diagnostic(string("cli.startup_creating_ui"))
-            ui = runtime.CeluneUI()
+            _print_startup_diagnostic(string("cli.startup_handing_off_ui"))
+            ui = runtime.CeluneUI(startup_messages=_STARTUP_DIAGNOSTICS)
+            _STARTUP_DIAGNOSTIC_SINK = ui.receive_startup_diagnostic
             _print_startup_diagnostic(string("cli.startup_preparing_core"))
             celune = runtime.Celune(config={}, backend=_load_ui_test_backend())
             ui.celune = celune
-            _print_startup_diagnostic(string("cli.startup_handing_off_ui"))
-            ui.run()
+            ui.prepare_theme()
+            try:
+                ui.run()
+            finally:
+                _STARTUP_DIAGNOSTIC_SINK = None
             sys.exit(EXIT_CODES.EXIT_SUCCESS.value)
         if runtime.supports_ansi():
             set_terminal_title(
@@ -1230,30 +1278,42 @@ def start(
             _close_existing_celune_processes(runtime)
 
         if not headless and runtime.supports_ansi():
+            from celune.ui import CeluneUI
+
+            def prepare_interactive_runtime():
+                """Construct the engine inside the already-mounted UI worker."""
+                runtime = _load_core_runtime()
+                _print_startup_diagnostic(string("cli.startup_preparing_core"))
+                return runtime.Celune(
+                    tts_backend=backend,
+                    log_callback=ui.tts_log,
+                    status_callback=ui.safe_status,
+                    error_callback=ui.error,
+                    idle_callback=ui.tts_idle,
+                    queue_avail_callback=ui.tts_queue_avail,
+                    voice_changed_callback=ui.tts_voice_changed,
+                    change_input_state_callback=ui.change_input_state,
+                    change_voice_lock_state_callback=ui.change_voice_lock_state,
+                    progress_callback=ui.safe_progress,
+                    caption_progress_callback=ui.safe_caption_progress,
+                    caption_callback=ui.tts_caption,
+                    caption_timing_callback=ui.tts_caption_timing,
+                    log_level=active_log_level,
+                    config=config,
+                )
+
             _print_startup_diagnostic(string("cli.startup_creating_ui"))
-            ui = runtime.CeluneUI()
-            _print_startup_diagnostic(string("cli.startup_preparing_core"))
-            celune = runtime.Celune(
-                tts_backend=backend,
-                log_callback=ui.tts_log,
-                status_callback=ui.safe_status,
-                error_callback=ui.error,
-                idle_callback=ui.tts_idle,
-                queue_avail_callback=ui.tts_queue_avail,
-                voice_changed_callback=ui.tts_voice_changed,
-                change_input_state_callback=ui.change_input_state,
-                change_voice_lock_state_callback=ui.change_voice_lock_state,
-                progress_callback=ui.safe_progress,
-                caption_progress_callback=ui.safe_caption_progress,
-                caption_callback=ui.tts_caption,
-                caption_timing_callback=ui.tts_caption_timing,
-                log_level=active_log_level,
-                config=config,
+            ui = CeluneUI(
+                startup_loader=prepare_interactive_runtime,
+                startup_messages=_STARTUP_DIAGNOSTICS,
             )
-            ui.celune = celune
-            _print_startup_diagnostic(string("cli.startup_handing_off_ui"))
-            ui.run()
+            _STARTUP_DIAGNOSTIC_SINK = ui.receive_startup_diagnostic
+            try:
+                ui.run()
+            finally:
+                _STARTUP_DIAGNOSTIC_SINK = None
         elif headless:
+            runtime = _load_core_runtime()
             _print_startup_diagnostic(string("cli.startup_preparing_headless"))
             ui_headless = runtime.CeluneHeadlessUI(config)
             _print_startup_diagnostic(string("cli.startup_preparing_core"))
@@ -1265,6 +1325,7 @@ def start(
                 config=config,
             )
             ui_headless.celune = celune
+            _flush_startup_diagnostics()
 
             if not celune.load():
                 print(string("cli.could_not_initialize", app_name=APP_NAME))
@@ -1276,6 +1337,7 @@ def start(
             print(string("cli.headless_extensions_only", app_name=APP_NAME))
             ui_headless.run()
         else:
+            _flush_startup_diagnostics()
             print(string("cli.no_ansi"))
             print(string("cli.cannot_start_normal_mode", app_name=APP_NAME))
             print(string("cli.hint"))
