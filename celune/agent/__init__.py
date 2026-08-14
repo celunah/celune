@@ -21,6 +21,13 @@ from ..typing.agent import (
 )
 from ..modes import mode_allows_agents, resolve_operation_mode
 from ..typing.common import JSONSerializable
+from .needle import (
+    NEEDLE_MODEL_ID,
+    NeedleHandler,
+    NeedleTokenizer,
+    convert_needle_safetensors,
+)
+from .needle_model import NeedleConfig, NeedleModel
 from .runtime import AgentRuntime
 
 
@@ -39,6 +46,11 @@ __all__ = [
     "AgentRuntime",
     "AgentSession",
     "AgentTool",
+    "NEEDLE_MODEL_ID",
+    "NeedleConfig",
+    "NeedleHandler",
+    "NeedleModel",
+    "NeedleTokenizer",
     "ToolCall",
     "ToolResult",
     "NeedleToolCall",
@@ -48,4 +60,5 @@ __all__ = [
     "NeedleToolParameterSpec",
     "NeedleToolSelection",
     "agent_mode_enabled",
+    "convert_needle_safetensors",
 ]
