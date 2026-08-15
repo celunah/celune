@@ -435,6 +435,9 @@ class CeluneUI(App):
         self,
         startup_loader: Optional[Callable[[], Celune]] = None,
         startup_messages: Optional[list[str]] = None,
+        test_completion_callback: Optional[
+            Callable[[Celune, bool, Optional[str]], None]
+        ] = None,
     ) -> None:
         super().__init__()
 
@@ -470,6 +473,7 @@ class CeluneUI(App):
         self._loading_screen: Optional[CeluneLoadingScreen] = None
         self._startup_loader = startup_loader
         self._startup_messages = list(startup_messages or [])
+        self._test_completion_callback = test_completion_callback
         self._runtime_intervals_started = False
         self._windows_signal_handler: Optional[Callable[[int], bool]] = None
 
@@ -951,6 +955,23 @@ class CeluneUI(App):
 
         backend = getattr(self.celune, "backend", None)
         return bool(getattr(backend, "is_fake", False)) and "pytest" not in sys.modules
+
+    def _finish_test_startup(
+        self,
+        success: bool,
+        detail: Optional[str] = None,
+    ) -> None:
+        """Report explicit test-mode startup completion once to the runner."""
+        callback = self._test_completion_callback
+        if callback is None or self.celune is None:
+            return
+        try:
+            callback(self.celune, success, detail)
+        except Exception as exc:
+            self.safe_log(
+                string("test.callback_failed", error=format_error(exc, "info")),
+                "error",
+            )
 
     def _refresh_status(self) -> None:
         """Refresh the status color for the active theme."""
@@ -1788,6 +1809,7 @@ class CeluneUI(App):
                         self.change_voice_lock_state(locked=True)
                         self.safe_status(string("ui.test_mode_active"))
                         self._dismiss_loading_screen()
+                        self._finish_test_startup(True)
                         return
 
                     self.change_input_state(locked=True)
@@ -1824,6 +1846,10 @@ class CeluneUI(App):
                 self._show_loading_error(
                     string("ui.app_could_not_start", app_name=APP_NAME)
                 )
+                self._finish_test_startup(
+                    False,
+                    string("ui.app_could_not_start", app_name=APP_NAME),
+                )
         except Exception as e:
             self.cur_state = "error"
             error_message = string(
@@ -1836,6 +1862,7 @@ class CeluneUI(App):
             self.change_input_state(locked=True)
             self.change_voice_lock_state(locked=True)
             self.error(string("ui.app_could_not_start", app_name=APP_NAME))
+            self._finish_test_startup(False, str(e))
 
     @staticmethod
     def _caption_word_timing_ranges(
@@ -3932,6 +3959,18 @@ class CeluneUI(App):
         if not text:
             return False
 
+        celune = self.celune
+        if celune is None:
+            return False
+
+        if getattr(celune, "test_finished", False):
+            self._suppress_input_change = True
+            try:
+                self.input_box.load_text("")
+            finally:
+                self._suppress_input_change = False
+            return True
+
         if self._is_ui_test_mode():
             self._suppress_input_change = True
             try:
@@ -3941,13 +3980,13 @@ class CeluneUI(App):
             self.safe_status(string("ui.test_mode_active"))
             return True
 
-        if self.celune.cur_state == "waking":
+        if celune.cur_state == "waking":
             self._cancel_sleep_timer()
             self.safe_status(string("status.waking_up"))
             self.change_input_state(locked=True)
             return True
 
-        if self.celune.sleeping:
+        if celune.sleeping:
             self._cancel_sleep_timer()
             self.safe_status(string("status.waking_up"))
             self._suppress_input_change = True
@@ -3977,10 +4016,10 @@ class CeluneUI(App):
             self.process_command(command, command_args)
             return True
 
-        if persona_talkback_enabled(self.celune.config):
-            handled = self.celune.think(text)
+        if persona_talkback_enabled(celune.config):
+            handled = celune.think(text)
         else:
-            if self.celune.config.get("ipa") is False:
+            if celune.config.get("ipa") is False:
                 ipa_decoded, unmatched = replace_ipa(text, strict=True)
                 if unmatched > 0:
                     self.safe_log(
@@ -3988,9 +4027,9 @@ class CeluneUI(App):
                         "warning",
                         loglevel="verbose",
                     )
-                handled = self.celune.say(ipa_decoded, display_text=text)
+                handled = celune.say(ipa_decoded, display_text=text)
             else:
-                handled = self.celune.say(text)
+                handled = celune.say(text)
 
         if not handled:
             return False
@@ -4214,19 +4253,23 @@ class CeluneUI(App):
         if self.cur_state == "exiting":
             return
 
-        if self.celune.is_in_tutorial:
+        celune = self.celune
+        if celune is None or getattr(celune, "test_finished", False):
+            return
+
+        if celune.is_in_tutorial:
             return
 
         if event.button == self.vc_mode_button:
             if self._is_voice_conversion_mode():
                 self.set_vc_f0_condition(
-                    not bool(getattr(self.celune, "vc_f0_condition", False))
+                    not bool(getattr(celune, "vc_f0_condition", False))
                 )
             return
 
         if event.button == self.vc_pitch_button:
             if self._is_voice_conversion_mode():
-                current_value = int(getattr(self.celune, "vc_pitch_shift", 0))
+                current_value = int(getattr(celune, "vc_pitch_shift", 0))
                 next_value = current_value + 1
                 if next_value > VC_PITCH_SHIFT_MAX:
                     next_value = VC_PITCH_SHIFT_MIN
@@ -4236,12 +4279,12 @@ class CeluneUI(App):
         if event.button != self.style_button:
             return
 
-        if len(self.celune.voices) == 0 or not self.celune_styles:
+        if len(celune.voices) == 0 or not self.celune_styles:
             self.safe_log(string("ui.no_voices_loaded"), "warning")
             self.change_voice_lock_state(locked=True)
             return
 
-        if not self.celune_ready and not self.celune.backend.is_fake:
+        if not self.celune_ready and not celune.backend.is_fake:
             self.safe_log(string("ui.core_engine_not_loaded"), "warning")
             self.change_voice_lock_state(locked=True)
             return
@@ -4249,7 +4292,7 @@ class CeluneUI(App):
         self.style_index = (self.style_index + 1) % len(self.celune_styles)
         next_voice = self.celune_styles[self.style_index]
         threading.Thread(
-            target=self.celune.set_voice,
+            target=celune.set_voice,
             args=(next_voice,),
             daemon=True,
         ).start()
@@ -4270,29 +4313,36 @@ class CeluneUI(App):
     def tts_idle(self) -> None:
         """Reset UI state after Celune stops talking."""
         self._hide_caption_widgets()
+        celune = self.celune
+        if celune is None:
+            return
+        if getattr(celune, "test_finished", False):
+            self.change_input_state(locked=True)
+            self.change_voice_lock_state(locked=True)
+            return
         if self.cur_state in {"exiting", "error"} or not self.celune_ready:
             if self.input_box is not None:
                 self.input_box.placeholder = string("ui.wait_placeholder")
             if self.style_button is not None:
                 self.style_button.disabled = True
             return
-        if self.celune.cur_state in {"reloading", "waking"}:
+        if celune.cur_state in {"reloading", "waking"}:
             self.change_input_state(locked=True)
             self.change_voice_lock_state(locked=True)
-            if self.celune.cur_state == "waking":
+            if celune.cur_state == "waking":
                 self.safe_status(string("status.waking_up"))
             return
-        self.celune.locked = False
-        if self.celune.sleeping:
+        celune.locked = False
+        if celune.sleeping:
             self.safe_status(string("status.sleeping"), "sleeping")
             return
-        self.celune.cur_state = "idle"
-        if self.celune.is_in_tutorial:
+        celune.cur_state = "idle"
+        if celune.is_in_tutorial:
             self.input_box.placeholder = string("ui.tutorial_placeholder")
             self.style_button.disabled = True
         else:
             self.change_input_state(locked=False)
-            self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
+            self.change_voice_lock_state(locked=len(celune.voices) < 2)
         self.safe_status(string("status.idle"))
         self._schedule_sleep_timer()
 
@@ -4300,17 +4350,20 @@ class CeluneUI(App):
         self,
     ) -> None:  # allow enqueuing new inputs while speaking but after generation
         """Unlock input queueing after Celune completes generation."""
+        celune = self.celune
+        if celune is None or getattr(celune, "test_finished", False):
+            return
         if self.cur_state in {"exiting", "error"} or not self.celune_ready:
             return
-        self.celune.locked = False
+        celune.locked = False
         self._cancel_sleep_timer()
         self.safe_status(string("status.speaking"))
-        if self.celune.is_in_tutorial:
+        if celune.is_in_tutorial:
             self.input_box.placeholder = string("ui.tutorial_placeholder")
             self.style_button.disabled = True
         else:
             self.change_input_state(locked=False)
-            self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
+            self.change_voice_lock_state(locked=len(celune.voices) < 2)
 
     def error(self, error: str) -> None:
         """Set the UI status to the error message.

@@ -611,7 +611,9 @@ def release_pipeline(engine: Celune, playback_idle: bool = True) -> None:
         engine.locked = False
         if playback_idle:
             engine.playback_done.set()
-            if engine.cur_state != "error":
+            if engine.cur_state not in {"error", "stopped"} and not getattr(
+                engine, "test_finished", False
+            ):
                 engine.cur_state = "idle"
         engine.log(string("pipeline.lock_released"), loglevel="verbose")
         engine.log(
@@ -2334,6 +2336,8 @@ def queue_speech(
 
 def _prepare_speech_readiness(engine: Celune) -> bool:
     """Run the pre-wait checks shared by synchronous and async speech queueing."""
+    if getattr(engine, "test_finished", False):
+        return False
     if engine.is_in_tutorial:
         engine.log(string("celune.speech_input_disabled_tutorial"), "warning")
         return False
@@ -3776,7 +3780,9 @@ async def playback_worker_job(engine: Celune) -> None:
         release_pipeline(engine)
         if getattr(engine, "_active_speech_generation", None) is None:
             engine.utterance_force_stop.clear()
-        if engine.cur_state != "error":
+        if engine.cur_state not in {"error", "stopped"} and not getattr(
+            engine, "test_finished", False
+        ):
             engine.idle_callback()
 
     async def drain_pending_items() -> bool:
@@ -3830,7 +3836,9 @@ async def playback_worker_job(engine: Celune) -> None:
 
             await asyncio.to_thread(close_stream, engine, True)
             release_pipeline(engine)
-            if engine.cur_state != "error":
+            if engine.cur_state not in {"error", "stopped"} and not getattr(
+                engine, "test_finished", False
+            ):
                 engine.idle_callback()
             return
 
@@ -3881,7 +3889,9 @@ async def playback_worker_job(engine: Celune) -> None:
                 _playback_source_statuses(engine).clear()
                 _playback_source_meta(engine).clear()
                 release_pipeline(engine)
-                if engine.cur_state != "error":
+                if engine.cur_state not in {"error", "stopped"} and not getattr(
+                    engine, "test_finished", False
+                ):
                     engine.idle_callback()
                 break
 

@@ -16,8 +16,8 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Optional
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Optional
 
 from celune import REVISION, __tagline__, __version__
 from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
@@ -27,6 +27,9 @@ from celune.watchdog import launcher_loss_requested, start_watchdog
 from celune.paths import migrate_legacy_app_data, project_root, running_compiled
 from celune.terminal import set_terminal_title
 from celune.updater import apply_update_and_restart
+
+if TYPE_CHECKING:
+    from celune.celune import Celune
 
 
 def _env_flag(name: str) -> bool:
@@ -1012,6 +1015,21 @@ def handle_config(command_args: list[str], prog_name: str) -> None:
         sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
 
 
+def handle_test(command_args: list[str], prog_name: str) -> None:
+    """Dispatch the explicit Celune test command hierarchy."""
+    if not command_args:
+        print(string("test.available_modes"))
+        print(string("test.usage", program=prog_name))
+        return
+
+    if len(command_args) != 1 or command_args[0] not in {"ui", "agent"}:
+        print(string("test.available_modes"))
+        print(string("test.usage", program=prog_name))
+        sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+
+    start(testing=True, test_mode=command_args[0])
+
+
 def _close_existing_celune_processes(runtime: SimpleNamespace) -> None:
     """Prompt before terminating other Celune processes found by the launcher."""
     current_pids = {os.getpid(), os.getppid()}
@@ -1073,12 +1091,14 @@ def _close_existing_celune_processes(runtime: SimpleNamespace) -> None:
 def start(
     log_level: Optional[str] = None,
     testing: bool = False,
+    test_mode: Optional[str] = None,
 ) -> None:
     """Instantiate and start the app.
 
     Args:
         log_level: Optional startup log level override.
         testing: Whether the app should be started in UI test mode.
+        test_mode: Explicit test mode selected by the test command hierarchy.
 
     Raises:
         No: Raised on Celune's name day unless explicitly overridden.
@@ -1095,10 +1115,34 @@ def start(
     try:
         migrate_legacy_app_data()
         if testing:
+            if test_mode not in {None, "ui", "agent"}:
+                raise ValueError(f"unknown test mode: {test_mode}")
             runtime = _load_core_runtime()
             _print_startup_diagnostic(string("cli.startup_creating_ui"))
             _print_startup_diagnostic(string("cli.startup_handing_off_ui"))
-            ui = runtime.CeluneUI(startup_messages=_STARTUP_DIAGNOSTICS)
+            active_test_mode = test_mode or "ui"
+
+            def finish_test(
+                core: "Celune",
+                success: bool,
+                detail: Optional[str],
+            ) -> None:
+                """Finish the selected explicit test through the core boundary."""
+                if active_test_mode == "agent" and success:
+                    from celune.test_mode import run_agent_test
+
+                    run_agent_test(core)
+                    return
+                core.finish_test_mode(
+                    active_test_mode,
+                    success,
+                    detail=detail,
+                )
+
+            ui = runtime.CeluneUI(
+                startup_messages=_STARTUP_DIAGNOSTICS,
+                test_completion_callback=finish_test,
+            )
             _STARTUP_DIAGNOSTIC_SINK = ui.receive_startup_diagnostic
             _print_startup_diagnostic(string("cli.startup_preparing_core"))
             celune = runtime.Celune(config={}, backend=_load_ui_test_backend())
@@ -1108,7 +1152,9 @@ def start(
                 ui.run()
             finally:
                 _STARTUP_DIAGNOSTIC_SINK = None
-            sys.exit(EXIT_CODES.EXIT_SUCCESS.value)
+            if test_mode is None:
+                sys.exit(EXIT_CODES.EXIT_SUCCESS.value)
+            return
         if runtime.supports_ansi():
             set_terminal_title(
                 (
@@ -1450,6 +1496,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         start(log_level=requested_log_level, testing=testing)
     elif args[0] == "config":
         handle_config(args[1:], resolved_argv[0])
+    elif args[0] == "test":
+        handle_test(args[1:], resolved_argv[0])
     elif args[0] == "doctor":
         if len(args) > 1 and args[1] != "--fix":
             print(string("cli.invalid_argument"))
@@ -1472,6 +1520,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         print()
         print(string("cli.help_available_commands"))
         print(string("cli.help_start", app_name=APP_NAME))
+        print(string("cli.help_test"))
         print(string("cli.help_config", app_name=APP_NAME))
         print(string("cli.help_doctor", app_name=APP_NAME))
         print(string("cli.help_help"))

@@ -36,6 +36,7 @@ from ..typing.celune import (
     VoiceChangedCallback,
     VoiceLockStateCallback,
 )
+from ..typing.common import JSON
 from ..typing.common import JSONSerializable
 from .properties import ConstantPropertySpec, ForwardedPropertySpec
 
@@ -176,6 +177,8 @@ class CeluneRuntimeState:
     persona_ready: bool = False
     persona_loading: bool = False
     persona_load_thread: Optional[threading.Thread] = None
+    test_finished: bool = False
+    test_result: Optional[JSON] = None
 
 
 CELUNE_FORWARDED_PROPERTIES = (
@@ -355,6 +358,8 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("vision", "_runtime_state", "vision"),
     ForwardedPropertySpec("persona_ready", "_runtime_state", "persona_ready"),
     ForwardedPropertySpec("persona_loading", "_runtime_state", "persona_loading"),
+    ForwardedPropertySpec("test_finished", "_runtime_state", "test_finished"),
+    ForwardedPropertySpec("test_result", "_runtime_state", "test_result"),
     ForwardedPropertySpec(
         "_persona_load_thread", "_runtime_state", "persona_load_thread"
     ),

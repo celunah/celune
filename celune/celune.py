@@ -157,6 +157,7 @@ from .typing.celune import (
     VoiceLockStateCallback,
     _BundleWithPath,
 )
+from .typing.common import JSON
 from .typing.common import JSONSerializable
 from .typing.events import EventName, EventPayload
 from .typing.pipeline import SpeechStreamQueue
@@ -738,6 +739,8 @@ class Celune(CeluneStateAccessors):
         Args:
             value: The new runtime-state label to store.
         """
+        if self.test_finished and value != "stopped":
+            return
         old_state = self._runtime_state.cur_state
         self._runtime_state.cur_state = value
         if old_state == value:
@@ -754,6 +757,89 @@ class Celune(CeluneStateAccessors):
                 new_state=value,
             ),
         )
+
+    def finish_test_mode(
+        self,
+        mode: str,
+        success: bool,
+        *,
+        task_state: Optional[str] = None,
+        detail: Optional[str] = None,
+    ) -> JSON:
+        """Finish an explicit test mode and leave the engine stopped but alive.
+
+        Args:
+            mode: The selected test mode name.
+            success: Whether the controlled test completed successfully.
+            task_state: Final agent task state, when the mode created a task.
+            detail: Optional diagnostic detail retained with the final result.
+
+        Returns:
+            JSON: The synchronously recorded final test result.
+        """
+        if self.test_result is not None:
+            return self.test_result
+
+        self._runtime_state.test_finished = True
+        self.locked = True
+        cleanup_errors: list[str] = []
+        for callback in (
+            lambda: self.change_input_state_callback(locked=True),
+            lambda: self.change_voice_lock_state_callback(locked=True),
+            self.stop_live_audio,
+        ):
+            try:
+                callback()
+            except Exception as exc:
+                cleanup_errors.append(str(exc))
+        clear_queue(self.persona_queue)
+
+        active_task = self.agent_runtime.get_active_task("default")
+        if active_task is not None:
+            with contextlib.suppress(Exception):
+                self.agent_runtime.cancel_task(active_task.task_id)
+
+        try:
+            close_pipeline(self)
+        except Exception as exc:
+            cleanup_errors.append(str(exc))
+        finally:
+            persona_thread = self._persona_thread
+            if (
+                persona_thread is not None
+                and persona_thread is not threading.current_thread()
+            ):
+                with contextlib.suppress(Exception):
+                    persona_thread.join(timeout=2)
+
+        if cleanup_errors:
+            success = False
+            detail = detail or "; ".join(cleanup_errors)
+
+        result: JSON = {
+            "mode": mode,
+            "success": success,
+            "engine_state": "stopped",
+            "task_state": task_state,
+            "detail": detail,
+        }
+        self._runtime_state.test_result = result
+        try:
+            self.cur_state = "stopped"
+        except Exception:
+            self._runtime_state.cur_state = "stopped"
+        message_key = "test.finished_success" if success else "test.finished_failure"
+        with contextlib.suppress(Exception):
+            self.log(
+                string(
+                    message_key,
+                    mode=mode,
+                    task_state=task_state or "none",
+                    detail=detail or "none",
+                ),
+                "info" if success else "error",
+            )
+        return result
 
     @staticmethod
     def _noop_message(
@@ -3405,6 +3491,8 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` if Celune processed this smart request, otherwise ``False``.
         """
+        if self.test_finished:
+            return False
         if self.input_mode != "text_to_speech":
             self.log(string("celune.text_input_unavailable_vc"), "warning")
             self.error_callback(string("celune.not_possible"))
@@ -3472,6 +3560,8 @@ class Celune(CeluneStateAccessors):
         Returns:
             AgentClassificationResult: The typed route selected for the input.
         """
+        if self.test_finished:
+            raise RuntimeError("Celune test mode has finished")
         ready = self.persona_ready if persona_ready is None else persona_ready
         return self._agent_router.route(text, persona_ready=ready)
 
@@ -3618,19 +3708,22 @@ class Celune(CeluneStateAccessors):
                 "status": AgentToolExecutionStatus.FAILED,
             }
 
-    def _run_agent_route(self, route: AgentClassificationResult) -> None:
+    def _run_agent_route(self, route: AgentClassificationResult) -> bool:
         """Consume a routed task through the shared agent runtime."""
+        if self.test_finished:
+            return False
         request = route.task_request
         if request is None:
             metadata = route.routing_metadata
             task_id = metadata.get("task_id") if isinstance(metadata, dict) else None
             if not isinstance(task_id, str):
-                return
+                return False
             request = self.agent_runtime.get_task(task_id).request
         output = self.agent_runtime.run(request)
         response = output.get("response")
         if output.get("end") and isinstance(response, str) and response.strip():
-            deliver_persona_response(self, request.request, response)
+            return deliver_persona_response(self, request.request, response)
+        return False
 
     def _wait_for_persona_playback(self) -> bool:
         """Wait until the shared speech pipeline is available for the next Persona turn."""
@@ -3657,6 +3750,8 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when the text was queued successfully, otherwise ``False``.
         """
+        if self.test_finished:
+            return False
         self.log(
             f"[ENGINE] say requested text_chars={len(text)} save={save} "
             f"state={self.cur_state} mode={self.input_mode}",
@@ -3761,6 +3856,8 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when the current mode accepted the audio input.
         """
+        if self.test_finished:
+            return False
         return handle_audio_input(
             self,
             AudioInputRequest(
@@ -3859,6 +3956,8 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when playback was queued successfully, otherwise ``False``.
         """
+        if self.test_finished:
+            return False
         return play_pipeline(self, sound_path, keep=keep, volume=volume)
 
     def play_audio(
@@ -3879,6 +3978,8 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when playback was queued successfully, otherwise ``False``.
         """
+        if self.test_finished:
+            return False
         return queue_sfx_audio(self, audio, sample_rate, label, keep=keep)
 
     def close(self) -> None:

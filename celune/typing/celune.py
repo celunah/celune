@@ -12,7 +12,7 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
 from .aliases import LogLevel
-from .common import Config, JSONSerializable
+from .common import Config, JSON, JSONSerializable
 from .modes import OperationMode
 
 if TYPE_CHECKING:
@@ -314,6 +314,8 @@ class CeluneStateAccessors:
     persona_memory_store: Optional[PersonaMemoryStore]
     persona_ready: bool
     persona_loading: bool
+    test_finished: bool
+    test_result: Optional[JSON]
     _persona_load_thread: Optional[threading.Thread]
     _active_speech_generation: Optional[int]
     _webui_callbacks_wrapped: bool
