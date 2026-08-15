@@ -6,18 +6,16 @@ import inspect
 import sys
 import threading
 import traceback
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Optional, cast
 
-from ..dataclasses.events import ReadyEvent
 from ..exceptions import ExtensionAlreadyRegisteredError, InvalidExtensionError
 from ..i18n import string
 from ..typing.events import EventName, EventPayload
-from ..utils import discard, format_error
+from ..utils import format_error
 from .base import CeluneContext, CeluneExtension
 from .events import (
     EventDispatcher,
@@ -52,7 +50,6 @@ class CeluneExtensionManager:
         self._event_registrations: dict[str, list[RegisteredEventHandler]] = {}
         self._module_registrations: dict[str, _ModuleRegistration] = {}
         self._extension_modules: dict[str, str] = {}
-        self.auto_started = False
 
     def register(self, extension_cls: type[CeluneExtension]) -> CeluneExtension:
         """Register a Celune extension class.
@@ -86,7 +83,6 @@ class CeluneExtensionManager:
         self.extensions[name] = instance
         self._extension_modules[name] = extension_cls.__module__
         self._register_extension_handlers(instance)
-        self._register_legacy_autostart_handler(instance)
         self.context.log(
             string("extensions.registered", name=name),
             loglevel="verbose",
@@ -134,56 +130,6 @@ class CeluneExtensionManager:
             event: Typed payload instance to deliver.
         """
         self.dispatcher.emit(event_name, event)
-
-    def autostart_all(self) -> None:
-        """Run deprecated legacy autostart handlers."""
-        if self.auto_started:
-            self.context.log(
-                string("extensions.autostart_once"),
-                "warning",
-            )
-            return
-
-        warnings.warn(
-            string("extensions.autostart_all_deprecated"),
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        started = 0
-        for name, ext in self.extensions.items():
-            if self._uses_legacy_autostart(ext):
-                self.context.log(
-                    string("extensions.autostart_running", name=name),
-                    loglevel="verbose",
-                )
-
-                def runner(e=ext, n=name):
-                    try:
-                        e.autostart()
-                    except Exception as ex:
-                        self.context.log(
-                            string(
-                                "extensions.autostart_failed",
-                                name=n,
-                                error=(
-                                    traceback.format_exc()
-                                    if self.context.log_level != "info"
-                                    else ex
-                                ),
-                            ),
-                            "warning",
-                        )
-
-                started += 1
-                threading.Thread(target=runner, daemon=True).start()
-
-        if not started:
-            self.context.log(
-                string("extensions.no_autostart"),
-                loglevel="verbose",
-            )
-        else:
-            self.auto_started = True
 
     def invoke(self, name: str, *args, **kwargs) -> None:
         """Manually invoke a Celune extension.
@@ -355,49 +301,6 @@ class CeluneExtensionManager:
 
         if handlers:
             self._event_registrations[extension.name] = handlers
-
-    def _register_legacy_autostart_handler(self, extension: CeluneExtension) -> None:
-        """Bridge deprecated ``autostart()`` handlers onto the ``ready`` event."""
-        if not self._uses_legacy_autostart(extension):
-            return
-
-        warnings.warn(
-            string("extensions.autostart_deprecated"),
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        def legacy_ready_callback(
-            event: ReadyEvent, ext: CeluneExtension = extension
-        ) -> None:
-            discard(event)
-
-            def runner() -> None:
-                try:
-                    ext.autostart()
-                except Exception as ex:
-                    self.context.log(
-                        f"[Core] Could not autostart {ext.name}: "
-                        f"{format_error(ex, self.context.log_level)}",
-                        "warning",
-                    )
-
-            threading.Thread(target=runner, daemon=True).start()
-
-        handler = self._register_handler(
-            owner_name=extension.name,
-            event_name="ready",
-            callback=legacy_ready_callback,
-        )
-        self._event_registrations.setdefault(extension.name, []).append(handler)
-
-    @staticmethod
-    def _uses_legacy_autostart(extension: CeluneExtension) -> bool:
-        """Return whether one extension still relies on deprecated autostart hooks."""
-        extension_type = type(extension)
-        return extension_type.AUTOSTART or (
-            extension_type.autostart is not CeluneExtension.autostart
-        )
 
     def _register_module_handlers(
         self,

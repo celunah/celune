@@ -14,7 +14,6 @@ class CeluneExtension(ABC):
     """Celune extension abstract base class."""
 
     EXTENSION_NAME = "unknown"
-    AUTOSTART = False
 
     def __init__(self, context: CeluneContext) -> None:
         self.ctx = context
@@ -36,10 +35,6 @@ class CeluneExtension(ABC):
             str: The current Celune runtime state string.
         """
         return self.ctx.get_state()
-
-    def autostart(self) -> None:
-        """Run deprecated extension startup logic."""
-        self.log(f"{self.name} has no autostart, skipping", "warning")
 
     def invoke(self, *args, **kwargs) -> None:
         """Run extension invocation logic.

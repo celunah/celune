@@ -202,13 +202,10 @@ filterwarnings = [
      "ignore:`torch\\.jit\\.load` is deprecated\\. Please switch to `torch\\.export`\\.:DeprecationWarning",
      # Python 3.14 emits this warning.
      "ignore:`torch\\.jit\\.load` is not supported in Python 3\\.14\\+ and may break\\. Please switch to `torch\\.export`\\.:DeprecationWarning",
-     # Celune's deprecated extension syntax is being exercised in the test suite, causing these warnings.
-     # This syntax will be removed in version 5.0.0.
-     "ignore:CeluneExtension\\.autostart\\(\\) is deprecated and will be removed in Celune 5\\.0\\.0, please use @celune\\.subscribe\\('ready'\\) instead:DeprecationWarning",
-     "ignore:CeluneExtensionManager\\.autostart_all\\(\\) is deprecated and will be removed in Celune 5\\.0\\.0, please use @celune\\.subscribe\\('ready'\\) in your extensions instead:DeprecationWarning",
 ]
 
 [tool.ruff.lint]
+# TODO: This group of inspections is based on Ruff 0.15.15, please upgrade.
 ignore=[
     "RUF100",  # unused-noqa
     "UP007",   # non-pep604-annotation-union

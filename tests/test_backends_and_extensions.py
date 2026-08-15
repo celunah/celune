@@ -1676,28 +1676,13 @@ class ExtensionTests(TestCase):
             manager.autoload(temp_dir)
         self.assertIn("Loaded", manager.list_extensions())
 
-    def test_manager_invoke_and_autostart_run_in_threads(self) -> None:
-        """Verify threaded extension invocation and autostart behavior.
+    def test_manager_invoke_runs_in_a_thread(self) -> None:
+        """Verify threaded extension invocation.
 
         Raises:
             AssertionError: Threaded extension behavior changes unexpectedly.
         """
-        event = threading.Event()
-
-        class AutoExtension(DemoExtension):
-            """Autostart extension used by one manager test."""
-
-            EXTENSION_NAME = "Auto"
-            AUTOSTART = True
-
-            def autostart(self) -> None:
-                event.set()
-
         manager = CeluneExtensionManager(self.context)
-        manager.register(AutoExtension)
-        manager.autostart_all()
-        self.assertTrue(event.wait(timeout=1))
-
         invoke_event = threading.Event()
 
         class InvokeExtension(DemoExtension):
