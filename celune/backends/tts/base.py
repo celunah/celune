@@ -469,8 +469,12 @@ class CeluneBackend[ModelT](ABC):
         self.model = self.load_model(self.model_name)
         return self.model
 
-    def unload_model(self) -> None:
-        """Release references held by the backend to its loaded model."""
+    def unload_model(self, release_cuda_cache: bool = True) -> None:
+        """Release references held by the backend to its loaded model.
+
+        Args:
+            release_cuda_cache: Whether to synchronize CUDA and release cached accelerator blocks.
+        """
         model = self.model
         self.model = None
         if model is not None:
@@ -488,7 +492,7 @@ class CeluneBackend[ModelT](ABC):
             _release_runtime_object_members(model, seen)
 
         gc.collect()
-        if torch.cuda.is_available():
+        if release_cuda_cache and torch.cuda.is_available():
             with contextlib.suppress(Exception):
                 torch.cuda.synchronize()
             with contextlib.suppress(Exception):

@@ -349,8 +349,12 @@ class BackendEnvironmentTests(unittest.TestCase):
         class FakeBackend:
             """Backend stand-in whose unload hook does not own the model table."""
 
-            def unload_model(self) -> None:
-                """Leave model-table cleanup to the worker."""
+            def unload_model(self, release_cuda_cache: bool = True) -> None:
+                """Leave model-table cleanup to the worker.
+
+                Args:
+                    release_cuda_cache: Whether the worker should release cached accelerator blocks.
+                """
 
             @staticmethod
             def load_model(**_kwargs: object) -> FakeModel:

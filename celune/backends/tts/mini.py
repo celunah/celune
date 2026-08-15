@@ -329,8 +329,12 @@ class Mini(CeluneBackend[TTSModel]):
         self._voice_states.clear()
         return self.model
 
-    def unload_model(self) -> None:
-        """Release the loaded model and cached voice states."""
+    def unload_model(self, release_cuda_cache: bool = True) -> None:
+        """Release the loaded model and cached voice states.
+
+        Args:
+            release_cuda_cache: Whether to synchronize CUDA and release cached accelerator blocks.
+        """
         generated_config_path = self._generated_config_path
         self._voice_states.clear()
         self._generated_config_path = None
@@ -338,7 +342,7 @@ class Mini(CeluneBackend[TTSModel]):
             with contextlib.suppress(OSError):
                 generated_config_path.unlink(missing_ok=True)
                 generated_config_path.parent.rmdir()
-        super().unload_model()
+        super().unload_model(release_cuda_cache=release_cuda_cache)
 
     def generate_stream(
         self, model: TTSModel, **kwargs

@@ -146,8 +146,12 @@ class _BackendRuntime(Protocol):
     def load_model(self, **kwargs: BackendArgumentValue) -> BackendModel:
         """Load one backend model."""
 
-    def unload_model(self) -> None:
-        """Unload backend models."""
+    def unload_model(self, release_cuda_cache: bool = True) -> None:
+        """Unload backend models.
+
+        Args:
+            release_cuda_cache: Whether to synchronize CUDA and release cached accelerator blocks.
+        """
 
     def generate_stream(
         self,

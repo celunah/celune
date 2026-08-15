@@ -639,8 +639,12 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         else:
             self._get_live_runtime()
 
-    def unload_model(self) -> None:
-        """Release the cached Seed-VC wrapper and best-effort GPU memory."""
+    def unload_model(self, release_cuda_cache: bool = True) -> None:
+        """Release the cached Seed-VC wrapper and best-effort GPU memory.
+
+        Args:
+            release_cuda_cache: Whether to synchronize CUDA and release cached accelerator blocks.
+        """
         with self._wrapper_lock:
             self._wrapper = None
             self._clear_live_session()
@@ -654,7 +658,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         with contextlib.suppress(Exception):
             import torch
 
-            if torch.cuda.is_available():
+            if release_cuda_cache and torch.cuda.is_available():
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
 

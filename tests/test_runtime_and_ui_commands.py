@@ -1395,6 +1395,22 @@ class UIStartupTests(TestCase):
             sys.stdout = original_stdout
             sys.stderr = original_stderr
 
+    def test_sleep_timer_callbacks_ignore_textual_shutdown(self) -> None:
+        """Verify background sleep callbacks tolerate Textual stopping concurrently."""
+        ui = CeluneUI()
+        ui.call_from_thread = mock.Mock(side_effect=RuntimeError("App is not running"))
+
+        schedule_thread = threading.Thread(target=ui._schedule_sleep_timer)
+        cancel_thread = threading.Thread(target=ui._cancel_sleep_timer)
+        schedule_thread.start()
+        cancel_thread.start()
+        schedule_thread.join(timeout=1)
+        cancel_thread.join(timeout=1)
+
+        self.assertFalse(schedule_thread.is_alive())
+        self.assertFalse(cancel_thread.is_alive())
+        self.assertEqual(ui.call_from_thread.call_count, 2)
+
     def test_headless_ui_warns_without_attached_celune(self) -> None:
         """Verify headless mode warns before doing nothing without Celune."""
         ui = CeluneHeadlessUI({"headless_nocolor": True})

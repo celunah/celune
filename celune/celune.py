@@ -314,12 +314,26 @@ def _release_loaded_object(value: ReleasableObject) -> None:
             unload()
 
 
+def _unload_backend_model(
+    backend: Union[CeluneBackend, CeluneVCBackend],
+    release_cuda_cache: bool,
+) -> None:
+    """Unload one backend while retaining compatibility with older backend plugins."""
+    try:
+        backend.unload_model(release_cuda_cache=release_cuda_cache)
+    except TypeError as error:
+        if "release_cuda_cache" not in str(error):
+            raise
+        backend.unload_model()
+
+
 def _dispose_backend(
     backend: Union[CeluneBackend, CeluneVCBackend],
+    release_cuda_cache: bool = True,
 ) -> None:
     """Unload one backend and close its worker process when supported."""
     try:
-        backend.unload_model()
+        _unload_backend_model(backend, release_cuda_cache)
     finally:
         _close_backend(backend)
 
@@ -1000,6 +1014,7 @@ class Celune(CeluneStateAccessors):
         include_normalizer: bool = False,
         include_vc: bool = True,
         close_backends: bool = False,
+        release_cuda_cache: bool = True,
     ) -> None:
         """Unload unused models to regain memory.
 
@@ -1007,25 +1022,29 @@ class Celune(CeluneStateAccessors):
             include_normalizer: Whether to also unload the normalization model and tokenizer.
             include_vc: Whether to also unload the voice-conversion backend runtime.
             close_backends: Whether to terminate isolated backend workers after unloading.
+            release_cuda_cache: Whether to synchronize CUDA and release cached accelerator blocks.
         """
         discard(self, "model")
 
         if close_backends:
-            _dispose_backend(self.backend)
+            _dispose_backend(self.backend, release_cuda_cache=release_cuda_cache)
         else:
-            self.backend.unload_model()
+            _unload_backend_model(self.backend, release_cuda_cache)
         if include_vc and self.vc_backend is not None:
             if close_backends:
-                _dispose_backend(self.vc_backend)
+                _dispose_backend(
+                    self.vc_backend,
+                    release_cuda_cache=release_cuda_cache,
+                )
             else:
-                self.vc_backend.unload_model()
+                _unload_backend_model(self.vc_backend, release_cuda_cache)
 
         if include_normalizer:
             self._unload_normalizer_components()
 
         gc.collect()
 
-        if torch.cuda.is_available():
+        if release_cuda_cache and torch.cuda.is_available():
             with contextlib.suppress(Exception):
                 torch.cuda.synchronize()
             with contextlib.suppress(Exception):
@@ -1669,12 +1688,16 @@ class Celune(CeluneStateAccessors):
 
     raise_warmup_error = _raise_warmup_error
 
-    def unload_normalizer_state(self) -> None:
-        """Unload only CeluneNorm components and release unused memory."""
+    def unload_normalizer_state(self, release_cuda_cache: bool = True) -> None:
+        """Unload only CeluneNorm components and release unused memory.
+
+        Args:
+            release_cuda_cache: Whether to synchronize CUDA and release cached accelerator blocks.
+        """
         self._unload_normalizer_components()
         gc.collect()
 
-        if torch.cuda.is_available():
+        if release_cuda_cache and torch.cuda.is_available():
             with contextlib.suppress(Exception):
                 torch.cuda.synchronize()
             with contextlib.suppress(Exception):
@@ -1784,13 +1807,14 @@ class Celune(CeluneStateAccessors):
                     include_normalizer=unload["normalizer"],
                     include_vc=unload["vc"],
                     close_backends=True,
+                    release_cuda_cache=False,
                 )
                 self.model_name = ""
             elif unload["normalizer"]:
-                self.unload_normalizer_state()
+                self.unload_normalizer_state(release_cuda_cache=False)
 
             if unload["vc"] and not unload["tts"] and self.vc_backend is not None:
-                _dispose_backend(self.vc_backend)
+                _dispose_backend(self.vc_backend, release_cuda_cache=False)
 
         self.model_ready.set()
         self.log("[SLEEP] enter complete model_ready=True", loglevel="debug")
@@ -3692,34 +3716,35 @@ class Celune(CeluneStateAccessors):
 
     def close(self) -> None:
         """Shut off Celune and release loaded runtime state."""
-        self.log(
-            f"[ENGINE] close requested state={self.cur_state} loaded={self.loaded} "
-            f"sleeping={self.sleeping}",
-            loglevel="debug",
-        )
-        with self._model_lock:
-            if self._closed:
-                return
-            self._closed = True
-        self._emit_event("shutdown", ShutdownEvent(celune=self))
-        try:
-            close_pipeline(self)
-            wake_background_thread = self._wake_background_thread
-            if (
-                wake_background_thread is not None
-                and wake_background_thread is not threading.current_thread()
-            ):
-                wake_background_thread.join(timeout=2)
-            self._unload_persona_state()
+        with self._async_runtime_lock:
+            self.log(
+                f"[ENGINE] close requested state={self.cur_state} loaded={self.loaded} "
+                f"sleeping={self.sleeping}",
+                loglevel="debug",
+            )
             with self._model_lock:
-                self.unload_runtime_state(include_normalizer=True)
-        finally:
-            with contextlib.suppress(Exception):
-                close_default_loader()
-            with contextlib.suppress(Exception):
-                self._cleanup_residual_temp_data(temp_data_dir())
-            Celune._instance = None
-            self.log("[ENGINE] close complete", loglevel="debug")
+                if self._closed:
+                    return
+                self._closed = True
+            self._emit_event("shutdown", ShutdownEvent(celune=self))
+            try:
+                close_pipeline(self)
+                wake_background_thread = self._wake_background_thread
+                if (
+                    wake_background_thread is not None
+                    and wake_background_thread is not threading.current_thread()
+                ):
+                    wake_background_thread.join(timeout=2)
+                self._unload_persona_state()
+                with self._model_lock:
+                    self.unload_runtime_state(include_normalizer=True)
+            finally:
+                with contextlib.suppress(Exception):
+                    close_default_loader()
+                with contextlib.suppress(Exception):
+                    self._cleanup_residual_temp_data(temp_data_dir())
+                Celune._instance = None
+                self.log("[ENGINE] close complete", loglevel="debug")
 
     def fatal(self) -> None:
         """Mark Celune state as fatal and prevent further operations."""

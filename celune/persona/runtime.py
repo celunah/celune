@@ -250,12 +250,6 @@ class PersonaBackend:
         self.supports_emotion_probes = False
         gc.collect()
 
-        if torch.cuda.is_available():
-            with contextlib.suppress(Exception):
-                torch.cuda.synchronize()
-            with contextlib.suppress(Exception):
-                torch.cuda.empty_cache()
-
     def emotion_backend(self) -> Optional[tuple[PersonaTokenizer, PersonaModel]]:
         """Return the loaded VLM components used for emotion probing."""
         if (

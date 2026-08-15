@@ -685,7 +685,10 @@ class CeluneUI(App):
         if threading.current_thread() is threading.main_thread():
             callback()
         else:
-            self.call_from_thread(callback)
+            try:
+                self.call_from_thread(callback)
+            except RuntimeError:
+                pass
 
     def _severity_color(self, severity: str = "info") -> str:
         """Return the current theme color for a log severity."""
@@ -1610,7 +1613,7 @@ class CeluneUI(App):
     def _cancel_sleep_timer(self) -> None:
         """Cancel a pending automatic sleep transition."""
         if threading.current_thread() is not threading.main_thread():
-            self.call_from_thread(self._cancel_sleep_timer)
+            self._run_on_ui_thread(self._cancel_sleep_timer)
             return
 
         if self._sleep_timer is not None:
@@ -1620,7 +1623,7 @@ class CeluneUI(App):
     def _schedule_sleep_timer(self) -> None:
         """Schedule automatic sleep after the configured idle timeout."""
         if threading.current_thread() is not threading.main_thread():
-            self.call_from_thread(self._schedule_sleep_timer)
+            self._run_on_ui_thread(self._schedule_sleep_timer)
             return
 
         self._cancel_sleep_timer()
@@ -1651,6 +1654,8 @@ class CeluneUI(App):
     async def enter_sleep_mode(self) -> None:
         """Put the app to sleep without blocking the UI event loop."""
         if await self.celune.enter_sleep_mode_async():
+            if self.cur_state == "exiting":
+                return
             self.safe_log(
                 string("ui.sleeping_log", app_name=APP_NAME),
                 "sleeping",
@@ -1663,9 +1668,10 @@ class CeluneUI(App):
         """Wake the app after the user types into the sleeping UI."""
         try:
             if await self.celune.wake_from_sleep_async():
-                self._schedule_sleep_timer()
+                if self.cur_state != "exiting":
+                    self._schedule_sleep_timer()
         finally:
-            if self.celune.sleeping:
+            if self.cur_state != "exiting" and self.celune.sleeping:
                 self.safe_status(string("ui.sleeping_status"), "sleeping")
 
     def start_background_init(self) -> None:
@@ -4239,11 +4245,12 @@ class CeluneUI(App):
 
     def on_unmount(self) -> None:
         """Unload Celune."""
+        self.cur_state = "exiting"
+        self._cancel_sleep_timer()
         self._clear_caption_timers()
         self._set_terminal_status("exiting", string("osc.action_exiting"))
         self._shutdown_runtime()
 
-        self.cur_state = "exiting"
         if self._runtime_log_capture_enabled:
             self._disable_runtime_log_capture()
 

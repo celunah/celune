@@ -25,8 +25,12 @@ class CeluneVCBackend(ABC):
     def preload_models(self) -> None:
         """Ensure any optional backend assets are ready before conversion."""
 
-    def unload_model(self) -> None:
-        """Release optional backend runtime state."""
+    def unload_model(self, release_cuda_cache: bool = True) -> None:
+        """Release optional backend runtime state.
+
+        Args:
+            release_cuda_cache: Whether to synchronize CUDA and release cached accelerator blocks.
+        """
 
     @abstractmethod
     def convert(self, request: VoiceConversionRequest) -> AudioOutput:

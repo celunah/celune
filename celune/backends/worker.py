@@ -171,7 +171,9 @@ def _run_request(
         return {"ok": True, "value": model_id}, next_model_id + 1
     if operation == "unload_model":
         try:
-            backend.unload_model()
+            backend.unload_model(
+                release_cuda_cache=bool(arguments.get("release_cuda_cache", True))
+            )
         finally:
             _release_worker_models(models)
         return {"ok": True, "value": None}, next_model_id

@@ -1510,9 +1510,9 @@ class CeluneCoreTests(TestCase):
                 super().__init__(*args, **kwargs)
                 self.unload_calls = 0
 
-            def unload_model(self) -> None:
+            def unload_model(self, release_cuda_cache: bool = True) -> None:
                 self.unload_calls += 1
-                super().unload_model()
+                super().unload_model(release_cuda_cache=release_cuda_cache)
 
         class CountingVCBackend(FakeVCBackend):
             """Fake VC backend that records preload and unload requests."""
@@ -1527,7 +1527,7 @@ class CeluneCoreTests(TestCase):
             def preload_models(self) -> None:
                 self.preload_calls += 1
 
-            def unload_model(self) -> None:
+            def unload_model(self, release_cuda_cache: bool = True) -> None:
                 self.unload_calls += 1
 
         with (
@@ -1587,7 +1587,7 @@ class CeluneCoreTests(TestCase):
             def preload_models(self) -> None:
                 self.preload_calls += 1
 
-            def unload_model(self) -> None:
+            def unload_model(self, release_cuda_cache: bool = True) -> None:
                 self.unload_calls += 1
 
         class FailingBackend(FakeBackend):
@@ -2056,6 +2056,42 @@ class CeluneCoreTests(TestCase):
         self.assertIsNone(celune.llm)
         self.assertIsNone(celune.tokenizer)
 
+    def test_sleep_transition_defers_cuda_cache_release(self) -> None:
+        """Verify automatic sleep unloads references without flushing the CUDA allocator."""
+        celune = self._make_celune(
+            {
+                "sleep": {
+                    "enabled": True,
+                    "unload": {"persona": False, "normalizer": True, "tts": True},
+                }
+            }
+        )
+        celune.locked = False
+        celune.loaded = True
+        celune.cur_state = "idle"
+        celune.current_voice = "balanced"
+        celune.voices = ("balanced",)
+        celune.model = {"model_id": "fake/balanced", "kwargs": {}}
+        celune.llm = cast(PreTrainedModel, mock.Mock(spec=PreTrainedModel))
+        celune.tokenizer = cast(
+            PreTrainedTokenizerBase,
+            mock.Mock(spec=PreTrainedTokenizerBase),
+        )
+
+        with (
+            mock.patch("celune.celune.play_signal", return_value=False),
+            mock.patch("celune.celune.torch.cuda.is_available", return_value=True),
+            mock.patch("celune.celune.torch.cuda.synchronize") as synchronize,
+            mock.patch("celune.celune.torch.cuda.empty_cache") as empty_cache,
+        ):
+            self.assertTrue(celune.enter_sleep_mode())
+
+        synchronize.assert_not_called()
+        empty_cache.assert_not_called()
+        self.assertTrue(celune.sleeping)
+        self.assertIsNone(celune.llm)
+        self.assertIsNone(celune.tokenizer)
+
     def test_stale_normalizer_load_does_not_restore_released_references(self) -> None:
         """Verify background normalizer loads cannot repopulate state after unload."""
         celune = self._make_celune({})
@@ -2189,7 +2225,7 @@ class CeluneCoreTests(TestCase):
             def preload_models(self) -> None:
                 self.preload_calls += 1
 
-            def unload_model(self) -> None:
+            def unload_model(self, release_cuda_cache: bool = True) -> None:
                 self.unload_calls += 1
 
         with (
@@ -2248,7 +2284,7 @@ class CeluneCoreTests(TestCase):
                 super().__init__(*args, **kwargs)
                 self.unload_calls = 0
 
-            def unload_model(self) -> None:
+            def unload_model(self, release_cuda_cache: bool = True) -> None:
                 self.unload_calls += 1
 
         with (

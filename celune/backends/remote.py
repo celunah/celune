@@ -404,9 +404,13 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Ensure backend models are available inside the worker environment."""
         self._request("preload_models")
 
-    def unload_model(self) -> None:
-        """Unload worker-side models and clear the local handle."""
-        self._request("unload_model")
+    def unload_model(self, release_cuda_cache: bool = True) -> None:
+        """Unload worker-side models and clear the local handle.
+
+        Args:
+            release_cuda_cache: Whether the worker should synchronize CUDA and release cached accelerator blocks.
+        """
+        self._request("unload_model", release_cuda_cache=release_cuda_cache)
         self.model = None
 
     def generate_stream(
@@ -495,9 +499,13 @@ class RemoteVCBackendProxy(CeluneVCBackend):
         """Ensure voice-conversion assets are available in the worker."""
         self._worker.preload_models()
 
-    def unload_model(self) -> None:
-        """Release voice-conversion assets in the worker."""
-        self._worker.unload_model()
+    def unload_model(self, release_cuda_cache: bool = True) -> None:
+        """Release voice-conversion assets in the worker.
+
+        Args:
+            release_cuda_cache: Whether the worker should synchronize CUDA and release cached accelerator blocks.
+        """
+        self._worker.unload_model(release_cuda_cache=release_cuda_cache)
 
     def convert(self, request: VoiceConversionRequest) -> AudioOutput:
         """Convert audio in the isolated voice-conversion worker."""
