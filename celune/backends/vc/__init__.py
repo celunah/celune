@@ -10,8 +10,8 @@ from .base import CeluneVCBackend
 
 __all__ = [
     "BACKEND_MANIFESTS",
-    "BackendManifest",
     "VC_BACKENDS",
+    "BackendManifest",
     "CeluneVCBackend",
     "backend_manifest",
     "resolve_vc_backend",

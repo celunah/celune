@@ -38,22 +38,20 @@ type RuntimeValue = Union[
     dict[Hashable, "RuntimeValue"],
     list["RuntimeValue"],
     set["RuntimeValue"],
-    tuple["RuntimeValue", ...],  # noqa
+    tuple["RuntimeValue", ...],
     "SupportsCloseHook",
     "SupportsUnloadHook",
     "SupportsRuntimeAttributes",
     unittest.mock.NonCallableMock,
 ]
 
-type AudioChunk = npt.NDArray[np.float32]  # noqa
-type AudioChunkNonNormalized = npt.NDArray[np.int16]  # noqa
-type AudioChunkBroad = npt.NDArray[np.floating]  # noqa
-type AudioChunks = list[AudioChunk]  # noqa
+type AudioChunk = npt.NDArray[np.float32]
+type AudioChunkNonNormalized = npt.NDArray[np.int16]
+type AudioChunkBroad = npt.NDArray[np.floating]
+type AudioChunks = list[AudioChunk]
 
 type SeedVCArgument = Union[str, int, float, bool]
-type SeedVCGenerator = Generator[
-    Optional[AudioChunk], None, AudioChunk  # noqa
-]
+type SeedVCGenerator = Generator[Optional[AudioChunk], None, AudioChunk]
 
 type LogLevel = Literal["info", "verbose", "debug"]
 
@@ -74,7 +72,7 @@ class LogCallback(Protocol):
 type DevLogCallback = LogCallback
 type _DispatcherCallback = Callable[["EventPayload"], None]
 type DispatcherCallback = _DispatcherCallback
-type EmbeddingVector = npt.NDArray[np.float32]  # noqa
+type EmbeddingVector = npt.NDArray[np.float32]
 type TokenizerBackend = Union[SentencePieceBackend, TokenizersBackend]
 type _EmbeddingBackend = tuple[TokenizerBackend, PreTrainedModel]
 type EmbeddingBackend = _EmbeddingBackend

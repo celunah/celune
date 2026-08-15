@@ -18,8 +18,8 @@ from .memory import MemoryRecord, PersonaMemoryStore
 
 __all__ = [
     "PERSONA_QUANTIZATION",
-    "PersonaCapabilities",
     "MemoryRecord",
+    "PersonaCapabilities",
     "PersonaClient",
     "PersonaClientResponse",
     "PersonaMemoryStore",

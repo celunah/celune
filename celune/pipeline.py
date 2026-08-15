@@ -1432,7 +1432,7 @@ def _persona_emotion_analyzer(engine: Celune) -> Optional[PersonaEmotionAnalyzer
     else:
         analyzer.bind_vlm(*emotion_backend)
 
-    setattr(engine, "persona_emotion_analyzer", analyzer)
+    engine.persona_emotion_analyzer = analyzer
     return analyzer
 
 
@@ -1502,7 +1502,7 @@ def _persona_memory_store(engine: Celune) -> Optional[PersonaMemoryStore]:
         embedding_model=embedding_model_name or PERSONA_MEMORY_EMBEDDING_MODEL,
     )
 
-    setattr(engine, "persona_memory_store", store)
+    engine.persona_memory_store = store
     return store
 
 
@@ -1861,8 +1861,7 @@ def build_persona_messages(engine: Celune, request: str) -> list[JSON]:
     messages: list[JSON] = [
         cast(JSON, {"role": "system", "content": PersonaPromptBuilder.build(context)})
     ]
-    for message in persona_history_messages(engine):
-        messages.append(message)  # noqa: PERF402
+    messages.extend(persona_history_messages(engine))
     messages.append(cast(JSON, {"role": "user", "content": user_content}))
     return messages
 
@@ -2519,15 +2518,14 @@ def queue_streaming_sfx_audio(
         string(status_label_key, label=label),
     )
 
-    if len(audio) > 0:
-        if not _queue_playback_chunk(
-            engine,
-            source_id,
-            audio,
-            playback_sample_rate,
-            generation=source_generation,
-        ):
-            return None
+    if len(audio) > 0 and not _queue_playback_chunk(
+        engine,
+        source_id,
+        audio,
+        playback_sample_rate,
+        generation=source_generation,
+    ):
+        return None
 
     return source_id
 
@@ -3427,11 +3425,11 @@ async def generation_worker_job(engine: Celune) -> None:
             continue
 
         engine.utterance_force_stop.clear()
-        setattr(engine, "_active_speech_generation", request.generation)
+        engine._active_speech_generation = request.generation
         try:
             await asyncio.to_thread(_process_generation_request, engine, request)
         finally:
-            setattr(engine, "_active_speech_generation", None)
+            engine._active_speech_generation = None
 
 
 def _playback_blocks(

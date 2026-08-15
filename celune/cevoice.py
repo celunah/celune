@@ -110,9 +110,13 @@ class CEVoice:
         bundle_path = Path(path)
         with bundle_path.open("rb") as stream:
             prefix = stream.read(V4_HEADER.size)
-            if len(prefix) >= len(V4_MAGIC) and prefix[: len(V4_MAGIC)] == V4_MAGIC:
-                if len(prefix) >= V4_HEADER.size and prefix[7] != 0:
-                    return cls._open_v4(bundle_path, prefix, stream.read())
+            if (
+                len(prefix) >= len(V4_MAGIC)
+                and prefix[: len(V4_MAGIC)] == V4_MAGIC
+                and len(prefix) >= V4_HEADER.size
+                and prefix[7] != 0
+            ):
+                return cls._open_v4(bundle_path, prefix, stream.read())
             stream.seek(0)
             magic, version, metadata_length = _read_header(stream)
             if magic not in {MAGIC, LEGACY_MAGIC}:
@@ -168,7 +172,7 @@ class CEVoice:
         )
 
     @property
-    def voices(self) -> VoiceManifest:  # noqa
+    def voices(self) -> VoiceManifest:
         """Return the voice manifest.
 
         Returns:
@@ -183,7 +187,7 @@ class CEVoice:
         return cast(VoiceManifest, voices)
 
     @property
-    def voice_order(self) -> tuple[str, ...]:  # noqa
+    def voice_order(self) -> tuple[str, ...]:
         """Return the preferred user-facing voice order.
 
         Returns:
@@ -228,7 +232,7 @@ class CEVoice:
         )
 
     @property
-    def assets(self) -> Manifest:  # noqa
+    def assets(self) -> Manifest:
         """Return the top-level bundle asset manifest.
 
         Returns:
@@ -434,7 +438,7 @@ def write_cevoice(
     manifest_voices: VoiceManifest = {}
     unknown_voice_metadata = set(voice_metadata or {}) - set(voices)
     if unknown_voice_metadata:
-        unknown = sorted(unknown_voice_metadata)[0]  # noqa: FURB192
+        unknown = min(unknown_voice_metadata)
         raise CEVoiceError(f"voice metadata provided for unknown voice '{unknown}'")
 
     for voice, assets in voices.items():
@@ -525,7 +529,7 @@ def write_cechar_v4(
 
     unknown_voice_metadata = set(voice_metadata or {}) - set(voices)
     if unknown_voice_metadata:
-        unknown = sorted(unknown_voice_metadata)[0]  # noqa: FURB192
+        unknown = min(unknown_voice_metadata)
         raise CEVoiceError(f"voice metadata provided for unknown voice '{unknown}'")
 
     payload = bytearray()

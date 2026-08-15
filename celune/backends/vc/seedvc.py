@@ -129,12 +129,12 @@ class CeluneSeedVCBackend(CeluneVCBackend):
     @contextlib.contextmanager
     def _suppress_native_stdout() -> Generator[None, None, None]:
         """Keep native Seed-VC output away from the worker protocol stream."""
-        with open(os.devnull, "w", encoding="utf-8") as native_output:
-            with (
-                contextlib.redirect_stdout(native_output),
-                contextlib.redirect_stderr(native_output),
-            ):
-                yield
+        with (
+            open(os.devnull, "w", encoding="utf-8") as native_output,
+            contextlib.redirect_stdout(native_output),
+            contextlib.redirect_stderr(native_output),
+        ):
+            yield
 
     @staticmethod
     def _seedvc_huggingface_cache_dir(create: bool = False) -> Path:
@@ -172,8 +172,8 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             )
             return model_path, config_path
 
-        setattr(hf_utils_module, "load_custom_model_from_hf", load_custom_model_from_hf)
-        setattr(wrapper_module, "load_custom_model_from_hf", load_custom_model_from_hf)
+        hf_utils_module.load_custom_model_from_hf = load_custom_model_from_hf
+        wrapper_module.load_custom_model_from_hf = load_custom_model_from_hf
 
     @classmethod
     def _load_wrapper_type(cls) -> type[_SeedVCWrapper]:
@@ -187,7 +187,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             ) from e
 
         cls._configure_seedvc_downloads(hf_utils_module, wrapper_module)
-        return cast(type[_SeedVCWrapper], getattr(wrapper_module, "SeedVCWrapper"))
+        return cast(type[_SeedVCWrapper], wrapper_module.SeedVCWrapper)
 
     def _get_wrapper(self) -> _SeedVCWrapper:
         """Return a cached Seed-VC wrapper instance."""
@@ -204,8 +204,8 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             if self._live_module is None or self._live_model_set is None:
                 realtime_module = self._load_live_module()
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                setattr(realtime_module, "device", device)
-                setattr(realtime_module, "fp16", device.type == "cuda")
+                realtime_module.device = device
+                realtime_module.fp16 = device.type == "cuda"
                 args = SimpleNamespace(
                     checkpoint_path=None,
                     config_path=None,
@@ -268,9 +268,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         try:
             hf_utils = __import__("hf_utils", fromlist=["*"])
             cls._configure_seedvc_downloads(hf_utils, hf_utils)
-            setattr(
-                module, "load_custom_model_from_hf", hf_utils.load_custom_model_from_hf
-            )
+            module.load_custom_model_from_hf = hf_utils.load_custom_model_from_hf
         except ImportError:
             pass
         return cast(_SeedVCRealtimeModule, module)
@@ -461,16 +459,12 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         self._live_fade_out_window = 1 - fade_in_window
         self._live_session_key = (reference_path, input_sample_rate)
 
-        setattr(realtime_module, "prompt_condition", None)
-        setattr(realtime_module, "mel2", None)
-        setattr(realtime_module, "style2", None)
-        setattr(realtime_module, "reference_wav_name", "")
-        setattr(realtime_module, "prompt_len", 0)
-        setattr(
-            realtime_module,
-            "ce_dit_difference",
-            _LIVE_CONTEXT_DIFFERENCE_SECONDS,
-        )
+        realtime_module.prompt_condition = None
+        realtime_module.mel2 = None
+        realtime_module.style2 = None
+        realtime_module.reference_wav_name = ""
+        realtime_module.prompt_len = 0
+        realtime_module.ce_dit_difference = _LIVE_CONTEXT_DIFFERENCE_SECONDS
 
     def _append_live_model_audio(self, audio: AudioChunk) -> None:
         """Append one model-rate block to Seed-VC's rolling live buffer."""
@@ -617,7 +611,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             return exc.value
 
     @property
-    def output_sample_rate(self) -> int:  # noqa
+    def output_sample_rate(self) -> int:
         """Return the sample rate produced by the backend's default Seed-VC mode.
 
         Returns:
@@ -709,7 +703,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
 
             trim_frames = min(
                 len(output.audio),
-                int(round(overlap_frames * output.sample_rate / request.sample_rate)),
+                round(overlap_frames * output.sample_rate / request.sample_rate),
             )
             return AudioOutput(
                 audio=np.asarray(output.audio[trim_frames:], dtype=np.float32),

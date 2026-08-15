@@ -12,7 +12,7 @@ from . import __codename__, __comment__, __version__
 from ._version import DEVELOPMENT
 from .backends.tts import CeluneBackend
 from .backends.vc import CeluneVCBackend
-from .constants import APP_NAME
+from .constants import APP_NAME, NVIDIA_DEVICE_KEYWORDS
 from .i18n import string
 from .utils import cuda_architecture, format_number
 from .typing.aliases import LogCallback, LogLevel
@@ -65,39 +65,13 @@ def check_supported_backends() -> tuple[str, bool]:
         if getattr(torch.version, "hip", None) is not None:
             return "ROCm", False
 
-        nvidia_keywords = (
-            "nvidia",
-            "geforce",
-            "rtx",
-            "gtx",
-            "quadro",
-            "tesla",
-            "rtx pro",
-            "a1",
-            "a3",
-            "a4",
-            "h1",
-            "h2",
-            "b1",
-            "b2",
-            "l4",
-            "blackwell",
-            "ada",
-            "hopper",
-            "ampere",
-            "turing",
-            "pascal",
-            "volta",
-            "maxwell",
-        )
-
         try:
             device_name = torch.cuda.get_device_name(0).lower()
         except (RuntimeError, AssertionError):
             # sometimes CUDA can be available but not yet usable, bail out here
             return "CUDA", False
 
-        if any(keyword in device_name for keyword in nvidia_keywords):
+        if any(keyword in device_name for keyword in NVIDIA_DEVICE_KEYWORDS):
             return "CUDA", True
         return "ZLUDA", True
 

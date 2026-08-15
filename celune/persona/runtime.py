@@ -312,8 +312,7 @@ class PersonaBackend:
         try:
             inputs = self._build_inputs(message_dicts)
             model_inputs = {
-                key: cast(torch.Tensor, value)  # noqa
-                for key, value in dict(inputs).items()
+                key: cast(torch.Tensor, value) for key, value in dict(inputs).items()
             }
             generation_kwargs: dict[str, int] = {}
             pad_token_id = tokenizer.eos_token_id
@@ -331,7 +330,7 @@ class PersonaBackend:
                     **generation_kwargs,
                 )
 
-            input_ids = cast(torch.Tensor, inputs["input_ids"])  # noqa
+            input_ids = cast(torch.Tensor, inputs["input_ids"])
             new_ids = output_ids[0, input_ids.shape[1] :]
             text = normalize_special_characters(
                 tokenizer.decode(new_ids, skip_special_tokens=True).strip()
@@ -454,7 +453,7 @@ class PersonaRuntime:
         self.lock = threading.Lock()
 
     @property
-    def model_id(self) -> str:  # noqa
+    def model_id(self) -> str:
         """Return the currently loaded model identifier.
 
         Returns:
@@ -463,7 +462,7 @@ class PersonaRuntime:
         return self.backend.model_id
 
     @property
-    def quantization(self) -> str:  # noqa
+    def quantization(self) -> str:
         """Return the currently loaded quantization mode.
 
         Returns:

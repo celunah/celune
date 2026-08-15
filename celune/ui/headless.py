@@ -6,6 +6,7 @@ import os
 import signal
 import time
 import warnings
+from collections.abc import Callable
 from types import FrameType
 from typing import Optional, cast
 
@@ -45,6 +46,7 @@ class CeluneHeadlessUI:
         )
         self.reset = "\x1b[0m" if not self.no_color else ""
         self._exit = False
+        self._windows_signal_handler: Optional[Callable[[int], bool]] = None
 
         CeluneHeadlessUI._instance = self
 

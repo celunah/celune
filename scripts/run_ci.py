@@ -8,7 +8,8 @@ import signal
 import subprocess
 import sys
 from contextlib import suppress
-from typing import Callable, cast
+from typing import cast
+from collections.abc import Callable
 
 
 TIMEOUT = 300

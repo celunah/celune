@@ -10,9 +10,9 @@ code.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Optional, Sequence, Tuple, cast
+from typing import Optional, cast
 
 import torch
 from torch import Tensor, nn
@@ -50,7 +50,7 @@ class NeedleConfig:
     def from_mapping(
         cls,
         values: Mapping[str, JSONSerializable],
-    ) -> "NeedleConfig":
+    ) -> NeedleConfig:
         """Build configuration from a Hugging Face JSON mapping."""
         max_seq_len = _config_int(values, "max_seq_len", cls.max_seq_len)
         if "max_seq_len" not in values:
@@ -213,8 +213,8 @@ class NeedleAttention(nn.Module):
         mask: Optional[Tensor] = None,
         rope: Optional[NeedleRoPE] = None,
         rope_start: int = 0,
-        past: Optional[Tuple[Tensor, Tensor]] = None,
-    ) -> Tuple[Tensor, Tuple[Tensor, Tensor]]:
+        past: Optional[tuple[Tensor, Tensor]] = None,
+    ) -> tuple[Tensor, tuple[Tensor, Tensor]]:
         """Run attention and return the output plus the current KV cache."""
         batch, query_length, _ = query.shape
         key_length = source.shape[1]
@@ -307,8 +307,8 @@ class NeedleDecoderLayer(nn.Module):
         value: Tensor,
         encoder_output: Tensor,
         rope: NeedleRoPE,
-        past: Optional[Tuple[Tensor, Tensor]],
-    ) -> Tuple[Tensor, Tuple[Tensor, Tensor]]:
+        past: Optional[tuple[Tensor, Tensor]],
+    ) -> tuple[Tensor, tuple[Tensor, Tensor]]:
         """Run one decoder layer and return its updated KV cache."""
         past_length = 0 if past is None else past[0].shape[2]
         residual = value
@@ -367,11 +367,11 @@ class NeedleDecoder(nn.Module):
         lm_head: nn.Linear,
         decoder_input_ids: Tensor,
         encoder_output: Tensor,
-        past: Optional[Sequence[Optional[Tuple[Tensor, Tensor]]]],
-    ) -> Tuple[Tensor, Tuple[Tuple[Tensor, Tensor], ...]]:
+        past: Optional[Sequence[Optional[tuple[Tensor, Tensor]]]],
+    ) -> tuple[Tensor, tuple[tuple[Tensor, Tensor], ...]]:
         """Decode one token and return logits plus updated layer caches."""
         value = embeddings(decoder_input_ids) * self.embed_scale
-        updated: list[Tuple[Tensor, Tensor]] = []
+        updated: list[tuple[Tensor, Tensor]] = []
         for index, layer in enumerate(self.layers):
             layer_past = None if past is None else past[index]
             value, present = layer(value, encoder_output, self.rope, layer_past)
@@ -414,8 +414,8 @@ class NeedleModel(nn.Module):
         self,
         decoder_input_ids: Tensor,
         encoder_output: Tensor,
-        past: Optional[Sequence[Optional[Tuple[Tensor, Tensor]]]] = None,
-    ) -> Tuple[Tensor, Tuple[Tuple[Tensor, Tensor], ...]]:
+        past: Optional[Sequence[Optional[tuple[Tensor, Tensor]]]] = None,
+    ) -> tuple[Tensor, tuple[tuple[Tensor, Tensor], ...]]:
         """Decode one autoregressive step."""
         return self.decoder.step(
             self.embed_tokens,
@@ -440,7 +440,7 @@ class NeedleModel(nn.Module):
             dtype=torch.long,
             device=input_ids.device,
         )
-        past: Optional[Tuple[Optional[Tuple[Tensor, Tensor]], ...]] = None
+        past: Optional[tuple[Optional[tuple[Tensor, Tensor]], ...]] = None
         generated: list[Tensor] = []
         finished = torch.zeros(batch, dtype=torch.bool, device=input_ids.device)
         for _ in range(min(max_new_tokens, self.config.max_seq_len)):

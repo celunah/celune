@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterator
 from typing import Optional
 
 from faster_qwen3_tts import FasterQwen3TTS
-from faster_qwen3_tts import __version__ as qwen3_ver  # noqa
+from faster_qwen3_tts import __version__ as qwen3_ver
 
 from ...cevoice import CEVoiceLoader, default_loader
 from ...typing.aliases import AudioChunk
@@ -73,7 +73,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
             loader.materialize(name, "wav")
 
     @property
-    def default_model_id(self) -> str:  # noqa
+    def default_model_id(self) -> str:
         """Return the model loaded by default for Qwen3 cloning.
 
         Returns:
@@ -82,7 +82,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         return self.clone_model_id
 
     @property
-    def all_model_ids(self) -> list[str]:  # noqa
+    def all_model_ids(self) -> list[str]:
         """Return every model required by Qwen3 cloning.
 
         Returns:
@@ -91,7 +91,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         return [self.clone_model_id]
 
     @property
-    def voices(self) -> list[str]:  # noqa
+    def voices(self) -> list[str]:
         """Return the voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:

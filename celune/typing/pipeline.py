@@ -16,7 +16,7 @@ from ..dataclasses.pipeline import (
 from .aliases import AudioChunk
 
 type SpeechStreamItem = Optional[Union[AudioChunk, Exception]]
-type SpeechStreamQueue = queue.Queue[SpeechStreamItem]  # noqa
+type SpeechStreamQueue = queue.Queue[SpeechStreamItem]
 type TextQueueItem = Union[SpeechRequest, PipelineStates]
 type AudioInputItem = AudioInputRequest
 type AudioOutputItem = AudioOutput

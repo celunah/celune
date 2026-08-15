@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: MIT
 """Frontend layer."""
 
+# UI runtime dependencies are declared under TYPE_CHECKING and populated lazily
+# by _load_ui_runtime_dependencies to keep the startup frame lightweight.
+# ruff: noqa: TC004
+
 from __future__ import annotations
 
 import asyncio
@@ -50,8 +54,10 @@ from ..constants import APP_NAME, SIGTSTP
 from ..i18n import string
 from ..watchdog import launcher_loss_requested
 from ..paths import config_path, main_window_log_path
-from ..typing.aliases import AudioDeviceScalar  # noqa: F401
-from ..typing.aliases import _VCAudioCallback  # noqa: F401  # pylint: disable=unused-import
+from ..typing.aliases import AudioDeviceScalar
+from ..typing.aliases import (  # noqa: F401  # pylint: disable=unused-import
+    _VCAudioCallback,
+)
 from ..utils import (
     discard,
     format_error,
@@ -282,7 +288,7 @@ class CeluneUIWidgetState:
     caption: Optional[Label] = None
     progress_bar: Optional[ProgressBar] = None
     header: Optional[Label] = None
-    header_lines: tuple[Label, ...] = ()  # noqa
+    header_lines: tuple[Label, ...] = ()
 
 
 @dataclass
@@ -306,7 +312,7 @@ class CeluneUIBindingState:
 
     celune: Optional[Celune] = None
     celune_ready: bool = False
-    celune_styles: tuple[str, ...] = ()  # noqa
+    celune_styles: tuple[str, ...] = ()
     celune_voices: Optional[Iterator[str]] = None
     style_index: int = 0
     cur_state: str = "active"
@@ -368,7 +374,7 @@ class CeluneUIInteractionState:
     vc_recording_silence_frames: int = 0
     vc_recording_speech_started: bool = False
     vc_recording_submission_queue: Optional[
-        queue_module.Queue[Optional[tuple[AudioChunk, int, str, bool]]]  # noqa
+        queue_module.Queue[Optional[tuple[AudioChunk, int, str, bool]]]
     ] = None
     vc_recording_stream: Optional[sd.InputStream] = None
     vc_recording_stop_thread: Optional[threading.Thread] = None
@@ -376,9 +382,9 @@ class CeluneUIInteractionState:
     vc_recording_vad: Optional[LiveVoiceActivityDetector] = None
     persona_recording_chunks: AudioChunks = field(default_factory=list)
     persona_recording_lock: threading.Lock = field(default_factory=threading.Lock)
-    persona_recording_queue: Optional[
-        queue_module.Queue[tuple[AudioChunk, bool]]  # noqa
-    ] = None
+    persona_recording_queue: Optional[queue_module.Queue[tuple[AudioChunk, bool]]] = (
+        None
+    )
     persona_recording_sample_rate: int = 0
     persona_recording_silence_frames: int = 0
     persona_recording_speech_started: bool = False
@@ -423,7 +429,7 @@ class CeluneUI(App):
 
     ENABLE_COMMAND_PALETTE = False
     CSS = CELUNE_CSS
-    _instance: Optional["CeluneUI"] = None
+    _instance: Optional[CeluneUI] = None
 
     def __init__(
         self,
@@ -465,6 +471,7 @@ class CeluneUI(App):
         self._startup_loader = startup_loader
         self._startup_messages = list(startup_messages or [])
         self._runtime_intervals_started = False
+        self._windows_signal_handler: Optional[Callable[[int], bool]] = None
 
         CeluneUI._instance = self
 
@@ -1407,7 +1414,7 @@ class CeluneUI(App):
         )
         original_call_handlers = logging.Logger.callHandlers
 
-        def call_handlers(self: logging.Logger, record: logging.LogRecord) -> None:  # noqa
+        def call_handlers(self: logging.Logger, record: logging.LogRecord) -> None:
             if is_celune_log_record(record):
                 original_call_handlers(self, record)
                 return
@@ -1667,9 +1674,11 @@ class CeluneUI(App):
     async def wake_from_sleep(self) -> None:
         """Wake the app after the user types into the sleeping UI."""
         try:
-            if await self.celune.wake_from_sleep_async():
-                if self.cur_state != "exiting":
-                    self._schedule_sleep_timer()
+            if (
+                await self.celune.wake_from_sleep_async()
+                and self.cur_state != "exiting"
+            ):
+                self._schedule_sleep_timer()
         finally:
             if self.cur_state != "exiting" and self.celune.sleeping:
                 self.safe_status(string("ui.sleeping_status"), "sleeping")
@@ -2251,7 +2260,7 @@ class CeluneUI(App):
         steps = 10
 
         widget = self.query_one(target) if isinstance(target, str) else target
-        original_border: tuple[EdgeStyle, ...] = tuple(widget.styles.border)  # noqa
+        original_border: tuple[EdgeStyle, ...] = tuple(widget.styles.border)
 
         if not any(edge_type for edge_type, _ in original_border):
             return
@@ -2261,7 +2270,7 @@ class CeluneUI(App):
         self._border_pulse_tokens[widget_key] = token
         self._border_pulse_widgets[widget_key] = widget
 
-        target_border: tuple[EdgeStyle, ...] = tuple(  # noqa
+        target_border: tuple[EdgeStyle, ...] = tuple(
             (
                 edge_type,
                 self._with_darkened_brightness(color) if edge_type else color,
@@ -2274,7 +2283,7 @@ class CeluneUI(App):
         transition_duration = max(0.0, duration - hold_duration)
         frame_delay = transition_duration / (steps * 2) if transition_duration else 0.0
 
-        def set_border(border: tuple[EdgeStyle, ...]) -> None:  # noqa
+        def set_border(border: tuple[EdgeStyle, ...]) -> None:
             (
                 widget.styles.border_top,
                 widget.styles.border_right,
@@ -2786,14 +2795,22 @@ class CeluneUI(App):
 
             self._shutdown_vc_stream(stream)
             self._close_live_vad(vad)
-            self._run_on_ui_thread(
-                lambda: self._complete_persona_transcription(
-                    transcript,  # noqa: B023
-                    prefix,  # noqa: B023
-                    error,  # noqa: B023
-                    error_already_reported=partial_error_reported and error is not None,  # noqa: B023
+
+            def complete_transcription(
+                transcript: str = transcript,
+                prefix: str = prefix,
+                error: Optional[Exception] = error,
+                partial_error_reported: bool = partial_error_reported,
+            ) -> None:
+                """Complete the captured Persona transcription on the UI thread."""
+                self._complete_persona_transcription(
+                    transcript,
+                    prefix,
+                    error,
+                    error_already_reported=partial_error_reported and error is not None,
                 )
-            )
+
+            self._run_on_ui_thread(complete_transcription)
             return
 
     def _request_persona_recording_stop(self) -> bool:
@@ -2924,11 +2941,7 @@ class CeluneUI(App):
                 if (
                     self._persona_recording_speech_started
                     and self._persona_recording_silence_frames >= vad_hangover_frames
-                ):
-                    self._persona_recording_stop_requested = True
-                    self._queue_persona_recording_item_locked(final=True)
-                    should_stop = True
-                elif (
+                ) or (
                     not self._persona_recording_speech_started
                     and time.monotonic() - recording_started_at
                     >= PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS
@@ -3244,7 +3257,7 @@ class CeluneUI(App):
     @staticmethod
     def _finish_vc_submission_queue(
         submission_queue: Optional[
-            queue_module.Queue[Optional[tuple[AudioChunk, int, str, bool]]]  # noqa
+            queue_module.Queue[Optional[tuple[AudioChunk, int, str, bool]]]
         ],
         final_item: Optional[tuple[AudioChunk, int, str, bool]] = None,
     ) -> None:
@@ -3292,9 +3305,7 @@ class CeluneUI(App):
         Optional[AudioChunk],
         int,
         str,
-        Optional[
-            queue_module.Queue[Optional[tuple[AudioChunk, int, str, bool]]]  # noqa
-        ],
+        Optional[queue_module.Queue[Optional[tuple[AudioChunk, int, str, bool]]]],
         int,
         Optional[threading.Thread],
         Optional[threading.Thread],
@@ -4400,7 +4411,7 @@ class CeluneUI(App):
         self._graceful_exit()
 
     @property
-    def tutorial_token(self) -> int:  # noqa
+    def tutorial_token(self) -> int:
         """Return the active tutorial cancellation token.
 
         Returns:
@@ -4409,7 +4420,7 @@ class CeluneUI(App):
         return self._tutorial_token
 
     @property
-    def tutorial_active(self) -> bool:  # noqa
+    def tutorial_active(self) -> bool:
         """Return whether a tutorial flow is currently active.
 
         Returns:

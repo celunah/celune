@@ -16,10 +16,11 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Callable, Optional
+from typing import Optional
+from collections.abc import Callable
 
 from celune import REVISION, __tagline__, __version__
-from celune.constants import APP_NAME, APP_SLUG, ExitCodes
+from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
 from celune.config import config_log_level, normalize_log_level
 from celune.i18n import string
 from celune.watchdog import launcher_loss_requested, start_watchdog
@@ -392,35 +393,9 @@ def _doctor_detect_backend(torch_module: ModuleType) -> tuple[str, bool]:
         if getattr(torch_module.version, "hip", None) is not None:
             return "ROCm", False
 
-        nvidia_keywords = (
-            "nvidia",
-            "geforce",
-            "rtx",
-            "gtx",
-            "quadro",
-            "tesla",
-            "rtx pro",
-            "a1",
-            "a3",
-            "a4",
-            "h1",
-            "h2",
-            "b1",
-            "b2",
-            "l4",
-            "blackwell",
-            "ada",
-            "hopper",
-            "ampere",
-            "turing",
-            "pascal",
-            "volta",
-            "maxwell",
-        )
-
         if any(
             keyword in str(torch_module.cuda.get_device_name(0)).lower()
-            for keyword in nvidia_keywords
+            for keyword in NVIDIA_DEVICE_KEYWORDS
         ):
             return "CUDA", True
         return "ZLUDA", True

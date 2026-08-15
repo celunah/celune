@@ -92,7 +92,7 @@ dev = [
     "pylint",
     # Docstrings matter, so everyone can read the code more easily.
     "docstr-coverage",
-    "ruff==0.15.15",
+    "ruff==0.16.0",
     # How many useless functions do we have?
     "vulture",
     # How many lines do we have?
@@ -205,26 +205,24 @@ filterwarnings = [
 ]
 
 [tool.ruff.lint]
-# TODO: This group of inspections is based on Ruff 0.15.15, please upgrade.
+# These exclusions are intentional: classic typing syntax, custom import ordering,
+# and broad exception boundaries are part of Celune's current architecture.
 ignore=[
-    "RUF100",  # unused-noqa
     "UP007",   # non-pep604-annotation-union
     "UP045",  # non-pep604-annotation-optional
     "BLE001",  # blind-except
     "I001",  # unsorted imports
-    "B008",  # function-call-in-default-argument
 ]
 
 [tool.pylint.main]
+# These exclusions cover intentional internal/test access, global runtime state,
+# broad error boundaries, lazy imports, and current class/function complexity.
 disable=[
-    "W0201",  # attribute-defined-outside-init
     "W0212",  # protected-access
     "W0511",  # fixme
     "W0603",  # global-statement
-    "W0621",  # redefined-outer-name
     "W0718",  # broad-exception-caught
     "R0401",  # cyclic-import
-    "R0801",  # duplicate-code
     "R0902",  # too-many-instance-attributes
     "R0903",  # too-few-public-methods
     "R0904",  # too-many-public-methods
@@ -237,7 +235,6 @@ disable=[
     "R0917",  # too-many-positional-arguments
     "R1702",  # too-many-nested-blocks
     "C0103",  # invalid-name
-    "C0114",  # missing-module-docstring
     "C0302",  # too-many-lines
     "C0415",  # import-outside-toplevel
     "I1101",  # c-extension-no-member
@@ -250,6 +247,11 @@ ignore-paths=[
 
 [tool.pylint.format]
 max-line-length = 120
+
+[tool.pylint.similarities]
+# Keep duplicate-code focused on substantial copied blocks; short overlaps are
+# expected in mirrored UI adapters, exports, and test fixtures.
+min-similarity-lines = 20
 
 
 [tool.pyrefly]

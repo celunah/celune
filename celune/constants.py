@@ -7,13 +7,37 @@ from enum import Enum, IntEnum, auto
 from typing import Literal, Optional, TypedDict
 
 from ._version import VERSION
-from .typing.common import JSON, JSONSerializable  # noqa: F401  # pylint: disable=W0611
 
 # main app name
 # why would you rename her? she doesn't approve of it
 # don't blame her when you fork Celune and rename her to something else
 APP_NAME = "Celune"
 APP_SLUG = "".join(char if char.isalnum() else "_" for char in APP_NAME.lower())
+NVIDIA_DEVICE_KEYWORDS = (
+    "nvidia",
+    "geforce",
+    "rtx",
+    "gtx",
+    "quadro",
+    "tesla",
+    "rtx pro",
+    "a1",
+    "a3",
+    "a4",
+    "h1",
+    "h2",
+    "b1",
+    "b2",
+    "l4",
+    "blackwell",
+    "ada",
+    "hopper",
+    "ampere",
+    "turing",
+    "pascal",
+    "volta",
+    "maxwell",
+)
 
 # CeluneNorm v2.0 inherits v1.3's feature set but at an extended context length
 # so Celune can process your normalized text more efficiently at either

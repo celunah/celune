@@ -20,18 +20,18 @@ def _load_cac_module():
         raise RuntimeError("could not load scripts/cac.py")
     module = importlib.util.module_from_spec(spec)
     fake_numpy = ModuleType("numpy")
-    setattr(fake_numpy, "mean", mock.Mock())
-    setattr(fake_numpy, "asarray", mock.Mock())
+    setattr(fake_numpy, "mean", mock.Mock())  # noqa: B010
+    setattr(fake_numpy, "asarray", mock.Mock())  # noqa: B010
     fake_celune = ModuleType("celune")
     fake_cevoice = ModuleType("celune.cevoice")
     fake_soundfile = ModuleType("soundfile")
-    setattr(fake_soundfile, "read", mock.Mock())
-    setattr(fake_soundfile, "info", mock.Mock())
-    setattr(fake_soundfile, "write", mock.Mock())
+    setattr(fake_soundfile, "read", mock.Mock())  # noqa: B010
+    setattr(fake_soundfile, "info", mock.Mock())  # noqa: B010
+    setattr(fake_soundfile, "write", mock.Mock())  # noqa: B010
     fake_scipy = ModuleType("scipy")
     fake_scipy_signal = ModuleType("scipy.signal")
-    setattr(fake_scipy_signal, "resample_poly", mock.Mock())
-    setattr(fake_cevoice, "write_cevoice", mock.Mock())
+    setattr(fake_scipy_signal, "resample_poly", mock.Mock())  # noqa: B010
+    setattr(fake_cevoice, "write_cevoice", mock.Mock())  # noqa: B010
 
     with mock.patch.dict(
         sys.modules,

@@ -28,7 +28,9 @@ if TYPE_CHECKING:
     from ..constants import PipelineStates
     from ..dsp import StreamingPedalboardReverb
     from ..extensions.manager import CeluneExtensionManager
+    from ..persona.emotion import PersonaEmotionAnalyzer
     from ..persona.impl import PersonaClient
+    from ..persona.memory import PersonaMemoryStore
     from .aliases import AudioChunk, AudioChunks
 
 
@@ -282,7 +284,7 @@ class CeluneStateAccessors:
     _playback_done: threading.Event
     _say_lock: threading.Lock
     _wake_lock: threading.Lock
-    _model_lock: threading.RLock  # noqa
+    _model_lock: threading.RLock
     _exit_requested: bool
     _stream: Optional[sd.OutputStream]
     _current_sr: Optional[int]
@@ -308,6 +310,13 @@ class CeluneStateAccessors:
     extension_manager: Optional[CeluneExtensionManager]
     glow: AudioRGBGlow
     vision: Optional[PersonaClient]
+    persona_emotion_analyzer: Optional[PersonaEmotionAnalyzer]
+    persona_memory_store: Optional[PersonaMemoryStore]
+    persona_ready: bool
+    persona_loading: bool
+    _persona_load_thread: Optional[threading.Thread]
+    _active_speech_generation: Optional[int]
+    _webui_callbacks_wrapped: bool
     stream: Optional[sd.OutputStream]
     say_lock: threading.Lock
     utterance_force_stop: threading.Event
@@ -320,12 +329,12 @@ class CeluneStateAccessors:
     generation_thread: Optional[threading.Thread]
     playback_thread: Optional[threading.Thread]
     exit_requested: bool
-    model_lock: threading.RLock  # noqa
+    model_lock: threading.RLock
     audio_unavailable: bool
     current_sr: Optional[int]
 
     @property
-    def cur_state(self) -> str:  # noqa
+    def cur_state(self) -> str:
         """Return the current runtime-state label.
 
         Raises:
@@ -334,7 +343,7 @@ class CeluneStateAccessors:
         raise NotImplementedError("typing surface only")
 
     @cur_state.setter
-    def cur_state(self, value: str) -> None:  # noqa
+    def cur_state(self, value: str) -> None:
         """Store the current runtime-state label.
 
         Args:
@@ -346,7 +355,7 @@ class CeluneStateAccessors:
         raise NotImplementedError("typing surface only")
 
     @property
-    def persona_queue(self) -> queue.Queue:  # noqa
+    def persona_queue(self) -> queue.Queue:
         """Return the queue receiving Persona input text.
 
         Returns:
@@ -355,7 +364,7 @@ class CeluneStateAccessors:
         return self._persona_queue
 
     @property
-    def speech_generation(self) -> int:  # noqa
+    def speech_generation(self) -> int:
         """Return the current speech-generation counter.
 
         Returns:
@@ -364,9 +373,9 @@ class CeluneStateAccessors:
         return self._speech_generation
 
 
-class _BundleWithPath(Protocol):
+class _BundleWithPath(Protocol):  # noqa: PYI046
     """Protocol for bundle-like objects that expose a path."""
 
     @property
-    def path(self) -> Union[str, Path]:  # noqa
+    def path(self) -> Union[str, Path]:
         """Return the bundle path."""

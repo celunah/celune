@@ -147,7 +147,7 @@ class BackendEnvironmentTests(unittest.TestCase):
                 "Backend",
                 index_urls=("https://pypi.org/simple", "https://example.com/simple"),
             )
-            environment = manager.environment_for(manifest)
+            backend_environment = manager.environment_for(manifest)
 
             def fake_run(command: list[str], **_kwargs) -> None:
                 if command[1] == "venv":
@@ -165,7 +165,7 @@ class BackendEnvironmentTests(unittest.TestCase):
             ) as run:
                 result = manager.ensure(manifest)
 
-            self.assertEqual(result, environment)
+            self.assertEqual(result, backend_environment)
             self.assertTrue(result.is_ready)
             self.assertEqual(
                 json.loads(result.metadata_path.read_text(encoding="utf-8"))[
@@ -183,7 +183,7 @@ class BackendEnvironmentTests(unittest.TestCase):
             self.assertIn("--index-url", install_command)
             self.assertFalse(
                 any(
-                    path.name.startswith(f"{environment.root.name}.install-")
+                    path.name.startswith(f"{backend_environment.root.name}.install-")
                     for path in root.rglob("*")
                 )
             )
@@ -195,13 +195,13 @@ class BackendEnvironmentTests(unittest.TestCase):
                 root=Path(temporary_directory), uv_executable="uv"
             )
             manifest = BackendManifest("test", "tts", ("demo==1",), "module", "Backend")
-            environment = manager.environment_for(manifest)
-            environment.python.parent.mkdir(parents=True)
-            environment.python.touch()
-            environment.metadata_path.write_text("{}", encoding="utf-8")
+            backend_environment = manager.environment_for(manifest)
+            backend_environment.python.parent.mkdir(parents=True)
+            backend_environment.python.touch()
+            backend_environment.metadata_path.write_text("{}", encoding="utf-8")
 
             with mock.patch("celune.backends.environment.subprocess.run") as run:
-                self.assertEqual(manager.ensure(manifest), environment)
+                self.assertEqual(manager.ensure(manifest), backend_environment)
 
             run.assert_not_called()
 
@@ -237,23 +237,27 @@ class BackendEnvironmentTests(unittest.TestCase):
         """Verify the operating-system lock blocks a second installer."""
         with tempfile.TemporaryDirectory() as temporary_directory:
             lock_path = Path(temporary_directory) / "install.lock"
-            with _exclusive_lock(lock_path, timeout=1.0):
-                with self.assertRaises(BackendEnvironmentError):
-                    with _exclusive_lock(lock_path, timeout=0.01):
-                        pass
+            with (
+                _exclusive_lock(lock_path, timeout=1.0),
+                self.assertRaises(BackendEnvironmentError),
+                _exclusive_lock(lock_path, timeout=0.01),
+            ):
+                pass
 
     def test_uv_timeout_becomes_backend_environment_error(self) -> None:
         """Verify stalled uv operations release installation with a clear error."""
         manager = BackendEnvironmentManager(uv_executable="uv", uv_timeout=1.5)
-        with mock.patch(
-            "celune.backends.environment.subprocess.run",
-            side_effect=subprocess.TimeoutExpired("uv", 1.5),
-        ) as run:
-            with self.assertRaisesRegex(
+        with (
+            mock.patch(
+                "celune.backends.environment.subprocess.run",
+                side_effect=subprocess.TimeoutExpired("uv", 1.5),
+            ) as run,
+            self.assertRaisesRegex(
                 BackendEnvironmentError,
                 "uv operation timed out",
-            ):
-                manager._run_uv("venv")
+            ),
+        ):
+            manager._run_uv("venv")
 
         self.assertEqual(run.call_args.kwargs["timeout"], 1.5)
         self.assertNotIn("PYTHONHOME", run.call_args.kwargs["env"])
@@ -454,9 +458,11 @@ class BackendEnvironmentTests(unittest.TestCase):
         proxy._protocol_lock = threading.Lock()
         proxy._log_callback = mock.Mock()
 
-        with mock.patch.object(proxy, "_drain_stream") as drain:
-            with self.assertRaisesRegex(ImportError, "missing codec"):
-                list(proxy._stream_request("generate_stream"))
+        with (
+            mock.patch.object(proxy, "_drain_stream") as drain,
+            self.assertRaisesRegex(ImportError, "missing codec"),
+        ):
+            list(proxy._stream_request("generate_stream"))
 
         drain.assert_not_called()
 
@@ -496,7 +502,9 @@ class BackendEnvironmentTests(unittest.TestCase):
         """Verify workers do not mix the core and backend Python runtimes."""
         proxy = object.__new__(remote.RemoteBackendProxy)
         proxy._manifest = BACKEND_MANIFESTS["mini"]
-        environment = BackendEnvironment(BACKEND_MANIFESTS["mini"], Path("C:/backend"))
+        backend_environment = BackendEnvironment(
+            BACKEND_MANIFESTS["mini"], Path("C:/backend")
+        )
         process = SimpleNamespace(stderr=None)
 
         with (
@@ -510,7 +518,7 @@ class BackendEnvironmentTests(unittest.TestCase):
             ) as popen,
         ):
             proxy._start_worker(
-                environment,
+                backend_environment,
                 lambda msg, severity="info", *, loglevel="info": None,
                 {},
             )

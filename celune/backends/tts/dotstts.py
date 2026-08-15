@@ -31,7 +31,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
     uses_voice_bundles: bool = True
     chunk_rate: float = 6.25
     max_new_tokens: int = 512
-    supported_languages: tuple[str, ...] = (  # noqa
+    supported_languages: tuple[str, ...] = (
         "ar",
         "my",
         "zh-cn",
@@ -95,7 +95,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             loader.materialize(name, "wav")
 
     @property
-    def voices(self) -> list[str]:  # noqa
+    def voices(self) -> list[str]:
         """Return the voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:

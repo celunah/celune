@@ -134,7 +134,7 @@ class CelunePipelineState:
     playback_done: threading.Event = field(default_factory=threading.Event)
     say_lock: threading.Lock = field(default_factory=threading.Lock)
     wake_lock: threading.Lock = field(default_factory=threading.Lock)
-    model_lock: threading.RLock = field(default_factory=threading.RLock)  # noqa
+    model_lock: threading.RLock = field(default_factory=threading.RLock)
     exit_requested: bool = False
 
 

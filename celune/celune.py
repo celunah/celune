@@ -367,7 +367,7 @@ class Celune(CeluneStateAccessors):
         input_mode: str
         model: Optional[BackendModel]
         model_name: str
-        voices: tuple[str, ...]  # noqa
+        voices: tuple[str, ...]
         current_voice: Optional[str]
         current_character: Optional[str]
         current_character_persona: Optional[CEVoicePersona]
@@ -611,9 +611,9 @@ class Celune(CeluneStateAccessors):
                     log=self.log_callback,
                 )
                 if hasattr(self.vc_backend, "pitch_shift"):
-                    setattr(self.vc_backend, "pitch_shift", self.vc_pitch_shift)
+                    self.vc_backend.pitch_shift = self.vc_pitch_shift
                 if hasattr(self.vc_backend, "f0_condition"):
-                    setattr(self.vc_backend, "f0_condition", self.vc_f0_condition)
+                    self.vc_backend.f0_condition = self.vc_f0_condition
                 self.voice_conversion_backend = self.vc_backend.name
             else:
                 self.vc_backend = None
@@ -681,7 +681,7 @@ class Celune(CeluneStateAccessors):
             self.log_level = "info"
 
     @property
-    def cur_state(self) -> str:  # noqa
+    def cur_state(self) -> str:
         """Return Celune's current runtime state.
 
         Returns:
@@ -690,7 +690,7 @@ class Celune(CeluneStateAccessors):
         return self._runtime_state.cur_state
 
     @cur_state.setter
-    def cur_state(self, value: str) -> None:  # noqa
+    def cur_state(self, value: str) -> None:
         """Store Celune's runtime state and emit transition events on change.
 
         Args:
@@ -765,7 +765,7 @@ class Celune(CeluneStateAccessors):
             original_fatal()
 
         self.glow.fatal = wrapped_fatal
-        setattr(self.glow, "_celune_fatal_wrapped", True)
+        self.glow._celune_fatal_wrapped = True
 
     def _emit_event(self, event_name: EventName, event: EventPayload) -> None:
         """Dispatch one typed event through Celune's internal event bus."""
@@ -969,7 +969,7 @@ class Celune(CeluneStateAccessors):
         finally:
             with self._model_lock:
                 if self._persona_load_thread is threading.current_thread():
-                    setattr(self, "_persona_load_thread", None)
+                    self._persona_load_thread = None
 
     def _close_stream(self, abort: bool = False) -> None:
         """Close the current audio stream if one exists."""
@@ -983,11 +983,11 @@ class Celune(CeluneStateAccessors):
             self.persona_ready = False
             self.persona_loading = False
             persona_thread = self._persona_load_thread
-            setattr(self, "_persona_load_thread", None)
+            self._persona_load_thread = None
             analyzer = getattr(self, "persona_emotion_analyzer", None)
             if isinstance(analyzer, PersonaEmotionAnalyzer):
                 analyzer.clear_vlm()
-            setattr(self, "persona_emotion_analyzer", None)
+            self.persona_emotion_analyzer = None
         if (
             persona_thread is not None
             and persona_thread is not threading.current_thread()
@@ -1091,9 +1091,9 @@ class Celune(CeluneStateAccessors):
             log=self.log_callback,
         )
         if hasattr(candidate_backend, "pitch_shift"):
-            setattr(candidate_backend, "pitch_shift", self.vc_pitch_shift)
+            candidate_backend.pitch_shift = self.vc_pitch_shift
         if hasattr(candidate_backend, "f0_condition"):
-            setattr(candidate_backend, "f0_condition", self.vc_f0_condition)
+            candidate_backend.f0_condition = self.vc_f0_condition
         previous_backend = self.vc_backend
         if previous_backend is not None:
             _close_backend(previous_backend)
@@ -1268,9 +1268,9 @@ class Celune(CeluneStateAccessors):
             log=self.log_callback,
         )
         if hasattr(restored_vc_backend, "pitch_shift"):
-            setattr(restored_vc_backend, "pitch_shift", self.vc_pitch_shift)
+            restored_vc_backend.pitch_shift = self.vc_pitch_shift
         if hasattr(restored_vc_backend, "f0_condition"):
-            setattr(restored_vc_backend, "f0_condition", self.vc_f0_condition)
+            restored_vc_backend.f0_condition = self.vc_f0_condition
         if snapshot.loaded:
             restored_vc_backend.preload_models()
         snapshot.vc_backend = restored_vc_backend
@@ -1280,7 +1280,7 @@ class Celune(CeluneStateAccessors):
         backend: CeluneBackend,
         preferred_voice: Optional[str] = None,
     ) -> tuple[
-        tuple[str, ...],  # noqa
+        tuple[str, ...],
         Optional[str],
         Optional[str],
         Optional[CEVoicePersona],
@@ -1450,13 +1450,9 @@ class Celune(CeluneStateAccessors):
                     log=self.log_callback,
                 )
                 if hasattr(candidate_vc_backend, "pitch_shift"):
-                    setattr(candidate_vc_backend, "pitch_shift", self.vc_pitch_shift)
+                    candidate_vc_backend.pitch_shift = self.vc_pitch_shift
                 if hasattr(candidate_vc_backend, "f0_condition"):
-                    setattr(
-                        candidate_vc_backend,
-                        "f0_condition",
-                        self.vc_f0_condition,
-                    )
+                    candidate_vc_backend.f0_condition = self.vc_f0_condition
                 if previous_backend is not None:
                     _dispose_backend(previous_backend)
                 if (
@@ -1966,7 +1962,7 @@ class Celune(CeluneStateAccessors):
             if self._wake_background_thread is threading.current_thread():
                 self._wake_background_thread = None
 
-    def set_voices(self, voices: tuple[str, ...]) -> None:  # noqa
+    def set_voices(self, voices: tuple[str, ...]) -> None:
         """Configure Celune's voice information.
 
         Args:
@@ -3264,7 +3260,7 @@ class Celune(CeluneStateAccessors):
 
                 device = next(llm.parameters()).device
                 inputs = tokens.to(device)
-                token_ids = cast(torch.Tensor, tokens["input_ids"])  # noqa
+                token_ids = cast(torch.Tensor, tokens["input_ids"])
                 len_tokens = token_ids.shape[1]
 
                 self.log(string("celune.tokens_to_normalize", count=len_tokens))
@@ -3282,7 +3278,7 @@ class Celune(CeluneStateAccessors):
                         eos_token_id=tokenizer.eos_token_id,
                     )
 
-                input_ids = inputs["input_ids"]  # noqa
+                input_ids = inputs["input_ids"]
 
                 if not isinstance(input_ids, torch.Tensor):
                     self.log(

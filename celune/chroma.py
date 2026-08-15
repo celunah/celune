@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 class AudioRGBGlow:
     """OpenRGB-compatible speaking-aware glow effect."""
 
+    _celune_fatal_wrapped: bool = False
+
     def __init__(
         self,
         celune: Optional[Celune],

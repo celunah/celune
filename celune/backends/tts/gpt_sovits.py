@@ -385,7 +385,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             loader.materialize(name, "wav")
 
     @property
-    def default_model_id(self) -> str:  # noqa
+    def default_model_id(self) -> str:
         """Return the selected GPT-SoVITS variant identifier.
 
         Returns:
@@ -394,7 +394,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         return self.variant
 
     @property
-    def all_model_ids(self) -> list[str]:  # noqa
+    def all_model_ids(self) -> list[str]:
         """Return the selected GPT-SoVITS variant identifier.
 
         Returns:
@@ -403,7 +403,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         return [self.variant]
 
     @property
-    def voices(self) -> list[str]:  # noqa
+    def voices(self) -> list[str]:
         """Return voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:
@@ -747,11 +747,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                 module.TTS,
             )
             config = config_type(self._model_config(variant))
-            setattr(
-                config,
-                "configs_path",
-                str(self.root / "GPT_SoVITS/configs/tts_infer.yaml"),
-            )
+            config.configs_path = str(self.root / "GPT_SoVITS/configs/tts_infer.yaml")
             pipeline = pipeline_type(config)
 
         sample_rate = 48000 if variant == "v4" else 32000
@@ -875,7 +871,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
 
     @staticmethod
     def _to_numpy_audio(
-        audio: Union[AudioChunk, AudioChunkNonNormalized, torch.Tensor],  # noqa
+        audio: Union[AudioChunk, AudioChunkNonNormalized, torch.Tensor],
     ) -> AudioChunk:
         """Convert one GPT-SoVITS output chunk to mono float32 audio."""
         if isinstance(audio, torch.Tensor):

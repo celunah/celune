@@ -209,7 +209,7 @@ def compute_raw_metrics(y: npt.NDArray[np.float32], sr: int) -> dict:
         "sample_rate": sr,
     }
 
-    rms_frames = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0]  # noqa
+    rms_frames = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0]
     metrics["rms_mean"] = float(np.mean(rms_frames))
     metrics["rms_std"] = float(np.std(rms_frames))
 
@@ -251,10 +251,10 @@ def compute_raw_metrics(y: npt.NDArray[np.float32], sr: int) -> dict:
         num_voiced_frames * hop_duration_s / max(metrics["duration_s"], 1e-6)
     )
 
-    centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=512)[0]  # noqa
+    centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=512)[0]
     metrics["spectral_centroid_mean"] = float(np.mean(centroid))
 
-    zcr = librosa.feature.zero_crossing_rate(y, hop_length=512)[0]  # noqa
+    zcr = librosa.feature.zero_crossing_rate(y, hop_length=512)[0]
     metrics["zcr_mean"] = float(np.mean(zcr))
 
     stft = np.abs(librosa.stft(y, hop_length=512))
@@ -481,7 +481,7 @@ def _blend_colors(color_a: str, color_b: str, mix: float) -> str:
     color_b_rgb = np.array(mcolors.to_rgb(color_b))
     blended = (1.0 - mix) * color_a_rgb + mix * color_b_rgb
     rgb = tuple(float(channel) for channel in blended)
-    return mcolors.to_hex(cast(tuple[float, float, float], rgb))  # noqa
+    return mcolors.to_hex(cast(tuple[float, float, float], rgb))
 
 
 def _summarize_trait_status(traits: dict) -> tuple[str, str]:

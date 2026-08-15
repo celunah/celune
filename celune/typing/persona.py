@@ -200,7 +200,7 @@ class _WhisperProcessorOutput(Protocol):
     attention_mask: Optional[Tensor]
 
 
-class _WhisperProcessor(Protocol):
+class _WhisperProcessor(Protocol):  # noqa: PYI046
     """Protocol for the processor operations used by the transcriber."""
 
     def __call__(
@@ -227,7 +227,7 @@ class _WhisperProcessor(Protocol):
         """
 
 
-class _WhisperModel(Protocol):
+class _WhisperModel(Protocol):  # noqa: PYI046
     """Protocol for the model operations used by the transcriber."""
 
     def eval(self) -> None:
@@ -235,7 +235,7 @@ class _WhisperModel(Protocol):
 
     def generate(
         self,
-        **kwargs: Union[Tensor, str, bool, int, float],
+        **kwargs: Union[Tensor, str, bool, float],
     ) -> Union[Tensor, WhisperGenerationPayload]:
         """Generate token IDs from prepared Whisper inputs.
 
@@ -251,7 +251,7 @@ class _WhisperModel(Protocol):
         """
 
 
-class _EmotionModelConfig(Protocol):
+class _EmotionModelConfig(Protocol):  # noqa: PYI046
     """Protocol for model configs that expose emotion label mappings."""
 
     id2label: Mapping[Union[int, str], str]

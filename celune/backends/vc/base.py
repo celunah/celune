@@ -14,6 +14,8 @@ class CeluneVCBackend(ABC):
 
     name: str = "unknown"
     is_fake: bool = False
+    pitch_shift: int
+    f0_condition: bool
 
     def __init__(self, log: Callable[[str, str], None]) -> None:
         self.log = log

@@ -24,7 +24,7 @@ class SpeechRequest:
     display_text: str
     language: str = "Auto"
     save: bool = True
-    stream_queue: Optional[queue.Queue[Optional[Union[AudioChunk, Exception]]]] = None  # noqa
+    stream_queue: Optional[queue.Queue[Optional[Union[AudioChunk, Exception]]]] = None
     normalize: bool = False
     silent_retry_count: int = 0
     generation: int = 0

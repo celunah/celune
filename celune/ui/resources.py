@@ -262,9 +262,12 @@ def resource_pages(celune: Celune, theme_name: Optional[str] = None) -> tuple[st
         historical_speech_seconds,
     )
     cached = _RESOURCE_PAGE_CACHE
-    if cached is not None and cached[0] == cache_key:
-        if now_monotonic - cached[1] < RESOURCE_PAGE_CACHE_SECONDS:
-            return cached[2]
+    if (
+        cached is not None
+        and cached[0] == cache_key
+        and now_monotonic - cached[1] < RESOURCE_PAGE_CACHE_SECONDS
+    ):
+        return cached[2]
 
     pages = [format_vram(), format_usage()]
 

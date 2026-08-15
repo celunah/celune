@@ -7,7 +7,7 @@ import tempfile
 import threading
 import weakref
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Optional, cast
 from unittest import IsolatedAsyncioTestCase, TestCase, mock
 
@@ -117,7 +117,7 @@ class CeluneCoreTests(TestCase):
             log_level="info",
         )
         glow = FakeGlow("#cebaff", celune=celune)
-        setattr(celune, "glow", glow)
+        setattr(celune, "glow", glow)  # noqa: B010
         celune._wrap_fatal_glow()
         glow.start()
         celune._model_ready.set()
@@ -217,7 +217,7 @@ class CeluneCoreTests(TestCase):
 
         celune = self._make_celune({})
         self.assertEqual(celune.chunk_size, 8)
-        self.assertEqual(getattr(celune.glow, "started"), True)
+        self.assertEqual(getattr(celune.glow, "started"), True)  # noqa: B009
         celune.close()
 
         with (
@@ -1035,12 +1035,12 @@ class CeluneCoreTests(TestCase):
         clear_vlm = mock.patch.object(analyzer, "clear_vlm", wraps=analyzer.clear_vlm)
         clear_vlm_mock = clear_vlm.start()
         self.addCleanup(clear_vlm.stop)
-        setattr(celune, "persona_emotion_analyzer", analyzer)
+        celune.persona_emotion_analyzer = analyzer
 
         celune._unload_persona_state()
 
         clear_vlm_mock.assert_called_once_with()
-        self.assertIsNone(getattr(celune, "persona_emotion_analyzer"))
+        self.assertIsNone(getattr(celune, "persona_emotion_analyzer"))  # noqa: B009
 
     def test_reset_persona_conversation_clears_history_summary_and_attachments(
         self,
@@ -1301,7 +1301,7 @@ class CeluneCoreTests(TestCase):
             """Backend fixture whose warmup generation always fails."""
 
             name = "failingwarmup"
-            voice_models = {"storm": "warmup/storm"}
+            voice_models = MappingProxyType({"storm": "warmup/storm"})
             default_voice = "storm"
 
             def generate_stream(self, model, **kwargs: JSONSerializable):
@@ -1340,7 +1340,7 @@ class CeluneCoreTests(TestCase):
             """Alternative backend fixture used by unload-order tests."""
 
             name = "altfake"
-            voice_models = {"storm": "alt/storm"}
+            voice_models = MappingProxyType({"storm": "alt/storm"})
             default_voice = "storm"
 
             def load_model(self, model_id: str, **kwargs: JSONSerializable):
@@ -1745,7 +1745,7 @@ class CeluneCoreTests(TestCase):
             """Backend fixture whose warmup generation fails after observing live state."""
 
             name = "failingwarmup"
-            voice_models = {"storm": "alt/storm"}
+            voice_models = MappingProxyType({"storm": "alt/storm"})
             default_voice = "storm"
 
             def generate_stream(self, model, **kwargs: JSONSerializable):
@@ -1770,7 +1770,7 @@ class CeluneCoreTests(TestCase):
             """Alternative backend fixture used by context-manager tests."""
 
             name = "altfake"
-            voice_models = {"storm": "alt/storm", "calm": "alt/calm"}
+            voice_models = MappingProxyType({"storm": "alt/storm", "calm": "alt/calm"})
             default_voice = "storm"
 
         celune = self._make_celune({})
@@ -1808,7 +1808,7 @@ class CeluneCoreTests(TestCase):
             """Alternative backend fixture used by backend lifetime tests."""
 
             name = "altfake"
-            voice_models = {"storm": "alt/storm"}
+            voice_models = MappingProxyType({"storm": "alt/storm"})
             default_voice = "storm"
 
         with (
@@ -1999,7 +1999,7 @@ class CeluneCoreTests(TestCase):
             thread_cls.return_value.start = mock.Mock()
             self.assertEqual(celune.load(), True)
         self.assertEqual(celune.loaded, True)
-        self.assertEqual(getattr(celune.glow, "entered"), True)
+        self.assertEqual(getattr(celune.glow, "entered"), True)  # noqa: B009
         celune.close()
 
         failing = self._make_celune({})
@@ -2011,7 +2011,7 @@ class CeluneCoreTests(TestCase):
         with mock.patch("celune.celune.play_signal", return_value=False):
             self.assertEqual(failing.load(), False)
         self.assertEqual(errors, ["Default model failed to load"])
-        self.assertEqual(getattr(failing.glow, "fatal_called"), True)
+        self.assertEqual(getattr(failing.glow, "fatal_called"), True)  # noqa: B009
 
     def test_unload_runtime_state_clears_models_without_cuda(self) -> None:
         """Verify model references are cleared without touching CUDA.
@@ -2173,7 +2173,7 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(celune.sleeping, True)
         self.assertEqual(celune.loaded, False)
         self.assertEqual(celune.cur_state, "sleeping")
-        self.assertEqual(getattr(celune.glow, "sleep_called"), True)
+        self.assertEqual(getattr(celune.glow, "sleep_called"), True)  # noqa: B009
         self.assertIsNone(celune.model)
         self.assertEqual(celune.model_name, "")
         self.assertIsNone(celune.llm)
@@ -2199,7 +2199,7 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(celune.sleeping, False)
         self.assertEqual(celune.loaded, True)
         self.assertEqual(celune.cur_state, "idle")
-        self.assertEqual(getattr(celune.glow, "wake_called"), True)
+        self.assertEqual(getattr(celune.glow, "wake_called"), True)  # noqa: B009
         self.assertEqual(celune.model, {"model_id": "fake/balanced", "kwargs": {}})
         self.assertEqual(celune.model_name, "fake/balanced")
         celune._warmup.assert_called_once_with()
@@ -2378,7 +2378,7 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.play_signal", return_value=False),
         ):
             self.assertEqual(celune.wake_from_sleep(), False)
-        self.assertEqual(getattr(celune.glow, "fatal_called"), True)
+        self.assertEqual(getattr(celune.glow, "fatal_called"), True)  # noqa: B009
 
     def test_concurrent_wake_requests_only_recreate_backend_once(self) -> None:
         """Verify repeated wake requests cannot duplicate backend recreation."""
@@ -2465,7 +2465,7 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(result, False)
         self.assertEqual(celune.cur_state, "reloading")
         self.assertEqual(celune.loaded, True)
-        self.assertEqual(getattr(celune.glow, "fatal_called"), False)
+        self.assertEqual(getattr(celune.glow, "fatal_called"), False)  # noqa: B009
         celune.error_callback.assert_not_called()
 
 

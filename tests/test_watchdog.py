@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: MIT
+"""Tests for the launcher-loss watchdog."""
 
 import os
 from unittest import TestCase, mock
@@ -23,13 +24,15 @@ class WatchdogTests(TestCase):
         read_fd, write_fd = os.pipe()
         os.close(write_fd)
 
-        with mock.patch.object(
-            watchdog,
-            "_request_launcher_lost",
-            side_effect=RuntimeError("launcher lost"),
-        ) as exit_launcher_lost:
-            with self.assertRaisesRegex(RuntimeError, "launcher lost"):
-                watchdog._watch_posix_pipe(str(read_fd))
+        with (
+            mock.patch.object(
+                watchdog,
+                "_request_launcher_lost",
+                side_effect=RuntimeError("launcher lost"),
+            ) as exit_launcher_lost,
+            self.assertRaisesRegex(RuntimeError, "launcher lost"),
+        ):
+            watchdog._watch_posix_pipe(str(read_fd))
 
         exit_launcher_lost.assert_called_once_with()
 

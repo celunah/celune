@@ -366,7 +366,7 @@ class CeluneBackend[ModelT](ABC):
         """
 
     @property
-    def default_model_id(self) -> str:  # noqa
+    def default_model_id(self) -> str:
         """Return the default model identifier for this backend.
 
         Returns:
@@ -384,7 +384,7 @@ class CeluneBackend[ModelT](ABC):
         raise ValueError(f"{self.name} does not define a default model")
 
     @property
-    def all_model_ids(self) -> list[str]:  # noqa
+    def all_model_ids(self) -> list[str]:
         """Return every known model identifier for this backend.
 
         Returns:
@@ -399,7 +399,7 @@ class CeluneBackend[ModelT](ABC):
         return []
 
     @property
-    def voices(self) -> list[str]:  # noqa
+    def voices(self) -> list[str]:
         """Return the available voice names for this backend.
 
         Returns:

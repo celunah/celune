@@ -601,7 +601,7 @@ def _vlm_persona_summary(
             previous_summary,
             maximum_characters,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         return ""
     if not isinstance(generated, str) or not generated.strip():
         return ""
@@ -672,7 +672,7 @@ def compact_persona_history(engine: PersonaEngineView) -> None:
         maximum_characters,
     ) or _build_persona_summary(previous_summary, old_messages, maximum_characters)
 
-    setattr(engine, "persona_session_summary", summary)
+    engine.persona_session_summary = summary
     del history[:-keep_count]
 
 
@@ -800,7 +800,7 @@ def persona_is_available() -> bool:
     try:
         PersonaRuntime()
         return True
-    except Exception:  # noqa
+    except Exception:
         return False
 
 

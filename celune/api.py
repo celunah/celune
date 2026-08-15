@@ -1280,7 +1280,7 @@ def _wrap_celune_callbacks(celune: Celune) -> None:
     celune.voice_changed_callback = wrapped_voice_changed
     celune.change_input_state_callback = wrapped_input_state
     celune.change_voice_lock_state_callback = wrapped_voice_lock_state
-    setattr(celune, "_webui_callbacks_wrapped", True)
+    celune._webui_callbacks_wrapped = True
 
 
 def require_celune() -> Celune:
@@ -2788,7 +2788,7 @@ async def voice(body: VoiceRequest) -> Union[ActionResponse, JSONResponse]:
 
 @api.post("/v1/sfx", response_model=None)
 async def sfx(
-    file: UploadFile = File(...),
+    file: UploadFile = File(...),  # noqa: B008
     keep: bool = Form(True),
 ) -> Union[StreamingResponse, JSONResponse]:
     """Play an uploaded sound effect file and stream the audio chunks back to the caller.
@@ -2851,7 +2851,7 @@ async def sfx(
 
 @api.post("/v1/convert", response_model=None)
 async def convert_audio(
-    file: UploadFile = File(...),
+    file: UploadFile = File(...),  # noqa: B008
     pitch_shift: Optional[int] = Form(None),
     f0_condition: Optional[bool] = Form(None),
 ) -> Union[StreamingResponse, JSONResponse]:

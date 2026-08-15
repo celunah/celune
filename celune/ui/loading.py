@@ -54,38 +54,35 @@ class CeluneLoadingScreen(Widget):
         Returns:
             ComposeResult: The loading overlay widget tree.
         """
-        with Center(id="loading-center"):
-            with Vertical(id="loading-content"):
-                yield Static(APP_NAME, id="loading-brand", markup=False)
+        with Center(id="loading-center"), Vertical(id="loading-content"):
+            yield Static(APP_NAME, id="loading-brand", markup=False)
+            yield Static(
+                self._status_message,
+                id="loading-state-label",
+                markup=False,
+            )
+            with Vertical(id="loading-log"):
                 yield Static(
-                    self._status_message,
-                    id="loading-state-label",
-                    markup=False,
-                )
-                with Vertical(id="loading-log"):
-                    yield Static(
-                        "",
-                        id="loading-diagnostics",
-                        markup=False,
-                    )
-                    yield Static(
-                        self._latest_log_message,
-                        id="loading-log-message",
-                        markup=False,
-                    )
-                yield Static(
-                    self._spinner_frames[0], id="loading-spinner", markup=False
-                )
-                yield Static(
-                    string("ui.loading_wait"),
-                    id="loading-wait",
+                    "",
+                    id="loading-diagnostics",
                     markup=False,
                 )
                 yield Static(
-                    self._error_message,
-                    id="loading-error",
+                    self._latest_log_message,
+                    id="loading-log-message",
                     markup=False,
                 )
+            yield Static(self._spinner_frames[0], id="loading-spinner", markup=False)
+            yield Static(
+                string("ui.loading_wait"),
+                id="loading-wait",
+                markup=False,
+            )
+            yield Static(
+                self._error_message,
+                id="loading-error",
+                markup=False,
+            )
         with Horizontal(id="loading-footer"):
             yield Static(
                 string("ui.loading_starting", app_name=APP_NAME),

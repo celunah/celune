@@ -165,7 +165,7 @@ def _run_request(
         return {"ok": True, "value": None}, next_model_id
     if operation == "load_model":
         model = backend.load_model(**cast(BackendArguments, arguments))
-        setattr(backend, "model", model)
+        backend.model = model
         model_id = next_model_id
         models[model_id] = model
         return {"ok": True, "value": model_id}, next_model_id + 1

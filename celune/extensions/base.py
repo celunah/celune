@@ -19,7 +19,7 @@ class CeluneExtension(ABC):
         self.ctx = context
 
     @property
-    def name(self) -> str:  # noqa
+    def name(self) -> str:
         """Return the extension's display name.
 
         Returns:
@@ -28,7 +28,7 @@ class CeluneExtension(ABC):
         return self.EXTENSION_NAME
 
     @property
-    def state(self) -> str:  # noqa
+    def state(self) -> str:
         """Read Celune's current state.
 
         Returns:

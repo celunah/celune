@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Optional
+from collections.abc import Sequence
 
 from ..typing.agent import (
     AgentContext,

@@ -2299,7 +2299,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 return {"response": "new reply"}
 
         engine.vision = SimpleNamespace(
-            post=lambda json: FakeResponse(),  # noqa: ARG005
+            post=lambda json: FakeResponse(),
         )
         engine.dev = False
 
@@ -2356,7 +2356,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 return {"response": "Understood."}
 
         engine.vision = SimpleNamespace(
-            post=lambda json: FakeResponse(),  # noqa: ARG005
+            post=lambda json: FakeResponse(),
         )
         engine.dev = False
 

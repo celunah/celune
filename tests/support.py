@@ -10,7 +10,7 @@ import sys
 import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import MappingProxyType, ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Optional, TypedDict
 from unittest import mock
 
@@ -42,7 +42,7 @@ class FakeBackend(CeluneBackend):
     name = "fake"
     chunk_rate = 12.5
     supported_languages = ("en",)
-    voice_models = {"balanced": "fake/balanced", "bold": "fake/bold"}
+    voice_models = MappingProxyType({"balanced": "fake/balanced", "bold": "fake/bold"})
     default_voice = "balanced"
     is_fake = True
 

@@ -205,22 +205,24 @@ class CEVoiceTests(TestCase):
 
     def test_v4_decompression_rejects_payloads_over_the_logical_limit(self) -> None:
         """Verify compressed CECHAR v4 payloads are bounded before parsing."""
-        with mock.patch.object(cevoice, "V4_MAX_DECOMPRESSED_BYTES", 3):
-            with self.assertRaisesRegex(CEVoiceError, "too large"):
-                cevoice._decompress_v4_payload(
-                    gzip.compress(b"four"),
-                    cevoice.V4_COMPRESSION_GZIP,
-                )
+        with (
+            mock.patch.object(cevoice, "V4_MAX_DECOMPRESSED_BYTES", 3),
+            self.assertRaisesRegex(CEVoiceError, "too large"),
+        ):
+            cevoice._decompress_v4_payload(
+                gzip.compress(b"four"),
+                cevoice.V4_COMPRESSION_GZIP,
+            )
 
     # any types here are resolved dynamically
     def test_asset_checksums_are_case_insensitive(self) -> None:
         """Accept uppercase hexadecimal asset checksums in a valid manifest."""
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])
         voice_data = voices["balanced"]
-        assets = cast(cevoice.Manifest, voice_data["assets"])  # noqa
-        wav_asset = cast(cevoice.Manifest, assets["wav"])  # noqa
+        assets = cast(cevoice.Manifest, voice_data["assets"])
+        wav_asset = cast(cevoice.Manifest, assets["wav"])
         wav_asset["sha256"] = cast(str, wav_asset["sha256"]).upper()
         self._rewrite_metadata(metadata)
 
@@ -362,7 +364,7 @@ class CEVoiceTests(TestCase):
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])
         voices["balanced"]["cfg_scale"] = 0
         self._rewrite_metadata(metadata)
         with self.assertRaisesRegex(CEVoiceError, "cfg_scale"):
@@ -370,7 +372,7 @@ class CEVoiceTests(TestCase):
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])
         voices["balanced"]["reference_text"] = " "
         self._rewrite_metadata(metadata)
         with self.assertRaisesRegex(CEVoiceError, "reference_text"):
@@ -378,7 +380,7 @@ class CEVoiceTests(TestCase):
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])
         del voices["balanced"]["reference_text"]
         self._rewrite_metadata(metadata)
         with self.assertRaisesRegex(CEVoiceError, "reference_text is required"):
@@ -386,8 +388,8 @@ class CEVoiceTests(TestCase):
 
         bundle = self._write_bundle()
         metadata = copy.deepcopy(bundle.metadata)
-        voices = cast(cevoice.VoiceManifest, metadata["voices"])  # noqa
-        assets = cast(cevoice.Manifest, voices["balanced"]["assets"])  # noqa
+        voices = cast(cevoice.VoiceManifest, metadata["voices"])
+        assets = cast(cevoice.Manifest, voices["balanced"]["assets"])
         assets["json"] = {
             "offset": 0,
             "length": 0,

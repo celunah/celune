@@ -20,9 +20,6 @@ from ..typing.persona import (
     _WhisperModel,
     _WhisperProcessor,
 )
-from ..typing.persona import (  # pylint: disable=W0611
-    _WhisperProcessorOutput,  # noqa: F401
-)
 
 if TYPE_CHECKING:
     # noinspection PyPep8Naming

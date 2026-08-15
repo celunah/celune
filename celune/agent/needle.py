@@ -159,7 +159,7 @@ class NeedleHandler:
         model_id: str = NEEDLE_MODEL_ID,
         device: Optional[Union[str, torch.device]] = None,
         cache_dir: Optional[Path] = None,
-    ) -> "NeedleHandler":
+    ) -> NeedleHandler:
         """Download, convert, and load one Needle checkpoint."""
         cache_root = cache_dir or huggingface_hub_cache_dir(create=True)
         cache = str(cache_root)

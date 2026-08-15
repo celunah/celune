@@ -72,7 +72,7 @@ def _worker_exception(error_type: Optional[str], message: str) -> Exception:
                 try:
                     return candidate(message)
                 except Exception:
-                    pass
+                    return BackendError(f"{error_type}: {message}")
         return BackendError(f"{error_type}: {message}")
     return BackendError(message)
 
@@ -184,9 +184,12 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Split one worker log line into its severity and message."""
         if text.startswith("["):
             first, separator, remainder = text[1:].partition("]")
-            if separator and first in {"info", "warning", "error"}:
-                if remainder.startswith(" "):
-                    return first, True, remainder[1:], "info"
+            if (
+                separator
+                and first in {"info", "warning", "error"}
+                and remainder.startswith(" ")
+            ):
+                return first, True, remainder[1:], "info"
             if (
                 separator
                 and first in {"verbose", "debug"}
@@ -450,9 +453,8 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         )
         self._process = None
         if process.poll() is None and process.stdin is not None:
-            with self._protocol_lock:
-                with suppress(OSError, BrokenPipeError):
-                    send_message(process.stdin, {"operation": "shutdown"})
+            with self._protocol_lock, suppress(OSError, BrokenPipeError):
+                send_message(process.stdin, {"operation": "shutdown"})
         try:
             if process.poll() is None:
                 process.wait(timeout=5)

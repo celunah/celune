@@ -532,7 +532,7 @@ class BackendTests(TestCase):
                 captured["cwd"] = Path.cwd()
                 return ("model", "semantic", "vocoder", "campplus", "mel", {})
 
-            setattr(module, "load_models", load_models)
+            setattr(module, "load_models", load_models)  # noqa: B010
             captured_stdout = io.StringIO()
             with (
                 contextlib.redirect_stdout(captured_stdout),
@@ -559,7 +559,7 @@ class BackendTests(TestCase):
             print("0%| | 0/10", file=sys.stderr)
             return torch.zeros(4)
 
-        setattr(module, "custom_infer", custom_infer)
+        setattr(module, "custom_infer", custom_infer)  # noqa: B010
         backend._live_module = cast(_SeedVCRealtimeModule, module)
         backend._live_model_set = ("model",)
         backend._live_reference_path = Path("reference.wav")
@@ -705,14 +705,18 @@ class BackendTests(TestCase):
             captured.append((repo_id, filename, cache_dir))
             return str(Path(cache_dir) / filename)
 
-        setattr(fake_hf_utils, "hf_hub_download", fake_hf_hub_download)
-        setattr(
+        setattr(fake_hf_utils, "hf_hub_download", fake_hf_hub_download)  # noqa: B010
+        setattr(  # noqa: B010
             fake_hf_utils,
             "load_custom_model_from_hf",
             lambda *args, **kwargs: None,
         )
-        setattr(fake_wrapper, "load_custom_model_from_hf", lambda *args, **kwargs: None)
-        setattr(fake_wrapper, "SeedVCWrapper", type("FakeSeedVCWrapper", (), {}))
+        setattr(  # noqa: B010
+            fake_wrapper,
+            "load_custom_model_from_hf",
+            lambda *args, **kwargs: None,
+        )
+        setattr(fake_wrapper, "SeedVCWrapper", type("FakeSeedVCWrapper", (), {}))  # noqa: B010
 
         def import_module(name: str) -> ModuleType:
             if name == "seed_vc.hf_utils":
@@ -735,7 +739,7 @@ class BackendTests(TestCase):
                 ),
             ):
                 backend._load_wrapper_type()
-                resolved = getattr(fake_wrapper, "load_custom_model_from_hf")(
+                resolved = getattr(fake_wrapper, "load_custom_model_from_hf")(  # noqa: B009
                     "funasr/campplus",
                     "campplus_cn_common.bin",
                     None,
