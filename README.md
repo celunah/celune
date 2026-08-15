@@ -41,6 +41,19 @@ mode: converse  # speak|converse|agent
 - `converse` uses Persona, allowing you to talk with any characters you've set up with Celune.
 - `agent` turns Celune into a conversational local agent, allowing her to perform actions on your computer while speaking as needed.
 
+### Agent smoke workflow
+
+With `mode: agent` enabled and Persona and Needle configured, verify the production path in this order:
+
+1. Send an ordinary conversational message and confirm it stays on the Persona conversation path.
+2. Send an explicit safe task, such as asking Celune to report the current agent status.
+3. Confirm Persona produces an action intent and Needle selects one registered tool.
+4. Confirm the permission policy allows a read-only tool, or pauses before a tool requiring approval.
+5. Confirm the tool executes once, its structured result returns to Persona, and the final response uses the normal speech path.
+6. Confirm a denied action does not execute.
+
+Interruption, steering, component locks, and UI lifecycle display are not part of this smoke workflow yet.
+
 Persona can be used with both LLMs and VLMs, but vision features and image uploads are not available with text-only language models. If uncertain, use a vision-language model.
 
 ## Note on development

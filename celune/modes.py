@@ -13,9 +13,8 @@ from .typing.modes import OperationMode
 OPERATION_MODES: tuple[OperationMode, ...] = ("speak", "converse", "agent")
 _LEGACY_INPUT_MODES = {"text_to_speech", "tts", "voice_conversion", "revoice"}
 
-# Temporary compatibility switch until the real agent runtime is implemented.
-# Set this to ``None`` when ``agent`` should become an active operation mode.
-AGENT_MODE_REDIRECT_TARGET: Optional[OperationMode] = "converse"
+# Agent mode is now owned by the production AgentRuntime integration.
+AGENT_MODE_REDIRECT_TARGET: Optional[OperationMode] = None
 
 
 def resolve_operation_mode(

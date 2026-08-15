@@ -20,11 +20,29 @@ import soundfile as sf
 
 from celune import pipeline
 from celune.celune import Celune
-from celune.cevoice import CEVoicePersona, PersonaIdentity, PersonaStyleValues
+from celune.cevoice import (
+    CEVoice,
+    CEVoiceLoader,
+    CEVoicePersona,
+    PersonaIdentity,
+    PersonaStyleValues,
+)
 from celune.constants import PipelineStates
 from celune.dataclasses.pipeline import AudioInputRequest
+from celune.persona.capabilities import PersonaCapabilities
 from celune.persona.impl import compact_persona_history
 from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
+from celune.typing.agent import (
+    AgentContext,
+    AgentRequest,
+    AgentTask,
+    AgentToolArgumentSchema,
+    AgentToolBehavior,
+    AgentToolDangerLevel,
+    AgentToolSchema,
+    AgentToolValueType,
+    ToolCall,
+)
 from celune.typing.aliases import AudioChunk
 from celune.typing.common import JSON, JSONSerializable
 from celune.utils import discard
@@ -2094,7 +2112,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertIn("Manifest identity.", prompt)
         self.assertIn("Manifest personality.", prompt)
         self.assertIn("Manifest speech style.", prompt)
-        self.assertNotIn("Legacy personality text.", prompt)
+        self.assertIn("<user_instructions>", prompt)
+        self.assertIn("Legacy personality text.", prompt)
         self.assertNotIn("Legacy identity text.", prompt)
         self.assertNotIn("Ignored text.", prompt)
 
@@ -2157,6 +2176,113 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         self.assertIn("Name: Celune", prompt)
         self.assertIn("Gender: female", prompt)
+
+    def test_default_cechar_pack_adds_celune_prompt_foundation(self) -> None:
+        """Verify the bundled CECHAR pack adds the Celune-specific foundation."""
+        bundle = CEVoice.open(Path("voices/default.cevoice"))
+        loader = CEVoiceLoader(bundle)
+        self.addCleanup(loader.close)
+
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Celune"
+        engine.current_voice = "balanced"
+        engine.voice_bundle_is_default = True
+
+        with mock.patch("celune.pipeline.default_loader", return_value=loader):
+            prompt = PersonaPromptBuilder.build(
+                pipeline.build_persona_context(cast(Celune, engine), "Hello.")
+            )
+
+        self.assertIn(
+            "You are Celune, commonly called Cel.",
+            prompt,
+        )
+        self.assertIn("Celune is a quiet nocturnal presence", prompt)
+        self.assertEqual(prompt.count("You are Celune, commonly called Cel."), 1)
+
+    def test_non_default_character_pack_does_not_inherit_celune_foundation(
+        self,
+    ) -> None:
+        """Verify another character pack does not receive Celune-only instructions."""
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Mirelle"
+        engine.current_voice = "balanced"
+        engine.voice_bundle_is_default = False
+
+        prompt = PersonaPromptBuilder.build(
+            pipeline.build_persona_context(cast(Celune, engine), "Hello.")
+        )
+
+        self.assertNotIn("You are Celune, commonly called Cel.", prompt)
+
+    def test_agent_prompt_context_uses_existing_task_and_tool_contracts(self) -> None:
+        """Verify task context and tool metadata are available without runtime authority."""
+        engine = make_pipeline_engine()
+        engine.config = {}
+        engine.current_character = "Fixture"
+        engine.current_voice = "balanced"
+        engine.voice_bundle_is_default = False
+
+        request = AgentRequest("Check whether the process is running.")
+        task = AgentTask(task_id="task-1", session_id="default", request=request)
+        agent_context = AgentContext(
+            request=request,
+            mode="agent",
+            persona_capabilities=PersonaCapabilities(),
+            task=task,
+            last_tool_result={
+                "tool_call_id": "call-1",
+                "output": "running",
+                "error": None,
+            },
+        )
+        schema = AgentToolSchema(
+            tool_id="process_status",
+            display_name="Process status",
+            description="Check whether a local process is running.",
+            arguments=(
+                AgentToolArgumentSchema(
+                    name="name",
+                    value_type=AgentToolValueType.STRING,
+                ),
+            ),
+            behavior=AgentToolBehavior.READ_ONLY,
+            danger=AgentToolDangerLevel.LOW,
+        )
+        pending_call: ToolCall = {
+            "id": "call-1",
+            "name": "process_status",
+            "arguments": {"name": "celune"},
+        }
+
+        context = pipeline.build_persona_context(
+            cast(Celune, engine),
+            request.request,
+            agent_context=agent_context,
+            tool_schemas=(schema,),
+            pending_tool_call=pending_call,
+        )
+        prompt = PersonaPromptBuilder.build(context)
+
+        self.assertIn("<agent_context>", prompt)
+        self.assertIn('"tool_id": "process_status"', prompt)
+        self.assertIn('"state": "queued"', prompt)
+        self.assertIn('"output": "running"', prompt)
+        self.assertIn("runtime remains authoritative", prompt)
+        self.assertLess(prompt.index("<memory>"), prompt.index("<agent_context>"))
+
+        payload = pipeline.build_persona_request(
+            cast(Celune, engine),
+            request.request,
+            agent_context=agent_context,
+            tool_schemas=(schema,),
+            pending_tool_call=pending_call,
+        )
+        messages = cast(list[JSON], payload["messages"])
+        self.assertEqual(payload["system"], messages[0]["content"])
+        self.assertEqual(cast(str, payload["system"]).count("<agent_context>"), 1)
 
     def test_named_celune_custom_pack_does_not_use_default_identity(self) -> None:
         """Verify custom packs named Celune do not inherit default identity fields."""

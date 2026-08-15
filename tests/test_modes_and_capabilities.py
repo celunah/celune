@@ -18,10 +18,10 @@ class OperationModeTests(TestCase):
     """Verify global modes provide the requested feature gates."""
 
     def test_operation_modes_are_resolved_directly(self) -> None:
-        """Verify the active global modes and temporary agent redirect."""
+        """Verify the active global modes include the production agent mode."""
         self.assertEqual(resolve_operation_mode({"mode": "speak"}), "speak")
         self.assertEqual(resolve_operation_mode({"mode": "converse"}), "converse")
-        self.assertEqual(resolve_operation_mode({"mode": "agent"}), "converse")
+        self.assertEqual(resolve_operation_mode({"mode": "agent"}), "agent")
 
     def test_legacy_input_mode_does_not_change_global_mode(self) -> None:
         """Verify legacy input-mode values remain compatible with the new switch."""
@@ -30,10 +30,8 @@ class OperationModeTests(TestCase):
             "converse",
         )
 
-    def test_speak_disables_persona_and_agent_mode_is_temporarily_redirected(
-        self,
-    ) -> None:
-        """Verify speak disables Persona while agent currently behaves as converse."""
+    def test_speak_disables_persona_and_agent_mode_enables_agent_routing(self) -> None:
+        """Verify speak disables Persona while agent routing remains enabled."""
         speak_config: Config = {
             "mode": "speak",
             "vram": "high",
@@ -47,7 +45,7 @@ class OperationModeTests(TestCase):
 
         self.assertFalse(persona_enabled(speak_config))
         self.assertTrue(persona_enabled(converse_config))
-        self.assertFalse(agent_mode_enabled({"mode": "agent"}))
+        self.assertTrue(agent_mode_enabled({"mode": "agent"}))
         self.assertFalse(agent_mode_enabled({"mode": "converse"}))
 
 

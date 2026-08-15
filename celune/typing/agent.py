@@ -18,6 +18,7 @@ class NeedleToolParameterSpec(TypedDict, total=False):
     type: str
     description: NotRequired[str]
     required: NotRequired[bool]
+    item_type: NotRequired[str]
 
 
 type NeedleToolParameter = Union[str, NeedleToolParameterSpec]
@@ -132,6 +133,7 @@ class AgentFailureReason(str, Enum):
     TOOL_ERROR = "tool_error"
     INVALID_TOOL_CALL = "invalid_tool_call"
     APPROVAL_DENIED = "approval_denied"
+    PERMISSION_DENIED = "permission_denied"
     CHOICE_UNAVAILABLE = "choice_unavailable"
     INTERNAL_ERROR = "internal_error"
 
@@ -163,6 +165,27 @@ class AgentApprovalDecision(str, Enum):
     DENIED = "denied"
 
 
+class AgentPermissionDecision(str, Enum):
+    """Policy outcomes for one validated tool call."""
+
+    ALLOW = "allow"
+    REQUIRE_APPROVAL = "require_approval"
+    DENY = "deny"
+
+
+class AgentPermissionReason(str, Enum):
+    """Reasons that make a policy decision explainable to callers."""
+
+    SAFE_READ_ONLY = "safe_read_only"
+    MUTATING_TOOL = "mutating_tool"
+    EXPLICIT_APPROVAL_REQUIRED = "explicit_approval_required"
+    DANGEROUS_TOOL = "dangerous_tool"
+    APPROVAL_UNAVAILABLE = "approval_unavailable"
+    TOOL_UNAVAILABLE = "tool_unavailable"
+    TOOL_DISALLOWED = "tool_disallowed"
+    LEGACY_TOOL = "legacy_tool"
+
+
 class AgentToolExecutionStatus(str, Enum):
     """Terminal status values for one tool execution result."""
 
@@ -179,12 +202,24 @@ class ToolCall(TypedDict):
     arguments: dict[str, JSONSerializable]
 
 
+class AgentPermissionMetadata(TypedDict):
+    """JSON-compatible permission metadata attached to execution results."""
+
+    decision: str
+    reason: str
+    task_id: str
+    tool_call_id: str
+    tool_id: str
+    approval_decision: Optional[str]
+
+
 class ToolResult(TypedDict):
     """The result or failure returned by one local tool."""
 
     tool_call_id: str
     output: Optional[JSONSerializable]
     error: Optional[str]
+    permission: NotRequired[AgentPermissionMetadata]
 
 
 class ValidatedToolCall(ToolCall):
@@ -346,6 +381,56 @@ class AgentContext:
     mode: OperationMode
     persona_capabilities: PersonaCapabilities
     task: Optional[AgentTask] = None
+    last_tool_result: Optional[ToolResult] = None
+
+
+@dataclass(frozen=True)
+class AgentPermissionEvaluation:
+    """Typed result of evaluating whether one tool call may execute."""
+
+    task_id: str
+    tool_call_id: str
+    tool_id: str
+    decision: AgentPermissionDecision
+    reason: AgentPermissionReason
+    approval_decision: Optional[AgentApprovalDecision] = None
+    metadata: Optional[JSON] = None
+
+    def __post_init__(self) -> None:
+        """Validate the identifiers and policy enums in one evaluation."""
+        if not self.task_id.strip():
+            raise ValueError("agent permission task_id must not be empty")
+        if not self.tool_call_id.strip() or not self.tool_id.strip():
+            raise ValueError("agent permission tool identifiers must not be empty")
+        if not isinstance(self.decision, AgentPermissionDecision):
+            raise TypeError("agent permission decision must use its typed enum")
+        if not isinstance(self.reason, AgentPermissionReason):
+            raise TypeError("agent permission reason must use its typed enum")
+        if self.approval_decision is not None and not isinstance(
+            self.approval_decision, AgentApprovalDecision
+        ):
+            raise TypeError("agent approval decision must use its typed enum")
+
+    def to_metadata(self) -> AgentPermissionMetadata:
+        """Return the compact JSON metadata carried by execution results."""
+        return {
+            "decision": self.decision.value,
+            "reason": self.reason.value,
+            "task_id": self.task_id,
+            "tool_call_id": self.tool_call_id,
+            "tool_id": self.tool_id,
+            "approval_decision": (
+                self.approval_decision.value
+                if self.approval_decision is not None
+                else None
+            ),
+        }
+
+    def to_json(self) -> JSON:
+        """Serialize the policy decision and optional policy metadata."""
+        payload = cast(JSON, dict(self.to_metadata()))
+        payload["metadata"] = self.metadata
+        return payload
 
 
 @dataclass(frozen=True)
@@ -478,6 +563,7 @@ class AgentApprovalRequest:
     task_id: str
     tool_call: ValidatedToolCall
     prompt: str
+    permission: Optional[AgentPermissionEvaluation] = None
 
     def __post_init__(self) -> None:
         """Validate approval request identity and prompt text."""
@@ -501,6 +587,9 @@ class AgentApprovalRequest:
                 "approval_required": self.tool_call["approval_required"],
             },
             "prompt": self.prompt,
+            "permission": (
+                self.permission.to_json() if self.permission is not None else None
+            ),
         }
 
 
@@ -637,6 +726,7 @@ _ALLOWED_AGENT_TASK_TRANSITIONS: dict[AgentTaskState, frozenset[AgentTaskState]]
     ),
     AgentTaskState.WORKING: frozenset(
         {
+            AgentTaskState.PLANNING,
             AgentTaskState.AWAITING_APPROVAL,
             AgentTaskState.AWAITING_CHOICE,
             AgentTaskState.EXECUTING_TOOL,
@@ -759,6 +849,7 @@ class AgentTask:
     failure_detail: Optional[str] = None
     interruption: Optional[AgentInterruption] = None
     completion_metadata: Optional[JSON] = None
+    permission_decision: Optional[AgentPermissionEvaluation] = None
 
     def __post_init__(self) -> None:
         """Validate task identity, counters, and terminal-reason consistency."""
@@ -948,6 +1039,11 @@ class AgentTask:
             ),
             "failure_detail": self.failure_detail,
             "completion_metadata": self.completion_metadata,
+            "permission_decision": (
+                self.permission_decision.to_json()
+                if self.permission_decision is not None
+                else None
+            ),
             "interruption": (
                 self.interruption.to_json() if self.interruption is not None else None
             ),
@@ -970,4 +1066,83 @@ class AgentTool(Protocol):
 
     def execute(self, call: ToolCall, context: AgentContext) -> ToolResult:
         """Execute one validated local tool call."""
+        raise NotImplementedError("protocol not defined")
+
+
+class AgentPlanner(Protocol):
+    """Dependency boundary for one planner decision cycle."""
+
+    def __call__(self, context: AgentContext, /) -> AgentOutput:
+        """Produce one typed planning output."""
+        raise NotImplementedError("protocol not defined")
+
+
+class AgentToolSelector(Protocol):
+    """Dependency boundary for selecting at most one tool call."""
+
+    def __call__(
+        self,
+        context: AgentContext,
+        output: AgentOutput,
+        /,
+    ) -> Optional[ToolCall]:
+        """Select one typed tool call or no tool call."""
+        raise NotImplementedError("protocol not defined")
+
+
+class AgentToolExecutor(Protocol):
+    """Dependency boundary for executing one selected tool call."""
+
+    def __call__(self, context: AgentContext, call: ToolCall, /) -> ToolResult:
+        """Return the typed result of one tool execution."""
+        raise NotImplementedError("protocol not defined")
+
+
+class AgentPermissionPolicy(Protocol):
+    """Dependency boundary for deterministic tool permission evaluation."""
+
+    def __call__(
+        self,
+        task: AgentTask,
+        call: ValidatedToolCall,
+        /,
+    ) -> AgentPermissionEvaluation:
+        """Return the policy decision for one validated tool call."""
+        raise NotImplementedError("protocol not defined")
+
+
+class AgentToolResultHandler(Protocol):
+    """Dependency boundary for interpreting one typed tool result."""
+
+    def __call__(
+        self,
+        context: AgentContext,
+        result: ToolResult,
+        /,
+    ) -> AgentOutput:
+        """Produce the next externally visible output after a tool result."""
+        raise NotImplementedError("protocol not defined")
+
+
+class AgentResponder(Protocol):
+    """Dependency boundary for producing a final response."""
+
+    def __call__(self, context: AgentContext, /) -> AgentOutput:
+        """Produce one typed response output."""
+        raise NotImplementedError("protocol not defined")
+
+
+class AgentContextCompactor(Protocol):
+    """Dependency boundary for future model-specific context compaction."""
+
+    def __call__(self, context: AgentContext, /) -> AgentContext:
+        """Return the compacted context without choosing a model policy."""
+        raise NotImplementedError("protocol not defined")
+
+
+class AgentTokenCounter(Protocol):
+    """Dependency boundary for counting generated response tokens."""
+
+    def __call__(self, text: str, /) -> int:
+        """Return the generated-token count for one response string."""
         raise NotImplementedError("protocol not defined")

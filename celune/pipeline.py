@@ -108,6 +108,7 @@ from .persona.prompts import (
     RetrievedMemoryBundle,
 )
 from .typing.aliases import AudioChunk, AudioChunks
+from .typing.agent import AgentContext, AgentToolSchema, ToolCall
 from .typing.common import JSON, JSONSerializable
 from .typing.pipeline import SpeechStreamQueue
 from .typing.persona import PersonaModel, PersonaTokenizer
@@ -1752,6 +1753,18 @@ def _legacy_examples_source(engine: Celune) -> str:
     return "\n".join(pack_persona_lines(engine, "example_dialogue")).strip()
 
 
+def _configured_persona_instructions(engine: Celune) -> str:
+    """Return explicit user Persona settings after pack-provided behavior."""
+    blocks: list[str] = []
+    configured_persona = engine.config.get("persona_persona")
+    if isinstance(configured_persona, str) and configured_persona.strip():
+        blocks.append(f"Persona guidance:\n{configured_persona.strip()}")
+    configured_context = engine.config.get("persona_context")
+    if isinstance(configured_context, str) and configured_context.strip():
+        blocks.append(f"User-provided context:\n{configured_context.strip()}")
+    return "\n\n".join(blocks)
+
+
 def _build_persona_source_material(
     engine: Celune,
     character_profile: CharacterProfile,
@@ -1773,12 +1786,22 @@ def _build_persona_source_material(
     )
 
 
-def build_persona_context(engine: Celune, request: str) -> PersonaContext:
+def build_persona_context(
+    engine: Celune,
+    request: str,
+    *,
+    agent_context: Optional[AgentContext] = None,
+    tool_schemas: tuple[AgentToolSchema, ...] = (),
+    pending_tool_call: Optional[ToolCall] = None,
+) -> PersonaContext:
     """Build structured Persona context for one user request.
 
     Args:
         engine: The instance of Celune to use.
         request: The user's request.
+        agent_context: Optional existing agent callback context for task-aware prompts.
+        tool_schemas: Existing tool schemas available to the agent runtime.
+        pending_tool_call: Optional validated-boundary tool call awaiting runtime handling.
 
     Returns:
         PersonaContext: The built RAG context for Persona.
@@ -1836,6 +1859,10 @@ def build_persona_context(engine: Celune, request: str) -> PersonaContext:
         mood_or_state=mood_or_state,
         conversation_summary=persona_session_summary(engine),
         retrieved_long_term_memory=_build_retrieved_memory_bundle(engine, request),
+        user_instructions=_configured_persona_instructions(engine),
+        agent_context=agent_context,
+        tool_schemas=tool_schemas,
+        pending_tool_call=pending_tool_call,
     )
 
 
@@ -1851,17 +1878,23 @@ def _effective_voice_prompt(engine: Celune) -> Optional[str]:
     return voice_prompt if isinstance(voice_prompt, str) else None
 
 
-def build_persona_messages(engine: Celune, request: str) -> list[JSON]:
+def build_persona_messages(
+    engine: Celune,
+    request: str,
+    *,
+    context: Optional[PersonaContext] = None,
+) -> list[JSON]:
     """Build OpenAI-style messages for the Persona model.
 
     Args:
         engine: The instance of Celune to use.
         request: The user's request.
+        context: Optional prebuilt context to keep the system prompt consistent.
 
     Returns:
         list[JSON]: A list of JSON objects containing current message history.
     """
-    context = build_persona_context(engine, request)
+    resolved_context = context or build_persona_context(engine, request)
     attachments = persona_pending_attachments(engine)
     user_content: JSONSerializable = request.strip()
     if attachments:
@@ -1871,24 +1904,43 @@ def build_persona_messages(engine: Celune, request: str) -> list[JSON]:
         ]
 
     messages: list[JSON] = [
-        cast(JSON, {"role": "system", "content": PersonaPromptBuilder.build(context)})
+        cast(
+            JSON,
+            {"role": "system", "content": PersonaPromptBuilder.build(resolved_context)},
+        )
     ]
     messages.extend(persona_history_messages(engine))
     messages.append(cast(JSON, {"role": "user", "content": user_content}))
     return messages
 
 
-def build_persona_request(engine: Celune, request: str) -> JSON:
+def build_persona_request(
+    engine: Celune,
+    request: str,
+    *,
+    agent_context: Optional[AgentContext] = None,
+    tool_schemas: tuple[AgentToolSchema, ...] = (),
+    pending_tool_call: Optional[ToolCall] = None,
+) -> JSON:
     """Build the JSON payload sent to the Persona model.
 
     Args:
         engine: The instance of Celune to use.
         request: The user's request.
+        agent_context: Optional existing agent callback context for task-aware prompts.
+        tool_schemas: Existing tool schemas available to the agent runtime.
+        pending_tool_call: Optional tool call awaiting runtime handling.
 
     Returns:
         JSON: The JSON payload to be sent to the Persona model.
     """
-    context = build_persona_context(engine, request)
+    context = build_persona_context(
+        engine,
+        request,
+        agent_context=agent_context,
+        tool_schemas=tool_schemas,
+        pending_tool_call=pending_tool_call,
+    )
     character_card = (
         f"{context.character_profile.render()}\n\n{context.persona_card.render()}"
     )
@@ -1907,7 +1959,8 @@ def build_persona_request(engine: Celune, request: str) -> JSON:
         "user": clean_request,
         "request": clean_request,
         "messages": cast(
-            JSONSerializable, build_persona_messages(engine, clean_request)
+            JSONSerializable,
+            build_persona_messages(engine, clean_request, context=context),
         ),
     }
 
@@ -2014,6 +2067,34 @@ def think(engine: Celune, request: str) -> bool:
         engine.log(string("pipeline.persona_empty_response"), "warning")
         return False
 
+    history = getattr(engine, "persona_history", None)
+    if isinstance(history, list):
+        history.extend(
+            [
+                {"role": "user", "content": request.strip()},
+                {"role": "assistant", "content": spoken_text},
+            ]
+        )
+
+    queued = queue_speech(
+        engine,
+        spoken_text,
+        save=False,
+        display_text=spoken_text,
+    )
+    if isinstance(history, list):
+        compact_persona_history(engine)
+    _classify_persona_memories(engine, request)
+    return queued
+
+
+def deliver_persona_response(engine: Celune, request: str, response: str) -> bool:
+    """Store and speak one response produced by a routed Persona task."""
+    spoken_text = response.strip()
+    if not spoken_text:
+        return False
+
+    _store_persona_memories(engine, request)
     history = getattr(engine, "persona_history", None)
     if isinstance(history, list):
         history.extend(

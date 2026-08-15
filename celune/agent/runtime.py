@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Optional, cast
 from uuid import uuid4
@@ -15,6 +15,7 @@ from ..dataclasses.events import (
     AgentTaskStateChangedEvent,
 )
 from ..extensions.events import EventDispatcher
+from ..i18n import string
 from ..persona.capabilities import PersonaCapabilities
 from ..typing.agent import (
     AgentAbortReason,
@@ -25,21 +26,38 @@ from ..typing.agent import (
     AgentChoiceRequest,
     AgentChoiceResponse,
     AgentContext,
+    AgentContextCompactor,
     AgentFailureReason,
     AgentInterruption,
     AgentOutput,
+    AgentPermissionDecision,
+    AgentPermissionEvaluation,
+    AgentPermissionPolicy,
+    AgentPermissionReason,
+    AgentPlanner,
     AgentRequest,
     AgentResponseCallback,
+    AgentResponder,
     AgentSession,
     AgentSessionState,
     AgentTask,
     AgentTaskConfig,
     AgentTaskState,
     AgentTool,
+    AgentToolBehavior,
+    AgentToolDangerLevel,
+    AgentToolExecutionStatus,
+    AgentToolExecutor,
+    AgentToolResultHandler,
+    AgentToolSchema,
+    AgentToolSelector,
+    AgentTokenCounter,
     ToolCall,
+    ToolExecutionResult,
     ToolResult,
+    ValidatedToolCall,
 )
-from ..typing.common import JSON
+from ..typing.common import JSON, JSONSerializable
 from ..typing.events import EventName, EventPayload
 from ..typing.modes import OperationMode
 
@@ -47,8 +65,144 @@ if TYPE_CHECKING:
     from ..celune import Celune
 
 
+def _default_token_counter(text: str) -> int:
+    """Count response words as a dependency-free token estimate."""
+    return len(text.split())
+
+
+def _is_json_value(value: JSONSerializable) -> bool:
+    """Return whether a runtime value is compatible with Celune JSON metadata."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return True
+    if isinstance(value, list):
+        return all(_is_json_value(item) for item in value)
+    if isinstance(value, dict):
+        return all(
+            isinstance(key, str) and _is_json_value(item) for key, item in value.items()
+        )
+    return False
+
+
+def _empty_output(
+    response: Optional[str] = None,
+    *,
+    end: bool = True,
+    paused: bool = False,
+) -> AgentOutput:
+    """Build the stable output shape required by the agent contract."""
+    return {
+        "tool_call": None,
+        "response": response,
+        "end": end,
+        "paused": paused,
+    }
+
+
+def _paused_output() -> AgentOutput:
+    """Build an output that preserves a waiting or interrupted task."""
+    return _empty_output(end=False, paused=True)
+
+
+class DefaultAgentPermissionPolicy:
+    """Apply deterministic approval rules to validated local tool calls."""
+
+    def __init__(
+        self,
+        *,
+        approval_available: bool = True,
+        disallowed_tool_ids: Sequence[str] = (),
+    ) -> None:
+        """Configure approval availability and an explicit deny list."""
+        if not isinstance(approval_available, bool):
+            raise TypeError("agent approval_available must be a boolean")
+        normalized = tuple(tool_id.strip() for tool_id in disallowed_tool_ids)
+        if any(not tool_id for tool_id in normalized):
+            raise ValueError("agent disallowed tool IDs must not be empty")
+        self.approval_available = approval_available
+        self.disallowed_tool_ids = frozenset(normalized)
+
+    def __call__(
+        self,
+        task: AgentTask,
+        call: ValidatedToolCall,
+        /,
+    ) -> AgentPermissionEvaluation:
+        """Return the default policy decision for one validated tool call."""
+        if call["tool_id"] in self.disallowed_tool_ids:
+            return self._evaluation(
+                task,
+                call,
+                AgentPermissionDecision.DENY,
+                AgentPermissionReason.TOOL_DISALLOWED,
+            )
+        if call["danger"] == AgentToolDangerLevel.HIGH:
+            if not self.approval_available:
+                return self._evaluation(
+                    task,
+                    call,
+                    AgentPermissionDecision.DENY,
+                    AgentPermissionReason.APPROVAL_UNAVAILABLE,
+                )
+            return self._evaluation(
+                task,
+                call,
+                AgentPermissionDecision.REQUIRE_APPROVAL,
+                AgentPermissionReason.DANGEROUS_TOOL,
+            )
+        if call["behavior"] == AgentToolBehavior.MUTATING:
+            if not self.approval_available:
+                return self._evaluation(
+                    task,
+                    call,
+                    AgentPermissionDecision.DENY,
+                    AgentPermissionReason.APPROVAL_UNAVAILABLE,
+                )
+            return self._evaluation(
+                task,
+                call,
+                AgentPermissionDecision.REQUIRE_APPROVAL,
+                AgentPermissionReason.MUTATING_TOOL,
+            )
+        if call["approval_required"]:
+            if not self.approval_available:
+                return self._evaluation(
+                    task,
+                    call,
+                    AgentPermissionDecision.DENY,
+                    AgentPermissionReason.APPROVAL_UNAVAILABLE,
+                )
+            return self._evaluation(
+                task,
+                call,
+                AgentPermissionDecision.REQUIRE_APPROVAL,
+                AgentPermissionReason.EXPLICIT_APPROVAL_REQUIRED,
+            )
+        reason = (
+            AgentPermissionReason.SAFE_READ_ONLY
+            if call["behavior"] == AgentToolBehavior.READ_ONLY
+            else AgentPermissionReason.LEGACY_TOOL
+        )
+        return self._evaluation(task, call, AgentPermissionDecision.ALLOW, reason)
+
+    @staticmethod
+    def _evaluation(
+        task: AgentTask,
+        call: ValidatedToolCall,
+        decision: AgentPermissionDecision,
+        reason: AgentPermissionReason,
+    ) -> AgentPermissionEvaluation:
+        """Build one policy evaluation with the current task and call IDs."""
+        return AgentPermissionEvaluation(
+            task_id=task.task_id,
+            tool_call_id=call["id"],
+            tool_id=call["tool_id"],
+            decision=decision,
+            reason=reason,
+        )
+
+
 class AgentRuntime:
-    """Own agent task lifecycle state without running the future model loop."""
+    """Own bounded agent task orchestration and lifecycle state."""
 
     def __init__(
         self,
@@ -58,6 +212,15 @@ class AgentRuntime:
         celune: Optional[Celune] = None,
         mode: OperationMode = "agent",
         persona_capabilities: Optional[PersonaCapabilities] = None,
+        planner: Optional[AgentPlanner] = None,
+        tool_selector: Optional[AgentToolSelector] = None,
+        tool_executor: Optional[AgentToolExecutor] = None,
+        tool_result_handler: Optional[AgentToolResultHandler] = None,
+        responder: Optional[AgentResponder] = None,
+        compactor: Optional[AgentContextCompactor] = None,
+        token_counter: Optional[AgentTokenCounter] = None,
+        tool_schemas: Optional[Mapping[str, AgentToolSchema]] = None,
+        permission_policy: Optional[AgentPermissionPolicy] = None,
     ) -> None:
         """Create a lifecycle owner around local tools and an existing event bus."""
         self.tools = tuple(tools)
@@ -65,13 +228,42 @@ class AgentRuntime:
         self._celune = celune
         self._mode = mode
         self._persona_capabilities = persona_capabilities or PersonaCapabilities()
+        self._planner = planner
+        self._tool_selector = tool_selector
+        self._tool_executor = tool_executor
+        self._tool_result_handler = tool_result_handler
+        self._responder = responder
+        self._compactor = compactor
+        self._token_counter = token_counter or _default_token_counter
+        self._tool_schemas = self._index_tool_schemas(tool_schemas)
+        self._permission_policy = permission_policy or DefaultAgentPermissionPolicy()
         self._tasks: dict[str, AgentTask] = {}
         self._contexts: dict[str, AgentContext] = {}
         self._sessions: dict[str, AgentSession] = {}
         self._pending_approvals: dict[str, AgentApprovalRequest] = {}
         self._pending_choices: dict[str, AgentChoiceRequest] = {}
         self._suspension_origins: dict[str, AgentTaskState] = {}
+        self._pending_tool_calls: dict[str, ToolCall] = {}
+        self._last_tool_calls: dict[str, ToolCall] = {}
         self._terminal_events: set[str] = set()
+
+    @staticmethod
+    def _index_tool_schemas(
+        schemas: Optional[Mapping[str, AgentToolSchema]],
+    ) -> dict[str, AgentToolSchema]:
+        """Index existing tool schemas by both registered names and tool IDs."""
+        indexed: dict[str, AgentToolSchema] = {}
+        for key, schema in (schemas or {}).items():
+            if not key.strip():
+                raise ValueError("agent tool schema keys must not be empty")
+            for schema_key in (key, schema.tool_id):
+                previous = indexed.get(schema_key)
+                if previous is not None and previous != schema:
+                    raise ValueError(
+                        f"agent tool schemas collide for key '{schema_key}'"
+                    )
+                indexed[schema_key] = schema
+        return indexed
 
     def create_context(
         self,
@@ -191,11 +383,47 @@ class AgentRuntime:
         if task.state not in {
             AgentTaskState.CLASSIFYING,
             AgentTaskState.WORKING,
+            AgentTaskState.PLANNING,
         }:
             raise ValueError(
                 "agent approval can only pause classifying or working tasks"
             )
+        if request.permission is None:
+            validated, schema = self._validated_permission_call(request.tool_call)
+            if schema is not None and not schema.available:
+                return self.fail_task(
+                    task_id,
+                    AgentFailureReason.PERMISSION_DENIED,
+                    AgentPermissionReason.TOOL_UNAVAILABLE.value,
+                )
+            permission = self._permission_policy(task, validated)
+            self._validate_permission_evaluation(permission, task, validated)
+            if permission.decision == AgentPermissionDecision.DENY:
+                return self.fail_task(
+                    task_id,
+                    AgentFailureReason.PERMISSION_DENIED,
+                    permission.reason.value,
+                )
+            if permission.decision == AgentPermissionDecision.ALLOW:
+                permission = replace(
+                    permission,
+                    decision=AgentPermissionDecision.REQUIRE_APPROVAL,
+                    reason=AgentPermissionReason.EXPLICIT_APPROVAL_REQUIRED,
+                )
+            request = replace(
+                request,
+                tool_call=validated,
+                permission=permission,
+            )
+        else:
+            self._validate_permission_evaluation(
+                request.permission,
+                task,
+                request.tool_call,
+            )
+        task.permission_decision = request.permission
         self._pending_approvals[task_id] = request
+        self._pending_tool_calls[task_id] = request.tool_call
         self._transition(task, AgentTaskState.AWAITING_APPROVAL)
         self._emit(
             "agent_approval_requested",
@@ -223,8 +451,19 @@ class AgentRuntime:
                 "agent approval response does not match the pending request"
             )
         self._pending_approvals.pop(task_id)
+        if pending.permission is not None:
+            task.permission_decision = replace(
+                pending.permission,
+                approval_decision=response.decision,
+            )
         if response.decision == AgentApprovalDecision.DENIED:
-            return self.fail_task(task_id, AgentFailureReason.APPROVAL_DENIED)
+            self._pending_tool_calls.pop(task_id, None)
+            reason = (
+                AgentFailureReason.PERMISSION_DENIED
+                if pending.permission is not None
+                else AgentFailureReason.APPROVAL_DENIED
+            )
+            return self.fail_task(task_id, reason)
         self._transition(task, AgentTaskState.WORKING)
         return task
 
@@ -239,6 +478,7 @@ class AgentRuntime:
         if task.state not in {
             AgentTaskState.CLASSIFYING,
             AgentTaskState.WORKING,
+            AgentTaskState.PLANNING,
         }:
             raise ValueError("agent choice can only pause classifying or working tasks")
         self._pending_choices[task_id] = request
@@ -423,8 +663,598 @@ class AgentRuntime:
         request: AgentRequest,
         callback: Optional[AgentResponseCallback] = None,
     ) -> AgentOutput:
-        """Run the future agent loop and emit steps through an optional callback."""
-        raise NotImplementedError("agent execution is not implemented")
+        """Run one bounded agent task through planning and typed tool execution.
+
+        An existing non-terminal task for ``request.session.session_id`` is always
+        reused.  When no task exists, this compatibility entry point creates one;
+        routed Phase 3 requests therefore never create a second task.
+        """
+        task = self._session_task(request.session.session_id)
+        if task is None:
+            task = self.create_task(request)
+        if task.is_terminal:
+            return self._terminal_output(task, callback)
+
+        failure_reason = AgentFailureReason.MODEL_ERROR
+        try:
+            last_output: Optional[AgentOutput] = None
+            while not task.is_terminal:
+                if task.state in {
+                    AgentTaskState.AWAITING_APPROVAL,
+                    AgentTaskState.AWAITING_CHOICE,
+                    AgentTaskState.PAUSED,
+                    AgentTaskState.INTERRUPTED,
+                }:
+                    return _paused_output()
+
+                if task.state == AgentTaskState.IDLE:
+                    self.start_task(task.task_id)
+                if task.state == AgentTaskState.CLASSIFYING:
+                    self.classify_task(task.task_id)
+                if task.state == AgentTaskState.WORKING:
+                    self._transition(task, AgentTaskState.PLANNING)
+                if task.state != AgentTaskState.PLANNING:
+                    raise ValueError(
+                        "agent task cannot enter planning from its current state"
+                    )
+
+                if not self._compact_if_needed(task):
+                    return self._terminal_output(task, callback)
+                if task.is_terminal:
+                    return self._terminal_output(task, callback)
+
+                pending_call = self._pending_tool_calls.pop(task.task_id, None)
+                call = pending_call
+                if call is None:
+                    if task.iterations >= task.config.max_iterations:
+                        self.abort_task(task.task_id, AgentAbortReason.MAX_ITERATIONS)
+                        return self._terminal_output(task, callback)
+                    output = self._validate_output(self._invoke_plan(task))
+                    if not self._publish_output(task, output, callback):
+                        return self._terminal_output(task, callback)
+                    if task.is_terminal:
+                        return self._terminal_output(task, callback)
+                    if task.state in {
+                        AgentTaskState.AWAITING_APPROVAL,
+                        AgentTaskState.AWAITING_CHOICE,
+                        AgentTaskState.PAUSED,
+                        AgentTaskState.INTERRUPTED,
+                    }:
+                        return _paused_output()
+                    if output["paused"]:
+                        self._transition(task, AgentTaskState.PAUSED)
+                        return _paused_output()
+
+                    failure_reason = AgentFailureReason.INVALID_TOOL_CALL
+                    selected = (
+                        None
+                        if output["tool_call"] is None and output["end"]
+                        else self._invoke_select_tool(task, output)
+                    )
+                    call = self._validate_tool_call(cast(JSONSerializable, selected))
+                    if task.state in {
+                        AgentTaskState.AWAITING_APPROVAL,
+                        AgentTaskState.AWAITING_CHOICE,
+                        AgentTaskState.PAUSED,
+                        AgentTaskState.INTERRUPTED,
+                    }:
+                        if call is not None:
+                            self._pending_tool_calls[task.task_id] = call
+                        return _paused_output()
+                    if output["tool_call"] is not None and call is None:
+                        raise ValueError(
+                            "agent selector did not return the planned tool call"
+                        )
+                    if call is None:
+                        if output["end"]:
+                            return self._complete_with_output(task, output, callback)
+                        self._transition(task, AgentTaskState.RESPONDING)
+                        failure_reason = AgentFailureReason.MODEL_ERROR
+                        response = self._validate_output(self._invoke_respond(task))
+                        if not self._publish_output(task, response, callback):
+                            return self._terminal_output(task, callback)
+                        if response["paused"]:
+                            self._transition(task, AgentTaskState.PAUSED)
+                            return _paused_output()
+                        if not response["end"]:
+                            raise ValueError(
+                                "agent response must terminate a response cycle"
+                            )
+                        return self._complete_with_output(task, response, callback)
+                    self._record_action(task, call)
+                    if task.is_terminal:
+                        return self._terminal_output(task, callback)
+                    if task.state in {
+                        AgentTaskState.AWAITING_APPROVAL,
+                        AgentTaskState.AWAITING_CHOICE,
+                        AgentTaskState.PAUSED,
+                        AgentTaskState.INTERRUPTED,
+                    }:
+                        self._pending_tool_calls[task.task_id] = call
+                        return _paused_output()
+
+                    failure_reason = AgentFailureReason.INTERNAL_ERROR
+                    call = self._authorize_tool(task, call)
+                    if call is None:
+                        if task.is_terminal:
+                            return self._terminal_output(task, callback)
+                        return _paused_output()
+
+                failure_reason = AgentFailureReason.TOOL_ERROR
+                self._transition(task, AgentTaskState.EXECUTING_TOOL)
+                result = self._normalize_tool_result(
+                    call,
+                    self._invoke_execute(task, call),
+                    task.permission_decision,
+                )
+                if task.is_terminal:
+                    return self._terminal_output(task, callback)
+                self._transition(task, AgentTaskState.PLANNING)
+                self._contexts[task.task_id] = replace(
+                    self.get_context(task.task_id),
+                    last_tool_result=result,
+                )
+                handled = self._validate_output(
+                    self._invoke_handle_result(task, result)
+                )
+                if not self._publish_output(task, handled, callback):
+                    return self._terminal_output(task, callback)
+                if task.is_terminal:
+                    return self._terminal_output(task, callback)
+                if handled["paused"]:
+                    if task.state == AgentTaskState.PLANNING:
+                        self._transition(task, AgentTaskState.PAUSED)
+                    return _paused_output()
+                if handled["end"]:
+                    return self._complete_with_output(task, handled, callback)
+                if not self._consume_iteration(task):
+                    return self._terminal_output(task, callback)
+                last_output = handled
+
+            return self._terminal_output(task, callback, last_output)
+        except Exception as exc:
+            if task.is_terminal:
+                return self._terminal_output(task, callback)
+            self.fail_task(task.task_id, failure_reason, str(exc))
+            return self._terminal_output(task, callback)
+
+    def _authorize_tool(
+        self,
+        task: AgentTask,
+        call: ToolCall,
+    ) -> Optional[ToolCall]:
+        """Evaluate one selected call before it crosses the executor boundary."""
+        validated, schema = self._validated_permission_call(call)
+        if schema is not None and not schema.available:
+            evaluation = AgentPermissionEvaluation(
+                task_id=task.task_id,
+                tool_call_id=validated["id"],
+                tool_id=validated["tool_id"],
+                decision=AgentPermissionDecision.DENY,
+                reason=AgentPermissionReason.TOOL_UNAVAILABLE,
+            )
+        else:
+            evaluation = self._permission_policy(task, validated)
+            self._validate_permission_evaluation(evaluation, task, validated)
+        task.permission_decision = evaluation
+        if evaluation.decision == AgentPermissionDecision.DENY:
+            self.fail_task(
+                task.task_id,
+                AgentFailureReason.PERMISSION_DENIED,
+                evaluation.reason.value,
+            )
+            return None
+        if evaluation.decision == AgentPermissionDecision.REQUIRE_APPROVAL:
+            if not isinstance(validated, dict):
+                raise ValueError("agent permission policy returned an invalid call")
+            request = AgentApprovalRequest(
+                request_id=f"approval-{uuid4().hex}",
+                task_id=task.task_id,
+                tool_call=validated,
+                prompt=string("agent.approval_prompt", tool_name=validated["name"]),
+                permission=evaluation,
+            )
+            self.request_approval(task.task_id, request)
+            return None
+        return validated if schema is not None or "tool_id" in call else call
+
+    def _validated_permission_call(
+        self,
+        call: ToolCall,
+    ) -> tuple[ValidatedToolCall, Optional[AgentToolSchema]]:
+        """Resolve schema metadata without allowing a selector to override it."""
+        schema = self._tool_schemas.get(call["name"])
+        if schema is None and "tool_id" in call:
+            schema = self._tool_schemas.get(cast(ValidatedToolCall, call)["tool_id"])
+        if schema is not None:
+            if (
+                "tool_id" in call
+                and cast(ValidatedToolCall, call)["tool_id"] != schema.tool_id
+            ):
+                raise ValueError("agent tool call metadata does not match its schema")
+            return (
+                {
+                    "id": call["id"],
+                    "name": call["name"],
+                    "arguments": call["arguments"],
+                    "tool_id": schema.tool_id,
+                    "behavior": schema.behavior,
+                    "danger": schema.danger,
+                    "approval_required": schema.approval_required,
+                },
+                schema,
+            )
+        if "tool_id" in call:
+            return cast(ValidatedToolCall, call), None
+        return (
+            {
+                "id": call["id"],
+                "name": call["name"],
+                "arguments": call["arguments"],
+                "tool_id": call["name"],
+                "behavior": AgentToolBehavior.READ_ONLY,
+                "danger": AgentToolDangerLevel.LOW,
+                "approval_required": False,
+            },
+            None,
+        )
+
+    @staticmethod
+    def _validate_permission_evaluation(
+        evaluation: AgentPermissionEvaluation,
+        task: AgentTask,
+        call: ValidatedToolCall,
+    ) -> None:
+        """Reject policy results that do not describe the evaluated task and call."""
+        if not isinstance(evaluation, AgentPermissionEvaluation):
+            raise TypeError("agent permission policy returned an invalid evaluation")
+        if (
+            evaluation.task_id != task.task_id
+            or evaluation.tool_call_id != call["id"]
+            or evaluation.tool_id != call["tool_id"]
+        ):
+            raise ValueError("agent permission policy returned mismatched metadata")
+
+    @staticmethod
+    def _permission_metadata(
+        evaluation: Optional[AgentPermissionEvaluation],
+    ) -> Optional[dict[str, JSONSerializable]]:
+        """Return JSON-compatible permission metadata for a typed tool result."""
+        if evaluation is None:
+            return None
+        return cast(dict[str, JSONSerializable], evaluation.to_metadata())
+
+    def _invoke_plan(self, task: AgentTask) -> AgentOutput:
+        """Invoke the injected planner or the overridable runtime method."""
+        context = self.get_context(task.task_id)
+        return (
+            self._planner(context) if self._planner is not None else self.plan(context)
+        )
+
+    def _invoke_select_tool(
+        self,
+        task: AgentTask,
+        output: AgentOutput,
+    ) -> Optional[ToolCall]:
+        """Invoke the injected selector or the overridable runtime method."""
+        context = self.get_context(task.task_id)
+        if self._tool_selector is not None:
+            return self._tool_selector(context, output)
+        return self.select_tool(context, output)
+
+    def _invoke_execute(self, task: AgentTask, call: ToolCall) -> ToolResult:
+        """Invoke the injected executor or the overridable runtime method."""
+        context = self.get_context(task.task_id)
+        if self._tool_executor is not None:
+            return self._tool_executor(context, call)
+        return self.execute_tool(context, call)
+
+    def _invoke_handle_result(
+        self,
+        task: AgentTask,
+        result: ToolResult,
+    ) -> AgentOutput:
+        """Invoke the injected result handler or the overridable runtime method."""
+        context = self.get_context(task.task_id)
+        if self._tool_result_handler is not None:
+            return self._tool_result_handler(context, result)
+        return self.handle_tool_result(context, result)
+
+    def _invoke_respond(self, task: AgentTask) -> AgentOutput:
+        """Invoke the injected responder or the overridable runtime method."""
+        context = self.get_context(task.task_id)
+        return (
+            self._responder(context)
+            if self._responder is not None
+            else self.respond(context)
+        )
+
+    def _compact_if_needed(self, task: AgentTask) -> bool:
+        """Run the injected compactor when the typed threshold is reached."""
+        if not task.needs_context_compaction:
+            return True
+        if self._compactor is None:
+            self.abort_task(task.task_id, AgentAbortReason.CONTEXT_LIMIT)
+            return False
+        try:
+            compacted = self._compactor(self.get_context(task.task_id))
+        except Exception as exc:
+            self.fail_task(task.task_id, AgentFailureReason.INTERNAL_ERROR, str(exc))
+            return False
+        if not isinstance(compacted, AgentContext) or compacted.task is not task:
+            self.fail_task(
+                task.task_id,
+                AgentFailureReason.INTERNAL_ERROR,
+                "agent compactor returned an invalid context",
+            )
+            return False
+        self._contexts[task.task_id] = compacted
+        if task.needs_context_compaction:
+            self.abort_task(task.task_id, AgentAbortReason.CONTEXT_LIMIT)
+            return False
+        return True
+
+    def _consume_iteration(self, task: AgentTask) -> bool:
+        """Account one completed decision cycle and publish limit termination."""
+        old_state = task.state
+        consumed = task.consume_iteration()
+        if consumed:
+            return True
+        self._after_direct_abort(task, old_state)
+        return False
+
+    def _record_action(self, task: AgentTask, call: ToolCall) -> None:
+        """Detect repeated identical calls before execution begins."""
+        previous = self._last_tool_calls.get(task.task_id)
+        progressed = previous is None or previous != call
+        self._last_tool_calls[task.task_id] = call
+        old_state = task.state
+        if task.record_progress(progressed):
+            return
+        self._after_direct_abort(task, old_state)
+
+    def _publish_output(
+        self,
+        task: AgentTask,
+        output: AgentOutput,
+        callback: Optional[AgentResponseCallback],
+    ) -> bool:
+        """Account generated response tokens and notify the caller safely."""
+        response = output["response"]
+        if response is not None:
+            count = self._token_counter(response)
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise ValueError(
+                    "agent token counter must return a non-negative integer"
+                )
+            old_state = task.state
+            if not task.add_generated_tokens(count):
+                self._after_direct_abort(task, old_state)
+                return False
+        if callback is not None:
+            try:
+                callback(output)
+            except Exception as exc:
+                self.fail_task(
+                    task.task_id, AgentFailureReason.INTERNAL_ERROR, str(exc)
+                )
+                return False
+        return not task.is_terminal
+
+    @staticmethod
+    def _validate_output(value: AgentOutput) -> AgentOutput:
+        """Validate and normalize one planner, handler, or responder output."""
+        if not isinstance(value, dict):
+            raise TypeError("agent dependency returned a non-object output")
+        response = value.get("response")
+        end = value.get("end")
+        paused = value.get("paused")
+        if response is not None and not isinstance(response, str):
+            raise TypeError("agent output response must be text or null")
+        if not isinstance(end, bool) or not isinstance(paused, bool):
+            raise TypeError("agent output end and paused fields must be boolean")
+        call = AgentRuntime._validate_tool_call(
+            cast(JSONSerializable, value.get("tool_call"))
+        )
+        if call is not None and (end or paused):
+            raise ValueError("agent tool outputs cannot also end or pause")
+        if call is None and response is None and not end and not paused:
+            raise ValueError(
+                "agent output must contain a response, tool call, pause, or end"
+            )
+        return {
+            "tool_call": call,
+            "response": response,
+            "end": end,
+            "paused": paused,
+        }
+
+    @staticmethod
+    def _validate_tool_call(value: JSONSerializable) -> Optional[ToolCall]:
+        """Validate one selector result without permitting multiple calls."""
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise TypeError("agent selector returned a non-object tool call")
+        call_id = value.get("id")
+        name = value.get("name")
+        arguments = value.get("arguments")
+        if (
+            not isinstance(call_id, str)
+            or not call_id.strip()
+            or not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(arguments, dict)
+            or not all(
+                isinstance(key, str) and _is_json_value(argument)
+                for key, argument in arguments.items()
+            )
+        ):
+            raise ValueError("agent selector returned an invalid tool call")
+        call: ToolCall = {
+            "id": call_id,
+            "name": name,
+            "arguments": cast(dict[str, JSONSerializable], arguments),
+        }
+        metadata_names = {
+            "tool_id",
+            "behavior",
+            "danger",
+            "approval_required",
+        }
+        if not any(name in value for name in metadata_names):
+            return call
+        if not all(name in value for name in metadata_names):
+            raise ValueError("agent selector returned incomplete tool metadata")
+        tool_id = value.get("tool_id")
+        behavior = value.get("behavior")
+        danger = value.get("danger")
+        approval_required = value.get("approval_required")
+        if (
+            not isinstance(tool_id, str)
+            or not tool_id.strip()
+            or not isinstance(behavior, str)
+            or not isinstance(danger, str)
+            or not isinstance(approval_required, bool)
+        ):
+            raise ValueError("agent selector returned invalid tool metadata")
+        try:
+            typed_call = cast(
+                ValidatedToolCall,
+                {
+                    **call,
+                    "tool_id": tool_id,
+                    "behavior": AgentToolBehavior(behavior),
+                    "danger": AgentToolDangerLevel(danger),
+                    "approval_required": approval_required,
+                },
+            )
+        except ValueError as exc:
+            raise ValueError("agent selector returned invalid tool metadata") from exc
+        return typed_call
+
+    @staticmethod
+    def _normalize_tool_result(
+        call: ToolCall,
+        value: ToolResult,
+        permission: Optional[AgentPermissionEvaluation] = None,
+    ) -> ToolResult:
+        """Validate one executor result and fill its typed execution status."""
+        if not isinstance(value, dict):
+            raise TypeError("agent executor returned a non-object tool result")
+        call_id = value.get("tool_call_id")
+        output = value.get("output")
+        error = value.get("error")
+        if (
+            not isinstance(call_id, str)
+            or call_id != call["id"]
+            or (output is not None and not _is_json_value(output))
+            or (error is not None and not isinstance(error, str))
+        ):
+            raise ValueError("agent executor returned an invalid tool result")
+        raw_status = value.get("status")
+        raw_tool_id = value.get("tool_id")
+        if raw_status is None:
+            status = (
+                AgentToolExecutionStatus.FAILED
+                if error is not None
+                else AgentToolExecutionStatus.SUCCEEDED
+            )
+            tool_id = call["name"]
+        else:
+            if not isinstance(raw_status, str):
+                raise ValueError("agent tool result status must be text")
+            try:
+                status = AgentToolExecutionStatus(raw_status)
+            except ValueError as exc:
+                raise ValueError("agent tool result status is invalid") from exc
+            if not isinstance(raw_tool_id, str) or not raw_tool_id.strip():
+                raise ValueError("typed agent tool results require a tool_id")
+            tool_id = raw_tool_id
+        return cast(
+            ToolExecutionResult,
+            {
+                "tool_call_id": call_id,
+                "output": output,
+                "error": error,
+                "tool_id": tool_id,
+                "status": status,
+                **(
+                    {"permission": permission.to_metadata()}
+                    if permission is not None
+                    else {}
+                ),
+            },
+        )
+
+    def _complete_with_output(
+        self,
+        task: AgentTask,
+        output: AgentOutput,
+        callback: Optional[AgentResponseCallback],
+    ) -> AgentOutput:
+        """Complete after an already-published final output."""
+        if task.state == AgentTaskState.PLANNING:
+            self._transition(task, AgentTaskState.RESPONDING)
+        if task.state != AgentTaskState.RESPONDING:
+            raise ValueError("agent task cannot complete from its current state")
+        if not self._consume_iteration(task):
+            return self._terminal_output(task, callback)
+        self.complete_task(
+            task.task_id,
+            {
+                "iterations": task.iterations,
+                "generated_tokens": task.generated_tokens,
+            },
+        )
+        return output
+
+    def _terminal_output(
+        self,
+        task: AgentTask,
+        callback: Optional[AgentResponseCallback],
+        output: Optional[AgentOutput] = None,
+    ) -> AgentOutput:
+        """Return and optionally publish one terminal response for a task."""
+        if output is not None:
+            return output
+        response: Optional[str]
+        if task.state == AgentTaskState.ABORTED:
+            if task.abort_reason == AgentAbortReason.STUCK_TASK:
+                self._safe_callback(
+                    callback, _empty_output(string("agent.stuck_progress"))
+                )
+                response = string("agent.stuck_final")
+            else:
+                response = string("agent.limit_final")
+        elif task.state == AgentTaskState.FAILED:
+            response = string("agent.failure_final")
+        elif task.state == AgentTaskState.CANCELLED:
+            response = string("agent.cancelled_final")
+        else:
+            response = None
+        terminal = _empty_output(response)
+        self._safe_callback(callback, terminal)
+        return terminal
+
+    @staticmethod
+    def _safe_callback(
+        callback: Optional[AgentResponseCallback],
+        output: AgentOutput,
+    ) -> None:
+        """Deliver a terminal output without masking lifecycle cleanup."""
+        if callback is None:
+            return
+        try:
+            callback(output)
+        except Exception:
+            return
+
+    def _after_direct_abort(self, task: AgentTask, old_state: AgentTaskState) -> None:
+        """Publish lifecycle events after a task accounting method aborts directly."""
+        self._after_transition(task, old_state)
+        self._clear_task_state(task.task_id)
+        self._emit_terminal(task)
 
     def plan(self, context: AgentContext) -> AgentOutput:
         """Select whether the next step is a response or a local tool call."""
@@ -573,6 +1403,8 @@ class AgentRuntime:
         self._pending_approvals.pop(task_id, None)
         self._pending_choices.pop(task_id, None)
         self._suspension_origins.pop(task_id, None)
+        self._pending_tool_calls.pop(task_id, None)
+        self._last_tool_calls.pop(task_id, None)
 
     def _emit(self, event_name: EventName, event: EventPayload) -> None:
         """Forward an event through the existing dispatcher when configured."""

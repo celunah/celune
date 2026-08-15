@@ -23,7 +23,11 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from . import __version__
 from .agent.routing import AgentInputRouter
+from .agent.needle import NeedleToolSelector
+from .agent.persona import PersonaAgentBridge
 from .agent.runtime import AgentRuntime
+from .agent.tools import production_agent_tool_schemas
+from .agent.tools import production_agent_tools
 from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
 from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
 from .cevoice import (
@@ -67,7 +71,13 @@ from .dataclasses.properties import (
     bind_constant_properties,
     bind_forwarded_properties,
 )
-from .exceptions import BackendError, NotAvailableError, RuntimeCheckError, WarmupError
+from .exceptions import (
+    BackendError,
+    NeedleSelectionError,
+    NotAvailableError,
+    RuntimeCheckError,
+    WarmupError,
+)
 from .extensions.base import CeluneContext
 from .extensions.events import EventDispatcher
 from .extensions.manager import CeluneExtensionManager
@@ -89,6 +99,7 @@ from .pipeline import (
     clear_queue,
     close_stream,
     convert_audio_input,
+    deliver_persona_response,
     generation_worker_job,
     handle_audio_input,
     play_signal,
@@ -121,7 +132,13 @@ from .pipeline import (
 )
 from .runtime import log_runtime_banner, validate_runtime
 from .typing.agent import AgentClassificationResult
+from .typing.agent import AgentContext
+from .typing.agent import AgentOutput
 from .typing.agent import AgentRoute
+from .typing.agent import AgentToolSelector
+from .typing.agent import AgentToolExecutionStatus
+from .typing.agent import ToolCall
+from .typing.agent import ToolExecutionResult
 from .typing.aliases import AudioChunk, LogLevel
 from .typing.backends import BackendModel
 from .typing.celune import (
@@ -404,6 +421,7 @@ class Celune(CeluneStateAccessors):
         caption_callback: Optional[CaptionCallback] = None,
         caption_timing_callback: Optional[CaptionTimingCallback] = None,
         log_level: LogLevel = "info",
+        agent_tool_selector: Optional[AgentToolSelector] = None,
     ) -> None:
         if Celune._instance is not None:
             raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
@@ -458,10 +476,25 @@ class Celune(CeluneStateAccessors):
         )
         set_locale(_configured_locale(config) or get_system_locale())
         self.mode: OperationMode = resolve_operation_mode(config)
+        self._agent_tools = production_agent_tools()
+        self._agent_tool_schemas = production_agent_tool_schemas()
+        self._agent_needle_selector = agent_tool_selector
+        self._agent_needle_error: Optional[str] = None
+        self._agent_persona_bridge = PersonaAgentBridge(
+            self,
+            self._agent_tool_schemas,
+        )
         self.input_mode = _resolve_input_mode(config, input_mode)
         self.agent_runtime = AgentRuntime(
+            tools=self._agent_tools,
             event_dispatcher=self._event_dispatcher,
             celune=self,
+            planner=self._agent_persona_bridge.plan,
+            tool_selector=self._select_agent_tool,
+            tool_executor=self._execute_agent_tool,
+            tool_result_handler=self._agent_persona_bridge.handle_tool_result,
+            responder=self._agent_persona_bridge.respond,
+            tool_schemas=self._agent_tool_schemas,
         )
         self._agent_router = AgentInputRouter(self, self.agent_runtime)
         glow_color = "#cebaff"
@@ -3488,6 +3521,7 @@ class Celune(CeluneStateAccessors):
                         self.say(clarification)
                     continue
                 if route.route != AgentRoute.CONVERSATION:
+                    self._run_agent_route(route)
                     continue
 
                 if persona_loading:
@@ -3514,6 +3548,89 @@ class Celune(CeluneStateAccessors):
             with self.say_lock:
                 if self._persona_thread is current_thread:
                     self._persona_thread = None
+
+    @property
+    def agent_needle_ready(self) -> bool:
+        """Return whether the production Needle selector is loaded and usable."""
+        return self._agent_needle_selector is not None
+
+    @property
+    def agent_needle_error(self) -> Optional[str]:
+        """Return the latest production Needle loading failure, if any."""
+        return self._agent_needle_error
+
+    def _load_agent_tool_selector(self) -> AgentToolSelector:
+        """Load the verified Needle selector only when an agent task needs it."""
+        if self._agent_needle_selector is not None:
+            return self._agent_needle_selector
+        try:
+            selector = NeedleToolSelector.from_pretrained(
+                self._agent_tools,
+                schemas=self._agent_tool_schemas,
+            )
+        except Exception as exc:
+            self._agent_needle_error = str(exc)
+            raise NeedleSelectionError(
+                "Needle selector is unavailable for the agent runtime"
+            ) from exc
+        self._agent_needle_selector = selector
+        self._agent_needle_error = None
+        return selector
+
+    def _select_agent_tool(
+        self,
+        context: AgentContext,
+        output: AgentOutput,
+    ) -> Optional[ToolCall]:
+        """Select and validate one registered tool through the Needle boundary."""
+        return self._load_agent_tool_selector()(context, output)
+
+    def _execute_agent_tool(
+        self,
+        _context: AgentContext,
+        call: ToolCall,
+    ) -> ToolExecutionResult:
+        """Execute one allowlisted production tool through its typed boundary."""
+        tool = next(
+            (
+                candidate
+                for candidate in self._agent_tools
+                if candidate.name == call["name"]
+            ),
+            None,
+        )
+        if tool is None:
+            return {
+                "tool_call_id": call["id"],
+                "output": None,
+                "error": "agent tool is not registered",
+                "tool_id": call["name"],
+                "status": AgentToolExecutionStatus.FAILED,
+            }
+        try:
+            return cast(ToolExecutionResult, tool.execute(call, _context))
+        except Exception as exc:
+            return {
+                "tool_call_id": call["id"],
+                "output": None,
+                "error": str(exc),
+                "tool_id": call["name"],
+                "status": AgentToolExecutionStatus.FAILED,
+            }
+
+    def _run_agent_route(self, route: AgentClassificationResult) -> None:
+        """Consume a routed task through the shared agent runtime."""
+        request = route.task_request
+        if request is None:
+            metadata = route.routing_metadata
+            task_id = metadata.get("task_id") if isinstance(metadata, dict) else None
+            if not isinstance(task_id, str):
+                return
+            request = self.agent_runtime.get_task(task_id).request
+        output = self.agent_runtime.run(request)
+        response = output.get("response")
+        if output.get("end") and isinstance(response, str) and response.strip():
+            deliver_persona_response(self, request.request, response)
 
     def _wait_for_persona_playback(self) -> bool:
         """Wait until the shared speech pipeline is available for the next Persona turn."""
@@ -3785,6 +3902,7 @@ class Celune(CeluneStateAccessors):
                     and wake_background_thread is not threading.current_thread()
                 ):
                     wake_background_thread.join(timeout=2)
+                self._close_agent_tool_selector()
                 self._unload_persona_state()
                 with self._model_lock:
                     self.unload_runtime_state(include_normalizer=True)
@@ -3795,6 +3913,14 @@ class Celune(CeluneStateAccessors):
                     self._cleanup_residual_temp_data(temp_data_dir())
                 Celune._instance = None
                 self.log("[ENGINE] close complete", loglevel="debug")
+
+    def _close_agent_tool_selector(self) -> None:
+        """Release the optional loaded Needle handler during engine shutdown."""
+        selector = self._agent_needle_selector
+        if isinstance(selector, NeedleToolSelector):
+            with contextlib.suppress(Exception):
+                selector.handler.close()
+        self._agent_needle_selector = None
 
     def fatal(self) -> None:
         """Mark Celune state as fatal and prevent further operations."""

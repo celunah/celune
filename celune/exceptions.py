@@ -60,3 +60,15 @@ class No(Exception):
 
 class CEVoiceError(RuntimeError, CeluneError):
     """CEVOICE data is malformed or unsupported."""
+
+
+class NeedleCheckpointError(RuntimeError, CeluneError):
+    """Needle checkpoint provenance, conversion, or validation failed."""
+
+
+class NeedleUnsupportedConverterError(NeedleCheckpointError):
+    """No safe offline converter is available for a Needle checkpoint."""
+
+
+class NeedleSelectionError(ValueError, CeluneError):
+    """Needle returned a selection that cannot cross the typed agent boundary."""
