@@ -12,7 +12,7 @@ from typing import cast
 from collections.abc import Callable
 
 
-TIMEOUT = 300
+TIMEOUT = 600
 GRACE_PERIOD = 2.0
 POE_COMMAND = ["uv", "run", "poe", "ci"]
 

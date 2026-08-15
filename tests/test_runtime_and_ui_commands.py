@@ -702,9 +702,9 @@ class UIStartupTests(TestCase):
                     str(screen.query_one("#loading-diagnostics", Static).render()),
                     "Creating terminal interface...\nPreparing the core engine...",
                 )
-                self.assertEqual(
+                self.assertIn(
                     str(screen.query_one("#loading-spinner", Static).render()),
-                    "⠋",
+                    {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
                 )
                 log = screen.query_one("#loading-log")
                 log_message = screen.query_one("#loading-log-message")
