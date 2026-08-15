@@ -4,12 +4,36 @@
 from collections.abc import Mapping
 
 from ..typing.agent import (
+    AgentAbortReason,
+    AgentApprovalDecision,
+    AgentApprovalRequest,
+    AgentApprovalResponse,
+    AgentCancellationReason,
+    AgentChoiceOption,
+    AgentChoiceRequest,
+    AgentChoiceResponse,
+    AgentClassificationResult,
     AgentContext,
+    AgentFailureReason,
+    AgentInputClassification,
+    AgentInterruption,
+    AgentInterruptionKind,
     AgentOutput,
     AgentRequest,
     AgentResponseCallback,
+    AgentRoute,
     AgentSession,
+    AgentSessionState,
+    AgentTask,
+    AgentTaskConfig,
+    AgentTaskState,
     AgentTool,
+    AgentToolArgumentSchema,
+    AgentToolBehavior,
+    AgentToolDangerLevel,
+    AgentToolExecutionStatus,
+    AgentToolSchema,
+    AgentToolValueType,
     NeedleToolCall,
     NeedleToolCatalog,
     NeedleToolDefinition,
@@ -17,7 +41,9 @@ from ..typing.agent import (
     NeedleToolParameterSpec,
     NeedleToolSelection,
     ToolCall,
+    ToolExecutionResult,
     ToolResult,
+    ValidatedToolCall,
 )
 from ..modes import mode_allows_agents, resolve_operation_mode
 from ..typing.common import JSONSerializable
@@ -29,6 +55,7 @@ from .needle import (
 )
 from .needle_model import NeedleConfig, NeedleModel
 from .runtime import AgentRuntime
+from .routing import AgentInputRouter
 
 
 def agent_mode_enabled(
@@ -40,13 +67,38 @@ def agent_mode_enabled(
 
 __all__ = [
     "NEEDLE_MODEL_ID",
+    "AgentAbortReason",
+    "AgentApprovalDecision",
+    "AgentApprovalRequest",
+    "AgentApprovalResponse",
+    "AgentCancellationReason",
+    "AgentChoiceOption",
+    "AgentChoiceRequest",
+    "AgentChoiceResponse",
+    "AgentClassificationResult",
     "AgentContext",
+    "AgentFailureReason",
+    "AgentInputClassification",
+    "AgentInputRouter",
+    "AgentInterruption",
+    "AgentInterruptionKind",
     "AgentOutput",
     "AgentRequest",
     "AgentResponseCallback",
+    "AgentRoute",
     "AgentRuntime",
     "AgentSession",
+    "AgentSessionState",
+    "AgentTask",
+    "AgentTaskConfig",
+    "AgentTaskState",
     "AgentTool",
+    "AgentToolArgumentSchema",
+    "AgentToolBehavior",
+    "AgentToolDangerLevel",
+    "AgentToolExecutionStatus",
+    "AgentToolSchema",
+    "AgentToolValueType",
     "NeedleConfig",
     "NeedleHandler",
     "NeedleModel",
@@ -58,7 +110,9 @@ __all__ = [
     "NeedleToolParameterSpec",
     "NeedleToolSelection",
     "ToolCall",
+    "ToolExecutionResult",
     "ToolResult",
+    "ValidatedToolCall",
     "agent_mode_enabled",
     "convert_needle_safetensors",
 ]

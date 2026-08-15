@@ -1678,6 +1678,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertEqual(payload["request"], "What now?")
         self.assertEqual(payload["user"], "What now?")
         self.assertEqual(payload["character"], "Celune")
+
         character_card = cast(str, payload["character_card"])
         system_prompt = cast(str, payload["system"])
         messages = cast(list[dict[str, str]], payload["messages"])
@@ -1709,6 +1710,38 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 {"role": "user", "content": "What now?"},
                 {"role": "assistant", "content": "I can help with that."},
             ],
+        )
+
+    def test_agent_classification_request_reuses_persona_prompt_and_history(
+        self,
+    ) -> None:
+        """Build routing input from the existing Persona prompt and history path."""
+        engine = make_pipeline_engine()
+        engine.config = {
+            "vram": "high",
+            "persona": {"model_id": "fixture/persona-test"},
+        }
+        engine.persona_history = [{"role": "assistant", "content": "Earlier."}]
+
+        payload = pipeline.build_agent_classification_request(
+            cast(Celune, engine),
+            "Please handle this.",
+        )
+
+        self.assertEqual(payload["format"], "celune_agent_classification")
+        self.assertEqual(payload["request"], "Please handle this.")
+        system_prompt = payload["system"]
+        self.assertIsInstance(system_prompt, str)
+        assert isinstance(system_prompt, str)
+        self.assertIn("Classify the latest user input", system_prompt)
+        messages = cast(list[JSON], payload["messages"])
+        self.assertEqual(
+            messages[-1],
+            {"role": "user", "content": "Please handle this."},
+        )
+        self.assertIn(
+            {"role": "assistant", "content": "Earlier."},
+            messages,
         )
 
     def test_persona_request_uses_xhigh_quantization(self) -> None:

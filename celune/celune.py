@@ -22,6 +22,8 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from . import __version__
+from .agent.routing import AgentInputRouter
+from .agent.runtime import AgentRuntime
 from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
 from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
 from .cevoice import (
@@ -118,8 +120,10 @@ from .pipeline import (
     think as think_pipeline,
 )
 from .runtime import log_runtime_banner, validate_runtime
-from .typing.backends import BackendModel
+from .typing.agent import AgentClassificationResult
+from .typing.agent import AgentRoute
 from .typing.aliases import AudioChunk, LogLevel
+from .typing.backends import BackendModel
 from .typing.celune import (
     CaptionCallback,
     CaptionTimingCallback,
@@ -455,6 +459,11 @@ class Celune(CeluneStateAccessors):
         set_locale(_configured_locale(config) or get_system_locale())
         self.mode: OperationMode = resolve_operation_mode(config)
         self.input_mode = _resolve_input_mode(config, input_mode)
+        self.agent_runtime = AgentRuntime(
+            event_dispatcher=self._event_dispatcher,
+            celune=self,
+        )
+        self._agent_router = AgentInputRouter(self, self.agent_runtime)
         glow_color = "#cebaff"
         loader = default_loader()
         if loader is not None:
@@ -3397,6 +3406,42 @@ class Celune(CeluneStateAccessors):
             thread.start()
         return True
 
+    def classify_input(
+        self,
+        text: str,
+        *,
+        persona_ready: Optional[bool] = None,
+    ) -> AgentClassificationResult:
+        """Classify one input without creating a task or starting execution.
+
+        Args:
+            text: The text or transcription to classify.
+            persona_ready: Whether the loaded Persona model may resolve ambiguity.
+
+        Returns:
+            AgentClassificationResult: The typed conversation-first classification.
+        """
+        ready = self.persona_ready if persona_ready is None else persona_ready
+        return self._agent_router.classify(text, persona_ready=ready)
+
+    def route_input(
+        self,
+        text: str,
+        *,
+        persona_ready: Optional[bool] = None,
+    ) -> AgentClassificationResult:
+        """Route one input through the active task or ordinary Persona conversation.
+
+        Args:
+            text: The text or transcription to route.
+            persona_ready: Whether the loaded Persona model may resolve ambiguity.
+
+        Returns:
+            AgentClassificationResult: The typed route selected for the input.
+        """
+        ready = self.persona_ready if persona_ready is None else persona_ready
+        return self._agent_router.route(text, persona_ready=ready)
+
     async def think_async(self, text: str) -> bool:
         """Let Celune reply to one input request without blocking an async caller.
 
@@ -3435,6 +3480,15 @@ class Celune(CeluneStateAccessors):
                     persona_loading = self.persona_loading
                     persona_ready = self.persona_ready
                     vision = self.vision
+
+                route = self.route_input(text, persona_ready=persona_ready)
+                if route.route == AgentRoute.CLARIFICATION:
+                    clarification = route.clarification_prompt
+                    if clarification:
+                        self.say(clarification)
+                    continue
+                if route.route != AgentRoute.CONVERSATION:
+                    continue
 
                 if persona_loading:
                     self.say(text)

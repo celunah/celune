@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING, Literal, Optional, TypeVar, cast, overload
 
 from ..typing.aliases import DispatcherCallback, LogLevel
 from ..typing.events import (
+    AgentApprovalRequestedEventCallback,
+    AgentChoiceRequestedEventCallback,
+    AgentTaskFinishedEventCallback,
+    AgentTaskStateChangedEventCallback,
     AudioEndEventCallback,
     AudioStartEventCallback,
     CharacterChangedEventCallback,
@@ -33,6 +37,10 @@ from ..utils import format_error
 
 if TYPE_CHECKING:
     from ..dataclasses.events import (
+        AgentApprovalRequestedEvent,
+        AgentChoiceRequestedEvent,
+        AgentTaskFinishedEvent,
+        AgentTaskStateChangedEvent,
         AudioEndEvent,
         AudioStartEvent,
         CharacterChangedEvent,
@@ -51,6 +59,10 @@ if TYPE_CHECKING:
 
 
 EVENT_NAMES: tuple[EventName, ...] = (
+    "agent_task_state_changed",
+    "agent_approval_requested",
+    "agent_choice_requested",
+    "agent_task_finished",
     "ready",
     "shutdown",
     "fatal",
@@ -104,6 +116,38 @@ class EventDispatcher:
         self._lock = threading.RLock()
         self._callbacks: dict[EventName, list[DispatcherCallback]] = defaultdict(list)
         self._owners: dict[tuple[EventName, DispatcherCallback], str] = {}
+
+    @overload
+    def subscribe(
+        self,
+        event_name: Literal["agent_task_state_changed"],
+        callback: AgentTaskStateChangedEventCallback,
+        owner_name: Optional[str] = None,
+    ) -> None: ...
+
+    @overload
+    def subscribe(
+        self,
+        event_name: Literal["agent_approval_requested"],
+        callback: AgentApprovalRequestedEventCallback,
+        owner_name: Optional[str] = None,
+    ) -> None: ...
+
+    @overload
+    def subscribe(
+        self,
+        event_name: Literal["agent_choice_requested"],
+        callback: AgentChoiceRequestedEventCallback,
+        owner_name: Optional[str] = None,
+    ) -> None: ...
+
+    @overload
+    def subscribe(
+        self,
+        event_name: Literal["agent_task_finished"],
+        callback: AgentTaskFinishedEventCallback,
+        owner_name: Optional[str] = None,
+    ) -> None: ...
 
     @overload
     def subscribe(
@@ -251,6 +295,34 @@ class EventDispatcher:
     @overload
     def unsubscribe(
         self,
+        event_name: Literal["agent_task_state_changed"],
+        callback: AgentTaskStateChangedEventCallback,
+    ) -> None: ...
+
+    @overload
+    def unsubscribe(
+        self,
+        event_name: Literal["agent_approval_requested"],
+        callback: AgentApprovalRequestedEventCallback,
+    ) -> None: ...
+
+    @overload
+    def unsubscribe(
+        self,
+        event_name: Literal["agent_choice_requested"],
+        callback: AgentChoiceRequestedEventCallback,
+    ) -> None: ...
+
+    @overload
+    def unsubscribe(
+        self,
+        event_name: Literal["agent_task_finished"],
+        callback: AgentTaskFinishedEventCallback,
+    ) -> None: ...
+
+    @overload
+    def unsubscribe(
+        self,
         event_name: Literal["ready"],
         callback: ReadyEventCallback,
     ) -> None: ...
@@ -380,6 +452,34 @@ class EventDispatcher:
         self._debug(
             f"[EVENT] unsubscribed name={event_name} callback={self._describe_callback(typed_callback)}"
         )
+
+    @overload
+    def emit(
+        self,
+        event_name: Literal["agent_task_state_changed"],
+        event: AgentTaskStateChangedEvent,
+    ) -> None: ...
+
+    @overload
+    def emit(
+        self,
+        event_name: Literal["agent_approval_requested"],
+        event: AgentApprovalRequestedEvent,
+    ) -> None: ...
+
+    @overload
+    def emit(
+        self,
+        event_name: Literal["agent_choice_requested"],
+        event: AgentChoiceRequestedEvent,
+    ) -> None: ...
+
+    @overload
+    def emit(
+        self,
+        event_name: Literal["agent_task_finished"],
+        event: AgentTaskFinishedEvent,
+    ) -> None: ...
 
     @overload
     def emit(self, event_name: Literal["ready"], event: ReadyEvent) -> None: ...
@@ -576,6 +676,38 @@ def iter_subscriptions(
                 EventSubscription(event_name=cast(EventName, item), enabled=True)
             )
     return tuple(normalized)
+
+
+@overload
+def subscribe(
+    event_name: Literal["agent_task_state_changed"],
+    *,
+    enabled: bool = True,
+) -> Callable[[_DecoratedCallback], _DecoratedCallback]: ...
+
+
+@overload
+def subscribe(
+    event_name: Literal["agent_approval_requested"],
+    *,
+    enabled: bool = True,
+) -> Callable[[_DecoratedCallback], _DecoratedCallback]: ...
+
+
+@overload
+def subscribe(
+    event_name: Literal["agent_choice_requested"],
+    *,
+    enabled: bool = True,
+) -> Callable[[_DecoratedCallback], _DecoratedCallback]: ...
+
+
+@overload
+def subscribe(
+    event_name: Literal["agent_task_finished"],
+    *,
+    enabled: bool = True,
+) -> Callable[[_DecoratedCallback], _DecoratedCallback]: ...
 
 
 @overload
