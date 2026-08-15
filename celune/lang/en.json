@@ -9,7 +9,7 @@
     "backends.worker_not_running": "backend worker '{backend}' is not running",
     "backends.worker_streams_unavailable": "backend worker protocol streams are unavailable",
     "backends.worker_unknown_operation": "unknown backend worker operation: {operation}",
-    "persona.untrusted_model": "Persona model '{model_id}' is not trusted or pinned by Celune",
+    "persona.unsupported_model": "Persona model '{model_id}' is not in Celune's supported registry; response quality may not be optimal",
     "persona.backend_diagnostic": "[PERSONA] {message}",
     "api.cannot_convert": "I can't convert that.",
     "api.content_protected": "[content protected]",

@@ -9,7 +9,10 @@ from unittest import TestCase, mock
 from celune.constants import (
     PERSONA_DEFAULT_MODEL_ID,
     PERSONA_MODELS,
+    persona_model_tier,
+    remote_code_model_revision,
 )
+from celune.i18n import string
 from celune.persona import impl, runtime
 from celune.typing.aliases import RecordedKwargValue
 from celune.typing.common import JSON
@@ -309,6 +312,7 @@ class PersonaApiTests(TestCase):
         fake_model.eval.return_value = None
         fake_tokenizer = _FakeTokenizer()
         fake_processor = _FakeProcessor(tokenizer=fake_tokenizer)
+        revision = cast(str, remote_code_model_revision(PERSONA_DEFAULT_MODEL_ID))
 
         with self._mock_qwen_vl_load(
             processor=fake_processor,
@@ -320,12 +324,12 @@ class PersonaApiTests(TestCase):
         loaders["config_loader"].assert_called_once_with(
             "Qwen/Qwen3-VL-4B-Instruct",
             trust_remote_code=True,
-            revision=PERSONA_MODELS[PERSONA_DEFAULT_MODEL_ID],
+            revision=revision,
         )
         loaders["processor_loader"].assert_called_once_with(
             "Qwen/Qwen3-VL-4B-Instruct",
             trust_remote_code=True,
-            revision=PERSONA_MODELS[PERSONA_DEFAULT_MODEL_ID],
+            revision=revision,
         )
         loaders["model_loader"].assert_called_once()
         self.assertEqual(
@@ -336,7 +340,7 @@ class PersonaApiTests(TestCase):
             loaders["model_loader"].call_args.kwargs,
             {
                 "trust_remote_code": True,
-                "revision": PERSONA_MODELS[PERSONA_DEFAULT_MODEL_ID],
+                "revision": revision,
                 "device_map": "auto",
                 "dtype": runtime.torch.bfloat16,
             },
@@ -349,24 +353,66 @@ class PersonaApiTests(TestCase):
 
     def test_trusted_model_revision_allows_abliterated_qwen_vl_model(self) -> None:
         """Verify the pinned abliterated Qwen VL derivative is trusted."""
-        model_id = next(
-            model_id for model_id in PERSONA_MODELS if "abliterated" in model_id
-        )
+        model_id = "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated"
+        revision = cast(str, remote_code_model_revision(model_id))
         self.assertEqual(
-            runtime.PersonaBackend._trusted_model_revision(model_id),
-            PERSONA_MODELS[model_id],
+            runtime.PersonaBackend._resolve_model_revision(model_id),
+            revision,
         )
 
-    def test_load_rejects_unpinned_remote_code_models(self) -> None:
-        """Verify Persona never loads an unknown model with remote code enabled."""
+    def test_persona_registry_derives_supported_variants_and_tiers(self) -> None:
+        """Verify each compact registry entry expands to both trusted model IDs."""
+        self.assertEqual(
+            tuple(
+                (definition["model"], definition["organization"], definition["tier"])
+                for definition in PERSONA_MODELS
+            ),
+            (
+                ("Qwen3-VL-4B-Instruct", "Qwen", "standard"),
+                ("Qwen3-VL-8B-Instruct", "Qwen", "smart"),
+                ("Qwen3-VL-8B-Thinking", "Qwen", "smart"),
+                ("Qwen3.5-4B", "Qwen", "standard"),
+                ("Qwen3.5-9B", "Qwen", "smart"),
+                ("gemma-4-E2B-it", "google", "standard"),
+                ("gemma-4-E4B-it", "google", "smart"),
+            ),
+        )
+
+        for definition in PERSONA_MODELS:
+            official_id = f"{definition['organization']}/{definition['model']}"
+            abliterated_id = f"huihui-ai/Huihui-{definition['model']}-abliterated"
+            self.assertEqual(
+                remote_code_model_revision(official_id),
+                definition["revisions"]["official"],
+            )
+            self.assertEqual(
+                remote_code_model_revision(abliterated_id),
+                definition["revisions"]["abliterated"],
+            )
+            self.assertEqual(persona_model_tier(official_id), definition["tier"])
+            self.assertEqual(persona_model_tier(abliterated_id), definition["tier"])
+
+    def test_load_warns_for_unknown_remote_code_models(self) -> None:
+        """Verify Persona warns before loading an unknown model."""
         backend = runtime.PersonaBackend()
         with (
-            mock.patch.object(runtime, "AutoConfig") as config_loader,
-            self.assertRaisesRegex(ValueError, "not trusted or pinned"),
+            self._mock_qwen_vl_load(
+                processor=_FakeProcessor(tokenizer=_FakeTokenizer()),
+                model=mock.Mock(),
+                tokenizer=_FakeTokenizer(),
+            ) as loaders,
+            mock.patch.object(runtime._LOGGER, "warning") as warning,
         ):
             backend.load("untrusted/example", "none")
 
-        config_loader.from_pretrained.assert_not_called()
+        warning.assert_called_once_with(
+            string("persona.unsupported_model", model_id="untrusted/example")
+        )
+        loaders["config_loader"].assert_called_once_with(
+            "untrusted/example",
+            trust_remote_code=True,
+            revision="main",
+        )
 
     def test_load_treats_multimodal_processor_as_vision_capable(self) -> None:
         """Verify multimodal processors are accepted even without chat templates."""

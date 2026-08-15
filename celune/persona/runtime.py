@@ -3,6 +3,7 @@
 
 import contextlib
 import gc
+import logging
 import os
 import threading
 from collections.abc import Mapping, Sequence
@@ -45,6 +46,9 @@ from ..typing.persona import (
 from ..utils import discard, normalize_special_characters
 from ..vram import resolve_vram_preset
 from .capabilities import PersonaCapabilities
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _render_chat_prompt(
@@ -135,12 +139,13 @@ class PersonaBackend:
         ):
             return
 
-        revision = self._trusted_model_revision(model_id)
+        revision = self._resolve_model_revision(model_id)
+        load_revision = revision or "main"
         self.unload()
         config = AutoConfig.from_pretrained(
             model_id,
             trust_remote_code=True,
-            revision=revision,
+            revision=load_revision,
         )
         model_type = getattr(config, "model_type", N_A_STR)
         wanted_type = "qwen3_vl"
@@ -159,7 +164,7 @@ class PersonaBackend:
                 Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
-                    revision=revision,
+                    revision=load_revision,
                     device_map="auto",
                     quantization_config=BitsAndBytesConfig(
                         load_in_4bit=True,
@@ -177,7 +182,7 @@ class PersonaBackend:
                 Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
-                    revision=revision,
+                    revision=load_revision,
                     device_map="auto",
                     quantization_config=BitsAndBytesConfig(load_in_8bit=True),
                 ),
@@ -188,7 +193,7 @@ class PersonaBackend:
                 Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
-                    revision=revision,
+                    revision=load_revision,
                     device_map="auto",
                     dtype=torch.bfloat16,
                 ),
@@ -202,7 +207,7 @@ class PersonaBackend:
                 AutoProcessor.from_pretrained(
                     model_id,
                     trust_remote_code=True,
-                    revision=revision,
+                    revision=load_revision,
                 ),
             )
         except Exception as exc:
@@ -218,7 +223,7 @@ class PersonaBackend:
                 AutoTokenizer.from_pretrained(
                     model_id,
                     trust_remote_code=True,
-                    revision=revision,
+                    revision=load_revision,
                 ),
             )
 
@@ -232,11 +237,11 @@ class PersonaBackend:
         self.supports_emotion_probes = _model_supports_emotion_probes(model)
 
     @staticmethod
-    def _trusted_model_revision(model_id: str) -> str:
-        """Return the pinned revision for an allowlisted remote-code model."""
+    def _resolve_model_revision(model_id: str) -> Optional[str]:
+        """Return a pinned revision or warn before using an unknown model."""
         revision = remote_code_model_revision(model_id)
         if revision is None:
-            raise ValueError(string("persona.untrusted_model", model_id=model_id))
+            _LOGGER.warning(string("persona.unsupported_model", model_id=model_id))
         return revision
 
     def unload(self) -> None:

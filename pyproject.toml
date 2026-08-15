@@ -197,8 +197,11 @@ live-vc-ai = [
 # Don't touch it, unless you want SLOP!
 [tool.pytest.ini_options]
 filterwarnings = [
-     # 'silero-vad' uses old legacy PyTorch JIT syntax.
-     "ignore:`torch.jit.load` is deprecated\\. Please switch to `torch.export`\\.:DeprecationWarning",
+     # 'silero-vad' uses old legacy PyTorch JIT syntax:
+     # Python 3.12 and 3.13 emit this warning.
+     "ignore:`torch\\.jit\\.load` is deprecated\\. Please switch to `torch\\.export`\\.:DeprecationWarning",
+     # Python 3.14 emits this warning.
+     "ignore:`torch\\.jit\\.load` is not supported in Python 3\\.14\\+ and may break\\. Please switch to `torch\\.export`\\.:DeprecationWarning",
      # Celune's deprecated extension syntax is being exercised in the test suite, causing these warnings.
      # This syntax will be removed in version 5.0.0.
      "ignore:CeluneExtension\\.autostart\\(\\) is deprecated and will be removed in Celune 5\\.0\\.0, please use @celune\\.subscribe\\('ready'\\) instead:DeprecationWarning",
