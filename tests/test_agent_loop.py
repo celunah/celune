@@ -429,6 +429,95 @@ class AgentLoopTests(TestCase):
         self.assertEqual(tool_task.state, AgentTaskState.FAILED)
         self.assertEqual(tool_task.failure_reason, AgentFailureReason.TOOL_ERROR)
 
+    def test_successful_terminal_tool_completes_without_result_handler(self) -> None:
+        """Treat a successful terminal tool result as the task result itself."""
+        call = _call()
+        handled: list[ToolResult] = []
+        outputs: list[AgentOutput] = []
+
+        def record_result(_context, result: ToolResult) -> AgentOutput:
+            """Record a result if the terminal result guard regresses."""
+            handled.append(result)
+            return _output(response="unexpected")
+
+        def record_output(output: AgentOutput) -> None:
+            """Record the externally visible runtime outputs."""
+            outputs.append(output)
+
+        def execute_terminal(_context, selected: ToolCall) -> ToolExecutionResult:
+            """Return one successfully executed terminal tool result."""
+            return {
+                "tool_call_id": selected["id"],
+                "output": {"spoken": True},
+                "error": None,
+                "tool_id": selected["name"],
+                "status": AgentToolExecutionStatus.SUCCEEDED,
+                "end_task": True,
+            }
+
+        runtime = AgentRuntime(
+            planner=lambda _context: _output(
+                response="I will check that.",
+                tool_call=call,
+            ),
+            tool_selector=lambda _context, output: output["tool_call"],
+            tool_executor=execute_terminal,
+            tool_result_handler=record_result,
+        )
+        task = runtime.create_task(_request(), task_id="terminal-tool")
+
+        result = runtime.run(task.request, record_output)
+
+        self.assertEqual(task.state, AgentTaskState.COMPLETED)
+        self.assertEqual(task.iterations, 1)
+        self.assertEqual(result["response"], None)
+        self.assertEqual(handled, [])
+        self.assertIsNotNone(task.completion_metadata)
+        assert task.completion_metadata is not None
+        tool_result = task.completion_metadata["tool_result"]
+        self.assertIsInstance(tool_result, dict)
+        assert isinstance(tool_result, dict)
+        self.assertEqual(tool_result["status"], "succeeded")
+        self.assertEqual(tool_result["end_task"], True)
+        self.assertEqual(
+            [output["response"] for output in outputs], ["I will check that."]
+        )
+
+    def test_failed_typed_tool_result_fails_without_claiming_success(self) -> None:
+        """Convert a typed executor failure into the runtime failure path."""
+        call = _call()
+        handled: list[ToolResult] = []
+
+        def record_result(_context, result: ToolResult) -> AgentOutput:
+            """Record a result if failed tools incorrectly reach the responder."""
+            handled.append(result)
+            return _output(response="unexpected")
+
+        def execute_failed(_context, selected: ToolCall) -> ToolExecutionResult:
+            """Return one structured executor failure."""
+            return {
+                "tool_call_id": selected["id"],
+                "output": None,
+                "error": "speech could not be queued",
+                "tool_id": selected["name"],
+                "status": AgentToolExecutionStatus.FAILED,
+            }
+
+        runtime = AgentRuntime(
+            planner=lambda _context: _output(tool_call=call),
+            tool_selector=lambda _context, output: output["tool_call"],
+            tool_executor=execute_failed,
+            tool_result_handler=record_result,
+        )
+        task = runtime.create_task(_request("failed-tool"), task_id="failed-tool")
+
+        runtime.run(task.request)
+
+        self.assertEqual(task.state, AgentTaskState.FAILED)
+        self.assertEqual(task.failure_reason, AgentFailureReason.TOOL_ERROR)
+        self.assertEqual(task.failure_detail, "speech could not be queued")
+        self.assertEqual(handled, [])
+
     def test_malformed_outputs_and_repeated_actions_abort_safely(self) -> None:
         """Reject malformed dependencies and terminate repeated identical actions."""
         malformed = AgentRuntime(

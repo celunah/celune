@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Optional, cast
 from unittest import TestCase, mock
 
@@ -11,6 +12,9 @@ from celune.agent import (
     AgentInputRouter,
     AgentOutput,
     AgentRequest,
+    AgentTool,
+    AgentToolSelector,
+    AgentResponseCallback,
     AgentRuntime,
     AgentTaskState,
     AgentToolBehavior,
@@ -21,7 +25,9 @@ from celune.agent import (
     ToolExecutionResult,
     ToolResult,
 )
-from celune.agent.tools import AgentStatusTool
+from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
+from celune.agent.needle import NeedleHandler, NeedleToolCatalog, NeedleToolCall
+from celune.agent.needle import NeedleToolSelector
 from celune.celune import Celune
 from celune.dataclasses.events import (
     AgentApprovalRequestedEvent,
@@ -31,6 +37,7 @@ from celune.dataclasses.events import (
 from celune.pipeline import deliver_persona_response as celune_deliver_persona_response
 from celune.persona.impl import PersonaClient
 from celune.typing.common import JSONSerializable
+from celune.typing.aliases import LogLevel
 from celune.typing.persona import PersonaClientResponse
 
 from .support import FakeBackend, FakeGlow
@@ -83,6 +90,29 @@ class _RoutingFixture(PersonaClient):
         return PersonaClientResponse({"response": self.payloads.pop(0)})
 
 
+class _SpeakPersonaFixture:
+    """Return routing, progress, and approval responses for a terminal speak task."""
+
+    def __init__(self) -> None:
+        self.requests: list[dict[str, JSONSerializable]] = []
+        self.responses = [
+            _PersonaResponse(
+                '{"classification":"task","route":"task",'
+                '"confidence":0.98,"task_request":"Say hello."}'
+            ),
+            _PersonaResponse("I will say hello."),
+            _PersonaResponse(
+                '{"classification":"task","route":"approval_response",'
+                '"confidence":0.99,"approval_decision":"approved"}'
+            ),
+        ]
+
+    def post(self, json: dict[str, JSONSerializable]) -> _PersonaResponse:
+        """Return the next deterministic response through the Persona boundary."""
+        self.requests.append(json)
+        return self.responses.pop(0)
+
+
 class _NeedleFixture:
     """Select the single registered read-only status tool without a model."""
 
@@ -105,10 +135,45 @@ class _NeedleFixture:
         }
 
 
+class _SpeakNeedleHandler:
+    """Return one controlled speak selection through the real Needle adapter."""
+
+    @staticmethod
+    def catalog_for_tools(
+        tools: Sequence[AgentTool],
+        *,
+        schemas: Optional[Mapping[str, AgentToolSchema]] = None,
+        available_only: bool = False,
+    ) -> NeedleToolCatalog:
+        """Build the same registered catalog used by the production selector."""
+        return NeedleHandler.catalog_for_tools(
+            tools,
+            schemas=schemas,
+            available_only=available_only,
+        )
+
+    def select_one_tool(
+        self,
+        query: str,
+        tools: NeedleToolCatalog,
+        max_new_tokens: int = 96,
+    ) -> NeedleToolCall:
+        """Select the registered speak tool without model or network work."""
+        del query, tools, max_new_tokens
+        return {"name": "speak", "arguments": {"text": "hello"}}
+
+    def close(self) -> None:
+        """Match the lifecycle method of a loaded Needle handler."""
+
+
 class AgentCoreIntegrationTests(TestCase):
     """Run a complete routed task through a real lightweight Celune core."""
 
-    def _make_core(self) -> Celune:
+    def _make_core(
+        self,
+        *,
+        agent_tool_selector: Optional[AgentToolSelector] = None,
+    ) -> Celune:
         """Create the core with model, audio-device, and glow work replaced by fakes."""
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
@@ -118,9 +183,106 @@ class AgentCoreIntegrationTests(TestCase):
             core = Celune(
                 config={"mode": "agent"},
                 tts_backend=FakeBackend,
+                agent_tool_selector=agent_tool_selector,
             )
         self.addCleanup(core.close)
         return core
+
+    def test_production_catalog_contains_typed_offline_tools(self) -> None:
+        """Expose the complete Appendix B catalog with permission metadata."""
+        schemas = production_agent_tool_schemas()
+        expected = {
+            "read_agent_status",
+            "query_status",
+            "query_capabilities",
+            "query_models",
+            "query_locks",
+            "query_audio_state",
+            "query_agent_task",
+            "run_health_check",
+            "speak",
+            "stop_speech",
+            "pause_speech",
+            "resume_speech",
+            "set_voice",
+            "set_voice_prompt",
+            "set_playback_speed",
+            "set_reverb",
+            "clear_speech_queue",
+            "set_character",
+            "query_character",
+            "set_conversation_mode",
+            "set_agent_mode",
+            "sleep",
+            "wake",
+            "remember",
+            "recall",
+            "forget",
+            "clear_recent_context",
+            "summarize_context",
+            "pause_task",
+            "resume_task",
+            "cancel_task",
+            "query_task",
+            "query_task_history",
+        }
+        self.assertEqual(set(schemas), expected)
+        for schema in schemas.values():
+            self.assertTrue(schema.description)
+            self.assertTrue(schema.display_name)
+            if schema.behavior == AgentToolBehavior.MUTATING:
+                self.assertTrue(schema.approval_required)
+
+    def test_local_management_registry_is_opt_in_and_warns(self) -> None:
+        """Local-management tools appear only when explicitly enabled."""
+        logs: list[str] = []
+
+        def capture_log(
+            msg: str,
+            severity: str = "info",
+            *,
+            loglevel: LogLevel = "info",
+        ) -> None:
+            """Capture constructor diagnostics for the warning assertion."""
+            del severity, loglevel
+            logs.append(msg)
+
+        with (
+            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
+            mock.patch("celune.celune.default_loader", return_value=None),
+            mock.patch("celune.celune.persona_is_available", return_value=False),
+        ):
+            core = Celune(
+                config={"mode": "agent", "agent_local_management": True},
+                tts_backend=FakeBackend,
+                log_callback=capture_log,
+            )
+        self.addCleanup(core.close)
+        self.assertIn("local_system_info", core._agent_tool_schemas)
+        self.assertTrue(any("UNSANDBOXED AGENT" in message for message in logs))
+        self.assertIn(
+            "local_system_info",
+            production_agent_tool_schemas(include_local_management=True),
+        )
+
+    def test_query_status_executes_against_the_real_core(self) -> None:
+        """Execute a read-only catalog tool against the core-owned task context."""
+        core = self._make_core()
+        task = core.agent_runtime.create_task(AgentRequest("query status"))
+        tool = next(tool for tool in core._agent_tools if tool.name == "query_status")
+        result = cast(
+            ToolExecutionResult,
+            tool.execute(
+                {"id": "status-call", "name": "query_status", "arguments": {}},
+                core.agent_runtime.get_context(task.task_id),
+            ),
+        )
+        self.assertEqual(result["status"], AgentToolExecutionStatus.SUCCEEDED)
+        output = result["output"]
+        self.assertIsInstance(output, dict)
+        assert isinstance(output, dict)
+        self.assertEqual(output["mode"], "agent")
+        core.agent_runtime.cancel_task(task.task_id)
 
     def test_core_routes_approves_and_completes_a_mutating_tool_workflow(self) -> None:
         """Route an explicit request through the core, pause, approve, and complete."""
@@ -213,7 +375,8 @@ class AgentCoreIntegrationTests(TestCase):
         self.assertIsNotNone(route.task_request)
         assert route.task_request is not None
 
-        core._run_agent_route(route)
+        with mock.patch("celune.celune.deliver_persona_response", return_value=True):
+            core._run_agent_route(route)
         task = runtime.get_active_task("default")
         self.assertIsNotNone(task)
         assert task is not None
@@ -228,7 +391,8 @@ class AgentCoreIntegrationTests(TestCase):
             "That is approved; continue.", persona_ready=True
         )
         self.assertEqual(approval_route.route.value, "approval_response")
-        core._run_agent_route(approval_route)
+        with mock.patch("celune.celune.deliver_persona_response", return_value=True):
+            core._run_agent_route(approval_route)
 
         self.assertEqual(task.state, AgentTaskState.COMPLETED)
         self.assertEqual(executions, [approval.tool_call])
@@ -268,8 +432,8 @@ class AgentCoreIntegrationTests(TestCase):
         self.assertIsNotNone(core.agent_runtime._planner)
         self.assertIsNotNone(core.agent_runtime._tool_result_handler)
         self.assertEqual(
-            tuple(tool.name for tool in core.agent_runtime.tools),
-            ("read_agent_status",),
+            {tool.name for tool in core.agent_runtime.tools},
+            set(production_agent_tool_schemas()),
         )
 
         conversation = core.route_input("Hello.", persona_ready=False)
@@ -286,9 +450,13 @@ class AgentCoreIntegrationTests(TestCase):
         outputs: list[AgentOutput] = []
         original_run = core.agent_runtime.run
 
-        def record_run(request: AgentRequest) -> AgentOutput:
+        def record_run(
+            request: AgentRequest,
+            *,
+            callback: Optional[AgentResponseCallback] = None,
+        ) -> AgentOutput:
             """Capture the runtime output while preserving the real call."""
-            output = original_run(request)
+            output = original_run(request, callback=callback)
             outputs.append(output)
             return output
 
@@ -321,13 +489,68 @@ class AgentCoreIntegrationTests(TestCase):
         self.assertIn("Last tool result", second_system)
         self.assertIn("succeeded", second_system)
         self.assertEqual(execute.call_count, 1)
-        self.assertEqual(delivery_mock.call_count, 1)
-        self.assertEqual(speech_mock.call_count, 1)
+        self.assertEqual(delivery_mock.call_count, 2)
+        self.assertEqual(speech_mock.call_count, 2)
         self.assertEqual(
             speech_mock.call_args.kwargs["display_text"],
             "The agent task completed successfully.",
         )
         self.assertIsNone(core.agent_runtime.get_active_task("default"))
+
+    def test_terminal_speak_tool_is_the_task_result(self) -> None:
+        """Run the real registered speak tool without a duplicate final response."""
+        core = self._make_core()
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, _SpeakNeedleHandler()),
+            core._agent_tools,
+            schemas=production_agent_tool_schemas(),
+        )
+        core._agent_needle_selector = selector
+        persona = _SpeakPersonaFixture()
+        core.vision = cast(PersonaClient, persona)
+        speech = mock.patch("celune.pipeline.queue_speech", return_value=True)
+        delivery = mock.patch(
+            "celune.celune.deliver_persona_response",
+            wraps=celune_deliver_persona_response,
+        )
+        speech_mock = speech.start()
+        delivery_mock = delivery.start()
+        self.addCleanup(speech.stop)
+        self.addCleanup(delivery.stop)
+
+        route = core.route_input("Please say hello.", persona_ready=True)
+        self.assertEqual(route.route.value, "task")
+        core._run_agent_route(route)
+        metadata = route.routing_metadata
+        self.assertIsInstance(metadata, dict)
+        assert isinstance(metadata, dict)
+        task_id = metadata.get("task_id")
+        self.assertIsInstance(task_id, str)
+        assert isinstance(task_id, str)
+        task = core.agent_runtime.get_task(task_id)
+        self.assertEqual(task.state, AgentTaskState.AWAITING_APPROVAL)
+
+        approval_route = core.route_input("Approved.", persona_ready=True)
+        self.assertEqual(approval_route.route.value, "approval_response")
+        self.assertTrue(core._run_agent_route(approval_route))
+
+        self.assertEqual(task.state, AgentTaskState.COMPLETED)
+        result = cast(
+            Optional[ToolExecutionResult],
+            core.agent_runtime.get_context(task_id).last_tool_result,
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["tool_id"], "speak")
+        self.assertEqual(result["status"], AgentToolExecutionStatus.SUCCEEDED)
+        self.assertEqual(result["end_task"], True)
+        self.assertEqual(delivery_mock.call_count, 1)
+        self.assertEqual(speech_mock.call_count, 2)
+        self.assertEqual(
+            [call.args[1] for call in speech_mock.call_args_list],
+            ["I will say hello.", "hello"],
+        )
+        self.assertEqual(len(persona.requests), 3)
 
     def test_needle_loading_failure_is_recorded_and_task_fails_safely(self) -> None:
         """Expose a typed terminal failure when production Needle cannot load."""

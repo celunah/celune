@@ -888,6 +888,19 @@ class AgentRuntime:
                     self.get_context(task.task_id),
                     last_tool_result=result,
                 )
+                if result["status"] != AgentToolExecutionStatus.SUCCEEDED:
+                    self.fail_task(
+                        task.task_id,
+                        AgentFailureReason.TOOL_ERROR,
+                        result.get("error") or "agent tool execution failed",
+                    )
+                    return self._terminal_output(task, callback)
+                if result.get("end_task", False):
+                    return self._complete_with_output(
+                        task,
+                        _empty_output(),
+                        callback,
+                    )
                 handled = self._validate_output(
                     self._invoke_handle_result(task, result)
                 )
@@ -1264,18 +1277,20 @@ class AgentRuntime:
         call: ToolCall,
         value: ToolResult,
         permission: Optional[AgentPermissionEvaluation] = None,
-    ) -> ToolResult:
+    ) -> ToolExecutionResult:
         """Validate one executor result and fill its typed execution status."""
         if not isinstance(value, dict):
             raise TypeError("agent executor returned a non-object tool result")
         call_id = value.get("tool_call_id")
         output = value.get("output")
         error = value.get("error")
+        end_task = value.get("end_task", False)
         if (
             not isinstance(call_id, str)
             or call_id != call["id"]
             or (output is not None and not _is_json_value(output))
             or (error is not None and not isinstance(error, str))
+            or not isinstance(end_task, bool)
         ):
             raise ValueError("agent executor returned an invalid tool result")
         raw_status = value.get("status")
@@ -1297,21 +1312,19 @@ class AgentRuntime:
             if not isinstance(raw_tool_id, str) or not raw_tool_id.strip():
                 raise ValueError("typed agent tool results require a tool_id")
             tool_id = raw_tool_id
-        return cast(
-            ToolExecutionResult,
-            {
-                "tool_call_id": call_id,
-                "output": output,
-                "error": error,
-                "tool_id": tool_id,
-                "status": status,
-                **(
-                    {"permission": permission.to_metadata()}
-                    if permission is not None
-                    else {}
-                ),
-            },
-        )
+        return {
+            "tool_call_id": call_id,
+            "output": output,
+            "error": error,
+            "tool_id": tool_id,
+            "status": status,
+            "end_task": end_task,
+            **(
+                {"permission": permission.to_metadata()}
+                if permission is not None
+                else {}
+            ),
+        }
 
     def _complete_with_output(
         self,
@@ -1326,12 +1339,23 @@ class AgentRuntime:
             raise ValueError("agent task cannot complete from its current state")
         if not self._consume_iteration(task):
             return self._terminal_output(task, callback)
+        metadata: JSON = {
+            "iterations": task.iterations,
+            "generated_tokens": task.generated_tokens,
+        }
+        result = cast(
+            Optional[ToolExecutionResult],
+            self.get_context(task.task_id).last_tool_result,
+        )
+        if isinstance(result, dict):
+            result_metadata = cast(dict[str, JSONSerializable], dict(result))
+            status = result_metadata.get("status")
+            if isinstance(status, AgentToolExecutionStatus):
+                result_metadata["status"] = status.value
+            metadata["tool_result"] = result_metadata
         self.complete_task(
             task.task_id,
-            {
-                "iterations": task.iterations,
-                "generated_tokens": task.generated_tokens,
-            },
+            metadata,
         )
         return output
 

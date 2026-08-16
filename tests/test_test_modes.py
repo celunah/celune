@@ -153,7 +153,7 @@ class TestFinishedLifecycleTests(TestCase):
         self.assertEqual(core.backend_mode, "agent_test")
         self.assertEqual(
             tuple(tool.name for tool in core._agent_tools),
-            ("read_agent_status",),
+            ("read_agent_status", "local_system_info"),
         )
         core.vision = cast(PersonaClient, _TestPersonaClient())
         core.persona_ready = True
@@ -164,5 +164,10 @@ class TestFinishedLifecycleTests(TestCase):
         self.assertEqual(payload["mode"], "agent")
         self.assertEqual(payload["engine_state"], "stopped")
         self.assertEqual(payload["task_state"], "completed")
+        detail = payload["detail"]
+        self.assertIsInstance(detail, str)
+        assert isinstance(detail, str)
+        self.assertIn("tool=local_system_info", detail)
+        self.assertIn("status=succeeded", detail)
         self.assertEqual(core.cur_state, "stopped")
         self.assertFalse(core.say("queued after test"))

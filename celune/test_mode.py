@@ -13,6 +13,7 @@ from .typing.agent import (
     AgentRoute,
     AgentTaskState,
     AgentTool,
+    AgentToolExecutionStatus,
     AgentToolSchema,
     NeedleToolCatalog,
     NeedleToolCall,
@@ -49,9 +50,9 @@ class _ControlledNeedleHandler:
         tools: NeedleToolCatalog,
         max_new_tokens: int = 96,
     ) -> NeedleToolCall:
-        """Select the registered status tool without model or network work."""
+        """Select the registered local diagnostic without model or network work."""
         del query, tools, max_new_tokens
-        return {"name": "read_agent_status", "arguments": {}}
+        return {"name": "local_system_info", "arguments": {}}
 
     def close(self) -> None:
         """Mark the controlled selector as closed."""
@@ -153,12 +154,29 @@ def run_agent_test(
             )
         if not delivered:
             raise RuntimeError("agent test response was not queued")
+        tool_result = engine.agent_runtime.get_context(task_id).last_tool_result
+        if not isinstance(tool_result, dict):
+            raise TypeError("agent test completed without executing a tool")
+        tool_id = tool_result.get("tool_id")
+        tool_status = tool_result.get("status")
+        if not isinstance(tool_id, str) or not tool_id.strip():
+            raise RuntimeError("agent test tool result did not identify a tool")
+        status_value = (
+            tool_status.value
+            if isinstance(tool_status, AgentToolExecutionStatus)
+            else tool_status
+            if isinstance(tool_status, str)
+            else "unknown"
+        )
+        if status_value != AgentToolExecutionStatus.SUCCEEDED.value:
+            raise RuntimeError(f"agent test tool execution failed: {status_value}")
         if not engine.playback_done.wait(timeout=timeout_seconds):
             raise TimeoutError("agent test speech playback timed out")
         return engine.finish_test_mode(
             "agent",
             True,
             task_state=final_state,
+            detail=f"tool={tool_id} status={status_value}",
         )
     except Exception as exc:
         return engine.finish_test_mode(

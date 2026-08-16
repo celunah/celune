@@ -41,6 +41,7 @@
     "agent.status.cancelled": "Agent task cancelled",
     "agent.status.aborted": "Agent task aborted",
     "agent.status.busy_components": "Components busy: {components}",
+    "agent.unsandboxed_warning": "UNSANDBOXED AGENT\nCelune may act directly through the enabled local-management tools. Some actions may require confirmation, while permitted actions may proceed automatically. The application does not guarantee containment or automatic rollback.",
     "test.callback_failed": "Test-mode completion callback failed: {error}",
     "test.finished_failure": "Test mode {mode} failed in task state {task_state}: {detail}",
     "test.finished_success": "Test mode {mode} succeeded in task state {task_state} and stopped Celune.",

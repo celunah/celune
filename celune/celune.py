@@ -493,11 +493,23 @@ class Celune(CeluneStateAccessors):
         set_locale(_configured_locale(config) or get_system_locale())
         self.mode: OperationMode = resolve_operation_mode(config)
         if backend_mode == "agent_test":
-            self._agent_tools = agent_test_tools()
+            self._agent_tools = agent_test_tools(self)
             self._agent_tool_schemas = agent_test_tool_schemas()
         else:
-            self._agent_tools = production_agent_tools()
-            self._agent_tool_schemas = production_agent_tool_schemas()
+            local_management = config_bool(
+                config,
+                "CELUNE_LOCAL_MANAGEMENT",
+                "agent_local_management",
+            )
+            self._agent_tools = production_agent_tools(
+                self,
+                include_local_management=local_management,
+            )
+            self._agent_tool_schemas = production_agent_tool_schemas(
+                include_local_management=local_management,
+            )
+            if local_management:
+                self.log(string("agent.unsandboxed_warning"), "warning")
         self._agent_needle_selector = agent_tool_selector
         self._agent_needle_error: Optional[str] = None
         self._agent_persona_bridge = PersonaAgentBridge(
@@ -3876,11 +3888,30 @@ class Celune(CeluneStateAccessors):
             if not isinstance(task_id, str):
                 return False
             request = self.agent_runtime.get_task(task_id).request
-        output = self.agent_runtime.run(request)
-        response = output.get("response")
-        if output.get("end") and isinstance(response, str) and response.strip():
-            return deliver_persona_response(self, request.request, response)
-        return False
+        delivery_failed = False
+
+        def deliver_output(output: AgentOutput) -> None:
+            """Deliver generated agent responses through the shared speech path."""
+            nonlocal delivery_failed
+            if output.get("tool_call") is not None:
+                return
+            if self.backend_mode == "agent_test" and not output.get("end"):
+                return
+            response = output.get("response")
+            if not isinstance(response, str) or not response.strip():
+                return
+            if (
+                self.cur_state in {"generating", "speaking"}
+                and not self._wait_for_persona_playback()
+            ):
+                delivery_failed = True
+                raise RuntimeError("agent response speech was interrupted")
+            if not deliver_persona_response(self, request.request, response):
+                delivery_failed = True
+                raise RuntimeError("agent response speech could not be queued")
+
+        output = self.agent_runtime.run(request, callback=deliver_output)
+        return output["end"] and not delivery_failed
 
     def _wait_for_persona_playback(self) -> bool:
         """Wait until the shared speech pipeline is available for the next Persona turn."""

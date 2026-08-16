@@ -25,7 +25,7 @@ from transformers import (
 from ..constants import PERSONA_MEMORY_EMBEDDING_MODEL
 from ..paths import persona_data_dir
 from ..typing.aliases import EmbeddingBackend, EmbeddingVector
-from ..typing.common import JSONSerializable
+from ..typing.common import JSON, JSONSerializable
 from .paths import persona_character_slug
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
@@ -229,6 +229,18 @@ class MemoryRecord:
     created_at: str
     updated_at: str
     last_used_at: str
+
+    def to_json(self) -> JSON:
+        """Serialize this memory record for typed agent and API results."""
+        return {
+            "id": self.id,
+            "content": self.content,
+            "importance": self.importance,
+            "explicit": self.explicit,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "last_used_at": self.last_used_at,
+        }
 
     @staticmethod
     def create(content: str, importance: int, explicit: bool) -> MemoryRecord:
@@ -532,6 +544,26 @@ class PersonaMemoryStore:
             else next(updated for updated in updated_records if updated.id == record.id)
             for record in selected
         ]
+
+    def forget(self, character_name: str, record_id: str) -> bool:
+        """Remove one character-scoped memory by its stable record identifier.
+
+        Args:
+            character_name: Character whose memory should be changed.
+            record_id: Identifier of the memory record to remove.
+
+        Returns:
+            bool: Whether a matching record was removed.
+        """
+        normalized_id = record_id.strip()
+        if not normalized_id:
+            raise ValueError("memory record_id must not be empty")
+        records = self.load_records(character_name)
+        remaining = [record for record in records if record.id != normalized_id]
+        if len(remaining) == len(records):
+            return False
+        self.save_records(character_name, remaining)
+        return True
 
     def _embedding_cache_key(self, text: str) -> str:
         """Return the cache key used for one normalized text embedding."""

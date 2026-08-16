@@ -220,6 +220,7 @@ class ToolResult(TypedDict):
     tool_call_id: str
     output: Optional[JSONSerializable]
     error: Optional[str]
+    end_task: NotRequired[bool]
     permission: NotRequired[AgentPermissionMetadata]
 
 
@@ -233,7 +234,7 @@ class ValidatedToolCall(ToolCall):
 
 
 class ToolExecutionResult(ToolResult):
-    """A tool result carrying execution status and the resolved tool ID."""
+    """A tool result carrying status, completion intent, and the resolved tool ID."""
 
     tool_id: str
     status: AgentToolExecutionStatus
