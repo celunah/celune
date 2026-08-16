@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
+from uuid import uuid4
 
 from ..pipeline import _extract_persona_text, build_persona_request
 from ..typing.agent import (
@@ -13,6 +14,9 @@ from ..typing.agent import (
     AgentToolSchema,
     ToolResult,
 )
+from ..typing.locks import ComponentLockName
+from ..typing.locks import ComponentLockOwner
+from ..typing.locks import ComponentLockRequirement
 from ..typing.persona import PersonaClientResponse
 
 if TYPE_CHECKING:
@@ -55,20 +59,53 @@ class PersonaAgentBridge:
         if not callable(post):
             raise TypeError("Persona agent boundary is unavailable")
 
-        payload = build_persona_request(
-            self.engine,
-            context.request.request,
-            agent_context=context,
-            tool_schemas=self.tool_schemas,
-        )
-        response = cast(PersonaClientResponse, post(json=payload))
-        response.raise_for_status()
-        spoken_text = _extract_persona_text(response.json())
-        if not spoken_text:
-            raise RuntimeError("Persona returned an empty agent response")
-        return {
-            "tool_call": None,
-            "response": spoken_text,
-            "end": terminal,
-            "paused": False,
-        }
+        lease = None
+        manager = getattr(self.engine, "component_locks", None)
+        if manager is not None:
+            task = context.task
+            owner = ComponentLockOwner(
+                operation_id=(
+                    f"agent-vlm:{task.task_id}:{task.generation}"
+                    if task is not None
+                    else f"persona:{uuid4().hex}"
+                ),
+                task_id=task.task_id if task is not None else None,
+                session_id=task.session_id if task is not None else None,
+                generation_id=task.generation if task is not None else None,
+            )
+            acquisition, lease = manager.try_acquire_lease(
+                (ComponentLockRequirement(ComponentLockName.VLM),),
+                owner,
+            )
+            if not acquisition.acquired:
+                busy = acquisition.busy
+                assert busy is not None
+                return {
+                    "tool_call": None,
+                    "response": None,
+                    "end": False,
+                    "paused": True,
+                    "busy": busy,
+                }
+
+        try:
+            payload = build_persona_request(
+                self.engine,
+                context.request.request,
+                agent_context=context,
+                tool_schemas=self.tool_schemas,
+            )
+            response = cast(PersonaClientResponse, post(json=payload))
+            response.raise_for_status()
+            spoken_text = _extract_persona_text(response.json())
+            if not spoken_text:
+                raise RuntimeError("Persona returned an empty agent response")
+            return {
+                "tool_call": None,
+                "response": spoken_text,
+                "end": terminal,
+                "paused": False,
+            }
+        finally:
+            if lease is not None:
+                lease.release()

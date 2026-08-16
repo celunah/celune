@@ -20,6 +20,7 @@ import numpy.typing as npt
 from celune.backends.tts.base import CeluneBackend
 from celune.backends.vc.base import CeluneVCBackend
 from celune.constants import PipelineStates
+from celune.locks import ComponentLockManager
 from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from celune.typing.aliases import AudioChunk
 from celune.typing.common import JSONSerializable
@@ -266,6 +267,9 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.model_ready.set()
     engine.loaded = True
     engine.locked = False
+    engine.component_locks = ComponentLockManager()
+    engine._pipeline_lock_owner = None
+    engine._last_component_busy = None
     engine.cur_state = "idle"
     engine.exit_requested = False
     engine.stream = None

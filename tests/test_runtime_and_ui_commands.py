@@ -22,6 +22,7 @@ from textual.containers import Vertical
 from textual.widgets import Button, Label, ProgressBar, RichLog, Static, TextArea
 
 from celune import colors, runtime
+from celune.agent import AgentTaskState
 from celune.celune import Celune
 from celune.config import Config
 from celune.constants import APP_NAME, COST_EQUIVALENTS
@@ -29,6 +30,11 @@ from celune.i18n import string
 from celune.terminal import set_terminal_title
 from celune.typing.common import JSONSerializable
 from celune.typing.aliases import LogLevel
+from celune.typing.locks import (
+    ComponentBusyResult,
+    ComponentLockName,
+    ComponentLockOwner,
+)
 from celune.ui import app as ui_app
 from celune.ui import resources as ui_resources
 from celune.ui import terminal as ui_terminal
@@ -3302,3 +3308,159 @@ class UIStartupTests(TestCase):
 
         self.assertNotEqual(narrow, fake_status.rendered)
         self.assertEqual(fake_status.rendered, f"  {message}")
+
+
+class AgentStatusUITests(TestCase):
+    """Tests for the typed agent lifecycle projection in the UI."""
+
+    def tearDown(self) -> None:
+        """Reset singleton UI guards after each test."""
+        CeluneUI._instance = None
+
+    @staticmethod
+    def _ui_for_task(
+        state: AgentTaskState,
+        *,
+        needs_compaction: bool = False,
+        busy: Optional[ComponentBusyResult] = None,
+    ) -> tuple[CeluneUI, SimpleNamespace, mock.Mock]:
+        """Build a headless UI around one typed task-shaped test fixture."""
+        task = SimpleNamespace(
+            task_id="task-1",
+            state=state,
+            iterations=2,
+            needs_context_compaction=needs_compaction,
+            config=SimpleNamespace(max_iterations=5),
+        )
+        agent_runtime = SimpleNamespace(
+            get_active_task=mock.Mock(return_value=task),
+            get_task=mock.Mock(return_value=task),
+        )
+        ui = CeluneUI()
+        safe_status = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                agent_runtime=agent_runtime,
+                cur_state="thinking",
+                last_component_busy=busy,
+                test_finished=False,
+            ),
+        )
+        ui.celune_ready = True
+        ui.safe_status = safe_status
+        return ui, task, safe_status
+
+    def test_agent_status_renders_lifecycle_states_once(self) -> None:
+        """Verify lifecycle events become localized status text without redraw spam."""
+        ui, task, safe_status = self._ui_for_task(AgentTaskState.IDLE)
+        for state, expected in (
+            (AgentTaskState.IDLE, "agent.status.idle"),
+            (AgentTaskState.CLASSIFYING, "agent.status.classifying"),
+            (AgentTaskState.WORKING, "agent.status.working"),
+            (AgentTaskState.AWAITING_APPROVAL, "agent.status.awaiting_approval"),
+            (AgentTaskState.AWAITING_CHOICE, "agent.status.awaiting_choice"),
+            (AgentTaskState.PAUSED, "agent.status.paused"),
+            (AgentTaskState.INTERRUPTED, "agent.status.interrupted"),
+            (AgentTaskState.CANCELLING, "agent.status.cancelling"),
+            (AgentTaskState.COMPLETED, "agent.status.completed"),
+            (AgentTaskState.FAILED, "agent.status.failed"),
+            (AgentTaskState.CANCELLED, "agent.status.cancelled"),
+            (AgentTaskState.ABORTED, "agent.status.aborted"),
+        ):
+            with self.subTest(state=state):
+                task.state = state
+                ui._agent_status_signature = None
+                safe_status.reset_mock()
+
+                ui._refresh_agent_status()
+                ui._refresh_agent_status()
+
+                if state == AgentTaskState.WORKING:
+                    safe_status.assert_called_once_with(
+                        string(
+                            "agent.status.working",
+                            iteration=2,
+                            maximum=5,
+                        ),
+                        "info",
+                    )
+                else:
+                    safe_status.assert_called_once_with(string(expected), "info")
+
+    def test_agent_status_prioritizes_compaction_and_structured_busy_components(
+        self,
+    ) -> None:
+        """Verify compaction and typed lock contention are visible without string parsing."""
+        ui, task, safe_status = self._ui_for_task(
+            AgentTaskState.PLANNING,
+            needs_compaction=True,
+        )
+
+        ui._refresh_agent_status()
+
+        safe_status.assert_called_once_with(string("agent.status.compacting"), "info")
+        task.needs_context_compaction = False
+        ui.celune.last_component_busy = ComponentBusyResult(
+            components=(ComponentLockName.VLM, ComponentLockName.TTS),
+            owners=(
+                (
+                    ComponentLockName.VLM,
+                    ComponentLockOwner(operation_id="persona"),
+                ),
+                (
+                    ComponentLockName.TTS,
+                    ComponentLockOwner(operation_id="speech"),
+                ),
+            ),
+        )
+
+        ui._refresh_agent_status()
+
+        safe_status.assert_called_with(
+            string(
+                "agent.status.busy_components",
+                components="VLM, TTS",
+            ),
+            "warning",
+        )
+
+    def test_stopped_state_wins_over_agent_status_and_uses_stopped_placeholder(
+        self,
+    ) -> None:
+        """Verify STOPPED remains visible and rejects every key except Ctrl+Q."""
+        ui, _task, _safe_status = self._ui_for_task(AgentTaskState.WORKING)
+        ui.celune.cur_state = "stopped"
+        ui.input_box = TextArea()
+        ui.style_button = Button("Voice")
+        ui.refresh_vc_controls = mock.Mock()
+        ui.update_resources = mock.Mock()
+        ui.change_input_state(locked=True)
+
+        self.assertEqual(ui.input_box.placeholder, string("ui.stopped_placeholder"))
+        self.assertEqual(
+            ui._terminal_status_for(string("status.speaking"), "info"),
+            ("stopped", string("osc.action_stopped")),
+        )
+        ui.celune.cur_state = "thinking"
+        ui._agent_task_state = AgentTaskState.AWAITING_APPROVAL
+        self.assertEqual(
+            ui._terminal_status_for(string("agent.status.awaiting_approval"), "info"),
+            ("awaiting", string("agent.status.awaiting_approval")),
+        )
+        ui._agent_task_state = AgentTaskState.PAUSED
+        self.assertEqual(
+            ui._terminal_status_for(string("agent.status.paused"), "info"),
+            ("paused", string("agent.status.paused")),
+        )
+        ui.celune.cur_state = "stopped"
+
+        event = SimpleNamespace(
+            key="ctrl+r",
+            prevent_default=mock.Mock(),
+            stop=mock.Mock(),
+        )
+        ui.on_key(cast(events.Key, event))
+
+        event.prevent_default.assert_called_once_with()
+        event.stop.assert_called_once_with()

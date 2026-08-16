@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 import types
+from uuid import uuid4
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from io import TextIOWrapper
@@ -58,6 +59,11 @@ from ..typing.aliases import AudioDeviceScalar
 from ..typing.aliases import (  # noqa: F401  # pylint: disable=unused-import
     _VCAudioCallback,
 )
+from ..typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
 from ..utils import (
     discard,
     format_error,
@@ -69,6 +75,7 @@ from ..utils import (
     typing_delay,
 )
 from ..terminal import set_terminal_title, terminal_title_escape
+from ..typing.agent import AgentTaskState
 from .loading import CeluneLoadingScreen
 from .terminal import LogRedirect, UILogHandler, is_celune_log_record
 from .theme import CELUNE_CSS, severity_color
@@ -82,6 +89,14 @@ if TYPE_CHECKING:
     from ..celune import Celune
     from ..cevoice import CEVoiceLoader
     from ..dataclasses.pipeline import AudioOutput
+    from ..dataclasses.events import (
+        AgentApprovalRequestedEvent,
+        AgentChoiceRequestedEvent,
+        AgentTaskFinishedEvent,
+        AgentTaskStateChangedEvent,
+    )
+    from ..extensions.events import EventDispatcher
+    from ..locks import ComponentLockLease
     from ..persona.asr import (
         DEFAULT_PERSONA_SPEECH_MODEL_ID,
         PERSONA_SPEECH_END_DELAY_SECONDS,
@@ -104,6 +119,7 @@ if TYPE_CHECKING:
         AudioChunks,
         LogLevel,
     )
+    from ..typing.agent import AgentTask
     from ..vc import (
         VC_PITCH_SHIFT_MAX,
         VC_PITCH_SHIFT_MIN,
@@ -254,6 +270,22 @@ _VC_FEEDBACK_RMS_MIN_PREVIOUS = 0.05
 _VC_FEEDBACK_RMS_MIN_CURRENT = 0.18
 _VC_FEEDBACK_RMS_RISE_RATIO = 2.0
 _VC_FEEDBACK_RMS_RISE_DELTA = 0.08
+_AGENT_ACTIVE_STATES = frozenset(
+    {
+        AgentTaskState.QUEUED,
+        AgentTaskState.IDLE,
+        AgentTaskState.CLASSIFYING,
+        AgentTaskState.WORKING,
+        AgentTaskState.PLANNING,
+        AgentTaskState.EXECUTING_TOOL,
+        AgentTaskState.RESPONDING,
+        AgentTaskState.CANCELLING,
+    }
+)
+_AGENT_AWAITING_STATES = frozenset(
+    {AgentTaskState.AWAITING_APPROVAL, AgentTaskState.AWAITING_CHOICE}
+)
+_AGENT_PAUSED_STATES = frozenset({AgentTaskState.PAUSED, AgentTaskState.INTERRUPTED})
 
 
 def _device_scalar_int(value: Optional[AudioDeviceScalar], default: int) -> int:
@@ -381,6 +413,7 @@ class CeluneUIInteractionState:
     vc_recording_stop_thread: Optional[threading.Thread] = None
     vc_recording_worker: Optional[threading.Thread] = None
     vc_recording_vad: Optional[LiveVoiceActivityDetector] = None
+    vc_recording_component_lease: Optional[ComponentLockLease] = None
     persona_recording_chunks: AudioChunks = field(default_factory=list)
     persona_recording_lock: threading.Lock = field(default_factory=threading.Lock)
     persona_recording_queue: Optional[queue_module.Queue[tuple[AudioChunk, bool]]] = (
@@ -396,6 +429,7 @@ class CeluneUIInteractionState:
     persona_recording_worker: Optional[threading.Thread] = None
     persona_recording_vad: Optional[LiveVoiceActivityDetector] = None
     persona_recording_last_partial_at: float = 0.0
+    persona_recording_component_lease: Optional[ComponentLockLease] = None
     caption_text: str = ""
     caption_words: tuple[str, ...] = ()
     caption_sentences: tuple[tuple[str, ...], ...] = ()
@@ -411,6 +445,13 @@ class CeluneUIInteractionState:
     sleep_timer: Optional[Timer] = None
     tutorial_token: int = 0
     tutorial_active: bool = False
+    agent_event_dispatcher: Optional[EventDispatcher] = None
+    agent_task_id: Optional[str] = None
+    agent_task_state: Optional[AgentTaskState] = None
+    agent_iterations: int = 0
+    agent_max_iterations: int = 0
+    agent_busy_components: tuple[ComponentLockName, ...] = ()
+    agent_status_signature: Optional[tuple[str, ...]] = None
 
 
 def _forward_ui_property(container_name: str, field_name: str) -> property:
@@ -627,6 +668,9 @@ class CeluneUI(App):
         "_interaction_state", "vc_recording_worker"
     )
     _vc_recording_vad = _forward_ui_property("_interaction_state", "vc_recording_vad")
+    _vc_recording_component_lease = _forward_ui_property(
+        "_interaction_state", "vc_recording_component_lease"
+    )
     _persona_recording_chunks = _forward_ui_property(
         "_interaction_state", "persona_recording_chunks"
     )
@@ -666,6 +710,9 @@ class CeluneUI(App):
     _persona_recording_last_partial_at = _forward_ui_property(
         "_interaction_state", "persona_recording_last_partial_at"
     )
+    _persona_recording_component_lease = _forward_ui_property(
+        "_interaction_state", "persona_recording_component_lease"
+    )
     _caption_text = _forward_ui_property("_interaction_state", "caption_text")
     _caption_words = _forward_ui_property("_interaction_state", "caption_words")
     _caption_sentences = _forward_ui_property("_interaction_state", "caption_sentences")
@@ -693,6 +740,21 @@ class CeluneUI(App):
     _sleep_timer = _forward_ui_property("_interaction_state", "sleep_timer")
     _tutorial_token = _forward_ui_property("_interaction_state", "tutorial_token")
     _tutorial_active = _forward_ui_property("_interaction_state", "tutorial_active")
+    _agent_event_dispatcher = _forward_ui_property(
+        "_interaction_state", "agent_event_dispatcher"
+    )
+    _agent_task_id = _forward_ui_property("_interaction_state", "agent_task_id")
+    _agent_task_state = _forward_ui_property("_interaction_state", "agent_task_state")
+    _agent_iterations = _forward_ui_property("_interaction_state", "agent_iterations")
+    _agent_max_iterations = _forward_ui_property(
+        "_interaction_state", "agent_max_iterations"
+    )
+    _agent_busy_components = _forward_ui_property(
+        "_interaction_state", "agent_busy_components"
+    )
+    _agent_status_signature = _forward_ui_property(
+        "_interaction_state", "agent_status_signature"
+    )
 
     def _run_on_ui_thread(self, callback: Callable[[], None]) -> None:
         if threading.current_thread() is threading.main_thread():
@@ -950,6 +1012,186 @@ class CeluneUI(App):
         self.celune.caption_callback = self.tts_caption
         self.celune.caption_timing_callback = self.tts_caption_timing
 
+    def _bind_agent_events(self) -> None:
+        """Subscribe the UI to the existing typed agent lifecycle events."""
+        self._unbind_agent_events()
+        if self.celune is None:
+            return
+        dispatcher = getattr(self.celune, "_event_dispatcher", None)
+        if dispatcher is None:
+            return
+
+        dispatcher.subscribe(
+            "agent_task_state_changed",
+            self._on_agent_task_state_changed,
+            "CeluneUI",
+        )
+        dispatcher.subscribe(
+            "agent_approval_requested",
+            self._on_agent_approval_requested,
+            "CeluneUI",
+        )
+        dispatcher.subscribe(
+            "agent_choice_requested",
+            self._on_agent_choice_requested,
+            "CeluneUI",
+        )
+        dispatcher.subscribe(
+            "agent_task_finished",
+            self._on_agent_task_finished,
+            "CeluneUI",
+        )
+        self._agent_event_dispatcher = dispatcher
+
+    def _unbind_agent_events(self) -> None:
+        """Unsubscribe UI lifecycle callbacks before replacing or closing Celune."""
+        dispatcher = self._agent_event_dispatcher
+        if dispatcher is None:
+            return
+
+        dispatcher.unsubscribe(
+            "agent_task_state_changed", self._on_agent_task_state_changed
+        )
+        dispatcher.unsubscribe(
+            "agent_approval_requested", self._on_agent_approval_requested
+        )
+        dispatcher.unsubscribe(
+            "agent_choice_requested", self._on_agent_choice_requested
+        )
+        dispatcher.unsubscribe("agent_task_finished", self._on_agent_task_finished)
+        self._agent_event_dispatcher = None
+
+    def _on_agent_task_state_changed(
+        self,
+        event: AgentTaskStateChangedEvent,
+    ) -> None:
+        """Refresh the UI after a typed agent task transition."""
+        self._agent_task_id = event.task_id
+        self._run_on_ui_thread(self._refresh_agent_status)
+
+    def _on_agent_approval_requested(
+        self,
+        event: AgentApprovalRequestedEvent,
+    ) -> None:
+        """Refresh the UI when a task pauses for approval."""
+        self._agent_task_id = event.task_id
+        self._run_on_ui_thread(self._refresh_agent_status)
+
+    def _on_agent_choice_requested(
+        self,
+        event: AgentChoiceRequestedEvent,
+    ) -> None:
+        """Refresh the UI when a task pauses for a user choice."""
+        self._agent_task_id = event.task_id
+        self._run_on_ui_thread(self._refresh_agent_status)
+
+    def _on_agent_task_finished(self, event: AgentTaskFinishedEvent) -> None:
+        """Refresh the UI once a task reaches its terminal lifecycle state."""
+        self._agent_task_id = event.task_id
+        self._run_on_ui_thread(self._refresh_agent_status)
+
+    def _agent_task_for_display(self) -> Optional[AgentTask]:
+        """Return the active or most recently evented task for status rendering."""
+        celune = self.celune
+        if celune is None:
+            return None
+        runtime = getattr(celune, "agent_runtime", None)
+        if runtime is None:
+            return None
+
+        active_task = runtime.get_active_task("default")
+        if active_task is not None:
+            self._agent_task_id = active_task.task_id
+            return active_task
+        if self._agent_task_id is None:
+            return None
+        with contextlib.suppress(ValueError):
+            return runtime.get_task(self._agent_task_id)
+        return None
+
+    def _agent_status_text(
+        self,
+        task: Optional[AgentTask],
+        busy_components: tuple[ComponentLockName, ...],
+    ) -> Optional[str]:
+        """Resolve one localized status message from typed task and lock state."""
+        if busy_components:
+            labels = ", ".join(
+                string(f"agent.component_{component.value}")
+                for component in busy_components
+            )
+            return string("agent.status.busy_components", components=labels)
+        if task is None:
+            return None
+        if task.needs_context_compaction and task.state in {
+            AgentTaskState.PLANNING,
+            AgentTaskState.WORKING,
+        }:
+            return string("agent.status.compacting")
+        if task.state in {
+            AgentTaskState.WORKING,
+            AgentTaskState.PLANNING,
+            AgentTaskState.EXECUTING_TOOL,
+            AgentTaskState.RESPONDING,
+        }:
+            return string(
+                "agent.status.working",
+                iteration=task.iterations,
+                maximum=task.config.max_iterations,
+            )
+        status_keys = {
+            AgentTaskState.QUEUED: "agent.status.queued",
+            AgentTaskState.IDLE: "agent.status.idle",
+            AgentTaskState.CLASSIFYING: "agent.status.classifying",
+            AgentTaskState.AWAITING_APPROVAL: "agent.status.awaiting_approval",
+            AgentTaskState.AWAITING_CHOICE: "agent.status.awaiting_choice",
+            AgentTaskState.PAUSED: "agent.status.paused",
+            AgentTaskState.INTERRUPTED: "agent.status.interrupted",
+            AgentTaskState.CANCELLING: "agent.status.cancelling",
+            AgentTaskState.COMPLETED: "agent.status.completed",
+            AgentTaskState.FAILED: "agent.status.failed",
+            AgentTaskState.CANCELLED: "agent.status.cancelled",
+            AgentTaskState.ABORTED: "agent.status.aborted",
+        }
+        key = status_keys.get(task.state)
+        return string(key) if key is not None else None
+
+    def _refresh_agent_status(self) -> None:
+        """Project typed agent progress and component contention into the UI status."""
+        celune = self.celune
+        if celune is None or getattr(celune, "test_finished", False):
+            return
+        if getattr(celune, "cur_state", None) == "stopped":
+            return
+
+        task = self._agent_task_for_display()
+        busy = getattr(celune, "last_component_busy", None)
+        busy_components = tuple(getattr(busy, "components", ()))
+        message = self._agent_status_text(task, busy_components)
+        if message is None:
+            return
+
+        task_id = task.task_id if task is not None else ""
+        task_state = task.state if task is not None else None
+        iterations = task.iterations if task is not None else 0
+        maximum = task.config.max_iterations if task is not None else 0
+        signature = (
+            task_id,
+            task_state.value if task_state is not None else "",
+            str(iterations),
+            str(maximum),
+            *(component.value for component in busy_components),
+            message,
+        )
+        self._agent_task_state = task_state
+        self._agent_iterations = iterations
+        self._agent_max_iterations = maximum
+        self._agent_busy_components = busy_components
+        if self._agent_status_signature == signature:
+            return
+        self._agent_status_signature = signature
+        self.safe_status(message, "warning" if busy_components else "info")
+
     def _is_ui_test_mode(self) -> bool:
         """Return whether the attached runtime is the interactive fake-backend UI test mode."""
         if self.celune is None:
@@ -1050,10 +1292,18 @@ class CeluneUI(App):
             return
         if self.celune is not None and getattr(self.celune, "test_finished", False):
             return
+        self._refresh_agent_status()
         playback_status = (
             current_playback_status(self.celune) if self.celune is not None else None
         )
-        if playback_status is not None and playback_status != self._status_text:
+        agent_is_active = self._agent_task_state in (
+            _AGENT_ACTIVE_STATES | _AGENT_AWAITING_STATES | _AGENT_PAUSED_STATES
+        )
+        if (
+            playback_status is not None
+            and playback_status != self._status_text
+            and not agent_is_active
+        ):
             self._status_text = playback_status
             self.status_severity = "info"
             self._status_marquee_offset = 0
@@ -1313,8 +1563,10 @@ class CeluneUI(App):
 
         if default_loader is None or ui_resources is None:
             _load_ui_runtime_dependencies()
+        self._unbind_agent_events()
         self.celune = celune
         self._bind_runtime_callbacks()
+        self._bind_agent_events()
         self.prepare_theme()
         self._wrap_runtime_fatal_glow()
         configured_theme = os.getenv("CELUNE_THEME") or self.celune.config.get(
@@ -1435,10 +1687,18 @@ class CeluneUI(App):
                 return "recording", string("osc.action_transcribing_speech")
             return "recording", string("osc.action_listening_microphone")
 
+        runtime_state = getattr(self.celune, "cur_state", "idle")
+        if runtime_state == "stopped":
+            return "stopped", string("osc.action_stopped")
         if not self.celune_ready:
             return "initializing", string("osc.action_loading_voice_pack")
 
-        runtime_state = getattr(self.celune, "cur_state", "idle")
+        if self._agent_task_state in _AGENT_AWAITING_STATES:
+            return "awaiting", msg
+        if self._agent_task_state in _AGENT_PAUSED_STATES:
+            return "paused", msg
+        if self._agent_task_state in _AGENT_ACTIVE_STATES:
+            return "thinking", msg
         reload_actions = {
             string("status.reloading"): string("osc.action_reloading"),
             string("status.reloading_backend"): string("osc.action_loading_backend"),
@@ -2507,8 +2767,17 @@ class CeluneUI(App):
 
         def update() -> None:
             self._input_locked = locked
+            stopped = bool(
+                self.celune is not None
+                and (
+                    getattr(self.celune, "test_finished", False)
+                    or getattr(self.celune, "cur_state", None) == "stopped"
+                )
+            )
             self.input_box.placeholder = (
-                string("ui.wait_placeholder")
+                string("ui.stopped_placeholder")
+                if stopped
+                else string("ui.wait_placeholder")
                 if locked
                 else self._normal_input_placeholder()
             )
@@ -2721,6 +2990,36 @@ class CeluneUI(App):
         """Return whether Persona microphone capture is active."""
         return self._persona_recording_stream is not None
 
+    def _acquire_recording_component_lease(
+        self,
+        operation_id: str,
+        components: tuple[ComponentLockName, ...],
+    ) -> tuple[bool, Optional[ComponentLockLease]]:
+        """Reserve the resources required by one microphone operation."""
+        if self.celune is None:
+            return False, None
+        manager = getattr(self.celune, "component_locks", None)
+        if manager is None:
+            return True, None
+
+        owner = ComponentLockOwner(operation_id=operation_id)
+        acquisition, lease = manager.try_acquire_lease(
+            tuple(ComponentLockRequirement(component) for component in components),
+            owner,
+        )
+        if lease is not None:
+            return True, lease
+
+        busy = acquisition.busy
+        if busy is not None:
+            self.celune._last_component_busy = busy
+            labels = ", ".join(component.name for component in busy.components)
+            self.safe_log(
+                string("pipeline.busy_components", components=labels),
+                "warning",
+            )
+        return False, None
+
     def _persona_speech_model_id(self) -> str:
         """Return the configured Hugging Face Whisper model ID."""
         configured = persona_config(self.celune.config).get("speech_model_id")
@@ -2878,6 +3177,7 @@ class CeluneUI(App):
             with self._persona_recording_lock:
                 stream = self._persona_recording_stream
                 vad = self._persona_recording_vad
+                component_lease = self._persona_recording_component_lease
                 self._persona_recording_stream = None
                 self._persona_recording_queue = None
                 self._persona_recording_worker = None
@@ -2887,9 +3187,12 @@ class CeluneUI(App):
                 self._persona_recording_stop_requested = False
                 self._persona_recording_speech_started = False
                 self._persona_recording_silence_frames = 0
+                self._persona_recording_component_lease = None
 
             self._shutdown_vc_stream(stream)
             self._close_live_vad(vad)
+            if component_lease is not None:
+                component_lease.release()
 
             def complete_transcription(
                 transcript: str = transcript,
@@ -3050,6 +3353,12 @@ class CeluneUI(App):
 
         worker: Optional[threading.Thread] = None
         stream: Optional[sd.InputStream] = None
+        acquired, component_lease = self._acquire_recording_component_lease(
+            f"persona-recording:{uuid4()}",
+            (ComponentLockName.MICROPHONE, ComponentLockName.ASR),
+        )
+        if not acquired:
+            return False
         try:
             stream = sd.InputStream(
                 samplerate=sample_rate,
@@ -3076,6 +3385,7 @@ class CeluneUI(App):
                 self._persona_recording_stop_requested = False
                 self._persona_recording_text_prefix = prefix
                 self._persona_recording_last_partial_at = time.monotonic()
+                self._persona_recording_component_lease = component_lease
             stream.start()
             worker.start()
         except Exception as exc:
@@ -3089,8 +3399,11 @@ class CeluneUI(App):
                 self._persona_recording_transcriber = None
                 self._persona_recording_chunks = []
                 self._persona_recording_stop_requested = True
+                self._persona_recording_component_lease = None
             self._shutdown_vc_stream(stream)
             self._close_live_vad(vad)
+            if component_lease is not None:
+                component_lease.release()
             if worker is not None and worker.is_alive():
                 worker.join(timeout=2.0)
             self.safe_log(
@@ -3123,6 +3436,7 @@ class CeluneUI(App):
         with self._persona_recording_lock:
             stream = self._persona_recording_stream
             vad = self._persona_recording_vad
+            component_lease = self._persona_recording_component_lease
             recording_queue = self._persona_recording_queue
             worker = self._persona_recording_worker
             self._persona_recording_stream = None
@@ -3132,6 +3446,7 @@ class CeluneUI(App):
             self._persona_recording_transcriber = None
             self._persona_recording_chunks = []
             self._persona_recording_stop_requested = True
+            self._persona_recording_component_lease = None
             if recording_queue is not None:
                 while True:
                     try:
@@ -3144,6 +3459,8 @@ class CeluneUI(App):
         self._close_live_vad(vad)
         if worker is not None and worker is not threading.current_thread():
             worker.join(timeout=2.0)
+        if component_lease is not None:
+            component_lease.release()
 
     def _vc_recording_active(self) -> bool:
         """Return whether live VC recording is active in the TUI."""
@@ -3374,6 +3691,7 @@ class CeluneUI(App):
     def _clear_vc_recording_state(self) -> None:
         """Clear transient VC recording buffers after stop or cancel."""
         vad = self._vc_recording_vad
+        component_lease = self._vc_recording_component_lease
         self._close_live_vad(vad)
         self._vc_recording_stream = None
         self._vc_recording_chunks = []
@@ -3392,6 +3710,9 @@ class CeluneUI(App):
         self._vc_recording_stop_thread = None
         self._vc_recording_worker = None
         self._vc_recording_vad = None
+        self._vc_recording_component_lease = None
+        if component_lease is not None:
+            component_lease.release()
 
     def _stop_vc_recording_stream(
         self,
@@ -3805,6 +4126,12 @@ class CeluneUI(App):
                     )
 
         stream: Optional[sd.InputStream] = None
+        acquired, component_lease = self._acquire_recording_component_lease(
+            f"vc-recording:{uuid4()}",
+            (ComponentLockName.MICROPHONE,),
+        )
+        if not acquired:
+            return False
         try:
             stream = sd.InputStream(
                 samplerate=sample_rate,
@@ -3835,14 +4162,17 @@ class CeluneUI(App):
                 self._vc_recording_stop_thread = None
                 self._vc_recording_worker = worker
                 self._vc_recording_vad = ai_vad
+                self._vc_recording_component_lease = component_lease
 
             stream.start()
         except Exception as e:
             with self._vc_recording_lock:
                 if self._vc_recording_stream is stream:
                     self._clear_vc_recording_state()
-                self._finish_vc_submission_queue(submission_queue)
+            self._finish_vc_submission_queue(submission_queue)
             self._shutdown_vc_stream(stream)
+            if component_lease is not None:
+                component_lease.release()
             self.safe_log(
                 string(
                     "ui.recording_start_failed",
@@ -4270,6 +4600,14 @@ class CeluneUI(App):
                 self._graceful_exit()
                 return
 
+            if (
+                getattr(self.celune, "test_finished", False)
+                or getattr(self.celune, "cur_state", None) == "stopped"
+            ):
+                event.prevent_default()
+                event.stop()
+                return
+
             if event.key in {"ctrl+j", "ctrl+enter"} and self.cancel_tutorial():
                 event.prevent_default()
                 event.stop()
@@ -4405,6 +4743,10 @@ class CeluneUI(App):
         if getattr(celune, "test_finished", False) or self._is_agent_test_mode():
             self.change_input_state(locked=True)
             self.change_voice_lock_state(locked=True)
+            if getattr(celune, "test_finished", False):
+                if self.input_box is not None:
+                    self.input_box.placeholder = string("ui.stopped_placeholder")
+                self.safe_status(string("status.stopped"), "sleeping")
             return
         if self.cur_state in {"exiting", "error"} or not self.celune_ready:
             if self.input_box is not None:
@@ -4565,6 +4907,10 @@ class CeluneUI(App):
             try:
                 try:
                     self._shutdown_live_vc_recording()
+                except Exception as exc:
+                    self._report_shutdown_error(exc)
+                try:
+                    self._unbind_agent_events()
                 except Exception as exc:
                     self._report_shutdown_error(exc)
                 try:

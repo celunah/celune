@@ -22,6 +22,7 @@ from celune.agent import (
     AgentToolDangerLevel,
     ValidatedToolCall,
 )
+from celune.typing.common import JSONSerializable
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -44,12 +45,25 @@ class AgentRoutingTests(TestCase):
     """Verify routing keeps conversation and task input separate."""
 
     def setUp(self) -> None:
-        self.engine = SimpleNamespace(persona_history=[])
+        self.engine = SimpleNamespace(persona_history=[], config={})
         self.runtime = AgentRuntime()
         self.router = AgentInputRouter(cast("Celune", self.engine), self.runtime)
 
+    def _set_classifier(self, *payloads: dict[str, JSONSerializable]) -> None:
+        """Install deterministic structured Persona routing responses."""
+        responses = []
+        for payload in payloads:
+            responses.append(
+                SimpleNamespace(
+                    raise_for_status=mock.Mock(),
+                    json=lambda payload=payload: {"text": json.dumps(payload)},
+                )
+            )
+        self.engine.vision = SimpleNamespace(post=mock.Mock(side_effect=responses))
+
     def test_greetings_questions_and_explanations_stay_conversation(self) -> None:
         """Keep social conversation and information requests on Persona."""
+        self._set_classifier({"classification": "conversation", "confidence": 0.98})
         for text in (
             "Hello.",
             "How are you?",
@@ -58,7 +72,7 @@ class AgentRoutingTests(TestCase):
             "How do I set my voice?",
         ):
             with self.subTest(text=text):
-                result = self.router.route(text)
+                result = self.router.route(text, persona_ready=True)
                 self.assertEqual(
                     result.classification, AgentInputClassification.CONVERSATION
                 )
@@ -67,8 +81,19 @@ class AgentRoutingTests(TestCase):
 
     def test_direct_action_creates_idle_task_without_execution(self) -> None:
         """Create a typed task while leaving the execution loop untouched."""
+        self._set_classifier(
+            {
+                "classification": "task",
+                "route": "task",
+                "confidence": 0.96,
+                "task_request": "Check whether this process is running.",
+            }
+        )
         with mock.patch.object(self.runtime, "execute_tool") as execute_tool:
-            result = self.router.route("Check whether this process is running.")
+            result = self.router.route(
+                "Could you verify whether this process is active?",
+                persona_ready=True,
+            )
 
         self.assertEqual(result.classification, AgentInputClassification.TASK)
         self.assertEqual(result.route, AgentRoute.TASK)
@@ -79,9 +104,26 @@ class AgentRoutingTests(TestCase):
         self.assertEqual(task.state, AgentTaskState.IDLE)
         execute_tool.assert_not_called()
 
-    def test_ambiguous_request_asks_for_clarification_without_a_task(self) -> None:
-        """Do not guess that an underspecified imperative is a tool request."""
+    def test_classifier_unavailable_keeps_input_on_conversation_path(self) -> None:
+        """Do not infer a task when the semantic classifier is unavailable."""
         result = self.router.route("Please handle this")
+
+        self.assertEqual(result.route, AgentRoute.CONVERSATION)
+        self.assertFalse(result.requires_clarification)
+        self.assertIsNone(result.task_request)
+        self.assertIsNone(self.runtime.get_active_task("default"))
+
+    def test_ambiguous_request_asks_for_clarification(self) -> None:
+        """Do not guess that an underspecified request is a tool request."""
+        self._set_classifier(
+            {
+                "classification": "conversation",
+                "confidence": 0.42,
+                "requires_clarification": True,
+                "clarification_prompt": "What would you like me to handle?",
+            }
+        )
+        result = self.router.route("Please take care of this", persona_ready=True)
 
         self.assertEqual(result.route, AgentRoute.CLARIFICATION)
         self.assertTrue(result.requires_clarification)
@@ -120,28 +162,52 @@ class AgentRoutingTests(TestCase):
 
     def test_follow_up_without_active_task_is_classified_normally(self) -> None:
         """Treat a follow-up-looking phrase as conversation when no task exists."""
-        result = self.router.route("Continue with the explanation.")
+        self._set_classifier({"classification": "conversation", "confidence": 0.95})
+        result = self.router.route(
+            "Could you continue explaining the previous point?",
+            persona_ready=True,
+        )
 
         self.assertEqual(result.route, AgentRoute.CONVERSATION)
         self.assertIsNone(self.runtime.get_active_task("default"))
 
     def test_follow_up_with_active_task_becomes_task_input(self) -> None:
         """Steer the existing task instead of creating a second task."""
-        created = self.router.route("Open this file and tell me what is wrong.")
+        self._set_classifier(
+            {
+                "classification": "task",
+                "route": "task",
+                "confidence": 0.96,
+            },
+            {
+                "classification": "task",
+                "route": "task_input",
+                "confidence": 0.94,
+            },
+        )
+        created = self.router.route(
+            "Could you inspect this file and explain the problem?",
+            persona_ready=True,
+        )
         task = self.runtime.get_active_task("default")
         self.assertIsNotNone(task)
         assert task is not None
 
-        result = self.router.route("Use a concise explanation.")
+        result = self.router.route("Keep the explanation concise.", persona_ready=True)
 
         self.assertEqual(created.route, AgentRoute.TASK)
         self.assertEqual(result.route, AgentRoute.TASK_INPUT)
-        self.assertEqual(task.state, AgentTaskState.INTERRUPTED)
+        self.assertEqual(task.state, AgentTaskState.PLANNING)
         interruption = task.interruption
         self.assertIsNotNone(interruption)
         assert interruption is not None
         self.assertEqual(interruption.kind, AgentInterruptionKind.USER_STEERING)
-        self.assertEqual(interruption.instruction, "Use a concise explanation.")
+        self.assertEqual(interruption.instruction, "Keep the explanation concise.")
+        self.assertEqual(task.request.request, "Keep the explanation concise.")
+        self.assertIn(
+            "Keep the explanation concise.",
+            [entry.get("content") for entry in task.request.history],
+        )
         active_task = self.runtime.get_active_task("default")
         self.assertIsNotNone(active_task)
         assert active_task is not None
@@ -160,8 +226,37 @@ class AgentRoutingTests(TestCase):
             AgentApprovalRequest("approval-1", task.task_id, _call(), "Allow?"),
         )
 
-        approval_result = self.router.route("yes")
+        self._set_classifier(
+            {
+                "classification": "task",
+                "route": "approval_response",
+                "confidence": 0.99,
+                "approval_decision": "approved",
+            },
+            {
+                "classification": "task",
+                "route": "choice_response",
+                "confidence": 0.99,
+                "choice_id": "brief",
+            },
+            {
+                "classification": "task",
+                "route": "task_input",
+                "confidence": 0.92,
+            },
+            {
+                "classification": "task",
+                "route": "task_input",
+                "confidence": 0.92,
+            },
+        )
+        approval_result = self.router.route(
+            "That is fine, proceed.", persona_ready=True
+        )
         self.assertEqual(approval_result.route, AgentRoute.APPROVAL_RESPONSE)
+        self.assertIsNotNone(approval_result.approval_decision)
+        assert approval_result.approval_decision is not None
+        self.assertEqual(approval_result.approval_decision.value, "approved")
         self.assertEqual(task.state, AgentTaskState.WORKING)
 
         self.runtime.request_choice(
@@ -173,9 +268,37 @@ class AgentRoutingTests(TestCase):
                 (AgentChoiceOption("brief", "Brief"),),
             ),
         )
-        choice_result = self.router.route("brief")
+        choice_result = self.router.route("Use the concise format.", persona_ready=True)
         self.assertEqual(choice_result.route, AgentRoute.CHOICE_RESPONSE)
+        self.assertEqual(choice_result.choice_id, "brief")
         self.assertEqual(task.state, AgentTaskState.WORKING)
+
+        self.runtime.request_approval(
+            task.task_id,
+            AgentApprovalRequest("approval-2", task.task_id, _call(), "Allow?"),
+        )
+        approval_steering = self.router.route(
+            "Only use the read-only status tool.", persona_ready=True
+        )
+        self.assertEqual(approval_steering.route, AgentRoute.TASK_INPUT)
+        self.assertEqual(task.state, AgentTaskState.PLANNING)
+        self.assertIsNone(self.runtime.get_pending_approval(task.task_id))
+
+        self.runtime.request_choice(
+            task.task_id,
+            AgentChoiceRequest(
+                "choice-2",
+                task.task_id,
+                "Choose a format",
+                (AgentChoiceOption("brief", "Brief"),),
+            ),
+        )
+        choice_steering = self.router.route(
+            "Keep the response short and factual.", persona_ready=True
+        )
+        self.assertEqual(choice_steering.route, AgentRoute.TASK_INPUT)
+        self.assertEqual(task.state, AgentTaskState.PLANNING)
+        self.assertIsNone(self.runtime.get_pending_choice(task.task_id))
 
     def test_cancellation_and_interruption_route_to_active_task(self) -> None:
         """Route explicit cancellation and interruption without conversation."""
@@ -186,12 +309,29 @@ class AgentRoutingTests(TestCase):
         self.runtime.start_task(task.task_id)
         self.runtime.classify_task(task.task_id)
 
-        interruption = self.router.route("hold on")
+        self._set_classifier(
+            {
+                "classification": "task",
+                "route": "interruption",
+                "confidence": 0.98,
+                "interruption_kind": "user_interrupt",
+            },
+            {
+                "classification": "task",
+                "route": "cancellation",
+                "confidence": 0.98,
+            },
+        )
+        interruption = self.router.route(
+            "Please pause the current work.", persona_ready=True
+        )
         self.assertEqual(interruption.route, AgentRoute.INTERRUPTION)
         self.assertEqual(task.state, AgentTaskState.INTERRUPTED)
 
         self.runtime.resume(task.session_id)
-        cancellation = self.router.route("cancel it")
+        cancellation = self.router.route(
+            "I changed my mind; abandon this task.", persona_ready=True
+        )
         self.assertEqual(cancellation.route, AgentRoute.CANCELLATION)
         self.assertEqual(task.state, AgentTaskState.CANCELLED)
 

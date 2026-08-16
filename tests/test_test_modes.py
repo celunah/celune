@@ -28,11 +28,12 @@ class _TestPersonaClient:
         """Return an action intent followed by a tool-result response."""
         del json
         self.request_count += 1
-        response = (
-            "Read the current agent status."
-            if self.request_count == 1
-            else "The current agent status was read successfully."
+        responses = (
+            '{"classification":"task","route":"task","confidence":0.98}',
+            "Read the current agent status.",
+            "The current agent status was read successfully.",
         )
+        response = responses[min(self.request_count - 1, len(responses) - 1)]
         return PersonaClientResponse({"text": response})
 
 

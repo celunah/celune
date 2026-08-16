@@ -31,6 +31,7 @@ from celune.dataclasses.events import (
 from celune.pipeline import deliver_persona_response as celune_deliver_persona_response
 from celune.persona.impl import PersonaClient
 from celune.typing.common import JSONSerializable
+from celune.typing.persona import PersonaClientResponse
 
 from .support import FakeBackend, FakeGlow
 
@@ -55,6 +56,10 @@ class _PersonaFixture:
     def __init__(self) -> None:
         self.requests: list[dict[str, JSONSerializable]] = []
         self.responses = [
+            _PersonaResponse(
+                '{"classification":"task","route":"task",'
+                '"confidence":0.98,"task_request":"Check the current agent status."}'
+            ),
             _PersonaResponse("Read the current agent status."),
             _PersonaResponse("The agent task completed successfully."),
         ]
@@ -63,6 +68,19 @@ class _PersonaFixture:
         """Record one request and return the next deterministic response."""
         self.requests.append(json)
         return self.responses.pop(0)
+
+
+class _RoutingFixture(PersonaClient):
+    """Return only structured semantic routing responses for core tests."""
+
+    def __init__(self, *payloads: str) -> None:
+        super().__init__()
+        self.payloads = list(payloads)
+
+    def post(self, json: dict[str, JSONSerializable]) -> PersonaClientResponse:
+        """Return the next classifier payload and ignore request details."""
+        del json
+        return PersonaClientResponse({"response": self.payloads.pop(0)})
 
 
 class _NeedleFixture:
@@ -182,9 +200,14 @@ class AgentCoreIntegrationTests(TestCase):
         )
         core.agent_runtime = runtime
         core._agent_router = AgentInputRouter(core, runtime)
+        core.vision = _RoutingFixture(
+            '{"classification":"task","route":"task","confidence":0.98}',
+            '{"classification":"task","route":"approval_response",'
+            '"confidence":0.99,"approval_decision":"approved"}',
+        )
 
         route = core.route_input(
-            "Delete the isolated fixture item.", persona_ready=False
+            "Please remove the isolated fixture item.", persona_ready=True
         )
         self.assertEqual(route.route.value, "task")
         self.assertIsNotNone(route.task_request)
@@ -201,7 +224,9 @@ class AgentCoreIntegrationTests(TestCase):
         self.assertIsNotNone(approval)
         assert approval is not None
 
-        approval_route = core.route_input("yes", persona_ready=False)
+        approval_route = core.route_input(
+            "That is approved; continue.", persona_ready=True
+        )
         self.assertEqual(approval_route.route.value, "approval_response")
         core._run_agent_route(approval_route)
 
@@ -252,7 +277,9 @@ class AgentCoreIntegrationTests(TestCase):
         self.assertIsNone(core.agent_runtime.get_active_task("default"))
         self.assertEqual(persona.requests, [])
 
-        route = core.route_input("Check the current agent status.", persona_ready=False)
+        route = core.route_input(
+            "Could you verify the current agent status?", persona_ready=True
+        )
         self.assertEqual(route.route.value, "task")
         self.assertIsNotNone(route.task_request)
         assert route.task_request is not None
@@ -288,8 +315,8 @@ class AgentCoreIntegrationTests(TestCase):
         self.assertEqual(task.state, AgentTaskState.COMPLETED)
         self.assertEqual(task.iterations, 1)
         self.assertEqual(selector.intents, ["Read the current agent status."])
-        self.assertEqual(len(persona.requests), 2)
-        second_system = persona.requests[1]["system"]
+        self.assertEqual(len(persona.requests), 3)
+        second_system = persona.requests[2]["system"]
         self.assertIsInstance(second_system, str)
         self.assertIn("Last tool result", second_system)
         self.assertIn("succeeded", second_system)
@@ -304,7 +331,6 @@ class AgentCoreIntegrationTests(TestCase):
 
     def test_needle_loading_failure_is_recorded_and_task_fails_safely(self) -> None:
         """Expose a typed terminal failure when production Needle cannot load."""
-        persona = _PersonaFixture()
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
@@ -317,9 +343,12 @@ class AgentCoreIntegrationTests(TestCase):
         ):
             core = Celune(config={"mode": "agent"}, tts_backend=FakeBackend)
             self.addCleanup(core.close)
-            core.vision = cast(PersonaClient, persona)
+            core.vision = _RoutingFixture(
+                '{"classification":"task","route":"task","confidence":0.98}',
+                "Check the current agent status.",
+            )
             route = core.route_input(
-                "Check the current agent status.", persona_ready=False
+                "Could you verify the current agent status?", persona_ready=True
             )
             assert route.task_request is not None
             core._run_agent_route(route)

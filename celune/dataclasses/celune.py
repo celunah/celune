@@ -18,6 +18,7 @@ from ..config import Config
 from ..constants import PipelineStates
 from ..dsp import StreamingPedalboardReverb
 from ..extensions.manager import CeluneExtensionManager
+from ..locks import ComponentLockManager
 from ..persona.impl import PersonaClient
 from ..typing.aliases import AudioChunks
 from ..typing.aliases import LogLevel
@@ -38,6 +39,8 @@ from ..typing.celune import (
 )
 from ..typing.common import JSON
 from ..typing.common import JSONSerializable
+from ..typing.locks import ComponentBusyResult
+from ..typing.locks import ComponentLockOwner
 from ..typing.modes import BackendMode
 from .properties import ConstantPropertySpec, ForwardedPropertySpec
 
@@ -137,6 +140,9 @@ class CelunePipelineState:
     say_lock: threading.Lock = field(default_factory=threading.Lock)
     wake_lock: threading.Lock = field(default_factory=threading.Lock)
     model_lock: threading.RLock = field(default_factory=threading.RLock)
+    component_locks: ComponentLockManager = field(default_factory=ComponentLockManager)
+    pipeline_lock_owner: Optional[ComponentLockOwner] = None
+    last_component_busy: Optional[ComponentBusyResult] = None
     exit_requested: bool = False
 
 
@@ -316,6 +322,21 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("_say_lock", "_pipeline_state", "say_lock"),
     ForwardedPropertySpec("_wake_lock", "_pipeline_state", "wake_lock"),
     ForwardedPropertySpec("_model_lock", "_pipeline_state", "model_lock"),
+    ForwardedPropertySpec(
+        "_component_locks",
+        "_pipeline_state",
+        "component_locks",
+    ),
+    ForwardedPropertySpec(
+        "_pipeline_lock_owner",
+        "_pipeline_state",
+        "pipeline_lock_owner",
+    ),
+    ForwardedPropertySpec(
+        "_last_component_busy",
+        "_pipeline_state",
+        "last_component_busy",
+    ),
     ForwardedPropertySpec("_exit_requested", "_pipeline_state", "exit_requested"),
     ForwardedPropertySpec("_stream", "_audio_state", "stream"),
     ForwardedPropertySpec("_current_sr", "_audio_state", "current_sr"),
@@ -400,6 +421,18 @@ CELUNE_FORWARDED_PROPERTIES = (
     ),
     ForwardedPropertySpec(
         "model_lock", "_pipeline_state", "model_lock", read_only=True
+    ),
+    ForwardedPropertySpec(
+        "component_locks",
+        "_pipeline_state",
+        "component_locks",
+        read_only=True,
+    ),
+    ForwardedPropertySpec(
+        "last_component_busy",
+        "_pipeline_state",
+        "last_component_busy",
+        read_only=True,
     ),
     ForwardedPropertySpec(
         "audio_unavailable",

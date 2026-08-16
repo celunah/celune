@@ -83,6 +83,7 @@ from .extensions.base import CeluneContext
 from .extensions.events import EventDispatcher
 from .extensions.manager import CeluneExtensionManager
 from .i18n import get_system_locale, set_locale, string
+from .locks import ComponentLockLease
 from .modeling import load_normalizer_components, normalizer_device
 from .modes import OperationMode, resolve_operation_mode
 from .paths import project_root, temp_data_dir
@@ -134,8 +135,11 @@ from .pipeline import (
 from .runtime import log_runtime_banner, validate_runtime
 from .typing.agent import AgentClassificationResult
 from .typing.agent import AgentContext
+from .typing.agent import AgentInterruption
+from .typing.agent import AgentInterruptionKind
 from .typing.agent import AgentOutput
 from .typing.agent import AgentRoute
+from .typing.agent import AgentTaskState
 from .typing.agent import AgentToolSelector
 from .typing.agent import AgentToolExecutionStatus
 from .typing.agent import ToolCall
@@ -161,6 +165,11 @@ from .typing.celune import (
 from .typing.common import JSON
 from .typing.common import JSONSerializable
 from .typing.events import EventName, EventPayload
+from .typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
 from .typing.modes import BackendMode
 from .typing.pipeline import SpeechStreamQueue
 from .utils import custom_assert, discard, format_error, format_number, is_port_usable
@@ -1050,6 +1059,30 @@ class Celune(CeluneStateAccessors):
         """Drain all pending items from a queue."""
         clear_queue(q)
 
+    def _acquire_model_loading_lease(
+        self,
+        operation_id: str,
+    ) -> tuple[bool, Optional[ComponentLockLease]]:
+        """Reserve the shared model lifecycle resource for one operation."""
+        manager = getattr(self, "component_locks", None)
+        if manager is None:
+            return True, None
+
+        owner = ComponentLockOwner(operation_id=operation_id)
+        acquisition, lease = manager.try_acquire_lease(
+            (ComponentLockRequirement(ComponentLockName.MODEL_LOADING),),
+            owner,
+        )
+        if lease is not None:
+            return True, lease
+
+        busy = acquisition.busy
+        if busy is not None:
+            self._last_component_busy = busy
+            labels = ", ".join(component.name for component in busy.components)
+            self.log(string("pipeline.busy_components", components=labels), "warning")
+        return False, None
+
     def _persona_conn(self) -> Optional[PersonaClient]:
         """Return a connection to the Persona runtime, if available."""
 
@@ -1081,6 +1114,14 @@ class Celune(CeluneStateAccessors):
 
     def _load_persona_background(self, vision: PersonaClient) -> None:
         """Load Persona in the background and publish its ready state."""
+        acquired, component_lease = self._acquire_model_loading_lease(
+            f"persona-load:{id(vision)}"
+        )
+        if not acquired:
+            with self._model_lock:
+                if self.vision is vision:
+                    self.persona_loading = False
+            return
         try:
             vision.load(
                 persona_model_id(self.config),
@@ -1111,12 +1152,27 @@ class Celune(CeluneStateAccessors):
             with self._model_lock:
                 if self._persona_load_thread is threading.current_thread():
                     self._persona_load_thread = None
+            if component_lease is not None:
+                component_lease.release()
 
     def _close_stream(self, abort: bool = False) -> None:
         """Close the current audio stream if one exists."""
         close_stream(self, abort=abort)
 
     def _unload_persona_state(self) -> None:
+        """Release Persona state while reserving the model lifecycle resource."""
+        acquired, component_lease = self._acquire_model_loading_lease(
+            f"persona-unload:{time.monotonic_ns()}"
+        )
+        if not acquired:
+            return
+        try:
+            self._unload_persona_state_impl()
+        finally:
+            if component_lease is not None:
+                component_lease.release()
+
+    def _unload_persona_state_impl(self) -> None:
         """Release Persona runtime state and clear the active client."""
         with self._model_lock:
             vision = self.vision
@@ -1151,6 +1207,30 @@ class Celune(CeluneStateAccessors):
             _release_loaded_object(tokenizer)
 
     def unload_runtime_state(
+        self,
+        include_normalizer: bool = False,
+        include_vc: bool = True,
+        close_backends: bool = False,
+        release_cuda_cache: bool = True,
+    ) -> None:
+        """Unload runtime state while reserving the model lifecycle resource."""
+        acquired, component_lease = self._acquire_model_loading_lease(
+            f"runtime-unload:{time.monotonic_ns()}"
+        )
+        if not acquired:
+            return
+        try:
+            self._unload_runtime_state_impl(
+                include_normalizer=include_normalizer,
+                include_vc=include_vc,
+                close_backends=close_backends,
+                release_cuda_cache=release_cuda_cache,
+            )
+        finally:
+            if component_lease is not None:
+                component_lease.release()
+
+    def _unload_runtime_state_impl(
         self,
         include_normalizer: bool = False,
         include_vc: bool = True,
@@ -1483,6 +1563,23 @@ class Celune(CeluneStateAccessors):
         backend_spec: CoreBackendSpec,
         preferred_voice: Optional[str] = None,
     ) -> bool:
+        """Switch backend while reserving the shared model lifecycle resource."""
+        acquired, component_lease = self._acquire_model_loading_lease(
+            f"backend-reload:{time.monotonic_ns()}"
+        )
+        if not acquired:
+            return False
+        try:
+            return self._hot_reload_backend_impl(backend_spec, preferred_voice)
+        finally:
+            if component_lease is not None:
+                component_lease.release()
+
+    def _hot_reload_backend_impl(
+        self,
+        backend_spec: CoreBackendSpec,
+        preferred_voice: Optional[str] = None,
+    ) -> bool:
         """Synchronously switch to a new backend family with rollback on failure."""
         # noinspection PyProtectedMember
         snapshot: Optional[Celune._ReloadSnapshot] = None
@@ -1697,6 +1794,23 @@ class Celune(CeluneStateAccessors):
             self.change_voice_lock_state_callback(locked=len(self.voices) < 2)
 
     def _hot_reload_cevoice(
+        self,
+        bundle: Optional[Union[str, Path]],
+        preferred_voice: Optional[str] = None,
+    ) -> bool:
+        """Switch voice bundle while reserving the model lifecycle resource."""
+        acquired, component_lease = self._acquire_model_loading_lease(
+            f"cevoice-reload:{time.monotonic_ns()}"
+        )
+        if not acquired:
+            return False
+        try:
+            return self._hot_reload_cevoice_impl(bundle, preferred_voice)
+        finally:
+            if component_lease is not None:
+                component_lease.release()
+
+    def _hot_reload_cevoice_impl(
         self,
         bundle: Optional[Union[str, Path]],
         preferred_voice: Optional[str] = None,
@@ -3520,6 +3634,10 @@ class Celune(CeluneStateAccessors):
             self.log(string("celune.speech_input_disabled_tutorial"), "warning")
             return False
 
+        if self._speech_playback_active():
+            self.force_stop_speech()
+        self._interrupt_active_agent_for_input(text)
+
         if self.sleeping:
             self.log(
                 string("celune.cannot_think_sleeping", app_name=APP_NAME),
@@ -3543,6 +3661,27 @@ class Celune(CeluneStateAccessors):
             )
             self._persona_thread = thread
             thread.start()
+        return True
+
+    def _interrupt_active_agent_for_input(self, text: str) -> bool:
+        """Invalidate active agent work before accepting replacement user input."""
+        del text
+        task = self.agent_runtime.get_active_task("default")
+        if task is None or task.state in {
+            AgentTaskState.IDLE,
+            AgentTaskState.AWAITING_APPROVAL,
+            AgentTaskState.AWAITING_CHOICE,
+            AgentTaskState.PAUSED,
+            AgentTaskState.INTERRUPTED,
+        }:
+            return False
+        try:
+            self.agent_runtime.interrupt_task(
+                task.task_id,
+                AgentInterruption(AgentInterruptionKind.USER_INTERRUPT),
+            )
+        except ValueError:
+            return False
         return True
 
     def classify_input(
@@ -3781,6 +3920,9 @@ class Celune(CeluneStateAccessors):
             self.progress_callback(0, 1)
             return False
 
+        if self._speech_playback_active():
+            self.force_stop_speech()
+
         return say_pipeline(self, text, save=save, display_text=display_text)
 
     async def say_async(
@@ -3804,6 +3946,9 @@ class Celune(CeluneStateAccessors):
             self.error_callback(string("celune.not_possible"))
             self.progress_callback(0, 1)
             return False
+
+        if self._speech_playback_active():
+            self.force_stop_speech()
 
         return await say_pipeline_async(
             self, text, save=save, display_text=display_text

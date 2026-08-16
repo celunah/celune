@@ -16,6 +16,7 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from celune import cevoice, i18n
+from celune.agent import AgentRequest, AgentSession, AgentTaskState
 from celune.celune import Celune
 from celune.config import Config
 from celune.dataclasses.celune import (
@@ -1026,6 +1027,35 @@ class CeluneCoreTests(TestCase):
 
         self.assertEqual(calls, ["first queued", "second queued"])
         self.assertEqual(celune._persona_queue.empty(), True)
+
+    def test_think_interrupts_active_agent_and_speech_before_queueing_input(
+        self,
+    ) -> None:
+        """Invalidate active speech and agent work before accepting new input."""
+        celune = self._make_celune({})
+        celune.locked = True
+        celune.cur_state = "speaking"
+        celune._persona_thread = mock.Mock()
+        celune._persona_thread.is_alive.return_value = True
+        task = celune.agent_runtime.create_task(
+            AgentRequest(
+                request="Check whether this process is running.",
+                session=AgentSession(session_id="default"),
+            ),
+            task_id="active-input-task",
+        )
+        celune.agent_runtime.start_task(task.task_id)
+        celune.agent_runtime.classify_task(task.task_id)
+        self.addCleanup(celune.agent_runtime.cancel_task, task.task_id)
+        celune.force_stop_speech = mock.Mock()
+
+        self.assertTrue(celune.think("Use the safer status check."))
+
+        celune.force_stop_speech.assert_called_once_with()
+        self.assertEqual(task.state, AgentTaskState.INTERRUPTED)
+        self.assertEqual(
+            celune._persona_queue.get_nowait(), "Use the safer status check."
+        )
 
     def test_unload_persona_state_clears_the_bound_emotion_analyzer(self) -> None:
         """Verify Persona teardown does not retain VLM references through emotion analysis."""

@@ -26,6 +26,7 @@ from celune.cevoice import (
     CEVoicePersona,
     PersonaIdentity,
     PersonaStyleValues,
+    persona_files_from_bundle,
 )
 from celune.constants import PipelineStates
 from celune.dataclasses.pipeline import AudioInputRequest
@@ -1762,6 +1763,39 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             messages,
         )
 
+    def test_agent_classification_request_includes_active_routing_context(self) -> None:
+        """Expose typed active-task context to semantic routing without a second prompt path."""
+        engine = make_pipeline_engine()
+        engine.config = {"vram": "high"}
+
+        payload = pipeline.build_agent_classification_request(
+            cast(Celune, engine),
+            "That is fine, continue.",
+            routing_context={
+                "active_task": {"task_id": "task-1", "state": "awaiting_approval"},
+                "pending_approval": {
+                    "request_id": "approval-1",
+                    "prompt": "Allow the change?",
+                },
+            },
+        )
+
+        self.assertEqual(
+            payload["routing_context"],
+            {
+                "active_task": {"task_id": "task-1", "state": "awaiting_approval"},
+                "pending_approval": {
+                    "request_id": "approval-1",
+                    "prompt": "Allow the change?",
+                },
+            },
+        )
+        system_prompt = payload["system"]
+        self.assertIsInstance(system_prompt, str)
+        assert isinstance(system_prompt, str)
+        self.assertIn("approval_response", system_prompt)
+        self.assertIn("awaiting_approval", system_prompt)
+
     def test_persona_request_uses_xhigh_quantization(self) -> None:
         """Verify xhigh VRAM presets request Persona in 8-bit mode."""
         engine = make_pipeline_engine()
@@ -2178,7 +2212,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertIn("Gender: female", prompt)
 
     def test_default_cechar_pack_adds_celune_prompt_foundation(self) -> None:
-        """Verify the bundled CECHAR pack adds the Celune-specific foundation."""
+        """Verify the bundled CECHAR pack assembles only its current prompt."""
         bundle = CEVoice.open(Path("voices/default.cevoice"))
         loader = CEVoiceLoader(bundle)
         self.addCleanup(loader.close)
@@ -2194,12 +2228,27 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 pipeline.build_persona_context(cast(Celune, engine), "Hello.")
             )
 
-        self.assertIn(
-            "You are Celune, commonly called Cel.",
-            prompt,
+        for source_text in persona_files_from_bundle(bundle).values():
+            self.assertIn(source_text, prompt)
+
+        self.assertIn("Aliases: Cel", prompt)
+        self.assertIn("Role: Lunar guardian", prompt)
+        self.assertIn("Remain consistently yourself.", prompt)
+        self.assertNotIn("Celune is a quiet nocturnal presence", prompt)
+        self.assertNotIn(
+            "These examples demonstrate tone and conversational style", prompt
         )
-        self.assertIn("Celune is a quiet nocturnal presence", prompt)
-        self.assertEqual(prompt.count("You are Celune, commonly called Cel."), 1)
+        self.assertNotIn(
+            "Keep the familiar nocturnal tone grounded and concise.", prompt
+        )
+        self.assertNotIn("## Response Behavior", prompt)
+        self.assertNotIn("User: i think i fixed it", prompt)
+
+        voice_manifest = bundle.metadata["voices"]
+        self.assertIsInstance(voice_manifest, dict)
+        for voice_metadata in voice_manifest.values():
+            self.assertIsInstance(voice_metadata, dict)
+            self.assertNotIn("persona", voice_metadata)
 
     def test_non_default_character_pack_does_not_inherit_celune_foundation(
         self,

@@ -110,6 +110,14 @@ if TYPE_CHECKING:
         VramTier,
     )
     from .modes import BackendMode, OperationMode
+    from .locks import (
+        ComponentBusyResult,
+        ComponentLockAcquisition,
+        ComponentLockName,
+        ComponentLockOwner,
+        ComponentLockRequirement,
+        ComponentName,
+    )
     from .extensions import (
         GetStateCallable,
         LogCallable,
@@ -257,6 +265,12 @@ _MODULE_EXPORTS = {
     "NeedleToolSelection": "agent",
     "BackendMode": "modes",
     "OperationMode": "modes",
+    "ComponentBusyResult": "locks",
+    "ComponentLockAcquisition": "locks",
+    "ComponentLockName": "locks",
+    "ComponentLockOwner": "locks",
+    "ComponentLockRequirement": "locks",
+    "ComponentName": "locks",
     "PersonaModel": "persona",
     "PersonaProcessor": "persona",
     "PersonaTokenizer": "persona",
@@ -365,6 +379,12 @@ __all__ = [
     "CeluneTextualUI",
     "ChatMessagePayload",
     "ChatTemplateRenderer",
+    "ComponentBusyResult",
+    "ComponentLockAcquisition",
+    "ComponentLockName",
+    "ComponentLockOwner",
+    "ComponentLockRequirement",
+    "ComponentName",
     "Config",
     "ContentItem",
     "EmbeddingModel",

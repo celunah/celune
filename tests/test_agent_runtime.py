@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest import TestCase, mock
@@ -16,9 +17,11 @@ from celune.agent import (
     AgentChoiceOption,
     AgentChoiceRequest,
     AgentChoiceResponse,
+    AgentContext,
     AgentFailureReason,
     AgentInterruption,
     AgentInterruptionKind,
+    AgentOutput,
     AgentRequest,
     AgentRuntime,
     AgentSession,
@@ -26,6 +29,8 @@ from celune.agent import (
     AgentTaskState,
     AgentToolBehavior,
     AgentToolDangerLevel,
+    ToolCall,
+    ToolResult,
     ValidatedToolCall,
 )
 from celune.dataclasses.events import (
@@ -203,6 +208,187 @@ class AgentRuntimeLifecycleTests(TestCase):
         self.assertEqual(
             self.event_names[-6:],
             ["state", "approval", "state", "state", "choice", "state"],
+        )
+
+    def test_steering_resumes_at_planning_and_invalidates_waiting_requests(
+        self,
+    ) -> None:
+        """Steering preserves task progress and rejects stale approval responses."""
+        task = self._working_task()
+        task.iterations = 1
+        approval = AgentApprovalRequest(
+            request_id="approval-1",
+            task_id=task.task_id,
+            tool_call=_validated_call(),
+            prompt="Allow?",
+        )
+        self.runtime.request_approval(task.task_id, approval)
+        generation = task.generation
+
+        self.runtime.steer_task(
+            task.task_id,
+            AgentInterruption(
+                AgentInterruptionKind.USER_STEERING,
+                "Use the safer read-only path.",
+            ),
+        )
+
+        self.assertEqual(task.state, AgentTaskState.PLANNING)
+        self.assertGreater(task.generation, generation)
+        self.assertEqual(task.iterations, 1)
+        self.assertIsNone(self.runtime.get_pending_approval(task.task_id))
+        self.assertEqual(task.request.request, "Use the safer read-only path.")
+        self.assertIn(
+            "Use the safer read-only path.",
+            [entry.get("content") for entry in task.request.history],
+        )
+        with self.assertRaises(ValueError):
+            self.runtime.respond_to_approval(
+                task.task_id,
+                AgentApprovalResponse("approval-1", AgentApprovalDecision.APPROVED),
+            )
+
+    def test_interruption_clears_approval_and_choice_without_progress(self) -> None:
+        """Interrupt waiting interactions without consuming work or accepting stale answers."""
+        for waiting_state in (
+            AgentTaskState.AWAITING_APPROVAL,
+            AgentTaskState.AWAITING_CHOICE,
+        ):
+            with self.subTest(waiting_state=waiting_state):
+                runtime = AgentRuntime()
+                task = runtime.create_task(
+                    self._request(session_id=f"interrupt-{waiting_state.value}"),
+                    task_id=f"interrupt-{waiting_state.value}",
+                )
+                runtime.start_task(task.task_id)
+                runtime.classify_task(task.task_id)
+                if waiting_state == AgentTaskState.AWAITING_APPROVAL:
+                    runtime.request_approval(
+                        task.task_id,
+                        AgentApprovalRequest(
+                            "approval-1", task.task_id, _validated_call(), "Allow?"
+                        ),
+                    )
+                else:
+                    runtime.request_choice(
+                        task.task_id,
+                        AgentChoiceRequest(
+                            "choice-1",
+                            task.task_id,
+                            "Choose",
+                            (AgentChoiceOption("one", "One"),),
+                        ),
+                    )
+
+                runtime.interrupt_task(
+                    task.task_id,
+                    AgentInterruption(AgentInterruptionKind.USER_INTERRUPT),
+                )
+
+                self.assertEqual(task.state, AgentTaskState.INTERRUPTED)
+                self.assertEqual(task.iterations, 0)
+                self.assertIsNone(runtime.get_pending_approval(task.task_id))
+                self.assertIsNone(runtime.get_pending_choice(task.task_id))
+                session = runtime.get_session(task.session_id)
+                self.assertEqual(session.state, AgentSessionState.PAUSED)
+                self.assertTrue(session.paused)
+
+    def test_stale_planner_output_after_interruption_is_discarded(self) -> None:
+        """An interrupted planner cannot publish its old response."""
+        started = threading.Event()
+        release = threading.Event()
+        outputs: list[AgentOutput] = []
+
+        def planner(_context: AgentContext) -> AgentOutput:
+            """Block one planner response until the test interrupts it."""
+            started.set()
+            release.wait(timeout=2)
+            return {
+                "tool_call": None,
+                "response": "stale planner response",
+                "end": True,
+                "paused": False,
+            }
+
+        def record_output(output: AgentOutput) -> None:
+            """Record only outputs accepted by the active task generation."""
+            outputs.append(output)
+
+        runtime = AgentRuntime(planner=planner)
+        task = runtime.create_task(self._request(), task_id="stale-planner")
+        worker = threading.Thread(
+            target=lambda: runtime.run(task.request, record_output),
+            daemon=True,
+        )
+        worker.start()
+        self.assertTrue(started.wait(timeout=2))
+
+        runtime.interrupt_task(
+            task.task_id,
+            AgentInterruption(AgentInterruptionKind.USER_INTERRUPT),
+        )
+        release.set()
+        worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(task.state, AgentTaskState.INTERRUPTED)
+        self.assertEqual(outputs, [])
+        self.assertEqual(len(runtime._terminal_events), 0)
+
+    def test_stale_non_cooperative_tool_result_is_diagnostic_only(self) -> None:
+        """A late tool result cannot advance an interrupted task iteration."""
+        started = threading.Event()
+        release = threading.Event()
+        call: ToolCall = {
+            "id": "call-1",
+            "name": "read_status",
+            "arguments": {},
+        }
+
+        def planner(_context: AgentContext) -> AgentOutput:
+            """Return one read-only call for the non-cooperative tool fixture."""
+            return {
+                "tool_call": call,
+                "response": "Reading status.",
+                "end": False,
+                "paused": False,
+            }
+
+        def execute(_context: AgentContext, _call: ToolCall) -> ToolResult:
+            """Block the fixture tool until the task has been interrupted."""
+            started.set()
+            release.wait(timeout=2)
+            return {
+                "tool_call_id": "call-1",
+                "output": {"status": "late"},
+                "error": None,
+            }
+
+        runtime = AgentRuntime(
+            planner=planner,
+            tool_selector=lambda _context, output: output["tool_call"],
+            tool_executor=execute,
+        )
+        task = runtime.create_task(self._request(), task_id="stale-tool")
+        worker = threading.Thread(target=lambda: runtime.run(task.request), daemon=True)
+        worker.start()
+        self.assertTrue(started.wait(timeout=2))
+
+        runtime.interrupt_task(
+            task.task_id,
+            AgentInterruption(AgentInterruptionKind.USER_INTERRUPT),
+        )
+        release.set()
+        worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(task.state, AgentTaskState.INTERRUPTED)
+        self.assertIsNone(runtime.get_context(task.task_id).last_tool_result)
+        self.assertTrue(
+            any(
+                entry.get("type") == "stale_tool_result"
+                for entry in task.request.history
+            )
         )
 
     def test_invalid_transitions_and_response_ids_are_rejected(self) -> None:

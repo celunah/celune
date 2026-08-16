@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Optional, cast
 
@@ -32,60 +31,6 @@ if TYPE_CHECKING:
     from ..celune import Celune
 
 
-_ACTION_START_RE = re.compile(
-    r"^(?:(?:please|kindly)\s+)?"
-    r"(?:(?:can|could|would)\s+you\s+(?:please\s+)?)?"
-    r"(?:(?:i\s+want\s+you\s+to|help\s+me\s+to)\s+)?"
-    r"(?:delete|remove|open|read|inspect|check|set|change|create|make|move|"
-    r"rename|send|close|launch|start|stop|list|find|run|install|download|"
-    r"clear|empty|turn\s+(?:on|off))\b"
-)
-_QUESTION_START_RE = re.compile(
-    r"^(?:how do i|how can i|what should i|why should i|can you explain|"
-    r"could you explain|tell me how)\b"
-)
-_AMBIGUOUS_RE = re.compile(
-    r"^(?:please\s+)?(?:do something|handle (?:this|that|it)|take care of "
-    r"(?:this|that|it)|deal with (?:this|that|it)|make it better|fix (?:this|that|it)|"
-    r"can you help(?: me)?|could you help(?: me)?)\??$"
-)
-_INTERRUPTION_INPUTS = {
-    "hold on",
-    "interrupt",
-    "pause",
-    "wait",
-    "stop for a moment",
-}
-_CANCELLATION_INPUTS = {
-    "cancel",
-    "cancel it",
-    "cancel the task",
-    "abort",
-    "abort it",
-    "never mind",
-    "nevermind",
-    "stop",
-    "stop it",
-    "stop the task",
-}
-_APPROVAL_INPUTS = {
-    "yes": AgentApprovalDecision.APPROVED,
-    "y": AgentApprovalDecision.APPROVED,
-    "approve": AgentApprovalDecision.APPROVED,
-    "approved": AgentApprovalDecision.APPROVED,
-    "allow": AgentApprovalDecision.APPROVED,
-    "allowed": AgentApprovalDecision.APPROVED,
-    "proceed": AgentApprovalDecision.APPROVED,
-    "go ahead": AgentApprovalDecision.APPROVED,
-    "no": AgentApprovalDecision.DENIED,
-    "n": AgentApprovalDecision.DENIED,
-    "deny": AgentApprovalDecision.DENIED,
-    "denied": AgentApprovalDecision.DENIED,
-    "decline": AgentApprovalDecision.DENIED,
-    "declined": AgentApprovalDecision.DENIED,
-}
-
-
 class AgentInputRouter:
     """Classify input and route it through Persona or AgentRuntime."""
 
@@ -110,10 +55,12 @@ class AgentInputRouter:
     ) -> AgentClassificationResult:
         """Classify input without creating a task or changing lifecycle state."""
         clean_text = self._clean_text(text)
-        local = self._classify_locally(clean_text)
-        if local.requires_clarification and persona_ready:
-            return self._classify_with_persona(clean_text, local)
-        return local
+        if not persona_ready:
+            return self._conversation_result(0.0, "persona_classifier_unavailable")
+        return self._classify_with_persona(
+            clean_text,
+            self._conversation_result(0.0, "persona_classifier_unavailable"),
+        )
 
     def route(
         self,
@@ -125,7 +72,7 @@ class AgentInputRouter:
         clean_text = self._clean_text(text)
         active_task = self.runtime.get_active_task(self.session_id)
         if active_task is not None:
-            return self._route_active_task(active_task, clean_text)
+            return self._route_active_task(active_task, clean_text, persona_ready)
 
         result = self.classify(clean_text, persona_ready=persona_ready)
         if result.route != AgentRoute.TASK or result.task_request is None:
@@ -143,34 +90,68 @@ class AgentInputRouter:
             reason=result.reason,
             routing_metadata=metadata,
             route=result.route,
+            approval_decision=result.approval_decision,
+            choice_id=result.choice_id,
+            choice_freeform=result.choice_freeform,
+            interruption_kind=result.interruption_kind,
         )
 
     def _route_active_task(
         self,
         task: AgentTask,
         text: str,
+        persona_ready: bool,
     ) -> AgentClassificationResult:
-        """Route control answers and steering input to an active task."""
-        normalized = self._normalize(text)
-        if normalized in _CANCELLATION_INPUTS:
+        """Route semantic control answers and steering to an active task."""
+        if not persona_ready:
+            return self._clarification(string("agent.clarification_prompt"))
+
+        result = self._classify_with_persona(
+            text,
+            self._clarification(string("agent.clarification_prompt")),
+            task=task,
+        )
+        if result.route == AgentRoute.CLARIFICATION:
+            return result
+        if result.route == AgentRoute.CANCELLATION:
             self.runtime.cancel_task(task.task_id)
             return self._active_result(task, AgentRoute.CANCELLATION, "cancellation")
 
-        if task.state == AgentTaskState.AWAITING_APPROVAL:
-            return self._route_approval(task, normalized)
-        if task.state == AgentTaskState.AWAITING_CHOICE:
-            return self._route_choice(task, text, normalized)
-
-        if normalized in _INTERRUPTION_INPUTS:
+        if result.route == AgentRoute.INTERRUPTION:
+            interruption_kind = (
+                result.interruption_kind or AgentInterruptionKind.USER_INTERRUPT
+            )
             self.runtime.interrupt_task(
                 task.task_id,
-                AgentInterruption(AgentInterruptionKind.USER_INTERRUPT),
+                AgentInterruption(interruption_kind),
             )
-            return self._active_result(task, AgentRoute.INTERRUPTION, "interruption")
+            return self._active_result(
+                task,
+                AgentRoute.INTERRUPTION,
+                "interruption",
+                interruption_kind=interruption_kind,
+            )
+
+        if result.route in {AgentRoute.TASK_INPUT, AgentRoute.CONVERSATION}:
+            if task.state == AgentTaskState.IDLE:
+                self.runtime.start_task(task.task_id)
+            self.runtime.steer_task(
+                task.task_id,
+                AgentInterruption(
+                    AgentInterruptionKind.USER_STEERING,
+                    instruction=text,
+                ),
+            )
+            return self._active_result(task, AgentRoute.TASK_INPUT, "task_follow_up")
+
+        if task.state == AgentTaskState.AWAITING_APPROVAL:
+            return self._route_approval(task, result)
+        if task.state == AgentTaskState.AWAITING_CHOICE:
+            return self._route_choice(task, result)
 
         if task.state == AgentTaskState.IDLE:
             self.runtime.start_task(task.task_id)
-        self.runtime.interrupt_task(
+        self.runtime.steer_task(
             task.task_id,
             AgentInterruption(
                 AgentInterruptionKind.USER_STEERING,
@@ -182,46 +163,39 @@ class AgentInputRouter:
     def _route_approval(
         self,
         task: AgentTask,
-        normalized: str,
+        result: AgentClassificationResult,
     ) -> AgentClassificationResult:
-        """Route a short approval answer to the pending typed request."""
+        """Route a semantically classified approval answer."""
         pending = self.runtime.get_pending_approval(task.task_id)
-        if pending is None:
-            return self._clarification(string("agent.approval_clarification"))
-        decision = _APPROVAL_INPUTS.get(normalized)
-        if decision is None:
+        if pending is None or result.approval_decision is None:
             return self._clarification(string("agent.approval_clarification"))
         self.runtime.respond_to_approval(
             task.task_id,
-            AgentApprovalResponse(pending.request_id, decision),
+            AgentApprovalResponse(pending.request_id, result.approval_decision),
         )
         return self._active_result(
             task,
             AgentRoute.APPROVAL_RESPONSE,
             "approval_response",
+            approval_decision=result.approval_decision,
         )
 
     def _route_choice(
         self,
         task: AgentTask,
-        text: str,
-        normalized: str,
+        result: AgentClassificationResult,
     ) -> AgentClassificationResult:
-        """Route an option or allowed freeform answer to a pending choice."""
+        """Route a semantically classified answer to a pending choice."""
         pending = self.runtime.get_pending_choice(task.task_id)
         if pending is None:
             return self._clarification(string("agent.choice_clarification"))
 
-        choice_id: Optional[str] = None
-        for option in pending.options:
-            if normalized in {
-                self._normalize(option.choice_id),
-                self._normalize(option.label),
-            }:
-                choice_id = option.choice_id
-                break
-
-        freeform = text if choice_id is None and pending.allow_freeform else None
+        choice_id = result.choice_id
+        if choice_id is not None and not any(
+            option.choice_id == choice_id for option in pending.options
+        ):
+            choice_id = None
+        freeform = result.choice_freeform if pending.allow_freeform else None
         if choice_id is None and freeform is None:
             return self._clarification(string("agent.choice_clarification"))
 
@@ -233,41 +207,49 @@ class AgentInputRouter:
                 freeform=freeform,
             ),
         )
-        return self._active_result(task, AgentRoute.CHOICE_RESPONSE, "choice_response")
-
-    def _classify_locally(self, text: str) -> AgentClassificationResult:
-        """Handle obvious routing cases without asking the Persona model."""
-        normalized = self._normalize(text)
-        if _QUESTION_START_RE.match(normalized):
-            return self._conversation_result(0.98, "question")
-        if _AMBIGUOUS_RE.match(normalized):
-            return self._clarification(string("agent.clarification_prompt"))
-        if _ACTION_START_RE.match(normalized):
-            return self._task_result(text, 0.96, "explicit_action")
-        return self._conversation_result(0.98, "ordinary_conversation")
+        return self._active_result(
+            task,
+            AgentRoute.CHOICE_RESPONSE,
+            "choice_response",
+            choice_id=choice_id,
+            choice_freeform=freeform,
+        )
 
     def _classify_with_persona(
         self,
         text: str,
         fallback: AgentClassificationResult,
+        *,
+        task: Optional[AgentTask] = None,
     ) -> AgentClassificationResult:
-        """Resolve genuinely ambiguous input through the existing Persona VLM."""
+        """Resolve natural-language routing through the existing Persona VLM."""
         vision = getattr(self.engine, "vision", None)
         post = getattr(vision, "post", None)
         if not callable(post):
             return fallback
 
         try:
+            if task is None:
+                request_payload = build_agent_classification_request(
+                    self.engine,
+                    text,
+                )
+            else:
+                request_payload = build_agent_classification_request(
+                    self.engine,
+                    text,
+                    routing_context=self._routing_context(task),
+                )
             response = cast(
                 PersonaClientResponse,
-                post(json=build_agent_classification_request(self.engine, text)),
+                post(json=request_payload),
             )
             response.raise_for_status()
             payload = response.json()
             candidate = self._classification_payload(payload)
             if candidate is None:
                 return fallback
-            return self._result_from_payload(text, candidate)
+            return self._result_from_payload(text, candidate, task=task)
         except Exception:
             # Classifier failure must preserve the ordinary conversation fallback.
             return fallback
@@ -297,6 +279,8 @@ class AgentInputRouter:
         self,
         text: str,
         payload: JSON,
+        *,
+        task: Optional[AgentTask] = None,
     ) -> AgentClassificationResult:
         """Validate a Persona classifier payload into the public result type."""
         raw_classification = payload.get("classification")
@@ -322,11 +306,16 @@ class AgentInputRouter:
             requires_clarification = True
             prompt = prompt or string("agent.clarification_prompt")
 
+        route = self._route_from_payload(payload, classification, task)
+        if task is not None and not requires_clarification:
+            classification = AgentInputClassification.TASK
+
         raw_request = payload.get("task_request")
         task_text = raw_request.strip() if isinstance(raw_request, str) else text
         task_request = (
             self._make_request(task_text)
-            if classification == AgentInputClassification.TASK
+            if task is None
+            and classification == AgentInputClassification.TASK
             and not requires_clarification
             else None
         )
@@ -353,29 +342,30 @@ class AgentInputRouter:
                 task_request=task_request,
                 reason=reason,
                 routing_metadata=metadata,
-                route=AgentRoute.TASK,
+                route=route,
+                approval_decision=self._approval_decision(
+                    payload.get("approval_decision")
+                ),
+                choice_id=(
+                    payload.get("choice_id")
+                    if isinstance(payload.get("choice_id"), str)
+                    else None
+                ),
+                choice_freeform=(
+                    payload.get("choice_freeform")
+                    if isinstance(payload.get("choice_freeform"), str)
+                    else None
+                ),
+                interruption_kind=self._interruption_kind(
+                    payload.get("interruption_kind")
+                ),
             )
         return AgentClassificationResult(
             classification=classification,
             confidence=confidence,
             reason=reason,
             routing_metadata=metadata,
-            route=AgentRoute.CONVERSATION,
-        )
-
-    def _task_result(
-        self,
-        text: str,
-        confidence: float,
-        reason: str,
-    ) -> AgentClassificationResult:
-        """Build an unambiguous task classification result."""
-        return AgentClassificationResult(
-            classification=AgentInputClassification.TASK,
-            confidence=confidence,
-            task_request=self._make_request(text),
-            reason=reason,
-            route=AgentRoute.TASK,
+            route=route,
         )
 
     @staticmethod
@@ -408,6 +398,11 @@ class AgentInputRouter:
         task: AgentTask,
         route: AgentRoute,
         reason: str,
+        *,
+        approval_decision: Optional[AgentApprovalDecision] = None,
+        choice_id: Optional[str] = None,
+        choice_freeform: Optional[str] = None,
+        interruption_kind: Optional[AgentInterruptionKind] = None,
     ) -> AgentClassificationResult:
         """Build a result for input consumed by an existing task."""
         return AgentClassificationResult(
@@ -416,6 +411,10 @@ class AgentInputRouter:
             reason=reason,
             routing_metadata={"task_id": task.task_id},
             route=route,
+            approval_decision=approval_decision,
+            choice_id=choice_id,
+            choice_freeform=choice_freeform,
+            interruption_kind=interruption_kind,
         )
 
     def _make_request(self, text: str) -> AgentRequest:
@@ -441,6 +440,71 @@ class AgentInputRouter:
         return clean_text
 
     @staticmethod
-    def _normalize(text: str) -> str:
-        """Normalize text for conservative control and intent matching."""
-        return re.sub(r"\s+", " ", text.casefold().strip(" \t\r\n.!?"))
+    def _route_from_payload(
+        payload: JSON,
+        classification: AgentInputClassification,
+        task: Optional[AgentTask],
+    ) -> AgentRoute:
+        """Read a validated route value, deriving the default route when absent."""
+        raw_route = payload.get("route")
+        valid_routes = tuple(route.value for route in AgentRoute)
+        if isinstance(raw_route, str) and raw_route in valid_routes:
+            return AgentRoute(raw_route)
+        if task is not None:
+            return AgentRoute.TASK_INPUT
+        if classification == AgentInputClassification.TASK:
+            return AgentRoute.TASK
+        return AgentRoute.CONVERSATION
+
+    @staticmethod
+    def _approval_decision(
+        value: JSONSerializable,
+    ) -> Optional[AgentApprovalDecision]:
+        """Convert a classifier approval value into its typed decision."""
+        if not isinstance(value, str):
+            return None
+        try:
+            return AgentApprovalDecision(value)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _interruption_kind(
+        value: JSONSerializable,
+    ) -> Optional[AgentInterruptionKind]:
+        """Convert a classifier interruption value into its typed kind."""
+        if not isinstance(value, str):
+            return None
+        try:
+            return AgentInterruptionKind(value)
+        except ValueError:
+            return None
+
+    def _routing_context(self, task: Optional[AgentTask]) -> Optional[JSON]:
+        """Build the classifier context for an active task, if one exists."""
+        if task is None:
+            return None
+        context: JSON = {
+            "active_task": {
+                "task_id": task.task_id,
+                "state": task.state.value,
+            }
+        }
+        pending_approval = self.runtime.get_pending_approval(task.task_id)
+        if pending_approval is not None:
+            context["pending_approval"] = {
+                "request_id": pending_approval.request_id,
+                "prompt": pending_approval.prompt,
+            }
+        pending_choice = self.runtime.get_pending_choice(task.task_id)
+        if pending_choice is not None:
+            context["pending_choice"] = {
+                "request_id": pending_choice.request_id,
+                "prompt": pending_choice.prompt,
+                "options": [
+                    {"id": option.choice_id, "label": option.label}
+                    for option in pending_choice.options
+                ],
+                "allow_freeform": pending_choice.allow_freeform,
+            }
+        return context

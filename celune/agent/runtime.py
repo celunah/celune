@@ -29,6 +29,7 @@ from ..typing.agent import (
     AgentContextCompactor,
     AgentFailureReason,
     AgentInterruption,
+    AgentInterruptionKind,
     AgentOutput,
     AgentPermissionDecision,
     AgentPermissionEvaluation,
@@ -59,10 +60,17 @@ from ..typing.agent import (
 )
 from ..typing.common import JSON, JSONSerializable
 from ..typing.events import EventName, EventPayload
+from ..typing.locks import (
+    ComponentBusyResult,
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
 from ..typing.modes import OperationMode
 
 if TYPE_CHECKING:
     from ..celune import Celune
+    from ..locks import ComponentLockLease, ComponentLockManager
 
 
 def _default_token_counter(text: str) -> int:
@@ -101,6 +109,14 @@ def _empty_output(
 def _paused_output() -> AgentOutput:
     """Build an output that preserves a waiting or interrupted task."""
     return _empty_output(end=False, paused=True)
+
+
+def _busy_output(busy: ComponentBusyResult) -> AgentOutput:
+    """Build a paused output that carries typed component-conflict metadata."""
+    return {
+        **_paused_output(),
+        "busy": busy,
+    }
 
 
 class DefaultAgentPermissionPolicy:
@@ -246,6 +262,17 @@ class AgentRuntime:
         self._pending_tool_calls: dict[str, ToolCall] = {}
         self._last_tool_calls: dict[str, ToolCall] = {}
         self._terminal_events: set[str] = set()
+        self._component_locks: Optional[ComponentLockManager] = getattr(
+            celune,
+            "component_locks",
+            None,
+        )
+        self._last_busy: Optional[ComponentBusyResult] = None
+
+    @property
+    def last_busy(self) -> Optional[ComponentBusyResult]:
+        """Return the latest typed component conflict, if one occurred."""
+        return self._last_busy
 
     @staticmethod
     def _index_tool_schemas(
@@ -564,6 +591,7 @@ class AgentRuntime:
         task = self._require_session_task(session_id)
         if task.is_terminal or task.state == AgentTaskState.CANCELLING:
             raise ValueError("cannot pause a terminal or cancelling agent task")
+        self._invalidate_generation(task)
         self._suspension_origins[task.task_id] = task.state
         old_state = task.state
         task.pause()
@@ -574,17 +602,26 @@ class AgentRuntime:
         task = self._require_session_task(session_id)
         if task.state not in {AgentTaskState.PAUSED, AgentTaskState.INTERRUPTED}:
             raise ValueError("only paused or interrupted agent tasks can resume")
+        self._invalidate_generation(task)
         old_state = task.state
         origin = self._suspension_origins.pop(task.task_id, AgentTaskState.WORKING)
-        target = (
-            origin
-            if origin
-            in {
-                AgentTaskState.AWAITING_APPROVAL,
-                AgentTaskState.AWAITING_CHOICE,
-            }
-            else AgentTaskState.WORKING
-        )
+        target = origin
+        if target in {
+            AgentTaskState.AWAITING_APPROVAL,
+            AgentTaskState.AWAITING_CHOICE,
+        } and not (
+            task.task_id in self._pending_approvals
+            or task.task_id in self._pending_choices
+        ):
+            target = AgentTaskState.PLANNING
+        if target not in {
+            AgentTaskState.AWAITING_APPROVAL,
+            AgentTaskState.AWAITING_CHOICE,
+            AgentTaskState.PLANNING,
+            AgentTaskState.WORKING,
+            AgentTaskState.CLASSIFYING,
+        }:
+            target = AgentTaskState.WORKING
         task.transition(target)
         task.interruption = None
         self._after_transition(task, old_state)
@@ -598,9 +635,30 @@ class AgentRuntime:
         task = self.get_task(task_id)
         if task.is_terminal or task.state == AgentTaskState.CANCELLING:
             raise ValueError("cannot interrupt a terminal or cancelling agent task")
+        self._invalidate_generation(task)
         self._suspension_origins[task.task_id] = task.state
         old_state = task.state
+        self._invalidate_pending_interaction(task_id)
         task.interrupt(interruption)
+        self._append_interruption_history(task, interruption)
+        self._after_transition(task, old_state)
+        return task
+
+    def steer_task(
+        self,
+        task_id: str,
+        interruption: AgentInterruption,
+    ) -> AgentTask:
+        """Apply steering to an existing task and resume at a planning boundary."""
+        if interruption.kind != AgentInterruptionKind.USER_STEERING:
+            raise ValueError("agent steering requires a user steering interruption")
+        task = self.get_task(task_id)
+        if task.state == AgentTaskState.IDLE:
+            self.start_task(task_id)
+            self.classify_task(task_id)
+        self.interrupt_task(task_id, interruption)
+        old_state = task.state
+        task.transition(AgentTaskState.PLANNING)
         self._after_transition(task, old_state)
         return task
 
@@ -613,6 +671,7 @@ class AgentRuntime:
         task = self.get_task(task_id)
         if task.is_terminal:
             raise ValueError("cannot cancel a terminal agent task")
+        self._invalidate_generation(task)
         if task.state != AgentTaskState.CANCELLING:
             self._transition(task, AgentTaskState.CANCELLING)
         cancellation_error: Optional[Exception] = None
@@ -675,10 +734,30 @@ class AgentRuntime:
         if task.is_terminal:
             return self._terminal_output(task, callback)
 
+        generation = task.generation
+        lease: Optional[ComponentLockLease] = None
+        if self._component_locks is not None:
+            acquisition, lease = self._component_locks.try_acquire_lease(
+                (ComponentLockRequirement(ComponentLockName.AGENT),),
+                ComponentLockOwner(
+                    operation_id=f"agent:{task.task_id}:{generation}",
+                    task_id=task.task_id,
+                    session_id=task.session_id,
+                    generation_id=generation,
+                ),
+            )
+            if not acquisition.acquired:
+                busy = acquisition.busy
+                assert busy is not None
+                self._last_busy = busy
+                return _busy_output(busy)
+            self._last_busy = None
         failure_reason = AgentFailureReason.MODEL_ERROR
         try:
             last_output: Optional[AgentOutput] = None
             while not task.is_terminal:
+                if not self._run_is_current(task, generation):
+                    return self._interrupted_output(task, callback)
                 if task.state in {
                     AgentTaskState.AWAITING_APPROVAL,
                     AgentTaskState.AWAITING_CHOICE,
@@ -699,7 +778,7 @@ class AgentRuntime:
                     )
 
                 if not self._compact_if_needed(task):
-                    return self._terminal_output(task, callback)
+                    return self._interrupted_output(task, callback)
                 if task.is_terminal:
                     return self._terminal_output(task, callback)
 
@@ -710,8 +789,10 @@ class AgentRuntime:
                         self.abort_task(task.task_id, AgentAbortReason.MAX_ITERATIONS)
                         return self._terminal_output(task, callback)
                     output = self._validate_output(self._invoke_plan(task))
-                    if not self._publish_output(task, output, callback):
-                        return self._terminal_output(task, callback)
+                    if not self._run_is_current(task, generation):
+                        return self._interrupted_output(task, callback)
+                    if not self._publish_output(task, output, callback, generation):
+                        return self._interrupted_output(task, callback)
                     if task.is_terminal:
                         return self._terminal_output(task, callback)
                     if task.state in {
@@ -723,7 +804,7 @@ class AgentRuntime:
                         return _paused_output()
                     if output["paused"]:
                         self._transition(task, AgentTaskState.PAUSED)
-                        return _paused_output()
+                        return output
 
                     failure_reason = AgentFailureReason.INVALID_TOOL_CALL
                     selected = (
@@ -731,6 +812,8 @@ class AgentRuntime:
                         if output["tool_call"] is None and output["end"]
                         else self._invoke_select_tool(task, output)
                     )
+                    if not self._run_is_current(task, generation):
+                        return self._interrupted_output(task, callback)
                     call = self._validate_tool_call(cast(JSONSerializable, selected))
                     if task.state in {
                         AgentTaskState.AWAITING_APPROVAL,
@@ -751,8 +834,15 @@ class AgentRuntime:
                         self._transition(task, AgentTaskState.RESPONDING)
                         failure_reason = AgentFailureReason.MODEL_ERROR
                         response = self._validate_output(self._invoke_respond(task))
-                        if not self._publish_output(task, response, callback):
-                            return self._terminal_output(task, callback)
+                        if not self._run_is_current(task, generation):
+                            return self._interrupted_output(task, callback)
+                        if not self._publish_output(
+                            task,
+                            response,
+                            callback,
+                            generation,
+                        ):
+                            return self._interrupted_output(task, callback)
                         if response["paused"]:
                             self._transition(task, AgentTaskState.PAUSED)
                             return _paused_output()
@@ -782,9 +872,13 @@ class AgentRuntime:
 
                 failure_reason = AgentFailureReason.TOOL_ERROR
                 self._transition(task, AgentTaskState.EXECUTING_TOOL)
+                raw_result = self._invoke_execute(task, call)
+                if not self._run_is_current(task, generation):
+                    self._record_stale_tool_result(task, raw_result)
+                    return self._interrupted_output(task, callback)
                 result = self._normalize_tool_result(
                     call,
-                    self._invoke_execute(task, call),
+                    raw_result,
                     task.permission_decision,
                 )
                 if task.is_terminal:
@@ -797,14 +891,16 @@ class AgentRuntime:
                 handled = self._validate_output(
                     self._invoke_handle_result(task, result)
                 )
-                if not self._publish_output(task, handled, callback):
-                    return self._terminal_output(task, callback)
+                if not self._run_is_current(task, generation):
+                    return self._interrupted_output(task, callback)
+                if not self._publish_output(task, handled, callback, generation):
+                    return self._interrupted_output(task, callback)
                 if task.is_terminal:
                     return self._terminal_output(task, callback)
                 if handled["paused"]:
                     if task.state == AgentTaskState.PLANNING:
                         self._transition(task, AgentTaskState.PAUSED)
-                    return _paused_output()
+                    return handled
                 if handled["end"]:
                     return self._complete_with_output(task, handled, callback)
                 if not self._consume_iteration(task):
@@ -813,10 +909,15 @@ class AgentRuntime:
 
             return self._terminal_output(task, callback, last_output)
         except Exception as exc:
+            if not self._run_is_current(task, generation):
+                return self._interrupted_output(task, callback)
             if task.is_terminal:
                 return self._terminal_output(task, callback)
             self.fail_task(task.task_id, failure_reason, str(exc))
             return self._terminal_output(task, callback)
+        finally:
+            if lease is not None:
+                lease.release()
 
     def _authorize_tool(
         self,
@@ -1018,8 +1119,11 @@ class AgentRuntime:
         task: AgentTask,
         output: AgentOutput,
         callback: Optional[AgentResponseCallback],
+        generation: int,
     ) -> bool:
         """Account generated response tokens and notify the caller safely."""
+        if not self._run_is_current(task, generation):
+            return False
         response = output["response"]
         if response is not None:
             count = self._token_counter(response)
@@ -1031,6 +1135,8 @@ class AgentRuntime:
             if not task.add_generated_tokens(count):
                 self._after_direct_abort(task, old_state)
                 return False
+        if not self._run_is_current(task, generation):
+            return False
         if callback is not None:
             try:
                 callback(output)
@@ -1041,6 +1147,16 @@ class AgentRuntime:
                 return False
         return not task.is_terminal
 
+    def _interrupted_output(
+        self,
+        task: AgentTask,
+        callback: Optional[AgentResponseCallback],
+    ) -> AgentOutput:
+        """Return a pause for stale work or the proper output for a terminal task."""
+        if task.is_terminal:
+            return self._terminal_output(task, callback)
+        return _paused_output()
+
     @staticmethod
     def _validate_output(value: AgentOutput) -> AgentOutput:
         """Validate and normalize one planner, handler, or responder output."""
@@ -1049,10 +1165,17 @@ class AgentRuntime:
         response = value.get("response")
         end = value.get("end")
         paused = value.get("paused")
+        busy = value.get("busy")
         if response is not None and not isinstance(response, str):
             raise TypeError("agent output response must be text or null")
         if not isinstance(end, bool) or not isinstance(paused, bool):
             raise TypeError("agent output end and paused fields must be boolean")
+        if busy is not None and not isinstance(busy, ComponentBusyResult):
+            raise TypeError(
+                "agent output busy metadata must be typed component metadata"
+            )
+        if busy is not None and not paused:
+            raise ValueError("agent busy output must be paused")
         call = AgentRuntime._validate_tool_call(
             cast(JSONSerializable, value.get("tool_call"))
         )
@@ -1062,12 +1185,15 @@ class AgentRuntime:
             raise ValueError(
                 "agent output must contain a response, tool call, pause, or end"
             )
-        return {
+        normalized: AgentOutput = {
             "tool_call": call,
             "response": response,
             "end": end,
             "paused": paused,
         }
+        if busy is not None:
+            normalized["busy"] = busy
+        return normalized
 
     @staticmethod
     def _validate_tool_call(value: JSONSerializable) -> Optional[ToolCall]:
@@ -1396,6 +1522,75 @@ class AgentRuntime:
                 cancellation_reason=task.cancellation_reason,
                 completion_metadata=task.completion_metadata,
             ),
+        )
+
+    @staticmethod
+    def _invalidate_generation(task: AgentTask) -> None:
+        """Invalidate work already running against the task's prior generation."""
+        task.generation += 1
+
+    def _invalidate_pending_interaction(self, task_id: str) -> None:
+        """Reject stale approval, choice, and selected-call responses."""
+        self._pending_approvals.pop(task_id, None)
+        self._pending_choices.pop(task_id, None)
+        self._pending_tool_calls.pop(task_id, None)
+
+    def _append_interruption_history(
+        self,
+        task: AgentTask,
+        interruption: AgentInterruption,
+    ) -> None:
+        """Record interruption metadata in the task request and active context."""
+        entry = cast(
+            JSON,
+            {
+                "role": "user",
+                "content": interruption.instruction or "",
+                "agent_interruption": interruption.kind.value,
+            },
+        )
+        request = task.request
+        next_request = replace(
+            request,
+            request=(
+                interruption.instruction
+                if interruption.kind == AgentInterruptionKind.USER_STEERING
+                and interruption.instruction is not None
+                else request.request
+            ),
+            history=(*request.history, entry),
+        )
+        task.request = next_request
+        self._contexts[task.task_id] = replace(
+            self.get_context(task.task_id),
+            request=next_request,
+        )
+
+    def _record_stale_tool_result(self, task: AgentTask, result: ToolResult) -> None:
+        """Keep a late tool result as diagnostics without returning it to planning."""
+        entry = cast(
+            JSON,
+            {
+                "type": "stale_tool_result",
+                "tool_result": cast(JSONSerializable, result),
+            },
+        )
+        request = task.request
+        next_request = replace(request, history=(*request.history, entry))
+        task.request = next_request
+        self._contexts[task.task_id] = replace(
+            self.get_context(task.task_id),
+            request=next_request,
+        )
+
+    @staticmethod
+    def _run_is_current(task: AgentTask, generation: int) -> bool:
+        """Return whether a worker may still publish work for this task generation."""
+        return (
+            task.generation == generation
+            and not task.is_terminal
+            and task.state
+            not in {AgentTaskState.INTERRUPTED, AgentTaskState.CANCELLING}
         )
 
     def _clear_task_state(self, task_id: str) -> None:

@@ -9,6 +9,7 @@ from typing import NotRequired, Optional, Protocol, TypedDict, Union, cast
 
 from ..persona.capabilities import PersonaCapabilities
 from .common import JSON, JSONSerializable
+from .locks import ComponentBusyResult
 from .modes import OperationMode
 
 
@@ -245,6 +246,7 @@ class AgentOutput(TypedDict):
     response: Optional[str]
     end: bool
     paused: bool
+    busy: NotRequired[ComponentBusyResult]
 
 
 @dataclass(frozen=True)
@@ -313,6 +315,10 @@ class AgentClassificationResult:
     reason: Optional[str] = None
     routing_metadata: Optional[JSON] = None
     route: AgentRoute = AgentRoute.CONVERSATION
+    approval_decision: Optional[AgentApprovalDecision] = None
+    choice_id: Optional[str] = None
+    choice_freeform: Optional[str] = None
+    interruption_kind: Optional[AgentInterruptionKind] = None
 
     def __post_init__(self) -> None:
         """Validate classification confidence and route-specific fields."""
@@ -339,6 +345,16 @@ class AgentClassificationResult:
             raise ValueError("conversation routes require ordinary conversation input")
         if self.route == AgentRoute.CLARIFICATION and not self.requires_clarification:
             raise ValueError("clarification routes require clarification")
+        if self.route == AgentRoute.APPROVAL_RESPONSE and (
+            self.approval_decision is None
+        ):
+            raise ValueError("approval routes require an approval decision")
+        if self.route == AgentRoute.CHOICE_RESPONSE and (
+            self.choice_id is None and self.choice_freeform is None
+        ):
+            raise ValueError("choice routes require a choice value")
+        if self.route == AgentRoute.INTERRUPTION and self.interruption_kind is None:
+            raise ValueError("interruption routes require an interruption kind")
         if (
             self.route
             in {
@@ -370,6 +386,18 @@ class AgentClassificationResult:
             "reason": self.reason,
             "routing_metadata": self.routing_metadata,
             "route": self.route.value,
+            "approval_decision": (
+                self.approval_decision.value
+                if self.approval_decision is not None
+                else None
+            ),
+            "choice_id": self.choice_id,
+            "choice_freeform": self.choice_freeform,
+            "interruption_kind": (
+                self.interruption_kind.value
+                if self.interruption_kind is not None
+                else None
+            ),
         }
 
 
@@ -843,6 +871,7 @@ class AgentTask:
     generated_tokens: int = 0
     context_tokens: int = 0
     stalled_iterations: int = 0
+    generation: int = 0
     cancellation_reason: Optional[AgentCancellationReason] = None
     abort_reason: Optional[AgentAbortReason] = None
     failure_reason: Optional[AgentFailureReason] = None
@@ -860,6 +889,7 @@ class AgentTask:
             ("generated_tokens", self.generated_tokens),
             ("context_tokens", self.context_tokens),
             ("stalled_iterations", self.stalled_iterations),
+            ("generation", self.generation),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"agent {name} must be a non-negative integer")
@@ -1026,6 +1056,7 @@ class AgentTask:
             "generated_tokens": self.generated_tokens,
             "context_tokens": self.context_tokens,
             "stalled_iterations": self.stalled_iterations,
+            "generation": self.generation,
             "cancellation_reason": (
                 self.cancellation_reason.value
                 if self.cancellation_reason is not None

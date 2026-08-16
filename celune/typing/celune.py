@@ -28,10 +28,12 @@ if TYPE_CHECKING:
     from ..constants import PipelineStates
     from ..dsp import StreamingPedalboardReverb
     from ..extensions.manager import CeluneExtensionManager
+    from ..locks import ComponentLockManager
     from ..persona.emotion import PersonaEmotionAnalyzer
     from ..persona.impl import PersonaClient
     from ..persona.memory import PersonaMemoryStore
     from .aliases import AudioChunk, AudioChunks
+    from .locks import ComponentBusyResult, ComponentLockOwner
 
 
 type GenerationKwarg = Union[torch.Tensor, int, bool, None]
@@ -286,6 +288,9 @@ class CeluneStateAccessors:
     _say_lock: threading.Lock
     _wake_lock: threading.Lock
     _model_lock: threading.RLock
+    _component_locks: ComponentLockManager
+    _pipeline_lock_owner: Optional[ComponentLockOwner]
+    _last_component_busy: Optional[ComponentBusyResult]
     _exit_requested: bool
     _stream: Optional[sd.OutputStream]
     _current_sr: Optional[int]
@@ -333,6 +338,8 @@ class CeluneStateAccessors:
     playback_thread: Optional[threading.Thread]
     exit_requested: bool
     model_lock: threading.RLock
+    component_locks: ComponentLockManager
+    last_component_busy: Optional[ComponentBusyResult]
     audio_unavailable: bool
     current_sr: Optional[int]
 
