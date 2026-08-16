@@ -2209,7 +2209,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         )
 
         self.assertIn("Name: Celune", prompt)
-        self.assertIn("Gender: female", prompt)
+        self.assertIn("Gender: Woman", prompt)
 
     def test_default_cechar_pack_adds_celune_prompt_foundation(self) -> None:
         """Verify the bundled CECHAR pack assembles only its current prompt."""

@@ -521,6 +521,33 @@ class CEVoiceTests(TestCase):
 
         self.assertEqual((user_dir / "default.cevoice").read_bytes(), b"default")
 
+    def test_stale_user_default_pack_is_refreshed_from_repository(self) -> None:
+        """Verify the managed default pack follows the bundled repository pack."""
+        repository_root = self.temp_dir / "repository-root"
+        repository_dir = repository_root / "voices"
+        user_dir = self.temp_dir / "user-voices"
+        repository_dir.mkdir(parents=True)
+        user_dir.mkdir(parents=True)
+        (repository_dir / "default.cevoice").write_bytes(b"new-default")
+        (user_dir / "default.cevoice").write_bytes(b"old-default")
+
+        with (
+            mock.patch(
+                "celune.cevoice.project_root",
+                return_value=repository_root,
+            ),
+            mock.patch(
+                "celune.cevoice.voices_data_dir",
+                return_value=user_dir,
+            ),
+        ):
+            self.assertEqual(cevoice.bundled_voices_dir(), user_dir)
+
+        self.assertEqual(
+            (user_dir / "default.cevoice").read_bytes(),
+            b"new-default",
+        )
+
     def test_missing_selected_and_default_bundles_report_no_compatible_pack(
         self,
     ) -> None:

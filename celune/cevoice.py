@@ -62,7 +62,7 @@ SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
     "examples.md",
 )
 DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
-    "02c8ae15745e318edc648c00fa1cf4f836ef676c973aca2e3afec0a9a26d5fba"
+    "926e6f439ce78d6e2262a1b5e7ae3c3c102ef656e07f102d958128cad9664f3e"
 )
 
 
@@ -1689,11 +1689,21 @@ def bundled_voices_dir() -> Path:
         Path: The absolute path to the user-local CEVOICE directory.
     """
     user_directory = voices_data_dir()
-    if user_directory.is_dir():
-        return user_directory
-
     repository_directory = project_root() / "voices"
     if not repository_directory.is_dir():
+        return user_directory
+
+    repository_default = repository_directory / "default.cevoice"
+    user_default = user_directory / "default.cevoice"
+    if user_directory.is_dir():
+        try:
+            if repository_default.is_file() and (
+                not user_default.is_file()
+                or bundle_sha256(user_default) != bundle_sha256(repository_default)
+            ):
+                shutil.copy2(repository_default, user_default)
+        except OSError:
+            pass
         return user_directory
 
     try:

@@ -2078,6 +2078,7 @@ class CeluneUI(App):
                         1.0,
                         duration=_MAIN_UI_FADE_SECONDS,
                     )
+                self.call_after_refresh(self._refresh_logs)
 
             def fade_overlay() -> None:
                 if self._loading_screen is not overlay:

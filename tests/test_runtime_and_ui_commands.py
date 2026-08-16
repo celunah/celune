@@ -785,6 +785,7 @@ class UIStartupTests(TestCase):
                 "query_one",
                 return_value=main_container,
             ),
+            mock.patch.object(ui, "_refresh_logs") as refresh_logs,
             mock.patch.object(
                 ui,
                 "call_after_refresh",
@@ -808,6 +809,7 @@ class UIStartupTests(TestCase):
             duration=ui_app._MAIN_UI_FADE_SECONDS,
         )
         assert loading_screen.display is False
+        refresh_logs.assert_called_once_with()
 
     def test_tts_log_preserves_backend_log_level_filtering(self) -> None:
         """Verify isolated backend debug logs stay hidden at the info level."""
