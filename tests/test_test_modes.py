@@ -5,12 +5,35 @@ from __future__ import annotations
 
 import contextlib
 import io
+from typing import cast
 from unittest import TestCase, mock
 
 from celune import entrypoint
 from celune.celune import Celune
+from celune.i18n import string
+from celune.persona.impl import PersonaClient
 from celune.test_mode import run_agent_test
+from celune.typing.common import JSON
+from celune.typing.persona import PersonaClientResponse
 from .support import FakeBackend, FakeGlow
+
+
+class _TestPersonaClient:
+    """Return deterministic model-shaped text for the isolated core test."""
+
+    def __init__(self) -> None:
+        self.request_count = 0
+
+    def post(self, json: JSON) -> PersonaClientResponse:
+        """Return an action intent followed by a tool-result response."""
+        del json
+        self.request_count += 1
+        response = (
+            "Read the current agent status."
+            if self.request_count == 1
+            else "The current agent status was read successfully."
+        )
+        return PersonaClientResponse({"text": response})
 
 
 class TestCommandTests(TestCase):
@@ -49,7 +72,11 @@ class TestFinishedLifecycleTests(TestCase):
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
         ):
-            core = Celune(config={"mode": "agent"}, tts_backend=FakeBackend)
+            core = Celune(
+                config={"mode": "agent"},
+                tts_backend=FakeBackend,
+                backend_mode="agent_test",
+            )
         self.addCleanup(core.close)
         return core
 
@@ -73,6 +100,12 @@ class TestFinishedLifecycleTests(TestCase):
         self.assertTrue(
             any(
                 args and "Test mode ui succeeded" in args[0]
+                for args, _kwargs in log.call_args_list
+            )
+        )
+        self.assertFalse(
+            any(
+                args and args[0] == string("pipeline.exiting")
                 for args, _kwargs in log.call_args_list
             )
         )
@@ -116,6 +149,13 @@ class TestFinishedLifecycleTests(TestCase):
     def test_agent_workflow_uses_the_real_core_runtime_boundaries(self) -> None:
         """The controlled agent task completes through routing and production tools."""
         core = self._make_core()
+        self.assertEqual(core.backend_mode, "agent_test")
+        self.assertEqual(
+            tuple(tool.name for tool in core._agent_tools),
+            ("read_agent_status",),
+        )
+        core.vision = cast(PersonaClient, _TestPersonaClient())
+        core.persona_ready = True
         result = run_agent_test(core)
 
         payload = result

@@ -13,7 +13,7 @@ from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokeni
 
 from .aliases import LogLevel
 from .common import Config, JSON, JSONSerializable
-from .modes import OperationMode
+from .modes import BackendMode, OperationMode
 
 if TYPE_CHECKING:
     import queue
@@ -232,6 +232,7 @@ class CeluneStateAccessors:
     caption_callback: CaptionCallback
     caption_timing_callback: CaptionTimingCallback
     config: Config
+    backend_mode: BackendMode
     _backend_spec: Optional[TTSBackendRecipe]
     _backend_kwargs: dict[str, JSONSerializable]
     backend: CeluneBackend

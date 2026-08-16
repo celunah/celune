@@ -7,7 +7,6 @@ import gc
 import os
 import queue
 import shutil
-import sys
 import threading
 import time
 from collections.abc import Callable
@@ -26,6 +25,8 @@ from .agent.routing import AgentInputRouter
 from .agent.needle import NeedleToolSelector
 from .agent.persona import PersonaAgentBridge
 from .agent.runtime import AgentRuntime
+from .agent.tools import agent_test_tool_schemas
+from .agent.tools import agent_test_tools
 from .agent.tools import production_agent_tool_schemas
 from .agent.tools import production_agent_tools
 from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
@@ -160,6 +161,7 @@ from .typing.celune import (
 from .typing.common import JSON
 from .typing.common import JSONSerializable
 from .typing.events import EventName, EventPayload
+from .typing.modes import BackendMode
 from .typing.pipeline import SpeechStreamQueue
 from .utils import custom_assert, discard, format_error, format_number, is_port_usable
 from .vc import clamp_vc_pitch_shift
@@ -423,9 +425,12 @@ class Celune(CeluneStateAccessors):
         caption_timing_callback: Optional[CaptionTimingCallback] = None,
         log_level: LogLevel = "info",
         agent_tool_selector: Optional[AgentToolSelector] = None,
+        backend_mode: BackendMode = "normal",
     ) -> None:
         if Celune._instance is not None:
             raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
+        if backend_mode not in {"normal", "ui_test", "agent_test"}:
+            raise ValueError(f"unknown Celune backend mode: '{backend_mode}'")
 
         self._callbacks = CeluneCallbackState(
             log_callback=log_callback or self._noop_message,
@@ -470,6 +475,7 @@ class Celune(CeluneStateAccessors):
         self._pipeline_state.playback_done.set()
 
         self.config = config
+        self._runtime_state.backend_mode = backend_mode
         self._isolated_backends = config_bool(
             config,
             "CELUNE_ISOLATED_BACKENDS",
@@ -477,8 +483,12 @@ class Celune(CeluneStateAccessors):
         )
         set_locale(_configured_locale(config) or get_system_locale())
         self.mode: OperationMode = resolve_operation_mode(config)
-        self._agent_tools = production_agent_tools()
-        self._agent_tool_schemas = production_agent_tool_schemas()
+        if backend_mode == "agent_test":
+            self._agent_tools = agent_test_tools()
+            self._agent_tool_schemas = agent_test_tool_schemas()
+        else:
+            self._agent_tools = production_agent_tools()
+            self._agent_tool_schemas = production_agent_tool_schemas()
         self._agent_needle_selector = agent_tool_selector
         self._agent_needle_error: Optional[str] = None
         self._agent_persona_bridge = PersonaAgentBridge(
@@ -2948,10 +2958,14 @@ class Celune(CeluneStateAccessors):
             RuntimeCheckError: If the runtime environment is unsupported.
             BackendError: If backend initialization fails.
         """
-        log_runtime_banner(self.log, self.vc_backend or self.backend)
+        log_runtime_banner(
+            self.log,
+            self.vc_backend or self.backend,
+            self.backend_mode,
+        )
         self.historical_generated_speech_seconds = saved_output_speech_seconds()
 
-        if self.backend.is_fake and "pytest" not in sys.modules:
+        if self.backend_mode == "ui_test" and self.backend.is_fake:
             self.log(string("celune.test_mode_active", app_name=APP_NAME))
             return True
 
@@ -2976,7 +2990,8 @@ class Celune(CeluneStateAccessors):
             else:
                 self.log(string("celune.current_character", character=character))
 
-        self.setup_extensions()
+        if self.backend_mode == "normal":
+            self.setup_extensions()
 
         vram_message = validate_vram_preset(self.config)
         if vram_message:
@@ -3069,7 +3084,8 @@ class Celune(CeluneStateAccessors):
         if self.use_normalization:
             self.load_normalizer()
 
-        self._start_configured_api()
+        if self.backend_mode == "normal":
+            self._start_configured_api()
 
         if persona_enabled(self.config) and self.vision is None:
             self.log(
@@ -3077,8 +3093,7 @@ class Celune(CeluneStateAccessors):
                 "warning",
             )
 
-        # notify readiness
-        if not self._try_play_signal("readiness"):
+        if self.backend_mode == "normal" and not self._try_play_signal("readiness"):
             self.log(
                 "Could not play the readiness signal.",
                 "warning",
@@ -3491,7 +3506,7 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` if Celune processed this smart request, otherwise ``False``.
         """
-        if self.test_finished:
+        if self.test_finished or self.backend_mode == "agent_test":
             return False
         if self.input_mode != "text_to_speech":
             self.log(string("celune.text_input_unavailable_vc"), "warning")
@@ -3856,7 +3871,7 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when the current mode accepted the audio input.
         """
-        if self.test_finished:
+        if self.test_finished or self.backend_mode == "agent_test":
             return False
         return handle_audio_input(
             self,
@@ -3956,7 +3971,7 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when playback was queued successfully, otherwise ``False``.
         """
-        if self.test_finished:
+        if self.test_finished or self.backend_mode == "agent_test":
             return False
         return play_pipeline(self, sound_path, keep=keep, volume=volume)
 
@@ -3978,7 +3993,7 @@ class Celune(CeluneStateAccessors):
         Returns:
             bool: ``True`` when playback was queued successfully, otherwise ``False``.
         """
-        if self.test_finished:
+        if self.test_finished or self.backend_mode == "agent_test":
             return False
         return queue_sfx_audio(self, audio, sample_rate, label, keep=keep)
 

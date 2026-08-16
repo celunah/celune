@@ -16,23 +16,30 @@ from .constants import APP_NAME, NVIDIA_DEVICE_KEYWORDS
 from .i18n import string
 from .utils import cuda_architecture, format_number
 from .typing.aliases import LogCallback, LogLevel
+from .typing.modes import BackendMode
 
 
 def log_runtime_banner(
-    log: Callable[[str, str], None], backend: Union[CeluneBackend, CeluneVCBackend]
+    log: Callable[[str, str], None],
+    backend: Union[CeluneBackend, CeluneVCBackend],
+    backend_mode: BackendMode = "normal",
 ) -> None:
     """Log high-level version and environment information.
 
     Args:
         log: Logging callback that receives the generated banner lines.
         backend: The backend with which Celune was started.
+        backend_mode: The restricted Celune backend mode, when applicable.
     """
     cuda_version = torch.version.cuda
 
     cuda_line = f", CUDA {cuda_version}" if cuda_version else ""
-    backend_line = (
-        f"on backend {backend.name}, " if not backend.is_fake else "in UI test mode, "
-    )
+    if backend_mode == "agent_test":
+        backend_line = string("runtime.agent_test_backend")
+    elif backend_mode == "ui_test" or backend.is_fake:
+        backend_line = string("runtime.ui_test_backend")
+    else:
+        backend_line = f"on backend {backend.name}, "
 
     log(
         f"{APP_NAME} {__version__} "

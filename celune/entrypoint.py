@@ -26,6 +26,7 @@ from celune.i18n import string
 from celune.watchdog import launcher_loss_requested, start_watchdog
 from celune.paths import migrate_legacy_app_data, project_root, running_compiled
 from celune.terminal import set_terminal_title
+from celune.typing.common import Config
 from celune.updater import apply_update_and_restart
 
 if TYPE_CHECKING:
@@ -65,6 +66,31 @@ def _load_ui_test_backend() -> type:
     """Load the lightweight fake backend used by the explicit UI test mode."""
     support = importlib.import_module("tests.support")
     return support.FakeBackend
+
+
+def _load_test_runtime_config(runtime: SimpleNamespace) -> tuple[Config, Optional[str]]:
+    """Load the user's runtime config without enabling normal services."""
+    active_config_path, created_config = runtime.ensure_config_path(
+        active_path=runtime.config_path(create_parent=True),
+        default_path=runtime.default_config_path(),
+    )
+    if created_config:
+        print(string("cli.config_created", app_name=APP_NAME))
+
+    with open(active_config_path, encoding="utf-8") as cfg:
+        config = runtime.yaml.safe_load(cfg)
+    with open(runtime.default_config_path(), encoding="utf-8") as cfg:
+        defaults = runtime.yaml.safe_load(cfg)
+
+    if not isinstance(config, dict):
+        config = {}
+    if not isinstance(defaults, dict):
+        defaults = {}
+    merged, _ = runtime.merge_missing_defaults(config, defaults)
+    merged["mode"] = "agent"
+    configured_backend = INITIAL_BACKEND or runtime.config_value(merged, "backend")
+    backend = configured_backend if isinstance(configured_backend, str) else None
+    return merged, backend
 
 
 def _startup_diagnostics_enabled(force: bool = False) -> bool:
@@ -1121,6 +1147,11 @@ def start(
             _print_startup_diagnostic(string("cli.startup_creating_ui"))
             _print_startup_diagnostic(string("cli.startup_handing_off_ui"))
             active_test_mode = test_mode or "ui"
+            backend_mode = "ui_test" if active_test_mode == "ui" else "agent_test"
+            test_config: Config = {}
+            test_backend: Optional[str] = None
+            if active_test_mode == "agent":
+                test_config, test_backend = _load_test_runtime_config(runtime)
 
             def finish_test(
                 core: "Celune",
@@ -1145,7 +1176,19 @@ def start(
             )
             _STARTUP_DIAGNOSTIC_SINK = ui.receive_startup_diagnostic
             _print_startup_diagnostic(string("cli.startup_preparing_core"))
-            celune = runtime.Celune(config={}, backend=_load_ui_test_backend())
+            if active_test_mode == "ui":
+                celune = runtime.Celune(
+                    config=test_config,
+                    backend=_load_ui_test_backend(),
+                    backend_mode=backend_mode,
+                )
+            else:
+                celune = runtime.Celune(
+                    config=test_config,
+                    tts_backend=test_backend,
+                    backend_mode=backend_mode,
+                    log_level=active_log_level,
+                )
             ui.celune = celune
             ui.prepare_theme()
             try:

@@ -32,7 +32,7 @@ from celune.typing.aliases import LogLevel
 from celune.ui import app as ui_app
 from celune.ui import resources as ui_resources
 from celune.ui import terminal as ui_terminal
-from celune.ui.app import CeluneLoadingScreen, CeluneUI
+from celune.ui.app import CeluneLoadingScreen, CeluneUI, UILogMessage
 from celune.persona.asr import WhisperSegment, WhisperWord
 from celune.ui.commands import attachment_source, process_command
 from celune.ui.headless import CeluneHeadlessUI
@@ -1490,6 +1490,91 @@ class UIStartupTests(TestCase):
         ui.error.assert_not_called()
         self.assertNotEqual(ui.cur_state, "error")
 
+    def test_load_tts_publishes_the_first_loaded_voice_in_agent_test_mode(self) -> None:
+        """Verify agent test startup does not leave the voice button on its placeholder."""
+        ui = CeluneUI()
+        ui.safe_status = mock.Mock()
+        ui.change_input_state = mock.Mock()
+        ui.change_voice_lock_state = mock.Mock()
+        ui.tts_voice_changed = mock.Mock()
+        ui._dismiss_loading_screen = mock.Mock()
+        ui._finish_test_startup = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                load=lambda: True,
+                voices=("balanced", "bold"),
+                current_voice=None,
+                use_normalization=False,
+                backend_mode="agent_test",
+            ),
+        )
+
+        load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
+        load_tts(ui)
+
+        ui.tts_voice_changed.assert_called_once_with("balanced")
+
+    def test_finished_agent_test_reconciles_all_visible_state(self) -> None:
+        """Verify test completion refreshes logs, voice, caption, status, and locks."""
+        ui = CeluneUI()
+        ui.input_box = TextArea()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                test_finished=True,
+                current_voice=None,
+                voices=("balanced",),
+                cur_state="stopped",
+            ),
+        )
+        ui.celune_ready = True
+        ui._hide_caption_widgets = mock.Mock()
+        ui.change_input_state = mock.Mock()
+        ui.change_voice_lock_state = mock.Mock()
+        ui.tts_voice_changed = mock.Mock()
+        ui.safe_status = mock.Mock()
+        ui._refresh_logs = mock.Mock()
+
+        ui._apply_test_finished_state()
+
+        ui._hide_caption_widgets.assert_called_once_with()
+        ui.change_input_state.assert_called_once_with(locked=True)
+        ui.change_voice_lock_state.assert_called_once_with(locked=True)
+        ui.tts_voice_changed.assert_called_once_with("balanced")
+        self.assertEqual(ui.input_box.placeholder, string("ui.stopped_placeholder"))
+        ui.safe_status.assert_called_once_with(string("status.stopped"), "sleeping")
+        ui._refresh_logs.assert_called_once_with()
+        self.assertEqual(
+            ui._terminal_status_for(string("status.stopped"), "sleeping"),
+            ("stopped", string("osc.action_stopped")),
+        )
+
+    def test_log_refresh_does_not_duplicate_pending_background_message(self) -> None:
+        """Verify a refresh and its queued message render one log entry."""
+        ui = CeluneUI()
+        logs = mock.Mock()
+        logs.scroll_offset = SimpleNamespace(x=0, y=0)
+        logs.auto_scroll = True
+        ui.logs = cast(RichLog, logs)
+        ui.log_history = [("Test result", "info")]
+
+        ui._refresh_logs()
+        ui.on_uilog_message(UILogMessage("Test result", "info"))
+
+        logs.write.assert_called_once()
+        self.assertEqual(ui._rendered_log_count, 1)
+
+    def test_finished_agent_test_ignores_late_speaking_status(self) -> None:
+        """Verify late playback callbacks cannot overwrite the stopped status."""
+        ui = CeluneUI()
+        ui.status = Label()
+        ui.celune = cast(Celune, SimpleNamespace(test_finished=True))
+
+        ui.safe_status(string("status.speaking"))
+
+        self.assertNotEqual(ui._status_text, string("status.speaking"))
+
     def test_submit_text_is_noop_in_ui_test_mode(self) -> None:
         """Verify interactive fake-backend UI test mode ignores submitted input."""
         ui = CeluneUI()
@@ -2433,6 +2518,50 @@ class UIStartupTests(TestCase):
         ui._shutdown_live_vc_recording.assert_called_once_with()
         cast(mock.Mock, ui.celune.close).assert_called_once_with()
         ui.exit.assert_called_once_with()
+
+    def test_graceful_exit_survives_shutdown_exception(self) -> None:
+        """Verify a core shutdown error cannot escape the exit handler."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui._old_stderr = mock.Mock()
+        ui._shutdown_runtime = mock.Mock(
+            side_effect=RuntimeError("pipeline close failed")
+        )
+        ui.exit = mock.Mock()
+
+        ui._graceful_exit()
+
+        ui.exit.assert_called_once_with()
+        ui._old_stderr.write.assert_called_once()
+        self.assertIn("pipeline close failed", ui._old_stderr.write.call_args.args[0])
+
+    def test_runtime_shutdown_continues_after_live_input_error(self) -> None:
+        """Verify core teardown still runs when live input cleanup fails."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui.celune = cast(Celune, SimpleNamespace(close=mock.Mock()))
+        ui._shutdown_live_vc_recording = mock.Mock(
+            side_effect=RuntimeError("input close failed")
+        )
+        ui._report_shutdown_error = mock.Mock()
+
+        ui._shutdown_runtime()
+
+        cast(mock.Mock, ui.celune.close).assert_called_once_with()
+        ui._report_shutdown_error.assert_called_once()
+
+    def test_unmount_survives_shutdown_exception(self) -> None:
+        """Verify late unmount cleanup cannot turn normal exit into an app error."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui._shutdown_runtime = mock.Mock(
+            side_effect=RuntimeError("runtime close failed")
+        )
+        ui._report_shutdown_error = mock.Mock()
+
+        ui.on_unmount()
+
+        ui._report_shutdown_error.assert_called_once()
 
     def test_runtime_shutdown_is_idempotent(self) -> None:
         """Verify graceful exit and unmount close the core only once."""

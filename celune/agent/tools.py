@@ -77,3 +77,13 @@ def production_agent_tool_schemas() -> Mapping[str, AgentToolSchema]:
             available=True,
         )
     }
+
+
+def agent_test_tools() -> tuple[AgentTool, ...]:
+    """Return the single read-only tool permitted by agent test mode."""
+    return (AgentStatusTool(),)
+
+
+def agent_test_tool_schemas() -> Mapping[str, AgentToolSchema]:
+    """Return schemas for the read-only agent test tool allowlist."""
+    return {AgentStatusTool.name: production_agent_tool_schemas()[AgentStatusTool.name]}

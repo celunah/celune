@@ -2769,7 +2769,8 @@ def close(engine: Celune) -> None:
     Args:
         engine: The Celune engine to shut down.
     """
-    engine.log(string("pipeline.exiting"))
+    if not getattr(engine, "test_finished", False):
+        engine.log(string("pipeline.exiting"))
     engine._exit_requested = True
 
     with engine.queue_lock:

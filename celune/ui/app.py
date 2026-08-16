@@ -299,6 +299,7 @@ class CeluneUIThemeState:
     active_theme_name: str
     fatal_error_active: bool = False
     log_history: list[tuple[str, str]] = field(default_factory=list)
+    rendered_log_count: int = 0
     status_severity: str = "info"
     status_text: str = ""
     status_marquee_offset: int = 0
@@ -495,6 +496,7 @@ class CeluneUI(App):
     active_theme_name = _forward_ui_property("_theme_state", "active_theme_name")
     _fatal_error_active = _forward_ui_property("_theme_state", "fatal_error_active")
     log_history = _forward_ui_property("_theme_state", "log_history")
+    _rendered_log_count = _forward_ui_property("_theme_state", "rendered_log_count")
     status_severity = _forward_ui_property("_theme_state", "status_severity")
     _status_text = _forward_ui_property("_theme_state", "status_text")
     _status_marquee_offset = _forward_ui_property(
@@ -953,8 +955,18 @@ class CeluneUI(App):
         if self.celune is None:
             return False
 
+        backend_mode = getattr(self.celune, "backend_mode", None)
+        if isinstance(backend_mode, str):
+            return backend_mode == "ui_test"
         backend = getattr(self.celune, "backend", None)
         return bool(getattr(backend, "is_fake", False)) and "pytest" not in sys.modules
+
+    def _is_agent_test_mode(self) -> bool:
+        """Return whether the attached runtime is the restricted agent test mode."""
+        return bool(
+            self.celune is not None
+            and getattr(self.celune, "backend_mode", None) == "agent_test"
+        )
 
     def _finish_test_startup(
         self,
@@ -972,6 +984,29 @@ class CeluneUI(App):
                 string("test.callback_failed", error=format_error(exc, "info")),
                 "error",
             )
+        self._run_on_ui_thread(self._apply_test_finished_state)
+
+    def _apply_test_finished_state(self) -> None:
+        """Reconcile the visible UI with a completed explicit test."""
+        celune = self.celune
+        if celune is None or not getattr(celune, "test_finished", False):
+            return
+
+        self._hide_caption_widgets()
+        self.change_input_state(locked=True)
+        self.change_voice_lock_state(locked=True)
+
+        voice = getattr(celune, "current_voice", None)
+        if not isinstance(voice, str) or not voice:
+            voices = getattr(celune, "voices", ())
+            voice = voices[0] if voices else None
+        if isinstance(voice, str) and voice:
+            self.tts_voice_changed(voice)
+
+        if self.input_box is not None:
+            self.input_box.placeholder = string("ui.stopped_placeholder")
+        self.safe_status(string("status.stopped"), "sleeping")
+        self._refresh_logs()
 
     def _refresh_status(self) -> None:
         """Refresh the status color for the active theme."""
@@ -1012,6 +1047,8 @@ class CeluneUI(App):
     def _advance_status_marquee(self) -> None:
         """Advance the marquee one character for long status messages."""
         if self.status is None:
+            return
+        if self.celune is not None and getattr(self.celune, "test_finished", False):
             return
         playback_status = (
             current_playback_status(self.celune) if self.celune is not None else None
@@ -1060,6 +1097,7 @@ class CeluneUI(App):
             immediate=True,
             force=True,
         )
+        self._rendered_log_count = len(self.log_history)
 
     def _persist_log_entry(self, msg: str, severity: str) -> None:
         """Append one UI log entry to the persisted main-window log file."""
@@ -1416,6 +1454,7 @@ class CeluneUI(App):
             "generating": ("speaking", string("osc.action_generating_audio")),
             "speaking": ("speaking", string("osc.action_playing_audio")),
             "sleeping": ("sleeping", string("osc.action_idle")),
+            "stopped": ("stopped", string("osc.action_stopped")),
             "waking": ("initializing", string("osc.action_waking_up")),
             "reloading": ("reloading", string("osc.action_reloading")),
         }
@@ -1818,6 +1857,16 @@ class CeluneUI(App):
                     self.cur_state = "error"
                     self._show_loading_error(string("ui.no_voices_loaded"))
                     return
+                if self._is_agent_test_mode():
+                    self.celune_ready = True
+                    active_voice = self.celune.current_voice or self.celune_styles[0]
+                    self.tts_voice_changed(active_voice)
+                    self.change_input_state(locked=True)
+                    self.change_voice_lock_state(locked=True)
+                    self.safe_status(string("ui.agent_test_mode_active"))
+                    self._dismiss_loading_screen()
+                    self._finish_test_startup(True)
+                    return
                 self.celune_voices = itertools.cycle(self.celune_styles)
                 if self.celune.current_voice in self.celune_styles:
                     self.style_index = self.celune_styles.index(
@@ -1929,7 +1978,12 @@ class CeluneUI(App):
         sample_rate: int,
     ) -> None:
         """Refine the active caption timing from Whisper's audio timestamps."""
-        if self.cur_state == "exiting" or not caption or len(audio) <= 0:
+        if (
+            self.cur_state == "exiting"
+            or getattr(self.celune, "test_finished", False)
+            or not caption
+            or len(audio) <= 0
+        ):
             return
 
         audio_copy = np.asarray(audio, dtype=np.float32).copy()
@@ -2220,7 +2274,11 @@ class CeluneUI(App):
 
     def tts_caption(self, caption: Optional[str]) -> None:
         """Show a speech caption and reveal its words with played-audio progress."""
-        if self.cur_state == "exiting" or not caption:
+        if (
+            self.cur_state == "exiting"
+            or getattr(self.celune, "test_finished", False)
+            or not caption
+        ):
             return
 
         sentences = tuple(
@@ -2472,6 +2530,13 @@ class CeluneUI(App):
         if self.cur_state == "exiting" or self.status is None:
             return
 
+        if (
+            self.celune is not None
+            and getattr(self.celune, "test_finished", False)
+            and msg != string("status.stopped")
+        ):
+            return
+
         if severity not in colors.SEVERITY_COLORS["celune"]:
             self.safe_log(
                 f"[WARNING] Unknown severity '{severity}', defaulting to info",
@@ -2533,6 +2598,7 @@ class CeluneUI(App):
 
         if threading.current_thread() is threading.main_thread():
             self.logs.write(entry)
+            self._rendered_log_count += 1
         else:
             self.post_message(UILogMessage(msg, severity))
 
@@ -2542,10 +2608,12 @@ class CeluneUI(App):
         Args:
             message: Background log message to write to the UI.
         """
-        if self.logs is not None:
-            self.logs.write(
-                Text(message.message, style=self._severity_color(message.severity))
-            )
+        if self.logs is None or self._rendered_log_count >= len(self.log_history):
+            return
+        self.logs.write(
+            Text(message.message, style=self._severity_color(message.severity))
+        )
+        self._rendered_log_count += 1
 
     def safe_log_dev(self, msg: str, severity: str = "info") -> None:
         """Log a message.
@@ -3980,6 +4048,15 @@ class CeluneUI(App):
             self.safe_status(string("ui.test_mode_active"))
             return True
 
+        if self._is_agent_test_mode():
+            self._suppress_input_change = True
+            try:
+                self.input_box.load_text("")
+            finally:
+                self._suppress_input_change = False
+            self.safe_status(string("ui.agent_test_mode_active"))
+            return True
+
         if celune.cur_state == "waking":
             self._cancel_sleep_timer()
             self.safe_status(string("status.waking_up"))
@@ -4220,6 +4297,10 @@ class CeluneUI(App):
                 return
 
             if event.key == "ctrl+r":
+                if self._is_agent_test_mode():
+                    event.prevent_default()
+                    event.stop()
+                    return
                 if getattr(self.celune, "sleeping", False):
                     self._cancel_sleep_timer()
                     self.safe_status(string("status.waking_up"))
@@ -4255,6 +4336,9 @@ class CeluneUI(App):
 
         celune = self.celune
         if celune is None or getattr(celune, "test_finished", False):
+            return
+
+        if self._is_agent_test_mode():
             return
 
         if celune.is_in_tutorial:
@@ -4300,13 +4384,15 @@ class CeluneUI(App):
     def on_unmount(self) -> None:
         """Unload Celune."""
         self.cur_state = "exiting"
-        self._cancel_sleep_timer()
-        self._clear_caption_timers()
-        self._set_terminal_status("exiting", string("osc.action_exiting"))
-        self._shutdown_runtime()
+        self._run_shutdown_step(self._cancel_sleep_timer)
+        self._run_shutdown_step(self._clear_caption_timers)
+        self._run_shutdown_step(
+            lambda: self._set_terminal_status("exiting", string("osc.action_exiting"))
+        )
+        self._run_shutdown_step(self._shutdown_runtime)
 
         if self._runtime_log_capture_enabled:
-            self._disable_runtime_log_capture()
+            self._run_shutdown_step(self._disable_runtime_log_capture)
 
         CeluneUI._instance = None
 
@@ -4316,7 +4402,7 @@ class CeluneUI(App):
         celune = self.celune
         if celune is None:
             return
-        if getattr(celune, "test_finished", False):
+        if getattr(celune, "test_finished", False) or self._is_agent_test_mode():
             self.change_input_state(locked=True)
             self.change_voice_lock_state(locked=True)
             return
@@ -4351,7 +4437,11 @@ class CeluneUI(App):
     ) -> None:  # allow enqueuing new inputs while speaking but after generation
         """Unlock input queueing after Celune completes generation."""
         celune = self.celune
-        if celune is None or getattr(celune, "test_finished", False):
+        if (
+            celune is None
+            or getattr(celune, "test_finished", False)
+            or self._is_agent_test_mode()
+        ):
             return
         if self.cur_state in {"exiting", "error"} or not self.celune_ready:
             return
@@ -4444,8 +4534,28 @@ class CeluneUI(App):
         """Exit from Celune gracefully."""
         # Shut down the core before leaving Textual's main loop.
         self.cur_state = "exiting"
-        self._shutdown_runtime()
+        self._run_shutdown_step(self._shutdown_runtime)
         self.exit()
+
+    def _run_shutdown_step(self, callback: Callable[[], None]) -> None:
+        """Run one shutdown action without allowing cleanup to crash the UI."""
+        try:
+            callback()
+        except Exception as exc:
+            self._report_shutdown_error(exc)
+
+    def _report_shutdown_error(self, error: Exception) -> None:
+        """Write a shutdown error to the original terminal stream."""
+        stream = self._old_stderr or sys.__stderr__
+        if stream is None:
+            return
+        message = string(
+            "celune.internal_error",
+            error=format_error(error, "info"),
+        )
+        with contextlib.suppress(OSError, ValueError):
+            stream.write(f"{message}\n")
+            stream.flush()
 
     def _shutdown_runtime(self) -> None:
         """Stop live input and close the core at most once."""
@@ -4453,9 +4563,15 @@ class CeluneUI(App):
             if self._interaction_state.runtime_shutdown_complete:
                 return
             try:
-                self._shutdown_live_vc_recording()
-                if self.celune is not None:
-                    self.celune.close()
+                try:
+                    self._shutdown_live_vc_recording()
+                except Exception as exc:
+                    self._report_shutdown_error(exc)
+                try:
+                    if self.celune is not None:
+                        self.celune.close()
+                except Exception as exc:
+                    self._report_shutdown_error(exc)
             finally:
                 self._interaction_state.runtime_shutdown_complete = True
 

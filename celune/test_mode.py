@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 import threading
+import time
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Optional, cast
 
 from .agent.needle import NeedleHandler, NeedleToolSelector
-from .persona.impl import PersonaClient
 from .typing.agent import (
     AgentRoute,
     AgentTaskState,
@@ -18,28 +18,9 @@ from .typing.agent import (
     NeedleToolCall,
 )
 from .typing.common import JSON
-from .typing.persona import PersonaClientResponse
 
 if TYPE_CHECKING:
     from .celune import Celune
-
-
-class _ControlledPersonaClient:
-    """Return fixed Persona responses while preserving the production bridge."""
-
-    def __init__(self) -> None:
-        self.request_count = 0
-
-    def post(self, json: JSON) -> PersonaClientResponse:
-        """Return one action intent followed by one final response."""
-        del json
-        self.request_count += 1
-        response = (
-            "Read the current agent status."
-            if self.request_count == 1
-            else "The controlled agent test completed successfully."
-        )
-        return PersonaClientResponse({"text": response})
 
 
 class _ControlledNeedleHandler:
@@ -89,6 +70,9 @@ def _task_state(engine: Celune, task_id: Optional[str]) -> Optional[str]:
 
 def _start_agent_test_pipeline(engine: Celune) -> None:
     """Start the production speech workers for the CLI's fake backend."""
+    if not engine.backend.is_fake:
+        return
+
     playback_thread = engine.playback_thread
     if playback_thread is None or not playback_thread.is_alive():
         engine.loaded = True
@@ -104,17 +88,28 @@ def _start_agent_test_pipeline(engine: Celune) -> None:
         engine._release_pipeline()
 
 
+def _wait_for_persona(engine: Celune, timeout_seconds: float) -> None:
+    """Wait for the real Persona model to finish loading for agent test mode."""
+    deadline = time.monotonic() + timeout_seconds
+    while not engine.persona_ready:
+        if not engine.persona_loading:
+            raise RuntimeError("agent test Persona is unavailable")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("agent test Persona loading timed out")
+        time.sleep(0.1)
+
+
 def run_agent_test(
     engine: Celune,
     timeout_seconds: float = 30.0,
 ) -> JSON:
-    """Run one controlled agent task through Celune's production boundaries.
+    """Run one scripted action through Celune's production boundaries.
 
     The engine, router, runtime, permission policy, registered tool executor,
-    Needle selector adapter, Persona bridge, and speech delivery remain the
-    production implementations. Only the model responses at the Persona and
-    Needle boundaries are deterministic so this explicit test is guaranteed to
-    complete without downloading or loading a model checkpoint.
+    Persona bridge, TTS model, TTS pipeline, and speech delivery remain the
+    production implementations. The single read-only Needle selection is
+    scripted so the test cannot choose an unrelated tool. Persona still
+    produces both the action intent and final response.
 
     Args:
         engine: A loaded Celune engine instance.
@@ -128,9 +123,7 @@ def run_agent_test(
 
     task_id: Optional[str] = None
     try:
-        controlled_persona = _ControlledPersonaClient()
-        engine.vision = cast(PersonaClient, controlled_persona)
-        engine.persona_ready = True
+        _wait_for_persona(engine, timeout_seconds)
         _start_agent_test_pipeline(engine)
         selector = NeedleToolSelector(
             cast(NeedleHandler, _ControlledNeedleHandler()),

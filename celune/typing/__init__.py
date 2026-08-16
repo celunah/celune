@@ -109,7 +109,7 @@ if TYPE_CHECKING:
         VideoMetadataScalar,
         VramTier,
     )
-    from .modes import OperationMode
+    from .modes import BackendMode, OperationMode
     from .extensions import (
         GetStateCallable,
         LogCallable,
@@ -255,6 +255,7 @@ _MODULE_EXPORTS = {
     "NeedleToolParameter": "agent",
     "NeedleToolParameterSpec": "agent",
     "NeedleToolSelection": "agent",
+    "BackendMode": "modes",
     "OperationMode": "modes",
     "PersonaModel": "persona",
     "PersonaProcessor": "persona",
@@ -354,6 +355,7 @@ __all__ = [
     "BackendArguments",
     "BackendDescription",
     "BackendGeneration",
+    "BackendMode",
     "BackendModel",
     "CallerInfo",
     "CaptionCallback",

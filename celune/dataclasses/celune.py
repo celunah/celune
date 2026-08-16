@@ -38,6 +38,7 @@ from ..typing.celune import (
 )
 from ..typing.common import JSON
 from ..typing.common import JSONSerializable
+from ..typing.modes import BackendMode
 from .properties import ConstantPropertySpec, ForwardedPropertySpec
 
 
@@ -162,6 +163,7 @@ class CeluneRuntimeState:
     """Top-level lifecycle and runtime integration state."""
 
     closed: bool = False
+    backend_mode: BackendMode = "normal"
     regenerate: bool = False
     locked: bool = True
     loaded: bool = False
@@ -344,6 +346,7 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("recently_saved", "_audio_state", "recently_saved"),
     ForwardedPropertySpec("kept_sfx_audio", "_audio_state", "kept_sfx_audio"),
     ForwardedPropertySpec("regenerate", "_runtime_state", "regenerate"),
+    ForwardedPropertySpec("backend_mode", "_runtime_state", "backend_mode"),
     ForwardedPropertySpec("locked", "_runtime_state", "locked"),
     ForwardedPropertySpec("loaded", "_runtime_state", "loaded"),
     ForwardedPropertySpec("sleeping", "_runtime_state", "sleeping"),
