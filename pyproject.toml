@@ -205,24 +205,29 @@ filterwarnings = [
 ]
 
 [tool.ruff.lint]
-# These exclusions are intentional: classic typing syntax, custom import ordering,
-# and broad exception boundaries are part of Celune's current architecture.
 ignore=[
-    "UP007",   # non-pep604-annotation-union
+    # Celune does not use PEP604 typing syntax
+    "UP007",  # non-pep604-annotation-union
     "UP045",  # non-pep604-annotation-optional
+    # some traps require an `except Exception:` statement
     "BLE001",  # blind-except
+    # Celune uses a non-isort-compliant import sorting strategy
     "I001",  # unsorted imports
 ]
 
 [tool.pylint.main]
-# These exclusions cover intentional internal/test access, global runtime state,
-# broad error boundaries, lazy imports, and current class/function complexity.
 disable=[
+    # some code requires access to a protected member, e.g. Class._method()
     "W0212",  # protected-access
+    # FIXME, TODO, etc. should not cause a CI failure
     "W0511",  # fixme
+    # some code requires variables and objects to be brought in from a different scope using the `global` statement
     "W0603",  # global-statement
+    # some traps require an `except Exception:` statement
     "W0718",  # broad-exception-caught
+    # Pylint's cyclic import detection files complaints about cyclic imports that Python is able to handle just fine
     "R0401",  # cyclic-import
+    # Celune codestyle requires very large classes
     "R0902",  # too-many-instance-attributes
     "R0903",  # too-few-public-methods
     "R0904",  # too-many-public-methods
@@ -234,9 +239,13 @@ disable=[
     "R0916",  # too-many-boolean-expressions
     "R0917",  # too-many-positional-arguments
     "R1702",  # too-many-nested-blocks
+    # ML variable names often are called with "invalid names"
     "C0103",  # invalid-name
+    # some parts of Celune require a lot of lines
     "C0302",  # too-many-lines
+    # Celune lazy loads dependencies at runtime
     "C0415",  # import-outside-toplevel
+    # some dependencies may still work during runtime but fail to detect members during CI
     "I1101",  # c-extension-no-member
 ]
 
