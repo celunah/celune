@@ -48,7 +48,8 @@ void launcher_reset_terminal_state(void) {
         "\x1b[?1006l"
         "\x1b[?1015l"
         "\x1b[?1049l"
-        "\x1b[?2004l";
+        "\x1b[?2004l"
+        "\x1b[999B\r";
 
     if (saved_console_modes) {
         DWORD current_output_mode;

@@ -42,7 +42,8 @@ void launcher_reset_terminal_state(void) {
         "\033[?1006l"
         "\033[?1015l"
         "\033[?1049l"
-        "\033[?2004l";
+        "\033[?2004l"
+        "\033[999B\r";
 
     if (!saved_terminal_state_valid) {
         return;
