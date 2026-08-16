@@ -97,7 +97,7 @@ class TestFinishedLifecycleTests(TestCase):
         self.assertEqual(core.cur_state, "stopped")
         self.assertTrue(core.test_finished)
         self.assertFalse(core._closed)
-        self.assertTrue(
+        self.assertFalse(
             any(
                 args and "Test mode ui succeeded" in args[0]
                 for args, _kwargs in log.call_args_list

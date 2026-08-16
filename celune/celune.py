@@ -838,17 +838,20 @@ class Celune(CeluneStateAccessors):
             self.cur_state = "stopped"
         except Exception:
             self._runtime_state.cur_state = "stopped"
-        message_key = "test.finished_success" if success else "test.finished_failure"
-        with contextlib.suppress(Exception):
-            self.log(
-                string(
-                    message_key,
-                    mode=mode,
-                    task_state=task_state or "none",
-                    detail=detail or "none",
-                ),
-                "info" if success else "error",
+        if mode == "agent":
+            message_key = (
+                "test.finished_success" if success else "test.finished_failure"
             )
+            with contextlib.suppress(Exception):
+                self.log(
+                    string(
+                        message_key,
+                        mode=mode,
+                        task_state=task_state or "none",
+                        detail=detail or "none",
+                    ),
+                    "info" if success else "error",
+                )
         return result
 
     @staticmethod
