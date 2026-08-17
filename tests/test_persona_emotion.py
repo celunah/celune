@@ -58,11 +58,13 @@ class FakePersonaTokenizer:
         return_tensors: str,
         padding: bool = False,
         truncation: bool = False,
+        max_length: Optional[int] = None,
     ) -> BatchEncoding:
         """Return a mock batch encoding."""
         discard(return_tensors)
         discard(padding)
         discard(truncation)
+        discard(max_length)
         values = [text] if isinstance(text, str) else list(text)
         lengths = torch.tensor([[len(value), len(value) + 1] for value in values])
         return BatchEncoding(

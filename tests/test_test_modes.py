@@ -5,14 +5,28 @@ from __future__ import annotations
 
 import contextlib
 import io
-from typing import cast
+from collections.abc import Mapping, Sequence
+from typing import Optional, cast
 from unittest import TestCase, mock
 
 from celune import entrypoint
+from celune.agent.needle import NeedleHandler, NeedleToolSelector
 from celune.celune import Celune
+from celune.config import config_log_level
 from celune.i18n import string
 from celune.persona.impl import PersonaClient
 from celune.test_mode import run_agent_test
+from celune.typing.agent import (
+    AgentClassificationFailure,
+    AgentClassificationFailureKind,
+    AgentClassificationResult,
+    AgentInputClassification,
+    AgentTool,
+    AgentToolSchema,
+    AgentRoute,
+    NeedleToolCall,
+    NeedleToolCatalog,
+)
 from celune.typing.common import JSON
 from celune.typing.persona import PersonaClientResponse
 from .support import FakeBackend, FakeGlow
@@ -23,10 +37,11 @@ class _TestPersonaClient:
 
     def __init__(self) -> None:
         self.request_count = 0
+        self.requests: list[JSON] = []
 
     def post(self, json: JSON) -> PersonaClientResponse:
         """Return an action intent followed by a tool-result response."""
-        del json
+        self.requests.append(json)
         self.request_count += 1
         responses = (
             '{"classification":"task","route":"task","confidence":0.98}',
@@ -35,6 +50,37 @@ class _TestPersonaClient:
         )
         response = responses[min(self.request_count - 1, len(responses) - 1)]
         return PersonaClientResponse({"text": response})
+
+
+class _TestNeedleHandler:
+    """Use the real Needle selector adapter with deterministic model output."""
+
+    @staticmethod
+    def catalog_for_tools(
+        tools: Sequence[AgentTool],
+        *,
+        schemas: Optional[Mapping[str, AgentToolSchema]] = None,
+        available_only: bool = False,
+    ) -> NeedleToolCatalog:
+        """Build the production catalog without loading model weights."""
+        return NeedleHandler.catalog_for_tools(
+            tools,
+            schemas=schemas,
+            available_only=available_only,
+        )
+
+    def select_one_tool(
+        self,
+        query: str,
+        tools: NeedleToolCatalog,
+        max_new_tokens: int = 96,
+    ) -> NeedleToolCall:
+        """Return the one safe tool selected by this controlled adapter."""
+        del query, tools, max_new_tokens
+        return {"name": "local_current_working_directory", "arguments": {}}
+
+    def close(self) -> None:
+        """Release the controlled adapter without external model resources."""
 
 
 class TestCommandTests(TestCase):
@@ -61,6 +107,35 @@ class TestCommandTests(TestCase):
             entrypoint.handle_test(["agent"], "celune")
 
         start.assert_called_once_with(testing=True, test_mode="agent")
+
+    def test_test_mode_accepts_verbose_log_level_override(self) -> None:
+        """Forward the verbose override to the selected test runtime."""
+        with mock.patch.object(entrypoint, "start") as start:
+            entrypoint.handle_test(["agent", "--verbose"], "celune")
+
+        start.assert_called_once_with(
+            log_level="verbose",
+            testing=True,
+            test_mode="agent",
+        )
+
+    def test_test_mode_accepts_debug_log_level_override(self) -> None:
+        """Forward the debug override to the selected test runtime."""
+        with mock.patch.object(entrypoint, "start") as start:
+            entrypoint.handle_test(["ui", "--log-level=debug"], "celune")
+
+        start.assert_called_once_with(
+            log_level="debug",
+            testing=True,
+            test_mode="ui",
+        )
+
+    def test_agent_test_config_resolves_configured_log_level(self) -> None:
+        """Resolve the agent test log level from its loaded configuration."""
+        self.assertEqual(
+            config_log_level({"log_level": "verbose"}, env_name="__missing__"),
+            "verbose",
+        )
 
 
 class TestFinishedLifecycleTests(TestCase):
@@ -98,6 +173,7 @@ class TestFinishedLifecycleTests(TestCase):
         self.assertEqual(core.cur_state, "stopped")
         self.assertTrue(core.test_finished)
         self.assertFalse(core._closed)
+        self.assertFalse(core.exit_requested)
         self.assertFalse(
             any(
                 args and "Test mode ui succeeded" in args[0]
@@ -153,21 +229,102 @@ class TestFinishedLifecycleTests(TestCase):
         self.assertEqual(core.backend_mode, "agent_test")
         self.assertEqual(
             tuple(tool.name for tool in core._agent_tools),
-            ("read_agent_status", "local_system_info"),
+            ("local_current_working_directory",),
         )
-        core.vision = cast(PersonaClient, _TestPersonaClient())
+        persona = _TestPersonaClient()
+        core.vision = cast(PersonaClient, persona)
         core.persona_ready = True
-        result = run_agent_test(core)
+        selector = NeedleToolSelector(
+            cast(NeedleHandler, _TestNeedleHandler()),
+            core._agent_tools,
+            schemas=core._agent_tool_schemas,
+        )
+        with mock.patch.object(
+            NeedleToolSelector,
+            "from_pretrained",
+            return_value=selector,
+        ) as load_selector:
+            result = run_agent_test(core)
+        load_selector.assert_called_once()
 
         payload = result
         self.assertTrue(payload["success"])
         self.assertEqual(payload["mode"], "agent")
         self.assertEqual(payload["engine_state"], "stopped")
         self.assertEqual(payload["task_state"], "completed")
+        self.assertEqual(
+            persona.requests[0]["user"],
+            "Check the current working directory and report the result.",
+        )
         detail = payload["detail"]
         self.assertIsInstance(detail, str)
         assert isinstance(detail, str)
-        self.assertIn("tool=local_system_info", detail)
+        self.assertIn("tool=local_current_working_directory", detail)
         self.assertIn("status=succeeded", detail)
         self.assertEqual(core.cur_state, "stopped")
         self.assertFalse(core.say("queued after test"))
+
+    def test_agent_test_reports_no_task_detected(self) -> None:
+        """Distinguish an ordinary conversation result from a test crash."""
+        core = self._make_core()
+        route = AgentClassificationResult(
+            classification=AgentInputClassification.CONVERSATION,
+            confidence=0.98,
+            route=AgentRoute.CONVERSATION,
+        )
+        with (
+            mock.patch("celune.test_mode._wait_for_persona"),
+            mock.patch("celune.test_mode._start_agent_test_pipeline"),
+            mock.patch.object(core, "stop_live_audio"),
+            mock.patch.object(core, "route_input", return_value=route),
+        ):
+            result = run_agent_test(core)
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["detail"], "no task detected")
+
+    def test_agent_test_reports_classification_failure(self) -> None:
+        """Preserve the typed classifier failure category in the test result."""
+        core = self._make_core()
+        route = AgentClassificationResult(
+            classification=AgentInputClassification.CONVERSATION,
+            confidence=0.0,
+            route=AgentRoute.CONVERSATION,
+            failure=AgentClassificationFailure(
+                AgentClassificationFailureKind.MALFORMED_OUTPUT,
+                "invalid JSON",
+            ),
+        )
+        with (
+            mock.patch("celune.test_mode._wait_for_persona"),
+            mock.patch("celune.test_mode._start_agent_test_pipeline"),
+            mock.patch.object(core, "stop_live_audio"),
+            mock.patch.object(core, "route_input", return_value=route),
+        ):
+            result = run_agent_test(core)
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["detail"], "classification failed: malformed_output")
+
+    def test_agent_test_reports_task_detected_but_not_started(self) -> None:
+        """Distinguish a task route without a runtime task identity."""
+        core = self._make_core()
+        route = AgentClassificationResult(
+            classification=AgentInputClassification.TASK,
+            confidence=0.9,
+            task_request=core._agent_router._make_request(
+                "Check the current working directory."
+            ),
+            route=AgentRoute.TASK,
+            routing_metadata={},
+        )
+        with (
+            mock.patch("celune.test_mode._wait_for_persona"),
+            mock.patch("celune.test_mode._start_agent_test_pipeline"),
+            mock.patch.object(core, "stop_live_audio"),
+            mock.patch.object(core, "route_input", return_value=route),
+        ):
+            result = run_agent_test(core)
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["detail"], "task detected but not started")

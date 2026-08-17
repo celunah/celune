@@ -62,7 +62,7 @@ SUPPORTED_PERSONA_FILENAMES: Final[tuple[str, ...]] = (
     "examples.md",
 )
 DEFAULT_CEVOICE_PACK_SHA256: Final[str] = (
-    "926e6f439ce78d6e2262a1b5e7ae3c3c102ef656e07f102d958128cad9664f3e"
+    "0424bbd36bd14f6d7b4e150ef627de0c45d47d4bf21b8c0f670827821b528b73"
 )
 
 

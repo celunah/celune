@@ -105,10 +105,19 @@ class AgentContractTests(unittest.TestCase):
         self.assertEqual(schema.arguments[0].to_json()["type"], "string")
         json.dumps(schema.to_json())
 
+        default_config = AgentTaskConfig()
+        self.assertEqual(default_config.max_iterations, 20)
+        self.assertIsNone(default_config.max_generated_tokens)
+        self.assertEqual(default_config.context_space, 32768)
+        self.assertEqual(default_config.context_compaction_threshold, 24576)
+        self.assertIsNone(default_config.to_json()["max_generated_tokens"])
+
         with self.assertRaises(ValueError):
             AgentTaskConfig(max_iterations=0)
         with self.assertRaises(ValueError):
             AgentTaskConfig(max_generated_tokens=True)
+        with self.assertRaises(ValueError):
+            AgentTaskConfig(max_generated_tokens=0)
         with self.assertRaises(ValueError):
             AgentTask(
                 task_id="task-1",
@@ -255,6 +264,9 @@ class AgentContractTests(unittest.TestCase):
         token_task.transition(AgentTaskState.PLANNING)
         self.assertTrue(token_task.add_generated_tokens(3))
         self.assertFalse(token_task.add_generated_tokens(1))
+
+        unlimited_task = _task(AgentTaskConfig())
+        self.assertTrue(unlimited_task.add_generated_tokens(100_000))
         self.assertEqual(token_task.abort_reason, AgentAbortReason.MAX_GENERATED_TOKENS)
 
         context_task = _task(AgentTaskConfig(context_compaction_threshold=5))

@@ -453,6 +453,37 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), False)
         self.assertEqual(engine.errors, ["Celune is not currently ready"])
 
+    def test_queue_speech_normalizes_tts_text_without_changing_display_text(
+        self,
+    ) -> None:
+        """Normalize technical speech input while preserving the visible text."""
+        engine = make_pipeline_engine()
+        raw_text = r'{status: "ok"} C:\Users\user foo_bar.py'
+
+        with mock.patch(
+            "celune.pipeline.detect_language",
+            return_value={
+                "language": "en",
+                "languages": ["en"],
+                "supported": True,
+                "probabilities": {"en": 1.0},
+            },
+        ):
+            self.assertTrue(
+                pipeline.queue_speech(
+                    cast(Celune, engine),
+                    raw_text,
+                    display_text=raw_text,
+                )
+            )
+
+        request = engine.text_queue.get_nowait()
+        self.assertEqual(
+            request.text,
+            "status, ok C drive, Users, user foo underscore bar dot py",
+        )
+        self.assertEqual(request.display_text, raw_text)
+
     def test_handle_audio_input_accepts_and_ignores_audio_by_default(self) -> None:
         """Verify engine-level audio input is a safe explicit no-op in TTS mode."""
         engine = make_pipeline_engine()
@@ -1753,6 +1784,15 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         self.assertIsInstance(system_prompt, str)
         assert isinstance(system_prompt, str)
         self.assertIn("Classify the latest user input", system_prompt)
+        self.assertIn(
+            "internal routing request, not a character response", system_prompt
+        )
+        self.assertIn("Do not add a preamble", system_prompt)
+        self.assertIn("a task classification must use route task", system_prompt)
+        self.assertIn("inspect or retrieve live/local state", system_prompt)
+        self.assertIn(
+            "Judge the intended operation and target semantically", system_prompt
+        )
         messages = cast(list[JSON], payload["messages"])
         self.assertEqual(
             messages[-1],
@@ -1809,6 +1849,34 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             payload = pipeline.build_persona_request(cast(Celune, engine), "Hello")
 
         self.assertEqual(payload["quantization"], "8bit")
+
+    def test_persona_context_space_uses_agent_budget_only_for_agent_requests(
+        self,
+    ) -> None:
+        """Use the smaller VLM context for conversation and larger agent context for tasks."""
+        engine = make_pipeline_engine()
+        engine.config = {"vram": "high"}
+
+        conversation = pipeline.build_persona_request(cast(Celune, engine), "Hello")
+        self.assertEqual(conversation["context_space"], 8192)
+
+        task = AgentTask(
+            task_id="task-context",
+            session_id="session-context",
+            request=AgentRequest(request="Check the status."),
+        )
+        agent_context = AgentContext(
+            request=task.request,
+            mode="agent",
+            persona_capabilities=PersonaCapabilities(),
+            task=task,
+        )
+        agent = pipeline.build_persona_request(
+            cast(Celune, engine),
+            task.request.request,
+            agent_context=agent_context,
+        )
+        self.assertEqual(agent["context_space"], 32768)
 
     def test_persona_context_omits_voice_prompt_when_unsupported(self) -> None:
         """Verify unsupported voice prompts do not leak into Persona context."""
@@ -2233,7 +2301,10 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         self.assertIn("Aliases: Cel", prompt)
         self.assertIn("Role: Lunar guardian", prompt)
+        self.assertIn("Ground every claim in available evidence.", prompt)
+        self.assertIn("adopt the corrected meaning immediately", prompt)
         self.assertIn("Remain consistently yourself.", prompt)
+        self.assertNotIn("apply the correction immediately", prompt)
         self.assertNotIn("Celune is a quiet nocturnal presence", prompt)
         self.assertNotIn(
             "These examples demonstrate tone and conversational style", prompt

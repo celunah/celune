@@ -5,58 +5,22 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, Optional
 
-from .agent.needle import NeedleHandler, NeedleToolSelector
+from .i18n import string
 from .typing.agent import (
+    AgentClassificationResult,
     AgentRoute,
     AgentTaskState,
-    AgentTool,
     AgentToolExecutionStatus,
-    AgentToolSchema,
-    NeedleToolCatalog,
-    NeedleToolCall,
 )
 from .typing.common import JSON
 
+
+_AGENT_TEST_REQUEST = "Check the current working directory and report the result."
+
 if TYPE_CHECKING:
     from .celune import Celune
-
-
-class _ControlledNeedleHandler:
-    """Provide one deterministic Needle selection for the controlled workflow."""
-
-    def __init__(self) -> None:
-        self.closed = False
-
-    @staticmethod
-    def catalog_for_tools(
-        tools: Sequence[AgentTool],
-        *,
-        schemas: Optional[Mapping[str, AgentToolSchema]] = None,
-        available_only: bool = False,
-    ) -> NeedleToolCatalog:
-        """Reuse Needle's production catalog conversion for the test boundary."""
-        return NeedleHandler.catalog_for_tools(
-            tools,
-            schemas=schemas,
-            available_only=available_only,
-        )
-
-    def select_one_tool(
-        self,
-        query: str,
-        tools: NeedleToolCatalog,
-        max_new_tokens: int = 96,
-    ) -> NeedleToolCall:
-        """Select the registered local diagnostic without model or network work."""
-        del query, tools, max_new_tokens
-        return {"name": "local_system_info", "arguments": {}}
-
-    def close(self) -> None:
-        """Mark the controlled selector as closed."""
-        self.closed = True
 
 
 def _task_state(engine: Celune, task_id: Optional[str]) -> Optional[str]:
@@ -89,6 +53,22 @@ def _start_agent_test_pipeline(engine: Celune) -> None:
         engine._release_pipeline()
 
 
+def _agent_test_route_failure(
+    route: AgentClassificationResult, task_id: Optional[str]
+) -> Optional[str]:
+    """Describe why the controlled agent input did not start a task."""
+    if route.failure is not None:
+        return string(
+            "test.agent_classification_failed",
+            reason=route.failure.kind.value,
+        )
+    if route.route != AgentRoute.TASK:
+        return string("test.agent_no_task_detected")
+    if task_id is None:
+        return string("test.agent_task_not_started")
+    return None
+
+
 def _wait_for_persona(engine: Celune, timeout_seconds: float) -> None:
     """Wait for the real Persona model to finish loading for agent test mode."""
     deadline = time.monotonic() + timeout_seconds
@@ -108,9 +88,10 @@ def run_agent_test(
 
     The engine, router, runtime, permission policy, registered tool executor,
     Persona bridge, TTS model, TTS pipeline, and speech delivery remain the
-    production implementations. The single read-only Needle selection is
-    scripted so the test cannot choose an unrelated tool. Persona still
-    produces both the action intent and final response.
+    production implementations. The test registry contains one safe
+    read-only operation, while Needle still loads and selects it through
+    the normal model and schema-validation path. Persona still produces both
+    the action intent and final response.
 
     Args:
         engine: A loaded Celune engine instance.
@@ -126,15 +107,8 @@ def run_agent_test(
     try:
         _wait_for_persona(engine, timeout_seconds)
         _start_agent_test_pipeline(engine)
-        selector = NeedleToolSelector(
-            cast(NeedleHandler, _ControlledNeedleHandler()),
-            engine._agent_tools,
-            schemas=engine._agent_tool_schemas,
-        )
-        engine._agent_needle_selector = selector
-
         route = engine.route_input(
-            "Check the current agent status.",
+            _AGENT_TEST_REQUEST,
             persona_ready=True,
         )
         metadata = route.routing_metadata
@@ -143,11 +117,16 @@ def run_agent_test(
             if isinstance(metadata, dict) and isinstance(metadata.get("task_id"), str)
             else None
         )
-        if route.route != AgentRoute.TASK or task_id is None:
-            raise RuntimeError("agent test input did not create a task")
+        route_failure = _agent_test_route_failure(route, task_id)
+        if route_failure is not None:
+            raise RuntimeError(route_failure)
+        if task_id is None:
+            raise RuntimeError(string("test.agent_task_not_started"))
 
         delivered = engine._run_agent_route(route)
         final_state = _task_state(engine, task_id)
+        if final_state == AgentTaskState.IDLE.value:
+            raise RuntimeError(string("test.agent_task_not_started"))
         if final_state != AgentTaskState.COMPLETED.value:
             raise RuntimeError(
                 f"agent test task ended in unexpected state: {final_state or 'none'}"

@@ -17,6 +17,7 @@ from ..dataclasses.events import (
 from ..extensions.events import EventDispatcher
 from ..i18n import string
 from ..persona.capabilities import PersonaCapabilities
+from ..typing.aliases import LogLevel
 from ..typing.agent import (
     AgentAbortReason,
     AgentApprovalDecision,
@@ -269,6 +270,16 @@ class AgentRuntime:
         )
         self._last_busy: Optional[ComponentBusyResult] = None
 
+    def _log(self, message: str, *, loglevel: LogLevel = "debug") -> None:
+        """Forward agent diagnostics through Celune's configured log gate."""
+        if self._celune is None:
+            return
+        try:
+            log = self._celune.log
+        except AttributeError:
+            return
+        log(message, loglevel=loglevel)
+
     @property
     def last_busy(self) -> Optional[ComponentBusyResult]:
         """Return the latest typed component conflict, if one occurred."""
@@ -342,6 +353,10 @@ class AgentRuntime:
             task_id=task.task_id,
         )
         self._transition(task, AgentTaskState.IDLE)
+        self._log(
+            f"[AGENT] task_created task={task.task_id} session={task.session_id}",
+            loglevel="verbose",
+        )
         return task
 
     def get_task(self, task_id: str) -> AgentTask:
@@ -388,6 +403,10 @@ class AgentRuntime:
         task = self.get_task(task_id)
         if task.state != AgentTaskState.IDLE:
             raise ValueError("only idle agent tasks can start classification")
+        self._log(
+            f"[AGENT] classify_start task={task.task_id}",
+            loglevel="verbose",
+        )
         self._transition(task, AgentTaskState.CLASSIFYING)
         return task
 
@@ -396,6 +415,10 @@ class AgentRuntime:
         task = self.get_task(task_id)
         if task.state != AgentTaskState.CLASSIFYING:
             raise ValueError("only classifying agent tasks can begin work")
+        self._log(
+            f"[AGENT] classify_complete task={task.task_id}",
+            loglevel="verbose",
+        )
         self._transition(task, AgentTaskState.WORKING)
         return task
 
@@ -451,6 +474,11 @@ class AgentRuntime:
         task.permission_decision = request.permission
         self._pending_approvals[task_id] = request
         self._pending_tool_calls[task_id] = request.tool_call
+        self._log(
+            f"[AGENT] approval_requested task={task.task_id} "
+            f"tool={request.tool_call['name']} request={request.request_id}",
+            loglevel="verbose",
+        )
         self._transition(task, AgentTaskState.AWAITING_APPROVAL)
         self._emit(
             "agent_approval_requested",
@@ -485,12 +513,20 @@ class AgentRuntime:
             )
         if response.decision == AgentApprovalDecision.DENIED:
             self._pending_tool_calls.pop(task_id, None)
+            self._log(
+                f"[AGENT] approval_response task={task.task_id} decision=denied",
+                loglevel="verbose",
+            )
             reason = (
                 AgentFailureReason.PERMISSION_DENIED
                 if pending.permission is not None
                 else AgentFailureReason.APPROVAL_DENIED
             )
             return self.fail_task(task_id, reason)
+        self._log(
+            f"[AGENT] approval_response task={task.task_id} decision=approved",
+            loglevel="verbose",
+        )
         self._transition(task, AgentTaskState.WORKING)
         return task
 
@@ -509,6 +545,11 @@ class AgentRuntime:
         }:
             raise ValueError("agent choice can only pause classifying or working tasks")
         self._pending_choices[task_id] = request
+        self._log(
+            f"[AGENT] choice_requested task={task.task_id} "
+            f"request={request.request_id} options={len(request.options)}",
+            loglevel="verbose",
+        )
         self._transition(task, AgentTaskState.AWAITING_CHOICE)
         self._emit(
             "agent_choice_requested",
@@ -539,7 +580,15 @@ class AgentRuntime:
         valid_freeform = response.freeform is not None and pending.allow_freeform
         self._pending_choices.pop(task_id)
         if not valid_choice and not valid_freeform:
+            self._log(
+                f"[AGENT] choice_response task={task.task_id} decision=invalid",
+                loglevel="verbose",
+            )
             return self.fail_task(task_id, AgentFailureReason.CHOICE_UNAVAILABLE)
+        self._log(
+            f"[AGENT] choice_response task={task.task_id} decision=accepted",
+            loglevel="verbose",
+        )
         self._transition(task, AgentTaskState.WORKING)
         return task
 
@@ -551,6 +600,10 @@ class AgentRuntime:
         """Complete a working task and emit one terminal lifecycle event."""
         task = self.get_task(task_id)
         old_state = task.state
+        self._log(
+            f"[AGENT] complete task={task.task_id} state={old_state.value}",
+            loglevel="verbose",
+        )
         task.complete(metadata)
         self._after_transition(task, old_state)
         self._clear_task_state(task.task_id)
@@ -566,6 +619,16 @@ class AgentRuntime:
         """Fail an active task and preserve its typed reason and detail."""
         task = self.get_task(task_id)
         old_state = task.state
+        self._log(
+            f"[AGENT] fail task={task.task_id} state={old_state.value} "
+            f"reason={reason.value}",
+            loglevel="verbose",
+        )
+        if detail:
+            self._log(
+                f"[AGENT] failure_detail task={task.task_id} detail={detail}",
+                loglevel="debug",
+            )
         task.fail(reason, detail)
         self._after_transition(task, old_state)
         self._clear_task_state(task.task_id)
@@ -580,6 +643,11 @@ class AgentRuntime:
         """Abort an active task and preserve its typed abort reason."""
         task = self.get_task(task_id)
         old_state = task.state
+        self._log(
+            f"[AGENT] abort task={task.task_id} state={old_state.value} "
+            f"reason={reason.value}",
+            loglevel="verbose",
+        )
         task.abort(reason)
         self._after_transition(task, old_state)
         self._clear_task_state(task.task_id)
@@ -671,6 +739,11 @@ class AgentRuntime:
         task = self.get_task(task_id)
         if task.is_terminal:
             raise ValueError("cannot cancel a terminal agent task")
+        self._log(
+            f"[AGENT] cancel task={task.task_id} state={task.state.value} "
+            f"reason={reason.value}",
+            loglevel="verbose",
+        )
         self._invalidate_generation(task)
         if task.state != AgentTaskState.CANCELLING:
             self._transition(task, AgentTaskState.CANCELLING)
@@ -734,6 +807,12 @@ class AgentRuntime:
         if task.is_terminal:
             return self._terminal_output(task, callback)
 
+        self._log(
+            f"[AGENT] run_start task={task.task_id} state={task.state.value} "
+            f"generation={task.generation}",
+            loglevel="verbose",
+        )
+
         generation = task.generation
         lease: Optional[ComponentLockLease] = None
         if self._component_locks is not None:
@@ -750,6 +829,11 @@ class AgentRuntime:
                 busy = acquisition.busy
                 assert busy is not None
                 self._last_busy = busy
+                self._log(
+                    f"[AGENT] busy task={task.task_id} "
+                    f"components={','.join(component.value for component in busy.components)}",
+                    loglevel="verbose",
+                )
                 return _busy_output(busy)
             self._last_busy = None
         failure_reason = AgentFailureReason.MODEL_ERROR
@@ -786,9 +870,20 @@ class AgentRuntime:
                 call = pending_call
                 if call is None:
                     if task.iterations >= task.config.max_iterations:
+                        self._log(
+                            f"[AGENT] max_iterations task={task.task_id} "
+                            f"iterations={task.iterations}",
+                            loglevel="verbose",
+                        )
                         self.abort_task(task.task_id, AgentAbortReason.MAX_ITERATIONS)
                         return self._terminal_output(task, callback)
+                    self._log(
+                        f"[AGENT] plan_start task={task.task_id} "
+                        f"iteration={task.iterations + 1}",
+                        loglevel="verbose",
+                    )
                     output = self._validate_output(self._invoke_plan(task))
+                    self._log_output(task, "plan", output)
                     if not self._run_is_current(task, generation):
                         return self._interrupted_output(task, callback)
                     if not self._publish_output(task, output, callback, generation):
@@ -815,6 +910,12 @@ class AgentRuntime:
                     if not self._run_is_current(task, generation):
                         return self._interrupted_output(task, callback)
                     call = self._validate_tool_call(cast(JSONSerializable, selected))
+                    if call is not None:
+                        self._log(
+                            f"[AGENT] tool_selected task={task.task_id} "
+                            f"tool={call['name']} call={call['id']}",
+                            loglevel="verbose",
+                        )
                     if task.state in {
                         AgentTaskState.AWAITING_APPROVAL,
                         AgentTaskState.AWAITING_CHOICE,
@@ -834,6 +935,7 @@ class AgentRuntime:
                         self._transition(task, AgentTaskState.RESPONDING)
                         failure_reason = AgentFailureReason.MODEL_ERROR
                         response = self._validate_output(self._invoke_respond(task))
+                        self._log_output(task, "respond", response)
                         if not self._run_is_current(task, generation):
                             return self._interrupted_output(task, callback)
                         if not self._publish_output(
@@ -872,6 +974,11 @@ class AgentRuntime:
 
                 failure_reason = AgentFailureReason.TOOL_ERROR
                 self._transition(task, AgentTaskState.EXECUTING_TOOL)
+                self._log(
+                    f"[AGENT] tool_execute task={task.task_id} "
+                    f"tool={call['name']} call={call['id']}",
+                    loglevel="verbose",
+                )
                 raw_result = self._invoke_execute(task, call)
                 if not self._run_is_current(task, generation):
                     self._record_stale_tool_result(task, raw_result)
@@ -880,6 +987,11 @@ class AgentRuntime:
                     call,
                     raw_result,
                     task.permission_decision,
+                )
+                self._log(
+                    f"[AGENT] tool_result task={task.task_id} tool={call['name']} "
+                    f"status={result['status'].value}",
+                    loglevel="verbose",
                 )
                 if task.is_terminal:
                     return self._terminal_output(task, callback)
@@ -904,6 +1016,7 @@ class AgentRuntime:
                 handled = self._validate_output(
                     self._invoke_handle_result(task, result)
                 )
+                self._log_output(task, "tool_result_handled", handled)
                 if not self._run_is_current(task, generation):
                     return self._interrupted_output(task, callback)
                 if not self._publish_output(task, handled, callback, generation):
@@ -926,11 +1039,21 @@ class AgentRuntime:
                 return self._interrupted_output(task, callback)
             if task.is_terminal:
                 return self._terminal_output(task, callback)
+            self._log(
+                f"[AGENT] run_error task={task.task_id} "
+                f"reason={failure_reason.value} error={exc}",
+                loglevel="debug",
+            )
             self.fail_task(task.task_id, failure_reason, str(exc))
             return self._terminal_output(task, callback)
         finally:
             if lease is not None:
                 lease.release()
+            self._log(
+                f"[AGENT] run_end task={task.task_id} state={task.state.value} "
+                f"iterations={task.iterations}",
+                loglevel="verbose",
+            )
 
     def _authorize_tool(
         self,
@@ -952,6 +1075,11 @@ class AgentRuntime:
             self._validate_permission_evaluation(evaluation, task, validated)
         task.permission_decision = evaluation
         if evaluation.decision == AgentPermissionDecision.DENY:
+            self._log(
+                f"[AGENT] permission task={task.task_id} tool={validated['name']} "
+                f"decision={evaluation.decision.value} reason={evaluation.reason.value}",
+                loglevel="verbose",
+            )
             self.fail_task(
                 task.task_id,
                 AgentFailureReason.PERMISSION_DENIED,
@@ -968,8 +1096,18 @@ class AgentRuntime:
                 prompt=string("agent.approval_prompt", tool_name=validated["name"]),
                 permission=evaluation,
             )
+            self._log(
+                f"[AGENT] permission task={task.task_id} tool={validated['name']} "
+                f"decision={evaluation.decision.value} reason={evaluation.reason.value}",
+                loglevel="verbose",
+            )
             self.request_approval(task.task_id, request)
             return None
+        self._log(
+            f"[AGENT] permission task={task.task_id} tool={validated['name']} "
+            f"decision={evaluation.decision.value}",
+            loglevel="verbose",
+        )
         return validated if schema is not None or "tool_id" in call else call
 
     def _validated_permission_call(
@@ -1081,6 +1219,23 @@ class AgentRuntime:
             self._responder(context)
             if self._responder is not None
             else self.respond(context)
+        )
+
+    def _log_output(
+        self,
+        task: AgentTask,
+        source: str,
+        output: AgentOutput,
+    ) -> None:
+        """Log the shape of an agent output without logging prompt content."""
+        call = output["tool_call"]
+        tool_name = call["name"] if call is not None else "none"
+        response_length = len(output["response"]) if output["response"] else 0
+        self._log(
+            f"[AGENT] {source}_result task={task.task_id} tool={tool_name} "
+            f"response_length={response_length} end={output['end']} "
+            f"paused={output['paused']}",
+            loglevel="verbose",
         )
 
     def _compact_if_needed(self, task: AgentTask) -> bool:
@@ -1469,6 +1624,11 @@ class AgentRuntime:
     def _transition(self, task: AgentTask, state: AgentTaskState) -> None:
         """Apply a Phase 1 transition and publish its typed state event."""
         old_state = task.state
+        self._log(
+            f"[AGENT] transition task={task.task_id} "
+            f"old={old_state.value} new={state.value}",
+            loglevel="debug",
+        )
         task.transition(state)
         if old_state != state:
             self._after_transition(task, old_state)
@@ -1629,7 +1789,19 @@ class AgentRuntime:
         """Forward an event through the existing dispatcher when configured."""
         if self._event_dispatcher is None:
             return
+        self._log(
+            f"[AGENT] emit name={event_name} payload={type(event).__name__}",
+            loglevel="debug",
+        )
         try:
             self._event_dispatcher.emit(event_name, event)
-        except Exception:
+        except Exception as exc:
+            self._log(
+                f"[AGENT] emit_error name={event_name} error={exc}",
+                loglevel="debug",
+            )
             return
+        self._log(
+            f"[AGENT] emit_return name={event_name}",
+            loglevel="debug",
+        )

@@ -78,25 +78,12 @@ class AgentStatusTool:
 
 def agent_test_tools(engine: Optional[Celune] = None) -> tuple[AgentTool, ...]:
     """Return the narrowly allowlisted tools permitted by agent test mode."""
-    return (AgentStatusTool(),) + tuple(
-        OfflineAgentTool(engine, spec) for spec in _LOCAL_TEST_SPECS
-    )
+    return tuple(OfflineAgentTool(engine, spec) for spec in _LOCAL_TEST_SPECS)
 
 
 def agent_test_tool_schemas() -> Mapping[str, AgentToolSchema]:
     """Return schemas for the read-only agent test tool allowlist."""
-    return {
-        AgentStatusTool.name: AgentToolSchema(
-            tool_id=AgentStatusTool.name,
-            display_name="Read agent status",
-            description=AgentStatusTool.description,
-            behavior=AgentToolBehavior.READ_ONLY,
-            danger=AgentToolDangerLevel.LOW,
-            approval_required=False,
-            available=True,
-        ),
-        **_schemas_for_specs(_LOCAL_TEST_SPECS),
-    }
+    return _schemas_for_specs(_LOCAL_TEST_SPECS)
 
 
 OfflineToolHandler = Callable[["Celune", ToolCall, AgentContext], JSONSerializable]
@@ -934,6 +921,21 @@ def _local_system_info(
     }
 
 
+def _local_current_working_directory(
+    _engine: Celune, _call: ToolCall, _context: AgentContext
+) -> JSON:
+    """Return the exact resolved working directory of the tool process."""
+    try:
+        path = Path.cwd().resolve(strict=True)
+    except OSError as exc:
+        raise LocalManagementError("access_denied", str(exc)) from exc
+    if not path.is_dir():
+        raise LocalManagementError(
+            "invalid_target", "working directory is not a directory", path
+        )
+    return {"result": "success", "path": str(path), "kind": "directory"}
+
+
 def _local_discover_application(
     _engine: Celune, call: ToolCall, _context: AgentContext
 ) -> JSON:
@@ -1244,6 +1246,12 @@ _SPECS = (
 
 _LOCAL_SPECS = (
     _spec(
+        "local_current_working_directory",
+        "Current working directory",
+        "Read the exact working directory of the Celune tool process.",
+        _local_current_working_directory,
+    ),
+    _spec(
         "local_list_directory",
         "List directory",
         "List entries in one exact local directory.",
@@ -1492,7 +1500,9 @@ _LOCAL_SPECS = (
 )
 
 
-_LOCAL_TEST_SPECS = (_LOCAL_SPECS[12],)
+_LOCAL_TEST_SPECS = tuple(
+    spec for spec in _LOCAL_SPECS if spec.tool_id == "local_current_working_directory"
+)
 
 
 def _schemas_for_specs(

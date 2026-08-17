@@ -45,8 +45,17 @@ class _FakeTokenizer:
         self.calls: list[tuple[str, str]] = []
         self.eos_token_id = 7
 
-    def __call__(self, *, text: str, return_tensors: str) -> _FakeEncoded:
+    def __call__(
+        self,
+        *,
+        text: str,
+        return_tensors: str,
+        truncation: bool = False,
+        max_length: Optional[int] = None,
+    ) -> _FakeEncoded:
         """Record text-only encoding requests."""
+        discard(truncation)
+        discard(max_length)
         self.calls.append((text, return_tensors))
         return _FakeEncoded()
 

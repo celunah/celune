@@ -1054,12 +1054,56 @@ def handle_test(command_args: list[str], prog_name: str) -> None:
         print(string("test.usage", program=prog_name))
         return
 
-    if len(command_args) != 1 or command_args[0] not in {"ui", "agent"}:
+    allowed_args = {"--verbose", "-v", "--debug"}
+    value_args = [arg for arg in command_args if arg.startswith("--log-level=")]
+    mode_args = [
+        arg
+        for arg in command_args
+        if arg not in allowed_args and not arg.startswith("--log-level=")
+    ]
+    if any(
+        arg not in allowed_args
+        and arg not in {"ui", "agent"}
+        and not arg.startswith("--log-level=")
+        for arg in command_args
+    ):
         print(string("test.available_modes"))
         print(string("test.usage", program=prog_name))
         sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
 
-    start(testing=True, test_mode=command_args[0])
+    requested_levels = [
+        arg.partition("=")[2] for arg in value_args if arg.partition("=")[2]
+    ]
+    if len(requested_levels) > 1 or (
+        requested_levels
+        and normalize_log_level(requested_levels[0]) != requested_levels[0].lower()
+    ):
+        print(string("test.available_modes"))
+        print(string("test.usage", program=prog_name))
+        sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+
+    if len(mode_args) != 1 or mode_args[0] not in {"ui", "agent"}:
+        print(string("test.available_modes"))
+        print(string("test.usage", program=prog_name))
+        sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+
+    requested_log_level = (
+        requested_levels[0]
+        if requested_levels
+        else "debug"
+        if "--debug" in command_args
+        else "verbose"
+        if any(arg in {"--verbose", "-v"} for arg in command_args)
+        else None
+    )
+    if requested_log_level is None:
+        start(testing=True, test_mode=mode_args[0])
+    else:
+        start(
+            log_level=requested_log_level,
+            testing=True,
+            test_mode=mode_args[0],
+        )
 
 
 def _close_existing_celune_processes(runtime: SimpleNamespace) -> None:
@@ -1156,8 +1200,17 @@ def start(
             backend_mode = "ui_test" if active_test_mode == "ui" else "agent_test"
             test_config: Config = {}
             test_backend: Optional[str] = None
+            configured_test_config, configured_test_backend = _load_test_runtime_config(
+                runtime
+            )
+            active_log_level = normalize_log_level(
+                log_level
+                if log_level is not None
+                else config_log_level(configured_test_config)
+            )
             if active_test_mode == "agent":
-                test_config, test_backend = _load_test_runtime_config(runtime)
+                test_config = configured_test_config
+                test_backend = configured_test_backend
 
             def finish_test(
                 core: "Celune",
@@ -1187,6 +1240,7 @@ def start(
                     config=test_config,
                     backend=_load_ui_test_backend(),
                     backend_mode=backend_mode,
+                    log_level=active_log_level,
                 )
             else:
                 celune = runtime.Celune(

@@ -56,6 +56,16 @@ PERSONA_MEMORY_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 # this model is used to infer conversation emotion and derive Persona's target response mood
 PERSONA_EMOTION_MODEL = "lunahr/emotispace-128"
 
+# Persona receives a smaller ordinary conversation context while agent tasks
+# reserve the larger context needed for planning and tool-result history.
+PERSONA_CONTEXT_SPACE = 8192
+AGENT_CONTEXT_SPACE = 32768
+AGENT_CONTEXT_COMPACTION_RATIO = 0.75
+AGENT_CONTEXT_COMPACTION_THRESHOLD = int(
+    AGENT_CONTEXT_SPACE * AGENT_CONTEXT_COMPACTION_RATIO
+)
+AGENT_MAX_ITERATIONS = 20
+
 
 # These models are available to Persona, with exact revisions for each variant.
 class PersonaModelRevisions(TypedDict):

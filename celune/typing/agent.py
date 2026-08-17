@@ -7,6 +7,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import NotRequired, Optional, Protocol, TypedDict, Union, cast
 
+from ..constants import (
+    AGENT_CONTEXT_COMPACTION_THRESHOLD,
+    AGENT_CONTEXT_SPACE,
+    AGENT_MAX_ITERATIONS,
+)
 from ..persona.capabilities import PersonaCapabilities
 from .common import JSON, JSONSerializable
 from .locks import ComponentBusyResult
@@ -157,6 +162,34 @@ class AgentRoute(str, Enum):
     CHOICE_RESPONSE = "choice_response"
     CANCELLATION = "cancellation"
     INTERRUPTION = "interruption"
+
+
+class AgentClassificationFailureKind(str, Enum):
+    """Failure categories returned when semantic input classification is unavailable."""
+
+    PERSONA_UNAVAILABLE = "persona_unavailable"
+    BUSY = "busy"
+    TRANSPORT = "transport"
+    EMPTY_OUTPUT = "empty_output"
+    MALFORMED_OUTPUT = "malformed_output"
+    INVALID_SCHEMA = "invalid_schema"
+
+
+@dataclass(frozen=True)
+class AgentClassificationFailure:
+    """Typed diagnostic preserved when the classifier cannot produce a result."""
+
+    kind: AgentClassificationFailureKind
+    detail: str
+
+    def __post_init__(self) -> None:
+        """Require a concrete classifier failure detail."""
+        if not self.detail.strip():
+            raise ValueError("agent classification failure detail must not be empty")
+
+    def to_json(self) -> JSON:
+        """Serialize the classifier failure for diagnostics and event metadata."""
+        return {"kind": self.kind.value, "detail": self.detail}
 
 
 class AgentApprovalDecision(str, Enum):
@@ -320,6 +353,7 @@ class AgentClassificationResult:
     choice_id: Optional[str] = None
     choice_freeform: Optional[str] = None
     interruption_kind: Optional[AgentInterruptionKind] = None
+    failure: Optional[AgentClassificationFailure] = None
 
     def __post_init__(self) -> None:
         """Validate classification confidence and route-specific fields."""
@@ -339,6 +373,8 @@ class AgentClassificationResult:
             or self.requires_clarification
         ):
             raise ValueError("task routes require an unambiguous task request")
+        if self.failure is not None and self.route == AgentRoute.TASK:
+            raise ValueError("classifier failures cannot create task routes")
         if self.route == AgentRoute.CONVERSATION and (
             self.classification != AgentInputClassification.CONVERSATION
             or self.requires_clarification
@@ -399,6 +435,7 @@ class AgentClassificationResult:
                 if self.interruption_kind is not None
                 else None
             ),
+            "failure": self.failure.to_json() if self.failure is not None else None,
         }
 
 
@@ -466,21 +503,30 @@ class AgentPermissionEvaluation:
 class AgentTaskConfig:
     """Limits and thresholds applied to one future agent task."""
 
-    max_iterations: int = 12
-    max_generated_tokens: int = 512
-    context_compaction_threshold: int = 8192
+    max_iterations: int = AGENT_MAX_ITERATIONS
+    max_generated_tokens: Optional[int] = None
+    context_compaction_threshold: int = AGENT_CONTEXT_COMPACTION_THRESHOLD
     stuck_task_threshold: int = 3
+    context_space: int = AGENT_CONTEXT_SPACE
 
     def __post_init__(self) -> None:
         """Validate positive task limits and detection thresholds."""
         for name, value in (
             ("max_iterations", self.max_iterations),
-            ("max_generated_tokens", self.max_generated_tokens),
             ("context_compaction_threshold", self.context_compaction_threshold),
             ("stuck_task_threshold", self.stuck_task_threshold),
+            ("context_space", self.context_space),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"agent {name} must be a positive integer")
+        if self.max_generated_tokens is not None and (
+            isinstance(self.max_generated_tokens, bool)
+            or not isinstance(self.max_generated_tokens, int)
+            or self.max_generated_tokens <= 0
+        ):
+            raise ValueError(
+                "agent max_generated_tokens must be a positive integer or None"
+            )
 
     def to_json(self) -> JSON:
         """Serialize task limits into JSON-compatible data."""
@@ -489,6 +535,7 @@ class AgentTaskConfig:
             "max_generated_tokens": self.max_generated_tokens,
             "context_compaction_threshold": self.context_compaction_threshold,
             "stuck_task_threshold": self.stuck_task_threshold,
+            "context_space": self.context_space,
         }
 
 
@@ -896,7 +943,10 @@ class AgentTask:
                 raise ValueError(f"agent {name} must be a non-negative integer")
         if self.iterations > self.config.max_iterations:
             raise ValueError("agent iterations cannot exceed max_iterations")
-        if self.generated_tokens > self.config.max_generated_tokens:
+        if (
+            self.config.max_generated_tokens is not None
+            and self.generated_tokens > self.config.max_generated_tokens
+        ):
             raise ValueError(
                 "agent generated_tokens cannot exceed max_generated_tokens"
             )
@@ -969,7 +1019,10 @@ class AgentTask:
             raise ValueError("agent generated token count must be non-negative")
         if self.is_terminal:
             raise ValueError("cannot add tokens to a terminal agent task")
-        if self.generated_tokens + count > self.config.max_generated_tokens:
+        if (
+            self.config.max_generated_tokens is not None
+            and self.generated_tokens + count > self.config.max_generated_tokens
+        ):
             self.abort(AgentAbortReason.MAX_GENERATED_TOKENS)
             return False
         self.generated_tokens += count

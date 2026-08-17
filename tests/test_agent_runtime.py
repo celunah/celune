@@ -67,6 +67,7 @@ class AgentRuntimeLifecycleTests(TestCase):
         self.finished_events: list[AgentTaskFinishedEvent] = []
         self.approval_events: list[AgentApprovalRequestedEvent] = []
         self.choice_events: list[AgentChoiceRequestedEvent] = []
+        self.agent_log = mock.Mock()
         self.dispatcher = EventDispatcher(
             log_warning=lambda _message, _severity: None,
         )
@@ -78,7 +79,7 @@ class AgentRuntimeLifecycleTests(TestCase):
         self.dispatcher.subscribe("agent_task_finished", self._record_finished_event)
         self.runtime = AgentRuntime(
             event_dispatcher=self.dispatcher,
-            celune=cast("Celune", SimpleNamespace()),
+            celune=cast("Celune", SimpleNamespace(log=self.agent_log)),
         )
 
     def _record_state_event(self, event: AgentTaskStateChangedEvent) -> None:
@@ -126,6 +127,22 @@ class AgentRuntimeLifecycleTests(TestCase):
         self.assertEqual(session.task_id, task.task_id)
         self.assertEqual(self.state_events[0].old_state, AgentTaskState.QUEUED)
         self.assertEqual(self.state_events[0].new_state, AgentTaskState.IDLE)
+
+    def test_agent_diagnostics_use_the_core_log_gate(self) -> None:
+        """Forward agent lifecycle diagnostics to Celune's configured logger."""
+        task = self.runtime.create_task(self._request(), task_id="task-1")
+        self.runtime.start_task(task.task_id)
+
+        messages = [call.args[0] for call in self.agent_log.call_args_list]
+        self.assertTrue(
+            any(message.startswith("[AGENT] task_created") for message in messages)
+        )
+        transition_call = next(
+            call
+            for call in self.agent_log.call_args_list
+            if call.args[0].startswith("[AGENT] transition")
+        )
+        self.assertEqual(transition_call.kwargs["loglevel"], "debug")
 
     def test_valid_lifecycle_transitions_and_terminal_metadata(self) -> None:
         """Cover classification, work, pauses, interruption, and completion."""

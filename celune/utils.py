@@ -758,11 +758,12 @@ def raise_test() -> None:
     raise RuntimeError("testing exception")
 
 
-def normalize_special_characters(text: str) -> str:
-    """Normalize special characters in input string for TTS.
+def normalize_special_characters(text: str, *, for_tts: bool = False) -> str:
+    """Normalize special characters while optionally preparing text for TTS.
 
     Args:
         text: The text to normalize.
+        for_tts: Whether to apply speech-specific technical formatting.
 
     Returns:
         str: The normalized text.
@@ -783,4 +784,36 @@ def normalize_special_characters(text: str) -> str:
     )
 
     normalized = text.translate(special_char_mappings).replace("\x00", ": ")
-    return re.sub(r"\s{2,}", " ", normalized)
+    normalized = re.sub(r"\s{2,}", " ", normalized)
+    if not for_tts:
+        return normalized
+
+    normalized = re.sub(r"(?m)^[ \t]{0,3}#{1,6}[ \t]+", "", normalized)
+    normalized = re.sub(r"(?m)^[ \t]*>[ \t]?", "", normalized)
+    normalized = re.sub(r"(?<!\w)[*_~`]+|[*_~`]+(?!\w)", "", normalized)
+    normalized = re.sub(r'[{}\[\]()"]', " ", normalized)
+    normalized = re.sub(
+        r"(?<![A-Za-z0-9])([A-Za-z]):(?=\\)",
+        lambda match: f"{match.group(1)} drive, ",
+        normalized,
+    )
+    normalized = re.sub(r"\S+", _normalize_tts_token, normalized)
+    normalized = normalized.replace("\\", ", ")
+    normalized = normalized.replace("/", ", ")
+    normalized = normalized.replace(":", ", ")
+    normalized = normalized.replace("-", ", ")
+    normalized = re.sub(r"\s*,\s*", ", ", normalized)
+    normalized = re.sub(r"(?:,\s*){2,}", ", ", normalized)
+    return re.sub(r"\s{2,}", " ", normalized).strip()
+
+
+def _normalize_tts_token(match: re.Match[str]) -> str:
+    """Render technical token punctuation for speech without changing prose dots."""
+    token = match.group(0)
+    token_without_trailing = token.rstrip(",;:!?)]}")
+    is_technical = any(mark in token for mark in ("_", "\\", "/", ":")) or bool(
+        re.search(r"\.[A-Za-z0-9]{1,8}$", token_without_trailing)
+    )
+    if not is_technical:
+        return token
+    return token.replace("_", " underscore ").replace(".", " dot ")

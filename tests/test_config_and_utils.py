@@ -426,6 +426,34 @@ class ConfigTests(TestCase):
 class UtilsTests(TestCase):
     """Tests for lightweight common utility functions."""
 
+    def test_special_character_normalization_keeps_default_mode_and_formats_tts(
+        self,
+    ) -> None:
+        """Verify TTS-only formatting handles technical punctuation and Markdown."""
+        self.assertEqual(
+            utils.normalize_special_characters("“hello”—*world*…"),
+            '"hello": world...',
+        )
+        self.assertEqual(
+            utils.normalize_special_characters(r"C:\Users\user", for_tts=True),
+            "C drive, Users, user",
+        )
+        self.assertEqual(
+            utils.normalize_special_characters("foo_bar.py", for_tts=True),
+            "foo underscore bar dot py",
+        )
+        self.assertEqual(
+            utils.normalize_special_characters('{status: "ok"}', for_tts=True),
+            "status, ok",
+        )
+        self.assertEqual(
+            utils.normalize_special_characters(
+                "# **status** / ready - now",
+                for_tts=True,
+            ),
+            "status, ready, now",
+        )
+
     def test_format_number_handles_precision_and_non_finite_values(self) -> None:
         """Verify number formatting and invalid precision handling.
 

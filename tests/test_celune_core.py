@@ -2,6 +2,7 @@
 """Tests for Celune core behavior without real models or GPU work."""
 
 import contextlib
+import json
 import queue
 import tempfile
 import threading
@@ -1027,6 +1028,76 @@ class CeluneCoreTests(TestCase):
 
         self.assertEqual(calls, ["first queued", "second queued"])
         self.assertEqual(celune._persona_queue.empty(), True)
+
+    def test_think_worker_keeps_task_like_input_in_converse_mode(self) -> None:
+        """Keep a valid task classification on the Persona path in converse mode."""
+        celune = self._make_celune({"mode": "converse"})
+        celune.persona_ready = True
+        celune.locked = False
+        celune.cur_state = "idle"
+        celune.playback_done.set()
+        response = mock.Mock()
+        response.raise_for_status = mock.Mock()
+        response.json.return_value = {
+            "text": json.dumps(
+                {"classification": "task", "route": "task", "confidence": 0.99}
+            )
+        }
+        celune.vision = mock.Mock(post=mock.Mock(return_value=response))
+        with (
+            mock.patch.object(celune, "_wait_for_persona_playback", return_value=True),
+            mock.patch(
+                "celune.celune.think_pipeline", return_value=True
+            ) as think_pipeline,
+            mock.patch(
+                "celune.agent.routing.build_agent_classification_request",
+                return_value={"format": "test"},
+            ),
+        ):
+            self.assertTrue(celune.think("Delete the fixture."))
+            persona_thread = celune._persona_thread
+            self.assertIsNotNone(persona_thread)
+            assert persona_thread is not None
+            persona_thread.join(timeout=2)
+
+        think_pipeline.assert_called_once_with(celune, "Delete the fixture.")
+        self.assertIsNone(celune.agent_runtime.get_active_task("default"))
+
+    def test_think_in_speak_mode_does_not_invoke_persona_or_agent_routing(self) -> None:
+        """Send speak-mode input directly to speech without touching Persona."""
+        celune = self._make_celune({"mode": "speak"})
+        celune.vision = mock.Mock()
+        with mock.patch.object(celune, "say", return_value=True) as say:
+            self.assertTrue(celune.think("Speak this exactly."))
+
+        say.assert_called_once_with("Speak this exactly.")
+        celune.vision.post.assert_not_called()
+        self.assertIsNone(celune.agent_runtime.get_active_task("default"))
+
+    def test_classifier_failure_does_not_fall_through_to_persona_generation(
+        self,
+    ) -> None:
+        """Keep a Persona classifier transport error out of normal generation."""
+        celune = self._make_celune({"mode": "agent"})
+        celune.persona_ready = True
+        celune.locked = False
+        celune.cur_state = "idle"
+        celune.playback_done.set()
+        celune.vision = mock.Mock()
+        celune.vision.post.side_effect = RuntimeError("classifier transport failed")
+        with (
+            mock.patch("celune.celune.think_pipeline") as think_pipeline,
+            mock.patch.object(celune, "say", return_value=False) as say,
+        ):
+            self.assertTrue(celune.think("Delete the fixture."))
+            persona_thread = celune._persona_thread
+            self.assertIsNotNone(persona_thread)
+            assert persona_thread is not None
+            persona_thread.join(timeout=2)
+
+        think_pipeline.assert_not_called()
+        say.assert_called_once_with(i18n.string("agent.classifier_unavailable"))
+        self.assertIsNone(celune.agent_runtime.get_active_task("default"))
 
     def test_think_interrupts_active_agent_and_speech_before_queueing_input(
         self,

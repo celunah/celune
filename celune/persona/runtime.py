@@ -22,6 +22,7 @@ from transformers.tokenization_utils_base import BatchEncoding
 from ..i18n import string
 from ..constants import (
     N_A_STR,
+    PERSONA_CONTEXT_SPACE,
     PERSONA_DEFAULT_MODEL_ID,
     remote_code_model_revision,
 )
@@ -310,7 +311,7 @@ class PersonaBackend:
         output_ids = None
         new_ids = None
         try:
-            inputs = self._build_inputs(message_dicts)
+            inputs = self._build_inputs(message_dicts, request.context_space)
             model_inputs = {
                 key: cast(torch.Tensor, value) for key, value in dict(inputs).items()
             }
@@ -356,8 +357,12 @@ class PersonaBackend:
                     with contextlib.suppress(Exception):
                         torch.cuda.empty_cache()
 
-    def _build_inputs(self, messages: Sequence[ChatMessagePayload]) -> BatchEncoding:
-        """Build model inputs, including optional image and video content."""
+    def _build_inputs(
+        self,
+        messages: Sequence[ChatMessagePayload],
+        context_space: int = PERSONA_CONTEXT_SPACE,
+    ) -> BatchEncoding:
+        """Build bounded model inputs, including optional image and video content."""
         model = self.model
         if model is None:
             raise ValueError("Persona backend is not loaded")
@@ -385,6 +390,8 @@ class PersonaBackend:
                         add_generation_prompt=True,
                         return_dict=True,
                         return_tensors="pt",
+                        truncation=True,
+                        max_length=context_space,
                     )
                     return cast(BatchEncoding, encoded).to(model.device)
                 raise ValueError(
@@ -426,6 +433,8 @@ class PersonaBackend:
                 videos=processed_video_inputs,
                 video_metadata=video_metadata,
                 return_tensors="pt",
+                truncation=True,
+                max_length=context_space,
                 **video_kwargs,
             ).to(model.device)
 
@@ -436,7 +445,12 @@ class PersonaBackend:
             self.processor if self.processor is not None else tokenizer
         )
         prompt = _render_chat_prompt(renderer, messages)
-        return tokenizer(text=prompt, return_tensors="pt").to(model.device)
+        return tokenizer(
+            text=prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=context_space,
+        ).to(model.device)
 
     build_inputs = _build_inputs
 
@@ -552,6 +566,7 @@ def request_from_json(payload: dict[str, JSONSerializable]) -> GenerateRequest:
     temperature = payload.get("temperature")
     top_p = payload.get("top_p")
     repetition_penalty = payload.get("repetition_penalty")
+    context_space = payload.get("context_space")
     if isinstance(raw_messages, list):
         for item in raw_messages:
             message = _message_from_json(item)
@@ -568,6 +583,11 @@ def request_from_json(payload: dict[str, JSONSerializable]) -> GenerateRequest:
         max_new_tokens=int(max_new_tokens)
         if isinstance(max_new_tokens, (int, float))
         else 220,
+        context_space=(
+            int(context_space)
+            if isinstance(context_space, (int, float))
+            else PERSONA_CONTEXT_SPACE
+        ),
         temperature=float(temperature)
         if isinstance(temperature, (int, float))
         else 0.75,

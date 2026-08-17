@@ -10,8 +10,11 @@ from unittest import TestCase, mock
 
 from celune.agent import (
     AgentApprovalRequest,
+    AgentApprovalDecision,
+    AgentApprovalResponse,
     AgentChoiceOption,
     AgentChoiceRequest,
+    AgentClassificationFailureKind,
     AgentInputClassification,
     AgentInputRouter,
     AgentInterruptionKind,
@@ -22,6 +25,7 @@ from celune.agent import (
     AgentToolDangerLevel,
     ValidatedToolCall,
 )
+from celune.i18n import string
 from celune.typing.common import JSONSerializable
 
 if TYPE_CHECKING:
@@ -79,6 +83,26 @@ class AgentRoutingTests(TestCase):
                 self.assertEqual(result.route, AgentRoute.CONVERSATION)
         self.assertIsNone(self.runtime.get_active_task("default"))
 
+    def test_classifier_failure_logging_is_generic_only_at_normal_level(self) -> None:
+        """Keep diagnostics detailed only when verbose or debug logs are enabled."""
+        self.engine.log = mock.Mock()
+        self.engine.log_level = "info"
+        self.engine.vision = SimpleNamespace(
+            post=mock.Mock(side_effect=RuntimeError("transport detail"))
+        )
+        self.router.route("Delete the fixture.", persona_ready=True)
+        self.assertEqual(
+            self.engine.log.call_args.args[-2:],
+            (string("agent.classifier_failed_summary"), "warning"),
+        )
+
+        self.engine.log.reset_mock()
+        self.engine.log_level = "debug"
+        self.router.route("Delete the fixture.", persona_ready=True)
+        message = self.engine.log.call_args.args[0]
+        self.assertIn("transport", message)
+        self.assertEqual(self.engine.log.call_args.kwargs["loglevel"], "verbose")
+
     def test_direct_action_creates_idle_task_without_execution(self) -> None:
         """Create a typed task while leaving the execution loop untouched."""
         self._set_classifier(
@@ -104,14 +128,189 @@ class AgentRoutingTests(TestCase):
         self.assertEqual(task.state, AgentTaskState.IDLE)
         execute_tool.assert_not_called()
 
+    def test_valid_low_confidence_task_is_not_downgraded_to_conversation(
+        self,
+    ) -> None:
+        """Honor an explicit task decision when its request is structurally valid."""
+        self._set_classifier(
+            {
+                "classification": "task",
+                "route": "task",
+                "confidence": 0.51,
+                "task_request": "Check the current working directory.",
+                "requires_clarification": False,
+            }
+        )
+
+        result = self.router.route(
+            "Check the current working directory.",
+            persona_ready=True,
+        )
+
+        self.assertEqual(result.classification, AgentInputClassification.TASK)
+        self.assertEqual(result.route, AgentRoute.TASK)
+        self.assertIsNotNone(self.runtime.get_active_task("default"))
+
+    def test_agent_test_backend_routes_even_when_operation_mode_is_conversation(
+        self,
+    ) -> None:
+        """Let the restricted agent test backend reach semantic task routing."""
+        self.engine.mode = "converse"
+        self.engine.backend_mode = "agent_test"
+        self._set_classifier(
+            {
+                "classification": "task",
+                "route": "task",
+                "confidence": 0.99,
+                "task_request": "Tell me the current working directory.",
+            }
+        )
+
+        result = self.router.route(
+            "Tell me the current working directory.",
+            persona_ready=True,
+        )
+
+        self.assertEqual(result.route, AgentRoute.TASK)
+        self.assertIsNotNone(self.runtime.get_active_task("default"))
+
     def test_classifier_unavailable_keeps_input_on_conversation_path(self) -> None:
         """Do not infer a task when the semantic classifier is unavailable."""
         result = self.router.route("Please handle this")
 
         self.assertEqual(result.route, AgentRoute.CONVERSATION)
         self.assertFalse(result.requires_clarification)
+        self.assertIsNotNone(result.failure)
+        assert result.failure is not None
+        self.assertEqual(
+            result.failure.kind,
+            AgentClassificationFailureKind.PERSONA_UNAVAILABLE,
+        )
         self.assertIsNone(result.task_request)
         self.assertIsNone(self.runtime.get_active_task("default"))
+
+    def test_classifier_failures_are_observable_and_fail_closed(self) -> None:
+        """Reject malformed, empty, and failed Persona classifier responses."""
+        cases = (
+            (
+                SimpleNamespace(
+                    json=lambda: {"text": "not json"},
+                ),
+                AgentClassificationFailureKind.MALFORMED_OUTPUT,
+            ),
+            (
+                SimpleNamespace(json=lambda: {"text": ""}),
+                AgentClassificationFailureKind.EMPTY_OUTPUT,
+            ),
+        )
+        for response, expected_kind in cases:
+            with self.subTest(expected_kind=expected_kind):
+                response.raise_for_status = mock.Mock()
+                self.engine.vision = SimpleNamespace(
+                    post=mock.Mock(side_effect=(response, response))
+                )
+                result = self.router.route("Delete the fixture.", persona_ready=True)
+                self.assertEqual(result.route, AgentRoute.CONVERSATION)
+                self.assertIsNotNone(result.failure)
+                assert result.failure is not None
+                self.assertEqual(result.failure.kind, expected_kind)
+                self.assertIsNone(self.runtime.get_active_task("default"))
+
+        self.engine.vision = SimpleNamespace(
+            post=mock.Mock(side_effect=RuntimeError("Persona transport failed"))
+        )
+        result = self.router.route("Delete the fixture.", persona_ready=True)
+        self.assertEqual(result.route, AgentRoute.CONVERSATION)
+        self.assertIsNotNone(result.failure)
+        assert result.failure is not None
+        self.assertEqual(
+            result.failure.kind,
+            AgentClassificationFailureKind.TRANSPORT,
+        )
+        self.assertIsNone(self.runtime.get_active_task("default"))
+
+    def test_malformed_output_gets_one_repair_request_through_persona(self) -> None:
+        """Retry one malformed VLM response without changing the routing boundary."""
+        first = SimpleNamespace(
+            raise_for_status=mock.Mock(),
+            json=lambda: {"text": "I will take care of that."},
+        )
+        second = SimpleNamespace(
+            raise_for_status=mock.Mock(),
+            json=lambda: {
+                "text": json.dumps(
+                    {
+                        "classification": "task",
+                        "route": "task",
+                        "confidence": 0.97,
+                        "task_request": "Delete the fixture.",
+                    }
+                )
+            },
+        )
+        self.engine.vision = SimpleNamespace(
+            post=mock.Mock(side_effect=(first, second))
+        )
+
+        result = self.router.route("Delete the fixture.", persona_ready=True)
+
+        self.assertEqual(result.route, AgentRoute.TASK)
+        self.assertEqual(self.engine.vision.post.call_count, 2)
+        second_request = self.engine.vision.post.call_args_list[1].kwargs["json"]
+        messages = second_request["messages"]
+        self.assertIsInstance(messages, list)
+        assert isinstance(messages, list)
+        first_message = messages[0]
+        self.assertIsInstance(first_message, dict)
+        assert isinstance(first_message, dict)
+        content = first_message.get("content")
+        self.assertIsInstance(content, str)
+        assert isinstance(content, str)
+        self.assertIn("previous routing output was rejected", content)
+
+    def test_incompatible_new_task_route_gets_one_schema_repair(self) -> None:
+        """Repair a task classification that incorrectly uses a follow-up route."""
+        first = SimpleNamespace(
+            raise_for_status=mock.Mock(),
+            json=lambda: {
+                "text": json.dumps(
+                    {
+                        "classification": "task",
+                        "route": "task_input",
+                        "confidence": 0.98,
+                    }
+                )
+            },
+        )
+        second = SimpleNamespace(
+            raise_for_status=mock.Mock(),
+            json=lambda: {
+                "text": json.dumps(
+                    {
+                        "classification": "task",
+                        "route": "task",
+                        "confidence": 0.98,
+                        "task_request": "Check the current working directory.",
+                    }
+                )
+            },
+        )
+        self.engine.vision = SimpleNamespace(
+            post=mock.Mock(side_effect=(first, second))
+        )
+
+        result = self.router.route(
+            "Tell me the current working directory.",
+            persona_ready=True,
+        )
+
+        self.assertEqual(result.route, AgentRoute.TASK)
+        self.assertEqual(self.engine.vision.post.call_count, 2)
+        second_request = self.engine.vision.post.call_args_list[1].kwargs["json"]
+        system = second_request["system"]
+        self.assertIsInstance(system, str)
+        assert isinstance(system, str)
+        self.assertIn("use classification task and route task exactly", system)
 
     def test_ambiguous_request_asks_for_clarification(self) -> None:
         """Do not guess that an underspecified request is a tool request."""
@@ -280,10 +479,17 @@ class AgentRoutingTests(TestCase):
         approval_steering = self.router.route(
             "Only use the read-only status tool.", persona_ready=True
         )
-        self.assertEqual(approval_steering.route, AgentRoute.TASK_INPUT)
-        self.assertEqual(task.state, AgentTaskState.PLANNING)
-        self.assertIsNone(self.runtime.get_pending_approval(task.task_id))
+        self.assertEqual(approval_steering.route, AgentRoute.CLARIFICATION)
+        self.assertEqual(task.state, AgentTaskState.AWAITING_APPROVAL)
+        self.assertIsNotNone(self.runtime.get_pending_approval(task.task_id))
 
+        self.runtime.respond_to_approval(
+            task.task_id,
+            AgentApprovalResponse(
+                "approval-2",
+                decision=AgentApprovalDecision.APPROVED,
+            ),
+        )
         self.runtime.request_choice(
             task.task_id,
             AgentChoiceRequest(
@@ -296,9 +502,9 @@ class AgentRoutingTests(TestCase):
         choice_steering = self.router.route(
             "Keep the response short and factual.", persona_ready=True
         )
-        self.assertEqual(choice_steering.route, AgentRoute.TASK_INPUT)
-        self.assertEqual(task.state, AgentTaskState.PLANNING)
-        self.assertIsNone(self.runtime.get_pending_choice(task.task_id))
+        self.assertEqual(choice_steering.route, AgentRoute.CLARIFICATION)
+        self.assertEqual(task.state, AgentTaskState.AWAITING_CHOICE)
+        self.assertIsNotNone(self.runtime.get_pending_choice(task.task_id))
 
     def test_cancellation_and_interruption_route_to_active_task(self) -> None:
         """Route explicit cancellation and interruption without conversation."""

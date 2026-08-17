@@ -85,7 +85,11 @@ from .extensions.manager import CeluneExtensionManager
 from .i18n import get_system_locale, set_locale, string
 from .locks import ComponentLockLease
 from .modeling import load_normalizer_components, normalizer_device
-from .modes import OperationMode, resolve_operation_mode
+from .modes import (
+    OperationMode,
+    mode_allows_persona,
+    resolve_operation_mode,
+)
 from .paths import project_root, temp_data_dir
 from .persona.impl import (
     PersonaClient,
@@ -133,6 +137,7 @@ from .pipeline import (
     think as think_pipeline,
 )
 from .runtime import log_runtime_banner, validate_runtime
+from .typing.agent import AgentClassificationFailureKind
 from .typing.agent import AgentClassificationResult
 from .typing.agent import AgentContext
 from .typing.agent import AgentInterruption
@@ -830,18 +835,7 @@ class Celune(CeluneStateAccessors):
             with contextlib.suppress(Exception):
                 self.agent_runtime.cancel_task(active_task.task_id)
 
-        try:
-            close_pipeline(self)
-        except Exception as exc:
-            cleanup_errors.append(str(exc))
-        finally:
-            persona_thread = self._persona_thread
-            if (
-                persona_thread is not None
-                and persona_thread is not threading.current_thread()
-            ):
-                with contextlib.suppress(Exception):
-                    persona_thread.join(timeout=2)
+        cleanup_errors.extend(self._stop_test_runtime())
 
         if cleanup_errors:
             success = False
@@ -874,6 +868,61 @@ class Celune(CeluneStateAccessors):
                     "info" if success else "error",
                 )
         return result
+
+    def _stop_test_runtime(self) -> list[str]:
+        """Stop test-owned workers without entering normal process shutdown."""
+        errors: list[str] = []
+        try:
+            with self.queue_lock:
+                self._speech_generation = getattr(self, "_speech_generation", 0) + 1
+                self._playback_generation = getattr(self, "_playback_generation", 0) + 1
+                self.utterance_force_stop.set()
+                clear_queue(self.text_queue)
+                clear_queue(self.audio_queue)
+                self.text_queue.put(self.sentinel)
+                self.audio_queue.put(self.sentinel)
+        except Exception as exc:
+            errors.append(str(exc))
+
+        try:
+            close_stream(self, abort=True)
+        except Exception as exc:
+            errors.append(str(exc))
+
+        current_thread = threading.current_thread()
+        for worker in (self.generation_thread, self.playback_thread):
+            if worker is not None and worker is not current_thread:
+                try:
+                    worker.join(timeout=2)
+                except Exception as exc:
+                    errors.append(str(exc))
+
+        persona_thread = self._persona_thread
+        if persona_thread is not None and persona_thread is not current_thread:
+            try:
+                persona_thread.join(timeout=2)
+            except Exception as exc:
+                errors.append(str(exc))
+
+        try:
+            self._close_agent_tool_selector()
+        except Exception as exc:
+            errors.append(str(exc))
+
+        try:
+            self.component_locks.release_all()
+            self._pipeline_lock_owner = None
+            self.locked = True
+            self.playback_done.set()
+        except Exception as exc:
+            errors.append(str(exc))
+
+        try:
+            self.glow.leave()
+            self.glow.finished.wait(timeout=5)
+        except Exception as exc:
+            errors.append(str(exc))
+        return errors
 
     @staticmethod
     def _noop_message(
@@ -3637,6 +3686,8 @@ class Celune(CeluneStateAccessors):
         """
         if self.test_finished or self.backend_mode == "agent_test":
             return False
+        if not mode_allows_persona(self.mode):
+            return self.say(text)
         if self.input_mode != "text_to_speech":
             self.log(string("celune.text_input_unavailable_vc"), "warning")
             self.error_callback(string("celune.not_possible"))
@@ -3774,6 +3825,15 @@ class Celune(CeluneStateAccessors):
                     vision = self.vision
 
                 route = self.route_input(text, persona_ready=persona_ready)
+                if route.failure is not None:
+                    can_prepare_persona = (
+                        route.failure.kind
+                        == AgentClassificationFailureKind.PERSONA_UNAVAILABLE
+                        and not persona_ready
+                    )
+                    if not can_prepare_persona:
+                        self.say(string("agent.classifier_unavailable"))
+                        continue
                 if route.route == AgentRoute.CLARIFICATION:
                     clarification = route.clarification_prompt
                     if clarification:

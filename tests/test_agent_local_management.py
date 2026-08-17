@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import cast
-from unittest import TestCase
+from unittest import TestCase, mock
 
 from celune.agent.tools import (
     OfflineAgentTool,
@@ -43,6 +43,7 @@ class LocalManagementToolTests(TestCase):
         """Every local tool has identity, arguments, availability, and danger metadata."""
         schemas = local_management_tool_schemas()
         expected = {
+            "local_current_working_directory",
             "local_list_directory",
             "local_file_metadata",
             "local_read_text",
@@ -70,6 +71,24 @@ class LocalManagementToolTests(TestCase):
             self.assertEqual(schema.to_json()["tool_id"], schema.tool_id)
             if schema.behavior.value == "mutating":
                 self.assertTrue(schema.approval_required)
+
+    def test_current_working_directory_returns_the_resolved_process_directory(
+        self,
+    ) -> None:
+        """The read-only diagnostic reports the exact resolved current directory."""
+        directory = Path.cwd().resolve()
+        with mock.patch("celune.agent.tools.Path.cwd", return_value=directory):
+            result = self._tool("local_current_working_directory").execute(
+                {
+                    "id": "cwd",
+                    "name": "local_current_working_directory",
+                    "arguments": {},
+                },
+                self._context(),
+            )
+        self.assertEqual(result["status"], AgentToolExecutionStatus.SUCCEEDED)
+        output = cast(dict[str, object], result["output"])
+        self.assertEqual(output["path"], str(directory))
 
     def test_local_filesystem_operations_use_exact_absolute_paths(self) -> None:
         """Read and write operations report exact targets and reject ambiguous paths."""

@@ -23,7 +23,12 @@ if TYPE_CHECKING:
 
 type Role = Literal["system", "user", "assistant"]
 type VisionInput = Union[JSONSerializable, torch.Tensor, bytes, memoryview]
-type ProcessorKwargValue = Union[VideoMetadataScalar, Sequence[VideoMetadataScalar]]
+type ProcessorKwargValue = Union[
+    VideoMetadataScalar,
+    Sequence[VideoMetadataScalar],
+    bool,
+    int,
+]
 type ModelGenerateKwargValue = Union[torch.Tensor, int, float, bool]
 type WhisperScalar = Union[int, float, np.number, torch.Tensor]
 type WhisperTokenValues = Union[Sequence[WhisperScalar], torch.Tensor, npt.NDArray]
@@ -104,6 +109,8 @@ class ChatTemplateRenderer(Protocol):
         add_generation_prompt: bool = True,
         return_dict: bool = True,
         return_tensors: str = "pt",
+        truncation: bool = False,
+        max_length: Optional[int] = None,
     ) -> Union[str, BatchEncoding]:
         """Render or tokenize a chat conversation.
 
@@ -113,6 +120,8 @@ class ChatTemplateRenderer(Protocol):
             add_generation_prompt: Whether to append an assistant generation turn.
             return_dict: Whether structured tensor output should be returned.
             return_tensors: Tensor backend requested by the caller.
+            truncation: Whether to truncate tokenized input.
+            max_length: Maximum number of input tokens when truncating.
 
         Raises:
             NotImplementedError: If `NotImplementedError` needs to be raised.
@@ -132,6 +141,7 @@ class PersonaTokenizer(Protocol):
         return_tensors: str,
         padding: bool = False,
         truncation: bool = False,
+        max_length: Optional[int] = None,
     ) -> BatchEncoding:
         """Tokenize text into a batch encoding."""
         raise NotImplementedError("protocol not defined")

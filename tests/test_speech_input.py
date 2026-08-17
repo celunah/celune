@@ -205,6 +205,34 @@ class SpeechInputTests(TestCase):
         transcriber.transcribe.return_value = "hello there"
 
         with (
+            mock.patch("celune.ui.app._load_ui_runtime_dependencies"),
+            mock.patch(
+                "celune.ui.app.sd",
+                SimpleNamespace(InputStream=FakeInputStream),
+                create=True,
+            ),
+            mock.patch("celune.ui.app.np", np, create=True),
+            mock.patch(
+                "celune.ui.app.persona_talkback_enabled",
+                return_value=True,
+                create=True,
+            ),
+            mock.patch(
+                "celune.ui.app.persona_config",
+                return_value={
+                    "speech_model_id": "fixture/whisper",
+                    "speech_end_delay_seconds": 0,
+                },
+                create=True,
+            ),
+            mock.patch(
+                "celune.ui.app.vc_vad_hangover_frames", return_value=0, create=True
+            ),
+            mock.patch(
+                "celune.ui.app.PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS",
+                PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
+                create=True,
+            ),
             mock.patch.object(
                 ui,
                 "call_from_thread",
@@ -221,11 +249,16 @@ class SpeechInputTests(TestCase):
                     },
                 ),
             ),
-            mock.patch("celune.ui.app.sd.InputStream", FakeInputStream),
             mock.patch(
-                "celune.ui.app.create_live_voice_activity_detector", return_value=vad
+                "celune.ui.app.create_live_voice_activity_detector",
+                return_value=vad,
+                create=True,
             ),
-            mock.patch("celune.ui.app.WhisperTranscriber", return_value=transcriber),
+            mock.patch(
+                "celune.ui.app.WhisperTranscriber",
+                return_value=transcriber,
+                create=True,
+            ),
         ):
             self.assertEqual(ui._start_persona_recording(), True)
             worker = ui._persona_recording_worker
@@ -292,6 +325,34 @@ class SpeechInputTests(TestCase):
         monotonic_values = iter((0.0, 0.0, PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS))
 
         with (
+            mock.patch("celune.ui.app._load_ui_runtime_dependencies"),
+            mock.patch(
+                "celune.ui.app.sd",
+                SimpleNamespace(InputStream=FakeInputStream),
+                create=True,
+            ),
+            mock.patch("celune.ui.app.np", np, create=True),
+            mock.patch(
+                "celune.ui.app.persona_talkback_enabled",
+                return_value=True,
+                create=True,
+            ),
+            mock.patch(
+                "celune.ui.app.persona_config",
+                return_value={
+                    "speech_model_id": "fixture/whisper",
+                    "speech_end_delay_seconds": 0,
+                },
+                create=True,
+            ),
+            mock.patch(
+                "celune.ui.app.vc_vad_hangover_frames", return_value=0, create=True
+            ),
+            mock.patch(
+                "celune.ui.app.PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS",
+                PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
+                create=True,
+            ),
             mock.patch.object(
                 ui,
                 "call_from_thread",
@@ -308,11 +369,16 @@ class SpeechInputTests(TestCase):
                     },
                 ),
             ),
-            mock.patch("celune.ui.app.sd.InputStream", FakeInputStream),
             mock.patch(
-                "celune.ui.app.create_live_voice_activity_detector", return_value=vad
+                "celune.ui.app.create_live_voice_activity_detector",
+                return_value=vad,
+                create=True,
             ),
-            mock.patch("celune.ui.app.WhisperTranscriber", return_value=transcriber),
+            mock.patch(
+                "celune.ui.app.WhisperTranscriber",
+                return_value=transcriber,
+                create=True,
+            ),
             mock.patch(
                 "celune.ui.app.time.monotonic",
                 side_effect=lambda: next(
