@@ -41,7 +41,7 @@ def main(arguments: Optional[list[str]] = None) -> int:
         print("Usage: ci_warnings.py -- command [args ...]", file=sys.stderr)
         return 2
 
-    process = subprocess.Popen(
+    process = subprocess.Popen(  # pylint: disable=R1732
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

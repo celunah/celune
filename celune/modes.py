@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Optional
+from typing import Optional, cast
 
 from .config import config_value
 from .typing.common import JSONSerializable
@@ -47,7 +47,8 @@ def resolve_operation_mode(
             resolved = normalized
             if resolved == "agent" and AGENT_MODE_REDIRECT_TARGET is not None:
                 return AGENT_MODE_REDIRECT_TARGET
-            return resolved
+            # HACK: Pyrefly's type inference is flaky here, and may randomly turn OperationMode into str
+            return cast(OperationMode, resolved)  # type: ignore[redundant-cast]
         else:
             raise ValueError(f"unknown Celune operation mode: '{candidate}'")
 

@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from ctypes import wintypes
-from typing import cast
+from typing import cast, Optional
 
 
 TIMEOUT = 600
@@ -65,8 +65,11 @@ class _JobObjectExtendedLimitInformation(ctypes.Structure):
     ]
 
 
-def _windows_kernel32() -> ctypes.CDLL:
+def _windows_kernel32() -> Optional[ctypes.CDLL]:
     """Return a configured Windows kernel API handle."""
+    if not hasattr(ctypes, "WinDLL"):
+        return None
+
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
@@ -75,10 +78,13 @@ def _windows_kernel32() -> ctypes.CDLL:
 
 def _attach_windows_job(process: subprocess.Popen[str]) -> None:
     """Attach a Windows process tree to a kill-on-close job object."""
-    if os.name != "nt":
+    kernel32 = _windows_kernel32()
+    if kernel32 is None:
         return
 
-    kernel32 = _windows_kernel32()
+    if not hasattr(ctypes, "WinError") or not hasattr(ctypes, "get_last_error"):
+        return
+
     kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
     kernel32.CreateJobObjectW.restype = wintypes.HANDLE
     kernel32.SetInformationJobObject.argtypes = [
@@ -121,18 +127,29 @@ def _attach_windows_job(process: subprocess.Popen[str]) -> None:
 
 def _close_windows_job(process: subprocess.Popen[str]) -> bool:
     """Close the process job, killing its descendants when configured."""
-    job_handle = getattr(process, _JOB_HANDLE_ATTRIBUTE, None)
-    if job_handle is None or os.name != "nt":
+    if os.name != "nt":
         return False
 
+    job_handle = getattr(process, _JOB_HANDLE_ATTRIBUTE, None)
+    if job_handle is None:
+        return False
+
+    kernel32 = _windows_kernel32()
+    if kernel32 is None:
+        return False
+
+    close_handle = getattr(kernel32, "CloseHandle", None)
     setattr(process, _JOB_HANDLE_ATTRIBUTE, None)
-    return bool(_windows_kernel32().CloseHandle(job_handle))
+
+    if close_handle is not None:
+        return bool(close_handle(job_handle))
+    return False
 
 
 def _start_process() -> subprocess.Popen[str]:
     """Start the Poe CI task while keeping console interrupts visible to the runner."""
     if os.name == "nt":
-        process = subprocess.Popen(POE_COMMAND, text=True)
+        process = subprocess.Popen(POE_COMMAND, text=True)  # pylint: disable=R1732
         with suppress(OSError):
             _attach_windows_job(process)
         return process
