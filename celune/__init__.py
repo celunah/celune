@@ -14,21 +14,15 @@ Only construct :class:`Celune` and its UI classes once per process. Creating mul
 instances can exhaust GPU resources and is not a supported usage pattern.
 """
 
-import contextlib as _contextlib
 import sys as _sys
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Union
 
 from ._version import REVISION, __version__
 from .constants import APP_NAME
-from .paths import (
-    configure_huggingface_cache_environment,
-    configure_huggingface_runtime,
-)
+from .paths import configure_huggingface_cache_environment
 
-with _contextlib.suppress(ModuleNotFoundError):
-    configure_huggingface_cache_environment()
-    configure_huggingface_runtime()
+configure_huggingface_cache_environment()
 
 if TYPE_CHECKING:
     from .celune import Celune

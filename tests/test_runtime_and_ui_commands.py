@@ -62,6 +62,7 @@ class RuntimeTests(TestCase):
                     "from celune import entrypoint; "
                     "entrypoint._load_runtime(); "
                     "assert 'torch' not in sys.modules; "
+                    "assert 'transformers' not in sys.modules; "
                     "assert 'celune.celune' not in sys.modules; "
                     "assert 'celune.ui.app' not in sys.modules"
                 ),

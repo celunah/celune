@@ -24,7 +24,12 @@ from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCod
 from celune.config import config_log_level, normalize_log_level
 from celune.i18n import string
 from celune.watchdog import launcher_loss_requested, start_watchdog
-from celune.paths import migrate_legacy_app_data, project_root, running_compiled
+from celune.paths import (
+    configure_huggingface_runtime,
+    migrate_legacy_app_data,
+    project_root,
+    running_compiled,
+)
 from celune.terminal import set_terminal_title
 from celune.typing.common import Config
 from celune.updater import apply_update_and_restart
@@ -250,6 +255,7 @@ def _load_core_runtime() -> SimpleNamespace:
         return runtime
 
     try:
+        configure_huggingface_runtime()
         from celune.celune import Celune
         from celune.ui import (
             CeluneHeadlessBaseUI,
