@@ -26,6 +26,7 @@ from celune.agent.contracts import (
     AgentTask,
     AgentTaskConfig,
     AgentTaskState,
+    AgentTerminalOutcome,
     AgentToolArgumentSchema,
     AgentToolBehavior,
     AgentToolDangerLevel,
@@ -177,6 +178,13 @@ class AgentContractTests(unittest.TestCase):
             "status": AgentToolExecutionStatus.SUCCEEDED,
         }
         self.assertEqual(execution_result["status"], AgentToolExecutionStatus.SUCCEEDED)
+        terminal = AgentTerminalOutcome(
+            state=AgentTaskState.ABORTED,
+            abort_reason=AgentAbortReason.MAX_ITERATIONS,
+            metadata={"iterations": 20},
+        )
+        self.assertEqual(terminal.to_json()["abort_reason"], "max_iterations")
+        json.dumps(terminal.to_json())
 
         with self.assertRaises(ValueError):
             AgentRequest(request=" ")

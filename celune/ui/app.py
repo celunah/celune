@@ -477,6 +477,7 @@ class CeluneUI(App):
         self,
         startup_loader: Optional[Callable[[], Celune]] = None,
         startup_messages: Optional[list[str]] = None,
+        startup_log_level: LogLevel = "info",
         test_completion_callback: Optional[
             Callable[[Celune, bool, Optional[str]], None]
         ] = None,
@@ -515,6 +516,7 @@ class CeluneUI(App):
         self._loading_screen: Optional[CeluneLoadingScreen] = None
         self._startup_loader = startup_loader
         self._startup_messages = list(startup_messages or [])
+        self._startup_log_level = startup_log_level
         self._test_completion_callback = test_completion_callback
         self._runtime_intervals_started = False
         self._windows_signal_handler: Optional[Callable[[int], bool]] = None
@@ -2179,8 +2181,9 @@ class CeluneUI(App):
         words: tuple[str, ...],
         segments: tuple[WhisperSegment, ...],
         audio_duration: float,
+        timing_words: Optional[tuple[str, ...]] = None,
     ) -> tuple[tuple[float, float], ...]:
-        """Map Whisper word timestamps onto the displayed caption words."""
+        """Map normalized speech timestamps onto displayed caption words."""
         if not words or not segments or audio_duration <= 0.0:
             return ()
 
@@ -2196,9 +2199,10 @@ class CeluneUI(App):
         def normalize(value: str) -> str:
             return re.sub(r"[^\w]+", "", value.casefold())
 
-        caption_keys = [normalize(word) for word in words]
+        matching_words = timing_words if timing_words is not None else words
+        caption_keys = [normalize(word) for word in matching_words]
         whisper_keys = [normalize(word.text) for word in whisper_words]
-        assigned: list[Optional[int]] = [None] * len(words)
+        assigned: list[Optional[int]] = [None] * len(matching_words)
         whisper_index = 0
         for caption_index, caption_key in enumerate(caption_keys):
             if not caption_key:
@@ -2212,7 +2216,7 @@ class CeluneUI(App):
                     whisper_index = candidate + 1
                     break
 
-        ranges: list[tuple[float, float]] = []
+        timing_ranges: list[tuple[float, float]] = []
         for index, assigned_index in enumerate(assigned):
             if assigned_index is None:
                 assigned_index = round(
@@ -2221,24 +2225,40 @@ class CeluneUI(App):
             word = whisper_words[assigned_index]
             start = max(0.0, min(audio_duration, word.start))
             end = max(start, min(audio_duration, word.end))
-            ranges.append((start, end))
+            timing_ranges.append((start, end))
 
         previous_end = 0.0
         normalized_ranges: list[tuple[float, float]] = []
-        for start, end in ranges:
+        for start, end in timing_ranges:
             start = max(previous_end, start)
             end = max(start, end)
             normalized_ranges.append((start, end))
             previous_end = end
-        return tuple(normalized_ranges)
+        if len(matching_words) == len(words):
+            return tuple(normalized_ranges)
+
+        displayed_ranges: list[tuple[float, float]] = []
+        for index in range(len(words)):
+            start_index = round(index * len(normalized_ranges) / len(words))
+            end_index = round((index + 1) * len(normalized_ranges) / len(words))
+            end_index = max(start_index + 1, end_index)
+            end_index = min(end_index, len(normalized_ranges))
+            displayed_ranges.append(
+                (
+                    normalized_ranges[start_index][0],
+                    normalized_ranges[end_index - 1][1],
+                )
+            )
+        return tuple(displayed_ranges)
 
     def tts_caption_timing(
         self,
         caption: str,
         audio: AudioChunk,
         sample_rate: int,
+        timing_text: Optional[str] = None,
     ) -> None:
-        """Refine the active caption timing from Whisper's audio timestamps."""
+        """Refine displayed caption timing from normalized speech timestamps."""
         if (
             self.cur_state == "exiting"
             or getattr(self.celune, "test_finished", False)
@@ -2250,6 +2270,8 @@ class CeluneUI(App):
         audio_copy = np.asarray(audio, dtype=np.float32).copy()
         token = self._caption_transition_token
         duration = len(audio_copy) / max(sample_rate, 1)
+        normalized_timing_text = timing_text if timing_text is not None else caption
+        timing_words = tuple(normalized_timing_text.split())
 
         def analyze() -> None:
             try:
@@ -2279,6 +2301,7 @@ class CeluneUI(App):
                 self._caption_words,
                 segments,
                 duration,
+                timing_words,
             )
             if not word_timings:
                 return
@@ -2850,7 +2873,11 @@ class CeluneUI(App):
             return
 
         levels = {"info": 0, "verbose": 1, "debug": 2}
-        active_log_level = getattr(self.celune, "log_level", "info")
+        active_log_level = getattr(
+            self.celune,
+            "log_level",
+            self._startup_log_level,
+        )
         if levels.get(active_log_level, 0) < levels.get(loglevel, 0):
             return
 
@@ -4100,9 +4127,8 @@ class CeluneUI(App):
                     self._vc_recording_silence_frames = 0
                 elif self._vc_recording_speech_started:
                     self._vc_recording_silence_frames += len(callback_audio)
-                    if self._vc_recording_silence_frames <= vad_hangover_frames:
-                        live_audio = callback_audio
-                    else:
+                    live_audio = np.zeros_like(callback_audio)
+                    if self._vc_recording_silence_frames > vad_hangover_frames:
                         self._vc_recording_speech_started = False
                         self._vc_recording_silence_frames = 0
                         if ai_vad is not None:
@@ -4112,6 +4138,7 @@ class CeluneUI(App):
                             vad_preroll_frames,
                         )
                 else:
+                    live_audio = np.zeros_like(callback_audio)
                     self._append_vc_preroll_audio_locked(
                         callback_audio,
                         vad_preroll_frames,

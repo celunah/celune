@@ -138,6 +138,8 @@ class AgentFailureReason(str, Enum):
     MODEL_ERROR = "model_error"
     TOOL_ERROR = "tool_error"
     INVALID_TOOL_CALL = "invalid_tool_call"
+    NO_TOOLS_FOUND = "no_tools_found"
+    NO_AVAILABLE_TOOLS = "no_available_tools"
     APPROVAL_DENIED = "approval_denied"
     PERMISSION_DENIED = "permission_denied"
     CHOICE_UNAVAILABLE = "choice_unavailable"
@@ -273,6 +275,67 @@ class ToolExecutionResult(ToolResult):
     status: AgentToolExecutionStatus
 
 
+@dataclass(frozen=True)
+class AgentTerminalOutcome:
+    """Typed terminal outcome exposed to the character response boundary."""
+
+    state: AgentTaskState
+    failure_reason: Optional[AgentFailureReason] = None
+    abort_reason: Optional[AgentAbortReason] = None
+    cancellation_reason: Optional[AgentCancellationReason] = None
+    detail: Optional[str] = None
+    metadata: Optional[JSON] = None
+
+    def __post_init__(self) -> None:
+        """Require terminal state and reason fields to agree."""
+        terminal_states = {
+            AgentTaskState.COMPLETED,
+            AgentTaskState.FAILED,
+            AgentTaskState.CANCELLED,
+            AgentTaskState.ABORTED,
+        }
+        if self.state not in terminal_states:
+            raise ValueError("agent terminal outcomes require a terminal task state")
+        if self.state == AgentTaskState.FAILED and self.failure_reason is None:
+            raise ValueError("failed agent outcomes require a failure reason")
+        if self.state != AgentTaskState.FAILED and self.failure_reason is not None:
+            raise ValueError("only failed agent outcomes can have a failure reason")
+        if self.state == AgentTaskState.ABORTED and self.abort_reason is None:
+            raise ValueError("aborted agent outcomes require an abort reason")
+        if self.state != AgentTaskState.ABORTED and self.abort_reason is not None:
+            raise ValueError("only aborted agent outcomes can have an abort reason")
+        if self.state == AgentTaskState.CANCELLED and self.cancellation_reason is None:
+            raise ValueError("cancelled agent outcomes require a cancellation reason")
+        if (
+            self.state != AgentTaskState.CANCELLED
+            and self.cancellation_reason is not None
+        ):
+            raise ValueError(
+                "only cancelled agent outcomes can have a cancellation reason"
+            )
+        if self.detail is not None and not self.detail.strip():
+            raise ValueError("agent terminal outcome detail must not be empty")
+
+    def to_json(self) -> JSON:
+        """Serialize the terminal outcome for prompts, logs, and diagnostics."""
+        return {
+            "state": self.state.value,
+            "failure_reason": (
+                self.failure_reason.value if self.failure_reason is not None else None
+            ),
+            "abort_reason": (
+                self.abort_reason.value if self.abort_reason is not None else None
+            ),
+            "cancellation_reason": (
+                self.cancellation_reason.value
+                if self.cancellation_reason is not None
+                else None
+            ),
+            "detail": self.detail,
+            "metadata": self.metadata,
+        }
+
+
 class AgentOutput(TypedDict):
     """One externally observable step produced by the agent runtime."""
 
@@ -281,6 +344,7 @@ class AgentOutput(TypedDict):
     end: bool
     paused: bool
     busy: NotRequired[ComponentBusyResult]
+    terminal: NotRequired[AgentTerminalOutcome]
 
 
 @dataclass(frozen=True)
@@ -354,6 +418,7 @@ class AgentClassificationResult:
     choice_freeform: Optional[str] = None
     interruption_kind: Optional[AgentInterruptionKind] = None
     failure: Optional[AgentClassificationFailure] = None
+    intent: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Validate classification confidence and route-specific fields."""
@@ -363,6 +428,8 @@ class AgentClassificationResult:
             or not 0.0 <= self.confidence <= 1.0
         ):
             raise ValueError("agent classification confidence must be between 0 and 1")
+        if self.intent is not None and not self.intent.strip():
+            raise ValueError("agent classification intent must not be empty")
         if self.requires_clarification and not (
             self.clarification_prompt and self.clarification_prompt.strip()
         ):
@@ -415,6 +482,7 @@ class AgentClassificationResult:
         return {
             "classification": self.classification.value,
             "confidence": self.confidence,
+            "intent": self.intent,
             "task_request": (
                 self.task_request.to_json() if self.task_request is not None else None
             ),
@@ -448,6 +516,7 @@ class AgentContext:
     persona_capabilities: PersonaCapabilities
     task: Optional[AgentTask] = None
     last_tool_result: Optional[ToolResult] = None
+    classification_failure: Optional[AgentClassificationFailure] = None
 
 
 @dataclass(frozen=True)
@@ -782,6 +851,7 @@ _ALLOWED_AGENT_TASK_TRANSITIONS: dict[AgentTaskState, frozenset[AgentTaskState]]
     AgentTaskState.IDLE: frozenset(
         {
             AgentTaskState.CLASSIFYING,
+            AgentTaskState.FAILED,
             AgentTaskState.CANCELLED,
             AgentTaskState.CANCELLING,
             AgentTaskState.ABORTED,

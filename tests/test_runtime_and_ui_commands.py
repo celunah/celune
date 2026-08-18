@@ -741,6 +741,20 @@ class UIStartupTests(TestCase):
 
         loading_screen.set_latest_log_message.assert_called_once_with("info line")
 
+    def test_pre_attach_logs_use_configured_startup_log_level(self) -> None:
+        """Verify deferred full-mode startup logs use the configured level before attach."""
+        ui = CeluneUI(startup_log_level="info")
+        ui.logs = None
+        loading_screen = mock.Mock()
+        ui._loading_screen = loading_screen
+
+        ui.safe_log("hidden verbose line", loglevel="verbose")
+        ui.safe_log("visible info line", loglevel="info")
+
+        loading_screen.set_latest_log_message.assert_called_once_with(
+            "visible info line"
+        )
+
     def test_start_background_init_shows_loading_screen_before_loading_tts(
         self,
     ) -> None:
@@ -1908,10 +1922,11 @@ class UIStartupTests(TestCase):
                 break
             time.sleep(0.01)
 
-    def test_vc_recording_vad_drops_leading_silence(self) -> None:
-        """Verify live VC does not submit leading low-RMS noise to the VC backend."""
+    def test_vc_recording_vad_plays_leading_silence(self) -> None:
+        """Verify live VC converts and plays silence while its VAD gate is closed."""
         ui = CeluneUI()
         self.addCleanup(setattr, CeluneUI, "_instance", None)
+        converted_chunks: list[np.ndarray] = []
         ui.celune = cast(
             Celune,
             SimpleNamespace(
@@ -1919,7 +1934,10 @@ class UIStartupTests(TestCase):
                 vc_backend=SimpleNamespace(),
                 convert_audio=mock.Mock(
                     side_effect=lambda audio, sample_rate, label=None, **_kwargs: (
-                        SimpleNamespace(
+                        converted_chunks.append(
+                            np.asarray(audio, dtype=np.float32).copy()
+                        )
+                        or SimpleNamespace(
                             audio=np.asarray(audio, dtype=np.float32).copy(),
                             sample_rate=sample_rate,
                             label=label or "Stereo Mix",
@@ -1966,7 +1984,9 @@ class UIStartupTests(TestCase):
                 },
             ),
             mock.patch("celune.ui.app.sd.InputStream", side_effect=FakeInputStream),
-            mock.patch("celune.ui.app.queue_streaming_sfx_audio", return_value=1),
+            mock.patch(
+                "celune.ui.app.queue_streaming_sfx_audio", return_value=1
+            ) as queue_stream,
             mock.patch("celune.ui.app.finish_streaming_sfx_audio"),
         ):
             start_event = SimpleNamespace(
@@ -1983,7 +2003,10 @@ class UIStartupTests(TestCase):
                     captured_callback,
                     np.full((48000, 2), 0.001, dtype=np.float32),
                 )
-                time.sleep(0.05)
+                for _ in range(50):
+                    if converted_chunks:
+                        break
+                    time.sleep(0.01)
 
             stop_event = SimpleNamespace(
                 key="ctrl+r",
@@ -1992,7 +2015,9 @@ class UIStartupTests(TestCase):
             )
             ui.on_key(cast(events.Key, stop_event))
 
-        self.assertEqual(cast(mock.Mock, ui.celune.convert_audio).call_count, 0)
+        self.assertTrue(converted_chunks)
+        self.assertTrue(np.allclose(converted_chunks[0], 0.0))
+        queue_stream.assert_called_once()
 
     def test_vc_recording_vad_preroll_keeps_speech_onset(self) -> None:
         """Verify live VC prepends a short preroll so VAD onset is not clipped."""
@@ -2116,10 +2141,13 @@ class UIStartupTests(TestCase):
             )
             ui.on_key(cast(events.Key, stop_event))
 
-        self.assertTrue(converted_chunks)
-        self.assertGreaterEqual(len(converted_chunks[0]), 3000)
-        self.assertAlmostEqual(float(converted_chunks[0][0, 0]), 0.004)
-        self.assertAlmostEqual(float(converted_chunks[0][-1, 0]), 0.05)
+        speech_chunks = [
+            chunk for chunk in converted_chunks if not np.allclose(chunk, 0.0)
+        ]
+        self.assertTrue(speech_chunks)
+        self.assertGreaterEqual(len(speech_chunks[0]), 3000)
+        self.assertAlmostEqual(float(speech_chunks[0][0, 0]), 0.004)
+        self.assertAlmostEqual(float(speech_chunks[0][-1, 0]), 0.05)
 
     def test_vc_recording_flushes_active_speech_before_end_of_phrase(self) -> None:
         """Verify live VC can submit one mid-speech chunk before silence arrives."""
@@ -2273,7 +2301,7 @@ class UIStartupTests(TestCase):
                     sample_rate: Input audio sample rate.
 
                 Returns:
-                    bool: Always ``False`` so no VC conversion is queued.
+                    bool: Always ``False`` so silent VC conversion is queued.
                 """
                 self.calls += 1
                 self.last_shape = audio.shape
@@ -2347,7 +2375,7 @@ class UIStartupTests(TestCase):
             ui.on_key(cast(events.Key, stop_event))
 
         self.assertGreaterEqual(fake_vad.calls, 1)
-        self.assertEqual(cast(mock.Mock, ui.celune.convert_audio).call_count, 0)
+        self.assertGreaterEqual(cast(mock.Mock, ui.celune.convert_audio).call_count, 1)
 
     def test_vc_recording_ai_vad_exception_keeps_detector_active(self) -> None:
         """Verify one AI VAD callback failure does not disable AI VAD forever."""
@@ -3069,6 +3097,27 @@ class UIStartupTests(TestCase):
         )
 
         self.assertEqual(timings, ((0.0, 0.4), (0.8, 1.4), (1.9, 2.8)))
+
+        normalized_timings = CeluneUI._caption_word_timing_ranges(
+            (r"C:\Users\user",),
+            (
+                WhisperSegment(
+                    text="C drive Users user",
+                    start=0.0,
+                    end=3.0,
+                    words=(
+                        WhisperWord("C", 0.0, 0.4),
+                        WhisperWord("drive", 0.5, 1.0),
+                        WhisperWord("Users", 1.1, 1.8),
+                        WhisperWord("user", 2.0, 2.8),
+                    ),
+                ),
+            ),
+            3.0,
+            ("C", "drive", "Users", "user"),
+        )
+
+        self.assertEqual(normalized_timings, ((0.0, 2.8),))
 
     def test_status_ticker_recovers_active_playback_status(self) -> None:
         """Verify the TUI ticker displays the active playback-source status."""

@@ -202,6 +202,7 @@ class CaptionTimingCallback(Protocol):
         caption: str,
         audio: AudioChunk,
         sample_rate: int,
+        timing_text: Optional[str] = None,
     ) -> None:
         """Analyze generated speech to refine caption timing."""
         raise NotImplementedError("protocol not defined")

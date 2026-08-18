@@ -18,6 +18,7 @@ from ..typing.agent import (
     AgentClassificationFailure,
     AgentClassificationFailureKind,
     AgentClassificationResult,
+    AgentFailureReason,
     AgentInputClassification,
     AgentInterruption,
     AgentInterruptionKind,
@@ -104,6 +105,7 @@ class AgentInputRouter:
         return AgentClassificationResult(
             classification=result.classification,
             confidence=result.confidence,
+            intent=result.intent,
             task_request=result.task_request,
             reason=result.reason,
             routing_metadata=metadata,
@@ -132,11 +134,24 @@ class AgentInputRouter:
             text,
             task=task,
         )
+        if result.failure is not None:
+            if task.state != AgentTaskState.CANCELLING:
+                self.runtime.fail_task(
+                    task.task_id,
+                    AgentFailureReason.INTERNAL_ERROR,
+                    result.failure.detail,
+                )
+            return result
         if result.route == AgentRoute.CLARIFICATION:
             return result
         if result.route == AgentRoute.CANCELLATION:
             self.runtime.cancel_task(task.task_id)
-            return self._active_result(task, AgentRoute.CANCELLATION, "cancellation")
+            return self._active_result(
+                task,
+                AgentRoute.CANCELLATION,
+                "cancellation",
+                intent=result.intent,
+            )
 
         if result.route == AgentRoute.INTERRUPTION:
             interruption_kind = (
@@ -151,6 +166,7 @@ class AgentInputRouter:
                 AgentRoute.INTERRUPTION,
                 "interruption",
                 interruption_kind=interruption_kind,
+                intent=result.intent,
             )
 
         if task.state == AgentTaskState.AWAITING_APPROVAL:
@@ -168,7 +184,12 @@ class AgentInputRouter:
                     instruction=text,
                 ),
             )
-            return self._active_result(task, AgentRoute.TASK_INPUT, "task_follow_up")
+            return self._active_result(
+                task,
+                AgentRoute.TASK_INPUT,
+                "task_follow_up",
+                intent=result.intent,
+            )
 
         if task.state == AgentTaskState.IDLE:
             self.runtime.start_task(task.task_id)
@@ -179,7 +200,12 @@ class AgentInputRouter:
                 instruction=text,
             ),
         )
-        return self._active_result(task, AgentRoute.TASK_INPUT, "task_follow_up")
+        return self._active_result(
+            task,
+            AgentRoute.TASK_INPUT,
+            "task_follow_up",
+            intent=result.intent,
+        )
 
     def _route_approval(
         self,
@@ -199,6 +225,7 @@ class AgentInputRouter:
             AgentRoute.APPROVAL_RESPONSE,
             "approval_response",
             approval_decision=result.approval_decision,
+            intent=result.intent,
         )
 
     def _route_choice(
@@ -234,6 +261,7 @@ class AgentInputRouter:
             "choice_response",
             choice_id=choice_id,
             choice_freeform=freeform,
+            intent=result.intent,
         )
 
     def _classify_with_persona(
@@ -446,6 +474,10 @@ class AgentInputRouter:
             and not requires_clarification
             else None
         )
+        raw_intent = payload.get("intent")
+        if raw_intent is not None and not isinstance(raw_intent, str):
+            raise ValueError("classifier intent must be a string or null")
+        intent = raw_intent.strip() if isinstance(raw_intent, str) else None
         reason_value = payload.get("reason")
         reason = reason_value if isinstance(reason_value, str) else "persona_classifier"
         metadata_value = payload.get("routing_metadata")
@@ -456,6 +488,7 @@ class AgentInputRouter:
             return AgentClassificationResult(
                 classification=AgentInputClassification.CONVERSATION,
                 confidence=confidence,
+                intent=None,
                 requires_clarification=True,
                 clarification_prompt=prompt,
                 reason=reason,
@@ -466,6 +499,7 @@ class AgentInputRouter:
             return AgentClassificationResult(
                 classification=classification,
                 confidence=confidence,
+                intent=intent,
                 task_request=task_request,
                 reason=reason,
                 routing_metadata=metadata,
@@ -490,6 +524,7 @@ class AgentInputRouter:
         return AgentClassificationResult(
             classification=classification,
             confidence=confidence,
+            intent=None,
             reason=reason,
             routing_metadata=metadata,
             route=route,
@@ -518,6 +553,8 @@ class AgentInputRouter:
         """Return an observable fail-closed classifier result."""
         failure = AgentClassificationFailure(kind, detail or kind.value)
         metadata: JSON = {"classifier_failure": failure.to_json()}
+        if task is not None:
+            metadata["task_id"] = task.task_id
         log = getattr(self.engine, "log", None)
         if callable(log):
             log_level = getattr(self.engine, "log_level", "info")
@@ -575,11 +612,13 @@ class AgentInputRouter:
         choice_id: Optional[str] = None,
         choice_freeform: Optional[str] = None,
         interruption_kind: Optional[AgentInterruptionKind] = None,
+        intent: Optional[str] = None,
     ) -> AgentClassificationResult:
         """Build a result for input consumed by an existing task."""
         return AgentClassificationResult(
             classification=AgentInputClassification.TASK,
             confidence=1.0,
+            intent=intent,
             reason=reason,
             routing_metadata={"task_id": task.task_id},
             route=route,

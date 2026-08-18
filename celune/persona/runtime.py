@@ -6,7 +6,7 @@ import gc
 import logging
 import os
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from typing import Optional, Union, cast
 
 import torch
@@ -16,6 +16,8 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
     Qwen3VLForConditionalGeneration,
+    StoppingCriteria,
+    StoppingCriteriaList,
 )
 from transformers.tokenization_utils_base import BatchEncoding
 
@@ -37,6 +39,7 @@ from ..typing.persona import (
     PersonaModel,
     PersonaProcessor,
     PersonaTokenizer,
+    ModelGenerateKwargValue,
     Role,
     TextContentItem,
     VideoContentItem,
@@ -50,6 +53,28 @@ from .capabilities import PersonaCapabilities
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class _PersonaCancellationCriteria(StoppingCriteria):
+    """Stop Hugging Face generation when Celune requests shutdown."""
+
+    def __init__(self, cancellation_event: threading.Event) -> None:
+        self._cancellation_event = cancellation_event
+
+    def __call__(
+        self,
+        input_ids: torch.Tensor,
+        scores: torch.Tensor,
+        **kwargs: ModelGenerateKwargValue,
+    ) -> torch.Tensor:
+        """Return one stop flag per sequence in the current generation batch."""
+        del scores, kwargs
+        return torch.full(
+            (input_ids.shape[0],),
+            self._cancellation_event.is_set(),
+            dtype=torch.bool,
+            device=input_ids.device,
+        )
 
 
 def _render_chat_prompt(
@@ -120,6 +145,15 @@ class PersonaBackend:
         self.model: Optional[PersonaModel] = None
         self.supports_vision = False
         self.supports_emotion_probes = False
+        self._generation_cancelled = threading.Event()
+
+    def interrupt_generation(self) -> None:
+        """Request cancellation of the current model generation."""
+        self._generation_cancelled.set()
+
+    def _reset_generation_cancellation(self) -> None:
+        """Allow a new generation after a previous cancellation request."""
+        self._generation_cancelled.clear()
 
     def load(self, model_id: str, quantization: str) -> None:
         """Load the requested model, quantized by default.
@@ -315,7 +349,11 @@ class PersonaBackend:
             model_inputs = {
                 key: cast(torch.Tensor, value) for key, value in dict(inputs).items()
             }
-            generation_kwargs: dict[str, int] = {}
+            generation_kwargs: dict[str, ModelGenerateKwargValue] = {
+                "stopping_criteria": StoppingCriteriaList(
+                    [_PersonaCancellationCriteria(self._generation_cancelled)]
+                )
+            }
             pad_token_id = tokenizer.eos_token_id
             if pad_token_id is not None:
                 generation_kwargs["pad_token_id"] = pad_token_id
@@ -514,13 +552,29 @@ class PersonaRuntime:
         )
         quantization = self._allowed_quantization(quantization)
         with self.lock:
+            self.backend._reset_generation_cancellation()
             self.backend.load(model_id, quantization)
             return self.backend.generate(request)
 
+    def interrupt(self) -> None:
+        """Request cancellation of an active Persona generation."""
+        self.backend.interrupt_generation()
+
     def close(self) -> None:
         """Unload the active Persona backend state."""
-        with self.lock:
-            self.backend.unload()
+        with self._close_lock() as acquired:
+            if acquired:
+                self.backend.unload()
+
+    @contextlib.contextmanager
+    def _close_lock(self) -> Generator[bool, None, None]:
+        """Acquire the Persona lock briefly without delaying shutdown indefinitely."""
+        acquired = self.lock.acquire(timeout=0.5)
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                self.lock.release()
 
     def emotion_backend(self) -> Optional[tuple[PersonaTokenizer, PersonaModel]]:
         """Return the loaded VLM components used for emotion probing."""

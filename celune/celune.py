@@ -137,13 +137,19 @@ from .pipeline import (
     think as think_pipeline,
 )
 from .runtime import log_runtime_banner, validate_runtime
+from .typing.agent import AgentClassificationFailure
 from .typing.agent import AgentClassificationFailureKind
 from .typing.agent import AgentClassificationResult
+from .typing.agent import AgentAbortReason
+from .typing.agent import AgentCancellationReason
+from .typing.agent import AgentInputClassification
 from .typing.agent import AgentContext
 from .typing.agent import AgentInterruption
 from .typing.agent import AgentInterruptionKind
 from .typing.agent import AgentOutput
+from .typing.agent import AgentRequest
 from .typing.agent import AgentRoute
+from .typing.agent import AgentSession
 from .typing.agent import AgentTaskState
 from .typing.agent import AgentToolSelector
 from .typing.agent import AgentToolExecutionStatus
@@ -384,6 +390,17 @@ def _close_backend(backend: Union[CeluneBackend, CeluneVCBackend]) -> None:
             close()
 
 
+def _shutdown_backend(
+    backend: Union[CeluneBackend, CeluneVCBackend],
+    release_cuda_cache: bool,
+) -> None:
+    """Release one backend without waiting on an already-aborted operation."""
+    if callable(getattr(backend, "close", None)):
+        _close_backend(backend)
+        return
+    _unload_backend_model(backend, release_cuda_cache)
+
+
 class Celune(CeluneStateAccessors):
     """The character engine for Celune."""
 
@@ -446,8 +463,11 @@ class Celune(CeluneStateAccessors):
         if backend_mode not in {"normal", "ui_test", "agent_test"}:
             raise ValueError(f"unknown Celune backend mode: '{backend_mode}'")
 
+        self._startup_log_buffer: list[tuple[str, str, LogLevel]] = []
+        self._startup_banner_emitted = False
+        self._startup_log_sink = log_callback or self._noop_message
         self._callbacks = CeluneCallbackState(
-            log_callback=log_callback or self._noop_message,
+            log_callback=self._buffer_startup_log,
             status_callback=status_callback or self._noop_message,
             error_callback=error_callback or (lambda error: None),
             idle_callback=idle_callback or (lambda: None),
@@ -474,7 +494,10 @@ class Celune(CeluneStateAccessors):
             log_debug=lambda message: self.log(message, loglevel="debug"),
         )
 
-        self._backend_state = CeluneBackendState(config=config)
+        self._backend_state = CeluneBackendState(
+            config=config,
+            log_level=normalize_log_level(log_level),
+        )
         self._model_state = CeluneModelState()
         self._voice_state = CeluneVoiceState()
         self._pipeline_state = CelunePipelineState(
@@ -954,6 +977,7 @@ class Celune(CeluneStateAccessors):
         caption: str,
         audio: AudioChunk,
         sample_rate: int,
+        timing_text: Optional[str] = None,
     ) -> None:
         """Discard generated speech caption timing input."""
 
@@ -1308,12 +1332,16 @@ class Celune(CeluneStateAccessors):
         """
         discard(self, "model")
 
-        if close_backends:
+        if self.exit_requested:
+            _shutdown_backend(self.backend, release_cuda_cache)
+        elif close_backends:
             _dispose_backend(self.backend, release_cuda_cache=release_cuda_cache)
         else:
             _unload_backend_model(self.backend, release_cuda_cache)
         if include_vc and self.vc_backend is not None:
-            if close_backends:
+            if self.exit_requested:
+                _shutdown_backend(self.vc_backend, release_cuda_cache)
+            elif close_backends:
                 _dispose_backend(
                     self.vc_backend,
                     release_cuda_cache=release_cuda_cache,
@@ -2927,6 +2955,51 @@ class Celune(CeluneStateAccessors):
             return
         self.log_callback(msg, severity)
 
+    def _buffer_startup_log(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
+        """Buffer startup diagnostics until the runtime banner is emitted."""
+        levels = {"info": 0, "verbose": 1, "debug": 2}
+        if levels.get(self.log_level, 0) < levels.get(loglevel, 0):
+            return
+        if not self._startup_banner_emitted:
+            self._startup_log_buffer.append((msg, severity, loglevel))
+            return
+        self._deliver_startup_log(msg, severity, loglevel)
+
+    def _emit_runtime_banner_line(
+        self,
+        msg: str,
+        severity: str = "info",
+    ) -> None:
+        """Emit one runtime-banner line without entering the startup buffer."""
+        self._deliver_startup_log(msg, severity, "info")
+
+    def _deliver_startup_log(
+        self,
+        msg: str,
+        severity: str,
+        loglevel: LogLevel,
+    ) -> None:
+        """Forward one startup log while retaining legacy callback compatibility."""
+        try:
+            self._startup_log_sink(msg, severity, loglevel=loglevel)
+        except TypeError as error:
+            if "loglevel" not in str(error):
+                raise
+            self._startup_log_sink(msg, severity)
+
+    def _flush_startup_logs(self) -> None:
+        """Flush buffered constructor diagnostics after the runtime banner."""
+        buffered_logs = self._startup_log_buffer
+        self._startup_log_buffer = []
+        for msg, severity, loglevel in buffered_logs:
+            self._deliver_startup_log(msg, severity, loglevel)
+
     def log_dev(self, msg: str, severity: str = "info") -> None:
         """Log a legacy developer message at verbose level.
 
@@ -3137,10 +3210,12 @@ class Celune(CeluneStateAccessors):
             BackendError: If backend initialization fails.
         """
         log_runtime_banner(
-            self.log,
+            self._emit_runtime_banner_line,
             self.vc_backend or self.backend,
             self.backend_mode,
         )
+        self._startup_banner_emitted = True
+        self._flush_startup_logs()
         self.historical_generated_speech_seconds = saved_output_speech_seconds()
 
         if self.backend_mode == "ui_test" and self.backend.is_fake:
@@ -3783,7 +3858,31 @@ class Celune(CeluneStateAccessors):
         if self.test_finished:
             raise RuntimeError("Celune test mode has finished")
         ready = self.persona_ready if persona_ready is None else persona_ready
-        return self._agent_router.route(text, persona_ready=ready)
+        result = self._agent_router.route(text, persona_ready=ready)
+        self._log_route_decision(text, result)
+        return result
+
+    def _log_route_decision(
+        self,
+        request: str,
+        result: AgentClassificationResult,
+    ) -> None:
+        """Log the semantic route selected before downstream processing begins."""
+        if result.failure is not None:
+            route_type = "say"
+        elif result.classification == AgentInputClassification.TASK:
+            route_type = "agent"
+        else:
+            route_type = "persona"
+
+        request_value = request.replace("\\", "\\\\").replace("\r", "\\r")
+        request_value = request_value.replace("\n", "\\n")
+        fields = [f"request={request_value}", f"type={route_type}"]
+        if route_type == "agent" and result.intent is not None:
+            fields.append(f"intent={result.intent}")
+        if result.failure is None:
+            fields.append(f"confidence={round(result.confidence * 100):.0f}%")
+        self.log(f"[ROUTE] {' '.join(fields)}", loglevel="debug")
 
     async def think_async(self, text: str) -> bool:
         """Let Celune reply to one input request without blocking an async caller.
@@ -3832,7 +3931,9 @@ class Celune(CeluneStateAccessors):
                         and not persona_ready
                     )
                     if not can_prepare_persona:
-                        self.say(string("agent.classifier_unavailable"))
+                        self._speak_agent_classification_failure(
+                            text, route.failure, route
+                        )
                         continue
                 if route.route == AgentRoute.CLARIFICATION:
                     clarification = route.clarification_prompt
@@ -3942,18 +4043,56 @@ class Celune(CeluneStateAccessors):
         if self.test_finished:
             return False
         request = route.task_request
+        metadata = route.routing_metadata
+        task_id = metadata.get("task_id") if isinstance(metadata, dict) else None
         if request is None:
-            metadata = route.routing_metadata
             task_id = metadata.get("task_id") if isinstance(metadata, dict) else None
             if not isinstance(task_id, str):
                 return False
             request = self.agent_runtime.get_task(task_id).request
+        if not isinstance(task_id, str):
+            active_task = self.agent_runtime.get_active_task(request.session.session_id)
+            task_id = active_task.task_id if active_task is not None else None
         delivery_failed = False
 
         def deliver_output(output: AgentOutput) -> None:
             """Deliver generated agent responses through the shared speech path."""
             nonlocal delivery_failed
             if output.get("tool_call") is not None:
+                return
+            terminal = output.get("terminal")
+            if terminal is not None:
+                if terminal.state == AgentTaskState.COMPLETED:
+                    return
+                if task_id is None:
+                    delivery_failed = True
+                    raise RuntimeError("agent terminal output has no task context")
+                try:
+                    context = self.agent_runtime.get_context(task_id)
+                    response_output = self._agent_persona_bridge.respond(context)
+                    response = response_output.get("response")
+                    if not isinstance(response, str) or not response.strip():
+                        raise RuntimeError("agent failure response was empty")
+                    if not deliver_persona_response(self, request.request, response):
+                        raise RuntimeError("agent failure response could not be queued")
+                except Exception as exc:
+                    self.log(
+                        f"[AGENT] failure_response_generation_failed error={exc}",
+                        "warning",
+                        loglevel="verbose",
+                    )
+                    fallback = string("agent.failure_final")
+                    if terminal.state == AgentTaskState.CANCELLED:
+                        fallback = string("agent.cancelled_final")
+                    elif (
+                        terminal.state == AgentTaskState.ABORTED
+                        and terminal.abort_reason == AgentAbortReason.STUCK_TASK
+                    ):
+                        fallback = string("agent.stuck_final")
+                    elif terminal.state == AgentTaskState.ABORTED:
+                        fallback = string("agent.limit_final")
+                    if not self.say(fallback):
+                        delivery_failed = True
                 return
             if self.backend_mode == "agent_test" and not output.get("end"):
                 return
@@ -3972,6 +4111,43 @@ class Celune(CeluneStateAccessors):
 
         output = self.agent_runtime.run(request, callback=deliver_output)
         return output["end"] and not delivery_failed
+
+    def _speak_agent_classification_failure(
+        self,
+        request: str,
+        failure: AgentClassificationFailure,
+        route: AgentClassificationResult,
+    ) -> bool:
+        """Ask the active Persona to explain a classifier failure naturally."""
+        metadata = route.routing_metadata
+        task_id = metadata.get("task_id") if isinstance(metadata, dict) else None
+        if isinstance(task_id, str):
+            try:
+                context = self.agent_runtime.get_context(task_id)
+            except ValueError:
+                context = None
+        else:
+            context = None
+        if context is None:
+            context = self.agent_runtime.create_context(
+                AgentRequest(
+                    request=request,
+                    session=AgentSession(session_id="default"),
+                ),
+                classification_failure=failure,
+            )
+        try:
+            output = self._agent_persona_bridge.respond(context)
+            response = output.get("response")
+            if isinstance(response, str) and response.strip():
+                return deliver_persona_response(self, request, response)
+        except Exception as exc:
+            self.log(
+                f"[AGENT] failure_response_generation_failed error={exc}",
+                "warning",
+                loglevel="verbose",
+            )
+        return self.say(string("agent.classifier_unavailable"))
 
     def _wait_for_persona_playback(self) -> bool:
         """Wait until the shared speech pipeline is available for the next Persona turn."""
@@ -4239,6 +4415,7 @@ class Celune(CeluneStateAccessors):
     def close(self) -> None:
         """Shut off Celune and release loaded runtime state."""
         with self._async_runtime_lock:
+            self._exit_requested = True
             self.log(
                 f"[ENGINE] close requested state={self.cur_state} loaded={self.loaded} "
                 f"sleeping={self.sleeping}",
@@ -4248,6 +4425,18 @@ class Celune(CeluneStateAccessors):
                 if self._closed:
                     return
                 self._closed = True
+            active_task = self.agent_runtime.get_active_task("default")
+            if active_task is not None:
+                with contextlib.suppress(Exception):
+                    self.agent_runtime.cancel_task(
+                        active_task.task_id,
+                        AgentCancellationReason.RUNTIME_SHUTDOWN,
+                    )
+            vision = self.vision
+            if isinstance(vision, PersonaClient):
+                with contextlib.suppress(Exception):
+                    vision.interrupt()
+            self._abort_backend_operations()
             self._emit_event("shutdown", ShutdownEvent(celune=self))
             try:
                 close_pipeline(self)
@@ -4268,6 +4457,14 @@ class Celune(CeluneStateAccessors):
                     self._cleanup_residual_temp_data(temp_data_dir())
                 Celune._instance = None
                 self.log("[ENGINE] close complete", loglevel="debug")
+
+    def _abort_backend_operations(self) -> None:
+        """Abort backend-owned work before pipeline and model teardown begins."""
+        for backend in (self.backend, self.vc_backend):
+            abort = getattr(backend, "abort", None)
+            if callable(abort):
+                with contextlib.suppress(Exception):
+                    abort()
 
     def _close_agent_tool_selector(self) -> None:
         """Release the optional loaded Needle handler during engine shutdown."""

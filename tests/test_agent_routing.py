@@ -15,6 +15,7 @@ from celune.agent import (
     AgentChoiceOption,
     AgentChoiceRequest,
     AgentClassificationFailureKind,
+    AgentFailureReason,
     AgentInputClassification,
     AgentInputRouter,
     AgentInterruptionKind,
@@ -103,6 +104,28 @@ class AgentRoutingTests(TestCase):
         self.assertIn("transport", message)
         self.assertEqual(self.engine.log.call_args.kwargs["loglevel"], "verbose")
 
+    def test_active_classifier_failure_releases_task_for_conversation(self) -> None:
+        """Release a broken active task so later input can return to Persona."""
+        task = self.runtime.create_task(
+            self.router._make_request("Check the current process."),
+            task_id="task-1",
+        )
+        self.engine.vision = SimpleNamespace(
+            post=mock.Mock(side_effect=RuntimeError("classifier unavailable"))
+        )
+
+        result = self.router.route("What do you think about this?", persona_ready=True)
+
+        self.assertEqual(result.route, AgentRoute.CLARIFICATION)
+        self.assertIsNotNone(result.failure)
+        self.assertEqual(task.state, AgentTaskState.FAILED)
+        self.assertEqual(task.failure_reason, AgentFailureReason.INTERNAL_ERROR)
+        self.assertIsNone(self.runtime.get_active_task("default"))
+
+        self._set_classifier({"classification": "conversation", "confidence": 0.95})
+        follow_up = self.router.route("How are you?", persona_ready=True)
+        self.assertEqual(follow_up.route, AgentRoute.CONVERSATION)
+
     def test_direct_action_creates_idle_task_without_execution(self) -> None:
         """Create a typed task while leaving the execution loop untouched."""
         self._set_classifier(
@@ -110,6 +133,7 @@ class AgentRoutingTests(TestCase):
                 "classification": "task",
                 "route": "task",
                 "confidence": 0.96,
+                "intent": "inspect_process",
                 "task_request": "Check whether this process is running.",
             }
         )
@@ -127,6 +151,8 @@ class AgentRoutingTests(TestCase):
         assert task is not None
         self.assertEqual(task.state, AgentTaskState.IDLE)
         execute_tool.assert_not_called()
+        self.assertEqual(result.intent, "inspect_process")
+        self.assertEqual(result.to_json()["intent"], "inspect_process")
 
     def test_valid_low_confidence_task_is_not_downgraded_to_conversation(
         self,

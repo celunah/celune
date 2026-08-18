@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime
+import inspect
 import json
 import os
 import pathlib
@@ -148,7 +149,8 @@ _AGENT_CLASSIFICATION_INSTRUCTIONS = (
     "or 'that process'. Return only one "
     "JSON object with these keys: classification (conversation or task), route "
     "(conversation, task, clarification, task_input, approval_response, choice_response, "
-    "cancellation, or interruption), confidence (number from 0 to 1), task_request "
+    "cancellation, or interruption), confidence (number from 0 to 1), intent "
+    "(a short agentic intent type or null), task_request "
     "(string or null), requires_clarification (boolean), clarification_prompt "
     "(string or null), approval_decision (approved, denied, or null), choice_id "
     "(string or null), choice_freeform (string or null), interruption_kind "
@@ -581,6 +583,13 @@ def force_stop_speech(engine: Celune) -> bool:
         return False
 
     engine.log(string("pipeline.forcefully_stopping_speech"))
+    _invalidate_speech_work(engine)
+
+    return True
+
+
+def _invalidate_speech_work(engine: Celune) -> None:
+    """Invalidate queued and in-flight speech generations immediately."""
     engine.utterance_force_stop.set()
 
     with engine.queue_lock:
@@ -591,8 +600,6 @@ def force_stop_speech(engine: Celune) -> bool:
         clear_queue(engine.audio_queue)
         engine.kept_sfx_audio = None
         engine.audio_queue.put(engine.force_stop_marker)
-
-    return True
 
 
 def _pipeline_requirements(action: str) -> tuple[ComponentLockRequirement, ...]:
@@ -1155,6 +1162,47 @@ def _flush_buffered_speech_chunks(
         return True
 
     return pushed_audio
+
+
+def _notify_caption_timing(
+    engine: Celune,
+    caption: str,
+    audio: AudioChunk,
+    sample_rate: int,
+    timing_text: str,
+) -> None:
+    """Send display and synthesis text to caption timing callbacks compatibly."""
+    caption_timing_callback = getattr(engine, "caption_timing_callback", None)
+    if not callable(caption_timing_callback):
+        return
+
+    try:
+        parameters = tuple(
+            inspect.signature(caption_timing_callback).parameters.values()
+        )
+    except (TypeError, ValueError):
+        parameters = ()
+
+    supports_timing_text = (
+        not parameters
+        or any(
+            parameter.kind == inspect.Parameter.VAR_POSITIONAL
+            for parameter in parameters
+        )
+        or sum(
+            parameter.kind
+            in {
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            }
+            for parameter in parameters
+        )
+        >= 4
+    )
+    if supports_timing_text:
+        caption_timing_callback(caption, audio, sample_rate, timing_text)
+        return
+    caption_timing_callback(caption, audio, sample_rate)
 
 
 def _youtube_sfx_temp_path() -> pathlib.Path:
@@ -2945,19 +2993,17 @@ def close(engine: Celune) -> None:
     if not getattr(engine, "test_finished", False):
         engine.log(string("pipeline.exiting"))
     engine._exit_requested = True
-
-    with engine.queue_lock:
-        clear_queue(engine.text_queue)
-        clear_queue(engine.audio_queue)
+    _invalidate_speech_work(engine)
+    close_stream(engine, abort=True)
 
     engine.text_queue.put(engine.sentinel)
     engine.audio_queue.put(engine.sentinel)
 
     if engine.generation_thread is not None:
-        engine.generation_thread.join(timeout=2)
+        engine.generation_thread.join(timeout=0.5)
 
     if engine.playback_thread is not None:
-        engine.playback_thread.join(timeout=2)
+        engine.playback_thread.join(timeout=0.5)
 
     manager = getattr(engine, "component_locks", None)
     try:
@@ -3465,8 +3511,11 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                             "warning",
                         )
 
+            timing_text = (
+                " ".join(generated_text_parts) if generated_text_parts else text
+            )
             if generated_text_parts:
-                text = " ".join(generated_text_parts)
+                text = timing_text
 
             generation_time = _monotonic_time() - start_time
 
@@ -3601,14 +3650,13 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 if is_silent and silence_tier == 1:
                     engine.log(string("pipeline.may_be_silent"), "warning")
 
-                caption_timing_callback = getattr(
-                    engine, "caption_timing_callback", None
-                )
-                if full_audio_array is not None and callable(caption_timing_callback):
-                    caption_timing_callback(
+                if full_audio_array is not None:
+                    _notify_caption_timing(
+                        engine,
                         display_text,
                         full_audio_array,
                         BASE_SR,
+                        timing_text,
                     )
 
                 engine.total_generated_speech_seconds += speech_len

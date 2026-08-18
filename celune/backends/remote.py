@@ -104,6 +104,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self._stderr_thread: Optional[threading.Thread] = None
         self._worker_stderr: deque[str] = deque(maxlen=200)
         self._worker_stderr_lock = threading.Lock()
+        self._stream_active = threading.Event()
         environment = self._environment_manager.ensure(manifest)
         try:
             self._start_worker(environment, log, backend_kwargs)
@@ -314,6 +315,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         if process.stdin is None or process.stdout is None:
             raise RuntimeError(string("backends.worker_streams_unavailable"))
         with self._protocol_lock:
+            if not hasattr(self, "_stream_active"):
+                self._stream_active = threading.Event()
+            self._stream_active.set()
             _emit_log(
                 self._log_callback,
                 f"[IPC] send_stream operation={operation} arguments={tuple(arguments)}",
@@ -359,6 +363,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                         loglevel="debug",
                     )
                     self._drain_stream(process)
+                self._stream_active.clear()
 
     def _read_stream_frame(
         self,
@@ -478,6 +483,28 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         ):
             stderr_thread.join(timeout=2)
 
+    def abort(self) -> None:
+        """Terminate the worker without waiting for an active generation."""
+        process = self._process
+        self._process = None
+        if process is None or process.poll() is not None:
+            return
+
+        with suppress(OSError):
+            process.terminate()
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            with suppress(OSError):
+                process.kill()
+            with suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=1)
+
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                with suppress(OSError):
+                    stream.close()
+
 
 class RemoteVCBackendProxy(CeluneVCBackend):
     """Expose a voice-conversion worker through the VC backend interface."""
@@ -530,3 +557,7 @@ class RemoteVCBackendProxy(CeluneVCBackend):
     def close(self) -> None:
         """Stop the voice-conversion worker process."""
         self._worker.close()
+
+    def abort(self) -> None:
+        """Terminate the voice-conversion worker without waiting for conversion."""
+        self._worker.abort()

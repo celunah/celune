@@ -194,6 +194,10 @@ class PersonaClient:
         """Release Persona runtime state."""
         self.runtime.close()
 
+    def interrupt(self) -> None:
+        """Request cancellation of an active Persona generation."""
+        self.runtime.interrupt()
+
     def emotion_backend(self) -> Optional[tuple[PersonaTokenizer, PersonaModel]]:
         """Return the active VLM components for local emotion analysis."""
         return self.runtime.emotion_backend()

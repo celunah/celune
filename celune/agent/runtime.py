@@ -26,6 +26,7 @@ from ..typing.agent import (
     AgentCancellationReason,
     AgentChoiceRequest,
     AgentChoiceResponse,
+    AgentClassificationFailure,
     AgentContext,
     AgentContextCompactor,
     AgentFailureReason,
@@ -54,6 +55,7 @@ from ..typing.agent import (
     AgentToolSchema,
     AgentToolSelector,
     AgentTokenCounter,
+    AgentTerminalOutcome,
     ToolCall,
     ToolExecutionResult,
     ToolResult,
@@ -97,14 +99,18 @@ def _empty_output(
     *,
     end: bool = True,
     paused: bool = False,
+    terminal: Optional[AgentTerminalOutcome] = None,
 ) -> AgentOutput:
     """Build the stable output shape required by the agent contract."""
-    return {
+    output: AgentOutput = {
         "tool_call": None,
         "response": response,
         "end": end,
         "paused": paused,
     }
+    if terminal is not None:
+        output["terminal"] = terminal
+    return output
 
 
 def _paused_output() -> AgentOutput:
@@ -307,6 +313,7 @@ class AgentRuntime:
         self,
         request: AgentRequest,
         task: Optional[AgentTask] = None,
+        classification_failure: Optional[AgentClassificationFailure] = None,
     ) -> AgentContext:
         """Build a context that keeps the request and optional task together."""
         return AgentContext(
@@ -314,6 +321,7 @@ class AgentRuntime:
             mode=self._mode,
             persona_capabilities=self._persona_capabilities,
             task=task,
+            classification_failure=classification_failure,
         )
 
     def create_task(
@@ -905,7 +913,7 @@ class AgentRuntime:
                     selected = (
                         None
                         if output["tool_call"] is None and output["end"]
-                        else self._invoke_select_tool(task, output)
+                        else self._select_or_fail_for_missing_tools(task, output)
                     )
                     if not self._run_is_current(task, generation):
                         return self._interrupted_output(task, callback)
@@ -932,27 +940,12 @@ class AgentRuntime:
                     if call is None:
                         if output["end"]:
                             return self._complete_with_output(task, output, callback)
-                        self._transition(task, AgentTaskState.RESPONDING)
-                        failure_reason = AgentFailureReason.MODEL_ERROR
-                        response = self._validate_output(self._invoke_respond(task))
-                        self._log_output(task, "respond", response)
-                        if not self._run_is_current(task, generation):
-                            return self._interrupted_output(task, callback)
-                        if not self._publish_output(
-                            task,
-                            response,
-                            callback,
-                            generation,
-                        ):
-                            return self._interrupted_output(task, callback)
-                        if response["paused"]:
-                            self._transition(task, AgentTaskState.PAUSED)
-                            return _paused_output()
-                        if not response["end"]:
-                            raise ValueError(
-                                "agent response must terminate a response cycle"
-                            )
-                        return self._complete_with_output(task, response, callback)
+                        self.fail_task(
+                            task.task_id,
+                            AgentFailureReason.NO_AVAILABLE_TOOLS,
+                            "no registered available tool matched the action intent",
+                        )
+                        return self._terminal_output(task, callback)
                     self._record_action(task, call)
                     if task.is_terminal:
                         return self._terminal_output(task, callback)
@@ -1194,6 +1187,36 @@ class AgentRuntime:
             return self._tool_selector(context, output)
         return self.select_tool(context, output)
 
+    def _select_or_fail_for_missing_tools(
+        self,
+        task: AgentTask,
+        output: AgentOutput,
+    ) -> Optional[ToolCall]:
+        """Select a tool or preserve a typed catalog failure on the task."""
+        if output.get("tool_call") is None and not self.tools:
+            self.fail_task(
+                task.task_id,
+                AgentFailureReason.NO_TOOLS_FOUND,
+                "the agent tool catalog is empty",
+            )
+            return None
+
+        if output.get("tool_call") is None:
+            available_tools = [
+                tool
+                for tool in self.tools
+                if self._tool_schemas.get(tool.name, None) is None
+                or self._tool_schemas[tool.name].available
+            ]
+            if not available_tools:
+                self.fail_task(
+                    task.task_id,
+                    AgentFailureReason.NO_AVAILABLE_TOOLS,
+                    "the registered agent tools are unavailable",
+                )
+                return None
+        return self._invoke_select_tool(task, output)
+
     def _invoke_execute(self, task: AgentTask, call: ToolCall) -> ToolResult:
         """Invoke the injected executor or the overridable runtime method."""
         context = self.get_context(task.task_id)
@@ -1334,6 +1357,7 @@ class AgentRuntime:
         end = value.get("end")
         paused = value.get("paused")
         busy = value.get("busy")
+        terminal = value.get("terminal")
         if response is not None and not isinstance(response, str):
             raise TypeError("agent output response must be text or null")
         if not isinstance(end, bool) or not isinstance(paused, bool):
@@ -1344,6 +1368,15 @@ class AgentRuntime:
             )
         if busy is not None and not paused:
             raise ValueError("agent busy output must be paused")
+        if terminal is not None and not isinstance(terminal, AgentTerminalOutcome):
+            raise TypeError("agent terminal metadata must be typed terminal metadata")
+        if terminal is not None and (
+            not end
+            or response is not None
+            or paused
+            or value.get("tool_call") is not None
+        ):
+            raise ValueError("agent terminal outputs must be empty and final")
         call = AgentRuntime._validate_tool_call(
             cast(JSONSerializable, value.get("tool_call"))
         )
@@ -1361,6 +1394,8 @@ class AgentRuntime:
         }
         if busy is not None:
             normalized["busy"] = busy
+        if terminal is not None:
+            normalized["terminal"] = terminal
         return normalized
 
     @staticmethod
@@ -1520,25 +1555,18 @@ class AgentRuntime:
         callback: Optional[AgentResponseCallback],
         output: Optional[AgentOutput] = None,
     ) -> AgentOutput:
-        """Return and optionally publish one terminal response for a task."""
+        """Return and optionally publish one typed terminal outcome for a task."""
         if output is not None:
             return output
-        response: Optional[str]
-        if task.state == AgentTaskState.ABORTED:
-            if task.abort_reason == AgentAbortReason.STUCK_TASK:
-                self._safe_callback(
-                    callback, _empty_output(string("agent.stuck_progress"))
-                )
-                response = string("agent.stuck_final")
-            else:
-                response = string("agent.limit_final")
-        elif task.state == AgentTaskState.FAILED:
-            response = string("agent.failure_final")
-        elif task.state == AgentTaskState.CANCELLED:
-            response = string("agent.cancelled_final")
-        else:
-            response = None
-        terminal = _empty_output(response)
+        terminal_outcome = AgentTerminalOutcome(
+            state=task.state,
+            failure_reason=task.failure_reason,
+            abort_reason=task.abort_reason,
+            cancellation_reason=task.cancellation_reason,
+            detail=task.failure_detail,
+            metadata=task.completion_metadata,
+        )
+        terminal = _empty_output(terminal=terminal_outcome)
         self._safe_callback(callback, terminal)
         return terminal
 

@@ -8,14 +8,22 @@ from typing import Optional, cast
 from unittest import TestCase, mock
 
 from celune.agent import (
+    AgentClassificationFailure,
+    AgentClassificationFailureKind,
+    AgentClassificationResult,
+    AgentCancellationReason,
     AgentContext,
+    AgentFailureReason,
+    AgentInputClassification,
     AgentInputRouter,
     AgentOutput,
     AgentRequest,
     AgentTool,
     AgentToolSelector,
     AgentResponseCallback,
+    AgentRoute,
     AgentRuntime,
+    AgentSession,
     AgentTaskState,
     AgentToolBehavior,
     AgentToolDangerLevel,
@@ -243,7 +251,7 @@ class AgentCoreIntegrationTests(TestCase):
             *,
             loglevel: LogLevel = "info",
         ) -> None:
-            """Capture constructor diagnostics for the warning assertion."""
+            """Capture startup diagnostics for the ordering assertion."""
             del severity, loglevel
             logs.append(msg)
 
@@ -259,7 +267,24 @@ class AgentCoreIntegrationTests(TestCase):
             )
         self.addCleanup(core.close)
         self.assertIn("local_system_info", core._agent_tool_schemas)
+
+        with (
+            mock.patch.object(core, "load_available_voices", return_value=False),
+            mock.patch.object(core, "fatal"),
+        ):
+            self.assertFalse(core.load(skip_runtime_check=True))
+
+        self.assertTrue(logs)
+        self.assertTrue(logs[0].startswith("Celune "))
         self.assertTrue(any("UNSANDBOXED AGENT" in message for message in logs))
+        self.assertGreater(
+            next(
+                index
+                for index, message in enumerate(logs)
+                if "UNSANDBOXED AGENT" in message
+            ),
+            0,
+        )
         self.assertIn(
             "local_system_info",
             production_agent_tool_schemas(include_local_management=True),
@@ -496,6 +521,222 @@ class AgentCoreIntegrationTests(TestCase):
             "The agent task completed successfully.",
         )
         self.assertIsNone(core.agent_runtime.get_active_task("default"))
+
+    def test_core_logs_one_typed_route_before_downstream_processing(self) -> None:
+        """Expose semantic routing diagnostics only through the debug log gate."""
+        core = self._make_core()
+        logs: list[str] = []
+        core.log_level = "debug"
+        core.log_callback = lambda message, *_args, **_kwargs: logs.append(message)
+        core.vision = _RoutingFixture(
+            '{"classification":"task","route":"task",'
+            '"confidence":0.98,"intent":"inspect_status"}'
+        )
+
+        route = core.route_input("Check the current agent status.", persona_ready=True)
+
+        self.assertEqual(route.route.value, "task")
+        self.assertEqual(
+            logs[-1],
+            "[ROUTE] request=Check the current agent status. "
+            "type=agent intent=inspect_status confidence=98%",
+        )
+
+    def test_core_route_log_uses_say_for_classifier_fallback(self) -> None:
+        """Mark an unavailable semantic route as a direct speech fallback."""
+        core = self._make_core()
+        logs: list[str] = []
+        core.log_level = "debug"
+        core.log_callback = lambda message, *_args, **_kwargs: logs.append(message)
+
+        route = core.route_input("Please handle this", persona_ready=False)
+
+        self.assertIsNotNone(route.failure)
+        self.assertEqual(logs[-1], "[ROUTE] request=Please handle this type=say")
+
+    def test_core_route_log_omits_agent_type_when_agent_mode_is_disabled(self) -> None:
+        """Keep disabled agent mode on the ordinary Persona route."""
+        core = self._make_core()
+        logs: list[str] = []
+        core.mode = "converse"
+        core.log_level = "debug"
+        core.log_callback = lambda message, *_args, **_kwargs: logs.append(message)
+
+        route = core.route_input("Check the current agent status.", persona_ready=False)
+
+        self.assertEqual(route.route.value, "conversation")
+        self.assertEqual(
+            logs[-1],
+            "[ROUTE] request=Check the current agent status. "
+            "type=persona confidence=100%",
+        )
+
+    def test_failed_agent_task_is_explained_by_active_persona(self) -> None:
+        """Use the active Persona voice for a no-tool-match terminal failure."""
+        core = self._make_core(agent_tool_selector=lambda _context, _output: None)
+        persona = _PersonaFixture()
+        persona.responses = [
+            _PersonaResponse(
+                '{"classification":"task","route":"task",'
+                '"confidence":0.98,"task_request":"Inspect the unavailable thing."}'
+            ),
+            _PersonaResponse("Inspect the unavailable thing."),
+            _PersonaResponse("I could not find a suitable way to do that just now."),
+        ]
+        core.vision = cast(PersonaClient, persona)
+        delivered: list[str] = []
+
+        def record_delivery(_engine: Celune, _request: str, response: str) -> bool:
+            """Capture the character-generated terminal response."""
+            delivered.append(response)
+            return True
+
+        route = core.route_input("Inspect the unavailable thing.", persona_ready=True)
+        with mock.patch(
+            "celune.celune.deliver_persona_response", side_effect=record_delivery
+        ):
+            self.assertTrue(core._run_agent_route(route))
+
+        metadata = route.routing_metadata
+        self.assertIsInstance(metadata, dict)
+        assert isinstance(metadata, dict)
+        task_id = metadata.get("task_id")
+        self.assertIsInstance(task_id, str)
+        assert isinstance(task_id, str)
+        task = core.agent_runtime.get_task(task_id)
+        self.assertEqual(task.state, AgentTaskState.FAILED)
+        self.assertIsNotNone(task.failure_reason)
+        assert task.failure_reason is not None
+        self.assertEqual(task.failure_reason.value, "no_available_tools")
+        self.assertEqual(
+            delivered[-1:],
+            ["I could not find a suitable way to do that just now."],
+        )
+        failure_prompt = persona.requests[-1]["system"]
+        self.assertIsInstance(failure_prompt, str)
+        assert isinstance(failure_prompt, str)
+        self.assertIn("Failure response instruction", failure_prompt)
+        self.assertIn("no_available_tools", failure_prompt)
+
+    def test_classification_failure_is_explained_by_active_persona(self) -> None:
+        """Use the active Persona voice when intent classification fails."""
+        core = self._make_core()
+        persona = _PersonaFixture()
+        persona.responses = [
+            _PersonaResponse("I cannot confidently route that request yet."),
+        ]
+        core.vision = cast(PersonaClient, persona)
+        failure = AgentClassificationFailure(
+            AgentClassificationFailureKind.MALFORMED_OUTPUT,
+            "classifier returned malformed output",
+        )
+        route = AgentClassificationResult(
+            classification=AgentInputClassification.CONVERSATION,
+            confidence=0.0,
+            reason="classifier_failure",
+            route=AgentRoute.CONVERSATION,
+            failure=failure,
+        )
+        delivered: list[str] = []
+        with mock.patch(
+            "celune.celune.deliver_persona_response",
+            side_effect=lambda _engine, _request, response: (
+                delivered.append(response) or True
+            ),
+        ):
+            self.assertTrue(
+                core._speak_agent_classification_failure(
+                    "Please handle this ambiguous request.",
+                    failure,
+                    route,
+                )
+            )
+
+        self.assertEqual(delivered, ["I cannot confidently route that request yet."])
+        failure_prompt = persona.requests[-1]["system"]
+        self.assertIsInstance(failure_prompt, str)
+        assert isinstance(failure_prompt, str)
+        self.assertIn("Classification failure", failure_prompt)
+        self.assertIn("malformed_output", failure_prompt)
+
+    def test_typed_permission_approval_tool_and_cancel_failures_use_persona(
+        self,
+    ) -> None:
+        """Use character-generated explanations for common terminal outcomes."""
+        core = self._make_core()
+        persona = _PersonaFixture()
+        responses = {
+            "permission": "I could not do that because it is not permitted.",
+            "approval": "You declined that action, so I left it undone.",
+            "tool": "The selected tool failed before it could finish.",
+            "cancel": "I stopped that task when you asked me to.",
+        }
+        persona.responses = [
+            _PersonaResponse(response) for response in responses.values()
+        ]
+        core.vision = cast(PersonaClient, persona)
+        delivered: list[str] = []
+
+        def record_delivery(_engine: Celune, _request: str, response: str) -> bool:
+            """Capture one character-generated terminal response."""
+            delivered.append(response)
+            return True
+
+        with mock.patch(
+            "celune.celune.deliver_persona_response", side_effect=record_delivery
+        ):
+            for label, reason in (
+                ("permission", AgentFailureReason.PERMISSION_DENIED),
+                ("approval", AgentFailureReason.APPROVAL_DENIED),
+                ("tool", AgentFailureReason.TOOL_ERROR),
+            ):
+                with self.subTest(label=label):
+                    task = core.agent_runtime.create_task(
+                        AgentRequest(
+                            f"Run the {label} case.",
+                            session=AgentSession(session_id=f"{label}-session"),
+                        ),
+                        task_id=f"{label}-task",
+                    )
+                    core.agent_runtime.start_task(task.task_id)
+                    core.agent_runtime.classify_task(task.task_id)
+                    core.agent_runtime.fail_task(task.task_id, reason, label)
+                    route = AgentClassificationResult(
+                        classification=AgentInputClassification.TASK,
+                        confidence=1.0,
+                        route=AgentRoute.TASK_INPUT,
+                        routing_metadata={"task_id": task.task_id},
+                    )
+                    self.assertTrue(core._run_agent_route(route))
+
+            task = core.agent_runtime.create_task(
+                AgentRequest(
+                    "Run the cancel case.",
+                    session=AgentSession(session_id="cancel-session"),
+                ),
+                task_id="cancel-task",
+            )
+            core.agent_runtime.start_task(task.task_id)
+            core.agent_runtime.classify_task(task.task_id)
+            core.agent_runtime.cancel_task(
+                task.task_id,
+                AgentCancellationReason.USER_REQUEST,
+            )
+            route = AgentClassificationResult(
+                classification=AgentInputClassification.TASK,
+                confidence=1.0,
+                route=AgentRoute.TASK_INPUT,
+                routing_metadata={"task_id": task.task_id},
+            )
+            self.assertTrue(core._run_agent_route(route))
+
+        self.assertEqual(list(responses.values()), delivered)
+        for request, label in zip(persona.requests, responses):
+            prompt = request["system"]
+            self.assertIsInstance(prompt, str)
+            assert isinstance(prompt, str)
+            self.assertIn("Failure response instruction", prompt)
+            self.assertIn(label, prompt)
 
     def test_terminal_speak_tool_is_the_task_result(self) -> None:
         """Run the real registered speak tool without a duplicate final response."""

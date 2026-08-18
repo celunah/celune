@@ -1430,6 +1430,7 @@ def start(
             ui = CeluneUI(
                 startup_loader=prepare_interactive_runtime,
                 startup_messages=_STARTUP_DIAGNOSTICS,
+                startup_log_level=active_log_level,
             )
             _STARTUP_DIAGNOSTIC_SINK = ui.receive_startup_diagnostic
             try:

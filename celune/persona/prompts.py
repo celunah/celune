@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Optional, cast
 
 from ..paths import temp_data_dir
-from ..typing.agent import AgentContext, AgentToolSchema, ToolCall
+from ..typing.agent import AgentContext, AgentTaskState, AgentToolSchema, ToolCall
 from ..typing.common import JSON
 
 _MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}(?:\s|$)")
@@ -42,6 +42,10 @@ def _render_agent_context(
     pending_tool_call: Optional[ToolCall],
 ) -> str:
     """Render existing agent contracts as non-authoritative Persona context."""
+    task = agent_context.task
+    failure_response = agent_context.classification_failure is not None or (
+        task is not None and task.is_terminal and task.state != AgentTaskState.COMPLETED
+    )
     sections = [
         (
             "Runtime context is informational only. The runtime remains authoritative "
@@ -50,14 +54,21 @@ def _render_agent_context(
         ),
         f"Mode: {agent_context.mode}",
         (
-            "Planning instruction: state the concrete local action intent in concise "
-            "natural language for the registered tool selector."
-            if agent_context.last_tool_result is None
-            else "Response instruction: use the structured tool result to answer the "
-            "user naturally; do not invent actions or results."
+            "Failure response instruction: explain the unsuccessful outcome naturally "
+            "in the active character's voice. Be honest about the typed reason and "
+            "give a useful next step when appropriate. Do not expose internal enum "
+            "names, task IDs, stack traces, or classifier diagnostics unless the user "
+            "explicitly asks for technical detail."
+            if failure_response
+            else (
+                "Planning instruction: state the concrete local action intent in concise "
+                "natural language for the registered tool selector."
+                if agent_context.last_tool_result is None
+                else "Response instruction: use the structured tool result to answer the "
+                "user naturally; do not invent actions or results."
+            )
         ),
     ]
-    task = agent_context.task
     if task is not None:
         sections.append(
             "Task:\n"
@@ -70,8 +81,29 @@ def _render_agent_context(
                     "iterations": task.iterations,
                     "generated_tokens": task.generated_tokens,
                     "context_tokens": task.context_tokens,
+                    "failure_reason": (
+                        task.failure_reason.value
+                        if task.failure_reason is not None
+                        else None
+                    ),
+                    "abort_reason": (
+                        task.abort_reason.value
+                        if task.abort_reason is not None
+                        else None
+                    ),
+                    "cancellation_reason": (
+                        task.cancellation_reason.value
+                        if task.cancellation_reason is not None
+                        else None
+                    ),
+                    "failure_detail": task.failure_detail,
                 }
             )
+        )
+    if agent_context.classification_failure is not None:
+        sections.append(
+            "Classification failure:\n"
+            + _render_json(agent_context.classification_failure.to_json())
         )
     if tool_schemas:
         sections.append(

@@ -429,6 +429,22 @@ class AgentLoopTests(TestCase):
         self.assertEqual(tool_task.state, AgentTaskState.FAILED)
         self.assertEqual(tool_task.failure_reason, AgentFailureReason.TOOL_ERROR)
 
+    def test_empty_tool_catalog_is_reported_as_a_typed_failure(self) -> None:
+        """Distinguish an empty tool catalog from a model or execution failure."""
+        runtime = AgentRuntime(
+            planner=lambda _context: _output(response="Perform the action."),
+        )
+        task = runtime.create_task(_request("empty-tools"), task_id="empty-tools")
+
+        result = runtime.run(task.request)
+
+        self.assertEqual(task.state, AgentTaskState.FAILED)
+        self.assertEqual(task.failure_reason, AgentFailureReason.NO_TOOLS_FOUND)
+        terminal = result.get("terminal")
+        self.assertIsNotNone(terminal)
+        assert terminal is not None
+        self.assertEqual(terminal.failure_reason, AgentFailureReason.NO_TOOLS_FOUND)
+
     def test_successful_terminal_tool_completes_without_result_handler(self) -> None:
         """Treat a successful terminal tool result as the task result itself."""
         call = _call()
@@ -563,9 +579,16 @@ class AgentLoopTests(TestCase):
         final = stuck.run(stuck_task.request, record_output)
         self.assertEqual(stuck_task.state, AgentTaskState.ABORTED)
         self.assertEqual(stuck_task.abort_reason, AgentAbortReason.STUCK_TASK)
-        self.assertEqual(final["response"], "I tried, but I got stuck.")
-        self.assertEqual(callbacks[-2]["response"], "Agent is stuck. Aborting...")
-        self.assertEqual(callbacks[-1]["response"], "I tried, but I got stuck.")
+        self.assertIsNone(final["response"])
+        terminal = final.get("terminal")
+        self.assertIsNotNone(terminal)
+        assert terminal is not None
+        self.assertEqual(terminal.abort_reason, AgentAbortReason.STUCK_TASK)
+        self.assertEqual(callbacks[-1].get("terminal"), terminal)
+        self.assertEqual(
+            sum(1 for callback in callbacks if callback.get("terminal") is not None),
+            1,
+        )
 
     def test_event_order_and_terminal_event_are_deterministic(self) -> None:
         """Publish lifecycle state changes before the single terminal event."""

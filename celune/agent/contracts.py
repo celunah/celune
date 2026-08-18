@@ -11,6 +11,7 @@ from ..exceptions import (
 )
 from ..typing.agent import (
     AgentAbortReason,
+    AgentTerminalOutcome,
     AgentApprovalDecision,
     AgentApprovalRequest,
     AgentApprovalResponse,
@@ -108,6 +109,7 @@ __all__ = [
     "AgentTask",
     "AgentTaskConfig",
     "AgentTaskState",
+    "AgentTerminalOutcome",
     "AgentTokenCounter",
     "AgentTool",
     "AgentToolArgumentSchema",

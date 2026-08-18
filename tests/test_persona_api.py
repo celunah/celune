@@ -549,6 +549,36 @@ class PersonaApiTests(TestCase):
         sync.assert_called_once_with()
         empty_cache.assert_called_once_with()
 
+    def test_generation_stopping_criteria_observes_interrupt(self) -> None:
+        """Verify Persona's model generation receives the shutdown cancellation hook."""
+        backend = runtime.PersonaBackend()
+        backend.processor = cast(runtime.PersonaProcessor, _FakeProcessor())
+        backend.tokenizer = cast(runtime.PersonaTokenizer, _FakeTokenizer())
+        model = _FakeGenerativeModel()
+        backend.model = cast(runtime.PersonaModel, model)
+        backend.model_id = "fixture/model"
+        backend.quantization = "4bit"
+
+        with mock.patch.object(
+            backend,
+            "_build_inputs",
+            return_value={"input_ids": runtime.torch.tensor([[1, 2]])},
+        ):
+            backend.generate(runtime.GenerateRequest(user="hello"))
+
+        criteria = cast(
+            runtime.StoppingCriteriaList,
+            model.calls[0]["stopping_criteria"],
+        )
+        criterion = cast(runtime._PersonaCancellationCriteria, criteria[0])
+        self.assertFalse(
+            criterion(runtime.torch.tensor([[1]]), runtime.torch.tensor([])).item()
+        )
+        backend.interrupt_generation()
+        self.assertTrue(
+            criterion(runtime.torch.tensor([[1]]), runtime.torch.tensor([])).item()
+        )
+
     def test_persona_client_routes_backend_output_to_verbose_logs(self) -> None:
         """Verify Persona backend stdout/stderr is captured into verbose logs."""
         logs: list[tuple[str, str]] = []

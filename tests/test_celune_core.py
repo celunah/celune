@@ -17,7 +17,12 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from celune import cevoice, i18n
-from celune.agent import AgentRequest, AgentSession, AgentTaskState
+from celune.agent import (
+    AgentCancellationReason,
+    AgentRequest,
+    AgentSession,
+    AgentTaskState,
+)
 from celune.celune import Celune
 from celune.config import Config
 from celune.dataclasses.celune import (
@@ -1127,6 +1132,35 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(
             celune._persona_queue.get_nowait(), "Use the safer status check."
         )
+
+    def test_close_cancels_active_agent_before_runtime_teardown(self) -> None:
+        """Verify shutdown records runtime cancellation before closing resources."""
+        celune = self._make_celune({})
+        task = celune.agent_runtime.create_task(
+            AgentRequest(
+                request="Check the current status.",
+                session=AgentSession(session_id="default"),
+            ),
+            task_id="shutdown-task",
+        )
+        celune.agent_runtime.start_task(task.task_id)
+        celune.agent_runtime.classify_task(task.task_id)
+        backend_abort = mock.Mock()
+
+        with (
+            mock.patch("celune.celune.close_pipeline"),
+            mock.patch.object(celune, "_unload_persona_state"),
+            mock.patch.object(celune, "unload_runtime_state"),
+            mock.patch.object(celune.backend, "abort", backend_abort, create=True),
+        ):
+            celune.close()
+
+        self.assertEqual(task.state, AgentTaskState.CANCELLED)
+        self.assertEqual(
+            task.cancellation_reason,
+            AgentCancellationReason.RUNTIME_SHUTDOWN,
+        )
+        backend_abort.assert_called_once_with()
 
     def test_unload_persona_state_clears_the_bound_emotion_analyzer(self) -> None:
         """Verify Persona teardown does not retain VLM references through emotion analysis."""

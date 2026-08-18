@@ -187,6 +187,30 @@ class PipelineTests(TestCase):
         self.assertEqual(engine.persona_queue.empty(), True)
         self.assertIs(engine.audio_queue.get_nowait(), engine.force_stop_marker)
 
+    def test_close_invalidates_active_speech_before_worker_teardown(self) -> None:
+        """Verify shutdown cancels speech generations before joining workers."""
+        engine = make_pipeline_engine()
+        engine.text_queue.put("pending speech")
+        engine.persona_queue.put("pending Persona")
+        engine.audio_queue.put("pending audio")
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.generation_thread = None
+        engine.playback_thread = None
+        engine.glow.leave = mock.Mock()
+        engine.glow.finished = threading.Event()
+        engine.glow.finished.set()
+
+        pipeline.close(cast(Celune, engine))
+
+        self.assertTrue(engine._exit_requested)
+        self.assertTrue(engine.utterance_force_stop.is_set())
+        self.assertEqual(engine._speech_generation, 1)
+        self.assertEqual(engine._playback_generation, 1)
+        self.assertIs(engine.text_queue.get_nowait(), engine.sentinel)
+        self.assertTrue(engine.persona_queue.empty())
+        self.assertIs(engine.audio_queue.get_nowait(), engine.force_stop_marker)
+        self.assertIs(engine.audio_queue.get_nowait(), engine.sentinel)
+
     def test_cancelled_speech_generation_cannot_queue_playback(self) -> None:
         """Verify a backend chunk racing with stop is rejected atomically."""
         engine = make_pipeline_engine()
@@ -3145,7 +3169,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             text = cast(str, kwargs["text"])
             events.append(f"generate:{text}")
             generated_texts.append(text)
-            yield np.zeros((8, 2), dtype=np.float32), 48000, None
+            yield np.ones((8, 2), dtype=np.float32) * 0.01, 48000, None
 
         def normalize(value: str) -> str:
             events.append(f"normalize:{value}")
@@ -3168,6 +3192,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             flush=mock.Mock(return_value=np.zeros((0, 2), dtype=np.float32)),
         )
         engine.queue_avail_callback = mock.Mock()
+        engine.caption_timing_callback = mock.Mock()
         engine.sentinel = PipelineStates.TERMINATE
         engine.exit_requested = False
         engine.dev = False
@@ -3201,6 +3226,11 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 "generate:normalized second",
             ],
         )
+        engine.caption_timing_callback.assert_called_once()
+        timing_call = engine.caption_timing_callback.call_args
+        assert timing_call is not None
+        self.assertEqual(timing_call.args[0], "raw input")
+        self.assertEqual(timing_call.args[3], "normalized first normalized second")
 
     async def test_generation_worker_reloads_language_specific_model_when_needed(
         self,

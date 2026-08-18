@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal, Optional, Protocol, TypedDict, Union
 import numpy as np
 import numpy.typing as npt
 import torch
+from transformers import StoppingCriteriaList
 from transformers.tokenization_utils_base import BatchEncoding
 
 from .common import JSONSerializable, VideoMetadataScalar
@@ -29,7 +30,13 @@ type ProcessorKwargValue = Union[
     bool,
     int,
 ]
-type ModelGenerateKwargValue = Union[torch.Tensor, int, float, bool]
+type ModelGenerateKwargValue = Union[
+    torch.Tensor,
+    int,
+    float,
+    bool,
+    StoppingCriteriaList,
+]
 type WhisperScalar = Union[int, float, np.number, torch.Tensor]
 type WhisperTokenValues = Union[Sequence[WhisperScalar], torch.Tensor, npt.NDArray]
 
