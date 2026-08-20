@@ -40,11 +40,11 @@ from celune.ui import app as ui_app
 from celune.ui import resources as ui_resources
 from celune.ui import terminal as ui_terminal
 from celune.ui.app import CeluneLoadingScreen, CeluneUI, UILogMessage
-from celune.persona.asr import WhisperSegment, WhisperWord
 from celune.ui.commands import attachment_source, process_command
 from celune.ui.headless import CeluneHeadlessUI
 from celune.ui.theme import severity_color
 from celune.utils import discard
+from celune.typing.common import JSONSerializable
 from tests.support import CeluneTestCase, FakeBackend, FakeVCBackend
 
 
@@ -3293,7 +3293,7 @@ class TestUIStartup(CeluneTestCase):
         self.assertEqual(fake_status.rendered, f"  {message}")
 
 
-class AgentStatusUITests(TestCase):
+class AgentStatusUITests(CeluneTestCase):
     """Tests for the typed agent lifecycle projection in the UI."""
 
     def tearDown(self) -> None:

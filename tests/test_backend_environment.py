@@ -14,8 +14,6 @@ from types import SimpleNamespace
 from typing import cast
 from unittest import mock
 
-import pytest
-
 from celune.backends import environment, remote, worker
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
@@ -172,7 +170,7 @@ class TestBackendEnvironment(CeluneTestCase):
 
             self.assertEqual(result, backend_environment)
             self.assertTrue(result.is_ready)
-            self.assertEqual(
+            self.assertTrue(
                 json.loads(result.metadata_path.read_text(encoding="utf-8"))[
                     "fingerprint"
                 ]

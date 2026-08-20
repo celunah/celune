@@ -8,11 +8,12 @@ import importlib
 import queue
 import sys
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Container, Iterable, Iterator
 from pathlib import Path
+from re import Pattern
 from types import MappingProxyType, ModuleType, SimpleNamespace
-from typing import TYPE_CHECKING, Optional, TypedDict
-from unittest import mock
+from typing import TYPE_CHECKING, ClassVar, Optional, TypedDict, Union, cast
+from unittest import TestCase, mock
 
 import numpy as np
 import numpy.typing as npt
@@ -31,7 +32,131 @@ if TYPE_CHECKING:
 
 
 class CeluneTestCase:
-    """Shared pytest lifecycle compatibility for Celune test classes."""
+    """Shared pytest lifecycle and legacy assertion compatibility."""
+
+    _cleanups: ClassVar[
+        list[tuple[Callable[..., object], tuple[object, ...], dict[str, object]]]
+    ] = []
+
+    def assertEqual(
+        self, first: object, second: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy equality assertion for preserved dev tests."""
+        TestCase().assertEqual(first, second, msg)
+
+    def assertNotEqual(
+        self, first: object, second: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy inequality assertion for preserved dev tests."""
+        TestCase().assertNotEqual(first, second, msg)
+
+    def assertTrue(self, expression: object, msg: Optional[str] = None) -> None:
+        """Retain the legacy truth assertion for preserved dev tests."""
+        TestCase().assertTrue(expression, msg)
+
+    def assertFalse(self, expression: object, msg: Optional[str] = None) -> None:
+        """Retain the legacy false assertion for preserved dev tests."""
+        TestCase().assertFalse(expression, msg)
+
+    def assertIs(
+        self, first: object, second: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy identity assertion for preserved dev tests."""
+        TestCase().assertIs(first, second, msg)
+
+    def assertIsNot(
+        self, first: object, second: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy non-identity assertion for preserved dev tests."""
+        TestCase().assertIsNot(first, second, msg)
+
+    def assertIsNone(self, value: object, msg: Optional[str] = None) -> None:
+        """Retain the legacy null assertion for preserved dev tests."""
+        TestCase().assertIsNone(value, msg)
+
+    def assertIsNotNone(self, value: object, msg: Optional[str] = None) -> None:
+        """Retain the legacy non-null assertion for preserved dev tests."""
+        TestCase().assertIsNotNone(value, msg)
+
+    def assertIsInstance(
+        self,
+        value: object,
+        class_or_tuple: Union[type[object], tuple[type[object], ...]],
+        msg: Optional[str] = None,
+    ) -> None:
+        """Retain the legacy instance assertion for preserved dev tests."""
+        TestCase().assertIsInstance(value, class_or_tuple, msg)
+
+    def assertIn(
+        self, member: object, container: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy containment assertion for preserved dev tests."""
+        typed_container = cast(Union[Container[object], Iterable[object]], container)
+        TestCase().assertIn(member, typed_container, msg)
+
+    def assertNotIn(
+        self, member: object, container: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy non-containment assertion for preserved dev tests."""
+        typed_container = cast(Union[Container[object], Iterable[object]], container)
+        TestCase().assertNotIn(member, typed_container, msg)
+
+    def assertLess(
+        self, first: object, second: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy ordering assertion for preserved dev tests."""
+        assertion = cast(Callable[..., None], TestCase().assertLess)
+        assertion(first, second, msg)
+
+    def assertGreaterEqual(
+        self, first: object, second: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy lower-bound assertion for preserved dev tests."""
+        assertion = cast(Callable[..., None], TestCase().assertGreaterEqual)
+        assertion(first, second, msg)
+
+    def assertAlmostEqual(
+        self,
+        first: object,
+        second: object,
+        places: Optional[int] = None,
+        msg: Optional[str] = None,
+        delta: Optional[float] = None,
+    ) -> None:
+        """Retain the legacy approximate-equality assertion for preserved dev tests."""
+        assertion = cast(Callable[..., None], TestCase().assertAlmostEqual)
+        assertion(
+            first,
+            second,
+            places=places,
+            msg=msg,
+            delta=delta,
+        )
+
+    def assertRaises(
+        self,
+        expected: Union[type[BaseException], tuple[type[BaseException], ...]],
+    ) -> contextlib.AbstractContextManager[BaseException]:
+        """Retain the legacy exception assertion for preserved dev tests."""
+        return cast(
+            contextlib.AbstractContextManager[BaseException],
+            TestCase().assertRaises(expected),
+        )
+
+    def assertRaisesRegex(
+        self,
+        expected: Union[type[BaseException], tuple[type[BaseException], ...]],
+        regex: Union[str, Pattern[str]],
+    ) -> contextlib.AbstractContextManager[BaseException]:
+        """Retain the legacy exception-regex assertion for preserved dev tests."""
+        return cast(
+            contextlib.AbstractContextManager[BaseException],
+            TestCase().assertRaisesRegex(expected, regex),
+        )
+
+    def subTest(self, **params: object) -> contextlib.AbstractContextManager[None]:
+        """Retain the legacy subtest context for preserved dev tests."""
+        return TestCase().subTest(**params)
 
     @classmethod
     def setup_class(cls) -> None:
@@ -49,9 +174,7 @@ class CeluneTestCase:
 
     def setup_method(self) -> None:
         """Run the legacy per-test setup hook through pytest."""
-        self._cleanups: list[
-            tuple[Callable[..., None], tuple[object, ...], dict[str, object]]
-        ] = []
+        self._cleanups.clear()
         setup = getattr(self, "setUp", None)
         if callable(setup):
             setup()  # pylint: disable=not-callable
@@ -66,7 +189,7 @@ class CeluneTestCase:
 
     def addCleanup(
         self,
-        function: Callable[..., None],
+        function: Callable[..., object],
         *args: object,
         **kwargs: object,
     ) -> None:

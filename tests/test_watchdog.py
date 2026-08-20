@@ -4,8 +4,6 @@
 import os
 from unittest import mock
 
-import pytest
-
 from celune import watchdog
 from celune.constants import ExitCodes
 
