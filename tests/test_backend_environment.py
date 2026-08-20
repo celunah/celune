@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for isolated backend environment metadata and installation."""
 
 import io
@@ -59,6 +59,8 @@ from celune.backends.worker_protocol import (
     validate_payload_descriptors,
 )
 
+from .support import CeluneTestCase
+
 
 def send_no_payload_packet(
     control_stream: IO[bytes], binary_fd: int, packet: WorkerMessage
@@ -105,7 +107,7 @@ class _ShutdownProcess:
         self.killed = True
 
 
-class BackendEnvironmentTests(unittest.TestCase):
+class TestBackendEnvironment(CeluneTestCase):
     """Verify backend environment paths and installation transactions."""
 
     def _make_shutdown_proxy(
@@ -187,14 +189,18 @@ class BackendEnvironmentTests(unittest.TestCase):
 
     def test_manifests_cover_installed_backend_extras(self) -> None:
         """Verify every supported optional backend has a manifest."""
-        self.assertEqual(
-            set(BACKEND_MANIFESTS),
-            {"mini", "qwen3", "dotstts", "voxcpm2", "gpt-sovits", "seed-vc"},
-        )
+        assert set(BACKEND_MANIFESTS) == {
+            "mini",
+            "qwen3",
+            "dotstts",
+            "voxcpm2",
+            "gpt-sovits",
+            "seed-vc",
+        }
 
     def test_manifest_lookup_normalizes_backend_id(self) -> None:
         """Verify manifest lookup accepts surrounding whitespace and case changes."""
-        self.assertIs(backend_manifest(" QWEN3 "), BACKEND_MANIFESTS["qwen3"])
+        assert backend_manifest(" QWEN3 ") is BACKEND_MANIFESTS["qwen3"]
 
     def test_worker_registry_contains_only_approved_backends(self) -> None:
         """Verify worker construction is limited to the six CEDTS backends."""
@@ -258,11 +264,8 @@ class BackendEnvironmentTests(unittest.TestCase):
             "torchvision==0.26.0+cu128",
         }
         for manifest in BACKEND_MANIFESTS.values():
-            self.assertIn(
-                "https://download.pytorch.org/whl/cu128",
-                manifest.index_urls,
-            )
-            self.assertTrue(expected_requirements.issubset(manifest.requirements))
+            assert "https://download.pytorch.org/whl/cu128" in manifest.index_urls
+            assert expected_requirements.issubset(manifest.requirements)
 
     def test_manifests_use_the_main_branch_huggingface_versions(self) -> None:
         """Verify isolated backends use the main branch's Hugging Face ranges."""
@@ -271,7 +274,7 @@ class BackendEnvironmentTests(unittest.TestCase):
             "transformers>=4.56,<5.0.0",
         }
         for manifest in BACKEND_MANIFESTS.values():
-            self.assertTrue(expected_requirements.issubset(manifest.requirements))
+            assert expected_requirements.issubset(manifest.requirements)
 
     def test_manifests_pin_the_main_branch_librosa_stack(self) -> None:
         """Verify isolated backends pin the compatible librosa dependency chain."""
@@ -281,28 +284,28 @@ class BackendEnvironmentTests(unittest.TestCase):
             "numba==0.65.1",
         }
         for manifest in BACKEND_MANIFESTS.values():
-            self.assertTrue(expected_requirements.issubset(manifest.requirements))
+            assert expected_requirements.issubset(manifest.requirements)
 
     def test_dotstts_uses_the_celune_fork(self) -> None:
         """Verify dots.tts is installed from Celune's maintained fork."""
-        self.assertIn(
-            "dots.tts @ git+https://github.com/celunah/dots.tts",
-            BACKEND_MANIFESTS["dotstts"].requirements,
+        assert (
+            "dots.tts @ git+https://github.com/celunah/dots.tts"
+            in BACKEND_MANIFESTS["dotstts"].requirements
         )
 
     def test_backend_dependency_list_matches_main_backend_normalizers(self) -> None:
         """Verify the backend dependency list follows the main branch declarations."""
-        self.assertNotIn("WeTextProcessing", BACKEND_MANIFESTS["dotstts"].requirements)
-        self.assertIn("jieba", BACKEND_MANIFESTS["gpt-sovits"].requirements)
-        self.assertIn("split-lang", BACKEND_MANIFESTS["gpt-sovits"].requirements)
-        self.assertIn("matplotlib", BACKEND_MANIFESTS["gpt-sovits"].requirements)
-        self.assertIn("torchcodec", BACKEND_MANIFESTS["gpt-sovits"].requirements)
+        assert "WeTextProcessing" not in BACKEND_MANIFESTS["dotstts"].requirements
+        assert "jieba" in BACKEND_MANIFESTS["gpt-sovits"].requirements
+        assert "split-lang" in BACKEND_MANIFESTS["gpt-sovits"].requirements
+        assert "matplotlib" in BACKEND_MANIFESTS["gpt-sovits"].requirements
+        assert "torchcodec" in BACKEND_MANIFESTS["gpt-sovits"].requirements
 
     def test_fingerprint_changes_when_requirements_change(self) -> None:
         """Verify dependency changes select a different environment directory."""
         first = BackendManifest("test", "tts", ("demo==1",), "module", "Backend")
         second = BackendManifest("test", "tts", ("demo==2",), "module", "Backend")
-        self.assertNotEqual(first.fingerprint(), second.fingerprint())
+        assert first.fingerprint() != second.fingerprint()
 
     def test_ensure_installs_backend_requirements_with_dependencies(self) -> None:
         """Verify backend packages are installed with their declared dependencies."""
@@ -333,10 +336,10 @@ class BackendEnvironmentTests(unittest.TestCase):
             ) as run:
                 manager.ensure(manifest)
 
-            self.assertEqual(run.call_count, 2)
-            self.assertIn("--no-config", run.call_args_list[1].args[0])
-            self.assertIn("--no-cache", run.call_args_list[1].args[0])
-            self.assertNotIn("--no-deps", run.call_args_list[1].args[0])
+            assert run.call_count == 2
+            assert "--no-config" in run.call_args_list[1].args[0]
+            assert "--no-cache" in run.call_args_list[1].args[0]
+            assert "--no-deps" not in run.call_args_list[1].args[0]
 
     def test_ensure_installs_into_a_temporary_environment_then_publishes_it(
         self,
@@ -373,13 +376,13 @@ class BackendEnvironmentTests(unittest.TestCase):
 
             self.assertEqual(result, backend_environment)
             self.assertTrue(result.is_ready)
-            self.assertEqual(
+            self.assertTrue(
                 json.loads(result.metadata_path.read_text(encoding="utf-8"))[
                     "fingerprint"
-                ],
-                manifest.fingerprint(),
+                ]
+                == manifest.fingerprint()
             )
-            self.assertEqual(run.call_count, 2)
+            assert run.call_count == 2
             install_command = run.call_args_list[1].args[0]
             strategy_index = install_command.index("--index-strategy")
             self.assertEqual(
@@ -437,7 +440,7 @@ class BackendEnvironmentTests(unittest.TestCase):
             ):
                 manager.ensure(manifest)
 
-            self.assertEqual(run.call_args_list[0].args[0][3], "3.13")
+            assert run.call_args_list[0].args[0][3] == "3.13"
 
     def test_exclusive_lock_times_out_while_another_handle_owns_it(self) -> None:
         """Verify the operating-system lock blocks a second installer."""
@@ -465,8 +468,8 @@ class BackendEnvironmentTests(unittest.TestCase):
         ):
             manager._run_uv("venv")
 
-        self.assertEqual(run.call_args.kwargs["timeout"], 1.5)
-        self.assertNotIn("PYTHONHOME", run.call_args.kwargs["env"])
+        assert run.call_args.kwargs["timeout"] == 1.5
+        assert "PYTHONHOME" not in run.call_args.kwargs["env"]
 
     def test_uv_does_not_inherit_core_package_manager_settings(self) -> None:
         """Verify uv cannot inherit core environment resolution constraints."""
@@ -490,9 +493,7 @@ class BackendEnvironmentTests(unittest.TestCase):
             manager._run_uv("venv")
 
         child_environment = run.call_args.kwargs["env"]
-        self.assertFalse(
-            any(name.startswith(("PIP_", "UV_")) for name in child_environment)
-        )
+        assert not any(name.startswith(("PIP_", "UV_")) for name in child_environment)
         for variable in (
             "PYTHONHOME",
             "PYTHONPATH",
@@ -500,7 +501,7 @@ class BackendEnvironmentTests(unittest.TestCase):
             "PYTHONNOUSERSITE",
             "VIRTUAL_ENV",
         ):
-            self.assertNotIn(variable, child_environment)
+            assert variable not in child_environment
 
     def test_worker_protocol_round_trips_messages(self) -> None:
         """Verify JSON-compatible worker messages survive CEDTS framing."""
@@ -512,7 +513,7 @@ class BackendEnvironmentTests(unittest.TestCase):
         )
         send_message(stream, message)
         stream.seek(0)
-        self.assertEqual(receive_message(stream), message)
+        assert receive_message(stream) == message
 
     def test_worker_protocol_uses_utf8_json_control_framing(self) -> None:
         """Verify control frames contain only length-prefixed UTF-8 JSON."""
@@ -1621,7 +1622,7 @@ class BackendEnvironmentTests(unittest.TestCase):
                 ),
             )
 
-        self.assertTrue(response["done"])
+        assert response["done"]
         protocol_stream.seek(0)
         frame = receive_message(protocol_stream)
         self.assertTrue(cast(dict, frame["data"])["stream"])
@@ -2532,10 +2533,10 @@ class BackendEnvironmentTests(unittest.TestCase):
             io.BytesIO(),
         )
 
-        self.assertTrue(loaded["ok"])
-        self.assertTrue(unloaded["ok"])
-        self.assertTrue(model.closed)
-        self.assertEqual(models, {})
+        assert loaded["ok"]
+        assert unloaded["ok"]
+        assert model.closed
+        assert not models
 
     def test_worker_unload_ignores_broken_model_attribute_lookup(self) -> None:
         """Verify torn-down Torch-like models cannot break worker cleanup."""
@@ -2551,7 +2552,7 @@ class BackendEnvironmentTests(unittest.TestCase):
         models: dict[int, BackendModel] = {1: PartiallyTornDownModel()}
         worker._release_worker_models(models)
 
-        self.assertEqual(models, {})
+        assert not models
 
     def test_remote_proxy_handles_fatal_frames_out_of_band(self) -> None:
         """Verify fatal worker notifications do not consume the response frame."""
@@ -2572,7 +2573,7 @@ class BackendEnvironmentTests(unittest.TestCase):
         )
 
         callback.assert_called_once_with()
-        self.assertEqual(response["value"], "ready")
+        assert response["value"] == "ready"
 
     def _make_packet_reader_proxy(
         self,
@@ -3179,8 +3180,9 @@ class BackendEnvironmentTests(unittest.TestCase):
         ):
             proxy._handshake()
 
-        self.assertEqual(context.exception.error_code, "backend_worker_error")
-        self.assertEqual(context.exception.error_type, "ImportError")
+        error = cast(BackendError, context.exception)
+        self.assertEqual(error.error_code, "backend_worker_error")
+        self.assertEqual(error.error_type, "ImportError")
         self.assertIn("backend dependency missing", str(context.exception))
 
     def test_remote_proxy_surfaces_handshake_error_before_ready(self) -> None:
@@ -3227,8 +3229,9 @@ class BackendEnvironmentTests(unittest.TestCase):
         ):
             proxy._handshake()
 
-        self.assertEqual(context.exception.error_code, "backend_worker_error")
-        self.assertEqual(context.exception.error_type, "ImportError")
+        error = cast(BackendError, context.exception)
+        self.assertEqual(error.error_code, "backend_worker_error")
+        self.assertEqual(error.error_type, "ImportError")
         self.assertIn("backend dependency missing", str(context.exception))
 
     def test_remote_proxy_bounds_packet_id_replay_window(self) -> None:
@@ -3425,7 +3428,10 @@ raise SystemExit(worker.main())
             load_request = build_packet(
                 "request",
                 "load_model",
-                {"arguments": {"model_id": "fake/model"}},
+                cast(
+                    dict[str, WorkerValue],
+                    {"arguments": {"model_id": "fake/model"}},
+                ),
                 message_id="load-request",
             )
             send_no_payload_packet(process.stdin, core_binary_output, load_request)
@@ -4439,10 +4445,12 @@ raise SystemExit(worker.main())
 
         proxy._read_worker_logs(stream, log)
 
-        self.assertEqual(
-            [call.args[1] for call in log.call_args_list],
-            ["error", "error", "error", "info"],
-        )
+        assert [call.args[1] for call in log.call_args_list] == [
+            "error",
+            "error",
+            "error",
+            "info",
+        ]
 
     def test_remote_proxy_uses_backend_error_for_unknown_worker_exception_types(
         self,
@@ -4648,7 +4656,7 @@ raise SystemExit(worker.main())
             resolve_backend("mini", isolated=True)
 
         proxy.assert_called_once()
-        self.assertEqual(proxy.call_args.args[0], BACKEND_MANIFESTS["mini"])
+        assert proxy.call_args.args[0] == BACKEND_MANIFESTS["mini"]
 
 
 if __name__ == "__main__":

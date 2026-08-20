@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Persona helpers exposed as a package API."""
 
 from .capabilities import PersonaCapabilities

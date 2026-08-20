@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Property helpers for grouped Celune runtime state."""
 
 from typing import Optional

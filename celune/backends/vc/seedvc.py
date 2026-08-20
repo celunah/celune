@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Seed-VC backend for Celune voice conversion."""
 
 import gc

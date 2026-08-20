@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Proxy objects for backends running in isolated Python processes."""
 
 import os
@@ -671,7 +671,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                         if callable(log_callback):
                             with suppress(Exception):
                                 _emit_log(
-                                    log_callback,
+                                    cast(Callable[..., None], log_callback),
                                     string(
                                         "backends.worker_proxy.packet_reader_failed",
                                         error=str(error),

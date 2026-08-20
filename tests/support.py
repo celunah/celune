@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Lightweight test fakes for Celune's unit test suite."""
 
 from __future__ import annotations
@@ -8,11 +8,21 @@ import queue
 import importlib
 import threading
 import contextlib
+from collections.abc import Callable, Container, Iterable, Iterator
 from pathlib import Path
-from unittest import mock
-from collections.abc import Callable, Iterator
-from typing import TYPE_CHECKING, Optional, TypedDict
-from types import ModuleType, SimpleNamespace, MappingProxyType
+from re import Pattern
+from types import MappingProxyType, ModuleType, SimpleNamespace, TracebackType
+from typing import (
+    TYPE_CHECKING,
+    ClassVar,
+    Optional,
+    Protocol,
+    Self,
+    TypedDict,
+    Union,
+    cast,
+)
+from unittest import TestCase, mock
 
 import numpy as np
 import numpy.typing as npt
@@ -27,6 +37,217 @@ from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 if TYPE_CHECKING:
     from celune.celune import Celune
+
+
+class _ExceptionCaptureContext(Protocol):
+    """Context manager returned by the legacy exception assertion helpers."""
+
+    exception: BaseException
+
+    def __enter__(self) -> Self:
+        """Return the captured-exception context."""
+
+    def __exit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_value: Optional[BaseException],
+        traceback: Optional[TracebackType],
+    ) -> Optional[bool]:
+        """Finish exception capture and suppress the expected exception."""
+
+
+class CeluneTestCase:
+    """Shared pytest lifecycle and legacy assertion compatibility."""
+
+    _cleanups: ClassVar[
+        list[tuple[Callable[..., object], tuple[object, ...], dict[str, object]]]
+    ] = []
+
+    def assertEqual(
+        self, first: object, second: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy equality assertion for preserved dev tests."""
+        TestCase().assertEqual(first, second, msg)
+
+    def assertNotEqual(
+        self, first: object, second: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy inequality assertion for preserved dev tests."""
+        TestCase().assertNotEqual(first, second, msg)
+
+    def assertTrue(self, expression: object, msg: Optional[str] = None) -> None:
+        """Retain the legacy truth assertion for preserved dev tests."""
+        TestCase().assertTrue(expression, msg)
+
+    def assertFalse(self, expression: object, msg: Optional[str] = None) -> None:
+        """Retain the legacy false assertion for preserved dev tests."""
+        TestCase().assertFalse(expression, msg)
+
+    def assertIs(
+        self, first: object, second: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy identity assertion for preserved dev tests."""
+        TestCase().assertIs(first, second, msg)
+
+    def assertIsNot(
+        self, first: object, second: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy non-identity assertion for preserved dev tests."""
+        TestCase().assertIsNot(first, second, msg)
+
+    def assertIsNone(self, value: object, msg: Optional[str] = None) -> None:
+        """Retain the legacy null assertion for preserved dev tests."""
+        TestCase().assertIsNone(value, msg)
+
+    def assertIsNotNone(self, value: object, msg: Optional[str] = None) -> None:
+        """Retain the legacy non-null assertion for preserved dev tests."""
+        TestCase().assertIsNotNone(value, msg)
+
+    def assertIsInstance(
+        self,
+        value: object,
+        class_or_tuple: Union[type[object], tuple[type[object], ...]],
+        msg: Optional[str] = None,
+    ) -> None:
+        """Retain the legacy instance assertion for preserved dev tests."""
+        TestCase().assertIsInstance(value, class_or_tuple, msg)
+
+    def assertIn(
+        self, member: object, container: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy containment assertion for preserved dev tests."""
+        typed_container = cast(Union[Container[object], Iterable[object]], container)
+        TestCase().assertIn(member, typed_container, msg)
+
+    def assertNotIn(
+        self, member: object, container: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy non-containment assertion for preserved dev tests."""
+        typed_container = cast(Union[Container[object], Iterable[object]], container)
+        TestCase().assertNotIn(member, typed_container, msg)
+
+    def assertLess(
+        self, first: object, second: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy ordering assertion for preserved dev tests."""
+        assertion = cast(Callable[..., None], TestCase().assertLess)
+        assertion(first, second, msg)
+
+    def assertGreaterEqual(
+        self, first: object, second: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy lower-bound assertion for preserved dev tests."""
+        assertion = cast(Callable[..., None], TestCase().assertGreaterEqual)
+        assertion(first, second, msg)
+
+    def assertGreater(
+        self, first: object, second: object, msg: Optional[str] = None
+    ) -> None:
+        """Retain the legacy strict lower-bound assertion for preserved dev tests."""
+        assertion = cast(Callable[..., None], TestCase().assertGreater)
+        assertion(first, second, msg)
+
+    def assertNotIsInstance(
+        self,
+        value: object,
+        class_or_tuple: Union[type[object], tuple[type[object], ...]],
+        msg: Optional[str] = None,
+    ) -> None:
+        """Retain the legacy negative instance assertion for preserved dev tests."""
+        TestCase().assertNotIsInstance(value, class_or_tuple, msg)
+
+    def fail(self, msg: str = "") -> None:
+        """Retain the legacy unconditional failure assertion."""
+        TestCase().fail(msg)
+
+    def skipTest(self, reason: str) -> None:
+        """Retain the legacy test-skipping helper."""
+        TestCase().skipTest(reason)
+
+    def assertAlmostEqual(
+        self,
+        first: object,
+        second: object,
+        places: Optional[int] = None,
+        msg: Optional[str] = None,
+        delta: Optional[float] = None,
+    ) -> None:
+        """Retain the legacy approximate-equality assertion for preserved dev tests."""
+        assertion = cast(Callable[..., None], TestCase().assertAlmostEqual)
+        assertion(
+            first,
+            second,
+            places=places,
+            msg=msg,
+            delta=delta,
+        )
+
+    def assertRaises(
+        self,
+        expected: Union[type[BaseException], tuple[type[BaseException], ...]],
+    ) -> _ExceptionCaptureContext:
+        """Retain the legacy exception assertion for preserved dev tests."""
+        return cast(
+            _ExceptionCaptureContext,
+            TestCase().assertRaises(expected),
+        )
+
+    def assertRaisesRegex(
+        self,
+        expected: Union[type[BaseException], tuple[type[BaseException], ...]],
+        regex: Union[str, Pattern[str]],
+    ) -> _ExceptionCaptureContext:
+        """Retain the legacy exception-regex assertion for preserved dev tests."""
+        return cast(
+            _ExceptionCaptureContext,
+            TestCase().assertRaisesRegex(expected, regex),
+        )
+
+    def subTest(self, **params: object) -> contextlib.AbstractContextManager[None]:
+        """Retain the legacy subtest context for preserved dev tests."""
+        return TestCase().subTest(**params)
+
+    @classmethod
+    def setup_class(cls) -> None:
+        """Run the legacy class setup hook through pytest."""
+        setup = getattr(cls, "setUpClass", None)
+        if callable(setup):
+            setup()  # pylint: disable=not-callable
+
+    @classmethod
+    def teardown_class(cls) -> None:
+        """Run the legacy class teardown hook through pytest."""
+        teardown = getattr(cls, "tearDownClass", None)
+        if callable(teardown):
+            teardown()  # pylint: disable=not-callable
+
+    def setup_method(self) -> None:
+        """Run the legacy per-test setup hook through pytest."""
+        self._cleanups.clear()
+        setup = getattr(self, "setUp", None)
+        if callable(setup):
+            setup()  # pylint: disable=not-callable
+
+    def teardown_method(self) -> None:
+        """Run teardown and registered cleanup callbacks through pytest."""
+        teardown = getattr(self, "tearDown", None)
+        if callable(teardown):
+            teardown()  # pylint: disable=not-callable
+        for function, args, kwargs in reversed(self._cleanups):
+            function(*args, **kwargs)
+
+    def addCleanup(
+        self,
+        function: Callable[..., object],
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        """Register a callback to run after the current test."""
+        self._cleanups.append((function, args, kwargs))
+
+
+class CeluneAsyncTestCase(CeluneTestCase):
+    """Shared pytest lifecycle compatibility for async Celune tests."""
 
 
 class FakeModel(TypedDict):

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Compatibility exports for the relocated agent type definitions."""
 
 # This module intentionally mirrors the lazy typing-package export list.

@@ -1,10 +1,11 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the shared Persona runtime helpers."""
 
 import contextlib
 from types import SimpleNamespace
-from unittest import TestCase, mock
-from typing import Union, Optional, cast
+from typing import Optional, Union, cast
+from unittest import mock
+import pytest
 
 from celune.i18n import string
 from celune.utils import discard
@@ -17,6 +18,8 @@ from celune.constants import (
     persona_model_tier,
     remote_code_model_revision,
 )
+
+from .support import CeluneTestCase
 
 
 class _FakeEncoded:
@@ -165,7 +168,7 @@ class _FakeQwenVlConfig:
     model_type = "qwen3_vl"
 
 
-class PersonaApiTests(TestCase):
+class TestPersonaApi(CeluneTestCase):
     """Tests for shared Persona runtime behavior."""
 
     @staticmethod
@@ -235,59 +238,45 @@ class PersonaApiTests(TestCase):
 
             load_backend.assert_called_once_with("fixture/model", "8bit")
 
-            with self.assertRaisesRegex(
-                ValueError, "not available for VRAM tier 'low'"
-            ):
+            with pytest.raises(ValueError, match="not available for VRAM tier 'low'"):
                 runtime_low.load("fixture/model", "8bit")
 
     def test_messages_have_vision_only_for_explicit_media_items(self) -> None:
         """Verify visual mode is enabled only for explicit media attachments."""
-        self.assertEqual(
-            runtime.messages_have_vision([self._text_message("user", "hello")]),
-            False,
+        assert not runtime.messages_have_vision([self._text_message("user", "hello")])
+        assert not runtime.messages_have_vision(
+            [
+                self._content_message(
+                    "user",
+                    [runtime.TextContentItem(type="text", text="hello")],
+                )
+            ]
         )
-        self.assertEqual(
-            runtime.messages_have_vision(
-                [
-                    self._content_message(
-                        "user",
-                        [runtime.TextContentItem(type="text", text="hello")],
-                    )
-                ]
-            ),
-            False,
+        assert runtime.messages_have_vision(
+            [
+                self._content_message(
+                    "user",
+                    [
+                        runtime.ImageContentItem(
+                            type="image",
+                            image="file:///frame.png",
+                        )
+                    ],
+                )
+            ]
         )
-        self.assertEqual(
-            runtime.messages_have_vision(
-                [
-                    self._content_message(
-                        "user",
-                        [
-                            runtime.ImageContentItem(
-                                type="image",
-                                image="file:///frame.png",
-                            )
-                        ],
-                    )
-                ]
-            ),
-            True,
-        )
-        self.assertEqual(
-            runtime.messages_have_vision(
-                [
-                    self._content_message(
-                        "user",
-                        [
-                            runtime.VideoContentItem(
-                                type="video",
-                                video="file:///clip.mp4",
-                            )
-                        ],
-                    )
-                ]
-            ),
-            True,
+        assert runtime.messages_have_vision(
+            [
+                self._content_message(
+                    "user",
+                    [
+                        runtime.VideoContentItem(
+                            type="video",
+                            video="file:///clip.mp4",
+                        )
+                    ],
+                )
+            ]
         )
 
     def test_text_only_inputs_do_not_enter_vision_processing(self) -> None:
@@ -306,12 +295,9 @@ class PersonaApiTests(TestCase):
         ) as render:
             encoded = backend.build_inputs(messages)
 
-        self.assertIsInstance(encoded, _FakeEncoded)
-        self.assertEqual(encoded.device, "cpu")
-        self.assertEqual(
-            fake_tokenizer.calls,
-            [("User: hello\n\nAssistant:", "pt")],
-        )
+        assert isinstance(encoded, _FakeEncoded)
+        assert encoded.device == "cpu"
+        assert fake_tokenizer.calls == [("User: hello\n\nAssistant:", "pt")]
         render.assert_called_once_with(fake_tokenizer, messages)
 
     def test_load_uses_causal_lm_for_qwen_vl_backend(self) -> None:
@@ -356,9 +342,9 @@ class PersonaApiTests(TestCase):
         )
         loaders["tokenizer_loader"].assert_not_called()
         fake_model.eval.assert_called_once_with()
-        self.assertIs(backend.processor, fake_processor)
-        self.assertIs(backend.tokenizer, fake_tokenizer)
-        self.assertTrue(backend.supports_vision)
+        assert backend.processor is fake_processor
+        assert backend.tokenizer is fake_tokenizer
+        assert backend.supports_vision
 
     def test_trusted_model_revision_allows_abliterated_qwen_vl_model(self) -> None:
         """Verify the pinned abliterated Qwen VL derivative is trusted."""
@@ -439,8 +425,8 @@ class PersonaApiTests(TestCase):
             backend.load("Qwen/Qwen3-VL-4B-Instruct", "none")
 
         loaders["tokenizer_loader"].assert_not_called()
-        self.assertIs(backend.processor, fake_processor)
-        self.assertTrue(backend.supports_vision)
+        assert backend.processor is fake_processor
+        assert backend.supports_vision
 
     def test_load_raises_when_processor_fails_for_vlm_model(self) -> None:
         """Verify Persona does not silently downgrade a VLM to tokenizer-only mode."""
@@ -455,14 +441,14 @@ class PersonaApiTests(TestCase):
                 tokenizer=None,
                 processor_side_effect=RuntimeError("processor boom"),
             ),
-            self.assertRaisesRegex(
+            pytest.raises(
                 ValueError,
-                "Persona processor failed to load for model 'Qwen/Qwen3-VL-4B-Instruct'",
+                match="Persona processor failed to load for model 'Qwen/Qwen3-VL-4B-Instruct'",
             ) as exc_info,
         ):
             backend.load("Qwen/Qwen3-VL-4B-Instruct", "none")
 
-        self.assertIsInstance(exc_info.exception.__cause__, RuntimeError)
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
 
     def test_vision_inputs_use_qwen_vl_utils_when_processor_is_loaded(self) -> None:
         """Verify image requests go through qwen-vl-utils without capability gating."""
@@ -497,19 +483,16 @@ class PersonaApiTests(TestCase):
         ):
             encoded = backend.build_inputs(messages)
 
-        self.assertIsInstance(encoded, _FakeEncoded)
-        self.assertEqual(encoded.device, "cpu")
-        self.assertEqual(len(fake_processor.calls), 1)
-        self.assertEqual(fake_processor.calls[0]["text"], "User: [image]\n\nAssistant:")
-        self.assertEqual(fake_processor.calls[0]["images"], [b"image"])
-        self.assertEqual(
-            captured_kwargs,
-            {
-                "return_video_kwargs": True,
-                "return_video_metadata": True,
-            },
-        )
-        self.assertNotIn("do_resize", fake_processor.calls[0])
+        assert isinstance(encoded, _FakeEncoded)
+        assert encoded.device == "cpu"
+        assert len(fake_processor.calls) == 1
+        assert fake_processor.calls[0]["text"] == "User: [image]\n\nAssistant:"
+        assert fake_processor.calls[0]["images"] == [b"image"]
+        assert captured_kwargs == {
+            "return_video_kwargs": True,
+            "return_video_metadata": True,
+        }
+        assert "do_resize" not in fake_processor.calls[0]
 
     def test_generate_releases_transient_vram_after_vision_turn(self) -> None:
         """Verify vision requests drop temporary GPU allocations after generation."""
@@ -544,7 +527,7 @@ class PersonaApiTests(TestCase):
         ):
             response = backend.generate(request)
 
-        self.assertEqual(response.text, "decoded")
+        assert response.text == "decoded"
         collect.assert_called_once_with()
         sync.assert_called_once_with()
         empty_cache.assert_called_once_with()
@@ -596,12 +579,9 @@ class PersonaApiTests(TestCase):
         ):
             client.load("fixture/model", "4bit")
 
-        self.assertEqual(
-            logs,
-            [
-                ("[PERSONA] warn 4bit", "warning"),
-            ],
-        )
+        assert logs == [
+            ("[PERSONA] warn 4bit", "warning"),
+        ]
 
     def test_persona_client_summarizes_without_character_prompt(self) -> None:
         """Verify conversation summaries use a neutral VLM request contract."""
@@ -619,9 +599,9 @@ class PersonaApiTests(TestCase):
         payload = cast(JSON, post.call_args.args[0])
         system = cast(str, payload["system"])
         user = cast(str, payload["user"])
-        self.assertEqual(summary, "The user reported a TTS cutoff.")
-        self.assertIn("neutral conversation summarizer", system)
-        self.assertNotIn("CEVOICE", system)
-        self.assertNotIn("active character", system)
-        self.assertIn("Existing summary:", user)
-        self.assertIn("Conversation turns:", user)
+        assert summary == "The user reported a TTS cutoff."
+        assert "neutral conversation summarizer" in system
+        assert "CEVOICE" not in system
+        assert "active character" not in system
+        assert "Existing summary:" in user
+        assert "Conversation turns:" in user

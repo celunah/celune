@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Bootstrap a backend worker while preserving its CEDTS channel arguments."""
 
 import sys

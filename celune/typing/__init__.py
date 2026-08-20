@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Unified Celune type package with lazy re-exports."""
 
 from typing import TYPE_CHECKING

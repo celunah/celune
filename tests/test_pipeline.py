@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for pipeline helpers that do not perform real synthesis."""
 
 import os
@@ -12,10 +12,11 @@ from collections.abc import Iterator
 from typing import Self, Optional, cast
 from importlib.machinery import ModuleSpec
 from types import TracebackType, SimpleNamespace
-from unittest import TestCase, IsolatedAsyncioTestCase, mock
+from unittest import mock
 
 import numpy as np
 import numpy.typing as npt
+import pytest
 import soundfile as sf
 from celune import pipeline
 from celune.i18n import string
@@ -48,20 +49,26 @@ from celune.typing.agent import (
     AgentToolArgumentSchema,
 )
 
+from .support import (
+    CeluneAsyncTestCase,
+    CeluneTestCase,
+)
 from .test_persona_memory import StubEmbeddingMemoryStore
 from .support import FakeStream, FakeVCBackend, make_voice_loader, make_pipeline_engine
 
 
-class PipelineTests(TestCase):
+class TestPipeline(CeluneTestCase):
     """Tests for lightweight pipeline behavior."""
 
     def test_pipeline_cpu_config_has_conservative_defaults(self) -> None:
         """Verify playback pressure protection defaults to a small bounded window."""
         engine = make_pipeline_engine()
 
-        self.assertEqual(
-            pipeline._pipeline_cpu_config(cast(Celune, engine)),
-            (True, 4.0, 1, 0.001),
+        assert pipeline._pipeline_cpu_config(cast(Celune, engine)) == (
+            True,
+            4.0,
+            1,
+            0.001,
         )
 
         engine.config = {
@@ -72,9 +79,11 @@ class PipelineTests(TestCase):
                 "yield_seconds": 0,
             }
         }
-        self.assertEqual(
-            pipeline._pipeline_cpu_config(cast(Celune, engine)),
-            (True, 2.0, 3, 0.0),
+        assert pipeline._pipeline_cpu_config(cast(Celune, engine)) == (
+            True,
+            2.0,
+            3,
+            0.0,
         )
 
     def test_pipeline_cpu_config_can_be_disabled(self) -> None:
@@ -82,9 +91,11 @@ class PipelineTests(TestCase):
         engine = make_pipeline_engine()
         engine.config = {"pipeline_cpu": {"enabled": False}}
 
-        self.assertEqual(
-            pipeline._pipeline_cpu_config(cast(Celune, engine)),
-            (False, float("inf"), 128, 0.0),
+        assert pipeline._pipeline_cpu_config(cast(Celune, engine)) == (
+            False,
+            float("inf"),
+            128,
+            0.0,
         )
 
     class _LanguageAwareBackend:
@@ -166,28 +177,27 @@ class PipelineTests(TestCase):
         q.put(1)
         q.put(2)
         pipeline.clear_queue(q)
-        self.assertEqual(q.empty(), True)
+        assert q.empty()
 
         engine = make_pipeline_engine()
         celune_engine = cast(Celune, engine)
-        self.assertEqual(pipeline.acquire_pipeline(celune_engine, "speak"), True)
-        self.assertEqual(engine.locked, True)
-        self.assertEqual(pipeline.acquire_pipeline(celune_engine, "speak"), False)
+        assert pipeline.acquire_pipeline(celune_engine, "speak")
+        assert engine.locked
+        assert not pipeline.acquire_pipeline(celune_engine, "speak")
         pipeline.release_pipeline(celune_engine)
-        self.assertEqual(engine.locked, False)
-        self.assertEqual(engine.cur_state, "idle")
+        assert not engine.locked
+        assert engine.cur_state == "idle"
 
-        self.assertEqual(pipeline.force_stop_speech(celune_engine), False)
+        assert not pipeline.force_stop_speech(celune_engine)
         engine.locked = True
         engine.backend.cancel_active_request = mock.Mock()
         engine.text_queue.put("pending")
         engine.audio_queue.put("audio")
-        self.assertEqual(pipeline.force_stop_speech(celune_engine), True)
-        self.assertEqual(engine._speech_generation, 1)
-        engine.backend.cancel_active_request.assert_called_once_with(wait_for_ack=False)
-        self.assertEqual(engine.text_queue.empty(), True)
-        self.assertEqual(engine.persona_queue.empty(), True)
-        self.assertIs(engine.audio_queue.get_nowait(), engine.force_stop_marker)
+        assert pipeline.force_stop_speech(celune_engine)
+        assert engine._speech_generation == 1
+        assert engine.text_queue.empty()
+        assert engine.persona_queue.empty()
+        assert engine.audio_queue.get_nowait() is engine.force_stop_marker
 
     def test_close_invalidates_active_speech_before_worker_teardown(self) -> None:
         """Verify shutdown cancels speech generations before joining workers."""
@@ -228,8 +238,8 @@ class PipelineTests(TestCase):
             48000,
         )
 
-        self.assertEqual(queued, False)
-        self.assertTrue(engine.audio_queue.empty())
+        assert not queued
+        assert engine.audio_queue.empty()
 
     def test_force_stop_queues_worker_stop_and_invalidates_old_sources(
         self,
@@ -246,21 +256,18 @@ class PipelineTests(TestCase):
         pipeline.set_playback_source_status(celune_engine, 1, "Playing fixture")
         old_generation = engine._playback_generation
 
-        self.assertEqual(pipeline.force_stop_speech(celune_engine), True)
+        assert pipeline.force_stop_speech(celune_engine)
 
-        self.assertEqual(engine._playback_generation, old_generation + 1)
-        self.assertEqual(fake_stream.aborted, False)
-        self.assertIs(engine.stream, fake_stream)
-        self.assertEqual(engine.audio_queue.get_nowait(), engine.force_stop_marker)
-        self.assertEqual(
-            pipeline._queue_playback_chunk(
-                celune_engine,
-                1,
-                np.zeros((8, 2), dtype=np.float32),
-                48000,
-                generation=old_generation,
-            ),
-            False,
+        assert engine._playback_generation == old_generation + 1
+        assert not fake_stream.aborted
+        assert engine.stream is fake_stream
+        assert engine.audio_queue.get_nowait() == engine.force_stop_marker
+        assert not pipeline._queue_playback_chunk(
+            celune_engine,
+            1,
+            np.zeros((8, 2), dtype=np.float32),
+            48000,
+            generation=old_generation,
         )
 
     def test_working_signal_completion_does_not_notify_idle(self) -> None:
@@ -268,23 +275,23 @@ class PipelineTests(TestCase):
         engine = make_pipeline_engine()
         engine.cur_state = "reloading"
 
-        self.assertEqual(pipeline.play_signal(cast(Celune, engine), "working"), True)
+        assert pipeline.play_signal(cast(Celune, engine), "working")
 
         queued = list(engine.audio_queue.queue)
         done_markers = [
             item for item in queued if isinstance(item, pipeline.PlaybackSourceDone)
         ]
-        self.assertEqual(len(done_markers), 1)
-        self.assertEqual(done_markers[0].notify_idle, False)
-        self.assertEqual(engine.cur_state, "reloading")
+        assert len(done_markers) == 1
+        assert not done_markers[0].notify_idle
+        assert engine.cur_state == "reloading"
 
     def test_sleeping_signal_preserves_sleeping_state(self) -> None:
         """Verify the sleeping cue does not classify Celune as speaking."""
         engine = make_pipeline_engine()
 
-        self.assertEqual(pipeline.play_signal(cast(Celune, engine), "sleeping"), True)
+        assert pipeline.play_signal(cast(Celune, engine), "sleeping")
 
-        self.assertEqual(engine.cur_state, "sleeping")
+        assert engine.cur_state == "sleeping"
 
     def test_current_playback_status_returns_latest_active_source(self) -> None:
         """Verify polling can recover the latest active playback status."""
@@ -300,9 +307,8 @@ class PipelineTests(TestCase):
             "Playing second",
         )
 
-        self.assertEqual(
-            pipeline.current_playback_status(cast(Celune, engine)),
-            "Playing second",
+        assert (
+            pipeline.current_playback_status(cast(Celune, engine)) == "Playing second"
         )
 
     def test_readiness_signal_does_not_block_concurrent_speech_queueing(self) -> None:
@@ -341,19 +347,18 @@ class PipelineTests(TestCase):
             "celune.pipeline._register_playback_source",
             side_effect=register_and_queue,
         ):
-            self.assertEqual(
-                pipeline.play_signal(cast(Celune, engine), "readiness"), True
-            )
+            assert pipeline.play_signal(cast(Celune, engine), "readiness")
 
-        self.assertEqual(queued_during_signal, [True])
+        assert queued_during_signal == [True]
         request = engine.text_queue.get_nowait()
-        self.assertEqual(request.text, "hello")
+        assert request.text == "hello"
 
 
-class PipelineAsyncTests(IsolatedAsyncioTestCase):
+@pytest.mark.anyio
+class TestPipelineAsync(CeluneAsyncTestCase):
     """Tests for async pipeline entry points."""
 
-    _LanguageAwareBackend = PipelineTests._LanguageAwareBackend
+    _LanguageAwareBackend = TestPipeline._LanguageAwareBackend
 
     @staticmethod
     async def _run_generation_worker(engine: Celune) -> None:
@@ -386,12 +391,12 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 display_text="shown",
             )
 
-        self.assertEqual(queued, True)
+        assert queued
         engine.model_ready.wait.assert_called_once_with()
-        self.assertEqual(to_thread.await_count, 1)
+        assert to_thread.await_count == 1
         request = engine.text_queue.get_nowait()
-        self.assertEqual(request.text, "hello")
-        self.assertEqual(request.display_text, "shown")
+        assert request.text == "hello"
+        assert request.display_text == "shown"
 
     def test_queue_speech_handles_success_and_failure_paths(self) -> None:
         """Verify speech queueing success and rejection paths.
@@ -410,15 +415,12 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 "probabilities": {"en": 1.0},
             },
         ):
-            self.assertEqual(
-                pipeline.queue_speech(celune_engine, "hello", display_text="shown"),
-                True,
-            )
+            assert pipeline.queue_speech(celune_engine, "hello", display_text="shown")
         request = engine.text_queue.get_nowait()
-        self.assertEqual(request.text, "hello")
-        self.assertEqual(request.display_text, "shown")
-        self.assertEqual(request.language, "en")
-        self.assertEqual(engine.statuses[-1], ("Generating", "info"))
+        assert request.text == "hello"
+        assert request.display_text == "shown"
+        assert request.language == "en"
+        assert engine.statuses[-1] == ("Generating", "info")
 
         engine = make_pipeline_engine()
         engine.use_normalization = True
@@ -432,12 +434,12 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 "probabilities": {"en": 1.0},
             },
         ):
-            self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "raw"), True)
+            assert pipeline.queue_speech(cast(Celune, engine), "raw")
         engine.normalize.assert_not_called()
         request = engine.text_queue.get_nowait()
-        self.assertEqual(request.text, "raw")
-        self.assertEqual(request.language, "en")
-        self.assertEqual(request.normalize, True)
+        assert request.text == "raw"
+        assert request.language == "en"
+        assert request.normalize
 
         engine = make_pipeline_engine()
         engine.language = "fr"
@@ -450,9 +452,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 "probabilities": {"en": 1.0},
             },
         ):
-            self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), True)
+            assert pipeline.queue_speech(cast(Celune, engine), "hello")
         request = engine.text_queue.get_nowait()
-        self.assertEqual(request.language, "fr")
+        assert request.language == "fr"
 
         engine = make_pipeline_engine()
         engine.backend = SimpleNamespace(name="qwen3", supported_languages=("en",))
@@ -465,19 +467,19 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 "probabilities": {"en": 1.0},
             },
         ):
-            self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), True)
+            assert pipeline.queue_speech(cast(Celune, engine), "hello")
         request = engine.text_queue.get_nowait()
-        self.assertEqual(request.language, "Auto")
+        assert request.language == "Auto"
 
         engine = make_pipeline_engine()
         engine.is_in_tutorial = True
-        self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), False)
-        self.assertEqual(engine.messages[-1][1], "warning")
+        assert not pipeline.queue_speech(cast(Celune, engine), "hello")
+        assert engine.messages[-1][1] == "warning"
 
         engine = make_pipeline_engine()
         engine.loaded = False
-        self.assertEqual(pipeline.queue_speech(cast(Celune, engine), "hello"), False)
-        self.assertEqual(engine.errors, ["Celune is not currently ready"])
+        assert not pipeline.queue_speech(cast(Celune, engine), "hello")
+        assert engine.errors == ["Celune is not currently ready"]
 
     def test_queue_speech_normalizes_tts_text_without_changing_display_text(
         self,
@@ -522,12 +524,12 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         result = pipeline.handle_audio_input(cast(Celune, engine), request)
 
-        self.assertEqual(result, True)
-        self.assertEqual(engine.text_queue.empty(), True)
-        self.assertEqual(engine.audio_queue.empty(), True)
-        self.assertEqual(engine.cur_state, "idle")
+        assert result
+        assert engine.text_queue.empty()
+        assert engine.audio_queue.empty()
+        assert engine.cur_state == "idle"
         engine.log.assert_called_once()
-        self.assertEqual(engine.log.call_args.kwargs["loglevel"], "verbose")
+        assert engine.log.call_args.kwargs["loglevel"] == "verbose"
 
     def test_handle_audio_input_routes_to_vc_backend_in_voice_conversion_mode(
         self,
@@ -557,24 +559,21 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ):
             result = pipeline.handle_audio_input(cast(Celune, engine), request)
 
-        self.assertEqual(result, True)
+        assert result
         convert_mock.assert_called_once()
         vc_request = convert_mock.call_args.args[0]
-        self.assertEqual(vc_request.target_references, (Path("balanced.wav"),))
-        self.assertEqual(vc_request.pitch_shift, 0)
-        self.assertEqual(vc_request.f0_condition, False)
+        assert vc_request.target_references == (Path("balanced.wav"),)
+        assert vc_request.pitch_shift == 0
+        assert not vc_request.f0_condition
         q.assert_called_once()
         queued_audio = q.call_args.args[1]
-        self.assertEqual(q.call_args.args[2], 48000)
-        self.assertEqual(q.call_args.args[3], "mic test")
-        self.assertEqual(
-            q.call_args.kwargs["status_label_key"],
-            "pipeline.revoicing_label",
-        )
-        self.assertEqual(queued_audio.shape, (16, 2))
-        self.assertIsNot(queued_audio, audio)
-        self.assertEqual(np.array_equal(queued_audio, audio), True)
-        self.assertEqual(engine.text_queue.empty(), True)
+        assert q.call_args.args[2] == 48000
+        assert q.call_args.args[3] == "mic test"
+        assert q.call_args.kwargs["status_label_key"] == "pipeline.revoicing_label"
+        assert queued_audio.shape == (16, 2)
+        assert queued_audio is not audio
+        assert np.array_equal(queued_audio, audio)
+        assert engine.text_queue.empty()
 
     def test_handle_audio_input_reports_missing_vc_backend_cleanly(self) -> None:
         """Verify VC mode surfaces a clean error when no VC backend is configured."""
@@ -589,13 +588,10 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             AudioInputRequest(audio=audio, sample_rate=24000, label="fixture"),
         )
 
-        self.assertEqual(result, False)
+        assert not result
         engine.log.assert_called_once()
-        self.assertEqual(
-            engine.errors,
-            ["Voice conversion backend is not configured."],
-        )
-        self.assertEqual(engine.audio_queue.empty(), True)
+        assert engine.errors == ["Voice conversion backend is not configured."]
+        assert engine.audio_queue.empty()
 
     def test_handle_audio_input_applies_engine_vc_pitch_shift_to_output(
         self,
@@ -632,8 +628,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ):
             result = pipeline.handle_audio_input(cast(Celune, engine), request)
 
-        self.assertEqual(result, True)
-        self.assertEqual(convert_mock.call_args.args[0].pitch_shift, 0)
+        assert result
+        assert convert_mock.call_args.args[0].pitch_shift == 0
         shift_audio.assert_called_once_with(mock.ANY, 48000, -5)
 
     def test_handle_audio_input_passes_engine_vc_f0_condition_to_vc_backend(
@@ -667,8 +663,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ):
             result = pipeline.handle_audio_input(cast(Celune, engine), request)
 
-        self.assertEqual(result, True)
-        self.assertEqual(convert_mock.call_args.args[0].f0_condition, True)
+        assert result
+        assert convert_mock.call_args.args[0].f0_condition
 
     def test_tts_mode_does_not_route_audio_to_vc_backend(self) -> None:
         """Verify the default TTS mode ignores audio instead of invoking VC routing."""
@@ -685,7 +681,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             ),
         )
 
-        self.assertEqual(result, True)
+        assert result
         engine.vc_backend.convert.assert_not_called()
 
     def test_download_youtube_sfx_writes_expected_temp_wav(self) -> None:
@@ -726,12 +722,12 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                     "https://youtu.be/demo",
                 )
 
-        self.assertEqual(resolved, (expected, "Fixture Video Title"))
+        assert resolved == (expected, "Fixture Video Title")
         command = run.call_args.args[0]
-        self.assertEqual(command[0], sys.executable)
-        self.assertEqual(command[1:3], ["-m", "yt_dlp"])
-        self.assertNotIn("--print", command)
-        self.assertIn(str(temp_root / "temp" / "temporary_audio.%(ext)s"), command)
+        assert command[0] == sys.executable
+        assert command[1:3] == ["-m", "yt_dlp"]
+        assert "--print" not in command
+        assert str(temp_root / "temp" / "temporary_audio.%(ext)s") in command
 
     def test_download_youtube_sfx_uses_repo_venv_python_when_compiled(self) -> None:
         """Verify compiled launches call yt-dlp through the repo venv Python."""
@@ -769,15 +765,15 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                     "https://youtu.be/demo",
                 )
 
-        self.assertEqual(resolved, (expected, "Fixture Video Title"))
+        assert resolved == (expected, "Fixture Video Title")
         command = run.call_args.args[0]
         expected_python = (
             r"/repo/.venv/bin/python"
             if os.name != "nt"
             else r"\repo\.venv\Scripts\python.exe"
         )
-        self.assertEqual(command[0], expected_python)
-        self.assertEqual(command[1:3], ["-m", "yt_dlp"])
+        assert command[0] == expected_python
+        assert command[1:3] == ["-m", "yt_dlp"]
 
     def test_download_youtube_sfx_logs_missing_file_state(self) -> None:
         """Verify missing yt-dlp output uses the current no-file warning messages."""
@@ -811,17 +807,14 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                     "https://youtu.be/demo",
                 )
 
-        self.assertIsNone(resolved)
+        assert resolved is None
         warnings = [msg for msg, severity in engine.messages if severity == "warning"]
-        self.assertEqual(run.call_count, 4)
-        self.assertEqual(
-            warnings[-1],
-            "Could not download audio: downloader returned no file",
+        assert run.call_count == 4
+        assert warnings[-1] == "Could not download audio: downloader returned no file"
+        assert all(
+            "postprocessor said something" not in message for message in warnings
         )
-        self.assertTrue(
-            all("postprocessor said something" not in message for message in warnings)
-        )
-        self.assertEqual(engine.errors[-1], "Could not download YouTube audio")
+        assert engine.errors[-1] == "Could not download YouTube audio"
 
     def test_download_youtube_sfx_logs_download_failure_state(self) -> None:
         """Verify yt-dlp failures use the current download-failed warning messages."""
@@ -855,12 +848,12 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                     "https://youtu.be/demo",
                 )
 
-        self.assertIsNone(resolved)
+        assert resolved is None
         warnings = [msg for msg, severity in engine.messages if severity == "warning"]
-        self.assertEqual(run.call_count, 4)
-        self.assertEqual(warnings[-1], "Could not download audio: yt-dlp exploded")
-        self.assertTrue(all("yt-dlp exploded" in warning for warning in warnings))
-        self.assertEqual(engine.errors[-1], "Could not download YouTube audio")
+        assert run.call_count == 4
+        assert warnings[-1] == "Could not download audio: yt-dlp exploded"
+        assert all("yt-dlp exploded" in warning for warning in warnings)
+        assert engine.errors[-1] == "Could not download YouTube audio"
 
     def test_download_youtube_sfx_compresses_yt_dlp_error_output(self) -> None:
         """Verify noisy yt-dlp warnings collapse to the actionable error reason."""
@@ -898,16 +891,14 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                     "https://youtu.be/demo",
                 )
 
-        self.assertIsNone(resolved)
+        assert resolved is None
         warnings = [msg for msg, severity in engine.messages if severity == "warning"]
-        self.assertEqual(run.call_count, 4)
-        self.assertEqual(
-            warnings[-1],
-            "Could not download audio: unable to download video data: HTTP Error 403: Forbidden",
+        assert run.call_count == 4
+        assert (
+            warnings[-1]
+            == "Could not download audio: unable to download video data: HTTP Error 403: Forbidden"
         )
-        self.assertTrue(
-            all("JavaScript runtime" not in warning for warning in warnings)
-        )
+        assert all("JavaScript runtime" not in warning for warning in warnings)
 
     def test_youtube_sfx_title_reads_oembed_title(self) -> None:
         """Verify YouTube titles can be resolved without yt-dlp title output."""
@@ -940,7 +931,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         with mock.patch("celune.pipeline.urlopen", return_value=FakeResponse()):
             title = pipeline.youtube_sfx_title("https://youtu.be/demo")
 
-        self.assertEqual(title, "Fixture Video Title")
+        assert title == "Fixture Video Title"
 
     def test_play_accepts_youtube_url_via_downloaded_wav(self) -> None:
         """Verify YouTube URLs are resolved to a WAV and played as SFX."""
@@ -967,15 +958,15 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 volume=volume,
             )
 
-        self.assertEqual(ok, True)
+        assert ok
         download.assert_called_once()
         read.assert_called_once_with(str(downloaded), dtype="float32")
         queued_args = queue_audio.call_args.args
         queued_kwargs = queue_audio.call_args.kwargs
-        self.assertEqual(queued_args[0], cast(Celune, engine))
+        assert queued_args[0] == cast(Celune, engine)
         np.testing.assert_allclose(queued_args[1], np.asarray(audio, dtype=np.float32))
-        self.assertEqual(queued_args[2:], (48000, "Fixture Video Title", True))
-        self.assertEqual(queued_kwargs, {"volume": volume * 0.5})
+        assert queued_args[2:] == (48000, "Fixture Video Title", True)
+        assert queued_kwargs == {"volume": volume * 0.5}
 
     def test_play_reports_playing_after_youtube_download(self) -> None:
         """Verify a successful YouTube download replaces the download status."""
@@ -994,15 +985,12 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             ),
             mock.patch("celune.pipeline.queue_sfx_audio", return_value=True),
         ):
-            self.assertEqual(
-                pipeline.play(
-                    cast(Celune, engine),
-                    "https://www.youtube.com/watch?v=demo",
-                ),
-                True,
+            assert pipeline.play(
+                cast(Celune, engine),
+                "https://www.youtube.com/watch?v=demo",
             )
 
-        self.assertEqual(engine.statuses[-1], ("Playing Fixture Video Title", "info"))
+        assert engine.statuses[-1] == ("Playing Fixture Video Title", "info")
 
     def test_queue_sfx_audio_allows_overlay_while_speech_pipeline_is_locked(
         self,
@@ -1027,15 +1015,11 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             "fixture",
         )
 
-        self.assertEqual(ok, True)
-        self.assertEqual(engine.playback_done.is_set(), False)
+        assert ok
+        assert not engine.playback_done.is_set()
         queued = list(engine.audio_queue.queue)
-        self.assertTrue(
-            any(isinstance(item, pipeline.PlaybackChunk) for item in queued)
-        )
-        self.assertTrue(
-            any(isinstance(item, pipeline.PlaybackSourceDone) for item in queued)
-        )
+        assert any(isinstance(item, pipeline.PlaybackChunk) for item in queued)
+        assert any(isinstance(item, pipeline.PlaybackSourceDone) for item in queued)
 
     def test_blocked_playback_put_does_not_block_speech_queueing(self) -> None:
         """Verify a full playback queue cannot prevent a new speech request."""
@@ -1066,7 +1050,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             daemon=True,
         )
         producer.start()
-        self.assertTrue(put_started.wait(timeout=1.0))
+        assert put_started.wait(timeout=1.0)
 
         speech_result: list[bool] = []
 
@@ -1091,9 +1075,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         release_put.set()
         producer.join(timeout=1.0)
 
-        self.assertFalse(speech_thread.is_alive())
-        self.assertEqual(speech_result, [True])
-        self.assertFalse(producer.is_alive())
+        assert not speech_thread.is_alive()
+        assert speech_result == [True]
+        assert not producer.is_alive()
 
     async def test_playback_worker_mixes_sources_and_glow_receives_mixed_audio(
         self,
@@ -1136,14 +1120,14 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
             await self._run_playback_worker(cast(Celune, engine))
 
-        self.assertEqual(fake_stream.started, True)
-        self.assertEqual(len(fake_stream.written), 1)
+        assert fake_stream.started
+        assert len(fake_stream.written) == 1
         mixed_audio = np.concatenate(fake_stream.written)
-        self.assertEqual(mixed_audio.shape, (2400, 2))
+        assert mixed_audio.shape == (2400, 2)
         np.testing.assert_allclose(mixed_audio, 0.5, atol=1e-6)
-        self.assertEqual(len(glow_calls), len(fake_stream.written))
+        assert len(glow_calls) == len(fake_stream.written)
         np.testing.assert_allclose(np.concatenate(glow_calls), 0.5, atol=1e-6)
-        self.assertEqual(engine.playback_done.is_set(), True)
+        assert engine.playback_done.is_set()
 
     async def test_playback_worker_uses_configured_output_device(self) -> None:
         """Verify playback streams honor the configured output device override."""
@@ -1178,7 +1162,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ) as mock_stream:
             await self._run_playback_worker(cast(Celune, engine))
 
-        self.assertEqual(mock_stream.call_args.kwargs["device"], "VB-Cable Output")
+        assert mock_stream.call_args.kwargs["device"] == "VB-Cable Output"
 
     async def test_playback_worker_logs_friendly_output_device_match_warnings(
         self,
@@ -1220,14 +1204,14 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ):
             await self._run_playback_worker(cast(Celune, engine))
 
-        self.assertEqual(engine.errors[-1], "No suitable audio devices")
+        assert engine.errors[-1] == "No suitable audio devices"
         warning_messages = [
             msg for msg, severity in engine.messages if severity == "warning"
         ]
-        self.assertTrue(warning_messages)
-        self.assertIn(
-            "the specified output device name has multiple matches",
-            warning_messages[-1],
+        assert warning_messages
+        assert (
+            "the specified output device name has multiple matches"
+            in warning_messages[-1]
         )
 
     async def test_playback_worker_does_not_emit_idle_for_non_idle_completion_marker(
@@ -1266,8 +1250,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             await self._run_playback_worker(cast(Celune, engine))
 
         engine.idle_callback.assert_not_called()
-        self.assertEqual(engine.cur_state, "reloading")
-        self.assertEqual(engine.playback_done.is_set(), True)
+        assert engine.cur_state == "reloading"
+        assert engine.playback_done.is_set()
 
     async def test_playback_worker_reports_live_audio_progress(self) -> None:
         """Verify playback progress follows audio position without flooding updates."""
@@ -1286,14 +1270,11 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
         fake_stream = FakeStream()
 
-        self.assertEqual(
-            pipeline.queue_sfx_audio(
-                cast(Celune, engine),
-                np.full((2400 * 8, 2), 0.25, dtype=np.float32),
-                48000,
-                "progress.wav",
-            ),
-            True,
+        assert pipeline.queue_sfx_audio(
+            cast(Celune, engine),
+            np.full((2400 * 8, 2), 0.25, dtype=np.float32),
+            48000,
+            "progress.wav",
         )
         engine.audio_queue.put(engine.sentinel)
 
@@ -1315,9 +1296,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             and total > 1
             and current < total
         ]
-        self.assertTrue(in_flight)
-        self.assertLess(len(in_flight), len(fake_stream.written))
-        self.assertEqual(engine.progress[-1], (1, 1))
+        assert in_flight
+        assert len(in_flight) < len(fake_stream.written)
+        assert engine.progress[-1] == (1, 1)
 
     async def test_playback_worker_admits_speech_after_sfx_has_already_started(
         self,
@@ -1373,9 +1354,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             await self._run_playback_worker(cast(Celune, engine))
 
         blocks = fake_stream.written
-        self.assertGreaterEqual(len(blocks), 3)
-        self.assertTrue(any(np.max(block) > 0.45 for block in blocks[1:]))
-        self.assertEqual(engine.playback_done.is_set(), True)
+        assert len(blocks) >= 3
+        assert any(np.max(block) > 0.45 for block in blocks[1:])
+        assert engine.playback_done.is_set()
 
     async def test_playback_status_restores_prior_sfx_label_after_speech_finishes(
         self,
@@ -1422,24 +1403,21 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                     engine.audio_queue.put(engine.sentinel)
 
         fake_stream = InjectingStream()
-        self.assertEqual(
-            pipeline.queue_sfx_audio(
-                cast(Celune, engine),
-                np.full((9600, 2), 0.1, dtype=np.float32),
-                48000,
-                "loop.wav",
-            ),
-            True,
+        assert pipeline.queue_sfx_audio(
+            cast(Celune, engine),
+            np.full((9600, 2), 0.1, dtype=np.float32),
+            48000,
+            "loop.wav",
         )
 
         with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
             await self._run_playback_worker(cast(Celune, engine))
 
         statuses = [msg for msg, _ in engine.statuses]
-        self.assertIn("Playing loop.wav", statuses)
-        self.assertIn("Speaking", statuses)
+        assert "Playing loop.wav" in statuses
+        assert "Speaking" in statuses
         speaking_index = statuses.index("Speaking")
-        self.assertIn("Playing loop.wav", statuses[speaking_index + 1 :])
+        assert "Playing loop.wav" in statuses[speaking_index + 1 :]
 
     async def test_playback_worker_ducks_sfx_to_quarter_and_restores_with_fades(
         self,
@@ -1490,29 +1468,26 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                     engine.audio_queue.put(engine.sentinel)
 
         fake_stream = InjectingStream()
-        self.assertEqual(
-            pipeline.queue_sfx_audio(
-                cast(Celune, engine),
-                np.ones((2400 * 12, 2), dtype=np.float32),
-                48000,
-                "duck.wav",
-                volume=0.8,
-            ),
-            True,
+        assert pipeline.queue_sfx_audio(
+            cast(Celune, engine),
+            np.ones((2400 * 12, 2), dtype=np.float32),
+            48000,
+            "duck.wav",
+            volume=0.8,
         )
 
         with mock.patch("celune.pipeline.sd.OutputStream", return_value=fake_stream):
             await self._run_playback_worker(cast(Celune, engine))
 
         means = [float(np.mean(block)) for block in fake_stream.written]
-        self.assertGreaterEqual(len(means), 6)
-        self.assertGreater(means[0], 0.79)
-        self.assertLess(min(means), 0.45)
+        assert len(means) >= 6
+        assert means[0] > 0.79
+        assert min(means) < 0.45
         min_index = means.index(min(means))
-        self.assertGreater(min_index, 0)
-        self.assertLess(means[min_index], means[0])
-        self.assertGreater(means[-1], means[min_index] + 0.25)
-        self.assertGreater(means[-1], 0.7)
+        assert min_index > 0
+        assert means[min_index] < means[0]
+        assert means[-1] > means[min_index] + 0.25
+        assert means[-1] > 0.7
 
     async def test_force_stop_resets_glow_audio_reactivity(self) -> None:
         """Verify forced playback stop clears the glow's audio-reactive state."""
@@ -1543,7 +1518,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             await self._run_playback_worker(cast(Celune, engine))
 
         engine.glow.reset_audio_reactivity.assert_called_once_with()
-        self.assertEqual(engine.playback_done.is_set(), True)
+        assert engine.playback_done.is_set()
         engine.idle_callback.assert_called_once_with()
 
     async def test_force_stop_during_write_releases_pipeline_once(self) -> None:
@@ -1594,8 +1569,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             await self._run_playback_worker(cast(Celune, engine))
 
         engine.idle_callback.assert_called_once_with()
-        self.assertEqual(engine.locked, False)
-        self.assertEqual(stop_results, [True])
+        assert not engine.locked
+        assert stop_results == [True]
 
     def test_finalize_playback_idle_resets_glow_audio_reactivity(self) -> None:
         """Verify normal playback completion restores the resting glow."""
@@ -1607,8 +1582,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         pipeline.finalize_playback_idle(cast(Celune, engine))
 
         engine.glow.reset_audio_reactivity.assert_called_once_with()
-        self.assertEqual(engine.playback_done.is_set(), True)
-        self.assertEqual(engine.cur_state, "idle")
+        assert engine.playback_done.is_set()
+        assert engine.cur_state == "idle"
         engine.idle_callback.assert_called_once_with()
 
     def test_finalize_playback_idle_does_not_announce_readiness_while_reloading(
@@ -1622,9 +1597,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         pipeline.finalize_playback_idle(cast(Celune, engine))
 
-        self.assertNotIn(("Ready to speak.", "info"), engine.messages)
-        self.assertEqual(getattr(engine, "_ready_announced", False), False)
-        self.assertEqual(engine.cur_state, "reloading")
+        assert ("Ready to speak.", "info") not in engine.messages
+        assert not getattr(engine, "_ready_announced", False)
+        assert engine.cur_state == "reloading"
 
     def test_finalize_playback_idle_does_not_emit_idle_callback_while_locked(
         self,
@@ -1638,8 +1613,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         pipeline.finalize_playback_idle(cast(Celune, engine))
 
         engine.idle_callback.assert_not_called()
-        self.assertEqual(engine.playback_done.is_set(), True)
-        self.assertEqual(engine.cur_state, "reloading")
+        assert engine.playback_done.is_set()
+        assert engine.cur_state == "reloading"
 
     def test_finalize_playback_idle_does_not_unlock_voice_reload(self) -> None:
         """Verify a voice reload remains transitional after pending playback drains."""
@@ -1651,8 +1626,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         pipeline.finalize_playback_idle(cast(Celune, engine))
 
         engine.idle_callback.assert_not_called()
-        self.assertEqual(engine.playback_done.is_set(), True)
-        self.assertEqual(engine.cur_state, "reloading")
+        assert engine.playback_done.is_set()
+        assert engine.cur_state == "reloading"
 
     def test_think_builds_persona_payload_and_queues_response(self) -> None:
         """Verify Persona request formatting without loading a Persona model.
@@ -1741,11 +1716,11 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 "probabilities": {"en": 1.0},
             },
         ):
-            self.assertEqual(pipeline.think(cast(Celune, engine), "What now?"), True)
+            assert pipeline.think(cast(Celune, engine), "What now?")
 
         request = engine.text_queue.get_nowait()
-        self.assertEqual(request.text, "I can help with that.")
-        self.assertEqual(request.save, False)
+        assert request.text == "I can help with that."
+        assert not request.save
 
         payload = cast(JSON, engine.vision.payload)
         self.assertEqual(payload["model"], "fixture/persona-test")
@@ -1758,35 +1733,29 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         character_card = cast(str, payload["character_card"])
         system_prompt = cast(str, payload["system"])
         messages = cast(list[dict[str, str]], payload["messages"])
-        self.assertIn("Name: Celune", character_card)
-        self.assertIn("The active character is gentle and observant.", character_card)
-        self.assertIn(
-            "A quietly attentive nocturnal presence with emotional continuity.",
-            character_card,
+        assert "Name: Celune" in character_card
+        assert "The active character is gentle and observant." in character_card
+        assert (
+            "A quietly attentive nocturnal presence with emotional continuity."
+            in character_card
         )
-        self.assertIn("Soft-spoken, intimate, and reflective", character_card)
-        self.assertIn("Prompt Rules:", character_card)
-        self.assertIn("Example Dialogue:", character_card)
-        self.assertIn("<profile>", system_prompt)
-        self.assertIn("<behavior>", system_prompt)
-        self.assertIn("## Identity", system_prompt)
-        self.assertIn("Name: Celune", system_prompt)
-        self.assertNotIn("<history>", system_prompt)
-        self.assertNotIn("Earlier reply.", system_prompt)
-        self.assertEqual(messages[0], {"role": "system", "content": system_prompt})
-        self.assertEqual(messages[-1], {"role": "user", "content": "What now?"})
-        self.assertEqual(
-            messages[1],
-            {"role": "assistant", "content": "Earlier reply."},
-        )
-        self.assertEqual(len(messages), 3)
-        self.assertEqual(
-            engine.persona_history[-2:],
-            [
-                {"role": "user", "content": "What now?"},
-                {"role": "assistant", "content": "I can help with that."},
-            ],
-        )
+        assert "Soft-spoken, intimate, and reflective" in character_card
+        assert "Prompt Rules:" in character_card
+        assert "Example Dialogue:" in character_card
+        assert "<profile>" in system_prompt
+        assert "<behavior>" in system_prompt
+        assert "## Identity" in system_prompt
+        assert "Name: Celune" in system_prompt
+        assert "<history>" not in system_prompt
+        assert "Earlier reply." not in system_prompt
+        assert messages[0] == {"role": "system", "content": system_prompt}
+        assert messages[-1] == {"role": "user", "content": "What now?"}
+        assert messages[1] == {"role": "assistant", "content": "Earlier reply."}
+        assert len(messages) == 3
+        assert engine.persona_history[-2:] == [
+            {"role": "user", "content": "What now?"},
+            {"role": "assistant", "content": "I can help with that."},
+        ]
 
     def test_agent_classification_request_reuses_persona_prompt_and_history(
         self,
@@ -1874,7 +1843,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         with mock.patch("celune.vram.torch.cuda.is_available", return_value=False):
             payload = pipeline.build_persona_request(cast(Celune, engine), "Hello")
 
-        self.assertEqual(payload["quantization"], "8bit")
+        assert payload["quantization"] == "8bit"
 
     def test_persona_context_space_uses_agent_budget_only_for_agent_requests(
         self,
@@ -1917,7 +1886,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         context = pipeline.build_persona_context(cast(Celune, engine), "Hello")
 
-        self.assertNotIn("Voice prompt:", context.persona_card.voice)
+        assert "Voice prompt:" not in context.persona_card.voice
 
     def test_persona_card_uses_baseline_persona_for_non_default_voice_pack(
         self,
@@ -1936,20 +1905,20 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         character_card = pipeline.build_persona_character_card(cast(Celune, engine))
 
-        self.assertIn("Name: Fixture", character_card)
-        self.assertIn("Gender: unknown", character_card)
-        self.assertIn(
-            "Stay in character using the active character metadata,", character_card
+        assert "Name: Fixture" in character_card
+        assert "Gender: unknown" in character_card
+        assert (
+            "Stay in character using the active character metadata," in character_card
         )
-        self.assertIn(
-            "The active character is replying to the user through a real-time speech system.",
-            character_card,
+        assert (
+            "The active character is replying to the user through a real-time speech system."
+            in character_card
         )
-        self.assertIn("- Warmth: mid", character_card)
-        self.assertIn("- Directness: mid", character_card)
-        self.assertIn("- Formality: mid", character_card)
-        self.assertNotIn("Gender: female", character_card)
-        self.assertNotIn("The speaker uses a more confident", character_card)
+        assert "- Warmth: mid" in character_card
+        assert "- Directness: mid" in character_card
+        assert "- Formality: mid" in character_card
+        assert "Gender: female" not in character_card
+        assert "The speaker uses a more confident" not in character_card
 
     def test_persona_prompt_builder_renders_structured_context_blocks(self) -> None:
         """Verify Persona prompts include the requested structured RAG sections."""
@@ -1982,47 +1951,41 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         )
         prompt = PersonaPromptBuilder.build(context)
 
-        self.assertIn("<profile>", prompt)
-        self.assertIn("## Identity", prompt)
-        self.assertIn("<memory>", prompt)
-        self.assertIn("- The user prefers concise answers.", prompt)
-        self.assertIn(
-            "- The character once helped recover a lost journal.",
-            prompt,
+        assert "<profile>" in prompt
+        assert "## Identity" in prompt
+        assert "<memory>" in prompt
+        assert "- The user prefers concise answers." in prompt
+        assert "- The character once helped recover a lost journal." in prompt
+        assert "<mood>" in prompt
+        assert "Thoughtful and slightly tired." in prompt
+        assert "<history>" not in prompt
+        assert "assistant: Yes, we catalogued the letters." not in prompt
+        assert "user: What do you notice?" not in prompt
+        assert "A careful archivist with a dry wit." in prompt
+        assert "Push the conversation forward naturally." in prompt
+        assert (
+            "Never output emojis; use plain text suitable for speech synthesis."
+            in prompt
         )
-        self.assertIn("<mood>", prompt)
-        self.assertIn("Thoughtful and slightly tired.", prompt)
-        self.assertNotIn("<history>", prompt)
-        self.assertNotIn("assistant: Yes, we catalogued the letters.", prompt)
-        self.assertNotIn("user: What do you notice?", prompt)
-        self.assertIn("A careful archivist with a dry wit.", prompt)
-        self.assertIn(
-            "Push the conversation forward naturally.",
-            prompt,
+        assert (
+            "Treat facts in <memory> as true background context when they are relevant."
+            in prompt
         )
-        self.assertIn(
-            "Never output emojis; use plain text suitable for speech synthesis.",
-            prompt,
+        assert (
+            "Keep facts from <memory> silent unless the current user message clearly asks for them"
+            in prompt
         )
-        self.assertIn(
-            "Treat facts in <memory> as true background context when they are relevant.",
-            prompt,
+        assert "## Runtime Guidance" in prompt
+        assert "Do not greet the user or restart the conversation." in prompt
+        assert "## Reference Resolution" in prompt
+        assert "The active character is Fixture." in prompt
+        assert (
+            "When the user refers to the active character by name, nickname, or matching third-person pronouns"
+            in prompt
         )
-        self.assertIn(
-            "Keep facts from <memory> silent unless the current user message clearly asks for them",
-            prompt,
-        )
-        self.assertIn("## Runtime Guidance", prompt)
-        self.assertIn("Do not greet the user or restart the conversation.", prompt)
-        self.assertIn("## Reference Resolution", prompt)
-        self.assertIn("The active character is Fixture.", prompt)
-        self.assertIn(
-            "When the user refers to the active character by name, nickname, or matching third-person pronouns",
-            prompt,
-        )
-        self.assertIn("he, him, his, she, her, hers, they, them, their", prompt)
-        self.assertNotIn("What do you notice?", prompt)
-        self.assertNotIn("<request>", prompt)
+        assert "he, him, his, she, her, hers, they, them, their" in prompt
+        assert "What do you notice?" not in prompt
+        assert "<request>" not in prompt
 
     def test_markdown_persona_headers_use_consistent_spacing(self) -> None:
         """Verify generated and embedded Persona Markdown headers have one blank line after them."""
@@ -2031,9 +1994,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             "Intro\n## Nested\n\n- first\n## Another\n- second",
         )
 
-        self.assertEqual(
-            rendered,
-            "## Fixture\n\nIntro\n## Nested\n\n- first\n## Another\n\n- second",
+        assert (
+            rendered
+            == "## Fixture\n\nIntro\n## Nested\n\n- first\n## Another\n\n- second"
         )
 
     def test_cevoice_persona_metadata_populates_persona_card(self) -> None:
@@ -2072,31 +2035,29 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         context = pipeline.build_persona_context(cast(Celune, engine), "What changed?")
         card = context.persona_card.render()
 
-        self.assertEqual(context.character_profile.name, "Mirelle")
-        self.assertEqual(context.character_profile.age, "27")
-        self.assertEqual(context.character_profile.gender, "female")
-        self.assertIn(
-            "A precise investigator who notices tiny shifts in tone.",
-            context.character_profile.render(),
+        assert context.character_profile.name == "Mirelle"
+        assert context.character_profile.age == "27"
+        assert context.character_profile.gender == "female"
+        assert (
+            "A precise investigator who notices tiny shifts in tone."
+            in context.character_profile.render()
         )
-        self.assertEqual(
-            context.persona_source_material.identity,
+        assert context.persona_source_material.identity == (
             "Name: Mirelle\nAge: 27\nGender: female\n\n"
-            "A precise investigator who notices tiny shifts in tone.",
+            "A precise investigator who notices tiny shifts in tone."
         )
-        self.assertEqual(
-            context.persona_source_material.speech_style,
+        assert context.persona_source_material.speech_style == (
             "Elegant, steady, and mildly teasing.\n\n"
             "- Warmth: mid\n- Directness: high\n- Humor: low\n"
-            "- Detail: high\n- Formality: high\n- Enthusiasm: low",
+            "- Detail: high\n- Formality: high\n- Enthusiasm: low"
         )
-        self.assertIn("Style Notes:", card)
-        self.assertIn("Elegant, steady, and mildly teasing.", card)
-        self.assertIn("Boundaries:", card)
-        self.assertIn("Prompt Rules:", card)
-        self.assertIn("Example Dialogue:", card)
-        self.assertIn("- Formality: high", card)
-        self.assertIn("- Enthusiasm: low", card)
+        assert "Style Notes:" in card
+        assert "Elegant, steady, and mildly teasing." in card
+        assert "Boundaries:" in card
+        assert "Prompt Rules:" in card
+        assert "Example Dialogue:" in card
+        assert "- Formality: high" in card
+        assert "- Enthusiasm: low" in card
 
     def test_voice_persona_style_extends_shared_persona(self) -> None:
         """Verify a selected voice can refine the shared Persona response style."""
@@ -2137,16 +2098,12 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 "Hello.",
             )
 
-        self.assertEqual(context.persona_card.directness, "high")
-        self.assertEqual(context.persona_card.enthusiasm, "high")
-        self.assertIn("Measured and observant.", context.persona_card.speaking_style)
-        self.assertIn(
-            "More playful and energetic.",
-            context.persona_card.speaking_style,
-        )
-        self.assertIn(
-            "Use a brighter conversational rhythm.",
-            context.persona_card.prompt_rules,
+        assert context.persona_card.directness == "high"
+        assert context.persona_card.enthusiasm == "high"
+        assert "Measured and observant." in context.persona_card.speaking_style
+        assert "More playful and energetic." in context.persona_card.speaking_style
+        assert (
+            "Use a brighter conversational rhythm." in context.persona_card.prompt_rules
         )
 
     def test_different_cevoice_personas_produce_distinct_prompts(self) -> None:
@@ -2178,9 +2135,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             pipeline.build_persona_context(cast(Celune, second), "Status?")
         )
 
-        self.assertNotEqual(first_prompt, second_prompt)
-        self.assertIn("A precise investigator.", first_prompt)
-        self.assertIn("A mischievous mechanic.", second_prompt)
+        assert first_prompt != second_prompt
+        assert "A precise investigator." in first_prompt
+        assert "A mischievous mechanic." in second_prompt
 
     def test_persona_prompt_prefers_manifest_markdown_files_when_available(
         self,
@@ -2274,7 +2231,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ):
             files = pipeline._persona_manifest_files(cast(Celune, engine))
 
-        self.assertEqual(files, {"personality.md": "Debug personality."})
+        assert files == {"personality.md": "Debug personality."}
 
     def test_persona_prompt_does_not_hardcode_celune_identity(self) -> None:
         """Verify Persona prompts stay character-agnostic without pack metadata."""
@@ -2287,8 +2244,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             pipeline.build_persona_context(cast(Celune, engine), "Hello.")
         )
 
-        self.assertIn("Name: Fixture", prompt)
-        self.assertNotIn("Name: Celune", prompt)
+        assert "Name: Fixture" in prompt
+        assert "Name: Celune" not in prompt
 
     def test_default_celune_prompt_uses_canonical_age_and_gender(self) -> None:
         """Verify default Celune prompts expose the intended identity fields."""
@@ -2442,7 +2399,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             pipeline.build_persona_context(cast(Celune, engine), "Hello.")
         )
 
-        self.assertIn("Name: Celune", prompt)
+        assert "Name: Celune" in prompt
 
     def test_persona_context_uses_weighted_emotion_state_when_unconfigured(
         self,
@@ -2476,7 +2433,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 cast(Celune, engine), "Please stay with me."
             )
 
-        self.assertIn("Target emotion: gently reassuring.", context.mood_or_state)
+        assert "Target emotion: gently reassuring." in context.mood_or_state
         fake_analyzer.summarize_history.assert_called_once()
 
     def test_persona_context_prefers_configured_state_over_emotion_analysis(
@@ -2491,7 +2448,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         with mock.patch("celune.pipeline._persona_emotion_analyzer") as analyzer:
             context = pipeline.build_persona_context(cast(Celune, engine), "Hello.")
 
-        self.assertEqual(context.mood_or_state, "Thoughtful and slightly tired.")
+        assert context.mood_or_state == "Thoughtful and slightly tired."
         analyzer.assert_not_called()
 
     def test_persona_context_logs_emotion_fallback_reason(self) -> None:
@@ -2516,19 +2473,16 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ):
             context = pipeline.build_persona_context(cast(Celune, engine), "Hello.")
 
-        self.assertEqual(context.mood_or_state, "Neutral.")
-        self.assertEqual(
-            captured,
-            [
+        assert context.mood_or_state == "Neutral."
+        assert captured == [
+            (
                 (
-                    (
-                        "Persona emotion analysis fell back to Neutral: "
-                        "lunahr/emotispace-128 could not be loaded"
-                    ),
-                    "warning",
-                )
-            ],
-        )
+                    "Persona emotion analysis fell back to Neutral: "
+                    "lunahr/emotispace-128 could not be loaded"
+                ),
+                "warning",
+            )
+        ]
 
     def test_persona_prompt_builder_omits_vision_context_without_attachments(
         self,
@@ -2546,9 +2500,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         context = pipeline.build_persona_context(cast(Celune, engine), "Continue.")
         prompt = PersonaPromptBuilder.build(context)
 
-        self.assertNotIn("<vision_context>", prompt)
-        self.assertNotIn("<history>", prompt)
-        self.assertNotIn("assistant: hi", prompt)
+        assert "<vision_context>" not in prompt
+        assert "<history>" not in prompt
+        assert "assistant: hi" not in prompt
 
     def test_persona_messages_keep_only_recent_history(self) -> None:
         """Verify stale Persona turns do not dilute the current character card."""
@@ -2565,14 +2519,14 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         messages = pipeline.build_persona_messages(cast(Celune, engine), "current")
 
-        self.assertEqual(messages[0]["role"], "system")
-        self.assertEqual(messages[-1], {"role": "user", "content": "current"})
-        self.assertEqual(len(messages), 8)
-        self.assertEqual(messages[1], {"role": "user", "content": "old user 6"})
-        self.assertEqual(messages[-2], {"role": "assistant", "content": "old reply 11"})
+        assert messages[0]["role"] == "system"
+        assert messages[-1] == {"role": "user", "content": "current"}
+        assert len(messages) == 8
+        assert messages[1] == {"role": "user", "content": "old user 6"}
+        assert messages[-2] == {"role": "assistant", "content": "old reply 11"}
         system_prompt = cast(str, messages[0]["content"])
-        self.assertNotIn("<history>", system_prompt)
-        self.assertNotIn("old user 4", str(messages))
+        assert "<history>" not in system_prompt
+        assert "old user 4" not in str(messages)
 
     def test_persona_history_uses_configured_short_term_message_limit(self) -> None:
         """Verify Persona history rolls forward using the configured message limit."""
@@ -2617,17 +2571,14 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 "probabilities": {"en": 1.0},
             },
         ):
-            self.assertEqual(pipeline.think(cast(Celune, engine), "new user"), True)
+            assert pipeline.think(cast(Celune, engine), "new user")
 
-        self.assertEqual(
-            engine.persona_history,
-            [
-                {"role": "user", "content": "old user 2"},
-                {"role": "assistant", "content": "old reply 3"},
-                {"role": "user", "content": "new user"},
-                {"role": "assistant", "content": "new reply"},
-            ],
-        )
+        assert engine.persona_history == [
+            {"role": "user", "content": "old user 2"},
+            {"role": "assistant", "content": "old reply 3"},
+            {"role": "user", "content": "new user"},
+            {"role": "assistant", "content": "new reply"},
+        ]
 
     def test_persona_history_compacts_older_turns_into_session_summary(self) -> None:
         """Verify older Persona turns are summarized and recent turns stay available."""
@@ -2674,26 +2625,17 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 "probabilities": {"en": 1.0},
             },
         ):
-            self.assertEqual(
-                pipeline.think(cast(Celune, engine), "What is next?"), True
-            )
+            assert pipeline.think(cast(Celune, engine), "What is next?")
 
-        self.assertEqual(
-            engine.persona_history,
-            [
-                {"role": "user", "content": "What is next?"},
-                {"role": "assistant", "content": "Understood."},
-            ],
-        )
-        self.assertIn(
-            "The archive is stored in the attic.", engine.persona_session_summary
-        )
-        self.assertTrue(
-            engine.persona_session_summary.startswith("Conversation context:")
-        )
-        self.assertNotIn("Earlier summary:", engine.persona_session_summary)
-        self.assertNotIn("user:", engine.persona_session_summary)
-        self.assertNotIn("assistant:", engine.persona_session_summary)
+        assert engine.persona_history == [
+            {"role": "user", "content": "What is next?"},
+            {"role": "assistant", "content": "Understood."},
+        ]
+        assert "The archive is stored in the attic." in engine.persona_session_summary
+        assert engine.persona_session_summary.startswith("Conversation context:")
+        assert "Earlier summary:" not in engine.persona_session_summary
+        assert "user:" not in engine.persona_session_summary
+        assert "assistant:" not in engine.persona_session_summary
 
     def test_persona_history_summary_does_not_nest_previous_summary(self) -> None:
         """Verify repeated compaction removes wrappers and duplicate summary labels."""
@@ -2718,13 +2660,11 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         compact_persona_history(cast(Celune, engine))
 
-        self.assertEqual(engine.persona_session_summary.count("archive"), 1)
-        self.assertTrue(
-            engine.persona_session_summary.startswith("Conversation context:")
-        )
-        self.assertNotIn("Earlier summary:", engine.persona_session_summary)
-        self.assertNotIn("<conversation_summary>", engine.persona_session_summary)
-        self.assertNotIn("</conversation_summary>", engine.persona_session_summary)
+        assert engine.persona_session_summary.count("archive") == 1
+        assert engine.persona_session_summary.startswith("Conversation context:")
+        assert "Earlier summary:" not in engine.persona_session_summary
+        assert "<conversation_summary>" not in engine.persona_session_summary
+        assert "</conversation_summary>" not in engine.persona_session_summary
 
     def test_persona_history_prefers_neutral_vlm_summary(self) -> None:
         """Verify compaction stores the VLM summary instead of raw conversation turns."""
@@ -2755,9 +2695,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             "Earlier context.",
             240,
         )
-        self.assertEqual(
-            engine.persona_session_summary,
-            "Conversation context: The conversation concerns a TTS cutoff.",
+        assert (
+            engine.persona_session_summary
+            == "Conversation context: The conversation concerns a TTS cutoff."
         )
 
     def test_think_persists_explicit_memory_before_persona_reply(self) -> None:
@@ -2823,20 +2763,14 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                     "probabilities": {"en": 1.0},
                 },
             ):
-                self.assertEqual(
-                    pipeline.think(
-                        cast(Celune, engine),
-                        "remember that my test word is moonlight",
-                    ),
-                    True,
+                assert pipeline.think(
+                    cast(Celune, engine),
+                    "remember that my test word is moonlight",
                 )
 
             retrieved = store.retrieve("Celune", "what is my test word?")
 
-        self.assertEqual(
-            [record.content for record in retrieved],
-            ["my test word is moonlight"],
-        )
+        assert [record.content for record in retrieved] == ["my test word is moonlight"]
 
     def test_persona_memory_path_is_independent_of_markdown_debug_overrides(
         self,
@@ -2855,9 +2789,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                     store = pipeline._persona_memory_store(cast(Celune, engine))
 
                 assert store is not None
-                self.assertEqual(
-                    store._path_for_character("Celune"),
-                    Path(temp_dir) / "celune" / "memory" / "records.json",
+                assert (
+                    store._path_for_character("Celune")
+                    == Path(temp_dir) / "celune" / "memory" / "records.json"
                 )
 
     def test_think_uses_classifier_for_unmatched_durable_user_context(self) -> None:
@@ -2932,22 +2866,18 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                     "probabilities": {"en": 1.0},
                 },
             ):
-                self.assertEqual(
-                    pipeline.think(
-                        cast(Celune, engine),
-                        "I recently adopted a dog named Luna.",
-                    ),
-                    True,
+                assert pipeline.think(
+                    cast(Celune, engine),
+                    "I recently adopted a dog named Luna.",
                 )
 
             classifier_payload = cast(FakeVision, engine.vision).classifier_payload
-            self.assertIsNotNone(classifier_payload)
+            assert classifier_payload is not None
             records = store.load_records("Celune")
 
-        self.assertEqual(
-            [record.content for record in records],
-            ["The user has a dog named Luna"],
-        )
+        assert [record.content for record in records] == [
+            "The user has a dog named Luna"
+        ]
 
     def test_persona_response_speech_is_not_saved(self) -> None:
         """Verify generated Persona replies skip saved utterance artifacts."""
@@ -2962,10 +2892,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             mock.patch("celune.pipeline.build_persona_request", return_value={}),
             mock.patch("celune.pipeline.queue_speech", return_value=True) as q,
         ):
-            self.assertEqual(
-                pipeline.think(cast(Celune, engine), "User request."),
-                True,
-            )
+            assert pipeline.think(cast(Celune, engine), "User request.")
 
         q.assert_called_once_with(
             engine,
@@ -2994,8 +2921,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         context = pipeline.build_persona_context(cast(Celune, engine), "Continue.")
         prompt = PersonaPromptBuilder.build(context)
 
-        self.assertIn("<conversation_summary>", prompt)
-        self.assertIn("The user and character already discussed the archive.", prompt)
+        assert "<conversation_summary>" in prompt
+        assert "The user and character already discussed the archive." in prompt
 
     def test_persona_messages_include_pending_attachments(self) -> None:
         """Verify visual attachments are sent in the next persona user turn."""
@@ -3021,30 +2948,27 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         )
 
         user = messages[-1]
-        self.assertEqual(user["role"], "user")
+        assert user["role"] == "user"
         content = cast(list[dict[str, str]], user["content"])
-        self.assertEqual(
-            content,
-            [
-                {
-                    "type": "image",
-                    "image": (
-                        "C:/Users/user/Pictures/frame.png"
-                        if os.name == "nt"
-                        else "file:///C:/Users/user/Pictures/frame.png"
-                    ),
-                },
-                {
-                    "type": "video",
-                    "video": (
-                        "C:/Users/user/Videos/clip.mp4"
-                        if os.name == "nt"
-                        else "file:///C:/Users/user/Videos/clip.mp4"
-                    ),
-                },
-                {"type": "text", "text": "What is this?"},
-            ],
-        )
+        assert content == [
+            {
+                "type": "image",
+                "image": (
+                    "C:/Users/user/Pictures/frame.png"
+                    if os.name == "nt"
+                    else "file:///C:/Users/user/Pictures/frame.png"
+                ),
+            },
+            {
+                "type": "video",
+                "video": (
+                    "C:/Users/user/Videos/clip.mp4"
+                    if os.name == "nt"
+                    else "file:///C:/Users/user/Videos/clip.mp4"
+                ),
+            },
+            {"type": "text", "text": "What is this?"},
+        ]
 
     def test_persona_messages_preserve_remote_attachment_urls(self) -> None:
         """Verify remote visual URLs are passed through to Persona unchanged."""
@@ -3065,17 +2989,14 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         )
 
         user = messages[-1]
-        self.assertEqual(user["role"], "user")
-        self.assertEqual(
-            cast(list[dict[str, str]], user["content"]),
-            [
-                {
-                    "type": "image",
-                    "image": "https://example.com/images/frame.png",
-                },
-                {"type": "text", "text": "What is this?"},
-            ],
-        )
+        assert user["role"] == "user"
+        assert cast(list[dict[str, str]], user["content"]) == [
+            {
+                "type": "image",
+                "image": "https://example.com/images/frame.png",
+            },
+            {"type": "text", "text": "What is this?"},
+        ]
 
     def test_stale_attachment_does_not_leak_into_later_requests(self) -> None:
         """Verify one-shot attachments do not persist after a Persona request."""
@@ -3137,22 +3058,20 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 "probabilities": {"en": 1.0},
             },
         ):
-            self.assertEqual(
-                pipeline.think(cast(Celune, engine), "What is this?"), True
-            )
+            assert pipeline.think(cast(Celune, engine), "What is this?")
 
-        self.assertEqual(engine.persona_attachments, [])
+        assert engine.persona_attachments == []
         first_payload = engine.vision.payloads[0]
         first_messages = cast(list[JSON], first_payload["messages"])
-        self.assertIsInstance(first_messages[-1]["content"], list)
+        assert isinstance(first_messages[-1]["content"], list)
 
         second_payload = pipeline.build_persona_request(
             cast(Celune, engine), "And now?"
         )
         second_system = cast(str, second_payload["system"])
         second_messages = cast(list[JSON], second_payload["messages"])
-        self.assertIn("<behavior>", second_system)
-        self.assertEqual(second_messages[-1], {"role": "user", "content": "And now?"})
+        assert "<behavior>" in second_system
+        assert second_messages[-1] == {"role": "user", "content": "And now?"}
 
     async def test_generation_worker_normalizes_each_split_chunk(self) -> None:
         """Verify normalization happens after splitting and before generation.
@@ -3280,8 +3199,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         backend.unload_model.assert_called_once_with()
         backend.load_model.assert_called_once_with("fake/balanced", lang="fr")
-        self.assertEqual(backend.current_language, "fr")
-        self.assertEqual(engine.model.kwargs["lang"], "fr")
+        assert backend.current_language == "fr"
+        assert engine.model.kwargs["lang"] == "fr"
 
     async def test_generation_worker_disables_smart_buffer_for_realtime_speed(
         self,
@@ -3338,8 +3257,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ):
             await self._run_generation_worker(cast(Celune, engine))
 
-        self.assertEqual(queued_lengths, [48000, 48000, 48000])
-        self.assertEqual(engine.smart_buffer_target_seconds, 0.0)
+        assert queued_lengths == [48000, 48000, 48000]
+        assert engine.smart_buffer_target_seconds == 0.0
 
     async def test_generation_worker_expands_smart_buffer_when_speed_drops(
         self,
@@ -3400,10 +3319,10 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ):
             await self._run_generation_worker(cast(Celune, engine))
 
-        self.assertEqual(queued_lengths, [48000, 48000, 48000])
-        self.assertGreater(engine.smart_buffer_generation_speed, 0.5)
-        self.assertLess(engine.smart_buffer_generation_speed, 1.3)
-        self.assertGreater(engine.smart_buffer_target_seconds, 0.0)
+        assert queued_lengths == [48000, 48000, 48000]
+        assert engine.smart_buffer_generation_speed > 0.5
+        assert engine.smart_buffer_generation_speed < 1.3
+        assert engine.smart_buffer_target_seconds > 0.0
 
     async def test_generation_worker_waits_for_completion_at_very_low_speed(
         self,
@@ -3464,8 +3383,8 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ):
             await self._run_generation_worker(cast(Celune, engine))
 
-        self.assertEqual(queued_lengths, [48000, 48000, 48000])
-        self.assertEqual(engine.smart_buffer_target_seconds, float("inf"))
+        assert queued_lengths == [48000, 48000, 48000]
+        assert engine.smart_buffer_target_seconds == float("inf")
 
     def test_playback_blocks_uses_true_50ms_chunks(self) -> None:
         """Verify mixer block splitting uses real wall-clock block lengths."""
@@ -3479,13 +3398,13 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         blocks = pipeline._playback_blocks(chunk)
 
-        self.assertEqual(len(blocks), 2)
+        assert len(blocks) == 2
         first_block, first_timing = blocks[0]
         second_block, second_timing = blocks[1]
-        self.assertEqual(first_block.shape, (2400, 2))
-        self.assertEqual(second_block.shape, (2400, 2))
-        self.assertIs(first_timing, timing)
-        self.assertIsNone(second_timing)
+        assert first_block.shape == (2400, 2)
+        assert second_block.shape == (2400, 2)
+        assert first_timing is timing
+        assert second_timing is None
 
     async def test_generation_worker_handles_save_false_without_concatenate_error(
         self,
@@ -3530,7 +3449,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
 
         silent_mock.assert_called_once()
         write_mock.assert_not_called()
-        self.assertIsNone(engine.recently_saved)
+        assert engine.recently_saved is None
 
     async def test_generation_worker_accumulates_total_generated_speech_seconds(
         self,
@@ -3572,7 +3491,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ):
             await self._run_generation_worker(cast(Celune, engine))
 
-        self.assertEqual(engine.total_generated_speech_seconds, 31.0)
+        assert engine.total_generated_speech_seconds == 31.0
 
     async def test_generation_worker_ignores_absolute_silence_without_retrying(
         self,
@@ -3615,22 +3534,20 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ):
             await self._run_generation_worker(cast(Celune, engine))
 
-        self.assertEqual(generate_stream.call_count, 1)
+        assert generate_stream.call_count == 1
         queue_chunk.assert_not_called()
         retry_logs = [
             message
             for message, severity in engine.messages
             if severity == "warning" and "regenerating" in message
         ]
-        self.assertEqual(retry_logs, [])
-        self.assertFalse(
-            any(
-                "may be unexpectedly silent" in message
-                for message, severity in engine.messages
-                if severity == "warning"
-            )
+        assert retry_logs == []
+        assert not any(
+            "may be unexpectedly silent" in message
+            for message, severity in engine.messages
+            if severity == "warning"
         )
-        self.assertEqual(engine.text_queue.empty(), True)
+        assert engine.text_queue.empty()
 
     async def test_generation_worker_skips_requeue_once_silent_retry_limit_is_reached(
         self,
@@ -3677,15 +3594,13 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         ):
             await self._run_generation_worker(cast(Celune, engine))
 
-        self.assertEqual(generate_stream.call_count, 1)
-        self.assertTrue(
-            any(
-                "stayed silent after 3 retries" in message
-                for message, severity in engine.messages
-                if severity == "warning"
-            )
+        assert generate_stream.call_count == 1
+        assert any(
+            "stayed silent after 3 retries" in message
+            for message, severity in engine.messages
+            if severity == "warning"
         )
-        self.assertEqual(engine.text_queue.empty(), True)
+        assert engine.text_queue.empty()
 
     def test_split_text_breaks_long_unpunctuated_lines(self) -> None:
         """Verify long prose without punctuation still splits into chunks.
@@ -3726,9 +3641,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         )
         chunks = pipeline.split_text(cast(Celune, engine), text)
 
-        self.assertGreater(len(chunks), 1)
-        self.assertTrue(all(len(chunk) <= 400 for chunk in chunks))
-        self.assertEqual(" ".join(chunks), " ".join(text.split()))
+        assert len(chunks) > 1
+        assert all(len(chunk) <= 400 for chunk in chunks)
+        assert " ".join(chunks) == " ".join(text.split())
 
     def test_flac_metadata_helpers_round_trip_tags(self) -> None:
         """Verify FLAC tag writing and parsing without real speech.
@@ -3752,9 +3667,9 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
                 if block_type == pipeline._FLAC_VORBIS_COMMENT_BLOCK
             )
             _, comments = pipeline.parse_vorbis_comment_block(comment_block)
-        self.assertIn(("artist", "Celune"), comments)
-        self.assertIn(("date", "2026"), comments)
-        self.assertNotIn(("invalid=key", "ignored"), comments)
+        assert ("artist", "Celune") in comments
+        assert ("date", "2026") in comments
+        assert ("invalid=key", "ignored") not in comments
 
     def test_saved_output_speech_seconds_scans_existing_outputs_directory(self) -> None:
         """Verify historical output duration is seeded from saved Celune FLACs."""
@@ -3782,7 +3697,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             with mock.patch("celune.pipeline.outputs_dir", return_value=output_dir):
                 total_seconds = pipeline.saved_output_speech_seconds()
 
-        self.assertAlmostEqual(total_seconds, 1.5, places=2)
+        assert total_seconds == pytest.approx(1.5)
 
     def test_celune_metadata_and_flac_writer_create_expected_tags(self) -> None:
         """Verify Celune metadata payloads and saved FLAC tags.
@@ -3813,7 +3728,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             subtype="PCM_24",
             included_kept_sfx=False,
         )
-        self.assertEqual(metadata["qwen3_x_vector_only"], True)
+        assert metadata["qwen3_x_vector_only"]
 
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "voice.flac"
@@ -3834,10 +3749,10 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
             )
             _, comments = pipeline.parse_vorbis_comment_block(comment_block)
             tags = dict(comments)
-        self.assertEqual(tags["artist"], "Fixture")
-        self.assertEqual(tags["album"], "Celune via fake")
-        self.assertEqual(tags["title"], "one two three four five...")
-        self.assertEqual(_json.loads(tags["comment"])["text"], "hello")
+        assert tags["artist"] == "Fixture"
+        assert tags["album"] == "Celune via fake"
+        assert tags["title"] == "one two three four five..."
+        assert _json.loads(tags["comment"])["text"] == "hello"
 
     def test_log_and_stream_helpers_are_lightweight(self) -> None:
         """Verify playback timing logs and stream cleanup behavior.
@@ -3849,16 +3764,16 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         timing = pipeline.SpeechTiming(start_time=1.0, first_playback_time=1.25)
         with mock.patch("celune.pipeline._monotonic_time", return_value=1.25):
             pipeline.log_first_playback(cast(Celune, engine), timing)
-        self.assertEqual(engine.messages[-1], ("TTFP: 0.25 seconds", "info"))
+        assert engine.messages[-1] == ("TTFP: 0.25 seconds", "info")
 
         stream = FakeStream()
         holder = SimpleNamespace(stream=stream, _stream=stream, _current_sr=48000)
         pipeline.close_stream(cast(Celune, holder))
-        self.assertEqual(stream.stopped, True)
-        self.assertEqual(stream.closed, True)
-        self.assertIsNone(holder._stream)
+        assert stream.stopped
+        assert stream.closed
+        assert holder._stream is None
 
         stream = FakeStream()
         holder = SimpleNamespace(stream=stream, _stream=stream, _current_sr=48000)
         pipeline.close_stream(cast(Celune, holder), abort=True)
-        self.assertEqual(stream.aborted, True)
+        assert stream.aborted

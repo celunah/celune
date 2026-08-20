@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Private CEDTS framing and typed payload transport for backend workers."""
 
 import json

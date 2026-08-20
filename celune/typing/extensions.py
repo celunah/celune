@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Extension-facing protocols."""
 
 from typing import Optional, Protocol, runtime_checkable

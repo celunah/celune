@@ -1,14 +1,16 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for Persona long-term memory persistence and retrieval."""
 
 import tempfile
 from pathlib import Path
-from typing import Union, Optional
-from unittest import TestCase, mock
+from typing import Optional, Union
+from unittest import mock
 from collections.abc import Sequence
 
 import numpy as np
 from celune.persona.memory import PersonaMemoryStore, classifier_memory_candidates
+
+from .support import CeluneTestCase
 
 
 class StubEmbeddingMemoryStore(PersonaMemoryStore):
@@ -38,7 +40,7 @@ class StubEmbeddingMemoryStore(PersonaMemoryStore):
         return [np.array(self.embedding_map[text], dtype=np.float32) for text in texts]
 
 
-class PersonaMemoryTests(TestCase):
+class TestPersonaMemory(CeluneTestCase):
     """Verify Persona long-term memory behavior stays conservative and stable."""
 
     def test_explicit_memory_persists_across_store_instances(self) -> None:
@@ -50,16 +52,16 @@ class PersonaMemoryTests(TestCase):
                 "remember that my test word is moonlight",
             )
 
-            self.assertEqual(len(saved), 1)
-            self.assertEqual(saved[0].content, "my test word is moonlight")
-            self.assertEqual(saved[0].explicit, True)
+            assert len(saved) == 1
+            assert saved[0].content == "my test word is moonlight"
+            assert saved[0].explicit
 
             second = PersonaMemoryStore(storage_dir=temp_dir)
             records = second.load_records("Celune")
 
-            self.assertEqual(len(records), 1)
-            self.assertEqual(records[0].content, "my test word is moonlight")
-            self.assertEqual(records[0].explicit, True)
+            assert len(records) == 1
+            assert records[0].content == "my test word is moonlight"
+            assert records[0].explicit
 
     def test_broad_explicit_memory_language_is_accepted(self) -> None:
         """Verify natural save-intent phrases create explicit memories."""
@@ -75,9 +77,9 @@ class PersonaMemoryTests(TestCase):
 
         for request in requests:
             candidates = store.collect_candidates(request)
-            self.assertEqual(len(candidates), 1, request)
-            self.assertEqual(candidates[0].content, "my test word is moonlight")
-            self.assertTrue(candidates[0].explicit, request)
+            assert len(candidates) == 1, request
+            assert candidates[0].content == "my test word is moonlight"
+            assert candidates[0].explicit, request
 
     def test_memory_recall_questions_are_not_saved_as_explicit_memories(self) -> None:
         """Verify questions about existing memories do not create new records."""
@@ -88,7 +90,7 @@ class PersonaMemoryTests(TestCase):
             "what do you remember about me?",
             "do you still remember our project?",
         ):
-            self.assertEqual(store.collect_candidates(request), [], request)
+            assert not store.collect_candidates(request), request
 
     def test_classifier_memory_candidates_require_confidence_and_reject_secrets(
         self,
@@ -102,9 +104,9 @@ class PersonaMemoryTests(TestCase):
             "]}"
         )
 
-        self.assertEqual(len(candidates), 1)
-        self.assertEqual(candidates[0].content, "The user prefers tea")
-        self.assertEqual(candidates[0].explicit, False)
+        assert len(candidates) == 1
+        assert candidates[0].content == "The user prefers tea"
+        assert not candidates[0].explicit
 
     def test_automatic_memory_extracts_persistent_user_context(self) -> None:
         """Verify obvious user preferences are stored automatically."""
@@ -115,10 +117,10 @@ class PersonaMemoryTests(TestCase):
                 "my favorite color is blue",
             )
 
-            self.assertEqual(len(saved), 1)
-            self.assertEqual(saved[0].content, "The user's favorite color is blue")
-            self.assertEqual(saved[0].explicit, False)
-            self.assertEqual(saved[0].importance, 3)
+            assert len(saved) == 1
+            assert saved[0].content == "The user's favorite color is blue"
+            assert not saved[0].explicit
+            assert saved[0].importance == 3
 
     def test_memory_records_use_persona_character_directory_by_default(self) -> None:
         """Verify memory records use the character-specific app-data directory."""
@@ -126,9 +128,7 @@ class PersonaMemoryTests(TestCase):
             store = PersonaMemoryStore(storage_dir=temp_dir)
             store.remember("Celune", "my test word is moonlight", explicit=True)
 
-            self.assertTrue(
-                (Path(temp_dir) / "celune" / "memory" / "records.json").is_file()
-            )
+            assert (Path(temp_dir) / "celune" / "memory" / "records.json").is_file()
 
     def test_automatic_memory_extracts_project_context(self) -> None:
         """Verify recurring project information can be stored automatically."""
@@ -139,12 +139,9 @@ class PersonaMemoryTests(TestCase):
                 "my project is the lighthouse refactor",
             )
 
-            self.assertEqual(len(saved), 1)
-            self.assertEqual(
-                saved[0].content,
-                "The user's project is the lighthouse refactor",
-            )
-            self.assertEqual(saved[0].explicit, False)
+            assert len(saved) == 1
+            assert saved[0].content == "The user's project is the lighthouse refactor"
+            assert not saved[0].explicit
 
     def test_memory_retrieval_is_character_specific(self) -> None:
         """Verify one character cannot read another character's memories."""
@@ -157,14 +154,12 @@ class PersonaMemoryTests(TestCase):
             celune = store.retrieve("Celune", "what is my test word?")
             mirelle = store.retrieve("Mirelle", "what is my test word?")
 
-            self.assertEqual(
-                [record.content for record in celune],
-                ["my test word is moonlight"],
-            )
-            self.assertEqual(
-                [record.content for record in mirelle],
-                ["my test word is starlight"],
-            )
+            assert [record.content for record in celune] == [
+                "my test word is moonlight"
+            ]
+            assert [record.content for record in mirelle] == [
+                "my test word is starlight"
+            ]
 
     def test_low_value_filler_is_not_saved_automatically(self) -> None:
         """Verify greetings do not become long-term memories."""
@@ -172,8 +167,8 @@ class PersonaMemoryTests(TestCase):
             store = PersonaMemoryStore(storage_dir=temp_dir)
             saved = store.remember_from_user_message("Celune", "hello there")
 
-            self.assertEqual(saved, [])
-            self.assertEqual(store.load_records("Celune"), [])
+            assert not saved
+            assert not store.load_records("Celune")
 
     def test_retrieval_updates_last_used_timestamp(self) -> None:
         """Verify successful retrieval refreshes long-term memory usage time."""
@@ -184,16 +179,13 @@ class PersonaMemoryTests(TestCase):
             assert first is not None
 
             records_before = store.load_records("Celune")
-            self.assertEqual(records_before[0].last_used_at, first.last_used_at)
+            assert records_before[0].last_used_at == first.last_used_at
 
             retrieved = store.retrieve("Celune", "tell me about my project")
 
-            self.assertEqual(len(retrieved), 1)
+            assert len(retrieved) == 1
             records_after = store.load_records("Celune")
-            self.assertNotEqual(
-                records_after[0].last_used_at,
-                records_before[0].last_used_at,
-            )
+            assert records_after[0].last_used_at != records_before[0].last_used_at
 
     def test_semantic_retrieval_matches_rephrased_request(self) -> None:
         """Verify semantic retrieval can match a memory when wording differs."""
@@ -211,7 +203,7 @@ class PersonaMemoryTests(TestCase):
 
             retrieved = store.retrieve("Celune", request)
 
-            self.assertEqual([record.content for record in retrieved], [memory])
+            assert [record.content for record in retrieved] == [memory]
 
     def test_semantic_retrieval_rejects_unrelated_memory(self) -> None:
         """Verify unrelated memories are ignored when semantic similarity is low."""
@@ -227,7 +219,7 @@ class PersonaMemoryTests(TestCase):
             )
             store.remember("Celune", memory, explicit=True)
 
-            self.assertEqual(store.retrieve("Celune", request), [])
+            assert store.retrieve("Celune", request) == []
 
     def test_fallback_retrieval_still_works_when_embeddings_are_unavailable(
         self,
@@ -240,11 +232,8 @@ class PersonaMemoryTests(TestCase):
 
             retrieved = store.retrieve("Celune", "tell me about my project")
 
-            self.assertEqual(len(retrieved), 1)
-            self.assertEqual(
-                retrieved[0].content,
-                "my project is the lighthouse refactor",
-            )
+            assert len(retrieved) == 1
+            assert retrieved[0].content == "my project is the lighthouse refactor"
 
     def test_fallback_retrieval_survives_missing_offline_embedding_cache(
         self,
@@ -260,11 +249,8 @@ class PersonaMemoryTests(TestCase):
             ):
                 retrieved = store.retrieve("Celune", "tell me about my project")
 
-            self.assertEqual(len(retrieved), 1)
-            self.assertEqual(
-                retrieved[0].content,
-                "my project is the lighthouse refactor",
-            )
+            assert len(retrieved) == 1
+            assert retrieved[0].content == "my project is the lighthouse refactor"
 
     def test_semantic_similarity_threshold_controls_retrieval(self) -> None:
         """Verify the configured semantic threshold gates borderline matches."""
@@ -284,7 +270,7 @@ class PersonaMemoryTests(TestCase):
                 embedding_map=embedding_map,
             )
             strict_store.remember("Celune", memory)
-            self.assertEqual(strict_store.retrieve("Celune", request), [])
+            assert strict_store.retrieve("Celune", request) == []
 
             relaxed_store = StubEmbeddingMemoryStore(
                 storage_dir=relaxed_dir,
@@ -293,4 +279,4 @@ class PersonaMemoryTests(TestCase):
             )
             relaxed_store.remember("Celune", memory)
             retrieved = relaxed_store.retrieve("Celune", request)
-            self.assertEqual([record.content for record in retrieved], [memory])
+            assert [record.content for record in retrieved] == [memory]

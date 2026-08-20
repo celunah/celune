@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Run the Poe CI task and terminate its complete process tree safely."""
 
 from __future__ import annotations
