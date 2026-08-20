@@ -1,43 +1,43 @@
 # SPDX-License-Identifier: MIT
 """Celune-managed Persona runtime helpers."""
 
-import contextlib
 import io
 import os
 import re
-from collections.abc import Generator, Mapping
+import contextlib
 from typing import Optional
+from collections.abc import Mapping, Generator
 
+from ..i18n import string
+from ..config import Config
+from ..vram import resolve_vram_preset
+from ..typing.aliases import LogCallback
+from .capabilities import PersonaCapabilities
+from ..typing.common import JSON, JSONSerializable
+from .runtime import PersonaRuntime, response_to_json, request_from_json
+from ..modes import (
+    mode_allows_persona,
+    resolve_operation_mode,
+    has_explicit_operation_mode,
+)
+from ..typing.persona import (
+    PersonaModel,
+    PersonaTokenizer,
+    PersonaEngineView,
+    PersonaClientResponse,
+)
 from ..cevoice import (
     CEVoicePersona,
     default_loader,
     merge_persona_metadata,
     persona_metadata_from_voice,
 )
-from ..config import Config
 from ..constants import (
     DEFAULT_PERSONA_CONTEXT,
-    DEFAULT_PERSONA_DESCRIPTION,
     PERSONA_DEFAULT_MODEL_ID,
     PERSONA_HISTORY_MESSAGES,
+    DEFAULT_PERSONA_DESCRIPTION,
 )
-from ..i18n import string
-from ..modes import (
-    has_explicit_operation_mode,
-    mode_allows_persona,
-    resolve_operation_mode,
-)
-from ..typing.aliases import LogCallback
-from ..typing.common import JSON, JSONSerializable
-from ..typing.persona import (
-    PersonaClientResponse,
-    PersonaEngineView,
-    PersonaModel,
-    PersonaTokenizer,
-)
-from ..vram import resolve_vram_preset
-from .capabilities import PersonaCapabilities
-from .runtime import PersonaRuntime, request_from_json, response_to_json
 
 PERSONA_QUANTIZATION = "4bit"
 _CONVERSATION_SUMMARY_SYSTEM_PROMPT = (
@@ -403,7 +403,7 @@ def default_persona_gender(engine: PersonaEngineView) -> str:
         str: Default gender string for the active persona source.
     """
     if uses_default_celune_identity(engine):
-        return "female"
+        return string("persona.default_gender")
     return "unknown"
 
 

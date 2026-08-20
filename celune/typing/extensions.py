@@ -3,8 +3,8 @@
 
 from typing import Optional, Protocol, runtime_checkable
 
-from ..exceptions import IncompleteExtensionError
 from .aliases import LogLevel
+from ..exceptions import IncompleteExtensionError
 
 
 @runtime_checkable

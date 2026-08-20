@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Name day list derived from Polish name days, translated to English, and with Polish-only names removed."""
 
-from datetime import date, datetime
 from typing import Union
+from datetime import date, datetime
 
 # some of these entries are empty because no suitable corresponding English name exists for certain Polish names
 NAME_DAYS: dict[str, list[str]] = {

@@ -1,41 +1,42 @@
 # SPDX-License-Identifier: MIT
 """GPT-SoVITS backend implementation for Celune."""
 
-import contextlib
-import hashlib
-import importlib
 import os
-import secrets
-import shutil
-import subprocess
 import sys
-import tempfile
-import threading
 import time
-import urllib.request
+import shutil
+import hashlib
+import secrets
 import zipfile
-from collections.abc import Callable, Generator, Iterator, Mapping
+import tempfile
+import importlib
+import threading
+import contextlib
+import subprocess
+import socket
+import urllib.request
 from pathlib import Path
 from types import ModuleType
-from typing import Optional, Union, cast
+from typing import Union, Optional, cast
+from collections.abc import Mapping, Callable, Iterator, Generator
 
+import torch
 import numpy as np
 import soundfile as sf
-import torch
 from huggingface_hub import snapshot_download
 
-from ...cevoice import CEVoiceLoader, default_loader
 from ...i18n import string
+from .base import CeluneBackend
+from ...utils import custom_assert
+from ...typing.common import JSONSerializable
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.backends import GPTSoVITSPipeline, _GPTSoVITSConfig
+from ...typing.aliases import AudioChunk, RuntimeValue, AudioChunkNonNormalized
 from ...paths import (
-    huggingface_hub_cache_dir,
     project_root,
     runtime_data_dir,
+    huggingface_hub_cache_dir,
 )
-from ...typing.aliases import AudioChunk, AudioChunkNonNormalized, RuntimeValue
-from ...typing.backends import GPTSoVITSPipeline, _GPTSoVITSConfig
-from ...typing.common import JSONSerializable
-from ...utils import custom_assert
-from .base import CeluneBackend
 
 
 class _GPTSoVITSRuntime:
@@ -114,6 +115,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
     _reference_frame_ms: int = 20
     _reference_silence_threshold: float = 0.01
     _reference_silence_padding_ms: int = 80
+    _nltk_download_timeout_seconds: float = 30.0
 
     _variant_order: tuple[str, ...] = (
         "v2ProPlus",
@@ -487,13 +489,31 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         for package, paths in self._nltk_resources.items():
             if self._nltk_resource_available(nltk, paths):
                 continue
-            if not nltk.download(
-                package,
-                download_dir=data_path,
-                quiet=True,
-            ) or not self._nltk_resource_available(nltk, paths):
+            previous_socket_timeout = socket.getdefaulttimeout()
+            try:
+                socket.setdefaulttimeout(self._nltk_download_timeout_seconds)
+                downloaded = nltk.download(
+                    package,
+                    download_dir=data_path,
+                    quiet=True,
+                )
+            except Exception as error:
                 raise RuntimeError(
-                    string("gpt_sovits.nltk_download_failed", package=package)
+                    string(
+                        "gpt_sovits.nltk_download_failed",
+                        package=package,
+                        error=str(error),
+                    )
+                ) from error
+            finally:
+                socket.setdefaulttimeout(previous_socket_timeout)
+            if not downloaded or not self._nltk_resource_available(nltk, paths):
+                raise RuntimeError(
+                    string(
+                        "gpt_sovits.nltk_download_failed",
+                        package=package,
+                        error=string("gpt_sovits.nltk_download_incomplete"),
+                    )
                 )
 
     def _ensure_fast_langdetect_data(self) -> None:

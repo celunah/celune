@@ -1,36 +1,36 @@
 # SPDX-License-Identifier: MIT
 """Unified backend abstractions for Celune."""
 
-import contextlib
 import gc
-import glob
-import hashlib
 import os
+import glob
 import random
+import hashlib
 import secrets
 import threading
+import contextlib
 import unittest.mock
-from abc import ABC, abstractmethod
-from collections.abc import Callable, Generator, Iterator, Mapping
 from pathlib import Path
+from abc import ABC, abstractmethod
 from typing import (
-    Optional,
     Union,
+    Optional,
     cast,
 )
+from collections.abc import Mapping, Callable, Iterator, Generator
 
+import torch
 import numpy as np
 import soundfile as sf
-import torch
 from huggingface_hub import snapshot_download
 
-from ...cevoice import CEVoiceLoader, default_loader
-from ...constants import N_A_NUMERIC
 from ...i18n import string
-from ...paths import huggingface_hub_cache_dir, temp_data_dir
-from ...typing.aliases import AudioChunk, RuntimeValue
-from ...typing.backends import BackendModel
 from ...utils import discard
+from ...constants import N_A_NUMERIC
+from ...typing.backends import BackendModel
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import AudioChunk, RuntimeValue
+from ...paths import temp_data_dir, huggingface_hub_cache_dir
 
 __all__ = [
     "BackendModel",

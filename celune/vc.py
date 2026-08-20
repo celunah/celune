@@ -1,21 +1,21 @@
 # SPDX-License-Identifier: MIT
 """Shared runtime helpers for Celune voice conversion."""
 
-import contextlib
 import importlib
-import queue as queue_module
 import threading
-from collections.abc import Mapping
+import contextlib
+import queue as queue_module
 from typing import Optional, cast
+from collections.abc import Mapping
 
-import numpy as np
 import torch
+import numpy as np
 from scipy import signal
 
 from .config import config_bool
 from .typing.aliases import AudioChunk
-from .typing.backends import _StreamingSpeechModel
 from .typing.common import JSONSerializable
+from .typing.backends import _StreamingSpeechModel
 
 VC_PITCH_SHIFT_MIN = -3
 VC_PITCH_SHIFT_MAX = 3

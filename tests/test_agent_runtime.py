@@ -5,41 +5,41 @@ from __future__ import annotations
 
 import threading
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
 from unittest import TestCase, mock
+from typing import TYPE_CHECKING, cast
 
+from celune.extensions.events import EventDispatcher
+from celune.dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentChoiceRequestedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+)
 from celune.agent import (
-    AgentAbortReason,
-    AgentApprovalDecision,
-    AgentApprovalRequest,
-    AgentApprovalResponse,
-    AgentCancellationReason,
-    AgentChoiceOption,
-    AgentChoiceRequest,
-    AgentChoiceResponse,
-    AgentContext,
-    AgentFailureReason,
-    AgentInterruption,
-    AgentInterruptionKind,
+    ToolCall,
+    ToolResult,
     AgentOutput,
+    AgentContext,
     AgentRequest,
     AgentRuntime,
     AgentSession,
-    AgentSessionState,
     AgentTaskState,
+    AgentAbortReason,
+    AgentChoiceOption,
+    AgentInterruption,
+    AgentSessionState,
     AgentToolBehavior,
-    AgentToolDangerLevel,
-    ToolCall,
-    ToolResult,
     ValidatedToolCall,
+    AgentChoiceRequest,
+    AgentFailureReason,
+    AgentChoiceResponse,
+    AgentApprovalRequest,
+    AgentToolDangerLevel,
+    AgentApprovalDecision,
+    AgentApprovalResponse,
+    AgentInterruptionKind,
+    AgentCancellationReason,
 )
-from celune.dataclasses.events import (
-    AgentApprovalRequestedEvent,
-    AgentChoiceRequestedEvent,
-    AgentTaskFinishedEvent,
-    AgentTaskStateChangedEvent,
-)
-from celune.extensions.events import EventDispatcher
 
 if TYPE_CHECKING:
     from celune.celune import Celune

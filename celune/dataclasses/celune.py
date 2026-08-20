@@ -3,46 +3,43 @@
 
 import queue
 import threading
-from dataclasses import dataclass, field
-from typing import Optional, Union
+from typing import Union, Optional
+from dataclasses import field, dataclass
 
 import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from ..backends.tts import CeluneBackend
-from ..backends.vc import CeluneVCBackend
-from ..cevoice import CEVoicePersona
-from ..chroma import AudioRGBGlow
 from ..config import Config
+from ..chroma import AudioRGBGlow
+from ..cevoice import CEVoicePersona
 from ..constants import PipelineStates
-from ..dsp import StreamingPedalboardReverb
-from ..extensions.manager import CeluneExtensionManager
+from ..typing.modes import BackendMode
 from ..locks import ComponentLockManager
+from ..backends.tts import CeluneBackend
 from ..persona.impl import PersonaClient
-from ..typing.aliases import AudioChunks
-from ..typing.aliases import LogLevel
+from ..backends.vc import CeluneVCBackend
 from ..typing.backends import BackendModel
+from ..dsp import StreamingPedalboardReverb
+from ..typing.common import JSON, JSONSerializable
+from ..typing.aliases import LogLevel, AudioChunks
+from ..extensions.manager import CeluneExtensionManager
+from ..typing.locks import ComponentLockOwner, ComponentBusyResult
+from .properties import ConstantPropertySpec, ForwardedPropertySpec
 from ..typing.celune import (
-    CaptionCallback,
-    CaptionTimingCallback,
-    ErrorCallback,
     IdleCallback,
-    InputStateCallback,
+    ErrorCallback,
+    CaptionCallback,
     MessageCallback,
-    ProgressCallback,
-    QueueAvailableCallback,
-    TTSBackendRecipe,
     VCBackendRecipe,
+    ProgressCallback,
+    TTSBackendRecipe,
+    InputStateCallback,
     VoiceChangedCallback,
+    CaptionTimingCallback,
+    QueueAvailableCallback,
     VoiceLockStateCallback,
 )
-from ..typing.common import JSON
-from ..typing.common import JSONSerializable
-from ..typing.locks import ComponentBusyResult
-from ..typing.locks import ComponentLockOwner
-from ..typing.modes import BackendMode
-from .properties import ConstantPropertySpec, ForwardedPropertySpec
 
 
 @dataclass

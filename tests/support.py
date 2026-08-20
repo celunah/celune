@@ -3,28 +3,27 @@
 
 from __future__ import annotations
 
-import contextlib
-import importlib
-import queue
 import sys
+import queue
+import importlib
 import threading
-from collections.abc import Callable, Iterator
+import contextlib
 from pathlib import Path
-from types import MappingProxyType, ModuleType, SimpleNamespace
-from typing import TYPE_CHECKING, Optional, TypedDict
 from unittest import mock
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Optional, TypedDict
+from types import ModuleType, SimpleNamespace, MappingProxyType
 
 import numpy as np
 import numpy.typing as npt
-
+from celune.utils import discard
+from celune.constants import PipelineStates
+from celune.typing.aliases import AudioChunk
+from celune.locks import ComponentLockManager
+from celune.typing.common import JSONSerializable
 from celune.backends.tts.base import CeluneBackend
 from celune.backends.vc.base import CeluneVCBackend
-from celune.constants import PipelineStates
-from celune.locks import ComponentLockManager
 from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
-from celune.typing.aliases import AudioChunk
-from celune.typing.common import JSONSerializable
-from celune.utils import discard
 
 if TYPE_CHECKING:
     from celune.celune import Celune

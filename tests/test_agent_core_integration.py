@@ -3,52 +3,57 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from typing import Optional, cast
 from unittest import TestCase, mock
+from collections.abc import Mapping, Sequence
 
+from celune.celune import Celune
+from celune.constants import PERSONA_DEFAULT_MODEL_ID
+from celune.typing.aliases import LogLevel
+from celune.persona.impl import PersonaClient
+from celune.typing.common import JSONSerializable
+from celune.typing.persona import PersonaClientResponse
+from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
+from celune.pipeline import deliver_persona_response as celune_deliver_persona_response
+from celune.agent.needle import (
+    NeedleHandler,
+    NeedleToolCall,
+    NeedleToolCatalog,
+    NeedleToolSelector,
+)
+from celune.dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+)
 from celune.agent import (
-    AgentClassificationFailure,
-    AgentClassificationFailureKind,
-    AgentClassificationResult,
-    AgentCancellationReason,
-    AgentContext,
-    AgentFailureReason,
-    AgentInputClassification,
-    AgentInputRouter,
-    AgentOutput,
-    AgentRequest,
+    ToolCall,
     AgentTool,
-    AgentToolSelector,
-    AgentResponseCallback,
     AgentRoute,
+    ToolResult,
+    AgentOutput,
+    AgentContext,
+    AgentRequest,
     AgentRuntime,
     AgentSession,
     AgentTaskState,
-    AgentToolBehavior,
-    AgentToolDangerLevel,
     AgentToolSchema,
-    AgentToolExecutionStatus,
-    ToolCall,
+    AgentInputRouter,
+    AgentToolBehavior,
+    AgentToolSelector,
+    AgentFailureReason,
     ToolExecutionResult,
-    ToolResult,
+    AgentToolDangerLevel,
+    AgentResponseCallback,
+    AgentCancellationReason,
+    AgentInputClassification,
+    AgentToolExecutionStatus,
+    AgentClassificationResult,
+    AgentClassificationFailure,
+    AgentClassificationFailureKind,
 )
-from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
-from celune.agent.needle import NeedleHandler, NeedleToolCatalog, NeedleToolCall
-from celune.agent.needle import NeedleToolSelector
-from celune.celune import Celune
-from celune.dataclasses.events import (
-    AgentApprovalRequestedEvent,
-    AgentTaskFinishedEvent,
-    AgentTaskStateChangedEvent,
-)
-from celune.pipeline import deliver_persona_response as celune_deliver_persona_response
-from celune.persona.impl import PersonaClient
-from celune.typing.common import JSONSerializable
-from celune.typing.aliases import LogLevel
-from celune.typing.persona import PersonaClientResponse
 
-from .support import FakeBackend, FakeGlow
+from .support import FakeGlow, FakeBackend
 
 
 class _PersonaResponse:
@@ -307,6 +312,51 @@ class AgentCoreIntegrationTests(TestCase):
         self.assertIsInstance(output, dict)
         assert isinstance(output, dict)
         self.assertEqual(output["mode"], "agent")
+        core.agent_runtime.cancel_task(task.task_id)
+
+    def test_query_models_reports_configured_persona_model_id(self) -> None:
+        """Report the configured Persona model ID through the production tool."""
+        core = self._make_core()
+        core.config["persona"] = {"model_id": "fixture/persona-custom"}
+        task = core.agent_runtime.create_task(AgentRequest("query models"))
+        tool = next(tool for tool in core._agent_tools if tool.name == "query_models")
+
+        result = cast(
+            ToolExecutionResult,
+            tool.execute(
+                {"id": "models-call", "name": "query_models", "arguments": {}},
+                core.agent_runtime.get_context(task.task_id),
+            ),
+        )
+
+        self.assertEqual(result["status"], AgentToolExecutionStatus.SUCCEEDED)
+        output = result["output"]
+        self.assertIsInstance(output, dict)
+        assert isinstance(output, dict)
+        self.assertEqual(output["persona_model"], "fixture/persona-custom")
+        core.agent_runtime.cancel_task(task.task_id)
+
+    def test_query_models_uses_the_default_persona_model_without_custom_config(
+        self,
+    ) -> None:
+        """Report the canonical default Persona model when none is configured."""
+        core = self._make_core()
+        task = core.agent_runtime.create_task(AgentRequest("query models"))
+        tool = next(tool for tool in core._agent_tools if tool.name == "query_models")
+
+        result = cast(
+            ToolExecutionResult,
+            tool.execute(
+                {"id": "models-call", "name": "query_models", "arguments": {}},
+                core.agent_runtime.get_context(task.task_id),
+            ),
+        )
+
+        self.assertEqual(result["status"], AgentToolExecutionStatus.SUCCEEDED)
+        output = result["output"]
+        self.assertIsInstance(output, dict)
+        assert isinstance(output, dict)
+        self.assertEqual(output["persona_model"], PERSONA_DEFAULT_MODEL_ID)
         core.agent_runtime.cancel_task(task.task_id)
 
     def test_core_routes_approves_and_completes_a_mutating_tool_workflow(self) -> None:

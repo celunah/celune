@@ -3,22 +3,22 @@
 
 from __future__ import annotations
 
-import contextlib
-import datetime
 import os
-import threading
 import time
+import datetime
+import threading
+import contextlib
 from collections import deque
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Union, Optional
 
 import numpy as np
 import numpy.typing as npt
 from openrgb import OpenRGBClient
 from openrgb.utils import RGBColor
 
-from .colors import ERROR, RGB
+from .colors import RGB, ERROR
 from .constants import BASE_SR
-from .utils import discard, is_celune_day, lunar_info, range_interpolated, to_rgb
+from .utils import to_rgb, discard, lunar_info, is_celune_day, range_interpolated
 
 if TYPE_CHECKING:
     from .celune import Celune

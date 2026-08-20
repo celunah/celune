@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: MIT
 """Tests for runtime validation and lightweight UI commands."""
 
+import sys
+import time
+import queue
 import asyncio
 import logging
-import queue
-import subprocess
-import sys
 import tempfile
-import threading
-import time
 import warnings
+import threading
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional, cast
@@ -19,31 +19,30 @@ import numpy as np
 from textual import events
 from textual.app import App
 from textual.containers import Vertical
-from textual.widgets import Button, Label, ProgressBar, RichLog, Static, TextArea
-
+from textual.widgets import Label, Button, Static, RichLog, TextArea, ProgressBar
 from celune import colors, runtime
-from celune.agent import AgentTaskState
+from celune.i18n import string
+from celune.utils import discard
 from celune.celune import Celune
 from celune.config import Config
-from celune.constants import APP_NAME, COST_EQUIVALENTS
-from celune.i18n import string
+from celune.agent import AgentTaskState
 from celune.terminal import set_terminal_title
-from celune.typing.common import JSONSerializable
+from celune.constants import APP_NAME, COST_EQUIVALENTS
+from celune.persona.asr import WhisperWord, WhisperSegment
 from celune.typing.aliases import LogLevel
+from celune.typing.common import JSONSerializable
+from celune.ui.commands import process_command, attachment_source
+from celune.ui import app as ui_app
+from celune.ui import terminal as ui_terminal
+from celune.ui import resources as ui_resources
+from celune.ui.theme import severity_color
+from celune.ui.headless import CeluneHeadlessUI
+from celune.ui.app import CeluneUI, UILogMessage, CeluneLoadingScreen
 from celune.typing.locks import (
-    ComponentBusyResult,
     ComponentLockName,
     ComponentLockOwner,
+    ComponentBusyResult,
 )
-from celune.ui import app as ui_app
-from celune.ui import resources as ui_resources
-from celune.ui import terminal as ui_terminal
-from celune.ui.app import CeluneLoadingScreen, CeluneUI, UILogMessage
-from celune.persona.asr import WhisperSegment, WhisperWord
-from celune.ui.commands import attachment_source, process_command
-from celune.ui.headless import CeluneHeadlessUI
-from celune.ui.theme import severity_color
-from celune.utils import discard
 from tests.support import FakeBackend, FakeVCBackend
 
 

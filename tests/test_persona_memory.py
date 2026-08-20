@@ -2,13 +2,12 @@
 """Tests for Persona long-term memory persistence and retrieval."""
 
 import tempfile
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional, Union
+from typing import Union, Optional
 from unittest import TestCase, mock
+from collections.abc import Sequence
 
 import numpy as np
-
 from celune.persona.memory import PersonaMemoryStore, classifier_memory_candidates
 
 

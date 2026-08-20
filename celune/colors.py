@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: MIT
 """Color utility helpers."""
 
-import colorsys
 import random
+import colorsys
 from typing import Final, Optional
 
 from textual.theme import Theme
 
-from .typing.common import RGB
 from .utils import to_rgb
+from .typing.common import RGB
 
 DEFAULT_BACKGROUND: Final[str] = "#1d1826"
 DEFAULT_ACCENT: Final[str] = "#cebaff"

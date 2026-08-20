@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from ..celune import Celune
     from ..typing.agent import (
+        AgentTaskState,
         AgentAbortReason,
-        AgentApprovalRequest,
-        AgentCancellationReason,
         AgentChoiceRequest,
         AgentFailureReason,
-        AgentTaskState,
+        AgentApprovalRequest,
+        AgentCancellationReason,
     )
     from ..typing.common import JSON
 

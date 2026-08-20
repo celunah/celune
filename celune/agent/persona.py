@@ -3,21 +3,23 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
-from uuid import uuid4
 
+from ..typing.persona import PersonaClientResponse
 from ..pipeline import _extract_persona_text, build_persona_request
 from ..typing.agent import (
-    AgentContext,
-    AgentOutput,
-    AgentToolSchema,
     ToolResult,
+    AgentOutput,
+    AgentContext,
+    AgentToolSchema,
 )
-from ..typing.locks import ComponentLockName
-from ..typing.locks import ComponentLockOwner
-from ..typing.locks import ComponentLockRequirement
-from ..typing.persona import PersonaClientResponse
+from ..typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
 
 if TYPE_CHECKING:
     from ..celune import Celune

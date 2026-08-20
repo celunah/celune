@@ -3,26 +3,26 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
-from collections.abc import Mapping
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional, Protocol, Union, cast
+import json
+import hashlib
 from uuid import uuid4
+from pathlib import Path
+from dataclasses import dataclass
+from collections.abc import Mapping
+from typing import Union, Optional, Protocol, cast
 
 import torch
-from huggingface_hub import hf_hub_download
 from safetensors import safe_open
+from huggingface_hub import hf_hub_download
 
+from ..paths import huggingface_hub_cache_dir
+from ..typing.common import JSON, JSONSerializable
+from .needle_model import NeedleModel, NeedleConfig
 from ..exceptions import (
     NeedleCheckpointError,
     NeedleUnsupportedConverterError,
 )
-from ..paths import huggingface_hub_cache_dir
-from ..typing.common import JSON, JSONSerializable
-from .needle_model import NeedleConfig, NeedleModel
 
 NEEDLE_MODEL_ID = "Cactus-Compute/needle"
 NEEDLE_MODEL_REVISION = "5f89b4307696d669c3df1d38ae057e6e1728b107"

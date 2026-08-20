@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Shared Celune constants."""
 
-import datetime
 import signal
+import datetime
 from enum import Enum, IntEnum, auto
 from typing import Literal, Optional, TypedDict
 

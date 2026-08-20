@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .app import CeluneUI
     from .headless import CeluneHeadlessUI
-    from .protocols import CeluneBaseUI, CeluneHeadlessBaseUI, CeluneTextualUI
-    from .terminal import LogRedirect, SelectMenu
+    from .terminal import SelectMenu, LogRedirect
+    from .protocols import CeluneBaseUI, CeluneTextualUI, CeluneHeadlessBaseUI
 
 __all__ = [
     "CeluneBaseUI",

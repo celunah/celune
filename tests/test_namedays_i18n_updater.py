@@ -1,14 +1,16 @@
 # SPDX-License-Identifier: MIT
 """Tests for lightweight data, localization, and update helpers."""
 
-import datetime
 import json
-import subprocess
+import stat
+import zipfile
+import datetime
 import tempfile
+import subprocess
 from pathlib import Path
 from unittest import TestCase, mock
 
-from celune import i18n, namedays, updater
+from celune import i18n, updater, namedays
 
 
 class NameDayTests(TestCase):
@@ -114,6 +116,173 @@ class I18nTests(TestCase):
 
 class UpdaterTests(TestCase):
     """Tests for pure updater decision logic."""
+
+    def test_missing_update_metadata_uses_active_locale(self) -> None:
+        """Verify missing update metadata is reported through the locale table."""
+        original_strings = dict(i18n.STRINGS)
+        original_locale = i18n.get_locale()
+        try:
+            i18n.STRINGS["zz"] = {
+                "cli.update_missing_metadata": "localized metadata missing",
+            }
+            i18n.set_locale("zz")
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                zip_path = root / "artifact.zip"
+                destination = root / "destination"
+                destination.mkdir()
+                with zipfile.ZipFile(zip_path, "w"):
+                    pass
+
+                with self.assertRaisesRegex(
+                    updater.UpdateError,
+                    "localized metadata missing",
+                ):
+                    updater._extract_artifact_root(zip_path, destination)
+        finally:
+            i18n.set_locale(original_locale)
+            i18n.STRINGS.clear()
+            i18n.STRINGS.update(original_strings)
+
+    def test_extract_artifact_rejects_unsafe_zip_members(self) -> None:
+        """Reject traversal, absolute, and symbolic-link ZIP members before extraction."""
+        unsafe_members = (
+            "../escape.txt",
+            "/absolute.txt",
+            "C:/absolute.txt",
+            r"\\server\share\absolute.txt",
+            "release/../../escape.txt",
+            r"release\..\escape.txt",
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for member_name in unsafe_members:
+                zip_path = root / "artifact.zip"
+                destination = root / "destination"
+                destination.mkdir()
+                with zipfile.ZipFile(zip_path, "w") as archive:
+                    archive.writestr(member_name, b"unsafe")
+
+                with self.subTest(member_name=member_name):
+                    with self.assertRaises(updater.UpdateError):
+                        updater._extract_artifact_root(zip_path, destination)
+                    self.assertFalse((root / "escape.txt").exists())
+                destination.rmdir()
+                zip_path.unlink()
+
+            zip_path = root / "symlink-artifact.zip"
+            destination = root / "symlink-destination"
+            destination.mkdir()
+            symlink = zipfile.ZipInfo("release/link")
+            symlink.create_system = 3
+            symlink.external_attr = (stat.S_IFLNK | 0o777) << 16
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr(symlink, "../../escape.txt")
+
+            with self.assertRaises(updater.UpdateError):
+                updater._extract_artifact_root(zip_path, destination)
+            self.assertFalse((root / "escape.txt").exists())
+
+    def test_extract_artifact_rejects_existing_symlink_escape(self) -> None:
+        """Reject a member whose destination path traverses an existing symlink."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            destination = root / "destination"
+            outside = root / "outside"
+            destination.mkdir()
+            outside.mkdir()
+            try:
+                (destination / "release").symlink_to(outside, target_is_directory=True)
+            except (NotImplementedError, OSError):
+                self.skipTest("symbolic links are not supported")
+
+            zip_path = root / "artifact.zip"
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr("release/escaped.txt", b"unsafe")
+
+            with self.assertRaises(updater.UpdateError):
+                updater._extract_artifact_root(zip_path, destination)
+            self.assertFalse((outside / "escaped.txt").exists())
+
+    def test_zip_safety_errors_use_localized_messages(self) -> None:
+        """Verify ZIP safety failures resolve their user-facing messages through i18n."""
+        symlink = zipfile.ZipInfo("release/link")
+        symlink.create_system = 3
+        symlink.external_attr = (stat.S_IFLNK | 0o777) << 16
+        cases = (
+            (
+                zipfile.ZipInfo("../escape.txt"),
+                "cli.update_unsafe_zip_member_path",
+            ),
+            (symlink, "cli.update_unsafe_zip_symbolic_link"),
+        )
+
+        for member, key in cases:
+            with self.subTest(key=key):
+                with (
+                    mock.patch.object(
+                        updater, "string", wraps=i18n.string
+                    ) as localized_string,
+                    self.assertRaises(updater.UpdateError) as raised,
+                ):
+                    updater._validate_zip_member(member, Path("destination"))
+
+                self.assertEqual(
+                    str(raised.exception),
+                    i18n.string(key, member=repr(member.filename)),
+                )
+                localized_string.assert_called_once_with(
+                    key, member=repr(member.filename)
+                )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            destination = root / "destination"
+            outside = root / "outside"
+            destination.mkdir()
+            outside.mkdir()
+            try:
+                (destination / "release").symlink_to(outside, target_is_directory=True)
+            except (NotImplementedError, OSError):
+                self.skipTest("symbolic links are not supported")
+
+            member = zipfile.ZipInfo("release/file.txt")
+            with (
+                mock.patch.object(
+                    updater, "string", wraps=i18n.string
+                ) as localized_string,
+                self.assertRaises(updater.UpdateError) as raised,
+            ):
+                updater._validate_zip_member(member, destination)
+
+            self.assertEqual(
+                str(raised.exception),
+                i18n.string(
+                    "cli.update_zip_member_escape", member=repr(member.filename)
+                ),
+            )
+            localized_string.assert_called_once_with(
+                "cli.update_zip_member_escape", member=repr(member.filename)
+            )
+
+    def test_extract_artifact_preserves_valid_nested_archives(self) -> None:
+        """Extract a valid nested release archive and locate its update manifest."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            zip_path = root / "artifact.zip"
+            destination = root / "destination"
+            destination.mkdir()
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr("release/nested/celune-update.json", b"{}")
+                archive.writestr("release/nested/bin/celune.exe", b"binary")
+
+            extracted_root = updater._extract_artifact_root(zip_path, destination)
+
+            self.assertEqual(extracted_root, destination / "release" / "nested")
+            self.assertEqual(
+                (extracted_root / "bin" / "celune.exe").read_bytes(), b"binary"
+            )
 
     def test_version_helpers_order_tags(self) -> None:
         """Verify version normalization and ordering helpers.

@@ -8,42 +8,41 @@ from typing import Optional, cast
 from unittest import TestCase, mock
 
 import torch
-
-from celune.agent import (
-    AgentApprovalDecision,
-    AgentApprovalResponse,
-    AgentContext,
-    AgentFailureReason,
-    AgentInterruption,
-    AgentInterruptionKind,
-    AgentRequest,
-    AgentRuntime,
-    AgentSession,
-    AgentTool,
-    AgentToolArgumentSchema,
-    AgentToolBehavior,
-    AgentToolDangerLevel,
-    AgentToolExecutionStatus,
-    AgentToolSchema,
-    AgentToolValueType,
-    NeedleHandler,
-    NeedleSelectionError,
-    NeedleToolParameterSpec,
-    NeedleToolSelector,
-    NeedleTokenizer,
-    ValidatedToolCall,
-)
-from celune.agent.needle import _parse_single_selection
+from celune.typing.common import JSONSerializable
 from celune.agent.needle_model import NeedleModel
+from celune.agent.needle import _parse_single_selection
 from celune.persona.capabilities import PersonaCapabilities
 from celune.typing.agent import (
+    ToolCall,
     AgentOutput,
     NeedleToolCall,
     NeedleToolCatalog,
-    ToolCall,
     ToolExecutionResult,
 )
-from celune.typing.common import JSONSerializable
+from celune.agent import (
+    AgentTool,
+    AgentContext,
+    AgentRequest,
+    AgentRuntime,
+    AgentSession,
+    NeedleHandler,
+    AgentToolSchema,
+    NeedleTokenizer,
+    AgentInterruption,
+    AgentToolBehavior,
+    ValidatedToolCall,
+    AgentFailureReason,
+    AgentToolValueType,
+    NeedleToolSelector,
+    AgentToolDangerLevel,
+    NeedleSelectionError,
+    AgentApprovalDecision,
+    AgentApprovalResponse,
+    AgentInterruptionKind,
+    AgentToolArgumentSchema,
+    NeedleToolParameterSpec,
+    AgentToolExecutionStatus,
+)
 
 
 def _tool(name: str) -> AgentTool:

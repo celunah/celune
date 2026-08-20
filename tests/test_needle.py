@@ -1,22 +1,21 @@
 # SPDX-License-Identifier: MIT
 """Tests for Celune's inference-only PyTorch Needle implementation."""
 
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from types import SimpleNamespace
 from typing import cast
+from pathlib import Path
 from unittest import TestCase
+from types import SimpleNamespace
+from tempfile import TemporaryDirectory
 
 import torch
 from safetensors.torch import save_file
-
+from celune.typing.agent import AgentTool
+from celune.agent.needle_model import NeedleModel, NeedleConfig
 from celune.agent.needle import (
     NeedleHandler,
     _parse_selection,
     convert_needle_safetensors,
 )
-from celune.agent.needle_model import NeedleConfig, NeedleModel
-from celune.typing.agent import AgentTool
 
 
 class NeedleModelTests(TestCase):

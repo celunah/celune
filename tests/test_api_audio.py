@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MIT
 """Tests for API audio encoding helpers."""
 
-import asyncio
 import io
 import json
-import queue
 import time
+import queue
+import asyncio
 from types import SimpleNamespace
 from typing import Optional, cast
 from unittest import TestCase, mock

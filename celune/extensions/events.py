@@ -4,57 +4,57 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Optional, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Literal, TypeVar, Optional, cast, overload
 
-from ..typing.aliases import DispatcherCallback, LogLevel
+from ..utils import format_error
+from ..typing.aliases import LogLevel, DispatcherCallback
 from ..typing.events import (
-    AgentApprovalRequestedEventCallback,
-    AgentChoiceRequestedEventCallback,
-    AgentTaskFinishedEventCallback,
-    AgentTaskStateChangedEventCallback,
-    AudioEndEventCallback,
-    AudioStartEventCallback,
-    CharacterChangedEventCallback,
-    CharacterLoadedEventCallback,
-    CharacterUnloadedEventCallback,
-    ErrorEventCallback,
-    EventCallback,
     EventName,
     EventPayload,
+    EventCallback,
+    ErrorEventCallback,
     FatalEventCallback,
-    GenerationEndEventCallback,
-    GenerationErrorEventCallback,
-    GenerationStartEventCallback,
     ReadyEventCallback,
+    AudioEndEventCallback,
     ShutdownEventCallback,
+    AudioStartEventCallback,
     StateChangedEventCallback,
     VoiceChangedEventCallback,
+    GenerationEndEventCallback,
+    CharacterLoadedEventCallback,
+    GenerationErrorEventCallback,
+    GenerationStartEventCallback,
+    CharacterChangedEventCallback,
+    AgentTaskFinishedEventCallback,
+    CharacterUnloadedEventCallback,
+    AgentChoiceRequestedEventCallback,
+    AgentTaskStateChangedEventCallback,
+    AgentApprovalRequestedEventCallback,
 )
-from ..utils import format_error
 
 if TYPE_CHECKING:
     from ..dataclasses.events import (
-        AgentApprovalRequestedEvent,
-        AgentChoiceRequestedEvent,
-        AgentTaskFinishedEvent,
-        AgentTaskStateChangedEvent,
-        AudioEndEvent,
-        AudioStartEvent,
-        CharacterChangedEvent,
-        CharacterLoadedEvent,
-        CharacterUnloadedEvent,
         ErrorEvent,
         FatalEvent,
-        GenerationEndEvent,
-        GenerationErrorEvent,
-        GenerationStartEvent,
         ReadyEvent,
+        AudioEndEvent,
         ShutdownEvent,
+        AudioStartEvent,
         StateChangedEvent,
         VoiceChangedEvent,
+        GenerationEndEvent,
+        CharacterLoadedEvent,
+        GenerationErrorEvent,
+        GenerationStartEvent,
+        CharacterChangedEvent,
+        AgentTaskFinishedEvent,
+        CharacterUnloadedEvent,
+        AgentChoiceRequestedEvent,
+        AgentTaskStateChangedEvent,
+        AgentApprovalRequestedEvent,
     )
 
 

@@ -1,50 +1,49 @@
 # SPDX-License-Identifier: MIT
 """Tests for backend resolution and extension infrastructure."""
 
-import contextlib
-import importlib
 import io
 import re
 import sys
 import tempfile
 import textwrap
+import importlib
 import threading
-from collections.abc import Generator, Iterator
+import contextlib
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
-from typing import Optional, Union, cast
 from unittest import TestCase, mock
+from typing import Union, Optional, cast
+from types import ModuleType, SimpleNamespace
+from collections.abc import Iterator, Generator
 
+import torch
 import numpy as np
 import soundfile as sf
-import torch
-
-from celune.backends.tts import resolve_backend
-from celune.backends.tts.gpt_sovits import GPTSoVITS, GPTSoVITSPipeline
-from celune.backends.vc import resolve_vc_backend
-from celune.backends.vc.passthrough import CelunePassthroughVCBackend
-from celune.backends.vc.seedvc import CeluneSeedVCBackend
-from celune.celune import Celune
-from celune.dataclasses.pipeline import VoiceConversionRequest
-from celune.exceptions import (
-    ExtensionAlreadyRegisteredError,
-    InvalidExtensionError,
-)
-from celune.extensions.base import CeluneContext, CeluneExtension
-from celune.extensions.manager import CeluneExtensionManager
 from celune.i18n import string
-from celune.typing.aliases import AudioChunk
-from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
 from celune.utils import discard
+from celune.celune import Celune
+from celune.typing.aliases import AudioChunk
+from celune.backends.tts import resolve_backend
+from celune.backends.vc import resolve_vc_backend
+from celune.backends.vc.seedvc import CeluneSeedVCBackend
+from celune.extensions.manager import CeluneExtensionManager
+from celune.dataclasses.pipeline import VoiceConversionRequest
+from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.backends.vc.passthrough import CelunePassthroughVCBackend
+from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
+from celune.backends.tts.gpt_sovits import GPTSoVITS, GPTSoVITSPipeline
+from celune.exceptions import (
+    InvalidExtensionError,
+    ExtensionAlreadyRegisteredError,
+)
 
 from .support import (
     FakeBackend,
     FakeVCBackend,
     make_voice_loader,
-    mock_dotstts_backend,
     mock_mini_backend,
     mock_qwen3_backend,
     mock_voxcpm_backend,
+    mock_dotstts_backend,
 )
 
 
@@ -120,6 +119,45 @@ class BackendTests(TestCase):
                     custom_checkpoint,
                 )
             )
+
+    def test_gpt_sovits_bounds_nltk_downloads_and_restores_socket_timeout(
+        self,
+    ) -> None:
+        """Verify a stalled NLTK download becomes a bounded backend error."""
+        backend = object.__new__(GPTSoVITS)
+        backend._nltk_resources = {"test-resource": ("taggers/test-resource",)}
+        backend._nltk_download_timeout_seconds = 0.25
+
+        nltk_data = SimpleNamespace(
+            path=[],
+            find=mock.Mock(side_effect=LookupError("missing resource")),
+        )
+        fake_nltk = ModuleType("nltk")
+        fake_nltk.data = nltk_data
+        fake_nltk.download = mock.Mock(side_effect=TimeoutError("network timeout"))
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            mock.patch(
+                "celune.backends.tts.gpt_sovits.runtime_data_dir",
+                return_value=Path(temp_dir),
+            ),
+            mock.patch.dict(sys.modules, {"nltk": fake_nltk}),
+            mock.patch(
+                "celune.backends.tts.gpt_sovits.socket.getdefaulttimeout",
+                return_value=None,
+            ),
+            mock.patch(
+                "celune.backends.tts.gpt_sovits.socket.setdefaulttimeout"
+            ) as setdefaulttimeout,
+            self.assertRaisesRegex(RuntimeError, "network timeout"),
+        ):
+            backend._ensure_nltk_data()
+
+        self.assertEqual(
+            setdefaulttimeout.call_args_list,
+            [mock.call(0.25), mock.call(None)],
+        )
 
     def test_gpt_sovits_bootstrap_uses_celune_user_data_directory(self) -> None:
         """Verify missing GPT-SoVITS source is installed below Celune user data."""

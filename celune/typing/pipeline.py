@@ -2,18 +2,18 @@
 """Speech pipeline aliases."""
 
 import queue
-from typing import Optional, Union
+from typing import Union, Optional
 
+from .aliases import AudioChunk
 from ..constants import PipelineStates
 from ..dataclasses.pipeline import (
-    AudioInputRequest,
     AudioOutput,
     PlaybackChunk,
-    PlaybackSourceDone,
     SpeechRequest,
+    AudioInputRequest,
+    PlaybackSourceDone,
     VoiceConversionRequest,
 )
-from .aliases import AudioChunk
 
 type SpeechStreamItem = Optional[Union[AudioChunk, Exception]]
 type SpeechStreamQueue = queue.Queue[SpeechStreamItem]

@@ -1,23 +1,23 @@
 # SPDX-License-Identifier: MIT
 """Extension-facing dataclasses."""
 
-from collections.abc import Callable
-from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from collections.abc import Callable
+from dataclasses import field, dataclass
+from contextlib import AbstractContextManager
+from typing import TYPE_CHECKING, Union, Optional
 
 from .. import __version__
-from ..typing.common import JSONSerializable
 from ..typing.aliases import LogLevel
+from ..typing.common import JSONSerializable
 from ..typing.extensions import (
-    GetStateCallable,
     LogCallable,
-    PlayCallable,
     SayCallable,
-    SetVoiceCallable,
-    StatusCallable,
+    PlayCallable,
     ThinkCallable,
+    StatusCallable,
+    GetStateCallable,
+    SetVoiceCallable,
     WaitUntilReadyCallable,
 )
 

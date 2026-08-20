@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import unittest.mock
-from collections.abc import Callable, Generator, Hashable
 from enum import Enum
-from typing import TYPE_CHECKING, Literal, Optional, Protocol, Union
+from collections.abc import Callable, Hashable, Generator
+from typing import TYPE_CHECKING, Union, Literal, Optional, Protocol
 
 import numpy as np
 import numpy.typing as npt
@@ -18,11 +18,11 @@ if TYPE_CHECKING:
     from torch import Tensor
 
     # noinspection PyPep8Naming
-    from torch import device as Device
+    from torch import dtype as DType
 
     # noinspection PyPep8Naming
-    from torch import dtype as DType
-    from transformers import SentencePieceBackend, TokenizersBackend, PreTrainedModel
+    from torch import device as Device
+    from transformers import PreTrainedModel, TokenizersBackend, SentencePieceBackend
 
     # noinspection PyUnresolvedReferences
     from .events import EventPayload

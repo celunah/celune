@@ -1,197 +1,200 @@
 # SPDX-License-Identifier: MIT
 """Celune's backend layer."""
 
-import asyncio
-import contextlib
 import gc
 import os
+import time
 import queue
 import shutil
+import asyncio
 import threading
-import time
-from collections.abc import Callable
-from dataclasses import dataclass
+import contextlib
 from pathlib import Path
-from typing import Optional, Union, cast
+from dataclasses import dataclass
+from collections.abc import Callable
+from typing import Union, Optional, cast
 
+import torch
 import numpy as np
 import numpy.typing as npt
-import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from . import __version__
+from .chroma import AudioRGBGlow
+from .vc import clamp_vc_pitch_shift
+from .locks import ComponentLockLease
+from .typing.modes import BackendMode
+from .agent.runtime import AgentRuntime
+from .typing.backends import BackendModel
+from .extensions.base import CeluneContext
 from .agent.routing import AgentInputRouter
 from .agent.needle import NeedleToolSelector
 from .agent.persona import PersonaAgentBridge
-from .agent.runtime import AgentRuntime
-from .agent.tools import agent_test_tool_schemas
-from .agent.tools import agent_test_tools
-from .agent.tools import production_agent_tool_schemas
-from .agent.tools import production_agent_tools
-from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
-from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
-from .cevoice import (
-    CEVoicePersona,
-    active_bundle_path,
-    announce_default_bundle,
-    bundle_character_name,
-    bundle_matches_default_pack_checksum,
-    close_default_loader,
-    default_loader,
-    is_protected_temp_path,
-    persona_metadata_from_manifest,
-    resolve_bundle_path,
-    select_voice_bundle,
-)
-from .chroma import AudioRGBGlow
-from .config import Config, config_bool, config_value, normalize_log_level
-from .constants import APP_NAME, NORMALIZER_MODEL_ID
-from .dataclasses.celune import (
-    CELUNE_CONSTANT_PROPERTIES,
-    CELUNE_FORWARDED_PROPERTIES,
-    CeluneAudioState,
-    CeluneBackendState,
-    CeluneCallbackState,
-    CeluneModelState,
-    CelunePipelineState,
-    CeluneRuntimeState,
-    CeluneVoiceState,
-)
-from .dataclasses.events import (
-    CharacterChangedEvent,
-    CharacterLoadedEvent,
-    CharacterUnloadedEvent,
-    ReadyEvent,
-    ShutdownEvent,
-    StateChangedEvent,
-    VoiceChangedEvent,
-)
-from .dataclasses.pipeline import AudioInputRequest, AudioOutput
-from .dataclasses.properties import (
-    bind_constant_properties,
-    bind_forwarded_properties,
-)
-from .exceptions import (
-    BackendError,
-    NeedleSelectionError,
-    NotAvailableError,
-    RuntimeCheckError,
-    WarmupError,
-)
-from .extensions.base import CeluneContext
+from .paths import project_root, temp_data_dir
+from .typing.pipeline import SpeechStreamQueue
 from .extensions.events import EventDispatcher
+from .typing.aliases import LogLevel, AudioChunk
+from .typing.common import JSON, JSONSerializable
+from .pipeline import (
+    say as say_pipeline,
+)
+from .typing.events import EventName, EventPayload
+from .persona.emotion import PersonaEmotionAnalyzer
+from .pipeline import (
+    play as play_pipeline,
+)
+from .constants import APP_NAME, NORMALIZER_MODEL_ID
+from .pipeline import (
+    close as close_pipeline,
+)
+from .pipeline import (
+    think as think_pipeline,
+)
 from .extensions.manager import CeluneExtensionManager
-from .i18n import get_system_locale, set_locale, string
-from .locks import ComponentLockLease
-from .modeling import load_normalizer_components, normalizer_device
+from .i18n import string, set_locale, get_system_locale
+from .runtime import validate_runtime, log_runtime_banner
+from .pipeline import (
+    say_async as say_pipeline_async,
+)
+from .dataclasses.pipeline import AudioOutput, AudioInputRequest
+from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
+from .modeling import normalizer_device, load_normalizer_components
+from .pipeline import (
+    force_stop_speech as force_stop_pipeline,
+)
+from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
+from .config import Config, config_bool, config_value, normalize_log_level
+from .utils import discard, format_error, custom_assert, format_number, is_port_usable
 from .modes import (
     OperationMode,
     mode_allows_persona,
     resolve_operation_mode,
 )
-from .paths import project_root, temp_data_dir
-from .persona.impl import (
-    PersonaClient,
-    create_persona_client,
-    persona_enabled,
-    persona_is_available,
-    persona_model_id,
-    persona_quantization,
+from .dataclasses.properties import (
+    bind_constant_properties,
+    bind_forwarded_properties,
 )
-from .persona.emotion import PersonaEmotionAnalyzer
-from .pipeline import (
-    acquire_pipeline,
-    clear_queue,
-    close_stream,
-    convert_audio_input,
-    deliver_persona_response,
-    generation_worker_job,
-    handle_audio_input,
-    play_signal,
-    playback_worker_job,
-    queue_sfx_audio,
-    queue_speech,
-    queue_speech_async,
-    release_pipeline,
-    saved_output_speech_seconds,
-    split_text,
-    stop_live_audio_input,
-)
-from .pipeline import (
-    close as close_pipeline,
-)
-from .pipeline import (
-    force_stop_speech as force_stop_pipeline,
-)
-from .pipeline import (
-    play as play_pipeline,
-)
-from .pipeline import (
-    say as say_pipeline,
-)
-from .pipeline import (
-    say_async as say_pipeline_async,
-)
-from .pipeline import (
-    think as think_pipeline,
-)
-from .runtime import log_runtime_banner, validate_runtime
-from .typing.agent import AgentClassificationFailure
-from .typing.agent import AgentClassificationFailureKind
-from .typing.agent import AgentClassificationResult
-from .typing.agent import AgentAbortReason
-from .typing.agent import AgentCancellationReason
-from .typing.agent import AgentInputClassification
-from .typing.agent import AgentContext
-from .typing.agent import AgentInterruption
-from .typing.agent import AgentInterruptionKind
-from .typing.agent import AgentOutput
-from .typing.agent import AgentRequest
-from .typing.agent import AgentRoute
-from .typing.agent import AgentSession
-from .typing.agent import AgentTaskState
-from .typing.agent import AgentToolSelector
-from .typing.agent import AgentToolExecutionStatus
-from .typing.agent import ToolCall
-from .typing.agent import ToolExecutionResult
-from .typing.aliases import AudioChunk, LogLevel
-from .typing.backends import BackendModel
-from .typing.celune import (
-    CaptionCallback,
-    CaptionTimingCallback,
-    CeluneStateAccessors,
-    CoreBackendSpec,
-    Generative,
-    InputStateCallback,
-    MessageCallback,
-    NormalizerTokenizer,
-    ProgressCallback,
-    ReleasableObject,
-    TTSBackendSpec,
-    VCBackendSpec,
-    VoiceLockStateCallback,
-    _BundleWithPath,
-)
-from .typing.common import JSON
-from .typing.common import JSONSerializable
-from .typing.events import EventName, EventPayload
 from .typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from .typing.modes import BackendMode
-from .typing.pipeline import SpeechStreamQueue
-from .utils import custom_assert, discard, format_error, format_number, is_port_usable
-from .vc import clamp_vc_pitch_shift
+from .exceptions import (
+    WarmupError,
+    BackendError,
+    NotAvailableError,
+    RuntimeCheckError,
+    NeedleSelectionError,
+)
+from .agent.tools import (
+    agent_test_tools,
+    production_agent_tools,
+    agent_test_tool_schemas,
+    production_agent_tool_schemas,
+)
 from .vram import (
     QWEN3_0_6B_MODEL,
     VramPreset,
     backend_allowed,
-    resolve_backend_name,
     resolve_vram_preset,
+    resolve_backend_name,
     validate_vram_preset,
+)
+from .persona.impl import (
+    PersonaClient,
+    persona_enabled,
+    persona_model_id,
+    persona_is_available,
+    persona_quantization,
+    create_persona_client,
+)
+from .dataclasses.events import (
+    ReadyEvent,
+    ShutdownEvent,
+    StateChangedEvent,
+    VoiceChangedEvent,
+    CharacterLoadedEvent,
+    CharacterChangedEvent,
+    CharacterUnloadedEvent,
+)
+from .dataclasses.celune import (
+    CELUNE_CONSTANT_PROPERTIES,
+    CELUNE_FORWARDED_PROPERTIES,
+    CeluneAudioState,
+    CeluneModelState,
+    CeluneVoiceState,
+    CeluneBackendState,
+    CeluneRuntimeState,
+    CeluneCallbackState,
+    CelunePipelineState,
+)
+from .cevoice import (
+    CEVoicePersona,
+    default_loader,
+    active_bundle_path,
+    resolve_bundle_path,
+    select_voice_bundle,
+    close_default_loader,
+    bundle_character_name,
+    is_protected_temp_path,
+    announce_default_bundle,
+    persona_metadata_from_manifest,
+    bundle_matches_default_pack_checksum,
+)
+from .typing.celune import (
+    Generative,
+    VCBackendSpec,
+    TTSBackendSpec,
+    CaptionCallback,
+    CoreBackendSpec,
+    MessageCallback,
+    ProgressCallback,
+    ReleasableObject,
+    InputStateCallback,
+    NormalizerTokenizer,
+    CeluneStateAccessors,
+    CaptionTimingCallback,
+    VoiceLockStateCallback,
+    _BundleWithPath,
+)
+from .pipeline import (
+    split_text,
+    clear_queue,
+    play_signal,
+    close_stream,
+    queue_speech,
+    queue_sfx_audio,
+    acquire_pipeline,
+    release_pipeline,
+    handle_audio_input,
+    queue_speech_async,
+    convert_audio_input,
+    playback_worker_job,
+    generation_worker_job,
+    stop_live_audio_input,
+    deliver_persona_response,
+    saved_output_speech_seconds,
+)
+from .typing.agent import (
+    ToolCall,
+    AgentRoute,
+    AgentOutput,
+    AgentContext,
+    AgentRequest,
+    AgentSession,
+    AgentTaskState,
+    AgentAbortReason,
+    AgentInterruption,
+    AgentToolSelector,
+    ToolExecutionResult,
+    AgentInterruptionKind,
+    AgentCancellationReason,
+    AgentInputClassification,
+    AgentToolExecutionStatus,
+    AgentClassificationResult,
+    AgentClassificationFailure,
+    AgentClassificationFailureKind,
 )
 
 
@@ -1657,6 +1660,7 @@ class Celune(CeluneStateAccessors):
             f"backend-reload:{time.monotonic_ns()}"
         )
         if not acquired:
+            self._release_unstarted_reload()
             return False
         try:
             return self._hot_reload_backend_impl(backend_spec, preferred_voice)
@@ -1879,6 +1883,7 @@ class Celune(CeluneStateAccessors):
         finally:
             self._reload_pending = False
             self._model_ready.set()
+            self._last_component_busy = None
             self.change_input_state_callback(locked=False)
             self.change_voice_lock_state_callback(locked=len(self.voices) < 2)
 
@@ -1892,6 +1897,7 @@ class Celune(CeluneStateAccessors):
             f"cevoice-reload:{time.monotonic_ns()}"
         )
         if not acquired:
+            self._release_unstarted_reload()
             return False
         try:
             return self._hot_reload_cevoice_impl(bundle, preferred_voice)
@@ -2017,8 +2023,17 @@ class Celune(CeluneStateAccessors):
         finally:
             self._reload_pending = False
             self._model_ready.set()
+            self._last_component_busy = None
             self.change_input_state_callback(locked=False)
             self.change_voice_lock_state_callback(locked=len(self.voices) < 2)
+
+    def _release_unstarted_reload(self) -> None:
+        """Restore readiness after a reload could not acquire model ownership."""
+        self._reload_pending = False
+        self._model_ready.set()
+        self._last_component_busy = None
+        self.change_input_state_callback(locked=False)
+        self.change_voice_lock_state_callback(locked=len(self.voices) < 2)
 
     def _raise_warmup_error(self, message: str) -> None:
         """Raise a Celune warmup error while preserving any original cause."""
@@ -4436,10 +4451,11 @@ class Celune(CeluneStateAccessors):
             if isinstance(vision, PersonaClient):
                 with contextlib.suppress(Exception):
                     vision.interrupt()
-            self._abort_backend_operations()
             self._emit_event("shutdown", ShutdownEvent(celune=self))
             try:
                 close_pipeline(self)
+                if self._pipeline_workers_active():
+                    self._abort_backend_operations()
                 wake_background_thread = self._wake_background_thread
                 if (
                     wake_background_thread is not None
@@ -4457,6 +4473,13 @@ class Celune(CeluneStateAccessors):
                     self._cleanup_residual_temp_data(temp_data_dir())
                 Celune._instance = None
                 self.log("[ENGINE] close complete", loglevel="debug")
+
+    def _pipeline_workers_active(self) -> bool:
+        """Return whether a bounded pipeline shutdown left work running."""
+        return any(
+            worker is not None and worker.is_alive()
+            for worker in (self.generation_thread, self.playback_thread)
+        )
 
     def _abort_backend_operations(self) -> None:
         """Abort backend-owned work before pipeline and model teardown begins."""

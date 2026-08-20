@@ -3,17 +3,16 @@
 
 from __future__ import annotations
 
-import ctypes
 import os
-import signal
-import subprocess
 import sys
 import time
-from collections.abc import Callable
-from contextlib import suppress
+import ctypes
+import signal
+import subprocess
 from ctypes import wintypes
-from typing import cast, Optional
-
+from contextlib import suppress
+from typing import Optional, cast
+from collections.abc import Callable
 
 TIMEOUT = 600
 GRACE_PERIOD = 2.0

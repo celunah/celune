@@ -1,38 +1,38 @@
 # SPDX-License-Identifier: MIT
 """CLI entrypoint helpers."""
 
-import contextlib
-import datetime
-import importlib
-import importlib.util
 import os
-import platform
-import random
-import shutil
-import subprocess
 import sys
 import time
+import random
+import shutil
+import datetime
+import platform
 import warnings
-from dataclasses import dataclass
+import importlib
+import importlib.util
+import contextlib
+import subprocess
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from dataclasses import dataclass
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional
+from types import ModuleType, SimpleNamespace
 
-from celune import REVISION, __tagline__, __version__
-from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
-from celune.config import config_log_level, normalize_log_level
 from celune.i18n import string
-from celune.watchdog import launcher_loss_requested, start_watchdog
+from celune.typing.common import Config
+from celune.terminal import set_terminal_title
+from celune.updater import apply_update_and_restart
+from celune import REVISION, __tagline__, __version__
+from celune.config import config_log_level, normalize_log_level
+from celune.watchdog import start_watchdog, launcher_loss_requested
+from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
 from celune.paths import (
-    configure_huggingface_runtime,
-    migrate_legacy_app_data,
     project_root,
     running_compiled,
+    migrate_legacy_app_data,
+    configure_huggingface_runtime,
 )
-from celune.terminal import set_terminal_title
-from celune.typing.common import Config
-from celune.updater import apply_update_and_restart
 
 if TYPE_CHECKING:
     from celune.celune import Celune
@@ -185,25 +185,25 @@ def _load_runtime() -> SimpleNamespace:
     try:
         import webbrowser
 
-        import psutil
         import yaml
+        import psutil
 
-        from celune.config import (
-            config_bool,
-            config_value,
-            env_bool,
-            merge_missing_defaults,
-        )
-        from celune.exceptions import No, UpdateError
-        from celune.namedays import has_name_day
+        from celune.ui import SelectMenu
         from celune.paths import (
             config_path,
-            default_config_path,
             ensure_config_path,
+            default_config_path,
         )
-        from celune.ui import SelectMenu
+        from celune.utils import indent, title_case, detected_ide, supports_ansi
+        from celune.config import (
+            env_bool,
+            config_bool,
+            config_value,
+            merge_missing_defaults,
+        )
         from celune.updater import check_for_update, update_to_latest
-        from celune.utils import detected_ide, indent, supports_ansi, title_case
+        from celune.namedays import has_name_day
+        from celune.exceptions import No, UpdateError
     except ModuleNotFoundError as package:
         if package.name is not None:
             _print_dependency_setup_help(package.name)
@@ -256,13 +256,13 @@ def _load_core_runtime() -> SimpleNamespace:
 
     try:
         configure_huggingface_runtime()
-        from celune.celune import Celune
         from celune.ui import (
-            CeluneHeadlessBaseUI,
-            CeluneHeadlessUI,
-            CeluneTextualUI,
             CeluneUI,
+            CeluneTextualUI,
+            CeluneHeadlessUI,
+            CeluneHeadlessBaseUI,
         )
+        from celune.celune import Celune
     except ModuleNotFoundError as package:
         if package.name is not None:
             _print_dependency_setup_help(package.name)

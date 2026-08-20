@@ -5,13 +5,13 @@
 No, this is not a setuptools remnant, this is the app bootstrapper.
 """
 
-import contextlib
 import os
-import platform
-import shutil
-import subprocess
 import sys
+import shutil
 import tomllib
+import platform
+import contextlib
+import subprocess
 from pathlib import Path
 from typing import Optional
 

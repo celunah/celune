@@ -1,19 +1,19 @@
 # SPDX-License-Identifier: MIT
 """Celune common utility functions."""
 
-import datetime
-import inspect
-import math
-import multiprocessing
 import os
-import random
 import re
-import subprocess
+import math
 import time
+import random
+import inspect
+import datetime
 import traceback
-from collections.abc import Callable, Iterator
+import subprocess
+import multiprocessing
 from pathlib import Path
-from typing import Any, Literal, Optional, TextIO, Union, overload
+from collections.abc import Callable, Iterator
+from typing import Any, Union, TextIO, Literal, Optional, overload
 
 import psutil
 from lingua import (  # pylint: disable=E0611
@@ -21,11 +21,11 @@ from lingua import (  # pylint: disable=E0611
     LanguageDetectorBuilder,
 )
 
-from .constants import REFERENCE_NEW_MOON
 from .paths import traceback_path
-from .terminal import supports_ansi as terminal_supports_ansi
 from .typing.aliases import LogLevel
+from .constants import REFERENCE_NEW_MOON
 from .typing.utils import CallerInfo, LanguageResult
+from .terminal import supports_ansi as terminal_supports_ansi
 
 _LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_spoken_languages().build()
 

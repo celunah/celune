@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MIT
 """Persona runtime dataclasses."""
 
-from dataclasses import dataclass, field
 from typing import Optional
+from dataclasses import field, dataclass
 
 from ..constants import PERSONA_CONTEXT_SPACE
-from ..typing.persona import MessageContent, Role
+from ..typing.persona import Role, MessageContent
 
 
 @dataclass(slots=True)

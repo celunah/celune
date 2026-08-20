@@ -3,33 +3,34 @@
 
 from __future__ import annotations
 
-import contextlib
 import io
-from collections.abc import Mapping, Sequence
+import contextlib
 from typing import Optional, cast
 from unittest import TestCase, mock
+from collections.abc import Mapping, Sequence
 
 from celune import entrypoint
-from celune.agent.needle import NeedleHandler, NeedleToolSelector
-from celune.celune import Celune
-from celune.config import config_log_level
 from celune.i18n import string
-from celune.persona.impl import PersonaClient
+from celune.celune import Celune
+from celune.typing.common import JSON
+from celune.config import config_log_level
 from celune.test_mode import run_agent_test
+from celune.persona.impl import PersonaClient
+from celune.typing.persona import PersonaClientResponse
+from celune.agent.needle import NeedleHandler, NeedleToolSelector
 from celune.typing.agent import (
-    AgentClassificationFailure,
-    AgentClassificationFailureKind,
-    AgentClassificationResult,
-    AgentInputClassification,
     AgentTool,
-    AgentToolSchema,
     AgentRoute,
     NeedleToolCall,
+    AgentToolSchema,
     NeedleToolCatalog,
+    AgentInputClassification,
+    AgentClassificationResult,
+    AgentClassificationFailure,
+    AgentClassificationFailureKind,
 )
-from celune.typing.common import JSON
-from celune.typing.persona import PersonaClientResponse
-from .support import FakeBackend, FakeGlow
+
+from .support import FakeGlow, FakeBackend
 
 
 class _TestPersonaClient:

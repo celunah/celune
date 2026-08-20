@@ -1,27 +1,26 @@
 # SPDX-License-Identifier: MIT
 """Tests for Needle checkpoint provenance and preparation."""
 
-import hashlib
 import json
-from collections.abc import Mapping
+import hashlib
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Optional
 from unittest import TestCase
+from collections.abc import Mapping
+from tempfile import TemporaryDirectory
 
 import torch
 from safetensors.torch import save_file
-
+from celune.typing.common import JSONSerializable
+from celune.agent.needle_model import NeedleModel, NeedleConfig
 from celune.agent.needle_checkpoint import (
     NEEDLE_PICKLE_FILE,
     NeedleCheckpointError,
-    NeedleUnsupportedConverterError,
     NeedleTensorInventory,
+    NeedleUnsupportedConverterError,
     prepare_needle_checkpoint,
     validate_needle_safetensors,
 )
-from celune.agent.needle_model import NeedleConfig, NeedleModel
-from celune.typing.common import JSONSerializable
 
 
 def _config_values() -> dict[str, JSONSerializable]:

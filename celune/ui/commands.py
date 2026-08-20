@@ -3,24 +3,24 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
+import asyncio
 import threading
-from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, cast
 from urllib.parse import urlparse
+from collections.abc import Callable, Awaitable
+from typing import TYPE_CHECKING, Optional, cast
 
 import soundfile as sf
 
-from ..audio import restart_audio_server
-from ..cevoice import active_bundle_path, resolve_bundle_path
-from ..constants import APP_NAME
-from ..exceptions import InvalidExtensionError
 from ..i18n import string
 from ..paths import project_root
+from ..constants import APP_NAME
+from ..audio import restart_audio_server
+from ..exceptions import InvalidExtensionError
 from ..persona.capabilities import PersonaCapabilities
-from ..utils import format_error, format_number, replace_ipa
+from ..utils import replace_ipa, format_error, format_number
+from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..vc import (
     VC_PITCH_SHIFT_MAX,
     VC_PITCH_SHIFT_MIN,
@@ -28,8 +28,8 @@ from ..vc import (
 )
 
 if TYPE_CHECKING:
-    from ..celune import Celune
     from .app import CeluneUI
+    from ..celune import Celune
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".webm"}

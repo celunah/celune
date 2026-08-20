@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT
 """Tests for GitHub Actions warning annotation helpers."""
 
-import contextlib
-import importlib.util
 import io
 import sys
+import contextlib
+import importlib.util
 from pathlib import Path
 from unittest import TestCase
 

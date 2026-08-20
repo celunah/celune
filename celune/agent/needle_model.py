@@ -10,9 +10,9 @@ code.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import Optional, cast
+from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
 
 import torch
 from torch import Tensor, nn

@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: MIT
 """Focused tests for Celune's typed component ownership boundary."""
 
-from types import SimpleNamespace
 from typing import cast
 from unittest import TestCase
+from types import SimpleNamespace
 
 from celune import pipeline
-from celune.agent import AgentRequest, AgentRuntime, AgentSession, AgentTaskState
 from celune.celune import Celune
 from celune.locks import ComponentLockManager
+from celune.agent import AgentRequest, AgentRuntime, AgentSession, AgentTaskState
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,

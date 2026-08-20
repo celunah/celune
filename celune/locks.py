@@ -4,15 +4,15 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Sequence
 from types import TracebackType
-from typing import Optional, Self
+from typing import Self, Optional
+from collections.abc import Sequence
 
 from .typing.locks import (
-    ComponentBusyResult,
-    ComponentLockAcquisition,
     ComponentLockName,
     ComponentLockOwner,
+    ComponentBusyResult,
+    ComponentLockAcquisition,
     ComponentLockRequirement,
 )
 

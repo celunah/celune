@@ -2,11 +2,11 @@
 """Analysis-specific protocols and type aliases."""
 
 from collections.abc import Mapping
-from typing import Protocol, TypedDict, Union
+from typing import Union, Protocol, TypedDict
 
+import torch
 import numpy as np
 import numpy.typing as npt
-import torch
 
 from .aliases import EmbeddingVector
 

@@ -3,23 +3,23 @@
 
 from __future__ import annotations
 
-import atexit
-import contextlib
-import gzip
-import hashlib
 import io
+import re
+import gzip
 import json
 import lzma
-import re
+import wave
+import atexit
 import shutil
 import struct
+import hashlib
 import tempfile
 import threading
-import wave
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+import contextlib
 from pathlib import Path
-from typing import BinaryIO, Final, Optional, Union, cast
+from dataclasses import field, dataclass
+from collections.abc import Mapping, Callable
+from typing import Final, Union, BinaryIO, Optional, cast
 
 import numpy as np
 

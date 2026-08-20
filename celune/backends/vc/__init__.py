@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT
 """Celune voice-conversion backend initialization manager."""
 
-from collections.abc import Callable
+from typing import Union, Optional
 from importlib import import_module
-from typing import Optional, Union
+from collections.abc import Callable
 
-from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
 from .base import CeluneVCBackend
+from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
 
 __all__ = [
     "BACKEND_MANIFESTS",

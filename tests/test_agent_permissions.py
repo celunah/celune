@@ -7,22 +7,22 @@ from typing import Optional
 from unittest import TestCase
 
 from celune.agent import (
-    AgentApprovalDecision,
-    AgentApprovalResponse,
+    ToolCall,
+    ToolResult,
     AgentOutput,
-    AgentFailureReason,
-    AgentPermissionDecision,
-    AgentPermissionReason,
     AgentRequest,
     AgentRuntime,
     AgentSession,
     AgentTaskState,
-    AgentToolBehavior,
-    AgentToolDangerLevel,
     AgentToolSchema,
+    AgentToolBehavior,
+    AgentFailureReason,
+    AgentToolDangerLevel,
+    AgentApprovalDecision,
+    AgentApprovalResponse,
+    AgentPermissionReason,
+    AgentPermissionDecision,
     DefaultAgentPermissionPolicy,
-    ToolCall,
-    ToolResult,
 )
 
 

@@ -1,31 +1,31 @@
 # SPDX-License-Identifier: MIT
 """Seed-VC backend for Celune voice conversion."""
 
-import contextlib
 import gc
-import importlib
-import importlib.metadata
-import importlib.util
 import os
 import sys
 import tempfile
+import importlib
 import threading
-from collections.abc import Callable, Generator
+import contextlib
+import importlib.util
 from pathlib import Path
-from types import ModuleType, SimpleNamespace, TracebackType
+import importlib.metadata
 from typing import Optional, cast
+from collections.abc import Callable, Generator
+from types import ModuleType, TracebackType, SimpleNamespace
 
-import numpy as np
-import soundfile as sf
 import torch
 import torchaudio
+import numpy as np
+import soundfile as sf
 
-from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from ...i18n import string
+from .base import CeluneVCBackend
 from ...paths import huggingface_hub_cache_dir
 from ...typing.aliases import AudioChunk, SeedVCGenerator
-from ...typing.backends import _SeedVCRealtimeModule, _SeedVCWrapper
-from .base import CeluneVCBackend
+from ...typing.backends import _SeedVCWrapper, _SeedVCRealtimeModule
+from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["CeluneSeedVCBackend"]
 

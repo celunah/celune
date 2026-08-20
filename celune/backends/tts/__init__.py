@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: MIT
 """Celune backend initialization manager."""
 
-from collections.abc import Callable
+from typing import Union, Optional
 from importlib import import_module
+from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
-from typing import Optional, Union
 
-from .base import CeluneBackend
-from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
 from ...i18n import string
+from .base import CeluneBackend
 from ...typing.backends import BackendModel
+from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
 
 __all__ = [
     "BACKENDS",

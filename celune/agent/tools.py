@@ -4,32 +4,32 @@
 from __future__ import annotations
 
 import os
-import platform
-import shutil
-import subprocess
 import sys
 import time
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+import shutil
+import platform
+import subprocess
 from pathlib import Path
+from dataclasses import dataclass
+from collections.abc import Mapping, Callable
 from typing import TYPE_CHECKING, Optional, cast
 
 import psutil
 
-from ..typing.agent import (
-    AgentContext,
-    AgentTool,
-    AgentToolArgumentSchema,
-    AgentToolBehavior,
-    AgentToolDangerLevel,
-    AgentToolExecutionStatus,
-    AgentToolSchema,
-    AgentToolValueType,
-    ToolCall,
-    ToolExecutionResult,
-)
-from ..typing.common import JSON, JSONSerializable
 from ..typing.modes import OperationMode
+from ..typing.common import JSON, JSONSerializable
+from ..typing.agent import (
+    ToolCall,
+    AgentTool,
+    AgentContext,
+    AgentToolSchema,
+    AgentToolBehavior,
+    AgentToolValueType,
+    ToolExecutionResult,
+    AgentToolDangerLevel,
+    AgentToolArgumentSchema,
+    AgentToolExecutionStatus,
+)
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -294,12 +294,12 @@ def _capabilities(engine: Celune, _call: ToolCall, _context: AgentContext) -> JS
 
 def _models(engine: Celune, _call: ToolCall, _context: AgentContext) -> JSON:
     """Read configured model identifiers without exposing model objects."""
-    persona = engine.config.get("persona")
-    persona_model = persona.get("model") if isinstance(persona, dict) else None
+    from ..persona.impl import persona_model_id
+
     return {
         "tts_backend": engine.tts_backend,
         "tts_model": engine.model_name,
-        "persona_model": persona_model,
+        "persona_model": persona_model_id(engine.config),
         "normalizer_loaded": engine.llm is not None and engine.tokenizer is not None,
     }
 

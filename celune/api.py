@@ -1,85 +1,85 @@
 # SPDX-License-Identifier: MIT
 """API layer."""
 
-import asyncio
-import contextlib
-import datetime
-import errno
 import io
-import inspect
-import json
 import os
-import queue
-import socket
-import textwrap
-import threading
+import json
 import time
 import uuid
-from collections import defaultdict, deque
-from collections.abc import Awaitable, Callable, Iterator
-from dataclasses import dataclass, field
-from hmac import compare_digest
+import errno
+import queue
+import socket
+import asyncio
+import inspect
+import datetime
+import textwrap
+import threading
+import contextlib
 from html import escape
+from hmac import compare_digest
+from dataclasses import field, dataclass
+from collections import deque, defaultdict
+from collections.abc import Callable, Iterator, Awaitable
 from typing import (
+    Union,
     Literal,
     Optional,
-    Union,
     cast,
 )
 
-import gradio as gr
+import uvicorn
 import numpy as np
 import numpy.typing as npt
+import gradio as gr
 import soundfile as sf
-import uvicorn
-from fastapi import (
-    FastAPI,
-    File,
-    Form,
-    HTTPException,
-    Request,
-    UploadFile,
-    WebSocket,
-    WebSocketDisconnect,
-)
+from pydantic import Field, BaseModel
+from starlette.concurrency import run_in_threadpool
+from starlette.middleware.base import RequestResponseEndpoint
 from fastapi.responses import (
+    Response,
     FileResponse,
     JSONResponse,
     RedirectResponse,
-    Response,
     StreamingResponse,
 )
-from pydantic import BaseModel, Field
-from starlette.concurrency import run_in_threadpool
-from starlette.middleware.base import RequestResponseEndpoint
+from fastapi import (
+    File,
+    Form,
+    FastAPI,
+    Request,
+    WebSocket,
+    UploadFile,
+    HTTPException,
+    WebSocketDisconnect,
+)
 
-from . import __version__, colors
-from .celune import Celune
-from .cevoice import default_loader
-from .constants import APP_NAME, BASE_SR
-from .dsp import resample_audio
-from .exceptions import TaskSubscriptionClosed
 from .i18n import string
-from .paths import main_window_log_path, project_root
+from .celune import Celune
+from .ui.app import CeluneUI
+from .dsp import resample_audio
+from .utils import format_error
+from . import colors, __version__
+from .cevoice import default_loader
+from .constants import BASE_SR, APP_NAME
+from .ui import resources as ui_resources
+from .typing.common import JSONSerializable
+from .exceptions import TaskSubscriptionClosed
+from .paths import project_root, main_window_log_path
+from .vc import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
+from .typing.aliases import LogLevel, AudioChunk, AudioChunks
 from .pipeline import (
     SpeechStreamQueue,
-    current_playback_status,
     prepare_playback_audio,
+    current_playback_status,
 )
-from .typing.aliases import AudioChunk, AudioChunks, LogLevel
 from .typing.api import (
-    TaskCommandName,
-    TaskEventName,
     TaskStatus,
+    WebUiUpdate,
+    TaskEventName,
+    TaskCommandName,
     WebUiAudioValue,
     WebUiInputAudioValue,
-    WebUiUpdate,
 )
-from .typing.common import JSONSerializable
-from .ui import resources as ui_resources
-from .ui.app import CeluneUI
-from .utils import format_error
-from .vc import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
 
 api = FastAPI(title=f"{APP_NAME}API")
 bound_celune: Optional[Celune] = None

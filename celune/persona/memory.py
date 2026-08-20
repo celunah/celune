@@ -3,18 +3,18 @@
 
 from __future__ import annotations
 
-import datetime
-import json
 import re
+import json
 import uuid
-from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+import datetime
 from pathlib import Path
-from typing import Optional, Union, cast
+from collections.abc import Sequence
+from typing import Union, Optional, cast
+from dataclasses import asdict, dataclass
 
-import numpy as np
 import torch
 import torch.nn.functional as f
+import numpy as np
 from transformers import (
     AutoModel,
     AutoTokenizer,
@@ -22,11 +22,11 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from ..constants import PERSONA_MEMORY_EMBEDDING_MODEL
 from ..paths import persona_data_dir
-from ..typing.aliases import EmbeddingBackend, EmbeddingVector
-from ..typing.common import JSON, JSONSerializable
 from .paths import persona_character_slug
+from ..typing.common import JSON, JSONSerializable
+from ..constants import PERSONA_MEMORY_EMBEDDING_MODEL
+from ..typing.aliases import EmbeddingVector, EmbeddingBackend
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
 _STOPWORDS = {

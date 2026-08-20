@@ -1,56 +1,55 @@
 # SPDX-License-Identifier: MIT
 """Shared Persona runtime helpers for Celune-managed generation."""
 
-import contextlib
 import gc
-import logging
 import os
+import logging
 import threading
-from collections.abc import Generator, Mapping, Sequence
-from typing import Optional, Union, cast
+import contextlib
+from typing import Union, Optional, cast
+from collections.abc import Mapping, Sequence, Generator
 
 import torch
+from transformers.tokenization_utils_base import BatchEncoding
 from transformers import (
     AutoConfig,
     AutoProcessor,
     AutoTokenizer,
-    BitsAndBytesConfig,
-    Qwen3VLForConditionalGeneration,
     StoppingCriteria,
+    BitsAndBytesConfig,
     StoppingCriteriaList,
+    Qwen3VLForConditionalGeneration,
 )
-from transformers.tokenization_utils_base import BatchEncoding
 
 from ..i18n import string
+from ..vram import resolve_vram_preset
+from ..typing.common import JSONSerializable
+from .capabilities import PersonaCapabilities
+from ..utils import discard, normalize_special_characters
+from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
 from ..constants import (
     N_A_STR,
     PERSONA_CONTEXT_SPACE,
     PERSONA_DEFAULT_MODEL_ID,
     remote_code_model_revision,
 )
-from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
-from ..typing.common import JSONSerializable
 from ..typing.persona import (
-    ChatMessagePayload,
-    ChatTemplateRenderer,
+    Role,
     ContentItem,
-    ImageContentItem,
-    MessageContent,
+    VisionInput,
     PersonaModel,
+    VideoMetadata,
+    MessageContent,
+    TextContentItem,
+    ImageContentItem,
     PersonaProcessor,
     PersonaTokenizer,
-    ModelGenerateKwargValue,
-    Role,
-    TextContentItem,
     VideoContentItem,
-    VideoMetadata,
-    VisionInput,
+    ChatMessagePayload,
+    ChatTemplateRenderer,
     VisionProcessorOutput,
+    ModelGenerateKwargValue,
 )
-from ..utils import discard, normalize_special_characters
-from ..vram import resolve_vram_preset
-from .capabilities import PersonaCapabilities
-
 
 _LOGGER = logging.getLogger(__name__)
 

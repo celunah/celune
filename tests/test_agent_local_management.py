@@ -3,19 +3,19 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import cast
+from pathlib import Path
 from unittest import TestCase, mock
 
-from celune.agent.tools import (
-    OfflineAgentTool,
-    local_management_tool_schemas,
-    local_management_tools,
-)
 from celune.celune import Celune
+from celune.typing.modes import OperationMode
 from celune.persona.capabilities import PersonaCapabilities
 from celune.typing.agent import AgentContext, AgentRequest, AgentToolExecutionStatus
-from celune.typing.modes import OperationMode
+from celune.agent.tools import (
+    OfflineAgentTool,
+    local_management_tools,
+    local_management_tool_schemas,
+)
 
 
 class LocalManagementToolTests(TestCase):

@@ -3,19 +3,18 @@
 
 from __future__ import annotations
 
-import threading
 import time
+import threading
 from typing import TYPE_CHECKING, Optional
 
 from .i18n import string
+from .typing.common import JSON
 from .typing.agent import (
-    AgentClassificationResult,
     AgentRoute,
     AgentTaskState,
     AgentToolExecutionStatus,
+    AgentClassificationResult,
 )
-from .typing.common import JSON
-
 
 _AGENT_TEST_REQUEST = "Check the current working directory and report the result."
 

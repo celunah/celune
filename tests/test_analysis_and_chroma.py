@@ -4,11 +4,11 @@
 from pathlib import Path
 from unittest import TestCase, mock
 
+import torch
 import numpy as np
-
-from celune import analysis
-from celune.chroma import AudioRGBGlow
 from celune.colors import RGB
+from celune import i18n, analysis
+from celune.chroma import AudioRGBGlow
 from celune.constants import BASE_SR, N_A_NUMERIC
 
 
@@ -163,6 +163,47 @@ class AnalysisTests(TestCase):
         with self.assertRaisesRegex(FileNotFoundError, "no compatible CEVOICE/CECHAR"):
             analysis.load_reference_embedding("balanced")
 
+    def test_reference_failures_use_active_locale(self) -> None:
+        """Verify reference embedding failures and metrics use localized messages."""
+        original_strings = dict(i18n.STRINGS)
+        original_locale = i18n.get_locale()
+        try:
+            i18n.STRINGS["zz"] = {
+                "analysis.reference_embedding_bundle_missing": "localized bundle missing",
+                "analysis.reference_similarity_error": "localized similarity: {reason}",
+            }
+            i18n.set_locale("zz")
+
+            with (
+                mock.patch("celune.analysis.default_loader", return_value=None),
+                self.assertRaisesRegex(
+                    FileNotFoundError,
+                    "localized bundle missing",
+                ),
+            ):
+                analysis.load_reference_embedding("balanced")
+
+            metrics: dict = {}
+            with mock.patch(
+                "celune.analysis._compute_qwen3_embedding",
+                side_effect=RuntimeError("backend detail"),
+            ):
+                analysis.add_reference_similarity_metrics(
+                    metrics,
+                    np.zeros(160, dtype=np.float32),
+                    BASE_SR,
+                    "balanced",
+                )
+
+            self.assertEqual(
+                metrics["voice_similarity_error"],
+                "localized similarity: backend detail",
+            )
+        finally:
+            i18n.set_locale(original_locale)
+            i18n.STRINGS.clear()
+            i18n.STRINGS.update(original_strings)
+
     @mock.patch("celune.analysis.torch.load")
     def test_bundle_reference_embedding_is_materialized_when_available(
         self,
@@ -173,7 +214,7 @@ class AnalysisTests(TestCase):
         Args:
             torch_load: The mocked value of torch.load().
         """
-        torch_load.return_value = np.ones(2048, dtype=np.float32)
+        torch_load.return_value = torch.ones(2048, dtype=torch.float32)
         fake_loader = mock.Mock()
         materialized = Path("C:/Users/user/AppData/Local/Celune/temp/fake/balanced.pt")
         fake_loader.materialize.return_value = materialized
@@ -183,7 +224,72 @@ class AnalysisTests(TestCase):
 
         self.assertEqual(embedding.shape, (2048,))
         fake_loader.materialize.assert_called_once_with("balanced", "pt")
-        torch_load.assert_called_once_with(materialized, map_location="cpu")
+        torch_load.assert_called_once_with(
+            materialized,
+            map_location="cpu",
+            weights_only=True,
+        )
+
+    @mock.patch("celune.analysis.torch.load")
+    def test_reference_embedding_rejects_unexpected_objects(
+        self,
+        torch_load: mock.Mock,
+    ) -> None:
+        """Reject reference files containing non-tensor or unexpected mappings.
+
+        Args:
+            torch_load: The mocked value of torch.load().
+        """
+        fake_loader = mock.Mock()
+        fake_loader.materialize.return_value = Path("balanced.pt")
+
+        invalid_values = (
+            (np.ones(2048, dtype=np.float32), TypeError),
+            ({"unexpected": torch.ones(2048)}, ValueError),
+        )
+        for value, expected_error in invalid_values:
+            torch_load.return_value = value
+            with (
+                self.subTest(value_type=type(value).__name__),
+                mock.patch(
+                    "celune.analysis.default_loader",
+                    return_value=fake_loader,
+                ),
+                self.assertRaisesRegex(
+                    expected_error,
+                    "invalid reference embedding",
+                ),
+            ):
+                analysis.load_reference_embedding("balanced")
+
+    @mock.patch("celune.analysis.torch.load")
+    def test_reference_embedding_rejects_invalid_shape_or_dtype(
+        self,
+        torch_load: mock.Mock,
+    ) -> None:
+        """Reject reference tensors with an unsupported shape or dtype.
+
+        Args:
+            torch_load: The mocked value of torch.load().
+        """
+        fake_loader = mock.Mock()
+        fake_loader.materialize.return_value = Path("balanced.pt")
+
+        for value in (
+            torch.ones(2047, dtype=torch.float32),
+            torch.ones(2048, dtype=torch.float64),
+            torch.ones(2, 1024, dtype=torch.float32),
+        ):
+            torch_load.return_value = value
+            with (
+                self.subTest(shape=tuple(value.shape), dtype=value.dtype),
+                mock.patch(
+                    "celune.analysis.default_loader",
+                    return_value=fake_loader,
+                ),
+                self.assertRaisesRegex(ValueError, "invalid reference embedding"),
+            ):
+                analysis.load_reference_embedding("balanced")
 
 
 class ChromaTests(TestCase):

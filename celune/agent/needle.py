@@ -8,50 +8,50 @@ response generation in the main runtime.
 
 from __future__ import annotations
 
-import json
 import os
 import re
-from collections.abc import Mapping, Sequence
-from pathlib import Path
-from typing import Optional, Union, cast
+import json
 from uuid import uuid4
+from pathlib import Path
+from typing import Union, Optional, cast
+from collections.abc import Mapping, Sequence
 
 import torch
-from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
+from huggingface_hub import hf_hub_download
 from sentencepiece import SentencePieceProcessor
 
-from ..exceptions import NeedleSelectionError
-from ..paths import huggingface_hub_cache_dir
-from ..typing.agent import (
-    AgentTool,
-    AgentContext,
-    AgentOutput,
-    AgentToolArgumentSchema,
-    AgentToolSchema,
-    AgentToolValueType,
-    NeedleToolCall,
-    NeedleToolCatalog,
-    NeedleToolDefinition,
-    NeedleToolParameter,
-    NeedleToolParameterSpec,
-    NeedleToolSelection,
-    ToolCall,
-    ValidatedToolCall,
-)
 from ..typing.common import JSONSerializable
+from ..paths import huggingface_hub_cache_dir
+from ..exceptions import NeedleSelectionError
+from .needle_model import NeedleModel, NeedleConfig
 from .needle_checkpoint import (
-    NEEDLE_CONFIG_FILE,
     NEEDLE_MODEL_ID,
-    NEEDLE_MODEL_REVISION,
+    NEEDLE_CONFIG_FILE,
     NEEDLE_PICKLE_FILE,
-    NEEDLE_TOKENIZER_FILE,
     NEEDLE_WEIGHTS_FILE,
-    NeedlePreparedCheckpoint,
+    NEEDLE_MODEL_REVISION,
+    NEEDLE_TOKENIZER_FILE,
     NeedlePickleConverter,
+    NeedlePreparedCheckpoint,
     prepare_needle_checkpoint,
 )
-from .needle_model import NeedleConfig, NeedleModel
+from ..typing.agent import (
+    ToolCall,
+    AgentTool,
+    AgentOutput,
+    AgentContext,
+    NeedleToolCall,
+    AgentToolSchema,
+    NeedleToolCatalog,
+    ValidatedToolCall,
+    AgentToolValueType,
+    NeedleToolParameter,
+    NeedleToolSelection,
+    NeedleToolDefinition,
+    AgentToolArgumentSchema,
+    NeedleToolParameterSpec,
+)
 
 NEEDLE_TOOL_CALL_TOKEN_ID = 4
 NEEDLE_TOOLS_TOKEN_ID = 5

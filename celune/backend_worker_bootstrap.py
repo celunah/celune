@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
-"""Bootstrap a backend worker before importing the Celune package."""
+"""Bootstrap a backend worker while preserving its CEDTS channel arguments."""
 
-import runpy
 import sys
+import runpy
 from pathlib import Path
 
 

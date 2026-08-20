@@ -3,77 +3,77 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import replace
-from typing import TYPE_CHECKING, Optional, cast
 from uuid import uuid4
+from dataclasses import replace
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Optional, cast
 
-from ..dataclasses.events import (
-    AgentApprovalRequestedEvent,
-    AgentChoiceRequestedEvent,
-    AgentTaskFinishedEvent,
-    AgentTaskStateChangedEvent,
-)
-from ..extensions.events import EventDispatcher
 from ..i18n import string
-from ..persona.capabilities import PersonaCapabilities
 from ..typing.aliases import LogLevel
-from ..typing.agent import (
-    AgentAbortReason,
-    AgentApprovalDecision,
-    AgentApprovalRequest,
-    AgentApprovalResponse,
-    AgentCancellationReason,
-    AgentChoiceRequest,
-    AgentChoiceResponse,
-    AgentClassificationFailure,
-    AgentContext,
-    AgentContextCompactor,
-    AgentFailureReason,
-    AgentInterruption,
-    AgentInterruptionKind,
-    AgentOutput,
-    AgentPermissionDecision,
-    AgentPermissionEvaluation,
-    AgentPermissionPolicy,
-    AgentPermissionReason,
-    AgentPlanner,
-    AgentRequest,
-    AgentResponseCallback,
-    AgentResponder,
-    AgentSession,
-    AgentSessionState,
-    AgentTask,
-    AgentTaskConfig,
-    AgentTaskState,
-    AgentTool,
-    AgentToolBehavior,
-    AgentToolDangerLevel,
-    AgentToolExecutionStatus,
-    AgentToolExecutor,
-    AgentToolResultHandler,
-    AgentToolSchema,
-    AgentToolSelector,
-    AgentTokenCounter,
-    AgentTerminalOutcome,
-    ToolCall,
-    ToolExecutionResult,
-    ToolResult,
-    ValidatedToolCall,
-)
+from ..typing.modes import OperationMode
+from ..extensions.events import EventDispatcher
 from ..typing.common import JSON, JSONSerializable
 from ..typing.events import EventName, EventPayload
+from ..persona.capabilities import PersonaCapabilities
 from ..typing.locks import (
-    ComponentBusyResult,
     ComponentLockName,
     ComponentLockOwner,
+    ComponentBusyResult,
     ComponentLockRequirement,
 )
-from ..typing.modes import OperationMode
+from ..dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentChoiceRequestedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+)
+from ..typing.agent import (
+    ToolCall,
+    AgentTask,
+    AgentTool,
+    ToolResult,
+    AgentOutput,
+    AgentContext,
+    AgentPlanner,
+    AgentRequest,
+    AgentSession,
+    AgentResponder,
+    AgentTaskState,
+    AgentTaskConfig,
+    AgentToolSchema,
+    AgentAbortReason,
+    AgentInterruption,
+    AgentSessionState,
+    AgentTokenCounter,
+    AgentToolBehavior,
+    AgentToolExecutor,
+    AgentToolSelector,
+    ValidatedToolCall,
+    AgentChoiceRequest,
+    AgentFailureReason,
+    AgentChoiceResponse,
+    ToolExecutionResult,
+    AgentApprovalRequest,
+    AgentTerminalOutcome,
+    AgentToolDangerLevel,
+    AgentApprovalDecision,
+    AgentApprovalResponse,
+    AgentContextCompactor,
+    AgentInterruptionKind,
+    AgentPermissionPolicy,
+    AgentPermissionReason,
+    AgentResponseCallback,
+    AgentToolResultHandler,
+    AgentCancellationReason,
+    AgentPermissionDecision,
+    AgentToolExecutionStatus,
+    AgentPermissionEvaluation,
+    AgentClassificationFailure,
+)
 
 if TYPE_CHECKING:
-    from ..celune import Celune
     from ..locks import ComponentLockLease, ComponentLockManager
+    from ..celune import Celune
 
 
 def _default_token_counter(text: str) -> int:

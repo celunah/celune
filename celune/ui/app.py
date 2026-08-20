@@ -7,96 +7,109 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
+import os
+import re
+import sys
+import math
+import time
+import shlex
+import types
 import ctypes
+import signal
+import asyncio
+import logging
 import datetime
 import itertools
-import logging
-import math
-import os
-import queue as queue_module
-import re
-import shlex
-import signal
-import sys
 import threading
-import time
-import types
+import contextlib
 from uuid import uuid4
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
-from io import TextIOWrapper
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Protocol, TextIO, Union, cast
+import queue as queue_module
+from io import TextIOWrapper
+from dataclasses import field, dataclass
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Union, TextIO, Optional, Protocol, cast
 
 from rich.text import Text
-from textual import events, work
-from textual.app import (
-    App,
-    AutopilotCallbackType,
-    ComposeResult,
-    ReturnType,
-    ScreenStackError,
-)
 from textual.color import Color
-from textual.containers import Horizontal, Vertical
-from textual.css.query import NoMatches
-from textual.css.types import EdgeStyle
-from textual.message import Message
 from textual.theme import Theme
 from textual.timer import Timer
+from textual import work, events
 from textual.widget import Widget
-from textual.widgets import Button, Label, ProgressBar, RichLog, TextArea
+from textual.message import Message
+from textual.css.query import NoMatches
+from textual.css.types import EdgeStyle
+from textual.containers import Vertical, Horizontal
+from textual.widgets import Label, Button, RichLog, TextArea, ProgressBar
+from textual.app import (
+    App,
+    ReturnType,
+    ComposeResult,
+    ScreenStackError,
+    AutopilotCallbackType,
+)
 
 from .. import colors
-from ..config import format_audio_device_name, resolve_audio_device_with_info
-from ..constants import APP_NAME, SIGTSTP
 from ..i18n import string
+from .loading import CeluneLoadingScreen
+from ..constants import SIGTSTP, APP_NAME
+from ..typing.agent import AgentTaskState
+from .theme import CELUNE_CSS, severity_color
 from ..watchdog import launcher_loss_requested
 from ..paths import config_path, main_window_log_path
-from ..typing.aliases import AudioDeviceScalar
-from ..typing.aliases import (  # noqa: F401  # pylint: disable=unused-import
-    _VCAudioCallback,
-)
+from ..terminal import set_terminal_title, terminal_title_escape
+from .terminal import LogRedirect, UILogHandler, is_celune_log_record
+from ..config import format_audio_device_name, resolve_audio_device_with_info
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..utils import (
-    discard,
-    format_error,
-    indent,
-    is_april_fools,
-    replace_ipa,
-    supports_ansi,
-    typing_animation,
-    typing_delay,
+from ..typing.aliases import (  # noqa: F401  # pylint: disable=unused-import
+    AudioDeviceScalar,
+    _VCAudioCallback,
 )
-from ..terminal import set_terminal_title, terminal_title_escape
-from ..typing.agent import AgentTaskState
-from .loading import CeluneLoadingScreen
-from .terminal import LogRedirect, UILogHandler, is_celune_log_record
-from .theme import CELUNE_CSS, severity_color
+from ..utils import (
+    indent,
+    discard,
+    replace_ipa,
+    format_error,
+    typing_delay,
+    supports_ansi,
+    is_april_fools,
+    typing_animation,
+)
 
 if TYPE_CHECKING:
-    import numpy as np
-    import numpy.typing as npt
-    import sounddevice as sd
     import yaml
+    import numpy as np
+    import sounddevice as sd
+    import numpy.typing as npt
 
+    from . import resources as ui_resources
+    from ..vc import (
+        VC_PITCH_SHIFT_MAX,
+        VC_PITCH_SHIFT_MIN,
+        LiveVoiceActivityDetector,
+        vc_input_rms,
+        vc_input_has_voice,
+        clamp_vc_pitch_shift,
+        vc_live_chunk_frames,
+        vc_vad_preroll_frames,
+        vc_vad_hangover_frames,
+        vc_live_chunk_overlap_frames,
+        create_live_voice_activity_detector,
+    )
+    from ..locks import ComponentLockLease
     from ..celune import Celune
     from ..cevoice import CEVoiceLoader
-    from ..dataclasses.pipeline import AudioOutput
-    from ..dataclasses.events import (
-        AgentApprovalRequestedEvent,
-        AgentChoiceRequestedEvent,
-        AgentTaskFinishedEvent,
-        AgentTaskStateChangedEvent,
+    from .commands import process_command as process_ui_command
+    from ..pipeline import (
+        current_playback_status,
+        queue_streaming_sfx_audio,
+        finish_streaming_sfx_audio,
     )
-    from ..extensions.events import EventDispatcher
-    from ..locks import ComponentLockLease
+    from .resources import FOOTER_ROTATE_SECONDS
     from ..persona.asr import (
         DEFAULT_PERSONA_SPEECH_MODEL_ID,
         PERSONA_SPEECH_END_DELAY_SECONDS,
@@ -109,33 +122,20 @@ if TYPE_CHECKING:
         persona_enabled,
         persona_talkback_enabled,
     )
-    from ..pipeline import (
-        current_playback_status,
-        finish_streaming_sfx_audio,
-        queue_streaming_sfx_audio,
-    )
+    from ..typing.agent import AgentTask
     from ..typing.aliases import (
+        LogLevel,
         AudioChunk,
         AudioChunks,
-        LogLevel,
     )
-    from ..typing.agent import AgentTask
-    from ..vc import (
-        VC_PITCH_SHIFT_MAX,
-        VC_PITCH_SHIFT_MIN,
-        LiveVoiceActivityDetector,
-        clamp_vc_pitch_shift,
-        create_live_voice_activity_detector,
-        vc_input_has_voice,
-        vc_input_rms,
-        vc_live_chunk_frames,
-        vc_live_chunk_overlap_frames,
-        vc_vad_hangover_frames,
-        vc_vad_preroll_frames,
+    from ..extensions.events import EventDispatcher
+    from ..dataclasses.events import (
+        AgentTaskFinishedEvent,
+        AgentChoiceRequestedEvent,
+        AgentTaskStateChangedEvent,
+        AgentApprovalRequestedEvent,
     )
-    from . import resources as ui_resources
-    from .commands import process_command as process_ui_command
-    from .resources import FOOTER_ROTATE_SECONDS
+    from ..dataclasses.pipeline import AudioOutput
 
     class _UIResources(Protocol):
         """Type-checkable subset of the resource footer module."""
@@ -194,13 +194,33 @@ def _load_ui_runtime_dependencies() -> None:
     global vc_vad_preroll_frames
     global yaml
 
-    import numpy as np
-    import numpy.typing as npt
-    import sounddevice as sd
     import yaml
+    import numpy as np
+    import sounddevice as sd
+    import numpy.typing as npt
 
+    from . import resources as ui_resources
+    from ..vc import (
+        VC_PITCH_SHIFT_MAX,
+        VC_PITCH_SHIFT_MIN,
+        LiveVoiceActivityDetector,
+        vc_input_rms,
+        vc_input_has_voice,
+        clamp_vc_pitch_shift,
+        vc_live_chunk_frames,
+        vc_vad_preroll_frames,
+        vc_vad_hangover_frames,
+        vc_live_chunk_overlap_frames,
+        create_live_voice_activity_detector,
+    )
     from ..cevoice import default_loader
-    from ..dataclasses.pipeline import AudioOutput
+    from .commands import process_command as process_ui_command
+    from ..pipeline import (
+        current_playback_status,
+        queue_streaming_sfx_audio,
+        finish_streaming_sfx_audio,
+    )
+    from .resources import FOOTER_ROTATE_SECONDS
     from ..persona.asr import (
         DEFAULT_PERSONA_SPEECH_MODEL_ID,
         PERSONA_SPEECH_END_DELAY_SECONDS,
@@ -213,27 +233,7 @@ def _load_ui_runtime_dependencies() -> None:
         persona_enabled,
         persona_talkback_enabled,
     )
-    from ..pipeline import (
-        current_playback_status,
-        finish_streaming_sfx_audio,
-        queue_streaming_sfx_audio,
-    )
-    from ..vc import (
-        VC_PITCH_SHIFT_MAX,
-        VC_PITCH_SHIFT_MIN,
-        LiveVoiceActivityDetector,
-        clamp_vc_pitch_shift,
-        create_live_voice_activity_detector,
-        vc_input_has_voice,
-        vc_input_rms,
-        vc_live_chunk_frames,
-        vc_live_chunk_overlap_frames,
-        vc_vad_hangover_frames,
-        vc_vad_preroll_frames,
-    )
-    from . import resources as ui_resources
-    from .commands import process_command as process_ui_command
-    from .resources import FOOTER_ROTATE_SECONDS
+    from ..dataclasses.pipeline import AudioOutput
 
     _RUNTIME_DEPENDENCIES_LOADED = True
 

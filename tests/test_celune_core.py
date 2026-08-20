@@ -1,53 +1,57 @@
 # SPDX-License-Identifier: MIT
 """Tests for Celune core behavior without real models or GPU work."""
 
-import contextlib
 import json
 import queue
+import weakref
 import tempfile
 import threading
-import weakref
+import contextlib
 from pathlib import Path
-from types import MappingProxyType, SimpleNamespace
 from typing import Optional, cast
-from unittest import IsolatedAsyncioTestCase, TestCase, mock
+from types import SimpleNamespace, MappingProxyType
+from unittest import TestCase, IsolatedAsyncioTestCase, mock
 
 import numpy as np
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-
-from celune import cevoice, i18n
+from celune import i18n, cevoice
+from celune.utils import discard
+from celune.celune import Celune
+from celune.config import Config
+from celune.typing.common import JSONSerializable
+from celune.typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
+from celune.pipeline import close as close_pipeline
+from celune.persona.impl import persona_quantization
+from celune.exceptions import WarmupError, BackendError
+from celune.persona.emotion import PersonaEmotionAnalyzer
 from celune.agent import (
-    AgentCancellationReason,
     AgentRequest,
     AgentSession,
     AgentTaskState,
+    AgentCancellationReason,
 )
-from celune.celune import Celune
-from celune.config import Config
-from celune.dataclasses.celune import (
-    CeluneAudioState,
-    CeluneBackendState,
-    CeluneCallbackState,
-    CeluneModelState,
-    CelunePipelineState,
-    CeluneRuntimeState,
-    CeluneVoiceState,
-)
-from celune.exceptions import BackendError, WarmupError
-from celune.persona.emotion import PersonaEmotionAnalyzer
-from celune.persona.impl import persona_quantization
-from celune.pipeline import close as close_pipeline
 from celune.pipeline import (
-    convert_audio_input,
-    handle_audio_input,
     play_signal,
     release_pipeline,
+    handle_audio_input,
+    convert_audio_input,
 )
-from celune.typing.common import JSONSerializable
-from celune.utils import discard
+from celune.dataclasses.celune import (
+    CeluneAudioState,
+    CeluneModelState,
+    CeluneVoiceState,
+    CeluneBackendState,
+    CeluneRuntimeState,
+    CeluneCallbackState,
+    CelunePipelineState,
+)
 
-from .support import FakeBackend, FakeGlow, FakeVCBackend
+from .support import FakeGlow, FakeBackend, FakeVCBackend
 
 
 class CeluneCoreTests(TestCase):
@@ -1146,6 +1150,7 @@ class CeluneCoreTests(TestCase):
         celune.agent_runtime.start_task(task.task_id)
         celune.agent_runtime.classify_task(task.task_id)
         backend_abort = mock.Mock()
+        celune._playback_thread = mock.Mock(is_alive=mock.Mock(return_value=True))
 
         with (
             mock.patch("celune.celune.close_pipeline"),
@@ -1161,6 +1166,50 @@ class CeluneCoreTests(TestCase):
             AgentCancellationReason.RUNTIME_SHUTDOWN,
         )
         backend_abort.assert_called_once_with()
+
+    def test_close_does_not_abort_cooperative_pipeline_workers(self) -> None:
+        """Verify cooperative pipeline shutdown skips backend escalation."""
+        celune = self._make_celune({})
+        backend_abort = mock.Mock()
+        celune._playback_thread = mock.Mock(is_alive=mock.Mock(return_value=False))
+
+        with (
+            mock.patch("celune.celune.close_pipeline"),
+            mock.patch.object(celune, "_unload_persona_state"),
+            mock.patch.object(celune, "unload_runtime_state"),
+            mock.patch.object(celune.backend, "abort", backend_abort, create=True),
+        ):
+            celune.close()
+
+        backend_abort.assert_not_called()
+
+    def test_close_aborts_non_cooperative_pipeline_before_teardown(self) -> None:
+        """Verify bounded shutdown escalates work that remains active."""
+        celune = self._make_celune({})
+        backend_abort = mock.Mock()
+        celune._playback_thread = mock.Mock(is_alive=mock.Mock(return_value=True))
+        events: list[str] = []
+        backend_abort.side_effect = lambda: events.append("abort")
+
+        def record_pipeline_close(_engine: Celune) -> None:
+            """Record the graceful shutdown boundary for ordering assertions."""
+            events.append("graceful")
+
+        with (
+            mock.patch(
+                "celune.celune.close_pipeline", side_effect=record_pipeline_close
+            ),
+            mock.patch.object(celune, "_unload_persona_state"),
+            mock.patch.object(
+                celune,
+                "unload_runtime_state",
+                side_effect=lambda **_kwargs: events.append("teardown"),
+            ),
+            mock.patch.object(celune.backend, "abort", backend_abort, create=True),
+        ):
+            celune.close()
+
+        self.assertEqual(events, ["graceful", "abort", "teardown"])
 
     def test_unload_persona_state_clears_the_bound_emotion_analyzer(self) -> None:
         """Verify Persona teardown does not retain VLM references through emotion analysis."""
@@ -1428,6 +1477,36 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(celune.model_name, "fake/balanced")
         self.assertEqual(celune.loaded, True)
         self.assertEqual(celune.cur_state, "idle")
+
+    def test_busy_backend_reload_restores_readiness_after_preparation(self) -> None:
+        """Verify a busy model-loading owner cannot strand a prepared reload."""
+        celune = self._make_celune({})
+        celune.change_input_state_callback = mock.Mock()
+        celune.change_voice_lock_state_callback = mock.Mock()
+        celune._last_component_busy = mock.sentinel.stale_busy
+        owner = ComponentLockOwner(operation_id="persona-load")
+        acquisition, lease = celune.component_locks.try_acquire_lease(
+            (ComponentLockRequirement(ComponentLockName.MODEL_LOADING),),
+            owner,
+        )
+        self.assertTrue(acquisition.acquired)
+        self.assertIsNotNone(lease)
+        self.addCleanup(celune.component_locks.release_all)
+
+        with (
+            mock.patch.object(celune, "force_stop_speech"),
+            mock.patch.object(celune, "_try_play_signal", return_value=False),
+        ):
+            self.assertTrue(celune._prepare_backend_reload(FakeBackend))
+
+        self.assertFalse(celune._model_ready.is_set())
+        self.assertTrue(celune._reload_pending)
+        self.assertFalse(celune._hot_reload_backend(FakeBackend))
+        self.assertFalse(celune._reload_pending)
+        self.assertTrue(celune._model_ready.is_set())
+        self.assertIsNone(celune.last_component_busy)
+        celune.change_input_state_callback.assert_any_call(locked=False)
+        celune.change_voice_lock_state_callback.assert_any_call(locked=False)
 
     def test_hot_backend_reload_failure_reports_restore_status(self) -> None:
         """Verify failed backend reloads announce the rollback phase."""

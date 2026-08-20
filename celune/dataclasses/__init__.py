@@ -1,44 +1,44 @@
 # SPDX-License-Identifier: MIT
 """Unified Celune dataclass package with lazy re-exports."""
 
-from importlib import import_module
 from typing import TYPE_CHECKING
+from importlib import import_module
 
 if TYPE_CHECKING:
     from .celune import (
         CELUNE_CONSTANT_PROPERTIES,
         CELUNE_FORWARDED_PROPERTIES,
         CeluneAudioState,
-        CeluneBackendState,
-        CeluneCallbackState,
         CeluneModelState,
-        CelunePipelineState,
-        CeluneRuntimeState,
         CeluneVoiceState,
+        CeluneBackendState,
+        CeluneRuntimeState,
+        CeluneCallbackState,
+        CelunePipelineState,
     )
-    from .extensions import CeluneContext
     from .persona import (
         ChatMessage,
         GenerateRequest,
         GenerateResponse,
     )
     from .pipeline import (
-        AudioInputRequest,
-        AudioOutput,
-        PlaybackChunk,
-        PlaybackSourceDone,
         SpeechDone,
-        SpeechRequest,
+        AudioOutput,
         SpeechTiming,
+        PlaybackChunk,
+        SpeechRequest,
+        AudioInputRequest,
+        PlaybackSourceDone,
         VoiceConversionRequest,
     )
+    from .extensions import CeluneContext
     from .properties import (
         ConstantPropertySpec,
         ForwardedPropertySpec,
+        forward_property,
+        constant_property,
         bind_constant_properties,
         bind_forwarded_properties,
-        constant_property,
-        forward_property,
     )
 
 _MODULE_EXPORTS = {

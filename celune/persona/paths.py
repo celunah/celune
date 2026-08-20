@@ -6,8 +6,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ..cevoice import SUPPORTED_PERSONA_FILENAMES
 from ..paths import persona_data_dir
+from ..cevoice import SUPPORTED_PERSONA_FILENAMES
 
 
 def persona_character_slug(character_name: str) -> str:

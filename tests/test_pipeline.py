@@ -1,25 +1,33 @@
 # SPDX-License-Identifier: MIT
 """Tests for pipeline helpers that do not perform real synthesis."""
 
-import json as _json
 import os
-import queue
 import sys
+import queue
 import tempfile
 import threading
-from collections.abc import Iterator
-from importlib.machinery import ModuleSpec
+import json as _json
 from pathlib import Path
-from types import SimpleNamespace, TracebackType
-from typing import Optional, Self, cast
-from unittest import IsolatedAsyncioTestCase, TestCase, mock
+from collections.abc import Iterator
+from typing import Self, Optional, cast
+from importlib.machinery import ModuleSpec
+from types import TracebackType, SimpleNamespace
+from unittest import TestCase, IsolatedAsyncioTestCase, mock
 
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
-
 from celune import pipeline
+from celune.i18n import string
+from celune.utils import discard
 from celune.celune import Celune
+from celune.constants import PipelineStates
+from celune.typing.aliases import AudioChunk
+from celune.persona.impl import compact_persona_history
+from celune.typing.common import JSON, JSONSerializable
+from celune.dataclasses.pipeline import AudioInputRequest
+from celune.persona.capabilities import PersonaCapabilities
+from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
 from celune.cevoice import (
     CEVoice,
     CEVoiceLoader,
@@ -28,28 +36,20 @@ from celune.cevoice import (
     PersonaStyleValues,
     persona_files_from_bundle,
 )
-from celune.constants import PipelineStates
-from celune.dataclasses.pipeline import AudioInputRequest
-from celune.persona.capabilities import PersonaCapabilities
-from celune.persona.impl import compact_persona_history
-from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
 from celune.typing.agent import (
+    ToolCall,
+    AgentTask,
     AgentContext,
     AgentRequest,
-    AgentTask,
-    AgentToolArgumentSchema,
-    AgentToolBehavior,
-    AgentToolDangerLevel,
     AgentToolSchema,
+    AgentToolBehavior,
     AgentToolValueType,
-    ToolCall,
+    AgentToolDangerLevel,
+    AgentToolArgumentSchema,
 )
-from celune.typing.aliases import AudioChunk
-from celune.typing.common import JSON, JSONSerializable
-from celune.utils import discard
 
-from .support import FakeStream, FakeVCBackend, make_pipeline_engine, make_voice_loader
 from .test_persona_memory import StubEmbeddingMemoryStore
+from .support import FakeStream, FakeVCBackend, make_voice_loader, make_pipeline_engine
 
 
 class PipelineTests(TestCase):
@@ -179,10 +179,12 @@ class PipelineTests(TestCase):
 
         self.assertEqual(pipeline.force_stop_speech(celune_engine), False)
         engine.locked = True
+        engine.backend.cancel_active_request = mock.Mock()
         engine.text_queue.put("pending")
         engine.audio_queue.put("audio")
         self.assertEqual(pipeline.force_stop_speech(celune_engine), True)
         self.assertEqual(engine._speech_generation, 1)
+        engine.backend.cancel_active_request.assert_called_once_with(wait_for_ack=False)
         self.assertEqual(engine.text_queue.empty(), True)
         self.assertEqual(engine.persona_queue.empty(), True)
         self.assertIs(engine.audio_queue.get_nowait(), engine.force_stop_marker)
@@ -2301,7 +2303,7 @@ class PipelineAsyncTests(IsolatedAsyncioTestCase):
         )
 
         self.assertIn("Name: Celune", prompt)
-        self.assertIn("Gender: Woman", prompt)
+        self.assertIn(f"Gender: {string('persona.default_gender')}", prompt)
 
     def test_default_cechar_pack_adds_celune_prompt_foundation(self) -> None:
         """Verify the bundled CECHAR pack assembles only its current prompt."""

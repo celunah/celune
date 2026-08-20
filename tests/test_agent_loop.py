@@ -3,33 +3,33 @@
 
 from __future__ import annotations
 
-from typing import Optional, cast
 from unittest import TestCase
+from typing import Optional, cast
 
+from celune.extensions.events import EventDispatcher
 from celune.agent import (
-    AgentAbortReason,
-    AgentApprovalDecision,
-    AgentApprovalRequest,
-    AgentApprovalResponse,
-    AgentChoiceResponse,
-    AgentChoiceOption,
-    AgentChoiceRequest,
-    AgentFailureReason,
+    ToolCall,
+    ToolResult,
     AgentOutput,
     AgentRequest,
     AgentRuntime,
     AgentSession,
-    AgentTaskConfig,
     AgentTaskState,
+    AgentTaskConfig,
+    AgentAbortReason,
+    AgentChoiceOption,
     AgentToolBehavior,
-    AgentToolDangerLevel,
-    AgentToolExecutionStatus,
-    ToolCall,
-    ToolExecutionResult,
-    ToolResult,
     ValidatedToolCall,
+    AgentChoiceRequest,
+    AgentFailureReason,
+    AgentChoiceResponse,
+    ToolExecutionResult,
+    AgentApprovalRequest,
+    AgentToolDangerLevel,
+    AgentApprovalDecision,
+    AgentApprovalResponse,
+    AgentToolExecutionStatus,
 )
-from celune.extensions.events import EventDispatcher
 
 
 def _request(session_id: str = "session-1") -> AgentRequest:

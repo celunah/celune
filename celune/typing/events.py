@@ -4,37 +4,37 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Literal, Optional, Protocol, Union
+from typing import TYPE_CHECKING, Union, Literal, Optional, Protocol
 
-from ..dataclasses.events import (
-    AgentApprovalRequestedEvent,
-    AgentChoiceRequestedEvent,
-    AgentTaskFinishedEvent,
-    AgentTaskStateChangedEvent,
-    AudioEndEvent,
-    AudioStartEvent,
-    CharacterChangedEvent,
-    CharacterLoadedEvent,
-    CharacterUnloadedEvent,
-    ErrorEvent,
-    FatalEvent,
-    GenerationEndEvent,
-    GenerationErrorEvent,
-    GenerationStartEvent,
-    ReadyEvent,
-    ShutdownEvent,
-    StateChangedEvent,
-    VoiceChangedEvent,
-)
+from .common import JSON
 from .agent import (
+    AgentTaskState,
     AgentAbortReason,
-    AgentApprovalRequest,
-    AgentCancellationReason,
     AgentChoiceRequest,
     AgentFailureReason,
-    AgentTaskState,
+    AgentApprovalRequest,
+    AgentCancellationReason,
 )
-from .common import JSON
+from ..dataclasses.events import (
+    ErrorEvent,
+    FatalEvent,
+    ReadyEvent,
+    AudioEndEvent,
+    ShutdownEvent,
+    AudioStartEvent,
+    StateChangedEvent,
+    VoiceChangedEvent,
+    GenerationEndEvent,
+    CharacterLoadedEvent,
+    GenerationErrorEvent,
+    GenerationStartEvent,
+    CharacterChangedEvent,
+    AgentTaskFinishedEvent,
+    CharacterUnloadedEvent,
+    AgentChoiceRequestedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+)
 
 type EventName = Literal[
     "agent_task_state_changed",

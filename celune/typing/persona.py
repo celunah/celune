@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
-from typing import TYPE_CHECKING, Literal, Optional, Protocol, TypedDict, Union
+from collections.abc import Mapping, Iterator, Sequence
+from typing import TYPE_CHECKING, Union, Literal, Optional, Protocol, TypedDict
 
+import torch
 import numpy as np
 import numpy.typing as npt
-import torch
 from transformers import StoppingCriteriaList
 from transformers.tokenization_utils_base import BatchEncoding
 
@@ -18,9 +18,9 @@ if TYPE_CHECKING:
     from torch import Tensor
     from torch.nn import Parameter
 
-    from ..cevoice import CEVoicePersona
-    from .aliases import AudioChunk
     from .common import Config
+    from .aliases import AudioChunk
+    from ..cevoice import CEVoicePersona
 
 type Role = Literal["system", "user", "assistant"]
 type VisionInput = Union[JSONSerializable, torch.Tensor, bytes, memoryview]

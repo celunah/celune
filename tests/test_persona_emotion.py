@@ -1,25 +1,24 @@
 # SPDX-License-Identifier: MIT
 """Tests for Persona emotion blending."""
 
-from collections.abc import Sequence
-from types import SimpleNamespace
-from typing import Optional, Union
 from unittest import TestCase
+from types import SimpleNamespace
+from typing import Union, Optional
+from collections.abc import Sequence
 
-import numpy as np
 import torch
+import numpy as np
 from transformers.tokenization_utils_base import BatchEncoding
-
+from celune.utils import discard
+from celune.typing.persona import ModelGenerateKwargValue
 from celune.persona.emotion import (
     GOEMOTIONS_LABELS,
     EmotionAnalysis,
     EmotionPrediction,
     PersonaEmotionAnalyzer,
-    compute_emotion_directions,
     compute_emotion_scores,
+    compute_emotion_directions,
 )
-from celune.typing.persona import ModelGenerateKwargValue
-from celune.utils import discard
 
 
 class StubPersonaEmotionAnalyzer(PersonaEmotionAnalyzer):

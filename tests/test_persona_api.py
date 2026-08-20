@@ -3,20 +3,20 @@
 
 import contextlib
 from types import SimpleNamespace
-from typing import Optional, Union, cast
 from unittest import TestCase, mock
+from typing import Union, Optional, cast
 
+from celune.i18n import string
+from celune.utils import discard
+from celune.typing.common import JSON
+from celune.persona import impl, runtime
+from celune.typing.aliases import RecordedKwargValue
 from celune.constants import (
-    PERSONA_DEFAULT_MODEL_ID,
     PERSONA_MODELS,
+    PERSONA_DEFAULT_MODEL_ID,
     persona_model_tier,
     remote_code_model_revision,
 )
-from celune.i18n import string
-from celune.persona import impl, runtime
-from celune.typing.aliases import RecordedKwargValue
-from celune.typing.common import JSON
-from celune.utils import discard
 
 
 class _FakeEncoded:

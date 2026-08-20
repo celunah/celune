@@ -1,28 +1,30 @@
 # SPDX-License-Identifier: MIT
 """VoxCPM2 backend implementation for Celune."""
 
-import contextlib
 import os
 import time
-from collections.abc import Callable, Generator, Iterator, Mapping
+import contextlib
 from typing import Optional
+from collections.abc import Mapping, Callable, Iterator, Generator
 
 import numpy as np
+from voxcpm import VoxCPM
 from transformers import AutoTokenizer
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-from voxcpm import VoxCPM
 
-from ...cevoice import CEVoiceLoader, default_loader
-from ...constants import BASE_SR
-from ...i18n import string
-from ...typing.aliases import AudioChunk, AudioChunks
-from ...utils import custom_assert
 from . import get_version
+from ...i18n import string
+from ...constants import BASE_SR
+from ...utils import custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import AudioChunk, AudioChunks
+from .base import (
+    _to_numpy_audio as normalize_streamed_audio,
+)
 from .base import (
     CeluneBackend,
-    _to_numpy_audio as normalize_streamed_audio,
-    cached_hf_snapshot_path,
     local_hf_offline_mode,
+    cached_hf_snapshot_path,
 )
 
 

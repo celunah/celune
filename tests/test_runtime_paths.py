@@ -11,26 +11,25 @@ from unittest import TestCase, mock
 
 import yaml
 from textual.widgets import RichLog
-
-from celune.cevoice import bundled_voices_dir, default_bundle_path
 from celune.constants import APP_SLUG
+from celune.utils import discard, format_error
+from celune.ui.app import CeluneUI, UILogMessage
+from celune.persona.memory import default_memory_dir
+from celune.cevoice import bundled_voices_dir, default_bundle_path
 from celune.paths import (
-    backend_environments_dir,
-    configure_huggingface_cache_environment,
-    configure_huggingface_runtime,
+    project_root,
+    voices_data_dir,
+    persona_data_dir,
+    running_compiled,
+    runtime_data_dir,
     ensure_config_path,
     huggingface_home_dir,
-    huggingface_hub_cache_dir,
     migrate_legacy_app_data,
-    persona_data_dir,
-    project_root,
-    runtime_data_dir,
-    running_compiled,
-    voices_data_dir,
+    backend_environments_dir,
+    huggingface_hub_cache_dir,
+    configure_huggingface_runtime,
+    configure_huggingface_cache_environment,
 )
-from celune.persona.memory import default_memory_dir
-from celune.ui.app import CeluneUI, UILogMessage
-from celune.utils import discard, format_error
 
 
 class RuntimePathTests(TestCase):

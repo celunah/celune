@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TypedDict, Union
+from typing import Union, Optional, TypedDict
 
-from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from .aliases import AudioChunk
-from .backends import BackendDescription
 from .common import JSONSerializable
+from .backends import BackendDescription
+from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 type WorkerValue = Union[
     JSONSerializable,
@@ -23,6 +23,33 @@ type WorkerValue = Union[
     dict[str, "WorkerValue"],
 ]
 type WorkerArguments = dict[str, WorkerValue]
+
+
+class WorkerPayloadDescriptor(TypedDict, total=False):
+    """Metadata declared for one binary CEDTS payload."""
+
+    id: str
+    media_type: str
+    byte_length: int
+    dtype: str
+    shape: list[int]
+    sample_rate: int
+    channels: int
+
+
+type WorkerControlMessage = dict[str, JSONSerializable]
+
+
+class WorkerPacket(TypedDict, total=False):
+    """Common CEDTS packet envelope shared by core and worker."""
+
+    cedts_version: int
+    kind: str
+    message_id: str
+    reply_to: Optional[str]
+    operation: str
+    data: dict[str, JSONSerializable]
+    payloads: list[WorkerPayloadDescriptor]
 
 
 class WorkerRequest(TypedDict, total=False):
@@ -41,7 +68,9 @@ class WorkerResponse(TypedDict, total=False):
     error_type: str
     stream: bool
     done: bool
+    cancelled: bool
     fatal: bool
+    payloads: list[WorkerPayloadDescriptor]
 
 
 type WorkerMessageValue = WorkerValue

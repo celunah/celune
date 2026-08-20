@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Property helpers for grouped Celune runtime state."""
 
-from dataclasses import dataclass
 from typing import Optional
+from dataclasses import dataclass
 
 from ..typing.aliases import ConstantPropertyValue
 

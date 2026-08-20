@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 """Celune exception classes."""
 
+from typing import Optional
+
 
 class CeluneError(Exception):
     """General Celune exception."""
@@ -24,6 +26,18 @@ class NotAvailableError(RuntimeError, CeluneError):
 
 class BackendError(RuntimeError, CeluneError):
     """Celune backend has failed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "backend_error",
+        error_type: Optional[str] = None,
+    ) -> None:
+        """Initialize a backend error with inert diagnostic metadata."""
+        super().__init__(message)
+        self.error_code = error_code
+        self.error_type = error_type
 
 
 class WarmupError(RuntimeError, CeluneError):

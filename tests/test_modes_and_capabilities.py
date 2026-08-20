@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: MIT
 """Tests for global operation modes and Persona capabilities."""
 
-from types import SimpleNamespace
 from typing import cast
 from unittest import TestCase
+from types import SimpleNamespace
 
-from celune.agent import AgentOutput, agent_mode_enabled
+from celune.typing.common import Config
 from celune.modes import resolve_operation_mode
-from celune.persona.capabilities import PersonaCapabilities
 from celune.persona.impl import persona_enabled
 from celune.persona.runtime import PersonaBackend
-from celune.typing.common import Config
+from celune.agent import AgentOutput, agent_mode_enabled
+from celune.persona.capabilities import PersonaCapabilities
 from celune.typing.persona import PersonaModel, PersonaProcessor, PersonaTokenizer
 
 

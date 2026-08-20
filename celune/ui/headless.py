@@ -1,22 +1,22 @@
 # SPDX-License-Identifier: MIT
 """Headless UI."""
 
-import ctypes
 import os
-import signal
 import time
+import ctypes
+import signal
 import warnings
-from collections.abc import Callable
 from types import FrameType
 from typing import Optional, cast
+from collections.abc import Callable
 
-from ..celune import Celune
-from ..config import Config, config_bool
-from ..constants import APP_NAME, SIGTSTP
 from ..i18n import string
-from ..typing.aliases import LogLevel
-from ..watchdog import launcher_loss_requested
 from ..utils import discard
+from ..celune import Celune
+from ..typing.aliases import LogLevel
+from ..config import Config, config_bool
+from ..constants import SIGTSTP, APP_NAME
+from ..watchdog import launcher_loss_requested
 
 
 class CeluneHeadlessUI:

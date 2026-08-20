@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Typed ownership contracts for Celune component operations."""
 
-from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
+from dataclasses import dataclass
 
 from .common import JSON
 

@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-import contextlib
-import importlib.util
 import io
 import sys
+import contextlib
+import importlib.util
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from types import ModuleType
 from unittest import TestCase, mock
+from tempfile import TemporaryDirectory
 
 
 def _load_cac_module():

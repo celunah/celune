@@ -8,41 +8,41 @@ import unittest
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Optional, cast
 
+from celune.extensions.events import EVENT_NAMES, EventDispatcher
+from celune.dataclasses.events import (
+    AgentTaskFinishedEvent,
+    AgentChoiceRequestedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+)
 from celune.agent.contracts import (
-    AgentAbortReason,
-    AgentApprovalDecision,
-    AgentApprovalRequest,
-    AgentApprovalResponse,
-    AgentChoiceOption,
-    AgentChoiceRequest,
-    AgentChoiceResponse,
-    AgentCancellationReason,
-    AgentFailureReason,
-    AgentInterruption,
-    AgentInterruptionKind,
+    AgentTask,
     AgentRequest,
     AgentSession,
-    AgentSessionState,
-    AgentTask,
-    AgentTaskConfig,
     AgentTaskState,
-    AgentTerminalOutcome,
-    AgentToolArgumentSchema,
-    AgentToolBehavior,
-    AgentToolDangerLevel,
-    AgentToolExecutionStatus,
+    AgentTaskConfig,
     AgentToolSchema,
-    AgentToolValueType,
-    ToolExecutionResult,
+    AgentAbortReason,
+    AgentChoiceOption,
+    AgentInterruption,
+    AgentSessionState,
+    AgentToolBehavior,
     ValidatedToolCall,
+    AgentChoiceRequest,
+    AgentFailureReason,
+    AgentToolValueType,
+    AgentChoiceResponse,
+    ToolExecutionResult,
+    AgentApprovalRequest,
+    AgentTerminalOutcome,
+    AgentToolDangerLevel,
+    AgentApprovalDecision,
+    AgentApprovalResponse,
+    AgentInterruptionKind,
+    AgentCancellationReason,
+    AgentToolArgumentSchema,
+    AgentToolExecutionStatus,
 )
-from celune.dataclasses.events import (
-    AgentApprovalRequestedEvent,
-    AgentChoiceRequestedEvent,
-    AgentTaskFinishedEvent,
-    AgentTaskStateChangedEvent,
-)
-from celune.extensions.events import EVENT_NAMES, EventDispatcher
 
 if TYPE_CHECKING:
     from celune.celune import Celune

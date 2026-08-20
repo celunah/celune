@@ -1,20 +1,19 @@
 # SPDX-License-Identifier: MIT
 """Tests for Persona microphone speech input."""
 
-from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Optional, cast
 from unittest import TestCase, mock
+from collections.abc import Callable
 
 import numpy as np
 from textual import events
-
+from celune.ui.app import CeluneUI
+from celune.typing.persona import _WhisperProcessor
 from celune.persona.asr import (
     PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS,
     WhisperTranscriber,
 )
-from celune.typing.persona import _WhisperProcessor
-from celune.ui.app import CeluneUI
 
 
 class SpeechInputTests(TestCase):

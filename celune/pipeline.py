@@ -3,133 +3,135 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
-import datetime
-import inspect
-import json
 import os
-import pathlib
+import re
+import sys
+import json
+import time
 import queue
 import random
-import re
+import asyncio
+import inspect
+import pathlib
+import datetime
+import contextlib
 import subprocess
-import sys
-import time
-from collections import deque
-from collections.abc import Callable, Mapping
-from dataclasses import replace
-from importlib import util as importlib_util
-from typing import TYPE_CHECKING, Optional, Union, cast
-from urllib.parse import urlencode, urlparse
-from urllib.request import urlopen
 from uuid import uuid4
+from collections import deque
+from collections.abc import Mapping, Callable
+from dataclasses import replace
+from urllib.request import urlopen
+from urllib.parse import urlparse, urlencode
+from importlib import util as importlib_util
+from typing import TYPE_CHECKING, Union, Optional, cast
 
-import numpy as np
-import pyrubberband as rb
-import sounddevice as sd
-import soundfile as sf
 import torch
+import numpy as np
+import soundfile as sf
+import sounddevice as sd
+import pyrubberband as rb
 from iso639 import Lang
-from iso639.exceptions import DeprecatedLanguageValue, InvalidLanguageValue
+from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
-from . import __version__
-from .analysis import analyze_voice_audio
-from .cevoice import (
-    bundle_character_name,
-    default_loader,
-    persona_files_from_bundle,
-    persona_metadata_from_manifest,
-)
-from .config import resolve_audio_device
-from .constants import (
-    AGENT_CONTEXT_SPACE,
-    APP_NAME,
-    APP_SLUG,
-    BASE_SR,
-    PERSONA_MEMORY_EMBEDDING_MODEL,
-    PERSONA_CONTEXT_SPACE,
-    PipelineStates,
-)
-from .dataclasses.pipeline import (
-    AudioInputRequest,
-    AudioOutput,
-    PlaybackChunk,
-    PlaybackSourceDone,
-    SpeechRequest,
-    SpeechTiming,
-    VoiceConversionRequest,
-)
-from .dsp import (
-    error_signal,
-    is_silent_utterance,
-    pitch_shift_audio,
-    readiness_signal,
-    resample_audio,
-    sleeping_signal,
-    soften,
-    split,
-    to_48khz,
-    working_signal,
-)
-from .exceptions import NotAvailableError
 from .i18n import string
-from .typing.locks import ComponentBusyResult
-from .typing.locks import ComponentLockAcquisition
-from .typing.locks import ComponentLockName
-from .typing.locks import ComponentLockOwner
-from .typing.locks import ComponentLockRequirement
+from . import __version__
+from .config import resolve_audio_device
+from .analysis import analyze_voice_audio
+from .exceptions import NotAvailableError
+from .typing.pipeline import SpeechStreamQueue
+from .persona.paths import persona_override_files
+from .typing.common import JSON, JSONSerializable
+from .typing.aliases import AudioChunk, AudioChunks
+from .persona.emotion import PersonaEmotionAnalyzer
+from .persona.capabilities import PersonaCapabilities
+from .typing.persona import PersonaModel, PersonaTokenizer
+from .typing.agent import ToolCall, AgentContext, AgentToolSchema
+from .persona.memory import PersonaMemoryStore, classifier_memory_candidates
 from .paths import (
     outputs_dir,
     project_root,
-    running_compiled,
     temp_data_dir,
+    running_compiled,
 )
-from .persona.emotion import PersonaEmotionAnalyzer
-from .persona.capabilities import PersonaCapabilities
-from .persona.impl import (
-    compact_persona_history,
-    default_persona_age,
-    default_persona_context,
-    default_persona_gender,
-    default_persona_persona,
-    pack_identity_text,
-    pack_persona_lines,
-    pack_persona_text,
-    persona_active_character_name,
-    persona_config,
-    persona_debug_overrides_enabled,
-    persona_history_messages,
-    persona_model_id,
-    persona_pending_attachments,
-    persona_quantization,
-    persona_session_summary,
-    persona_style_traits,
+from .cevoice import (
+    default_loader,
+    bundle_character_name,
+    persona_files_from_bundle,
+    persona_metadata_from_manifest,
 )
-from .persona.memory import PersonaMemoryStore, classifier_memory_candidates
-from .persona.paths import persona_override_files
+from .typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentBusyResult,
+    ComponentLockAcquisition,
+    ComponentLockRequirement,
+)
 from .persona.prompts import (
-    CharacterProfile,
     PersonaCard,
     PersonaContext,
+    CharacterProfile,
     PersonaPromptBuilder,
     PersonaSourceMaterial,
     RetrievedMemoryBundle,
 )
-from .typing.aliases import AudioChunk, AudioChunks
-from .typing.agent import AgentContext, AgentToolSchema, ToolCall
-from .typing.common import JSON, JSONSerializable
-from .typing.pipeline import SpeechStreamQueue
-from .typing.persona import PersonaModel, PersonaTokenizer
+from .constants import (
+    BASE_SR,
+    APP_NAME,
+    APP_SLUG,
+    AGENT_CONTEXT_SPACE,
+    PERSONA_CONTEXT_SPACE,
+    PERSONA_MEMORY_EMBEDDING_MODEL,
+    PipelineStates,
+)
 from .utils import (
-    detect_language,
     discard,
+    run_async,
+    rng_replace,
     format_error,
     format_number,
     is_april_fools,
+    detect_language,
     normalize_special_characters,
-    rng_replace,
-    run_async,
+)
+from .dataclasses.pipeline import (
+    AudioOutput,
+    SpeechTiming,
+    PlaybackChunk,
+    SpeechRequest,
+    AudioInputRequest,
+    PlaybackSourceDone,
+    VoiceConversionRequest,
+)
+from .dsp import (
+    split,
+    soften,
+    to_48khz,
+    error_signal,
+    resample_audio,
+    working_signal,
+    sleeping_signal,
+    readiness_signal,
+    pitch_shift_audio,
+    is_silent_utterance,
+)
+from .persona.impl import (
+    persona_config,
+    persona_model_id,
+    pack_persona_text,
+    pack_identity_text,
+    pack_persona_lines,
+    default_persona_age,
+    persona_quantization,
+    persona_style_traits,
+    default_persona_gender,
+    compact_persona_history,
+    default_persona_context,
+    default_persona_persona,
+    persona_session_summary,
+    persona_history_messages,
+    persona_pending_attachments,
+    persona_active_character_name,
+    persona_debug_overrides_enabled,
 )
 
 if TYPE_CHECKING:
@@ -591,6 +593,11 @@ def force_stop_speech(engine: Celune) -> bool:
 def _invalidate_speech_work(engine: Celune) -> None:
     """Invalidate queued and in-flight speech generations immediately."""
     engine.utterance_force_stop.set()
+
+    cancel_active_request = getattr(engine.backend, "cancel_active_request", None)
+    if callable(cancel_active_request):
+        with contextlib.suppress(Exception):
+            cancel_active_request(wait_for_ack=False)
 
     with engine.queue_lock:
         engine._speech_generation = getattr(engine, "_speech_generation", 0) + 1

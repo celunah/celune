@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Terminal handling helpers for Celune."""
 
-import ctypes
 import re
 import sys
+import ctypes
 from collections.abc import Callable
 from typing import IO, Optional, cast
 

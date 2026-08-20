@@ -2,14 +2,14 @@
 """VRAM preset resolution helpers for Celune."""
 
 import math
-from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Optional, cast
+from dataclasses import dataclass
+from collections.abc import Mapping
 
 import torch
 
 from .constants import TIERS, VRAM_REQUIREMENTS
-from .typing.common import JSONSerializable, VramTier
+from .typing.common import VramTier, JSONSerializable
 
 QWEN3_0_6B_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 QWEN3_1_7B_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"

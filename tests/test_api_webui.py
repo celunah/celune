@@ -3,8 +3,8 @@
 
 import asyncio
 from queue import Queue
-from types import SimpleNamespace
 from typing import cast
+from types import SimpleNamespace
 from unittest import TestCase, mock
 
 import numpy as np
@@ -12,8 +12,8 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from celune import api
-from celune.celune import Celune
 from celune.i18n import string
+from celune.celune import Celune
 from celune.pipeline import SpeechStreamQueue
 
 

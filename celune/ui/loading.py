@@ -5,14 +5,14 @@ from __future__ import annotations
 
 from typing import Optional
 
-from textual.app import ComposeResult
-from textual.containers import Center, Horizontal, Vertical
-from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Static
+from textual.app import ComposeResult
+from textual.css.query import NoMatches
+from textual.containers import Center, Vertical, Horizontal
 
-from ..constants import APP_NAME
 from ..i18n import string
+from ..constants import APP_NAME
 
 
 class CeluneLoadingScreen(Widget):

@@ -4,38 +4,38 @@
 from __future__ import annotations
 
 import json
+from uuid import uuid4
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Optional, cast
-from uuid import uuid4
 
 from ..i18n import string
+from .runtime import AgentRuntime
 from ..modes import mode_allows_agents
-from ..pipeline import build_agent_classification_request
-from ..typing.agent import (
-    AgentApprovalDecision,
-    AgentApprovalResponse,
-    AgentChoiceResponse,
-    AgentClassificationFailure,
-    AgentClassificationFailureKind,
-    AgentClassificationResult,
-    AgentFailureReason,
-    AgentInputClassification,
-    AgentInterruption,
-    AgentInterruptionKind,
-    AgentRequest,
-    AgentRoute,
-    AgentSession,
-    AgentTask,
-    AgentTaskState,
-)
 from ..typing.common import JSON, JSONSerializable
+from ..typing.persona import PersonaClientResponse
+from ..pipeline import build_agent_classification_request
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..typing.persona import PersonaClientResponse
-from .runtime import AgentRuntime
+from ..typing.agent import (
+    AgentTask,
+    AgentRoute,
+    AgentRequest,
+    AgentSession,
+    AgentTaskState,
+    AgentInterruption,
+    AgentFailureReason,
+    AgentChoiceResponse,
+    AgentApprovalDecision,
+    AgentApprovalResponse,
+    AgentInterruptionKind,
+    AgentInputClassification,
+    AgentClassificationResult,
+    AgentClassificationFailure,
+    AgentClassificationFailureKind,
+)
 
 if TYPE_CHECKING:
     from ..celune import Celune

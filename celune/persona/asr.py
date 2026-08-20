@@ -4,29 +4,28 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Union, cast
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Union, Optional, cast
 
-import numpy as np
 import torch
+import numpy as np
 
 from ..dsp import resample_audio
 from ..typing.aliases import AudioChunk
 from ..typing.persona import (
-    WhisperGenerationPayload,
     WhisperScalar,
     WhisperSegmentPayload,
+    WhisperGenerationPayload,
     _WhisperModel,
     _WhisperProcessor,
 )
 
 if TYPE_CHECKING:
     # noinspection PyPep8Naming
-    from torch import device as Device
-
     # noinspection PyPep8Naming
     from torch import dtype as DType
+    from torch import device as Device
 
 
 DEFAULT_PERSONA_SPEECH_MODEL_ID = "openai/whisper-large-v3-turbo"
@@ -77,9 +76,9 @@ class WhisperTranscriber:
                 return
 
             from transformers import (
-                AutoModelForSpeechSeq2Seq,
                 AutoProcessor,
                 BitsAndBytesConfig,
+                AutoModelForSpeechSeq2Seq,
             )
 
             if not torch.cuda.is_available():

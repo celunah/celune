@@ -6,8 +6,8 @@ import gzip
 import json
 import shutil
 import tempfile
-from pathlib import Path
 from typing import cast
+from pathlib import Path
 from unittest import TestCase, mock
 
 from celune import cevoice

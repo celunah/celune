@@ -215,6 +215,9 @@ ignore=[
     "I001",  # unsorted imports
 ]
 
+[tool.ruff.lint.isort]
+length-sort = true
+
 [tool.pylint.main]
 disable=[
     # some code requires access to a protected member, e.g. Class._method()

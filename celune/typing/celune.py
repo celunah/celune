@@ -3,17 +3,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Protocol, Union
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Union, Optional, Protocol
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
 from .aliases import LogLevel
-from .common import Config, JSON, JSONSerializable
 from .modes import BackendMode, OperationMode
+from .common import JSON, Config, JSONSerializable
 
 if TYPE_CHECKING:
     import queue
@@ -21,19 +21,19 @@ if TYPE_CHECKING:
 
     import sounddevice as sd
 
-    from ..backends.tts import BackendModel, CeluneBackend
-    from ..backends.vc import CeluneVCBackend
-    from ..cevoice import CEVoicePersona
-    from ..chroma import AudioRGBGlow
-    from ..constants import PipelineStates
     from ..dsp import StreamingPedalboardReverb
-    from ..extensions.manager import CeluneExtensionManager
+    from .locks import ComponentLockOwner, ComponentBusyResult
     from ..locks import ComponentLockManager
-    from ..persona.emotion import PersonaEmotionAnalyzer
+    from ..chroma import AudioRGBGlow
+    from .aliases import AudioChunk, AudioChunks
+    from ..cevoice import CEVoicePersona
+    from ..constants import PipelineStates
+    from ..backends.vc import CeluneVCBackend
+    from ..backends.tts import BackendModel, CeluneBackend
     from ..persona.impl import PersonaClient
     from ..persona.memory import PersonaMemoryStore
-    from .aliases import AudioChunk, AudioChunks
-    from .locks import ComponentBusyResult, ComponentLockOwner
+    from ..persona.emotion import PersonaEmotionAnalyzer
+    from ..extensions.manager import CeluneExtensionManager
 
 
 type GenerationKwarg = Union[torch.Tensor, int, bool, None]

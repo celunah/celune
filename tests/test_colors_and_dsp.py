@@ -5,10 +5,9 @@ from typing import cast
 from unittest import TestCase, mock
 
 import numpy as np
-
-from celune import colors, dsp
+from celune import dsp, colors
 from celune.constants import UtteranceLoudnessTier
-from celune.exceptions import AudioMismatchError, BadAudioError
+from celune.exceptions import BadAudioError, AudioMismatchError
 
 
 class ColorTests(TestCase):

@@ -3,19 +3,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from enum import Enum
-from typing import NotRequired, Optional, Protocol, TypedDict, Union, cast
+from dataclasses import field, dataclass
+from typing import Union, Optional, Protocol, TypedDict, NotRequired, cast
 
+from .modes import OperationMode
+from .locks import ComponentBusyResult
+from .common import JSON, JSONSerializable
+from ..persona.capabilities import PersonaCapabilities
 from ..constants import (
-    AGENT_CONTEXT_COMPACTION_THRESHOLD,
     AGENT_CONTEXT_SPACE,
     AGENT_MAX_ITERATIONS,
+    AGENT_CONTEXT_COMPACTION_THRESHOLD,
 )
-from ..persona.capabilities import PersonaCapabilities
-from .common import JSON, JSONSerializable
-from .locks import ComponentBusyResult
-from .modes import OperationMode
 
 
 class NeedleToolParameterSpec(TypedDict, total=False):

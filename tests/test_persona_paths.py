@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest import TestCase, mock
 
 from celune.persona.paths import (
+    persona_memory_dir,
     persona_character_dir,
     persona_character_slug,
-    persona_memory_dir,
     persona_override_files,
 )
 

@@ -18,8 +18,8 @@ import sys as _sys
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Union
 
-from ._version import REVISION, __version__
 from .constants import APP_NAME
+from ._version import REVISION, __version__
 from .paths import configure_huggingface_cache_environment
 
 configure_huggingface_cache_environment()

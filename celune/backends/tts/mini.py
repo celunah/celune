@@ -1,24 +1,24 @@
 # SPDX-License-Identifier: MIT
 """Pocket TTS backend implementation for Celune."""
 
-import contextlib
-import tempfile
 import time
-from collections.abc import Callable, Iterator, Mapping
+import tempfile
+import contextlib
 from pathlib import Path
 from typing import Optional, cast
+from collections.abc import Mapping, Callable, Iterator
 
-import numpy as np
 import yaml
-from huggingface_hub import snapshot_download
+import numpy as np
 from pocket_tts import TTSModel
+from huggingface_hub import snapshot_download
 
-from ...cevoice import CEVoiceLoader, default_loader
 from ...paths import temp_data_dir
-from ...typing.aliases import AudioChunk, AudioChunks
-from ...typing.backends import MiniModel, MiniPromptState
 from ...utils import custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import AudioChunk, AudioChunks
 from .base import CeluneBackend, cached_hf_snapshot_path
+from ...typing.backends import MiniModel, MiniPromptState
 
 
 class Mini(CeluneBackend[TTSModel]):

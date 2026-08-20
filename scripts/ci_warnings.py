@@ -4,10 +4,9 @@
 from __future__ import annotations
 
 import re
-import subprocess
 import sys
+import subprocess
 from typing import Optional
-
 
 _WARNING_LINE = re.compile(
     r"(?:\b\w*warn(?:ing)?\b|\bdeprecated\b|\bW\d{4}\b)",

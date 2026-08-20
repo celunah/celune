@@ -2,22 +2,22 @@
 """Configuration helpers for Celune."""
 
 import os
-from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import Optional, cast
+from collections.abc import Mapping, Sequence
 
 import sounddevice as sd
 
-from .constants import APP_NAME
 from .i18n import string
+from .constants import APP_NAME
 from .typing.aliases import LogLevel
 from .typing.common import Config, JSONSerializable
 from .typing.config import (
+    AudioHostApi,
     AudioDeviceConfig,
     AudioDeviceDirection,
     AudioDeviceInfoValue,
     AudioDeviceQueryResult,
-    AudioHostApi,
 )
 
 ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}

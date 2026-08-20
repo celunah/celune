@@ -3,11 +3,11 @@
 
 from abc import ABC
 from pathlib import Path
-from typing import Optional, Union
+from typing import Union, Optional
 
-from ..dataclasses.extensions import CeluneContext
-from ..exceptions import IncompleteExtensionError
 from ..typing.aliases import LogLevel
+from ..exceptions import IncompleteExtensionError
+from ..dataclasses.extensions import CeluneContext
 
 
 class CeluneExtension(ABC):

@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
-from typing import TYPE_CHECKING, Optional, Protocol, TypeVar, TypedDict
+from collections.abc import Mapping, Iterator
+from typing import TYPE_CHECKING, TypeVar, Optional, Protocol, TypedDict
 
-import numpy as np
 import torch
+import numpy as np
 
 from .aliases import AudioChunk
 from .common import JSON, JSONSerializable

@@ -11,9 +11,7 @@ on:
       - dev
 
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: read
 
 jobs:
   python-checks:
@@ -126,6 +124,10 @@ jobs:
   notify-failure:
     name: Comment on CI Failure
     runs-on: ubuntu-slim
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     needs:
       - python-checks
       - launcher-build-linux

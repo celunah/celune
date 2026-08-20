@@ -4,7 +4,7 @@
 from unittest import TestCase, mock
 
 from celune.typing.common import Config
-from celune.vram import backend_allowed, resolve_backend_name, resolve_vram_preset
+from celune.vram import backend_allowed, resolve_vram_preset, resolve_backend_name
 
 
 class VramTests(TestCase):

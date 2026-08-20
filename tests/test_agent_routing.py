@@ -5,29 +5,29 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
 from unittest import TestCase, mock
+from typing import TYPE_CHECKING, cast
 
+from celune.i18n import string
+from celune.typing.common import JSONSerializable
 from celune.agent import (
-    AgentApprovalRequest,
-    AgentApprovalDecision,
-    AgentApprovalResponse,
-    AgentChoiceOption,
-    AgentChoiceRequest,
-    AgentClassificationFailureKind,
-    AgentFailureReason,
-    AgentInputClassification,
-    AgentInputRouter,
-    AgentInterruptionKind,
     AgentRoute,
     AgentRuntime,
     AgentTaskState,
+    AgentInputRouter,
+    AgentChoiceOption,
     AgentToolBehavior,
-    AgentToolDangerLevel,
     ValidatedToolCall,
+    AgentChoiceRequest,
+    AgentFailureReason,
+    AgentApprovalRequest,
+    AgentToolDangerLevel,
+    AgentApprovalDecision,
+    AgentApprovalResponse,
+    AgentInterruptionKind,
+    AgentInputClassification,
+    AgentClassificationFailureKind,
 )
-from celune.i18n import string
-from celune.typing.common import JSONSerializable
 
 if TYPE_CHECKING:
     from celune.celune import Celune
