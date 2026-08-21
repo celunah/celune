@@ -41,21 +41,6 @@ mode: converse  # speak|converse|agent
 - `converse` uses Persona, allowing you to talk with any characters you've set up with Celune.
 - `agent` turns Celune into a conversational local agent, allowing her to perform actions on your computer while speaking as needed.
 
-### Agent smoke workflow
-
-With `mode: agent` enabled and Persona and Needle configured, verify the production path in this order:
-
-1. Send an ordinary conversational message and confirm it stays on the Persona conversation path.
-2. Send an explicit safe task, such as asking Celune to report the current agent status.
-3. Confirm Persona produces an action intent and Needle selects one registered tool.
-4. Confirm the permission policy allows a read-only tool, or pauses before a tool requiring approval.
-5. Confirm the tool executes once, its structured result returns to Persona, and the final response uses the normal speech path.
-6. Confirm a denied action does not execute.
-
-Interruption, steering, component locks, and UI lifecycle display are not part of this smoke workflow yet.
-
-Persona can be used with both LLMs and VLMs, but vision features and image uploads are not available with text-only language models. If uncertain, use a vision-language model.
-
 ## Note on development
 
 Celune is against the stance of "vibe coding" used in development.
@@ -66,9 +51,15 @@ All decisions and implementations were reviewed, validated, and approved by huma
 
 Celune never was, and will never become an "AI slop" project.
 
+## Documentation
+
+Visit <https://celune.readthedocs.io/en/latest> to view Celune documentation. They will help you learn to use Celune.
+
 ## License note
 
-Celune is licensed under the [MIT license](https://opensource.org/license/mit) for Celune 4.3.2 and older, Apache 2.0 starting from Celune 5.0, but the software may download certain models from [Hugging Face](https://huggingface.co) that are of varying licenses, such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.), [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS), [GPL-3.0](https://opensource.org/license/gpl-3.0) (SeedVC), as well as Celune's own license: MIT (Whisper, Silero VAD, etc.). Users of Celune are expected to read and comply with any applicable license terms for the models they intend to use.
+Celune is licensed under the Apache 2.0 License, but the software may download certain models from [Hugging Face](https://huggingface.co) that are of varying licenses, such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.), [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS), [GPL-3.0](https://opensource.org/license/gpl-3.0) (SeedVC), and MIT (Whisper, Silero VAD, etc.). Users of Celune are expected to read and comply with any applicable license terms for the models they intend to use.
+
+Please note that Celune 4.3.2 and older remain on the MIT license.
 
 ## Voices & samples
 
