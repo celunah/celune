@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Adapters between the existing Persona boundary and AgentRuntime."""
 
 from __future__ import annotations

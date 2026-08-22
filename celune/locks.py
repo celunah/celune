@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Shared component ownership registry connected to Celune operations."""
 
 from __future__ import annotations

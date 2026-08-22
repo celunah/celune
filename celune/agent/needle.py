@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """PyTorch Needle handler for Celune's local tool-selection runtime.
 
 The handler owns only model inference and structured tool-call parsing. Celune

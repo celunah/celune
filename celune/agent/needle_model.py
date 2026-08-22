@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Inference-only PyTorch implementation of the Cactus Needle model.
 
 This implementation follows the published Needle encoder-decoder architecture

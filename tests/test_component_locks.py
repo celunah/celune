@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Focused tests for Celune's typed component ownership boundary."""
 
 from typing import cast

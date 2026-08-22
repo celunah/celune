@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the CI process runner's interruption cleanup."""
 
 from unittest import TestCase, mock

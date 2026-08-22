@@ -4890,6 +4890,14 @@ raise SystemExit(worker.main())
                 "celune.backends.remote.configure_numba_cache",
                 return_value=Path("C:/celune/temp/numba"),
             ),
+            mock.patch(
+                "celune.backends.remote.huggingface_home_dir",
+                return_value=Path("C:/celune/huggingface"),
+            ),
+            mock.patch(
+                "celune.backends.remote.huggingface_hub_cache_dir",
+                return_value=Path("C:/celune/huggingface/hub"),
+            ),
         ):
             proxy._start_worker(
                 backend_environment,

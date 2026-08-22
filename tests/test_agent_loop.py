@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Focused tests for the bounded Phase 4 agent execution loop."""
 
 from __future__ import annotations

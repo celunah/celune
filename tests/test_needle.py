@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for Celune's inference-only PyTorch Needle implementation."""
 
 from typing import cast

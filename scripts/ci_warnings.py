@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Run a command while turning warning-like output into GitHub annotations."""
 
 from __future__ import annotations

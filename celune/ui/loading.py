@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Lightweight loading overlay owned by the main UI."""
 
 from __future__ import annotations

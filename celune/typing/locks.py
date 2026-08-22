@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Typed ownership contracts for Celune component operations."""
 
 from enum import Enum

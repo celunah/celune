@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Verified preparation of the inference-only Needle checkpoint."""
 
 from __future__ import annotations

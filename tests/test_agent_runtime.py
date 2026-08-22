@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Focused lifecycle tests for Celune's Phase 2 agent runtime."""
 
 from __future__ import annotations
