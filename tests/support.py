@@ -494,6 +494,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.exit_requested = False
     engine.stream = None
     engine._stream = None
+    engine.stream_lock = threading.RLock()
     engine.current_sr = None
     engine._current_sr = None
     engine.audio_unavailable = False

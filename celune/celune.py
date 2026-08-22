@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Celune's backend layer."""
 
+# Import groups follow Celune's project-specific Ruff ordering.
+# pylint: disable=ungrouped-imports
+
 import gc
 import os
 import time
@@ -9,90 +12,20 @@ import shutil
 import asyncio
 import threading
 import contextlib
+from typing import Union, Optional, cast
 from pathlib import Path
 from dataclasses import dataclass
-from collections.abc import Callable
-from typing import Union, Optional, cast
+from collections.abc import Callable, Generator
 
-import torch
 import numpy as np
+import torch
 import numpy.typing as npt
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from . import __version__
-from .chroma import AudioRGBGlow
 from .vc import clamp_vc_pitch_shift
-from .locks import ComponentLockLease
-from .typing.modes import BackendMode
-from .agent.runtime import AgentRuntime
-from .typing.backends import BackendModel
-from .extensions.base import CeluneContext
-from .agent.routing import AgentInputRouter
-from .agent.needle import NeedleToolSelector
-from .agent.persona import PersonaAgentBridge
-from .paths import project_root, temp_data_dir
-from .typing.pipeline import SpeechStreamQueue
-from .extensions.events import EventDispatcher
-from .typing.aliases import LogLevel, AudioChunk
-from .typing.common import JSON, JSONSerializable
-from .pipeline import (
-    say as say_pipeline,
-)
-from .typing.events import EventName, EventPayload
-from .persona.emotion import PersonaEmotionAnalyzer
-from .pipeline import (
-    play as play_pipeline,
-)
-from .constants import APP_NAME, NORMALIZER_MODEL_ID
-from .pipeline import (
-    close as close_pipeline,
-)
-from .pipeline import (
-    think as think_pipeline,
-)
-from .extensions.manager import CeluneExtensionManager
 from .i18n import string, set_locale, get_system_locale
-from .runtime import validate_runtime, log_runtime_banner
-from .pipeline import (
-    say_async as say_pipeline_async,
-)
-from .dataclasses.pipeline import AudioOutput, AudioInputRequest
-from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
-from .modeling import normalizer_device, load_normalizer_components
-from .pipeline import (
-    force_stop_speech as force_stop_pipeline,
-)
-from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
-from .config import Config, config_bool, config_value, normalize_log_level
-from .utils import discard, format_error, custom_assert, format_number, is_port_usable
-from .modes import (
-    OperationMode,
-    mode_allows_persona,
-    resolve_operation_mode,
-)
-from .dataclasses.properties import (
-    bind_constant_properties,
-    bind_forwarded_properties,
-)
-from .typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentLockRequirement,
-)
-from .exceptions import (
-    WarmupError,
-    BackendError,
-    NotAvailableError,
-    RuntimeCheckError,
-    NeedleSelectionError,
-)
-from .agent.tools import (
-    agent_test_tools,
-    production_agent_tools,
-    agent_test_tool_schemas,
-    production_agent_tool_schemas,
-)
 from .vram import (
     QWEN3_0_6B_MODEL,
     VramPreset,
@@ -101,34 +34,16 @@ from .vram import (
     resolve_backend_name,
     validate_vram_preset,
 )
-from .persona.impl import (
-    PersonaClient,
-    persona_enabled,
-    persona_model_id,
-    persona_is_available,
-    persona_quantization,
-    create_persona_client,
+from .locks import ComponentLockLease
+from .modes import (
+    OperationMode,
+    mode_allows_persona,
+    resolve_operation_mode,
 )
-from .dataclasses.events import (
-    ReadyEvent,
-    ShutdownEvent,
-    StateChangedEvent,
-    VoiceChangedEvent,
-    CharacterLoadedEvent,
-    CharacterChangedEvent,
-    CharacterUnloadedEvent,
-)
-from .dataclasses.celune import (
-    CELUNE_CONSTANT_PROPERTIES,
-    CELUNE_FORWARDED_PROPERTIES,
-    CeluneAudioState,
-    CeluneModelState,
-    CeluneVoiceState,
-    CeluneBackendState,
-    CeluneRuntimeState,
-    CeluneCallbackState,
-    CelunePipelineState,
-)
+from .paths import project_root, temp_data_dir, huggingface_progress
+from .utils import discard, format_error, custom_assert, format_number, is_port_usable
+from .chroma import AudioRGBGlow
+from .config import Config, config_bool, config_value, normalize_log_level
 from .cevoice import (
     CEVoicePersona,
     default_loader,
@@ -142,21 +57,22 @@ from .cevoice import (
     persona_metadata_from_manifest,
     bundle_matches_default_pack_checksum,
 )
-from .typing.celune import (
-    Generative,
-    VCBackendSpec,
-    TTSBackendSpec,
-    CaptionCallback,
-    CoreBackendSpec,
-    MessageCallback,
-    ProgressCallback,
-    ReleasableObject,
-    InputStateCallback,
-    NormalizerTokenizer,
-    CeluneStateAccessors,
-    CaptionTimingCallback,
-    VoiceLockStateCallback,
-    _BundleWithPath,
+from .runtime import validate_runtime, log_runtime_banner
+from .modeling import normalizer_device, load_normalizer_components
+from .pipeline import (
+    say as say_pipeline,
+)
+from .pipeline import (
+    play as play_pipeline,
+)
+from .pipeline import (
+    close as close_pipeline,
+)
+from .pipeline import (
+    think as think_pipeline,
+)
+from .pipeline import (
+    say_async as say_pipeline_async,
 )
 from .pipeline import (
     split_text,
@@ -175,6 +91,34 @@ from .pipeline import (
     stop_live_audio_input,
     deliver_persona_response,
     saved_output_speech_seconds,
+)
+from .pipeline import (
+    force_stop_speech as force_stop_pipeline,
+)
+from .constants import APP_NAME, NORMALIZER_MODEL_ID
+from .exceptions import (
+    WarmupError,
+    BackendError,
+    NotAvailableError,
+    RuntimeCheckError,
+    NeedleSelectionError,
+)
+from .agent.tools import (
+    agent_test_tools,
+    production_agent_tools,
+    agent_test_tool_schemas,
+    production_agent_tool_schemas,
+)
+from .backends.vc import VC_BACKENDS, CeluneVCBackend, resolve_vc_backend
+from .agent.needle import NeedleToolSelector
+from .backends.tts import BACKENDS, CeluneBackend, resolve_backend
+from .persona.impl import (
+    PersonaClient,
+    persona_enabled,
+    persona_model_id,
+    persona_is_available,
+    persona_quantization,
+    create_persona_client,
 )
 from .typing.agent import (
     ToolCall,
@@ -195,6 +139,65 @@ from .typing.agent import (
     AgentClassificationResult,
     AgentClassificationFailure,
     AgentClassificationFailureKind,
+)
+from .typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
+from .typing.modes import BackendMode
+from .agent.persona import PersonaAgentBridge
+from .agent.routing import AgentInputRouter
+from .agent.runtime import AgentRuntime
+from .typing.celune import (
+    Generative,
+    VCBackendSpec,
+    TTSBackendSpec,
+    CaptionCallback,
+    CoreBackendSpec,
+    MessageCallback,
+    ProgressCallback,
+    ReleasableObject,
+    InputStateCallback,
+    NormalizerTokenizer,
+    CeluneStateAccessors,
+    CaptionTimingCallback,
+    VoiceLockStateCallback,
+    _BundleWithPath,
+)
+from .typing.common import JSON, JSONSerializable
+from .typing.events import EventName, EventPayload
+from .typing.aliases import LogLevel, AudioChunk
+from .extensions.base import CeluneContext
+from .persona.emotion import PersonaEmotionAnalyzer
+from .typing.backends import BackendModel
+from .typing.pipeline import SpeechStreamQueue
+from .extensions.events import EventDispatcher
+from .dataclasses.celune import (
+    CELUNE_CONSTANT_PROPERTIES,
+    CELUNE_FORWARDED_PROPERTIES,
+    CeluneAudioState,
+    CeluneModelState,
+    CeluneVoiceState,
+    CeluneBackendState,
+    CeluneRuntimeState,
+    CeluneCallbackState,
+    CelunePipelineState,
+)
+from .dataclasses.events import (
+    ReadyEvent,
+    ShutdownEvent,
+    StateChangedEvent,
+    VoiceChangedEvent,
+    CharacterLoadedEvent,
+    CharacterChangedEvent,
+    CharacterUnloadedEvent,
+)
+from .extensions.manager import CeluneExtensionManager
+from .dataclasses.pipeline import AudioOutput, AudioInputRequest
+from .dataclasses.properties import (
+    bind_constant_properties,
+    bind_forwarded_properties,
 )
 
 
@@ -508,6 +511,7 @@ class Celune(CeluneStateAccessors):
         )
         self._audio_state = CeluneAudioState()
         self._runtime_state = CeluneRuntimeState()
+        self._reload_backend = None
         self._async_runtime_lock = threading.Lock()
         self._voice_reload_guard = threading.Lock()
         self._voice_reload_active = False
@@ -1147,18 +1151,19 @@ class Celune(CeluneStateAccessors):
         """Drain all pending items from a queue."""
         clear_queue(q)
 
-    def _acquire_model_loading_lease(
+    def _acquire_component_lease(
         self,
         operation_id: str,
+        component: ComponentLockName,
     ) -> tuple[bool, Optional[ComponentLockLease]]:
-        """Reserve the shared model lifecycle resource for one operation."""
+        """Reserve one component resource for an operation."""
         manager = getattr(self, "component_locks", None)
         if manager is None:
             return True, None
 
         owner = ComponentLockOwner(operation_id=operation_id)
         acquisition, lease = manager.try_acquire_lease(
-            (ComponentLockRequirement(ComponentLockName.MODEL_LOADING),),
+            (ComponentLockRequirement(component),),
             owner,
         )
         if lease is not None:
@@ -1170,6 +1175,16 @@ class Celune(CeluneStateAccessors):
             labels = ", ".join(component.name for component in busy.components)
             self.log(string("pipeline.busy_components", components=labels), "warning")
         return False, None
+
+    def _acquire_model_loading_lease(
+        self,
+        operation_id: str,
+    ) -> tuple[bool, Optional[ComponentLockLease]]:
+        """Reserve the shared model lifecycle resource for one operation."""
+        return self._acquire_component_lease(
+            operation_id,
+            ComponentLockName.MODEL_LOADING,
+        )
 
     def _persona_conn(self) -> Optional[PersonaClient]:
         """Return a connection to the Persona runtime, if available."""
@@ -1202,8 +1217,9 @@ class Celune(CeluneStateAccessors):
 
     def _load_persona_background(self, vision: PersonaClient) -> None:
         """Load Persona in the background and publish its ready state."""
-        acquired, component_lease = self._acquire_model_loading_lease(
-            f"persona-load:{id(vision)}"
+        acquired, component_lease = self._acquire_component_lease(
+            f"persona-load:{id(vision)}",
+            ComponentLockName.VLM,
         )
         if not acquired:
             with self._model_lock:
@@ -1211,14 +1227,16 @@ class Celune(CeluneStateAccessors):
                     self.persona_loading = False
             return
         try:
-            vision.load(
-                persona_model_id(self.config),
-                persona_quantization(self.config),
-            )
+            with huggingface_progress(self.progress_callback):
+                vision.load(
+                    persona_model_id(self.config),
+                    persona_quantization(self.config),
+                )
         except Exception as e:
             self.log(string("celune.persona_not_initialized"), "warning")
             self.log(string("celune.speech_only_mode"), "warning")
             self.log(format_error(e, self.log_level), "warning")
+            self.progress_callback(0, 1)
             with self._model_lock:
                 if self.vision is vision:
                     self.vision = None
@@ -1236,6 +1254,7 @@ class Celune(CeluneStateAccessors):
             else:
                 self.log(string("celune.persona_initialized"))
                 self.change_input_state_callback(locked=False)
+                self.progress_callback(1, 1)
         finally:
             with self._model_lock:
                 if self._persona_load_thread is threading.current_thread():
@@ -1387,12 +1406,15 @@ class Celune(CeluneStateAccessors):
     ) -> CeluneBackend:
         """Resolve one TTS backend using the configured process isolation mode."""
         if self._isolated_backends:
-            return resolve_backend(
+            backend = resolve_backend(
                 backend_spec,
                 isolated=True,
                 **backend_kwargs,
             )
-        return resolve_backend(backend_spec, **backend_kwargs)
+        else:
+            backend = resolve_backend(backend_spec, **backend_kwargs)
+        backend.bind_progress(self.progress_callback)
+        return backend
 
     def _recreate_vc_backend(self) -> bool:
         """Rebuild the VC backend from its original constructor recipe."""
@@ -1420,11 +1442,13 @@ class Celune(CeluneStateAccessors):
         log: Optional[MessageCallback] = None,
     ) -> CeluneVCBackend:
         """Resolve one VC backend using the configured process isolation mode."""
-        return resolve_vc_backend(
+        backend = resolve_vc_backend(
             backend_spec,
             log=log,
             isolated=self._isolated_backends,
         )
+        backend.bind_progress(self.progress_callback)
+        return backend
 
     def _restorable_vc_backend_spec(
         self,
@@ -1549,6 +1573,7 @@ class Celune(CeluneStateAccessors):
 
     def _rebuild_reload_snapshot_runtime(self, snapshot: _ReloadSnapshot) -> None:
         """Recreate the previous backend runtime from a rollback snapshot."""
+        _close_backend(snapshot.backend)
         restored_backend = self._resolve_tts_backend(
             snapshot.restorable_backend_spec,
             log=self.log_callback,
@@ -1576,6 +1601,8 @@ class Celune(CeluneStateAccessors):
         if snapshot.restorable_vc_backend_spec is None:
             return
 
+        if snapshot.vc_backend is not None:
+            _close_backend(snapshot.vc_backend)
         restored_vc_backend = self._resolve_vc_backend(
             snapshot.restorable_vc_backend_spec,
             log=self.log_callback,
@@ -1722,6 +1749,9 @@ class Celune(CeluneStateAccessors):
                     fatal=self.fatal,
                     **candidate_kwargs,
                 )
+                if not self._track_reload_backend(candidate_backend):
+                    _close_backend(candidate_backend)
+                    return False
                 candidate_backend.bind_fatal(self.fatal)
                 self._validate_backend_against_preset(candidate_backend, preset)
                 if candidate_backend.uses_voice_bundles:
@@ -1780,6 +1810,9 @@ class Celune(CeluneStateAccessors):
                     cast(VCBackendSpec, normalized_backend_spec),
                     log=self.log_callback,
                 )
+                if not self._track_reload_backend(candidate_vc_backend):
+                    _close_backend(candidate_vc_backend)
+                    return False
                 if hasattr(candidate_vc_backend, "pitch_shift"):
                     candidate_vc_backend.pitch_shift = self.vc_pitch_shift
                 if hasattr(candidate_vc_backend, "f0_condition"):
@@ -1837,6 +1870,12 @@ class Celune(CeluneStateAccessors):
                 string("celune.reload_error", error=format_error(e, self.log_level)),
                 "error",
             )
+            if self.exit_requested:
+                if candidate_backend is not None:
+                    _close_backend(candidate_backend)
+                if candidate_vc_backend is not None:
+                    _close_backend(candidate_vc_backend)
+                return False
             self.status_callback(string("status.restoring_backend"))
             self.progress_callback(None, None)
             if (
@@ -1844,7 +1883,7 @@ class Celune(CeluneStateAccessors):
                 and snapshot is not None
                 and candidate_backend is not snapshot.backend
             ):
-                _dispose_backend(candidate_backend)
+                _shutdown_backend(candidate_backend, release_cuda_cache=True)
             elif (
                 candidate_model is not None
                 and snapshot is not None
@@ -1856,36 +1895,82 @@ class Celune(CeluneStateAccessors):
                 and snapshot is not None
                 and candidate_vc_backend is not snapshot.vc_backend
             ):
-                _dispose_backend(candidate_vc_backend)
+                _shutdown_backend(candidate_vc_backend, release_cuda_cache=True)
+            rollback_succeeded = True
             if snapshot is not None:
-                if snapshot.input_mode == "voice_conversion":
-                    if (
-                        snapshot.loaded
-                        and snapshot.restorable_vc_backend_spec is not None
-                    ):
-                        self._rebuild_reload_snapshot_vc_runtime(snapshot)
+                try:
+                    if snapshot.input_mode == "voice_conversion":
+                        if (
+                            snapshot.loaded
+                            and snapshot.restorable_vc_backend_spec is not None
+                        ):
+                            self._rebuild_reload_snapshot_vc_runtime(snapshot)
+                        self._restore_reload_snapshot(snapshot)
+                    elif snapshot.backend.model is None and snapshot.loaded:
+                        self._rebuild_reload_snapshot_runtime(snapshot)
+                        self._restore_reload_snapshot(snapshot)
+                    else:
+                        self._restore_reload_snapshot(snapshot)
+                except Exception as restore_error:
+                    rollback_succeeded = False
+                    self.log(
+                        string(
+                            "celune.backend_restore_error",
+                            error=format_error(restore_error, self.log_level),
+                        ),
+                        "error",
+                    )
                     self._restore_reload_snapshot(snapshot)
-                elif snapshot.backend.model is None and snapshot.loaded:
-                    self._rebuild_reload_snapshot_runtime(snapshot)
-                    self._restore_reload_snapshot(snapshot)
-                else:
-                    self._restore_reload_snapshot(snapshot)
+                    self.model = None
+                    self.backend.model = None
+                    if self.input_mode == "voice_conversion":
+                        self.vc_backend = None
+                        self._vc_backend_spec = None
+                        self.voice_conversion_backend = ""
+                    self.loaded = False
+                    self.model_name = ""
+                    self.cur_state = "idle"
             else:
                 self.cur_state = "idle"
             self._last_warmup_error = None
             self.status_callback(string("status.idle"))
             self.progress_callback(1, 1)
-            self.log(
-                string("celune.backend_restore_failed"),
-                "warning",
-            )
+            if rollback_succeeded:
+                self.log(string("celune.backend_restore_failed"), "warning")
             return False
         finally:
+            self._clear_reload_backend(
+                candidate_backend
+                if candidate_backend is not None
+                else candidate_vc_backend
+            )
             self._reload_pending = False
             self._model_ready.set()
             self._last_component_busy = None
             self.change_input_state_callback(locked=False)
             self.change_voice_lock_state_callback(locked=len(self.voices) < 2)
+
+    def _track_reload_backend(
+        self,
+        backend: Union[CeluneBackend, CeluneVCBackend],
+    ) -> bool:
+        """Publish a reload candidate to shutdown before it performs work."""
+        with self._model_lock:
+            if self._closed:
+                return False
+            self._reload_backend = backend
+            return True
+
+    def _clear_reload_backend(
+        self,
+        backend: Optional[Union[CeluneBackend, CeluneVCBackend]],
+    ) -> None:
+        """Drop one reload candidate without clearing a newer candidate."""
+        if backend is None:
+            return
+        with self._model_lock:
+            if self._reload_backend is backend:
+                self._reload_backend = None
 
     def _hot_reload_cevoice(
         self,
@@ -2577,6 +2662,8 @@ class Celune(CeluneStateAccessors):
         backend_spec: CoreBackendSpec,
     ) -> bool:
         """Prepare runtime state for one backend reload before loading begins."""
+        if self._closed or self.exit_requested:
+            return False
         if self._reload_pending or self.cur_state == "reloading":
             self.log(string("celune.reload_already_in_progress"), "warning")
             return False
@@ -3497,7 +3584,10 @@ class Celune(CeluneStateAccessors):
             discard(loaded_llm)
             try:
                 loaded_tokenizer, loaded_llm = load_normalizer_components(
-                    self.log, self.backend, self.config
+                    self.log,
+                    self.backend,
+                    self.config,
+                    progress_callback=self.progress_callback,
                 )
                 with self._model_lock:
                     if (
@@ -3999,10 +4089,11 @@ class Celune(CeluneStateAccessors):
         if self._agent_needle_selector is not None:
             return self._agent_needle_selector
         try:
-            selector = NeedleToolSelector.from_pretrained(
-                self._agent_tools,
-                schemas=self._agent_tool_schemas,
-            )
+            with huggingface_progress(self.progress_callback):
+                selector = NeedleToolSelector.from_pretrained(
+                    self._agent_tools,
+                    schemas=self._agent_tool_schemas,
+                )
         except Exception as exc:
             self._agent_needle_error = str(exc)
             raise NeedleSelectionError(
@@ -4429,17 +4520,22 @@ class Celune(CeluneStateAccessors):
 
     def close(self) -> None:
         """Shut off Celune and release loaded runtime state."""
-        with self._async_runtime_lock:
-            self._exit_requested = True
+        self._exit_requested = True
+        with self._model_lock:
+            if self._closed:
+                return
+            self._closed = True
+
+        # Shutdown must not wait for the reload lock or for a backend response.
+        # Reload workers can be blocked in CEDTS while holding that lock, so
+        # abort them before entering any serialized cleanup path.
+        self._abort_backend_operations()
+        with self._shutdown_runtime_lock():
             self.log(
                 f"[ENGINE] close requested state={self.cur_state} loaded={self.loaded} "
                 f"sleeping={self.sleeping}",
                 loglevel="debug",
             )
-            with self._model_lock:
-                if self._closed:
-                    return
-                self._closed = True
             active_task = self.agent_runtime.get_active_task("default")
             if active_task is not None:
                 with contextlib.suppress(Exception):
@@ -4454,8 +4550,6 @@ class Celune(CeluneStateAccessors):
             self._emit_event("shutdown", ShutdownEvent(celune=self))
             try:
                 close_pipeline(self)
-                if self._pipeline_workers_active():
-                    self._abort_backend_operations()
                 wake_background_thread = self._wake_background_thread
                 if (
                     wake_background_thread is not None
@@ -4474,16 +4568,23 @@ class Celune(CeluneStateAccessors):
                 Celune._instance = None
                 self.log("[ENGINE] close complete", loglevel="debug")
 
-    def _pipeline_workers_active(self) -> bool:
-        """Return whether a bounded pipeline shutdown left work running."""
-        return any(
-            worker is not None and worker.is_alive()
-            for worker in (self.generation_thread, self.playback_thread)
-        )
+    @contextlib.contextmanager
+    def _shutdown_runtime_lock(self) -> Generator[None, None, None]:
+        """Run shutdown cleanup without waiting for a reload operation."""
+        acquired = self._async_runtime_lock.acquire(blocking=False)
+        try:
+            yield
+        finally:
+            if acquired:
+                self._async_runtime_lock.release()
 
     def _abort_backend_operations(self) -> None:
         """Abort backend-owned work before pipeline and model teardown begins."""
-        for backend in (self.backend, self.vc_backend):
+        seen: set[int] = set()
+        for backend in (self.backend, self.vc_backend, self._reload_backend):
+            if backend is None or id(backend) in seen:
+                continue
+            seen.add(id(backend))
             abort = getattr(backend, "abort", None)
             if callable(abort):
                 with contextlib.suppress(Exception):

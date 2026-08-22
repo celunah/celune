@@ -593,6 +593,42 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert engine.errors == ["Voice conversion backend is not configured."]
         assert engine.audio_queue.empty()
 
+    def test_handle_audio_input_normalizes_audio_before_vc_boundary(self) -> None:
+        """Verify VC requests cannot send non-finite or out-of-range samples."""
+        engine = make_pipeline_engine()
+        engine.input_mode = "voice_conversion"
+        engine.vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
+        engine.current_voice = "balanced"
+        engine.current_character = "Celune"
+        source_audio = np.array([np.nan, 2.0, -2.0, np.inf], dtype=np.float32)
+        convert_mock = mock.Mock(
+            return_value=SimpleNamespace(
+                audio=np.zeros(4, dtype=np.float32),
+                sample_rate=48000,
+                label="mic test",
+            )
+        )
+        engine.vc_backend.convert = convert_mock
+        loader = make_voice_loader("balanced", {"reference_text": "Pack reference."})
+
+        with (
+            mock.patch("celune.pipeline.default_loader", return_value=loader),
+            mock.patch("celune.pipeline.queue_sfx_audio", return_value=True),
+        ):
+            result = pipeline.handle_audio_input(
+                cast(Celune, engine),
+                AudioInputRequest(
+                    audio=source_audio,
+                    sample_rate=48000,
+                    label="mic test",
+                ),
+            )
+
+        assert result
+        request = convert_mock.call_args.args[0]
+        assert np.all(np.isfinite(request.source_audio))
+        assert float(np.max(np.abs(request.source_audio))) <= 0.95
+
     def test_handle_audio_input_applies_engine_vc_pitch_shift_to_output(
         self,
     ) -> None:
@@ -3777,3 +3813,30 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         holder = SimpleNamespace(stream=stream, _stream=stream, _current_sr=48000)
         pipeline.close_stream(cast(Celune, holder), abort=True)
         assert stream.aborted
+
+    def test_playback_write_is_serialized_with_stream_close(self) -> None:
+        """Verify stream teardown waits for an in-flight native audio write."""
+        engine = make_pipeline_engine()
+        stream = FakeStream()
+        engine.stream = stream
+        engine._stream = stream
+        audio = np.zeros((8, 2), dtype=np.float32)
+        write_finished = threading.Event()
+
+        def write_audio() -> None:
+            pipeline._write_playback_block(cast(Celune, engine), audio)
+            write_finished.set()
+
+        engine.stream_lock.acquire()
+        try:
+            writer = threading.Thread(target=write_audio)
+            writer.start()
+            assert not write_finished.wait(0.05)
+        finally:
+            engine.stream_lock.release()
+
+        writer.join(timeout=1)
+        assert not writer.is_alive()
+        assert write_finished.is_set()
+        assert len(stream.written) == 1
+        np.testing.assert_array_equal(stream.written[0], audio)

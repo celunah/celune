@@ -377,4 +377,9 @@ void launcher_report_failure(int return_code) {
     if (reason != NULL) {
         printfe("%s\n", reason);
     }
+
+    printfe("Exit code: %d\n", return_code);
+    if (return_code >= 128) {
+        printfe("Terminated by signal: %d\n", return_code - 128);
+    }
 }

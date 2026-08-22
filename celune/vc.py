@@ -24,6 +24,7 @@ VC_VAD_HANGOVER_SECONDS = 0.3
 VC_VAD_PREROLL_SECONDS = 0.18
 VC_LIVE_CHUNK_SECONDS = 0.18
 VC_LIVE_CHUNK_OVERLAP_SECONDS = 0.0
+_VC_AUDIO_PEAK = 0.95
 
 _LIVE_VAD_TARGET_SAMPLE_RATE = 16000
 _LIVE_VAD_FRAME_SAMPLES = 512
@@ -41,6 +42,7 @@ __all__ = [
     "LiveVoiceActivityDetector",
     "clamp_vc_pitch_shift",
     "create_live_voice_activity_detector",
+    "normalize_vc_audio",
     "vc_input_has_voice",
     "vc_input_rms",
     "vc_live_chunk_frames",
@@ -60,6 +62,30 @@ def clamp_vc_pitch_shift(value: int) -> int:
         int: The requested offset clamped to Celune's supported VC range.
     """
     return max(VC_PITCH_SHIFT_MIN, min(VC_PITCH_SHIFT_MAX, value))
+
+
+def normalize_vc_audio(audio: AudioChunk) -> AudioChunk:
+    """Return finite float32 audio safe for a CEDTS VC payload.
+
+    Args:
+        audio: Audio samples that will cross the voice-conversion boundary.
+
+    Returns:
+        AudioChunk: A finite float32 array with a small peak headroom margin.
+    """
+    normalized = np.nan_to_num(
+        np.asarray(audio, dtype=np.float32),
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
+    if normalized.size == 0:
+        return normalized
+
+    peak = float(np.max(np.abs(normalized)))
+    if peak > _VC_AUDIO_PEAK:
+        normalized = normalized * (_VC_AUDIO_PEAK / peak)
+    return np.asarray(normalized, dtype=np.float32)
 
 
 def vc_input_rms(audio: AudioChunk) -> float:

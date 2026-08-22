@@ -3,6 +3,8 @@
 
 from typing import Optional
 
+from .i18n import string
+
 
 class CeluneError(Exception):
     """General Celune exception."""
@@ -38,6 +40,91 @@ class BackendError(RuntimeError, CeluneError):
         super().__init__(message)
         self.error_code = error_code
         self.error_type = error_type
+
+
+class CEDTSError(RuntimeError, CeluneError):
+    """Base class for all CEDTS transport, protocol, and payload failures."""
+
+
+class CEDTSStreamError(OSError, CEDTSError):
+    """CEDTS could not read from or write to its transport stream."""
+
+
+class CEDTSEOFError(CEDTSStreamError):
+    """CEDTS reached the end of a stream before a packet was complete."""
+
+    def __init__(
+        self,
+        message: Optional[str] = None,
+        *,
+        packet_name: Optional[str] = None,
+    ) -> None:
+        """Initialize an unexpected-end-of-stream error."""
+        super().__init__(message or string("backends.cedts.unexpected_eof"))
+        self.packet_name = packet_name
+
+
+class CEDTSTimeoutError(TimeoutError, CEDTSError):
+    """CEDTS did not receive a packet before its deadline."""
+
+    def __init__(
+        self,
+        packet_name: str,
+        timeout_seconds: float,
+        *,
+        message: Optional[str] = None,
+    ) -> None:
+        """Initialize a timeout with the packet and deadline that expired."""
+        super().__init__(
+            message
+            or string(
+                "backends.cedts.packet_timed_out",
+                packet_name=packet_name,
+                timeout_seconds=f"{timeout_seconds:g}",
+            )
+        )
+        self.packet_name = packet_name
+        self.timeout_seconds = timeout_seconds
+
+
+class CEDTSProtocolError(CEDTSError):
+    """CEDTS received or produced an invalid control packet."""
+
+    def __init__(
+        self,
+        message: Optional[str] = None,
+        *,
+        packet_name: Optional[str] = None,
+    ) -> None:
+        """Initialize a protocol error with optional packet context."""
+        super().__init__(
+            message
+            or string(
+                "backends.cedts.invalid_packet",
+                packet_name=packet_name or "packet",
+            )
+        )
+        self.packet_name = packet_name
+
+
+class CEDTSPayloadError(CEDTSError):
+    """CEDTS received an invalid binary or typed payload descriptor."""
+
+    def __init__(
+        self,
+        message: Optional[str] = None,
+        *,
+        packet_name: Optional[str] = None,
+    ) -> None:
+        """Initialize a payload error with optional packet context."""
+        super().__init__(
+            message
+            or string(
+                "backends.cedts.invalid_binary_payload",
+                packet_name=packet_name or "packet",
+            )
+        )
+        self.packet_name = packet_name
 
 
 class WarmupError(RuntimeError, CeluneError):

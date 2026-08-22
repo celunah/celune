@@ -252,6 +252,7 @@ CELUNE_CSS = """
 
     #progress {
         width: 1fr;
+        padding-right: 1;
     }
 
     #progress > Bar {

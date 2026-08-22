@@ -3,24 +3,31 @@
 
 import json
 import struct
-from uuid import uuid4
-from pathlib import Path
 from math import isfinite
-from dataclasses import dataclass
+from uuid import uuid4
 from typing import IO, Optional, cast
+from pathlib import Path
+from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
 
 import numpy as np
 
 from ..i18n import string
+from ..exceptions import (
+    CEDTSError,
+    CEDTSEOFError,
+    CEDTSStreamError,
+    CEDTSPayloadError,
+    CEDTSProtocolError,
+)
 from ..typing.common import JSONSerializable
-from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
     WorkerControlMessage,
     WorkerPayloadDescriptor,
 )
+from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = [
     "CEDTS_VERSION",
@@ -31,7 +38,6 @@ __all__ = [
     "WORKER_CAPABILITIES",
     "CEDTSLimits",
     "WorkerPayload",
-    "WorkerProtocolError",
     "build_packet",
     "decode_message",
     "encode_message",
@@ -84,6 +90,7 @@ _AUDIO_MEDIA_TYPES = frozenset(
         "audio/pcm_s16le",
     }
 )
+_CEDTS_AUDIO_PEAK = np.float32(0.95)
 _TENSOR_MEDIA_TYPES = frozenset({"application/x-tensor"})
 _VALID_DTYPES = frozenset({"bool", "float32", "float64", "int8", "int16", "uint8"})
 CEDTS_VERSION = 1
@@ -180,6 +187,17 @@ _DESCRIPTOR_FIELDS = frozenset(
         "shape",
     }
 )
+_PAYLOAD_ERROR_PREFIXES = (
+    "aggregate_",
+    "audio_payload_",
+    "backend_worker_payload_",
+    "binary_",
+    "numpy_payload_",
+    "received_binary_payload_",
+    "too_many_binary_payload",
+    "typed_",
+    "unsupported_numpy_",
+)
 
 
 @dataclass(frozen=True)
@@ -230,13 +248,25 @@ def limits_from_capabilities(
     return CEDTSLimits(**values)
 
 
-class WorkerProtocolError(RuntimeError):
-    """Raised when a backend worker sends invalid CEDTS data."""
+def _worker_protocol_error(key: str, **kwargs: str) -> CEDTSError:
+    """Create a localized, typed CEDTS validation error."""
+    message = string(f"backends.worker_protocol.{key}", **kwargs)
+    if key.startswith(_PAYLOAD_ERROR_PREFIXES):
+        return CEDTSPayloadError(message)
+    return CEDTSProtocolError(message)
 
 
-def _worker_protocol_error(key: str, **kwargs: str) -> WorkerProtocolError:
-    """Create a localized protocol validation error."""
-    return WorkerProtocolError(string(f"backends.worker_protocol.{key}", **kwargs))
+def _cedts_stream_error(
+    direction: str,
+    error: BaseException,
+) -> CEDTSStreamError:
+    """Create a localized CEDTS stream error while retaining its cause."""
+    return CEDTSStreamError(
+        string(
+            f"backends.cedts.stream_{direction}_failed",
+            error=str(error),
+        )
+    )
 
 
 def build_packet(
@@ -522,9 +552,14 @@ def send_message(
         ) from error
     if len(payload) > limits.max_control_frame_size:
         raise _worker_protocol_error("backend_worker_control_frame_is_too_large")
-    stream.write(_FRAME_HEADER.pack(len(payload)))
-    stream.write(payload)
-    stream.flush()
+    try:
+        stream.write(_FRAME_HEADER.pack(len(payload)))
+        stream.write(payload)
+        stream.flush()
+    except (OSError, ValueError) as error:
+        if isinstance(error, CEDTSError):
+            raise
+        raise _cedts_stream_error("write", error) from error
 
 
 def receive_message(
@@ -585,21 +620,26 @@ def send_payloads(
         total += len(payload.data)
         if total > limits.max_aggregate_payload_size:
             raise _worker_protocol_error("aggregate_binary_payload_is_too_large")
-    for payload in payloads:
-        payload_id = payload.descriptor["id"].encode("utf-8")
-        frame_size = _BINARY_HEADER.size + len(payload_id) + len(payload.data)
-        if frame_size > limits.max_binary_frame_size:
-            raise _worker_protocol_error("binary_payload_frame_is_too_large")
-        stream.write(_FRAME_HEADER.pack(frame_size))
-        stream.write(_BINARY_HEADER.pack(len(payload_id), len(payload.data)))
-        stream.write(payload_id)
-        stream.write(payload.data)
+    try:
+        for payload in payloads:
+            payload_id = payload.descriptor["id"].encode("utf-8")
+            frame_size = _BINARY_HEADER.size + len(payload_id) + len(payload.data)
+            if frame_size > limits.max_binary_frame_size:
+                raise _worker_protocol_error("binary_payload_frame_is_too_large")
+            stream.write(_FRAME_HEADER.pack(frame_size))
+            stream.write(_BINARY_HEADER.pack(len(payload_id), len(payload.data)))
+            stream.write(payload_id)
+            stream.write(payload.data)
+            stream.flush()
+        # A zero-sized frame is the mandatory boundary for this control packet.
+        # It lets the receiver distinguish an intentional no-payload message from
+        # an undeclared frame on the separate binary channel.
+        stream.write(_FRAME_HEADER.pack(0))
         stream.flush()
-    # A zero-sized frame is the mandatory boundary for this control packet.
-    # It lets the receiver distinguish an intentional no-payload message from
-    # an undeclared frame on the separate binary channel.
-    stream.write(_FRAME_HEADER.pack(0))
-    stream.flush()
+    except (OSError, ValueError) as error:
+        if isinstance(error, CEDTSError):
+            raise
+        raise _cedts_stream_error("write", error) from error
 
 
 def receive_payloads(
@@ -870,6 +910,18 @@ def _encode_audio(
         channels=audio.shape[-1] if audio.ndim == 2 else 1,
     )
     array = np.ascontiguousarray(audio)
+    if dtype == "float32":
+        array = np.nan_to_num(
+            array,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
+        if array.size:
+            peak = np.max(np.abs(array))
+            if peak > _CEDTS_AUDIO_PEAK:
+                array = np.asarray(array * (_CEDTS_AUDIO_PEAK / peak), dtype=np.float32)
+
     return builder.add(
         array.tobytes(order="C"),
         media_type=media_type,
@@ -1566,9 +1618,14 @@ def _read_exact(stream: IO[bytes], size: int) -> bytes:
     chunks: list[bytes] = []
     remaining = size
     while remaining:
-        chunk = stream.read(remaining)
+        try:
+            chunk = stream.read(remaining)
+        except EOFError as error:
+            raise CEDTSEOFError() from error
+        except (OSError, ValueError) as error:
+            raise _cedts_stream_error("read", error) from error
         if not chunk:
-            raise _worker_protocol_error("backend_worker_closed_its_protocol_stream")
+            raise CEDTSEOFError()
         chunks.append(chunk)
         remaining -= len(chunk)
     return b"".join(chunks)

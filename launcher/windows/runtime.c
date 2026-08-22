@@ -11,6 +11,29 @@
 
 static int launcher_child_failed = 0;
 
+static const char *windows_exit_detail(DWORD exit_code) {
+    switch (exit_code) {
+        case 0xC0000005UL:
+            return "access violation";
+        case 0xC0000006UL:
+            return "in-page error";
+        case 0xC000001DUL:
+            return "illegal instruction";
+        case 0xC0000094UL:
+            return "integer divide by zero";
+        case 0xC0000135UL:
+            return "required DLL was not found";
+        case 0xC0000139UL:
+            return "entry point was not found in a required DLL";
+        case 0xC0000374UL:
+            return "heap corruption";
+        case 0xC0000409UL:
+            return "stack buffer overrun";
+        default:
+            return NULL;
+    }
+}
+
 static HANDLE create_launcher_pipe(char *name, size_t size) {
     int written = snprintf(
         name,
@@ -557,5 +580,17 @@ void launcher_report_failure(int return_code) {
     const char *reason = launcher_exit_reason(return_code);
     if (reason != NULL) {
         printfe("%s\n", reason);
+    }
+
+    DWORD exit_code = (DWORD)return_code;
+    printfe(
+        "Exit code: 0x%08lX (%lu)\n",
+        (unsigned long)exit_code,
+        (unsigned long)exit_code
+    );
+
+    const char *detail = windows_exit_detail(exit_code);
+    if (detail != NULL) {
+        printfe("Windows exception: %s.\n", detail);
     }
 }

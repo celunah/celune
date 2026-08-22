@@ -5,6 +5,7 @@ import pathlib
 import warnings
 import contextlib
 from pathlib import Path
+from collections.abc import Callable
 from typing import Optional, cast
 
 import torch
@@ -19,6 +20,7 @@ from matplotlib import rcParams, font_manager
 from transformers import AutoModel, AutoProcessor
 
 from .i18n import string
+from .paths import huggingface_progress
 from .typing.aliases import AudioChunk
 from .cevoice import ManifestValue, default_loader
 from .constants import (
@@ -349,28 +351,33 @@ def _available_reference_voices() -> list[str]:
     )
 
 
-def _load_embedding_model() -> tuple[EmbeddingProcessor, EmbeddingModel]:
+def _load_embedding_model(
+    progress_callback: Optional[
+        Callable[[Optional[float], Optional[float]], None]
+    ] = None,
+) -> tuple[EmbeddingProcessor, EmbeddingModel]:
     """Load and cache the Qwen3 speaker embedding processor/model."""
     global _EMBEDDING_MODEL, _EMBEDDING_PROCESSOR
 
     if _EMBEDDING_MODEL is None or _EMBEDDING_PROCESSOR is None:
         revision = remote_code_model_revision(VOICE_EMBEDDING_MODEL)
-        _EMBEDDING_PROCESSOR = cast(
-            EmbeddingProcessor,
-            AutoProcessor.from_pretrained(
-                VOICE_EMBEDDING_MODEL,
-                trust_remote_code=True,
-                revision=revision,
-            ),
-        )
-        _EMBEDDING_MODEL = cast(
-            EmbeddingModel,
-            AutoModel.from_pretrained(
-                VOICE_EMBEDDING_MODEL,
-                trust_remote_code=True,
-                revision=revision,
-            ),
-        )
+        with huggingface_progress(progress_callback):
+            _EMBEDDING_PROCESSOR = cast(
+                EmbeddingProcessor,
+                AutoProcessor.from_pretrained(
+                    VOICE_EMBEDDING_MODEL,
+                    trust_remote_code=True,
+                    revision=revision,
+                ),
+            )
+            _EMBEDDING_MODEL = cast(
+                EmbeddingModel,
+                AutoModel.from_pretrained(
+                    VOICE_EMBEDDING_MODEL,
+                    trust_remote_code=True,
+                    revision=revision,
+                ),
+            )
         _EMBEDDING_MODEL.eval()
         with contextlib.suppress(AttributeError):
             _EMBEDDING_MODEL.to(torch.device("cpu"))
@@ -381,9 +388,12 @@ def _load_embedding_model() -> tuple[EmbeddingProcessor, EmbeddingModel]:
 def _compute_qwen3_embedding(
     y: npt.NDArray[np.float32],
     sr: int,
+    progress_callback: Optional[
+        Callable[[Optional[float], Optional[float]], None]
+    ] = None,
 ) -> npt.NDArray[np.float32]:
     """Compute a Qwen3 ECAPA-TDNN speaker embedding for a mono waveform."""
-    processor, model = _load_embedding_model()
+    processor, model = _load_embedding_model(progress_callback)
     inputs = processor(y, sampling_rate=sr)
     inputs = {
         key: value.to("cpu") if isinstance(value, torch.Tensor) else value
@@ -434,6 +444,9 @@ def add_reference_similarity_metrics(
     y: npt.NDArray[np.float32],
     sr: int,
     reference_voice: Optional[str],
+    progress_callback: Optional[
+        Callable[[Optional[float], Optional[float]], None]
+    ] = None,
 ) -> None:
     """Add Qwen3 speaker embedding similarity metrics when possible.
 
@@ -442,13 +455,14 @@ def add_reference_similarity_metrics(
         y: The NumPy array of the voice.
         sr: The sample rete of the voice.
         reference_voice: The reference voice to check against.
+        progress_callback: Callback receiving Hugging Face transfer progress.
     """
     if not reference_voice:
         return
 
     metrics["reference_voice"] = reference_voice
     try:
-        generated_embedding = _compute_qwen3_embedding(y, sr)
+        generated_embedding = _compute_qwen3_embedding(y, sr, progress_callback)
         reference_embedding = _load_reference_embedding(reference_voice)
         cosine, percent = _cosine_similarity_percent(
             generated_embedding,
@@ -1016,13 +1030,22 @@ def _analyze_voice_data(
     out_dir: pathlib.Path,
     stem: str,
     reference_voice: Optional[str] = None,
+    progress_callback: Optional[
+        Callable[[Optional[float], Optional[float]], None]
+    ] = None,
 ) -> None:
     """Analyze voice audio and write report artifacts."""
     radar_path = out_dir / f"{stem}_radar.png"
     report_path = out_dir / f"{stem}_report.txt"
 
     metrics = compute_raw_metrics(y, sr)
-    add_reference_similarity_metrics(metrics, y, sr, reference_voice)
+    add_reference_similarity_metrics(
+        metrics,
+        y,
+        sr,
+        reference_voice,
+        progress_callback,
+    )
     traits = compute_traits(metrics)
     assessment = generate_assessment(metrics, traits)
     plot_radar(traits, voice.name, radar_path, metrics)
@@ -1036,6 +1059,9 @@ def analyze_voice_audio(
     out_dir: pathlib.Path,
     stem: str,
     reference_voice: Optional[str] = None,
+    progress_callback: Optional[
+        Callable[[Optional[float], Optional[float]], None]
+    ] = None,
 ) -> None:
     """Analyze in-memory voice audio without any saved SFX prefix.
 
@@ -1046,6 +1072,7 @@ def analyze_voice_audio(
         out_dir: Directory where report artifacts should be written.
         stem: File stem to use for report artifacts.
         reference_voice: Optional voice whose reference embedding should be compared with the analyzed audio.
+        progress_callback: Callback receiving Hugging Face transfer progress.
     """
     y = np.asarray(audio, dtype=np.float32)
     if y.ndim == 2:
@@ -1058,6 +1085,7 @@ def analyze_voice_audio(
         out_dir,
         stem,
         reference_voice,
+        progress_callback,
     )
 
 

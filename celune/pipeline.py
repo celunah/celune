@@ -133,6 +133,7 @@ from .persona.impl import (
     persona_active_character_name,
     persona_debug_overrides_enabled,
 )
+from .vc import normalize_vc_audio
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -537,6 +538,17 @@ def close_stream(engine: Celune, abort: bool = False) -> None:
         engine: The Celune engine that owns the audio stream.
         abort: Whether to abort immediately instead of stopping gracefully.
     """
+    stream_lock = getattr(engine, "stream_lock", None)
+    if stream_lock is None:
+        _close_stream_unlocked(engine, abort)
+        return
+
+    with stream_lock:
+        _close_stream_unlocked(engine, abort)
+
+
+def _close_stream_unlocked(engine: Celune, abort: bool = False) -> None:
+    """Close the audio stream while the stream lifecycle lock is held."""
     if engine.stream is None:
         return
 
@@ -551,6 +563,25 @@ def close_stream(engine: Celune, abort: bool = False) -> None:
 
     engine._stream = None
     engine._current_sr = None
+
+
+def _write_playback_block(engine: Celune, audio: AudioChunk) -> None:
+    """Write one playback block while serialized against stream teardown."""
+    stream_lock = getattr(engine, "stream_lock", None)
+    if stream_lock is None:
+        _write_playback_block_unlocked(engine, audio)
+        return
+
+    with stream_lock:
+        _write_playback_block_unlocked(engine, audio)
+
+
+def _write_playback_block_unlocked(engine: Celune, audio: AudioChunk) -> None:
+    """Write one playback block while the stream lifecycle lock is held."""
+    stream = engine.stream
+    if stream is None:
+        raise NotAvailableError("audio stream is not available")
+    stream.write(audio)
 
 
 def _reset_glow_audio_reactivity(engine: Celune) -> None:
@@ -2465,7 +2496,7 @@ def convert_audio_input(
                 target_references = ()
 
     conversion_request = VoiceConversionRequest(
-        source_audio=np.asarray(request.audio, dtype=np.float32),
+        source_audio=normalize_vc_audio(request.audio),
         sample_rate=request.sample_rate,
         target_voice=getattr(engine, "current_voice", None),
         target_character=getattr(engine, "current_character", None),
@@ -3813,6 +3844,16 @@ def _playback_blocks(
 
 def _ensure_playback_stream(engine: Celune, sample_rate: int) -> bool:
     """Ensure the shared playback stream exists for the requested sample rate."""
+    stream_lock = getattr(engine, "stream_lock", None)
+    if stream_lock is None:
+        return _ensure_playback_stream_unlocked(engine, sample_rate)
+
+    with stream_lock:
+        return _ensure_playback_stream_unlocked(engine, sample_rate)
+
+
+def _ensure_playback_stream_unlocked(engine: Celune, sample_rate: int) -> bool:
+    """Ensure the playback stream exists while its lifecycle lock is held."""
     if engine.stream is not None and getattr(engine, "current_sr", None) == sample_rate:
         return True
 
@@ -4191,12 +4232,9 @@ async def playback_worker_job(engine: Celune) -> None:
                 if engine.utterance_force_stop.is_set():
                     await force_stop_playback()
                     break
-                stream = engine.stream
-                if stream is None:
-                    raise NotAvailableError("audio stream is not available")
                 log_first_playback(engine, timing_to_log)
                 engine.glow.schedule(mixed)
-                await asyncio.to_thread(stream.write, mixed)
+                await asyncio.to_thread(_write_playback_block, engine, mixed)
                 _update_playback_progress(engine, source_buffers)
             except Exception as e:
                 engine.log(

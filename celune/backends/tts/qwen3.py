@@ -12,6 +12,7 @@ from faster_qwen3_tts import __version__ as qwen3_ver
 from ...utils import custom_assert
 from ...typing.aliases import AudioChunk
 from ...cevoice import CEVoiceLoader, default_loader
+from ...paths import configure_numba_cache, huggingface_progress
 from .base import CeluneBackend, local_hf_offline_mode, cached_hf_snapshot_path
 
 
@@ -124,6 +125,12 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
 
         return self.clone_model_id
 
+    def prepare_model_loading(self) -> None:
+        """Import Qwen's lazy model dependencies before request execution."""
+        from qwen_tts import Qwen3TTSModel
+
+        del Qwen3TTSModel
+
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
     ) -> tuple[bool, Optional[str]]:
@@ -157,14 +164,16 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
             FasterQwen3TTS: The loaded Qwen3 TTS model instance.
         """
         available, path = self.model_is_available_locally(model_id)
+        configure_numba_cache()
 
         if available and path is not None:
-            with local_hf_offline_mode():
+            with local_hf_offline_mode(), huggingface_progress(self.report_progress):
                 self.model = FasterQwen3TTS.from_pretrained(path)
             return self.model
 
         self.log("Downloading TTS model...", "info")
-        self.model = FasterQwen3TTS.from_pretrained(model_id)
+        with huggingface_progress(self.report_progress):
+            self.model = FasterQwen3TTS.from_pretrained(model_id)
         return self.model
 
     def generate_stream(

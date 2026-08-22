@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Callable
 from typing import TYPE_CHECKING, Union, Optional, cast
 
 import torch
 import numpy as np
 
 from ..dsp import resample_audio
+from ..paths import huggingface_progress
 from ..typing.aliases import AudioChunk
 from ..typing.persona import (
     WhisperScalar,
@@ -56,7 +57,14 @@ class WhisperSegment:
 class WhisperTranscriber:
     """Lazily load and run one configurable Hugging Face Whisper model."""
 
-    def __init__(self, model_id: str, language: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        model_id: str,
+        language: Optional[str] = None,
+        progress_callback: Optional[
+            Callable[[Optional[float], Optional[float]], None]
+        ] = None,
+    ) -> None:
         self.model_id = model_id.strip() or DEFAULT_PERSONA_SPEECH_MODEL_ID
         self.language = language.strip() if language and language.strip() else None
         self._processor: Optional[_WhisperProcessor] = None
@@ -65,6 +73,7 @@ class WhisperTranscriber:
         self._dtype: Optional[DType] = None
         self._is_multilingual = True
         self._load_lock = threading.Lock()
+        self._progress_callback = progress_callback
 
     def _load_model(self) -> None:
         """Load the configured Whisper processor and model once."""
@@ -87,23 +96,24 @@ class WhisperTranscriber:
             bnb_config = BitsAndBytesConfig(
                 load_in_8bit=True,
             )
-            model = cast(
-                _WhisperModel,
-                AutoModelForSpeechSeq2Seq.from_pretrained(
-                    self.model_id,
-                    dtype=torch.bfloat16,
-                    low_cpu_mem_usage=True,
-                    quantization_config=bnb_config,
-                    device_map="auto",
-                ),
-            )
+            with huggingface_progress(self._progress_callback):
+                model = cast(
+                    _WhisperModel,
+                    AutoModelForSpeechSeq2Seq.from_pretrained(
+                        self.model_id,
+                        dtype=torch.bfloat16,
+                        low_cpu_mem_usage=True,
+                        quantization_config=bnb_config,
+                        device_map="auto",
+                    ),
+                )
+                self._processor = cast(
+                    _WhisperProcessor, AutoProcessor.from_pretrained(self.model_id)
+                )
             model.eval()
             generation_config = getattr(model, "generation_config", None)
             self._is_multilingual = bool(
                 getattr(generation_config, "is_multilingual", True)
-            )
-            self._processor = cast(
-                _WhisperProcessor, AutoProcessor.from_pretrained(self.model_id)
             )
             self._model = model
             self._device = next(model.parameters()).device

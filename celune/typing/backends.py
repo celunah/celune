@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Iterator
 from typing import TYPE_CHECKING, TypeVar, Optional, Protocol, TypedDict
+from collections.abc import Mapping, Callable, Iterator
 
-import torch
 import numpy as np
+import torch
 
-from .aliases import AudioChunk
 from .common import JSON, JSONSerializable
+from .aliases import AudioChunk
 
 if TYPE_CHECKING:
     from .aliases import RuntimeValue, SeedVCArgument, SeedVCGenerator
@@ -135,6 +135,17 @@ class _BackendRuntime(Protocol):  # noqa: PYI046
     """Runtime method surface used by the generic worker loop."""
 
     model: Optional[BackendModel]
+
+    def bind_progress(
+        self,
+        progress: Optional[Callable[[Optional[float], Optional[float]], None]],
+    ) -> None:
+        """Bind Celune's loading progress callback."""
+
+    def report_progress(
+        self, progress: Optional[float], total: Optional[float] = None
+    ) -> None:
+        """Report backend-owned loading progress."""
 
     def model_is_available_locally(
         self,

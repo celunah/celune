@@ -28,6 +28,7 @@ from celune.paths import (
     migrate_legacy_app_data,
     backend_environments_dir,
     huggingface_hub_cache_dir,
+    huggingface_progress,
     configure_huggingface_runtime,
     configure_huggingface_cache_environment,
 )
@@ -225,6 +226,36 @@ class TestRuntimePath(CeluneTestCase):
 
         disable_transformers.assert_called_once_with()
         disable_hub.assert_called_once_with()
+
+    def test_huggingface_progress_forwards_disabled_transfer_updates(self) -> None:
+        """Verify quiet Hugging Face bars still update Celune's progress callback."""
+        from huggingface_hub import _snapshot_download, file_download
+
+        callback = mock.Mock()
+        previous_tqdm = file_download.tqdm
+        previous_hf_tqdm = _snapshot_download.hf_tqdm
+        with huggingface_progress(callback):
+            progress_bar = file_download.tqdm(
+                total=100,
+                initial=0,
+                desc="model.safetensors",
+                disable=True,
+            )
+            progress_bar.update(25)
+            progress_bar.close()
+            aggregate_bar = _snapshot_download.hf_tqdm(
+                total=200,
+                initial=0,
+                desc="aggregate",
+                disable=True,
+            )
+            aggregate_bar.update(50)
+            aggregate_bar.close()
+
+        assert file_download.tqdm is previous_tqdm
+        assert _snapshot_download.hf_tqdm is previous_hf_tqdm
+        callback.assert_any_call(25.0, 100.0)
+        callback.assert_any_call(50.0, 200.0)
 
     def test_format_error_writes_traceback_to_runtime_directory(self) -> None:
         """Verify developer tracebacks are saved via the runtime path helper.

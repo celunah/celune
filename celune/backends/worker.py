@@ -4,25 +4,26 @@
 import os
 import sys
 import json
+import math
+import time
 import argparse
 import threading
 import traceback
+from typing import IO, Optional, cast
 from contextlib import suppress
 from collections import OrderedDict
 from collections.abc import Mapping, Callable
-from typing import IO, Optional, cast
 
 from ..i18n import string
-from ..typing.aliases import LogLevel
-from ..typing.common import JSONSerializable
-from ..dataclasses.pipeline import VoiceConversionRequest
-from .environment import BackendManifest, backend_manifest
-from ..typing.backends import (
-    BackendModel,
-    BackendArguments,
-    BackendDescription,
-    _BackendRuntime,
+from ..exceptions import (
+    CEDTSError,
+    CEDTSEOFError,
+    CEDTSStreamError,
+    CEDTSPayloadError,
+    CEDTSProtocolError,
 )
+from .environment import BackendManifest, backend_manifest
+from ..typing.common import JSONSerializable
 from ..typing.worker import (
     WorkerValue,
     WorkerMessage,
@@ -30,13 +31,13 @@ from ..typing.worker import (
     WorkerResponse,
     WorkerPayloadDescriptor,
 )
+from ..typing.aliases import LogLevel
 from .worker_protocol import (
     CEDTS_VERSION,
     WORKER_CAPABILITIES,
     DEFAULT_CEDTS_LIMITS,
     SUPPORTED_OPERATIONS,
     CEDTSLimits,
-    WorkerProtocolError,
     build_packet,
     send_message,
     send_payloads,
@@ -46,6 +47,14 @@ from .worker_protocol import (
     receive_payloads,
     limits_from_capabilities,
 )
+from ..typing.backends import (
+    BackendModel,
+    BackendArguments,
+    BackendDescription,
+    _BackendRuntime,
+)
+from ..dataclasses.pipeline import VoiceConversionRequest
+from ..paths import configure_numba_cache
 
 _WORKER_STDERR = sys.stderr
 # Retain recent packet IDs to reject replayed packets without growing state for
@@ -66,9 +75,12 @@ _SHUTDOWN_FINISH_TIMEOUT_SECONDS = 5.0
 _SHUTDOWN_CANCEL_TIMEOUT_SECONDS = 5.0
 
 
-def _worker_protocol_error(key: str, **kwargs: str) -> WorkerProtocolError:
-    """Create a localized worker protocol error."""
-    return WorkerProtocolError(string(f"backends.worker_runtime.{key}", **kwargs))
+def _worker_protocol_error(key: str, **kwargs: str) -> CEDTSError:
+    """Create a localized, typed worker CEDTS error."""
+    message = string(f"backends.worker_runtime.{key}", **kwargs)
+    if key == "worker_payload_descriptors_are_invalid":
+        return CEDTSPayloadError(message)
+    return CEDTSProtocolError(message)
 
 
 def _remember_message_id(
@@ -224,7 +236,7 @@ def _load_backend(
     try:
         expected_kind, constructor_loader = _BACKEND_REGISTRY[manifest.backend_id]
     except KeyError as error:
-        raise WorkerProtocolError(
+        raise CEDTSProtocolError(
             string(
                 "celune.unknown_backend",
                 backend=manifest.backend_id,
@@ -761,7 +773,7 @@ def main() -> int:
         hello_id = cast(str, hello["message_id"])
         negotiated_capabilities = _negotiate_hello(hello)
         effective_limits = limits_from_capabilities(negotiated_capabilities)
-    except (EOFError, BrokenPipeError):
+    except (CEDTSEOFError, CEDTSStreamError, BrokenPipeError):
         return 0
     except Exception as error:
         _send_error(
@@ -794,7 +806,11 @@ def main() -> int:
         limits=effective_limits,
     )
     try:
+        configure_numba_cache()
         backend = _load_backend(manifest, _worker_log, _worker_fatal, backend_kwargs)
+        prepare_model_loading = getattr(backend, "prepare_model_loading", None)
+        if callable(prepare_model_loading):
+            prepare_model_loading()
     except Exception as error:
         _send_error(
             protocol_stream,
@@ -828,6 +844,65 @@ def main() -> int:
     active_request_terminal = False
     active_thread: Optional[threading.Thread] = None
     shutting_down = False
+    last_progress_at = 0.0
+
+    def _backend_progress(
+        progress: Optional[float], total: Optional[float] = None
+    ) -> None:
+        """Forward throttled backend progress through the active CEDTS request."""
+        nonlocal last_progress_at
+        with active_request_lock:
+            request_id = active_request_id
+            operation = active_request_operation
+        if request_id is None or operation is None:
+            return
+
+        if progress is None:
+            step = 0
+        elif isinstance(progress, (int, float)) and not isinstance(progress, bool):
+            if not math.isfinite(float(progress)):
+                return
+            step = max(0, int(progress))
+        else:
+            return
+
+        total_value: Optional[int]
+        if total is None:
+            total_value = None
+        elif isinstance(total, (int, float)) and not isinstance(total, bool):
+            if not math.isfinite(float(total)) or total <= 0:
+                total_value = None
+            else:
+                total_value = max(1, int(total))
+                step = min(step, total_value)
+        else:
+            return
+
+        now = time.monotonic()
+        complete = total_value is not None and step >= total_value
+        if not complete and now - last_progress_at < 0.1:
+            return
+        last_progress_at = now
+        data: dict[str, WorkerValue] = {"step": step}
+        if total_value is not None:
+            data["total"] = total_value
+        with suppress(BrokenPipeError, CEDTSError, OSError):
+            _send_message(
+                protocol_stream,
+                binary_output,
+                build_packet(
+                    "progress",
+                    operation,
+                    data,
+                    reply_to=request_id,
+                ),
+                send_lock,
+                limits=effective_limits,
+            )
+
+    bind_progress = getattr(backend, "bind_progress", None)
+    if callable(bind_progress):
+        bind_progress(_backend_progress)
 
     def _close_worker_streams() -> None:
         """Close both CEDTS channels after the worker has sent its final packet."""
@@ -923,7 +998,7 @@ def main() -> int:
     while True:
         try:
             control, decoded = _receive_packet()
-        except (EOFError, BrokenPipeError):
+        except (CEDTSEOFError, CEDTSStreamError, BrokenPipeError):
             return 0
         except Exception as error:
             print(str(error), file=_WORKER_STDERR)
@@ -1154,6 +1229,7 @@ def main() -> int:
             active_cancel_event = cancel_event
             active_request_terminal = False
             active_thread = request_thread
+            last_progress_at = 0.0
         request_thread.start()
         continue
 

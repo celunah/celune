@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Normalizer loading helpers for Celune."""
 
-from typing import Union, Optional
-from collections.abc import Mapping, Callable
+from collections.abc import Callable, Mapping
+from typing import Optional, Union
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
@@ -10,6 +10,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from .i18n import string
+from .paths import huggingface_progress
 from .vram import resolve_vram_preset
 from .backends.tts import CeluneBackend
 from .constants import NORMALIZER_MODEL_ID
@@ -39,6 +40,9 @@ def load_normalizer_components(
     log: Callable[[str, str], None],
     backend: Union[CeluneBackend, type[CeluneBackend]],
     config: Optional[Mapping[str, JSONSerializable]] = None,
+    progress_callback: Optional[
+        Callable[[Optional[float], Optional[float]], None]
+    ] = None,
 ) -> tuple[PreTrainedTokenizerBase, PreTrainedModel]:
     """Load CeluneNorm and return its tokenizer and model.
 
@@ -46,6 +50,7 @@ def load_normalizer_components(
         log: Logging callback used to report cache and loading progress.
         backend: Backend type or instance used to resolve model cache helpers.
         config: Celune configuration used to resolve the target device.
+        progress_callback: Callback receiving Hugging Face transfer progress.
 
     Returns:
         tuple[PreTrainedTokenizerBase, PreTrainedModel]: The loaded tokenizer and causal language model.
@@ -61,19 +66,20 @@ def load_normalizer_components(
     if available:
         log("Normalizer is already available in cache", "info")
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_ref, extra_special_tokens=list(NORMALIZER_SPECIAL_TOKENS)
-    )
+    with huggingface_progress(progress_callback):
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_ref, extra_special_tokens=list(NORMALIZER_SPECIAL_TOKENS)
+        )
 
-    if tokenizer is None:
-        raise RuntimeError(string("celune.normalizer_tokenizer_unavailable"))
+        if tokenizer is None:
+            raise RuntimeError(string("celune.normalizer_tokenizer_unavailable"))
 
-    device = normalizer_device(config)
-    supported_dispatch = {"auto", "balanced", "balanced_low_0", "sequential"}
-    device_map = device if device in supported_dispatch else {"": device}
-    llm = AutoModelForCausalLM.from_pretrained(
-        model_ref,
-        dtype=torch.bfloat16,
-        device_map=device_map,
-    )
+        device = normalizer_device(config)
+        supported_dispatch = {"auto", "balanced", "balanced_low_0", "sequential"}
+        device_map = device if device in supported_dispatch else {"": device}
+        llm = AutoModelForCausalLM.from_pretrained(
+            model_ref,
+            dtype=torch.bfloat16,
+            device_map=device_map,
+        )
     return tokenizer, llm

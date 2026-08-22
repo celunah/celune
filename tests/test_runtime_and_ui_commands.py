@@ -2513,16 +2513,44 @@ class TestUIStartup(CeluneTestCase):
         ui = CeluneUI()
         self.addCleanup(setattr, CeluneUI, "_instance", None)
         ui._old_stderr = mock.Mock()
+        ui._persist_log_entry = mock.Mock()
         ui._shutdown_runtime = mock.Mock(
             side_effect=RuntimeError("pipeline close failed")
         )
         ui.exit = mock.Mock()
 
-        ui._graceful_exit()
+        with mock.patch(
+            "celune.ui.app.format_error",
+            side_effect=["pipeline close failed", "traceback text"],
+        ):
+            ui._graceful_exit()
 
         ui.exit.assert_called_once_with()
         ui._old_stderr.write.assert_called_once()
         self.assertIn("pipeline close failed", ui._old_stderr.write.call_args.args[0])
+        ui._persist_log_entry.assert_any_call(
+            mock.ANY,
+            "error",
+        )
+
+    def test_shutdown_error_persists_traceback(self) -> None:
+        """Verify shutdown diagnostics remain available after the UI closes."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui._old_stderr = mock.Mock()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ui._log_file_path = Path(temp_dir) / "celune.log"
+            with mock.patch(
+                "celune.ui.app.format_error",
+                side_effect=["pipeline close failed", "traceback text"],
+            ):
+                ui._report_shutdown_error(RuntimeError("pipeline close failed"))
+
+            persisted = ui._log_file_path.read_text(encoding="utf-8")
+
+        self.assertIn("pipeline close failed", persisted)
+        self.assertIn("traceback text", persisted)
 
     def test_runtime_shutdown_continues_after_live_input_error(self) -> None:
         """Verify core teardown still runs when live input cleanup fails."""

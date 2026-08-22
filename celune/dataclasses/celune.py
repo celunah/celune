@@ -149,6 +149,7 @@ class CeluneAudioState:
 
     stream: Optional[sd.OutputStream] = None
     current_sr: Optional[int] = None
+    stream_lock: threading.RLock = field(default_factory=threading.RLock)
     audio_unavailable: bool = False
     can_use_rubberband: bool = True
     speed: float = 1.0
@@ -171,6 +172,7 @@ class CeluneRuntimeState:
     locked: bool = True
     loaded: bool = False
     reload_pending: bool = False
+    reload_backend: Optional[Union[CeluneBackend, CeluneVCBackend]] = None
     sleeping: bool = False
     last_flavor: Optional[str] = None
     ready_announced: bool = False
@@ -371,6 +373,7 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("_last_flavor", "_runtime_state", "last_flavor"),
     ForwardedPropertySpec("_ready_announced", "_runtime_state", "ready_announced"),
     ForwardedPropertySpec("_reload_pending", "_runtime_state", "reload_pending"),
+    ForwardedPropertySpec("_reload_backend", "_runtime_state", "reload_backend"),
     ForwardedPropertySpec("_closed", "_runtime_state", "closed"),
     ForwardedPropertySpec("cur_state", "_runtime_state", "cur_state"),
     ForwardedPropertySpec("is_in_tutorial", "_runtime_state", "is_in_tutorial"),
@@ -385,6 +388,12 @@ CELUNE_FORWARDED_PROPERTIES = (
         "_persona_load_thread", "_runtime_state", "persona_load_thread"
     ),
     ForwardedPropertySpec("stream", "_audio_state", "stream"),
+    ForwardedPropertySpec(
+        "stream_lock",
+        "_audio_state",
+        "stream_lock",
+        read_only=True,
+    ),
     ForwardedPropertySpec("say_lock", "_pipeline_state", "say_lock", read_only=True),
     ForwardedPropertySpec(
         "utterance_force_stop",

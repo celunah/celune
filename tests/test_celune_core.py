@@ -28,7 +28,7 @@ from celune.typing.locks import (
 )
 from celune.pipeline import close as close_pipeline
 from celune.persona.impl import persona_quantization
-from celune.exceptions import WarmupError, BackendError
+from celune.exceptions import WarmupError, BackendError, CEDTSTimeoutError
 from celune.persona.emotion import PersonaEmotionAnalyzer
 from celune.agent import (
     AgentRequest,
@@ -600,6 +600,10 @@ class TestCeluneCore(CeluneTestCase):
         celune.backend.model_id_for_voice = mock.Mock(return_value="fake/balanced")
         persona_client = mock.Mock()
         celune.vision = persona_client
+        progress_events: list[tuple[Optional[float], Optional[float]]] = []
+        celune.progress_callback = lambda progress, total: progress_events.append(
+            (progress, total)
+        )
         with (
             mock.patch("celune.celune.threading.Thread") as thread_cls,
             mock.patch("celune.celune.validate_runtime", return_value=True),
@@ -618,6 +622,7 @@ class TestCeluneCore(CeluneTestCase):
         )
         assert celune.persona_ready
         assert not celune.persona_loading
+        assert progress_events[-1] == (1, 1)
 
     def test_load_defers_temp_cleanup_until_shutdown(self) -> None:
         """Verify temp cleanup waits until runtime shutdown after initialization."""
@@ -1163,8 +1168,10 @@ class TestCeluneCore(CeluneTestCase):
         )
         backend_abort.assert_called_once_with()
 
-    def test_close_does_not_abort_cooperative_pipeline_workers(self) -> None:
-        """Verify cooperative pipeline shutdown skips backend escalation."""
+    def test_close_aborts_backends_even_when_pipeline_workers_are_cooperative(
+        self,
+    ) -> None:
+        """Verify shutdown aborts backend workers before pipeline cleanup."""
         celune = self._make_celune({})
         backend_abort = mock.Mock()
         celune._playback_thread = mock.Mock(is_alive=mock.Mock(return_value=False))
@@ -1177,7 +1184,23 @@ class TestCeluneCore(CeluneTestCase):
         ):
             celune.close()
 
-        backend_abort.assert_not_called()
+        backend_abort.assert_called_once_with()
+
+    def test_close_aborts_a_backend_candidate_stuck_during_reload(self) -> None:
+        """Verify shutdown aborts a candidate before it is published as active."""
+        celune = self._make_celune({})
+        candidate_abort = mock.Mock()
+        candidate = mock.Mock(abort=candidate_abort)
+        celune._reload_backend = candidate
+
+        with (
+            mock.patch("celune.celune.close_pipeline"),
+            mock.patch.object(celune, "_unload_persona_state"),
+            mock.patch.object(celune, "unload_runtime_state"),
+        ):
+            celune.close()
+
+        candidate_abort.assert_called_once_with()
 
     def test_close_aborts_non_cooperative_pipeline_before_teardown(self) -> None:
         """Verify bounded shutdown escalates work that remains active."""
@@ -1205,7 +1228,41 @@ class TestCeluneCore(CeluneTestCase):
         ):
             celune.close()
 
-        self.assertEqual(events, ["graceful", "abort", "teardown"])
+        self.assertEqual(events, ["abort", "graceful", "teardown"])
+
+    def test_close_does_not_wait_for_reload_lock(self) -> None:
+        """Verify shutdown continues while a reload still owns its lock."""
+        celune = self._make_celune({})
+        backend_abort = mock.Mock()
+        close_done = threading.Event()
+        close_errors: list[BaseException] = []
+        celune._async_runtime_lock.acquire()
+
+        def close_engine() -> None:
+            """Close the engine from the simulated reload worker boundary."""
+            try:
+                celune.close()
+            except BaseException as error:  # pragma: no cover - assertion aid
+                close_errors.append(error)
+            finally:
+                close_done.set()
+
+        with (
+            mock.patch("celune.celune.close_pipeline"),
+            mock.patch.object(celune, "_unload_persona_state"),
+            mock.patch.object(celune, "unload_runtime_state"),
+            mock.patch.object(celune.backend, "abort", backend_abort, create=True),
+        ):
+            closer = threading.Thread(target=close_engine)
+            closer.start()
+            try:
+                self.assertTrue(close_done.wait(timeout=1))
+            finally:
+                celune._async_runtime_lock.release()
+            closer.join(timeout=1)
+
+        self.assertFalse(close_errors)
+        backend_abort.assert_called_once_with()
 
     def test_unload_persona_state_clears_the_bound_emotion_analyzer(self) -> None:
         """Verify Persona teardown does not retain VLM references through emotion analysis."""
@@ -1469,6 +1526,46 @@ class TestCeluneCore(CeluneTestCase):
         assert celune.loaded
         assert celune.cur_state == "idle"
 
+    def test_failed_reload_closes_aborted_candidate_without_unloading_it(self) -> None:
+        """Verify a timed-out remote candidate cannot mask the reload failure during cleanup."""
+
+        class AbortedBackend(FakeBackend):
+            """Backend fixture that models a worker already terminated by a timeout."""
+
+            name = "aborted"
+
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                self.close_calls = 0
+
+            def load_model(self, model_id: str, **kwargs: JSONSerializable):
+                """Simulate a timeout that has already terminated the worker."""
+                raise CEDTSTimeoutError("load_model", 180.0)
+
+            def unload_model(self, release_cuda_cache: bool = True) -> None:
+                """Simulate cleanup through a worker already terminated by abort."""
+                raise RuntimeError("backend worker is not running")
+
+            def close(self) -> None:
+                """Record direct candidate shutdown without touching the worker."""
+                self.close_calls += 1
+
+        celune = self._make_celune({})
+        celune.loaded = True
+        celune.cur_state = "idle"
+        celune.model = {"model_id": "fake/balanced", "kwargs": {}}
+        celune.backend.model = celune.model
+        celune.model_name = "fake/balanced"
+        celune.current_voice = "balanced"
+        celune.voices = ("balanced", "bold")
+
+        with mock.patch("celune.celune.play_signal", return_value=False):
+            assert not celune._hot_reload_backend(AbortedBackend, "balanced")
+
+        assert celune.tts_backend == "fake"
+        assert celune.loaded
+        assert celune.model is not None
+
     def test_busy_backend_reload_restores_readiness_after_preparation(self) -> None:
         """Verify a busy model-loading owner cannot strand a prepared reload."""
         celune = self._make_celune({})
@@ -1476,7 +1573,7 @@ class TestCeluneCore(CeluneTestCase):
         celune.change_voice_lock_state_callback = mock.Mock()
         celune.voices = ("balanced", "bold")
         celune._last_component_busy = mock.sentinel.stale_busy
-        owner = ComponentLockOwner(operation_id="persona-load")
+        owner = ComponentLockOwner(operation_id="runtime-unload")
         acquisition, lease = celune.component_locks.try_acquire_lease(
             (ComponentLockRequirement(ComponentLockName.MODEL_LOADING),),
             owner,
@@ -1499,6 +1596,39 @@ class TestCeluneCore(CeluneTestCase):
         self.assertIsNone(celune.last_component_busy)
         celune.change_input_state_callback.assert_any_call(locked=False)
         celune.change_voice_lock_state_callback.assert_any_call(locked=False)
+
+    def test_persona_loading_does_not_block_backend_reload(self) -> None:
+        """Verify Persona loading does not occupy the TTS model-loading resource."""
+        celune = self._make_celune({})
+        persona_client = mock.Mock()
+        celune.vision = persona_client
+        celune._hot_reload_backend_impl = mock.Mock(return_value=True)
+
+        def load_persona(*_args: JSONSerializable) -> None:
+            self.assertIsNotNone(
+                celune.component_locks.owner_for(ComponentLockName.VLM)
+            )
+            self.assertIsNone(
+                celune.component_locks.owner_for(ComponentLockName.MODEL_LOADING)
+            )
+            self.assertTrue(celune._hot_reload_backend(FakeBackend, "balanced"))
+
+        persona_client.load.side_effect = load_persona
+
+        celune._load_persona_background(persona_client)
+
+        persona_client.load.assert_called_once_with(
+            "Qwen/Qwen3-VL-4B-Instruct",
+            "4bit",
+        )
+        celune._hot_reload_backend_impl.assert_called_once_with(
+            FakeBackend,
+            "balanced",
+        )
+        self.assertIsNone(celune.component_locks.owner_for(ComponentLockName.VLM))
+        self.assertIsNone(
+            celune.component_locks.owner_for(ComponentLockName.MODEL_LOADING)
+        )
 
     def test_hot_backend_reload_failure_reports_restore_status(self) -> None:
         """Verify failed backend reloads announce the rollback phase."""

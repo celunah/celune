@@ -22,7 +22,11 @@ import soundfile as sf
 
 from ...i18n import string
 from .base import CeluneVCBackend
-from ...paths import huggingface_hub_cache_dir
+from ...paths import (
+    configure_numba_cache,
+    huggingface_progress,
+    huggingface_hub_cache_dir,
+)
 from ...typing.aliases import AudioChunk, SeedVCGenerator
 from ...typing.backends import _SeedVCWrapper, _SeedVCRealtimeModule
 from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
@@ -38,6 +42,7 @@ _LIVE_DIFFUSION_STEPS = 10
 _LIVE_INFERENCE_CFG_RATE = 0.7
 _LIVE_MAX_PROMPT_SECONDS = 3.0
 _F0_LIVE_OVERLAP_SECONDS = 0.04
+_LIVE_OUTPUT_PEAK = 0.95
 
 
 class _TemporaryWaveFile:
@@ -100,6 +105,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         self.pitch_shift = pitch_shift
         self._wrapper: Optional[_SeedVCWrapper] = None
         self._live_module: Optional[_SeedVCRealtimeModule] = None
+        self._prepared_live_module: Optional[_SeedVCRealtimeModule] = None
         self._live_model_set: Optional[tuple[object, ...]] = None
         self._live_session_key: Optional[tuple[Path, int]] = None
         self._live_reference_path: Optional[Path] = None
@@ -195,14 +201,16 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             if self._wrapper is None:
                 wrapper_type = self._load_wrapper_type()
                 self.log(string("seedvc.loading_models"), "info")
-                self._wrapper = wrapper_type()
+                with huggingface_progress(self.report_progress):
+                    self._wrapper = wrapper_type()
             return self._wrapper
 
     def _get_live_runtime(self) -> tuple[_SeedVCRealtimeModule, tuple[object, ...]]:
         """Return the cached native Seed-VC real-time module and model set."""
         with self._wrapper_lock:
             if self._live_module is None or self._live_model_set is None:
-                realtime_module = self._load_live_module()
+                configure_numba_cache()
+                realtime_module = self._prepared_live_module or self._load_live_module()
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                 realtime_module.device = device
                 realtime_module.fp16 = device.type == "cuda"
@@ -222,13 +230,30 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                 try:
                     if source_root is not None and source_root.is_dir():
                         os.chdir(source_root)
-                    with self._suppress_native_stdout():
+                    with (
+                        huggingface_progress(self.report_progress),
+                        self._suppress_native_stdout(),
+                    ):
                         model_set = realtime_module.load_models(args)
                 finally:
                     os.chdir(previous_cwd)
                 self._live_module = realtime_module
+                self._prepared_live_module = None
                 self._live_model_set = model_set
             return self._live_module, self._live_model_set
+
+    def prepare_model_loading(self) -> None:
+        """Import Seed-VC's native runtime before request execution can begin."""
+        if not self.f0_condition and self._prepared_live_module is None:
+            configure_numba_cache()
+            self._prepared_live_module = self._load_live_module()
+            for module_name in (
+                "modules.campplus.DTDNN",
+                "modules.hifigan.generator",
+                "modules.hifigan.f0_predictor",
+                "transformers",
+            ):
+                importlib.import_module(module_name)
 
     @classmethod
     def _load_live_module(cls) -> _SeedVCRealtimeModule:
@@ -600,6 +625,22 @@ class CeluneSeedVCBackend(CeluneVCBackend):
         raise ValueError("Seed-VC expects one-dimensional or two-dimensional audio")
 
     @staticmethod
+    def _normalize_live_output(audio: AudioChunk) -> AudioChunk:
+        """Return finite live output with headroom and no hard-clipping distortion."""
+        normalized = np.nan_to_num(
+            np.asarray(audio, dtype=np.float32),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
+        if normalized.size == 0:
+            return normalized
+        peak = float(np.max(np.abs(normalized)))
+        if peak > _LIVE_OUTPUT_PEAK:
+            normalized = normalized * (_LIVE_OUTPUT_PEAK / peak)
+        return np.asarray(normalized, dtype=np.float32)
+
+    @staticmethod
     def _drain_generator_return_value(
         generator: SeedVCGenerator,
     ) -> AudioChunk:
@@ -643,6 +684,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
             self._wrapper = None
             self._clear_live_session()
             self._live_module = None
+            self._prepared_live_module = None
             self._live_model_set = None
         with self._f0_live_lock:
             self._f0_live_session_key = None
@@ -706,7 +748,7 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                 round(overlap_frames * output.sample_rate / request.sample_rate),
             )
             return AudioOutput(
-                audio=np.asarray(output.audio[trim_frames:], dtype=np.float32),
+                audio=self._normalize_live_output(output.audio[trim_frames:]),
                 sample_rate=output.sample_rate,
                 label=output.label,
             )
@@ -728,9 +770,10 @@ class CeluneSeedVCBackend(CeluneVCBackend):
                 request.source_audio,
                 request.sample_rate,
             )
+            audio = self._normalize_live_output(audio)
 
         return AudioOutput(
-            audio=np.asarray(audio, dtype=np.float32),
+            audio=audio,
             sample_rate=request.sample_rate,
             label=request.label,
         )

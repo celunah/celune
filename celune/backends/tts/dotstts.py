@@ -15,6 +15,7 @@ from dots_tts.runtime import DotsTtsRuntime
 from ...utils import discard, custom_assert
 from ...typing.backends import _LoguruLogger
 from ...cevoice import CEVoiceLoader, default_loader
+from ...paths import huggingface_progress
 from ...typing.aliases import AudioChunk, AudioChunks
 from .base import (
     _to_numpy_audio as normalize_streamed_audio,
@@ -232,6 +233,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
 
         with (
             local_hf_offline_mode(available and path is not None),
+            huggingface_progress(self.report_progress),
             self._suppress_backend_output(),
         ):
             self.model = DotsTtsRuntime.from_pretrained(

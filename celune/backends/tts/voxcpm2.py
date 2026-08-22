@@ -13,19 +13,20 @@ from transformers import AutoTokenizer
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from . import get_version
-from ...i18n import string
-from ...constants import BASE_SR
-from ...utils import custom_assert
-from ...cevoice import CEVoiceLoader, default_loader
-from ...typing.aliases import AudioChunk, AudioChunks
-from .base import (
-    _to_numpy_audio as normalize_streamed_audio,
-)
 from .base import (
     CeluneBackend,
     local_hf_offline_mode,
     cached_hf_snapshot_path,
 )
+from .base import (
+    _to_numpy_audio as normalize_streamed_audio,
+)
+from ...i18n import string
+from ...utils import custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
+from ...paths import huggingface_progress
+from ...constants import BASE_SR
+from ...typing.aliases import AudioChunk, AudioChunks
 
 
 class _VoxCPMTextTokenizer:
@@ -184,7 +185,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         tokenizer = AutoTokenizer.from_pretrained(
             snapshot_path,
             local_files_only=True,
-            trust_remote_code=False,
+            trust_remote_code=True,
         )
         runtime = getattr(model, "tts_model", None)
         if runtime is None or not hasattr(runtime, "text_tokenizer"):
@@ -245,7 +246,11 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         # torch.use_deterministic_algorithms(True)
 
         if available and path is not None:
-            with local_hf_offline_mode(), self._suppress_backend_output():
+            with (
+                local_hf_offline_mode(),
+                huggingface_progress(self.report_progress),
+                self._suppress_backend_output(),
+            ):
                 self.model = VoxCPM.from_pretrained(
                     path,
                     load_denoiser=kwargs.get("load_denoiser", False),
@@ -256,7 +261,10 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
             return self.model
 
         self.log("Downloading TTS model...", "info")
-        with self._suppress_backend_output():
+        with (
+            huggingface_progress(self.report_progress),
+            self._suppress_backend_output(),
+        ):
             self.model = VoxCPM.from_pretrained(
                 model_id,
                 load_denoiser=kwargs.get("load_denoiser", False),

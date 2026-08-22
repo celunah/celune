@@ -10,27 +10,27 @@ import secrets
 import threading
 import contextlib
 import unittest.mock
-from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import (
     Union,
     Optional,
     cast,
 )
+from pathlib import Path
 from collections.abc import Mapping, Callable, Iterator, Generator
 
-import torch
 import numpy as np
+import torch
 import soundfile as sf
 from huggingface_hub import snapshot_download
 
 from ...i18n import string
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import discard
-from ...constants import N_A_NUMERIC
-from ...typing.backends import BackendModel
 from ...cevoice import CEVoiceLoader, default_loader
+from ...constants import N_A_NUMERIC
 from ...typing.aliases import AudioChunk, RuntimeValue
-from ...paths import temp_data_dir, huggingface_hub_cache_dir
+from ...typing.backends import BackendModel
 
 __all__ = [
     "BackendModel",
@@ -249,6 +249,9 @@ class CeluneBackend[ModelT](ABC):
         self.model: Optional[ModelT] = None
         self.log = log
         self._fatal_callback = fatal
+        self._progress_callback: Optional[
+            Callable[[Optional[float], Optional[float]], None]
+        ] = None
         self.current_seed: Optional[int] = None
         self.random_seed = True
         self._truncated_reference_paths: set[Path] = set()
@@ -264,6 +267,31 @@ class CeluneBackend[ModelT](ABC):
             fatal: Callback invoked when the backend must transition Celune into a fatal state.
         """
         self._fatal_callback = fatal
+
+    def bind_progress(
+        self,
+        progress: Optional[Callable[[Optional[float], Optional[float]], None]],
+    ) -> None:
+        """Bind the active Celune progress callback to this backend instance.
+
+        Args:
+            progress: Callback receiving current progress and an optional total.
+        """
+        self._progress_callback = progress
+
+    def report_progress(
+        self, progress: Optional[float], total: Optional[float] = None
+    ) -> None:
+        """Forward backend-owned loading or download progress to Celune.
+
+        Args:
+            progress: Current progress, or ``None`` for an indeterminate update.
+            total: Total progress, or ``None`` when the total is unavailable.
+        """
+        callback = getattr(self, "_progress_callback", None)
+        if callback is not None:
+            with contextlib.suppress(Exception):
+                callback(progress, total)
 
     @staticmethod
     def _get_default_loader() -> Optional[CEVoiceLoader]:
@@ -509,7 +537,8 @@ class CeluneBackend[ModelT](ABC):
             available, _ = self.model_is_available_locally(model_id)
             if not available:
                 self.log(f"Downloading {model_id}...", "info")
-                snapshot_download(repo_id=model_id)
+                with huggingface_progress(self.report_progress):
+                    snapshot_download(repo_id=model_id)
             else:
                 self.log(f"{model_id} is already available.", "info")
 

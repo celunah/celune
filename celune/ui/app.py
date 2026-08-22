@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Frontend layer."""
 
+# Import groups follow Celune's project-specific Ruff ordering.
+# pylint: disable=ungrouped-imports
+
 # UI runtime dependencies are declared under TYPE_CHECKING and populated lazily
 # by _load_ui_runtime_dependencies to keep the startup frame lightweight.
 # ruff: noqa: TC004
@@ -12,6 +15,7 @@ import re
 import sys
 import math
 import time
+import queue as queue_module
 import shlex
 import types
 import ctypes
@@ -22,25 +26,15 @@ import datetime
 import itertools
 import threading
 import contextlib
-from uuid import uuid4
-from pathlib import Path
-import queue as queue_module
 from io import TextIOWrapper
+from uuid import uuid4
+from typing import TYPE_CHECKING, Union, TextIO, Optional, Protocol, cast
+from pathlib import Path
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator
-from typing import TYPE_CHECKING, Union, TextIO, Optional, Protocol, cast
 
-from rich.text import Text
-from textual.color import Color
-from textual.theme import Theme
-from textual.timer import Timer
 from textual import work, events
-from textual.widget import Widget
-from textual.message import Message
-from textual.css.query import NoMatches
-from textual.css.types import EdgeStyle
-from textual.containers import Vertical, Horizontal
-from textual.widgets import Label, Button, RichLog, TextArea, ProgressBar
+from rich.text import Text
 from textual.app import (
     App,
     ReturnType,
@@ -48,27 +42,20 @@ from textual.app import (
     ScreenStackError,
     AutopilotCallbackType,
 )
+from textual.color import Color
+from textual.theme import Theme
+from textual.timer import Timer
+from textual.widget import Widget
+from textual.message import Message
+from textual.widgets import Label, Button, RichLog, TextArea, ProgressBar
+from textual.css.query import NoMatches
+from textual.css.types import EdgeStyle
+from textual.containers import Vertical, Horizontal
 
 from .. import colors
 from ..i18n import string
-from .loading import CeluneLoadingScreen
-from ..constants import SIGTSTP, APP_NAME
-from ..typing.agent import AgentTaskState
 from .theme import CELUNE_CSS, severity_color
-from ..watchdog import launcher_loss_requested
 from ..paths import config_path, main_window_log_path
-from ..terminal import set_terminal_title, terminal_title_escape
-from .terminal import LogRedirect, UILogHandler, is_celune_log_record
-from ..config import format_audio_device_name, resolve_audio_device_with_info
-from ..typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentLockRequirement,
-)
-from ..typing.aliases import (  # noqa: F401  # pylint: disable=unused-import
-    AudioDeviceScalar,
-    _VCAudioCallback,
-)
 from ..utils import (
     indent,
     discard,
@@ -78,6 +65,23 @@ from ..utils import (
     supports_ansi,
     is_april_fools,
     typing_animation,
+)
+from ..config import format_audio_device_name, resolve_audio_device_with_info
+from ..exceptions import CEDTSError
+from .loading import CeluneLoadingScreen
+from .terminal import LogRedirect, UILogHandler, is_celune_log_record
+from ..terminal import set_terminal_title, terminal_title_escape
+from ..watchdog import launcher_loss_requested
+from ..constants import SIGTSTP, APP_NAME
+from ..typing.agent import AgentTaskState
+from ..typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
+from ..typing.aliases import (  # noqa: F401  # pylint: disable=unused-import
+    AudioDeviceScalar,
+    _VCAudioCallback,
 )
 
 if TYPE_CHECKING:
@@ -270,6 +274,7 @@ _VC_FEEDBACK_RMS_MIN_PREVIOUS = 0.05
 _VC_FEEDBACK_RMS_MIN_CURRENT = 0.18
 _VC_FEEDBACK_RMS_RISE_RATIO = 2.0
 _VC_FEEDBACK_RMS_RISE_DELTA = 0.08
+_VC_LIVE_SUBMISSION_QUEUE_SIZE = 3
 _AGENT_ACTIVE_STATES = frozenset(
     {
         AgentTaskState.QUEUED,
@@ -1461,7 +1466,7 @@ class CeluneUI(App):
             yield RichLog(id="logs", wrap=True, markup=False)
             yield Label("", id="caption", markup=False)
             yield ProgressBar(
-                id="progress", show_percentage=False, show_eta=False, total=1
+                id="progress", show_percentage=True, show_eta=False, total=1
             )
             with Horizontal(id="controls"):
                 yield TextArea(id="input", placeholder=string("ui.wait_placeholder"))
@@ -2292,6 +2297,7 @@ class CeluneUI(App):
                     transcriber = WhisperTranscriber(
                         model_id_getter(),
                         language=language_value_getter(),
+                        progress_callback=self.safe_progress,
                     )
                     self._caption_transcriber = transcriber
                 segments = transcriber.transcribe_segments(audio_copy, sample_rate)
@@ -3316,6 +3322,7 @@ class CeluneUI(App):
         transcriber = WhisperTranscriber(
             self._persona_speech_model_id(),
             language=self._persona_speech_language(),
+            progress_callback=self.safe_progress,
         )
         prefix = self.input_box.text.strip() if self.input_box is not None else ""
         recording_started_at = time.monotonic()
@@ -3796,12 +3803,23 @@ class CeluneUI(App):
 
     def _stop_live_vc_backend(self) -> None:
         """Reset the active backend's native live conversion state."""
-        if self.celune is None:
+        celune = self.celune
+        if celune is None:
             return
-        stop_live = getattr(self.celune, "stop_live_audio", None)
-        if callable(stop_live):
+        backend = getattr(celune, "vc_backend", None)
+        stop_live = getattr(backend, "stop_live", None)
+        if not callable(stop_live):
+            return
+
+        def reset_backend() -> None:
             with contextlib.suppress(Exception):
                 stop_live()
+
+        threading.Thread(
+            target=reset_backend,
+            name="celune-live-vc-reset",
+            daemon=True,
+        ).start()
 
     @staticmethod
     def _join_vc_recording_threads(
@@ -3951,7 +3969,7 @@ class CeluneUI(App):
         ai_vad = create_live_voice_activity_detector(input_config)
         submission_queue: queue_module.Queue[
             Optional[tuple[AudioChunk, int, str, bool]]
-        ] = queue_module.Queue(maxsize=1)
+        ] = queue_module.Queue(maxsize=_VC_LIVE_SUBMISSION_QUEUE_SIZE)
 
         def submit_live_audio() -> None:
             live_source_id: Optional[int] = None
@@ -4056,6 +4074,8 @@ class CeluneUI(App):
                         ),
                         "warning",
                     )
+                    if isinstance(exc, CEDTSError):
+                        self._cancel_vc_recording(announce=False)
 
         worker = threading.Thread(target=submit_live_audio, daemon=True)
 
@@ -4915,14 +4935,20 @@ class CeluneUI(App):
             self._report_shutdown_error(exc)
 
     def _report_shutdown_error(self, error: Exception) -> None:
-        """Write a shutdown error to the original terminal stream."""
-        stream = self._old_stderr or sys.__stderr__
-        if stream is None:
-            return
+        """Write a shutdown error to both the log and original terminal stream."""
         message = string(
             "celune.internal_error",
             error=format_error(error, "info"),
         )
+        with contextlib.suppress(Exception):
+            self._persist_log_entry(message, "error")
+            trace = format_error(error, "debug").rstrip()
+            if trace:
+                self._persist_log_entry(trace, "error")
+
+        stream = self._old_stderr or sys.__stderr__
+        if stream is None:
+            return
         with contextlib.suppress(OSError, ValueError):
             stream.write(f"{message}\n")
             stream.flush()

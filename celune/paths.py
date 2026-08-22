@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Runtime filesystem paths and global Hugging Face runtime setup for Celune."""
 
-import os
-import sys
-import shutil
-import sysconfig
 import contextlib
+import os
 from pathlib import Path
+import shutil
+import sys
+import sysconfig
+import threading
+import time
+from collections.abc import Callable, Generator
 from typing import Optional
 
 from platformdirs import user_data_dir
@@ -17,6 +20,7 @@ _REPO_MARKERS = ("celune", "default_config.yaml", "pyproject.toml")
 _HF_HOME_ENV = "HF_HOME"
 _HF_HUB_CACHE_ENV = "HF_HUB_CACHE"
 _HF_HUB_DISABLE_PROGRESS_BARS_ENV = "HF_HUB_DISABLE_PROGRESS_BARS"
+_HF_PROGRESS_PATCH_LOCK = threading.RLock()
 _LEGACY_APP_DATA_MIGRATIONS = (
     ("backends", ("environments",)),
     ("fast_langdetect", ("runtime", "fast_langdetect")),
@@ -159,6 +163,96 @@ def configure_huggingface_runtime() -> None:
     os.environ.setdefault(_HF_HUB_DISABLE_PROGRESS_BARS_ENV, "1")
     disable_progress_bar()
     disable_progress_bars()
+
+
+def configure_numba_cache() -> Path:
+    """Configure a writable process cache for Numba-backed dependencies.
+
+    Returns:
+        Path: The writable Numba cache directory.
+    """
+    cache_dir = temp_data_dir(create=True) / "numba"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["NUMBA_CACHE_DIR"] = str(cache_dir)
+    return cache_dir
+
+
+@contextlib.contextmanager
+def huggingface_progress(
+    callback: Optional[Callable[[Optional[float], Optional[float]], None]],
+) -> Generator[None, None, None]:
+    """Forward Hugging Face transfer progress to one Celune progress callback.
+
+    Args:
+        callback: Receiver for downloaded bytes and their total, or ``None`` to leave the Hub unchanged.
+    """
+    if callback is None:
+        yield
+        return
+
+    import importlib
+
+    from huggingface_hub.utils.tqdm import tqdm as HuggingFaceTqdm
+
+    file_download = importlib.import_module("huggingface_hub.file_download")
+    snapshot_download = importlib.import_module("huggingface_hub._snapshot_download")
+
+    class CeluneHuggingFaceTqdm(HuggingFaceTqdm):
+        """Keep Hugging Face bars quiet while forwarding their transfer state."""
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            initial = kwargs.get("initial", 0)
+            self._celune_downloaded = (
+                float(initial) if isinstance(initial, (int, float)) else 0.0
+            )
+            self._celune_progress_callback = callback
+            self._celune_progress_lock = threading.Lock()
+            self._celune_last_report = 0.0
+            super().__init__(*args, **kwargs)
+            self._report_celune_progress(force=True)
+
+        def update(self, n: Optional[float] = 1) -> Optional[bool]:
+            if isinstance(n, (int, float)) and not isinstance(n, bool):
+                self._celune_downloaded = max(
+                    0.0,
+                    self._celune_downloaded + float(n),
+                )
+            result = super().update(n)
+            self._report_celune_progress()
+            return result
+
+        def close(self) -> None:
+            self._report_celune_progress(force=True)
+            super().close()
+
+        def _report_celune_progress(self, force: bool = False) -> None:
+            total = getattr(self, "total", None)
+            normalized_total = (
+                float(total)
+                if isinstance(total, (int, float))
+                and not isinstance(total, bool)
+                and total > 0
+                else None
+            )
+            progress = self._celune_downloaded if normalized_total is not None else None
+            now = time.monotonic()
+            with self._celune_progress_lock:
+                if not force and now - self._celune_last_report < 0.1:
+                    return
+                self._celune_last_report = now
+            with contextlib.suppress(Exception):
+                self._celune_progress_callback(progress, normalized_total)
+
+    with _HF_PROGRESS_PATCH_LOCK:
+        previous_file_tqdm = file_download.__dict__["tqdm"]
+        previous_snapshot_tqdm = snapshot_download.__dict__["hf_tqdm"]
+        file_download.__dict__["tqdm"] = CeluneHuggingFaceTqdm
+        snapshot_download.__dict__["hf_tqdm"] = CeluneHuggingFaceTqdm
+        try:
+            yield
+        finally:
+            file_download.__dict__["tqdm"] = previous_file_tqdm
+            snapshot_download.__dict__["hf_tqdm"] = previous_snapshot_tqdm
 
 
 def memory_data_dir(create: bool = False) -> Path:

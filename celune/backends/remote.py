@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Proxy objects for backends running in isolated Python processes."""
 
+# Import groups follow Celune's project-specific Ruff ordering.
+# pylint: disable=ungrouped-imports
+
 import os
 import re
 import json
@@ -9,19 +12,25 @@ import select
 import threading
 import subprocess
 from uuid import uuid4
-from contextlib import suppress
-from dataclasses import dataclass
 from typing import IO, Optional, cast
+from contextlib import suppress
 from collections import OrderedDict, deque
+from dataclasses import dataclass
 from collections.abc import Callable, Iterator
 
 from ..i18n import string
-from ..paths import project_root
-from .tts.base import CeluneBackend
+from ..paths import configure_numba_cache, project_root
 from .vc.base import CeluneVCBackend
-from ..exceptions import BackendError
-from ..typing.aliases import LogLevel, LogCallback
-from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+from .tts.base import CeluneBackend
+from ..exceptions import (
+    CEDTSError,
+    BackendError,
+    CEDTSEOFError,
+    CEDTSStreamError,
+    CEDTSPayloadError,
+    CEDTSTimeoutError,
+    CEDTSProtocolError,
+)
 from .environment import (
     BackendManifest,
     BackendEnvironment,
@@ -33,18 +42,12 @@ from ..typing.worker import (
     WorkerResponse,
     WorkerPayloadDescriptor,
 )
-from ..typing.backends import (
-    BackendArguments,
-    BackendGeneration,
-    BackendDescription,
-    BackendArgumentValue,
-)
+from ..typing.aliases import LogLevel, LogCallback
 from .worker_protocol import (
     CEDTS_VERSION,
     CORE_CAPABILITIES,
     DEFAULT_CEDTS_LIMITS,
     CEDTSLimits,
-    WorkerProtocolError,
     build_packet,
     send_message,
     send_payloads,
@@ -54,13 +57,28 @@ from .worker_protocol import (
     receive_payloads,
     limits_from_capabilities,
 )
+from ..typing.backends import (
+    BackendArguments,
+    BackendGeneration,
+    BackendDescription,
+    BackendArgumentValue,
+)
+from ..dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 
 __all__ = ["RemoteBackendProxy", "RemoteModelHandle", "RemoteVCBackendProxy"]
 
 
-def _worker_protocol_error(key: str, **kwargs: str) -> WorkerProtocolError:
-    """Create a localized worker proxy protocol error."""
-    return WorkerProtocolError(string(f"backends.worker_proxy.{key}", **kwargs))
+def _worker_protocol_error(key: str, **kwargs: str) -> CEDTSError:
+    """Create a localized, typed worker proxy CEDTS error."""
+    message = string(f"backends.worker_proxy.{key}", **kwargs)
+    if key == "worker_payload_descriptors_are_invalid":
+        return CEDTSPayloadError(message)
+    if key in {
+        "worker_binary_input_stream_is_unavailable",
+        "worker_binary_output_stream_is_unavailable",
+    }:
+        return CEDTSStreamError(message)
+    return CEDTSProtocolError(message)
 
 
 _CANCEL_ACK_TIMEOUT_SECONDS = 5.0
@@ -68,6 +86,7 @@ _STREAM_DRAIN_TIMEOUT_SECONDS = 5.0
 _WORKER_THREAD_JOIN_TIMEOUT_SECONDS = 2.0
 _SHUTDOWN_ACK_TIMEOUT_SECONDS = 5.0
 _BACKEND_MODEL_OPERATION_TIMEOUT_SECONDS = 900.0
+_BACKEND_MODEL_LOAD_TIMEOUT_SECONDS = _BACKEND_MODEL_OPERATION_TIMEOUT_SECONDS
 _MAX_RESPONSE_QUEUE_ITEMS = 128
 _MAX_RESPONSE_QUEUE_BYTES = 16 * 1024 * 1024
 # Retain recent packet IDs to reject replayed packets without growing state for
@@ -88,6 +107,7 @@ _WORKER_ENVIRONMENT_VARIABLES = (
     "TEMP",
     "TMP",
     "TMPDIR",
+    "NUMBA_CACHE_DIR",
     "SYSTEMROOT",
     "WINDIR",
     "COMSPEC",
@@ -189,6 +209,7 @@ def _worker_environment(environment: BackendEnvironment) -> dict[str, str]:
     worker_environment["PATH"] = os.pathsep.join(
         item for item in (str(backend_bin), parent_path) if item
     )
+    worker_environment["NUMBA_CACHE_DIR"] = str(configure_numba_cache())
     worker_environment["PYTHONPATH"] = str(project_root().resolve())
     worker_environment["PYTHONNOUSERSITE"] = "1"
     return worker_environment
@@ -220,8 +241,24 @@ def _emit_log(
 _WORKER_ERROR_CODE = "backend_worker_error"
 
 
-def _worker_exception(error_type: Optional[str], message: str) -> BackendError:
-    """Convert worker error data into a fixed backend error."""
+def _worker_exception(error_type: Optional[str], message: str) -> Exception:
+    """Convert worker error data into a typed CEDTS or backend error."""
+    cedts_error_types: dict[str, type[CEDTSError]] = {
+        f"{error_class.__module__}.{error_class.__qualname__}": error_class
+        for error_class in (
+            CEDTSError,
+            CEDTSEOFError,
+            CEDTSTimeoutError,
+            CEDTSProtocolError,
+            CEDTSPayloadError,
+            CEDTSStreamError,
+        )
+    }
+    cedts_error_type = cedts_error_types.get(error_type or "")
+    if cedts_error_type is not None:
+        if cedts_error_type is CEDTSTimeoutError:
+            return CEDTSTimeoutError("worker response", 0.0, message=message)
+        return cedts_error_type(message)
     safe_error_type = error_type or string(
         "backends.worker_proxy.unknown_worker_error_type"
     )
@@ -493,11 +530,25 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             recent_lines = list(self._worker_stderr)[-20:]
         return "\n".join(recent_lines)
 
+    def _abort_after_reader_failure(self) -> None:
+        """Terminate a worker after its response stream becomes undecodable."""
+        process = getattr(self, "_process", None)
+        if process is None or not callable(getattr(process, "poll", None)):
+            return
+        with suppress(Exception):
+            self.abort()
+
     def _notify_fatal(self) -> None:
         """Forward one worker fatal notification to the Celune runtime."""
         fatal_callback = getattr(self, "_fatal_callback", None)
         if fatal_callback is not None:
             fatal_callback()
+
+    def _stop_packet_reader(self) -> None:
+        """Mark the packet reader as intentionally stopped before closing a worker."""
+        reader_stop = getattr(self, "_reader_stop", None)
+        if reader_stop is not None:
+            reader_stop.set()
 
     def _start_packet_reader(self) -> None:
         """Start the sole reader for the worker control and binary streams."""
@@ -519,7 +570,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Initialize dispatcher response state for lightweight test doubles."""
         if not hasattr(self, "_response_condition"):
             self._response_condition = threading.Condition()
+        if not hasattr(self, "_pending_reply_ids"):
             self._pending_reply_ids = set()
+        if not hasattr(self, "_response_queues"):
             self._response_queues = {}
         if not hasattr(self, "_response_queue_item_sizes"):
             self._response_queue_item_sizes = {}
@@ -548,11 +601,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             self._response_queue_item_sizes.clear()
             self._response_queue_bytes.clear()
             if getattr(self, "_reader_error", None) is None:
-                self._reader_error = WorkerProtocolError(
-                    string(
-                        "backends.worker_protocol.backend_worker_closed_its_protocol_stream"
-                    )
-                )
+                self._reader_error = CEDTSEOFError()
             self._response_condition.notify_all()
 
         self._ensure_event_state()
@@ -656,7 +705,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 except Exception as error:
                     if not self._reader_stop.is_set():
                         detail = self._worker_error_detail()
-                        if detail:
+                        if detail and isinstance(error, CEDTSProtocolError):
                             error = _worker_protocol_error(
                                 "error_with_detail",
                                 error=str(error),
@@ -678,6 +727,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                                     ),
                                     "error",
                                 )
+                        threading.Thread(
+                            target=self._abort_after_reader_failure,
+                            name="celune-worker-reader-abort",
+                            daemon=True,
+                        ).start()
                     return
         finally:
             if not self._reader_stop.is_set():
@@ -732,6 +786,8 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             )
             self._response_queue_bytes[reply_to] = queued_bytes + response_size
             self._response_condition.notify_all()
+        if kind == "shutdown_ack":
+            self._stop_packet_reader()
 
     def _handle_cancel_ack(self, packet: WorkerMessage) -> None:
         """Resolve a request-scoped cancellation acknowledgement."""
@@ -778,6 +834,20 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         with self._event_condition:
             self._event_queue.append(packet)
             self._event_condition.notify_all()
+        if packet.get("kind") == "progress":
+            data = packet.get("data")
+            if isinstance(data, dict):
+                step = data.get("step")
+                total = data.get("total")
+                if isinstance(step, int) and not isinstance(step, bool):
+                    self.report_progress(
+                        float(step),
+                        float(total)
+                        if isinstance(total, int)
+                        and not isinstance(total, bool)
+                        and total > 0
+                        else None,
+                    )
         if packet.get("operation") == "fatal":
             log_callback = getattr(self, "_log_callback", None)
             if log_callback is not None:
@@ -815,7 +885,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             Optional[WorkerMessage]: The next event packet, or ``None`` when the timeout expires.
 
         Raises:
-            WorkerProtocolError: If the worker packet reader has failed.
+            CEDTSError: If the worker packet reader has failed.
         """
         deadline = None if timeout is None else time.monotonic() + timeout
         with self._event_condition:
@@ -938,10 +1008,16 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         process: subprocess.Popen[bytes],
         reply_to: Optional[str] = None,
         timeout: Optional[float] = None,
+        packet_name: Optional[str] = None,
     ) -> WorkerResponse:
         """Return a correlated response from the dispatcher-owned response queue."""
         if getattr(self, "_reader_thread", None) is None:
-            return self._read_response_direct(process, reply_to, timeout)
+            return self._read_response_direct(
+                process,
+                reply_to,
+                timeout,
+                packet_name,
+            )
         self._ensure_response_state()
         if reply_to is None:
             raise _worker_protocol_error("worker_response_correlation_is_missing")
@@ -968,8 +1044,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     raise self._reader_error
                 remaining = None if deadline is None else deadline - time.monotonic()
                 if remaining is not None and remaining <= 0:
-                    raise TimeoutError(
-                        string("backends.worker_proxy.worker_response_timed_out")
+                    raise CEDTSTimeoutError(
+                        packet_name or "worker response",
+                        timeout or 0.0,
                     )
                 self._response_condition.wait(remaining)
 
@@ -978,6 +1055,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         process: subprocess.Popen[bytes],
         reply_to: Optional[str] = None,
         timeout: Optional[float] = None,
+        packet_name: Optional[str] = None,
     ) -> WorkerResponse:
         """Read a correlated response while handling out-of-band notifications."""
         deadline = None if timeout is None else time.monotonic() + timeout
@@ -985,8 +1063,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None:
                 if remaining <= 0:
-                    raise TimeoutError(
-                        string("backends.worker_proxy.worker_response_timed_out")
+                    raise CEDTSTimeoutError(
+                        packet_name or "worker response",
+                        timeout or 0.0,
                     )
                 assert process.stdout is not None
                 try:
@@ -1001,13 +1080,14 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     # Windows subprocess pipes do not support select().
                     ready = [process.stdout]
                 if not ready:
-                    raise TimeoutError(
-                        string("backends.worker_proxy.worker_response_timed_out")
+                    raise CEDTSTimeoutError(
+                        packet_name or "worker response",
+                        timeout or 0.0,
                     )
             try:
                 packet = self._receive_packet(process)
                 self._register_packet(packet)
-            except WorkerProtocolError as error:
+            except CEDTSProtocolError as error:
                 detail = self._worker_error_detail()
                 if detail:
                     raise _worker_protocol_error(
@@ -1217,18 +1297,14 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                             process,
                             request_id,
                             timeout=response_timeout,
+                            packet_name=operation,
                         )
                 except TimeoutError as error:
                     if response_timeout is None:
                         raise
                     with suppress(Exception):
                         self.abort()
-                    raise TimeoutError(
-                        string(
-                            "backends.worker_proxy.worker_operation_timed_out",
-                            operation=operation,
-                        )
-                    ) from error
+                    raise CEDTSTimeoutError(operation, response_timeout) from error
             finally:
                 with self._response_condition:
                     self._pending_reply_ids.discard(request_id)
@@ -1310,7 +1386,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     with self._active_request_lock:
                         state.cancel_packet_id = sent_cancel_packet_id
                         self._sync_active_cancellation_fields(state)
-            except (BrokenPipeError, OSError, WorkerProtocolError):
+            except (BrokenPipeError, OSError, CEDTSError):
                 with self._active_request_lock:
                     state.cancel_sent = False
                     self._sync_active_cancellation_fields(state)
@@ -1468,7 +1544,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         reply_to: str,
     ) -> WorkerResponse:
         """Read one streaming frame and raise on worker-reported failures."""
-        response = self._read_response(process, reply_to)
+        response = self._read_response(
+            process,
+            reply_to,
+            packet_name="generate_stream",
+        )
         if not response.get("ok", False) and not response.get("cancelled", False):
             raise _worker_exception(
                 response.get("error_type"),
@@ -1491,8 +1571,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     process,
                     reply_to,
                     timeout=remaining,
+                    packet_name="generate_stream",
                 )
-            except (EOFError, TimeoutError, WorkerProtocolError, OSError, ValueError):
+            except (EOFError, TimeoutError, CEDTSError, OSError, ValueError):
                 return False
             if response.get("done", False) or not response.get("ok", True):
                 return True
@@ -1517,7 +1598,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Load a model in the worker and return an opaque handle."""
         value = self._request(
             "load_model",
-            response_timeout=_BACKEND_MODEL_OPERATION_TIMEOUT_SECONDS,
+            response_timeout=_BACKEND_MODEL_LOAD_TIMEOUT_SECONDS,
             model_id=model_id,
             **kwargs,
         )
@@ -1536,6 +1617,15 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         Args:
             release_cuda_cache: Whether the worker should synchronize CUDA and release cached accelerator blocks.
         """
+        process = getattr(self, "_process", None)
+        if (
+            getattr(self, "_closed", False)
+            or getattr(self, "_closing", False)
+            or process is None
+            or process.poll() is not None
+        ):
+            self.model = None
+            return
         self._request("unload_model", release_cuda_cache=release_cuda_cache)
         self.model = None
 
@@ -1574,6 +1664,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             process,
             shutdown_id,
             timeout=_SHUTDOWN_ACK_TIMEOUT_SECONDS,
+            packet_name="shutdown",
         )
         return response
 
@@ -1601,9 +1692,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         self, process: Optional[subprocess.Popen[bytes]]
     ) -> None:
         """Close all control, binary, and diagnostic streams owned by a worker."""
-        reader_stop = getattr(self, "_reader_stop", None)
-        if reader_stop is not None:
-            reader_stop.set()
+        self._stop_packet_reader()
         try:
             process_streams = (
                 getattr(process, "stdin", None),
@@ -1639,6 +1728,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
 
     def _terminate_process(self, process: subprocess.Popen[bytes]) -> None:
         """Escalate a worker that did not complete its graceful shutdown."""
+        self._stop_packet_reader()
         with suppress(OSError):
             process.terminate()
         try:
@@ -1684,7 +1774,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                             "shutdown",
                             {"active_job_policy": "cancel"},
                         )
-                    except (BrokenPipeError, OSError, WorkerProtocolError):
+                    except (BrokenPipeError, OSError, CEDTSError):
                         with self._response_condition:
                             if shutdown_id is not None:
                                 self._pending_reply_ids.discard(shutdown_id)
@@ -1701,7 +1791,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                             BrokenPipeError,
                             OSError,
                             TimeoutError,
-                            WorkerProtocolError,
+                            CEDTSError,
                         ) as error:
                             shutdown_failure = error
                         with self._response_condition:
@@ -1713,6 +1803,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                         process.wait(timeout=_SHUTDOWN_ACK_TIMEOUT_SECONDS)
                     except subprocess.TimeoutExpired:
                         self._terminate_process(process)
+                self._stop_packet_reader()
             finally:
                 self._process = None
                 self._closed = True
@@ -1724,12 +1815,17 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
 
     def abort(self) -> None:
         """Terminate the worker without waiting for an active generation."""
+        self._closing = True
+        self._stop_packet_reader()
+        # Wake every CEDTS consumer before terminating the process.  A request
+        # or event waiter may otherwise remain blocked on its condition while
+        # the worker is stuck inside a backend-specific operation.
+        self._clear_runtime_state()
         with self._close_lock:
             if self._closed and self._process is None:
                 self._close_process_streams(None)
                 self._clear_received_message_ids()
                 return
-            self._closing = True
             process = self._process
             try:
                 if process is not None and process.poll() is None:

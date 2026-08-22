@@ -13,20 +13,27 @@ import tempfile
 import unittest
 import threading
 import subprocess
+from types import SimpleNamespace
+from typing import IO, Optional, cast
 from pathlib import Path
 from unittest import mock
 from contextlib import suppress
-from types import SimpleNamespace
-from typing import IO, Optional, cast
 from collections import OrderedDict, deque
 from collections.abc import Callable, Generator
 
 import numpy as np
-from celune.exceptions import BackendError
-from celune.backends.tts import resolve_backend
+
 from celune.backends import remote, worker, environment
-from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
-from celune.typing.backends import BackendModel, BackendArgumentValue, _BackendRuntime
+from celune.exceptions import (
+    CEDTSError,
+    BackendError,
+    CEDTSEOFError,
+    CEDTSStreamError,
+    CEDTSPayloadError,
+    CEDTSTimeoutError,
+    CEDTSProtocolError,
+)
+from celune.backends.tts import resolve_backend
 from celune.typing.worker import (
     WorkerValue,
     WorkerMessage,
@@ -35,6 +42,7 @@ from celune.typing.worker import (
     WorkerControlMessage,
     WorkerPayloadDescriptor,
 )
+from celune.typing.backends import BackendModel, BackendArgumentValue, _BackendRuntime
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendManifest,
@@ -44,10 +52,10 @@ from celune.backends.environment import (
     _exclusive_lock,
     backend_manifest,
 )
+from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
 from celune.backends.worker_protocol import (
     CEDTSLimits,
     WorkerPayload,
-    WorkerProtocolError,
     build_packet,
     send_message,
     send_payloads,
@@ -232,7 +240,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "attacker.module",
             "AttackerBackend",
         )
-        with self.assertRaises(worker.WorkerProtocolError):
+        with self.assertRaises(CEDTSProtocolError):
             worker._load_backend(manifest, mock.Mock(), mock.Mock(), {})
 
     def test_worker_registry_ignores_manifest_constructor_strings(self) -> None:
@@ -515,6 +523,75 @@ class TestBackendEnvironment(CeluneTestCase):
         stream.seek(0)
         assert receive_message(stream) == message
 
+    def test_cedts_errors_share_a_common_typed_base(self) -> None:
+        """Verify every public CEDTS error is catchable as CEDTSError."""
+        errors = (
+            CEDTSEOFError(),
+            CEDTSTimeoutError("load_model", 180.0),
+            CEDTSProtocolError(packet_name="hello"),
+            CEDTSPayloadError(packet_name="generate_stream"),
+            CEDTSStreamError("stream closed"),
+        )
+
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                self.assertIsInstance(error, CEDTSError)
+        self.assertIsInstance(errors[1], TimeoutError)
+        self.assertIsInstance(errors[4], OSError)
+        self.assertEqual(str(errors[0]), "unexpected EOF while reading stream")
+        self.assertEqual(str(errors[1]), "load_model timed out after 180 seconds")
+        self.assertEqual(str(errors[2]), "invalid packet hello")
+        self.assertEqual(
+            str(errors[3]),
+            "invalid binary payload received while processing generate_stream",
+        )
+
+    def test_worker_protocol_distinguishes_eof_protocol_and_payload_errors(
+        self,
+    ) -> None:
+        """Verify CEDTS classifies its three packet-boundary failure families."""
+        with self.assertRaises(CEDTSEOFError):
+            receive_message(io.BytesIO())
+        with self.assertRaises(CEDTSProtocolError):
+            build_packet("invalid", "protocol")
+        with self.assertRaises(CEDTSPayloadError):
+            validate_payload_descriptors(
+                cast(
+                    list[WorkerPayloadDescriptor],
+                    [
+                        {
+                            "id": "audio",
+                            "media_type": "audio/pcm_f32le",
+                            "byte_length": 4,
+                            "dtype": "float32",
+                            "shape": [2],
+                            "sample_rate": 48000,
+                            "channels": 1,
+                        }
+                    ],
+                )
+            )
+
+    def test_worker_protocol_wraps_stream_write_failures(self) -> None:
+        """Verify a closed CEDTS output pipe becomes a stream error."""
+
+        class _ClosedStream:
+            def write(self, value: bytes) -> int:
+                """Reject every write as a closed-pipe failure."""
+                del value
+                raise OSError("pipe is closed")
+
+            def flush(self) -> None:
+                """Provide the flush method required by the CEDTS writer."""
+                return
+
+        with self.assertRaises(CEDTSStreamError) as context:
+            send_message(
+                cast(IO[bytes], _ClosedStream()),
+                build_packet("ping", "protocol"),
+            )
+        self.assertIn("pipe is closed", str(context.exception))
+
     def test_worker_protocol_uses_utf8_json_control_framing(self) -> None:
         """Verify control frames contain only length-prefixed UTF-8 JSON."""
         stream = io.BytesIO()
@@ -541,7 +618,7 @@ class TestBackendEnvironment(CeluneTestCase):
         payload = b"not a CEDTS control object"
         stream = io.BytesIO(len(payload).to_bytes(4, "big") + payload)
 
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             receive_message(stream)
 
     def test_worker_protocol_normalizes_malformed_control_frames(self) -> None:
@@ -563,7 +640,7 @@ class TestBackendEnvironment(CeluneTestCase):
         for raw_frame in malformed_frames:
             with (
                 self.subTest(raw_frame=raw_frame),
-                self.assertRaises(WorkerProtocolError),
+                self.assertRaises(CEDTSError),
             ):
                 receive_message(io.BytesIO(raw_frame))
 
@@ -605,7 +682,7 @@ class TestBackendEnvironment(CeluneTestCase):
             json.dumps(oversized_collection).encode(),
             json.dumps(unknown_packet_field).encode(),
         ):
-            with self.subTest(value=value), self.assertRaises(WorkerProtocolError):
+            with self.subTest(value=value), self.assertRaises(CEDTSError):
                 receive_message(io.BytesIO(frame(value)))
 
         oversized_string = json.dumps(
@@ -618,7 +695,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 "data": {"arguments": {"value": "x" * (1024 * 1024 + 1)}},
             }
         ).encode()
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             receive_message(io.BytesIO(frame(oversized_string)))
 
     def test_worker_request_validation_rejects_unknown_operations_and_methods(
@@ -634,7 +711,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 return "secret"
 
         backend = cast(_BackendRuntime, FakeBackend())
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             worker._run_request(
                 backend,
                 {"operation": "unknown", "arguments": {}},
@@ -642,7 +719,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 1,
                 io.BytesIO(),
             )
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             worker._run_request(
                 backend,
                 {
@@ -666,7 +743,7 @@ class TestBackendEnvironment(CeluneTestCase):
             },
         )
         for request in malformed_requests:
-            with self.subTest(request=request), self.assertRaises(WorkerProtocolError):
+            with self.subTest(request=request), self.assertRaises(CEDTSError):
                 worker._run_request(
                     backend,
                     cast(WorkerRequest, request),
@@ -706,7 +783,7 @@ class TestBackendEnvironment(CeluneTestCase):
             ),
         )
         for packet in invalid_packets:
-            with self.subTest(packet=packet), self.assertRaises(WorkerProtocolError):
+            with self.subTest(packet=packet), self.assertRaises(CEDTSError):
                 send_message(io.BytesIO(), packet)
 
     def test_worker_operation_schemas_require_handles_and_bound_backend_kwargs(
@@ -727,7 +804,7 @@ class TestBackendEnvironment(CeluneTestCase):
             ),
         )
         send_message(io.BytesIO(), valid_wire_packet)
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             send_message(
                 io.BytesIO(),
                 build_packet(
@@ -826,7 +903,7 @@ class TestBackendEnvironment(CeluneTestCase):
             },
         )
         for request in malformed_arguments:
-            with self.subTest(request=request), self.assertRaises(WorkerProtocolError):
+            with self.subTest(request=request), self.assertRaises(CEDTSError):
                 worker._run_request(
                     cast(_BackendRuntime, backend),
                     cast(WorkerRequest, request),
@@ -943,7 +1020,7 @@ class TestBackendEnvironment(CeluneTestCase):
             mock.patch.object(
                 np, "ascontiguousarray", wraps=np.ascontiguousarray
             ) as contiguous,
-            self.assertRaises(WorkerProtocolError),
+            self.assertRaises(CEDTSError),
         ):
             encode_message({"value": array}, limits=limits)
         contiguous.assert_not_called()
@@ -955,7 +1032,7 @@ class TestBackendEnvironment(CeluneTestCase):
             mock.patch.object(
                 np, "ascontiguousarray", wraps=np.ascontiguousarray
             ) as contiguous,
-            self.assertRaises(WorkerProtocolError),
+            self.assertRaises(CEDTSError),
         ):
             encode_message(
                 {"values": cast(list[WorkerValue], [first, second])}, limits=limits
@@ -968,7 +1045,7 @@ class TestBackendEnvironment(CeluneTestCase):
             mock.patch.object(
                 np, "ascontiguousarray", wraps=np.ascontiguousarray
             ) as contiguous,
-            self.assertRaises(WorkerProtocolError),
+            self.assertRaises(CEDTSError),
         ):
             encode_message({"value": audio}, limits=limits)
         contiguous.assert_not_called()
@@ -978,7 +1055,7 @@ class TestBackendEnvironment(CeluneTestCase):
             mock.patch.object(
                 np, "ascontiguousarray", wraps=np.ascontiguousarray
             ) as contiguous,
-            self.assertRaises(WorkerProtocolError),
+            self.assertRaises(CEDTSError),
         ):
             encode_message({"value": np.zeros(1, dtype=np.float32)}, limits=limits)
         contiguous.assert_not_called()
@@ -992,7 +1069,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "__cedts_type__": "tuple",
             "items": [typed_array, typed_array],
         }
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             decode_message(
                 control,
                 {payload.descriptor["id"]: payload for payload in payloads},
@@ -1007,7 +1084,7 @@ class TestBackendEnvironment(CeluneTestCase):
             "__cedts_type__": "tuple",
             "items": [typed_audio, typed_audio],
         }
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             decode_message(
                 control,
                 {payload.descriptor["id"]: payload for payload in payloads},
@@ -1040,7 +1117,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 wrapper = cast(dict, control["value"])
                 reference = cast(dict, wrapper[reference_field])
                 reference["unexpected"] = "rejected"
-                with self.assertRaises(WorkerProtocolError):
+                with self.assertRaises(CEDTSError):
                     decode_message(
                         control,
                         {payload.descriptor["id"]: payload for payload in payloads},
@@ -1070,7 +1147,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 },
             ],
         }
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             decode_message(
                 control,
                 {payload.descriptor["id"]: payload for payload in payloads},
@@ -1086,7 +1163,7 @@ class TestBackendEnvironment(CeluneTestCase):
             payload_map,
             limits=CEDTSLimits(max_aggregate_payload_size=8),
         )
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             decode_message(
                 control,
                 payload_map,
@@ -1101,7 +1178,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 )
             }
         )
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             decode_message(
                 audio_control,
                 {payload.descriptor["id"]: payload for payload in audio_payloads},
@@ -1151,7 +1228,7 @@ class TestBackendEnvironment(CeluneTestCase):
         unexpected_frame = (10).to_bytes(4, "big") + (b"x" * 10)
         binary_stream = io.BytesIO(unexpected_frame + (0).to_bytes(4, "big"))
 
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             receive_payloads(binary_stream, [])
 
         self.assertEqual(receive_payloads(binary_stream, []), {})
@@ -1295,7 +1372,7 @@ class TestBackendEnvironment(CeluneTestCase):
                     cast(dict[str, WorkerValue], invalid_control["data"])["value"],
                 )
                 invalid_value_wrapper[field_name] = cast(WorkerValue, invalid_value)
-                with self.assertRaises(WorkerProtocolError):
+                with self.assertRaises(CEDTSError):
                     decode_message(
                         invalid_control,
                         {
@@ -1312,7 +1389,7 @@ class TestBackendEnvironment(CeluneTestCase):
             )
         )
         cast(dict, cast(dict, output_control["data"])["value"])["sample_rate"] = 44100
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             decode_message(
                 output_control,
                 {payload.descriptor["id"]: payload for payload in output_payloads},
@@ -1337,7 +1414,7 @@ class TestBackendEnvironment(CeluneTestCase):
             dict,
             cast(dict, cast(dict, request_control["data"])["arguments"])["request"],
         )["sample_rate"] = 22050
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             decode_message(
                 request_control,
                 {payload.descriptor["id"]: payload for payload in request_payloads},
@@ -1372,7 +1449,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 payload = payloads[0]
                 descriptor = dict(payload.descriptor)
                 descriptor["media_type"] = "application/x-tensor"
-                with self.assertRaises(WorkerProtocolError):
+                with self.assertRaises(CEDTSError):
                     decode_message(
                         control,
                         {
@@ -1394,7 +1471,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 "channels": 1,
             }
         )
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             decode_message(
                 control,
                 {
@@ -1461,7 +1538,7 @@ class TestBackendEnvironment(CeluneTestCase):
         for descriptor in invalid_descriptors:
             with (
                 self.subTest(descriptor=descriptor),
-                self.assertRaises(WorkerProtocolError),
+                self.assertRaises(CEDTSError),
             ):
                 validate_payload_descriptors(cast(list, [descriptor]))
 
@@ -1482,15 +1559,40 @@ class TestBackendEnvironment(CeluneTestCase):
                         "convert",
                         {
                             "ok": True,
-                            "value": AudioOutput(audio, 48000),
+                            "value": AudioOutput(np.zeros(1, dtype=np.float32), 48000),
                         },
                     )
                 )
-                with self.assertRaises(WorkerProtocolError):
+                payload = payloads[0]
+                invalid_payload = WorkerPayload(
+                    payload.descriptor,
+                    audio.tobytes(),
+                )
+                with self.assertRaises(CEDTSError):
                     decode_message(
                         control,
-                        {payload.descriptor["id"]: payload for payload in payloads},
+                        {invalid_payload.descriptor["id"]: invalid_payload},
                     )
+
+    def test_worker_protocol_normalizes_float_audio_before_transmission(self) -> None:
+        """Verify worker-produced float audio cannot poison the response stream."""
+        control, payloads = encode_message(
+            {
+                "value": AudioOutput(
+                    np.array([np.nan, 2.0, -2.0], dtype=np.float32),
+                    48000,
+                )
+            }
+        )
+
+        decoded = decode_message(
+            control,
+            {payload.descriptor["id"]: payload for payload in payloads},
+        )
+        audio = cast(AudioOutput, decoded["value"]).audio
+
+        assert np.all(np.isfinite(audio))
+        assert float(np.max(np.abs(audio))) <= 0.95
 
     def test_worker_protocol_rejects_binary_length_mismatch(self) -> None:
         """Verify a binary frame cannot disagree with its declared payload length."""
@@ -1509,7 +1611,7 @@ class TestBackendEnvironment(CeluneTestCase):
         raw.extend((4).to_bytes(8, "big"))
         raw.extend(b"audio-1")
         raw.extend(b"\x00\x00\x00\x00")
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             receive_payloads(io.BytesIO(raw), [descriptor])
 
     def test_worker_protocol_rejects_unexpected_binary_payload_identity(self) -> None:
@@ -1529,7 +1631,7 @@ class TestBackendEnvironment(CeluneTestCase):
             + payload
         )
 
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             receive_payloads(io.BytesIO(binary_frame), [descriptor])
 
     def test_worker_protocol_rejects_invalid_binary_metadata_and_limits(self) -> None:
@@ -1559,7 +1661,7 @@ class TestBackendEnvironment(CeluneTestCase):
         for descriptor in invalid_descriptors:
             with (
                 self.subTest(descriptor=descriptor),
-                self.assertRaises(WorkerProtocolError),
+                self.assertRaises(CEDTSError),
             ):
                 validate_payload_descriptors(cast(list, [descriptor]))
 
@@ -1571,7 +1673,7 @@ class TestBackendEnvironment(CeluneTestCase):
             }
             for index in range(10)
         ]
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             validate_payload_descriptors(descriptors)
 
     def test_worker_protocol_rejects_payload_data_length_before_transmission(
@@ -1586,7 +1688,7 @@ class TestBackendEnvironment(CeluneTestCase):
             },
             b"short",
         )
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             send_payloads(io.BytesIO(), [payload])
 
     def test_worker_stream_uses_protocol_stdout_during_backend_redirects(self) -> None:
@@ -1732,8 +1834,8 @@ class TestBackendEnvironment(CeluneTestCase):
         proxy.abort = mock.Mock()
 
         with self.assertRaisesRegex(
-            TimeoutError,
-            "worker operation 'preload_models' timed out",
+            CEDTSTimeoutError,
+            "preload_models timed out after 0.01 seconds",
         ):
             proxy._request("preload_models", response_timeout=0.01)
 
@@ -1742,6 +1844,35 @@ class TestBackendEnvironment(CeluneTestCase):
             proxy._process,
             "request-id",
             timeout=0.01,
+            packet_name="preload_models",
+        )
+
+    def test_remote_proxy_unload_is_idempotent_after_worker_failure(self) -> None:
+        """Verify cleanup does not report a stale worker from a dead proxy."""
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy._closed = True
+        proxy._closing = True
+        proxy._process = None
+        proxy.model = remote.RemoteModelHandle(1)
+        proxy._request = mock.Mock()
+
+        proxy.unload_model()
+
+        self.assertIsNone(proxy.model)
+        proxy._request.assert_not_called()
+
+    def test_remote_proxy_allows_slow_model_initialization(self) -> None:
+        """Verify model construction receives the long backend-operation deadline."""
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy._request = mock.Mock(return_value=7)
+
+        handle = proxy.load_model("slow-model")
+
+        self.assertEqual(handle.identifier, 7)
+        proxy._request.assert_called_once_with(
+            "load_model",
+            response_timeout=900.0,
+            model_id="slow-model",
         )
 
     def test_remote_cancel_ack_is_consumed_before_stream_terminal_response(
@@ -1981,6 +2112,32 @@ class TestBackendEnvironment(CeluneTestCase):
         )
         self.assertFalse(process.terminated)
         self.assertEqual(process.returncode, 0)
+
+    def test_remote_proxy_abort_wakes_event_waiters_before_termination(self) -> None:
+        """Verify abort releases a consumer blocked on the next worker event."""
+        proxy, _process = self._make_shutdown_proxy()
+        proxy._event_condition = threading.Condition()
+        proxy._event_queue = deque()
+        proxy._response_condition = threading.Condition()
+        proxy._reader_stop = threading.Event()
+        proxy._reader_error = None
+        error: list[CEDTSError] = []
+
+        def wait_for_event() -> None:
+            """Wait for the proxy event queue in a background consumer."""
+            try:
+                proxy.get_worker_event(timeout=30)
+            except CEDTSError as raised:
+                error.append(raised)
+
+        waiter = threading.Thread(target=wait_for_event)
+        waiter.start()
+        proxy.abort()
+        waiter.join(timeout=1)
+
+        self.assertFalse(waiter.is_alive())
+        self.assertEqual(len(error), 1)
+        self.assertIsInstance(error[0], CEDTSEOFError)
 
     def test_remote_proxy_cancels_active_work_before_graceful_shutdown(self) -> None:
         """Verify active work is cancelled before the correlated shutdown exchange."""
@@ -2250,7 +2407,7 @@ class TestBackendEnvironment(CeluneTestCase):
             """Hold one stream read until shutdown has released the generator."""
             read_started.set()
             release_read.wait(2)
-            raise WorkerProtocolError("stream read interrupted by shutdown")
+            raise CEDTSProtocolError("stream read interrupted by shutdown")
 
         generator = proxy._stream_request("generate_stream")
         generator_errors: list[Exception] = []
@@ -2259,7 +2416,7 @@ class TestBackendEnvironment(CeluneTestCase):
             """Consume the test generator and retain expected shutdown errors."""
             try:
                 next(generator)
-            except WorkerProtocolError as error:
+            except CEDTSError as error:
                 generator_errors.append(error)
 
         consumer = threading.Thread(target=consume_generator)
@@ -2311,6 +2468,36 @@ class TestBackendEnvironment(CeluneTestCase):
         self.assertIsNone(proxy._reader_thread)
         self.assertFalse(stderr_thread.is_alive())
         self.assertFalse(reader_thread.is_alive())
+
+    def test_remote_proxy_abort_stops_reader_before_termination(self) -> None:
+        """Verify intentional process termination cannot be reported as protocol EOF."""
+        process = _ShutdownProcess(io.BytesIO())
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy._process = cast(subprocess.Popen[bytes], process)
+        proxy._closed = False
+        proxy._closing = False
+        proxy._close_lock = threading.Lock()
+        proxy._binary_input = None
+        proxy._binary_output = None
+        proxy._reader_stop = threading.Event()
+        proxy._stderr_thread = None
+        proxy._reader_thread = None
+        proxy._received_message_ids = OrderedDict()
+        termination_observed = False
+
+        def terminate(_process: subprocess.Popen[bytes]) -> None:
+            """Record that the reader was stopped before termination."""
+            nonlocal termination_observed
+            termination_observed = proxy._reader_stop.is_set()
+            _process.wait()
+
+        with mock.patch.object(proxy, "_terminate_process", side_effect=terminate):
+            proxy.abort()
+
+        self.assertTrue(termination_observed)
+        self.assertTrue(process.stdin.closed)
+        self.assertTrue(process.stdout.closed)
+        self.assertTrue(process.stderr.closed)
 
     def test_remote_proxy_startup_failure_closes_partial_worker(self) -> None:
         """Verify a partial stream setup terminates the worker and closes ownership."""
@@ -2658,6 +2845,54 @@ class TestBackendEnvironment(CeluneTestCase):
             if reader_thread is not None:
                 reader_thread.join(timeout=2)
 
+    def test_remote_proxy_treats_shutdown_eof_as_expected(self) -> None:
+        """Verify a shutdown acknowledgement stops the reader before worker EOF."""
+        proxy, reader, writer = self._make_packet_reader_proxy()
+        reply_to = "shutdown-request"
+        with proxy._response_condition:
+            proxy._pending_reply_ids.add(reply_to)
+        try:
+            send_message(
+                writer,
+                build_packet(
+                    "shutdown_ack",
+                    "shutdown",
+                    {"ok": True, "value": {}},
+                    reply_to=reply_to,
+                ),
+            )
+
+            response = proxy._read_response(
+                cast(subprocess.Popen[bytes], proxy._process),
+                reply_to,
+                timeout=2,
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertTrue(proxy._reader_stop.is_set())
+            reader_thread = proxy._reader_thread
+            if reader_thread is not None:
+                reader_thread.join(timeout=2)
+                self.assertFalse(reader_thread.is_alive())
+            self.assertIsNone(proxy._reader_error)
+            log_messages = [
+                str(call.args[0])
+                for call in cast(mock.Mock, proxy._log_callback).call_args_list
+                if call.args
+            ]
+            self.assertFalse(
+                any(
+                    "worker packet reader failed" in message for message in log_messages
+                )
+            )
+        finally:
+            proxy._reader_stop.set()
+            writer.close()
+            reader.close()
+            reader_thread = proxy._reader_thread
+            if reader_thread is not None:
+                reader_thread.join(timeout=2)
+
     def test_remote_proxy_rejects_uncorrelated_worker_progress_and_callbacks(
         self,
     ) -> None:
@@ -2690,7 +2925,7 @@ class TestBackendEnvironment(CeluneTestCase):
                                 break
                             threading.Event().wait(0.01)
 
-                        self.assertIsInstance(reader_error, WorkerProtocolError)
+                        self.assertIsInstance(reader_error, CEDTSError)
                         event_callback.assert_not_called()
                         with proxy._event_condition:
                             self.assertFalse(proxy._event_queue)
@@ -2748,7 +2983,7 @@ class TestBackendEnvironment(CeluneTestCase):
         proxy._event_condition = threading.Condition()
         proxy._event_queue = deque()
         proxy._response_condition = threading.Condition()
-        reader_error = WorkerProtocolError("worker reader failed")
+        reader_error = CEDTSProtocolError("worker reader failed")
         proxy._reader_error = None
         waiter_started = threading.Event()
         errors: list[Exception] = []
@@ -2757,7 +2992,7 @@ class TestBackendEnvironment(CeluneTestCase):
             waiter_started.set()
             try:
                 proxy.get_worker_event(timeout=2)
-            except WorkerProtocolError as error:
+            except CEDTSError as error:
                 errors.append(error)
 
         waiter = threading.Thread(target=wait_for_event)
@@ -2777,9 +3012,11 @@ class TestBackendEnvironment(CeluneTestCase):
     def test_remote_proxy_dispatches_progress_while_waiting_for_response(self) -> None:
         """Verify the reader routes progress independently of a response waiter."""
         event_callback = mock.Mock()
+        progress_callback = mock.Mock()
         proxy, reader, writer = self._make_packet_reader_proxy(
             event_callback=event_callback,
         )
+        proxy.bind_progress(progress_callback)
         request_id = "active-request"
         with proxy._response_condition:
             proxy._pending_reply_ids.add(request_id)
@@ -2814,6 +3051,7 @@ class TestBackendEnvironment(CeluneTestCase):
             self.assertEqual(progress["kind"], "progress")
             self.assertEqual(progress["reply_to"], request_id)
             event_callback.assert_called_once()
+            progress_callback.assert_called_once_with(1.0, None)
         finally:
             proxy._reader_stop.set()
             writer.close()
@@ -2852,7 +3090,7 @@ class TestBackendEnvironment(CeluneTestCase):
                         break
                     threading.Event().wait(0.01)
 
-            self.assertIsInstance(reader_error, WorkerProtocolError)
+            self.assertIsInstance(reader_error, CEDTSError)
             with proxy._response_condition:
                 self.assertEqual(len(proxy._response_queues[request_id]), 2)
                 queued_bytes = proxy._response_queue_bytes[request_id]
@@ -2906,7 +3144,7 @@ class TestBackendEnvironment(CeluneTestCase):
                         break
                     threading.Event().wait(0.01)
 
-            self.assertIsInstance(reader_error, WorkerProtocolError)
+            self.assertIsInstance(reader_error, CEDTSError)
             with proxy._response_condition:
                 self.assertNotIn(request_id, proxy._response_queues)
                 self.assertNotIn(request_id, proxy._response_queue_item_sizes)
@@ -2949,7 +3187,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 },
             ),
         )
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             worker._negotiate_hello(unsupported_version)
 
         incompatible = build_packet(
@@ -2964,7 +3202,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 },
             ),
         )
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             worker._negotiate_hello(incompatible)
 
     def test_cedts_handshake_retains_smaller_peer_frame_limits(self) -> None:
@@ -3016,12 +3254,12 @@ class TestBackendEnvironment(CeluneTestCase):
                 {"arguments": {"model_id": "model-id-" + "x" * 900}},
             ),
         )
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             send_message(io.BytesIO(), oversized_control, limits=limits)
         control_stream = io.BytesIO()
         send_message(control_stream, oversized_control)
         control_stream.seek(0)
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             receive_message(control_stream, limits=limits)
 
         oversized_payload = WorkerPayload(
@@ -3032,19 +3270,19 @@ class TestBackendEnvironment(CeluneTestCase):
             },
             b"x" * 9,
         )
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             send_payloads(io.BytesIO(), [oversized_payload], limits=limits)
         binary_stream = io.BytesIO()
         send_payloads(binary_stream, [oversized_payload])
         binary_stream.seek(0)
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             receive_payloads(
                 binary_stream,
                 [oversized_payload.descriptor],
                 limits=limits,
             )
 
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             validate_payload_descriptors(
                 [
                     {
@@ -3067,7 +3305,7 @@ class TestBackendEnvironment(CeluneTestCase):
                 error_stream,
                 io.BytesIO(),
                 "handshake",
-                WorkerProtocolError("unsupported CEDTS version"),
+                CEDTSProtocolError("unsupported CEDTS version"),
                 reply_to="hello-id",
             )
         error_stream.seek(0)
@@ -3245,7 +3483,7 @@ class TestBackendEnvironment(CeluneTestCase):
         self.assertEqual(
             len(proxy._received_message_ids), remote._MESSAGE_ID_REPLAY_WINDOW
         )
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             proxy._register_packet(
                 {"message_id": f"packet-{remote._MESSAGE_ID_REPLAY_WINDOW}"}
             )
@@ -4282,7 +4520,7 @@ raise SystemExit(worker.main())
         proxy._received_message_ids = OrderedDict()
         proxy._worker_stderr = deque()
         proxy._worker_stderr_lock = threading.Lock()
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             proxy._read_response(
                 cast(subprocess.Popen[bytes], SimpleNamespace(stdout=mismatched)),
                 "active-request",
@@ -4306,7 +4544,7 @@ raise SystemExit(worker.main())
         self.assertEqual(
             proxy._read_response(process, "active-request")["value"], "once"
         )
-        with self.assertRaises(WorkerProtocolError):
+        with self.assertRaises(CEDTSError):
             proxy._read_response(process, "active-request")
 
     def test_remote_proxy_does_not_treat_progress_as_a_response(self) -> None:
@@ -4495,6 +4733,10 @@ raise SystemExit(worker.main())
             mock.patch.object(
                 remote.subprocess, "Popen", return_value=process
             ) as popen,
+            mock.patch(
+                "celune.backends.remote.configure_numba_cache",
+                return_value=Path("C:/celune/temp/numba"),
+            ) as configure_numba_cache,
         ):
             proxy._start_worker(
                 backend_environment,
@@ -4517,6 +4759,11 @@ raise SystemExit(worker.main())
             ),
         )
         self.assertEqual(popen.call_args.kwargs["env"]["TEMP"], "C:/temp")
+        self.assertEqual(
+            popen.call_args.kwargs["env"]["NUMBA_CACHE_DIR"],
+            str(Path("C:/celune/temp/numba")),
+        )
+        configure_numba_cache.assert_called_once_with()
         self.assertEqual(popen.call_args.kwargs["env"]["USERNAME"], "test-user")
         self.assertEqual(
             popen.call_args.kwargs["env"]["CUDA_VISIBLE_DEVICES"],
