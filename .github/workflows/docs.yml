@@ -8,6 +8,7 @@ on:
     paths:
       - ".readthedocs.yaml"
       - "mkdocs.yml"
+      - ".markdownlint.json"
       - "docs/**"
   pull_request:
     branches:
@@ -16,6 +17,7 @@ on:
     paths:
       - ".readthedocs.yaml"
       - "mkdocs.yml"
+      - ".markdownlint.json"
       - "docs/**"
   workflow_dispatch:
 
@@ -33,6 +35,12 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+
+      - name: Lint Markdown
+        uses: DavidAnson/markdownlint-cli2-action@v24
+        with:
+          globs: |
+            docs/**/*.md
 
       - name: Build MkDocs site
         run: uv run --with-requirements docs/requirements.txt mkdocs build --strict

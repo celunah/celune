@@ -40,6 +40,16 @@ part of Celune's compiled-artifact boundary.
 
 ## Documentation checks
 
+MarkdownLint checks every technical page under `docs/` using the repository
+root `.markdownlint.json` configuration:
+
+```bash
+npx --yes markdownlint-cli2 "docs/**/*.md"
+```
+
+This command requires Node.js 22 or newer. The GitHub Action supplies Node.js
+24 automatically.
+
 ReadTheDocs builds the repository with `.readthedocs.yaml`, Python 3.13, and
 `docs/requirements.txt`, which installs `mkdocs-material`. Validate locally
 with:

@@ -60,6 +60,22 @@ not omit it.
 - Technical pages describe implemented behavior. Do not treat
   `resources/about/about-celune.md` as a factual technical source.
 
+## Local validation
+
+Run MarkdownLint and the strict site build before committing documentation:
+
+```bash
+npx --yes markdownlint-cli2 "docs/**/*.md"
+uv run --with-requirements docs/requirements.txt mkdocs build --strict
+```
+
+The current MarkdownLint CLI requires Node.js 22 or newer. The CI action runs
+with Node.js 24; use an equivalent supported Node.js runtime when running the
+command locally.
+
+The CI workflow runs the same MarkdownLint configuration through the official
+`markdownlint-cli2` action before building the MkDocs site.
+
 ## Review checklist
 
 Before committing documentation, confirm that:

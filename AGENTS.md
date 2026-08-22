@@ -277,7 +277,9 @@ contract in multiple pages; link to its canonical page instead.
 
 Before completing a documentation change, update `mkdocs.yml` navigation and
 links, check that new pages are discoverable, run a strict MkDocs build, and
-review rendered code blocks/tables for copyability. Keep `README.md`,
+run MarkdownLint against `docs/**/*.md` using the repository's
+`.markdownlint.json` configuration. Review rendered code blocks/tables for
+copyability. Keep `README.md`,
 `AGENTS.md`, and lore-only Markdown outside `docs/` unless the repository
 layout explicitly requires otherwise.
 
