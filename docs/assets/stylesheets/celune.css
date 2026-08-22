@@ -16,6 +16,8 @@
   --celune-code: #2b2439;
   --celune-warning: #f0e68c;
   --celune-error: #f07178;
+  --celune-link: #deceff;
+  --celune-on-accent: var(--celune-background);
 
   --md-primary-fg-color: var(--celune-background);
   --md-primary-fg-color--light: var(--celune-secondary);
@@ -46,7 +48,7 @@
   --md-code-hl-string-color: #a7e99c;
   --md-code-hl-variable-color: #bde3ff;
   --md-typeset-color: var(--celune-foreground);
-  --md-typeset-a-color: #deceff;
+  --md-typeset-a-color: var(--celune-link);
   --md-footer-bg-color: var(--celune-background);
   --md-footer-bg-color--dark: #15121c;
   --md-footer-fg-color: var(--celune-foreground);
@@ -64,6 +66,8 @@
   --celune-code: #d7c7f9;
   --celune-warning: #6b5e00;
   --celune-error: #7a1f24;
+  --celune-link: var(--celune-primary);
+  --celune-on-accent: var(--celune-background);
 
   --md-primary-fg-color: var(--celune-accent);
   --md-primary-fg-color--light: var(--celune-secondary);
@@ -94,7 +98,7 @@
   --md-code-hl-string-color: #648c5e;
   --md-code-hl-variable-color: #718899;
   --md-typeset-color: var(--celune-foreground);
-  --md-typeset-a-color: #deceff;
+  --md-typeset-a-color: var(--celune-link);
   --md-footer-bg-color: var(--celune-accent);
   --md-footer-bg-color--dark: var(--celune-secondary);
   --md-footer-fg-color: var(--celune-background);
@@ -175,7 +179,7 @@ h6,
 .md-tabs__link--active,
 .md-toc__link:is(:focus, :hover),
 .md-toc__link--active {
-  color: #deceff;
+  color: var(--celune-link);
 }
 
 .md-typeset a,
@@ -183,13 +187,13 @@ h6,
 .md-nav__link--active,
 .md-tabs__link--active,
 .md-tabs__link:is(:focus, :hover) {
-  color: #deceff;
+  color: var(--celune-link);
 }
 
 .md-typeset a:hover,
 .md-nav__link:is(:focus, :hover),
 .md-tabs__link:is(:focus, :hover) {
-  color: #deceff;
+  color: var(--celune-link);
 }
 
 .md-typeset code,
@@ -208,7 +212,7 @@ h6,
 
 .md-typeset table:not([class]) th {
   background-color: var(--celune-accent);
-  color: var(--celune-foreground);
+  color: var(--celune-on-accent);
 }
 
 .md-typeset table:not([class]) tr:hover {
@@ -266,6 +270,6 @@ details {
 
   .md-nav__link--active,
   .md-tabs__link--active {
-    color: #deceff;
+    color: var(--celune-link);
   }
 }

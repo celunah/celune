@@ -1,9 +1,9 @@
 # Licensing
 
-Celune source code is licensed under the MIT License. The repository also
+Celune source code is licensed under the Apache 2.0 License. The repository also
 contains third-party dependencies, downloaded model checkpoints, reference
 recordings, tutorial audio, icons, and other assets. Those materials are not
-automatically covered by Celune's MIT license.
+automatically covered by Celune's Apache 2.0 license.
 
 Before redistributing a build, voice pack, model cache, or generated bundle:
 
@@ -11,8 +11,8 @@ Before redistributing a build, voice pack, model cache, or generated bundle:
 - Check the rights for each reference recording and embedding.
 - Preserve the relevant notices in a distribution that includes third-party
   code or assets.
-- Do not describe a third-party model as MIT-licensed merely because the Celune
-  wrapper is MIT-licensed.
+- Do not describe a third-party model as Apache 2.0-licensed merely because the Celune
+  wrapper is Apache 2.0-licensed.
 
 The `docs/` pages describe interfaces and file formats; they do not grant
 rights to redistribute models or voice recordings. The lore-only
