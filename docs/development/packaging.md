@@ -63,5 +63,9 @@ python:
 
 The documentation source is `docs/`, the navigation is `mkdocs.yml`, and
 `mkdocs-material` is installed from `docs/requirements.txt`. Pushing the
-configured repository branch triggers the ReadTheDocs webhook; the published
-URL is `https://celune.readthedocs.io/en/latest/`.
+configured repository branch triggers the ReadTheDocs webhook when the
+project's GitHub integration is enabled; the published URL is
+`https://celune.readthedocs.io/en/latest/`. The repository's
+`.github/workflows/docs.yml` workflow builds the same MkDocs site in GitHub
+Actions for documentation changes, but it does not replace the ReadTheDocs
+incoming webhook.
