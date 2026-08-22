@@ -6,7 +6,7 @@ The API is enabled by default in `default_config.yaml`:
 ```yaml
 api:
   enabled: true
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 2060
   token: null
   rate_limit_per_minute: 60
@@ -14,6 +14,11 @@ api:
 
 If no token is configured, Celune binds the API to `127.0.0.1`.
 If a token is configured through `api.token` or `CELUNE_API_TOKEN`, Celune can bind to `0.0.0.0`.
+
+The API is an optional core extra. Install it with `uv sync --extra api` (or
+include `--all-extras` during development). Keep a network-facing listener
+behind authentication and an appropriate firewall; the API can start speech,
+load voices, and play uploaded audio.
 
 Authenticated requests may send either header:
 
@@ -28,6 +33,7 @@ X-Celune-Token: YOUR_TOKEN
 |--------|------|-------------|
 | `GET` | `/v1` | Return Celune's current status. |
 | `GET` | `/v1/version` | Return the running Celune version. |
+| `GET` | `/` | Redirect to the mounted WebUI at `/ui`. |
 | `POST` | `/v1/think` | Ask Celune to think through Persona and reply asynchronously through her normal speech pipeline. |
 | `POST` | `/v1/speak` | Queue speech and keep the HTTP request open until `audio/flac` is ready. |
 | `POST` | `/v1/speak/async` | Queue speech and return `202 Accepted` immediately with a job ID. |
@@ -36,6 +42,35 @@ X-Celune-Token: YOUR_TOKEN
 | `WebSocket` | `/v1/ws/tasks/{job_id}` | Replay and stream typed lifecycle events for an async speech job. |
 | `POST` | `/v1/voice` | Change the active voice. |
 | `POST` | `/v1/sfx` | Upload and play a sound effect. |
+| `POST` | `/v1/convert` | Upload audio for voice conversion in VC mode. |
+
+`/v1` and `/v1/version` are JSON endpoints. The root redirect is useful when a
+browser opens the API port; programmatic clients should call the `/v1` paths
+directly. `/ui` is the Gradio WebUI mounted by the optional API runtime.
+
+## Request and response shapes
+
+The JSON models are intentionally small:
+
+```json
+{"content":"Hello from Celune.","save":true}
+```
+
+`SpeakRequest.content` is a non-empty string and `save` defaults to `true`.
+`ThinkRequest` has `content`. `VoiceRequest` has `voice_name`.
+
+Synchronous speech returns `audio/flac`. Async speech returns a task object
+with `status`, `job_id`, and `location`; polling returns JSON while queued or
+running and FLAC when complete. Task event objects contain `task_id`, `event`,
+`status`, optional `message`, `severity`, `current`, `total`, `location`, and
+`error`. WebSocket commands currently accept:
+
+```json
+{"command":"cancel"}
+```
+
+The server validates the command and returns a typed command result. A socket
+disconnect removes only that subscriber; it does not cancel the job.
 
 ## Think
 
@@ -234,3 +269,68 @@ Response:
 - `400 application/json` when the upload is not valid audio.
 - `409 application/json` when Celune cannot play the sound right now.
 - `413 application/json` when the upload is too large.
+
+## Voice conversion
+
+The conversion endpoint accepts multipart form data:
+
+```bash
+curl -X POST http://127.0.0.1:2060/v1/convert \
+  -F "file=@input.wav" \
+  -F "pitch_shift=-2" \
+  -F "f0_condition=false" \
+  --output converted.flac
+```
+
+`file` is required. `pitch_shift` is an optional integer override and
+`f0_condition` is an optional boolean override. The endpoint returns `audio/flac`
+when conversion succeeds, `409` when VC mode is not active or the engine is
+busy, `400` for malformed audio/fields, `413` when the upload limit is
+exceeded, and `500` when the conversion backend raises an internal request
+failure. See [Voice conversion](user-guide/voice-conversion.md) for the
+interactive capture path.
+
+## Authentication, limits, and errors
+
+When a token is configured, send either:
+
+```http
+Authorization: Bearer YOUR_TOKEN
+```
+
+or:
+
+```http
+X-Celune-Token: YOUR_TOKEN
+```
+
+The configured per-minute rate limit applies to API calls. Failed validation,
+busy-state, missing-job, and backend errors are returned as JSON with an HTTP
+status instead of exposing raw internal tracebacks. Async jobs are retained in
+memory for 15 minutes and are not persisted across a restart.
+
+## WebUI behavior
+
+The WebUI is a Gradio application mounted at `/ui`. It reuses the same engine
+and command behavior as the Textual UI, including speech, voice selection,
+voice conversion controls, logs, and responsive/mobile layouts. It is not a
+second TTS implementation. If the API extra is absent, the REST/WebUI surface
+cannot be started, but the core Python/TUI runtime remains separate.
+
+## Embedding the server
+
+Python integrations can bind the engine explicitly:
+
+```python
+from celune.api import run_api, start_api
+
+run_api(celune, host="127.0.0.1", port=2060, token=None)
+# Or keep the main thread free:
+thread = start_api(celune, host="127.0.0.1", port=2060)
+```
+
+`run_api()` blocks in Uvicorn. `start_api()` starts a daemon thread and waits
+for startup confirmation. The supporting calls `bind_celune()`,
+`configure_api_security()`, `resolve_api_host()`, `audio_bytes()`, and
+`stream_headers()` are the existing integration hooks for custom hosts; use
+them instead of mounting a second FastAPI app around the engine.

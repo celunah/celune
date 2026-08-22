@@ -12,7 +12,7 @@ Her average pitch range during speech is ~170 Hz. This is reflected across all f
 
 The character personality is loosely based on Japanese-style philosophies, and the connected UX practices follow a Korean style. When she speaks, she tends to be slightly hesitant and keeps her responses brief, while naturally pausing in her speech. The interpretation is left to the user to decipher.
 
-Please check [the Book of Celune](resources/about/about-celune.md) for lore-accurate details and a comprehensive description of Celune.
+Please check [the Book of Celune](https://github.com/celunah/celune/blob/dev/resources/about/about-celune.md) for lore-accurate details and a comprehensive description of Celune.
 
 ## Pronunciation glossary
 

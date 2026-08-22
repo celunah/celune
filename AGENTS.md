@@ -117,6 +117,8 @@ If this process updates typing or dataclass related docstrings, remove the place
 
 This process may leave some formatting inaccuracies, run `uv run ruff format .` again after completing docstrings.
 
+Immediately document every new or changed behavior you write. This includes public calls, configuration keys, CLI or slash commands, API endpoints, events, backend capabilities, file formats, standards, and user-visible workflows. Update the appropriate `docs/` page and `mkdocs.yml` navigation in the same task before considering the implementation complete; do not defer documentation to a later pass.
+
 Additionally, perform all actions listed in the `Import Ordering` section below.
 
 Make sure to remove all `__pycache__` directories. Celune code is compiled and does not use said cache files.

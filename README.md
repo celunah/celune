@@ -139,7 +139,7 @@ Browse the `demos` directory for demonstration content from the current version 
 
 Samples were captured directly from Celune's output directory. No extra post-processing was applied.
 
-For details on voice production, check [VOICES.md](./VOICES.md).
+For details on voice production, check [VOICES.md](./docs/VOICES.md).
 
 ## System Requirements
 
@@ -372,7 +372,7 @@ Without this, Celune may require elevated permissions or fall back to slower beh
 
 ## REST API
 
-See [API.md](./API.md) for REST API configuration, authentication, endpoints, and cURL examples.
+See [API.md](./docs/API.md) for REST API configuration, authentication, endpoints, and cURL examples.
 The API allows programmatic usage of all Celune features. It can be used both as a public and local interface.
 
 ## Extensions

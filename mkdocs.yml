@@ -1,0 +1,75 @@
+site_name: Celune Documentation
+site_description: Local-first expressive voice, Persona, agent, and voice-conversion engine.
+site_url: https://celune.readthedocs.io/en/latest/
+repo_url: https://github.com/celunah/celune
+repo_name: celunah/celune
+
+strict: true
+docs_dir: docs
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Use light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Use dark mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Requirements and installation: getting-started/installation.md
+      - First run: getting-started/first-run.md
+  - User guide:
+      - Configuration: user-guide/configuration.md
+      - Operation modes: user-guide/modes.md
+      - Speech and voices: user-guide/speech.md
+      - Persona: user-guide/persona.md
+      - Agent mode: user-guide/agent.md
+      - Voice conversion: user-guide/voice-conversion.md
+      - Troubleshooting: troubleshooting.md
+  - Interfaces:
+      - CLI: interfaces/cli.md
+      - Text UI: interfaces/tui.md
+      - REST API: API.md
+      - Extensions: interfaces/extensions.md
+  - Formats and standards:
+      - CEVOICE and CECHAR: CEVOICE.md
+      - CEDTS worker transport: formats/cedts.md
+      - Persona Markdown: formats/persona-markdown.md
+  - Reference:
+      - Public Python API: reference/public-api.md
+      - Source map: reference/source-map.md
+      - Voice design: VOICES.md
+      - Gallery: GALLERY.md
+  - Development:
+      - Architecture: development/architecture.md
+      - Backends and environments: development/backends.md
+      - Voice analysis and pack creation: development/voice-analysis.md
+      - Validation standards: development/validation.md
+      - Packaging and release: development/packaging.md
+      - Licensing: licensing.md
