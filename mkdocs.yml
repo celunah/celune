@@ -1,0 +1,33 @@
+site_name: Celune Documentation
+site_description: Local-first expressive voice, Persona, agent, and voice-conversion engine.
+site_url: https://celune.readthedocs.io/en/stable/
+repo_url: https://github.com/celunah/celune
+repo_name: celunah/celune
+
+strict: true
+docs_dir: docs
+
+extra_css:
+  - assets/stylesheets/celune.css
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Use light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Use dark mode
+
+nav:
+  - Home: index.md
