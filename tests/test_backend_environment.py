@@ -3957,8 +3957,13 @@ from celune.backends import worker
 
 
 release_fd = int(os.environ["CELUNE_TEST_RELEASE_FD"])
+started_fd = int(os.environ["CELUNE_TEST_STARTED_FD"])
 operation_finished = threading.Event()
 response_sent = threading.Event()
+
+
+def signal_operation_started():
+    os.write(started_fd, b"1")
 
 
 def wait_for_release():
@@ -3980,14 +3985,14 @@ class FakeBackend:
     is_fake = True
 
     def preload_models(self):
-        print("BLOCKING_STARTED", file=worker._WORKER_STDERR, flush=True)
+        signal_operation_started()
         try:
             wait_for_release()
         finally:
             operation_finished.set()
 
     def load_model(self, model_id):
-        print("BLOCKING_STARTED", file=worker._WORKER_STDERR, flush=True)
+        signal_operation_started()
         try:
             wait_for_release()
             return model_id
@@ -3996,7 +4001,7 @@ class FakeBackend:
 
     def convert(self, request):
         del request
-        print("BLOCKING_STARTED", file=worker._WORKER_STDERR, flush=True)
+        signal_operation_started()
         try:
             wait_for_release()
             return {"converted": True}
@@ -4004,7 +4009,7 @@ class FakeBackend:
             operation_finished.set()
 
     def resolve_generation_language(self, lang):
-        print("BLOCKING_STARTED", file=worker._WORKER_STDERR, flush=True)
+        signal_operation_started()
         try:
             wait_for_release()
             return lang
@@ -4052,6 +4057,7 @@ finally:
         worker_binary_input, core_binary_output = os.pipe()
         core_binary_input, worker_binary_output = os.pipe()
         release_read, release_write = os.pipe()
+        started_read, started_write = os.pipe()
         process: Optional[subprocess.Popen[bytes]] = None
 
         def release_blocked_operation() -> None:
@@ -4068,6 +4074,7 @@ finally:
         try:
             worker_environment = os.environ.copy()
             worker_environment["CELUNE_TEST_RELEASE_FD"] = str(release_read)
+            worker_environment["CELUNE_TEST_STARTED_FD"] = str(started_write)
             process = subprocess.Popen(  # pylint: disable=R1732
                 [
                     sys.executable,
@@ -4087,14 +4094,21 @@ finally:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                pass_fds=(worker_binary_input, worker_binary_output, release_read),
+                pass_fds=(
+                    worker_binary_input,
+                    worker_binary_output,
+                    release_read,
+                    started_write,
+                ),
             )
             os.close(worker_binary_input)
             os.close(worker_binary_output)
             os.close(release_read)
+            os.close(started_write)
             worker_binary_input = -1
             worker_binary_output = -1
             release_read = -1
+            started_write = -1
             assert process.stdin is not None
             assert process.stdout is not None
             assert process.stderr is not None
@@ -4143,32 +4157,22 @@ finally:
             ) as binary_stream:
                 send_payloads(binary_stream, request_payloads)
             blocking_deadline = time.monotonic() + 10.0
-            stderr_lines: list[bytes] = []
-            while True:
-                remaining = blocking_deadline - time.monotonic()
-                if remaining <= 0:
-                    stderr = b""
-                    if process.poll() is not None:
-                        stderr = process.stderr.read()
-                    self.fail(
-                        "blocking backend operation did not start "
-                        f"(returncode={process.poll()}, stderr={stderr!r})"
-                    )
-                ready, _, _ = select.select([process.stderr], [], [], remaining)
-                if not ready:
-                    self.fail(
-                        "blocking backend operation did not start "
-                        f"(returncode={process.poll()}, stderr={stderr_lines!r})"
-                    )
-                line = process.stderr.readline()
-                stderr_lines.append(line)
-                if b"BLOCKING_STARTED" in line:
-                    break
-                if not line:
-                    self.fail(
-                        "blocking backend operation did not start "
-                        f"(returncode={process.poll()}, stderr={stderr_lines!r})"
-                    )
+            remaining = blocking_deadline - time.monotonic()
+            ready, _, _ = select.select([started_read], [], [], remaining)
+            if not ready:
+                stderr = process.stderr.read() if process.poll() is not None else b""
+                self.fail(
+                    "blocking backend operation did not start "
+                    f"(returncode={process.poll()}, stderr={stderr!r})"
+                )
+            if not os.read(started_read, 1):
+                stderr = process.stderr.read() if process.poll() is not None else b""
+                self.fail(
+                    "blocking backend operation did not start "
+                    f"(returncode={process.poll()}, stderr={stderr!r})"
+                )
+            os.close(started_read)
+            started_read = -1
 
             started = time.monotonic()
             if packet_kind == "cancel":
@@ -4242,6 +4246,8 @@ finally:
                 core_binary_output,
                 core_binary_input,
                 release_read,
+                started_read,
+                started_write,
             ):
                 if descriptor >= 0:
                     with suppress(OSError):
