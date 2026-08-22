@@ -130,12 +130,8 @@ def huggingface_hub_cache_dir(create: bool = False) -> Path:
     return path
 
 
-def configure_huggingface_cache_environment(force: bool = False) -> None:
-    """Point Hugging Face caches at Celune's user data directory.
-
-    Args:
-        force: Retained for compatibility; defaults apply in every launch mode.
-    """
+def configure_huggingface_cache_environment() -> None:
+    """Point Hugging Face caches at Celune's user data directory."""
     default_hf_home = str(huggingface_home_dir())
     default_hf_hub_cache = str(huggingface_hub_cache_dir())
 
