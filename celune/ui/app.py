@@ -336,6 +336,7 @@ class CeluneUIThemeState:
     active_theme_name: str
     fatal_error_active: bool = False
     log_history: list[tuple[str, str]] = field(default_factory=list)
+    log_history_lock: threading.Lock = field(default_factory=threading.Lock)
     rendered_log_count: int = 0
     status_severity: str = "info"
     status_text: str = ""
@@ -544,6 +545,7 @@ class CeluneUI(App):
     active_theme_name = _forward_ui_property("_theme_state", "active_theme_name")
     _fatal_error_active = _forward_ui_property("_theme_state", "fatal_error_active")
     log_history = _forward_ui_property("_theme_state", "log_history")
+    _log_history_lock = _forward_ui_property("_theme_state", "log_history_lock")
     _rendered_log_count = _forward_ui_property("_theme_state", "rendered_log_count")
     status_severity = _forward_ui_property("_theme_state", "status_severity")
     _status_text = _forward_ui_property("_theme_state", "status_text")
@@ -842,7 +844,7 @@ class CeluneUI(App):
         self.theme = self._runtime_theme_name()
         self._refresh_status()
         self._refresh_theme_text()
-        self._refresh_logs()
+        self._refresh_logs(recolor=True)
 
     def _has_celune(self) -> bool:
         """Is the app attached to this UI instance?"""
@@ -1330,9 +1332,42 @@ class CeluneUI(App):
         if self.status is not None:
             self._update_status_label()
 
-    def _refresh_logs(self) -> None:
-        """Repaint existing log entries using the active theme colors."""
+    def _refresh_logs(self, *, recolor: bool = False) -> None:
+        """Reconcile visible log entries with the retained UI log history.
+
+        Args:
+            recolor: Whether existing entries should be rebuilt with the active
+                theme colors.
+        """
         if self.logs is None:
+            return
+
+        with self._log_history_lock:
+            history = tuple(self.log_history)
+
+        if not recolor:
+            if self._rendered_log_count > len(history):
+                self.logs.clear()
+                self._rendered_log_count = 0
+            elif self._rendered_log_count == len(history):
+                if not history or not getattr(self.logs, "_size_known", True):
+                    return
+                if self.logs.lines:
+                    if self.logs.auto_scroll:
+                        self.logs.scroll_end(
+                            animate=False,
+                            immediate=True,
+                            force=True,
+                        )
+                    return
+                self.logs.clear()
+                self._rendered_log_count = 0
+
+            for message, severity in history[self._rendered_log_count :]:
+                self.logs.write(
+                    Text(message, style=self._severity_color(severity)),
+                )
+                self._rendered_log_count += 1
             return
 
         scroll_offset = self.logs.scroll_offset
@@ -1340,7 +1375,7 @@ class CeluneUI(App):
         self.logs.auto_scroll = False
         self.logs.clear()
 
-        for message, severity in self.log_history:
+        for message, severity in history:
             self.logs.write(
                 Text(message, style=self._severity_color(severity)),
                 scroll_end=False,
@@ -1354,7 +1389,7 @@ class CeluneUI(App):
             immediate=True,
             force=True,
         )
-        self._rendered_log_count = len(self.log_history)
+        self._rendered_log_count = len(history)
 
     def _persist_log_entry(self, msg: str, severity: str) -> None:
         """Append one UI log entry to the persisted main-window log file."""
@@ -2890,7 +2925,8 @@ class CeluneUI(App):
         if severity not in colors.SEVERITY_COLORS["celune"]:
             severity = "info"
 
-        self.log_history.append((msg, severity))
+        with self._log_history_lock:
+            self.log_history.append((msg, severity))
         self._persist_log_entry(msg, severity)
         if loglevel == "info" and self._loading_screen is not None:
             self._run_on_ui_thread(lambda: self._update_loading_log(msg))
@@ -2911,7 +2947,9 @@ class CeluneUI(App):
         Args:
             message: Background log message to write to the UI.
         """
-        if self.logs is None or self._rendered_log_count >= len(self.log_history):
+        with self._log_history_lock:
+            history_length = len(self.log_history)
+        if self.logs is None or self._rendered_log_count >= history_length:
             return
         self.logs.write(
             Text(message.message, style=self._severity_color(message.severity))

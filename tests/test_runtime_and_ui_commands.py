@@ -1557,6 +1557,27 @@ class TestUIStartup(CeluneTestCase):
         logs.write.assert_called_once()
         self.assertEqual(ui._rendered_log_count, 1)
 
+    def test_log_refresh_preserves_rendered_history(self) -> None:
+        """Verify a layout refresh does not clear already rendered log entries."""
+        ui = CeluneUI()
+        logs = mock.Mock()
+        logs.lines = [mock.Mock()]
+        logs.auto_scroll = True
+        logs._size_known = True
+        ui.logs = cast(RichLog, logs)
+        ui.log_history = [("Existing log", "info")]
+        ui._rendered_log_count = 1
+
+        ui._refresh_logs()
+
+        logs.clear.assert_not_called()
+        logs.write.assert_not_called()
+        logs.scroll_end.assert_called_once_with(
+            animate=False,
+            immediate=True,
+            force=True,
+        )
+
     def test_finished_agent_test_ignores_late_speaking_status(self) -> None:
         """Verify late playback callbacks cannot overwrite the stopped status."""
         ui = CeluneUI()

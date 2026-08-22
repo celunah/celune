@@ -20,6 +20,15 @@ The style button cycles the active voice. In VC mode the mode button toggles
 talk/sing F0 conditioning and the pitch button cycles the pitch-shift value.
 Touch users can use these visible buttons rather than keyboard shortcuts.
 
+## Log panel
+
+The main log panel retains the current session's log history while the loading
+screen transitions to the ready state and while the UI repaints. Background
+runtime messages are appended on the Textual application thread, so a backend
+worker cannot directly corrupt the panel. Switching themes repaints existing
+entries with the selected severity colors. The same entries are also appended
+to Celune's persisted `celune.log` file for troubleshooting.
+
 ## Slash commands
 
 Commands are entered in the input box and start with `/`.
