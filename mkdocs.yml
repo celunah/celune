@@ -7,6 +7,9 @@ repo_name: celunah/celune
 strict: true
 docs_dir: docs
 
+extra_css:
+  - assets/stylesheets/celune.css
+
 theme:
   name: material
   language: en

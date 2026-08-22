@@ -68,4 +68,6 @@ project's GitHub integration is enabled; the published URL is
 `https://celune.readthedocs.io/en/latest/`. The repository's
 `.github/workflows/docs.yml` workflow builds the same MkDocs site in GitHub
 Actions for documentation changes, but it does not replace the ReadTheDocs
-incoming webhook.
+incoming webhook. The site loads the canonical palette from `celune/colors.py`
+into `docs/assets/stylesheets/celune.css` and uses Michroma for display text
+and Outfit for body text.
