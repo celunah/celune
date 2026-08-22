@@ -39,7 +39,7 @@ packages into the main application.
 
 ## Project conventions
 
-The source repository is MIT-licensed. Third-party models, backend packages,
+The source repository is Apache 2.0-licensed. Third-party models, backend packages,
 voice recordings, and other assets retain their own licenses. See
 [Licensing](licensing.md) before redistributing a model or a voice pack.
 
