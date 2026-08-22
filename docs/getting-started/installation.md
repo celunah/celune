@@ -1,5 +1,8 @@
 # Requirements and installation
 
+This page lists supported environments and system dependencies, then shows how
+to install and launch Celune from the source repository.
+
 ## Supported environments
 
 Celune supports Python 3.12, 3.13, and 3.14 on Windows and Linux. The core

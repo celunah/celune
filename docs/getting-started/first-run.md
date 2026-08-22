@@ -1,5 +1,8 @@
 # First run
 
+This page walks new users through the first safe launch, backend and voice
+selection, and the checks that confirm Celune is ready to speak.
+
 ## Start with a safe baseline
 
 1. Install the core and optional dependencies with `uv sync --all-extras --dev`.

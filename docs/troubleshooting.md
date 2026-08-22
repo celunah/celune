@@ -1,5 +1,8 @@
 # Troubleshooting
 
+This page maps common Celune symptoms to checks, likely causes, and recovery
+steps across startup, audio, backends, Persona, agent mode, and CI.
+
 ## Startup or import failures
 
 Run `celune doctor` first. Confirm Python is 3.12–3.14, the active `uv`

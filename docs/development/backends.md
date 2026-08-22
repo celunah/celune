@@ -1,5 +1,8 @@
 # Backends and environments
 
+This page describes how Celune installs, isolates, launches, and extends its
+text-to-speech and voice-conversion backends.
+
 ## Manifest-driven installation
 
 The canonical backend registry is `celune.backends.environment.BACKEND_MANIFESTS`.

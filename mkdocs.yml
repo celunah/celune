@@ -72,6 +72,7 @@ nav:
   - Development:
       - Architecture: development/architecture.md
       - Backends and environments: development/backends.md
+      - Documentation standard: development/documentation.md
       - Voice analysis and pack creation: development/voice-analysis.md
       - Validation standards: development/validation.md
       - Packaging and release: development/packaging.md

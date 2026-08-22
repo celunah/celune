@@ -1,5 +1,8 @@
 # Validation standards
 
+This page defines the validation workflow for Celune code, documentation,
+packaging, and cross-platform changes.
+
 ## Canonical checks
 
 For logical Python changes, the repository's canonical command is:

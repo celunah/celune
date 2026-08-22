@@ -1,5 +1,8 @@
 # Packaging and release
 
+This page describes how contributors build, package, update, and deploy
+Celune's compiled artifacts and documentation.
+
 ## Nuitka builds
 
 The build scripts produce a compiled core executable plus a small launcher:

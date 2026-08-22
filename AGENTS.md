@@ -246,7 +246,40 @@ Do not remove checks, documentation, or fallback behavior for these dependencies
 
 ## Documentation
 
-Keep documentation concise, direct, and technically accurate.
+Keep documentation concise, direct, and technically accurate. Technical
+documentation belongs under `docs/` and must follow the repository's
+[documentation standard](docs/development/documentation.md).
+
+Every technical page must use this structure:
+
+1. One H1 title that names the subject.
+2. A short purpose paragraph immediately below the title that states the
+   audience and scope.
+3. H2 sections organized around the reader's task or the documented contract.
+4. A verification, error-handling, compatibility, or troubleshooting section
+   when the subject can fail or vary by environment.
+5. A `See also` section when related pages provide the next useful step.
+
+Use sentence case for headings; preserve acronyms, API names, commands, and
+file-format names exactly. Use fenced code blocks with a language identifier,
+tables for stable field/option comparisons, numbered lists for procedures, and
+bullets for unordered facts. Use the canonical project commands and copyable
+examples from the README and source. Put signatures, arguments, return values,
+errors, side effects, and at least one usage example beside every documented
+public call.
+
+For format and protocol pages, state the version, invariants, wire/file layout,
+compatibility rules, and failure behavior. For user procedures, state
+prerequisites, ordered steps, expected results, and recovery steps. For
+development pages, identify the owning source paths, boundaries, validation
+commands, and release/runtime consequences. Do not duplicate the same
+contract in multiple pages; link to its canonical page instead.
+
+Before completing a documentation change, update `mkdocs.yml` navigation and
+links, check that new pages are discoverable, run a strict MkDocs build, and
+review rendered code blocks/tables for copyability. Keep `README.md`,
+`AGENTS.md`, and lore-only Markdown outside `docs/` unless the repository
+layout explicitly requires otherwise.
 
 When documenting licensing, distinguish between:
 

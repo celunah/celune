@@ -1,5 +1,8 @@
 # Speech and voices
 
+This page explains TTS backend differences, voice selection, reference
+conditioning, playback controls, and Celune's audio invariants.
+
 ## TTS backends
 
 Celune's TTS backends all consume the active CEVOICE/CECHAR pack when they

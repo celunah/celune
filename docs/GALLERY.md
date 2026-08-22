@@ -1,6 +1,7 @@
 # Gallery
 
-Want to look at how the software looks like?
+This page shows the major Textual UI and WebUI states so contributors and users
+can compare the expected visual behavior with a local installation.
 
 [![Before init](./assets/gallery/init.png)](./assets/gallery/init.png)
 
