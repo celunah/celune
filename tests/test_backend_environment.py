@@ -4847,6 +4847,10 @@ raise SystemExit(worker.main())
                 "Popen",
                 side_effect=record_startup_info,
             ),
+            mock.patch(
+                "celune.backends.remote.configure_numba_cache",
+                return_value=Path("C:/celune/temp/numba"),
+            ),
         ):
             proxy._start_worker(
                 backend_environment,
