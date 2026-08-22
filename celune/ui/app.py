@@ -70,7 +70,11 @@ from ..config import format_audio_device_name, resolve_audio_device_with_info
 from ..exceptions import CEDTSError
 from .loading import CeluneLoadingScreen
 from .terminal import LogRedirect, UILogHandler, is_celune_log_record
-from ..terminal import set_terminal_title, terminal_title_escape
+from ..terminal import (
+    RUNTIME_LOG_FILTER_MESSAGES,
+    set_terminal_title,
+    terminal_title_escape,
+)
 from ..watchdog import launcher_loss_requested
 from ..constants import SIGTSTP, APP_NAME
 from ..typing.agent import AgentTaskState
@@ -242,28 +246,7 @@ def _load_ui_runtime_dependencies() -> None:
     _RUNTIME_DEPENDENCIES_LOADED = True
 
 
-_RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = frozenset(
-    {
-        "`torch_dtype` is deprecated! Use `dtype` instead!",
-        "Skipped loading some keys due to shape mismatch:",
-        "cfm loaded",
-        "length_regulator loaded",
-        "Removing weight norm...",
-        "Loading weights from",
-        "Loading Text2Semantic weights from",
-        "Loading Text2Semantic Weights from",
-        "min value is",
-        "max value is",
-        "generation flags are not valid and may be ignored:",
-        "it/s]",
-        "s/it]",
-        "inputs will be cast",
-        "Ignoring clean_up_tokenization_spaces=True for BPE tokenizer",
-        "You are sending unauthenticated requests",
-        "triton not found",
-        "A custom logits processor of type",
-    }
-)
+_RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = RUNTIME_LOG_FILTER_MESSAGES
 
 _CAPTION_FADE_SECONDS = 0.36
 _LOADING_FADE_SECONDS = 1.0
@@ -2209,11 +2192,11 @@ class CeluneUI(App):
                 error=format_error(e, getattr(self.celune, "log_level", "info")),
             )
             self.safe_log(error_message, "error")
-            self._show_loading_error(error_message)
             self.celune.fatal()
             self.change_input_state(locked=True)
             self.change_voice_lock_state(locked=True)
             self.error(string("ui.app_could_not_start", app_name=APP_NAME))
+            self._show_loading_error(error_message)
             self._finish_test_startup(False, str(e))
 
     @staticmethod

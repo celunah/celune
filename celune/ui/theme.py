@@ -92,13 +92,6 @@ CELUNE_CSS = """
         margin-top: 2;
     }
 
-    #loading-error {
-        width: 1fr;
-        height: auto;
-        color: $error;
-        margin-top: 1;
-    }
-
     #loading-footer {
         dock: bottom;
         width: auto;

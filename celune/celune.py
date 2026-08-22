@@ -705,7 +705,7 @@ class Celune(CeluneStateAccessors):
                 config_value(config, "voice_conversion_backend")
             ) or _config_str(config_value(config, "vc_backend"))
             if vc_backend is None:
-                vc_backend = "passthrough"
+                vc_backend = "seed-vc"
 
         try:
             if vc_backend is not None:

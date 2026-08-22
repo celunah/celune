@@ -38,7 +38,6 @@ from celune.backends.vc.seedvc import CeluneSeedVCBackend
 from celune.extensions.manager import CeluneExtensionManager
 from celune.dataclasses.pipeline import VoiceConversionRequest
 from celune.backends.tts.gpt_sovits import GPTSoVITS, GPTSoVITSPipeline
-from celune.backends.vc.passthrough import CelunePassthroughVCBackend
 
 from .support import (
     FakeBackend,
@@ -141,6 +140,32 @@ class TestBackend(CeluneTestCase):
             backend._ensure_model_snapshot()
 
         progress_bridge.assert_called_once_with(backend.report_progress)
+
+    def test_tts_preload_uses_celune_huggingface_cache(self) -> None:
+        """Verify generic TTS preloading downloads into Celune's Hub cache."""
+        with mock_mini_backend() as mini_cls:
+            backend = object.__new__(mini_cls)
+            backend.log = mock.Mock()
+            backend._progress_callback = None
+
+            with (
+                mock.patch.object(
+                    backend,
+                    "model_is_available_locally",
+                    return_value=(False, None),
+                ),
+                mock.patch("celune.backends.tts.base.snapshot_download") as download,
+                mock.patch(
+                    "celune.backends.tts.base.huggingface_hub_cache_dir",
+                    return_value=Path("C:/celune/huggingface/hub"),
+                ),
+            ):
+                backend.preload_models()
+
+        download.assert_called_once_with(
+            repo_id="lunahr/pocket-tts-ungated",
+            cache_dir="C:/celune/huggingface/hub",
+        )
 
     def test_gpt_sovits_bounds_nltk_downloads_and_restores_socket_timeout(
         self,
@@ -512,27 +537,6 @@ class TestBackend(CeluneTestCase):
         assert inner.closed
         assert cached.closed
         assert backend.model is None
-
-    def test_passthrough_vc_backend_returns_playable_output(self) -> None:
-        """Verify the passthrough VC backend returns decoded audio unchanged."""
-        backend = CelunePassthroughVCBackend(log=lambda _msg, _severity="info": None)
-        source = np.ones((12, 2), dtype=np.float32)
-
-        output = backend.convert(
-            VoiceConversionRequest(
-                source_audio=source,
-                sample_rate=44100,
-                target_voice="balanced",
-                target_character="Celune",
-                label="fixture audio",
-            )
-        )
-
-        assert output.sample_rate == 44100
-        assert output.label == "fixture audio"
-        assert output.audio.shape == (12, 2)
-        assert np.array_equal(output.audio, source)
-        assert output.audio is not source
 
     def test_resolve_vc_backend_accepts_seedvc_backend_name(self) -> None:
         """Verify the Seed-VC backend resolves through the VC backend registry."""

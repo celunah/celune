@@ -18,10 +18,6 @@ __all__ = [
 ]
 
 VC_BACKENDS = {
-    "passthrough": (
-        "celune.backends.vc.passthrough",
-        "CelunePassthroughVCBackend",
-    ),
     "seed-vc": (
         "celune.backends.vc.seedvc",
         "CeluneSeedVCBackend",

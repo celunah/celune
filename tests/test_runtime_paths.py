@@ -163,20 +163,23 @@ class TestRuntimePath(CeluneTestCase):
             assert os.environ["HF_HOME"] == existing["HF_HOME"]
             assert os.environ["HF_HUB_CACHE"] == existing["HF_HUB_CACHE"]
 
-    def test_huggingface_cache_environment_skips_source_tree_imports(self) -> None:
-        """Verify source-tree runs keep the host Hugging Face cache defaults."""
+    def test_huggingface_cache_environment_defaults_to_runtime_data_in_source_tree(
+        self,
+    ) -> None:
+        """Verify source-tree runs use Celune's Hugging Face cache defaults."""
         with (
+            mock.patch("celune.paths.user_data_dir", return_value="C:/runtime-data"),
             mock.patch("celune.paths.running_compiled", return_value=False),
             mock.patch.dict(os.environ, {}, clear=True),
         ):
             configure_huggingface_cache_environment()
-            assert "HF_HOME" not in os.environ
-            assert "HF_HUB_CACHE" not in os.environ
+            assert os.environ["HF_HOME"] == "C:/runtime-data/huggingface"
+            assert os.environ["HF_HUB_CACHE"] == "C:/runtime-data/huggingface/hub"
 
-    def test_huggingface_cache_environment_clears_celune_portable_defaults(
+    def test_huggingface_cache_environment_keeps_celune_defaults_in_source_tree(
         self,
     ) -> None:
-        """Verify source-tree runs clear Celune-owned portable cache defaults."""
+        """Verify source-tree runs do not discard Celune-owned cache defaults."""
         expected_root = Path("C:/runtime-data")
 
         with (
@@ -192,8 +195,10 @@ class TestRuntimePath(CeluneTestCase):
             ),
         ):
             configure_huggingface_cache_environment()
-            assert "HF_HOME" not in os.environ
-            assert "HF_HUB_CACHE" not in os.environ
+            assert os.environ["HF_HOME"] == str(expected_root / "huggingface")
+            assert os.environ["HF_HUB_CACHE"] == str(
+                expected_root / "huggingface" / "hub"
+            )
 
     def test_huggingface_cache_environment_keeps_non_celune_overrides(
         self,

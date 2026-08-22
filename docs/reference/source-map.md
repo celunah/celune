@@ -41,7 +41,6 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/backends/tts/dotstts.py` | Celune's forked dots.tts adapter. |
 | `celune/backends/tts/gpt_sovits.py` | GPT-SoVITS family adapter. |
 | `celune/backends/vc/base.py` | Voice-conversion backend contract. |
-| `celune/backends/vc/passthrough.py` | Test/diagnostic passthrough VC backend. |
 | `celune/backends/vc/seedvc.py` | Seed-VC file and live conversion adapter. |
 | `celune/backends/environment.py` | Per-backend manifests, uv environments, fingerprints, and readiness. |
 | `celune/backends/remote.py` | Core-side proxy around a worker process. |

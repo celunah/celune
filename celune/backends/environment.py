@@ -30,6 +30,7 @@ __all__ = [
 
 _WORKER_HUGGINGFACE_REQUIREMENTS = (
     "huggingface-hub>=0.36,<1.0.0",
+    "hf-xet",
     "transformers>=4.56,<5.0.0",
     "lingua-language-detector>=2.2.0,<3.0.0",
     "librosa==0.11.0",

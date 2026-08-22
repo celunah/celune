@@ -622,9 +622,16 @@ class TestUIStartup(CeluneTestCase):
         screen.set_latest_log_message("Backend initialized")
         screen.show_error("Backend failed")
 
-        assert screen._status_message == "Loading backend"
-        assert screen._latest_log_message == "Backend initialized"
-        assert screen._error_message == "Backend failed"
+        assert screen._status_message == string("status.failed_to_start")
+        assert screen._latest_log_message == "Backend failed"
+        assert screen._wait_message == string(
+            "ui.loading_cannot_continue",
+            app_name=APP_NAME,
+        )
+        assert screen._footer_message == string(
+            "ui.app_could_not_start",
+            app_name=APP_NAME,
+        )
 
     def test_main_ui_selects_celune_theme_before_rendering_without_engine(self) -> None:
         """Verify the single UI app has its theme before the engine is attached."""
@@ -697,6 +704,22 @@ class TestUIStartup(CeluneTestCase):
                 assert starting.region.x >= 2
                 assert quit_hint.region.right <= 78
                 assert str(quit_hint.render()) == "CTRL+Q to quit"
+
+                screen.show_error("Backend failed")
+                assert str(
+                    screen.query_one("#loading-state-label", Static).render()
+                ) == string("status.failed_to_start")
+                assert (
+                    str(screen.query_one("#loading-log-message", Static).render())
+                    == "Backend failed"
+                )
+                assert not screen.query_one("#loading-spinner", Static).display
+                assert str(screen.query_one("#loading-wait", Static).render()) == (
+                    string("ui.loading_cannot_continue", app_name=APP_NAME)
+                )
+                assert str(
+                    screen.query_one("#loading-footer-starting", Static).render()
+                ) == string("ui.app_could_not_start", app_name=APP_NAME)
 
         asyncio.run(run_smoke_test())
 

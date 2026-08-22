@@ -538,7 +538,10 @@ class CeluneBackend[ModelT](ABC):
             if not available:
                 self.log(f"Downloading {model_id}...", "info")
                 with huggingface_progress(self.report_progress):
-                    snapshot_download(repo_id=model_id)
+                    snapshot_download(
+                        repo_id=model_id,
+                        cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                    )
             else:
                 self.log(f"{model_id} is already available.", "info")
 

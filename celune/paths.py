@@ -131,24 +131,16 @@ def huggingface_hub_cache_dir(create: bool = False) -> Path:
 
 
 def configure_huggingface_cache_environment(force: bool = False) -> None:
-    """Point Hugging Face caches at Celune's user data directory in portable mode.
+    """Point Hugging Face caches at Celune's user data directory.
 
     Args:
-        force: Whether to apply the portable cache defaults even outside compiled builds.
+        force: Retained for compatibility; defaults apply in every launch mode.
     """
     default_hf_home = str(huggingface_home_dir())
     default_hf_hub_cache = str(huggingface_hub_cache_dir())
 
-    if not force and not running_compiled():
-        # If this process previously enabled Celune's portable defaults,
-        # clear them again for source-tree runs so local development and tests
-        # continue to use the host Hugging Face cache.
-        if os.environ.get(_HF_HOME_ENV) == default_hf_home:
-            os.environ.pop(_HF_HOME_ENV, None)
-        if os.environ.get(_HF_HUB_CACHE_ENV) == default_hf_hub_cache:
-            os.environ.pop(_HF_HUB_CACHE_ENV, None)
-        return
-
+    # Keep explicit deployment or host overrides, but make Celune's cache
+    # deterministic for source-tree, compiled, and isolated worker processes.
     if _HF_HOME_ENV not in os.environ:
         os.environ[_HF_HOME_ENV] = default_hf_home
     if _HF_HUB_CACHE_ENV not in os.environ:

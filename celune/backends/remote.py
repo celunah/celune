@@ -19,7 +19,13 @@ from dataclasses import dataclass
 from collections.abc import Callable, Iterator
 
 from ..i18n import string
-from ..paths import configure_numba_cache, project_root
+from ..paths import (
+    configure_numba_cache,
+    huggingface_home_dir,
+    huggingface_hub_cache_dir,
+    project_root,
+)
+from ..terminal import RUNTIME_LOG_FILTER_MESSAGES
 from .vc.base import CeluneVCBackend
 from .tts.base import CeluneBackend
 from ..exceptions import (
@@ -203,6 +209,12 @@ def _worker_environment(environment: BackendEnvironment) -> dict[str, str]:
         )
         if value is not None:
             worker_environment[variable] = value
+
+    worker_environment.setdefault("HF_HOME", str(huggingface_home_dir()))
+    worker_environment.setdefault(
+        "HF_HUB_CACHE",
+        str(huggingface_hub_cache_dir()),
+    )
 
     backend_bin = environment.python.resolve().parent
     parent_path = worker_environment.get("PATH")
@@ -483,6 +495,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 continue
             with self._worker_stderr_lock:
                 self._worker_stderr.append(text)
+            if any(
+                filtered_message in text
+                for filtered_message in RUNTIME_LOG_FILTER_MESSAGES
+            ):
+                continue
             severity, explicit, message, loglevel = self._split_worker_log(text)
             if text.startswith("Traceback (most recent call last):"):
                 traceback_active = True

@@ -49,7 +49,7 @@ void launcher_reset_terminal_state(void) {
         "\x1b[?1015l"
         "\x1b[?1049l"
         "\x1b[?2004l"
-        "\x1b[999B\r";
+        "\r";
 
     if (saved_console_modes) {
         DWORD current_output_mode;
@@ -90,7 +90,7 @@ void launcher_prepare_failure_output(void) {
     }
 
     line_start.X = info.srWindow.Left;
-    line_start.Y = info.srWindow.Bottom;
+    line_start.Y = info.dwCursorPosition.Y;
     line_width = (DWORD)(info.srWindow.Right - info.srWindow.Left + 1);
     FillConsoleOutputCharacter(output, ' ', line_width, line_start, &written);
     FillConsoleOutputAttribute(

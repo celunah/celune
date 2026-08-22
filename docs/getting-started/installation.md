@@ -87,11 +87,13 @@ ownership, and shutdown behavior remain intact.
 ## First model download
 
 The first load downloads the selected model and backend assets from their
-configured sources. Compiled launches use a Celune-owned Hugging Face cache
-under the application data directory; source-tree launches preserve the host
-Hugging Face cache unless the environment explicitly overrides it. Downloads
-are reported through Celune's startup progress path rather than raw model
-progress bars.
+configured sources. All launch modes use a Celune-owned Hugging Face cache
+under the application data directory by default, including isolated backend
+workers. On Windows this is typically
+`C:\Users\<user>\AppData\Local\Celune\huggingface\hub`. Explicit
+`HF_HOME` or `HF_HUB_CACHE` environment variables override these defaults.
+Downloads are reported through Celune's startup progress path rather than raw
+model progress bars.
 
 ## Optional environment variables
 

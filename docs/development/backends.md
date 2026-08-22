@@ -27,11 +27,11 @@ creates a new fingerprint rather than silently reusing an incompatible one.
 | `gpt-sovits` | TTS | `celune.backends.tts.gpt_sovits:GPTSoVITS` | GPT-SoVITS family dependencies. |
 | `seed-vc` | VC | `celune.backends.vc.seedvc:CeluneSeedVCBackend` | Celune's Seed-VC fork. |
 
-Workers share a compatibility baseline containing Hugging Face Hub,
-Transformers below 5 in the worker environment, Lingua, librosa, llvmlite,
-NumPy/Numba, Pillow, platformdirs, psutil, sounddevice, soundfile, and
-Zstandard, plus the CEDTS-compatible PyTorch 2.11 CUDA 12.8 worker stack. The
-core project itself currently resolves its own CUDA 13.0 stack; the two
+Workers share a compatibility baseline containing Hugging Face Hub and
+`hf-xet`, Transformers below 5 in the worker environment, Lingua, librosa,
+llvmlite, NumPy/Numba, Pillow, platformdirs, psutil, sounddevice, soundfile,
+and Zstandard, plus the CEDTS-compatible PyTorch 2.11 CUDA 12.8 worker stack.
+The core project itself currently resolves its own CUDA 13.0 stack; the two
 environments are intentionally not the same lockfile.
 
 ## Backend behavior

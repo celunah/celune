@@ -6,8 +6,7 @@ while the engine is in VC mode.
 
 ## Backends
 
-The built-in `passthrough` backend is a diagnostic path that returns the input
-audio. The Seed-VC backend is the production conversion path. It supports
+The Seed-VC backend is the production conversion path. It supports
 reference-based conversion, pitch adjustment, optional F0 conditioning, and a
 low-latency live path.
 

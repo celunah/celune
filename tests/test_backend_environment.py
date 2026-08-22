@@ -279,6 +279,7 @@ class TestBackendEnvironment(CeluneTestCase):
         """Verify isolated backends use the main branch's Hugging Face ranges."""
         expected_requirements = {
             "huggingface-hub>=0.36,<1.0.0",
+            "hf-xet",
             "transformers>=4.56,<5.0.0",
         }
         for manifest in BACKEND_MANIFESTS.values():
@@ -4696,6 +4697,22 @@ raise SystemExit(worker.main())
             "info",
         ]
 
+    def test_remote_proxy_suppresses_known_runtime_log_messages(self) -> None:
+        """Verify CEDTS worker logs share Celune's runtime suppressions."""
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy._worker_stderr = deque()
+        proxy._worker_stderr_lock = threading.Lock()
+        log = mock.Mock()
+        ignored = "\n".join(
+            f"{message} additional details"
+            for message in remote.RUNTIME_LOG_FILTER_MESSAGES
+        )
+        stream = io.BytesIO(f"{ignored}\nbackend message\n".encode())
+
+        proxy._read_worker_logs(stream, log)
+
+        log.assert_called_once_with("backend message", "info", loglevel="info")
+
     def test_remote_proxy_uses_backend_error_for_unknown_worker_exception_types(
         self,
     ) -> None:
@@ -4743,6 +4760,14 @@ raise SystemExit(worker.main())
                 "celune.backends.remote.configure_numba_cache",
                 return_value=Path("C:/celune/temp/numba"),
             ) as configure_numba_cache,
+            mock.patch(
+                "celune.backends.remote.huggingface_home_dir",
+                return_value=Path("C:/celune/huggingface"),
+            ),
+            mock.patch(
+                "celune.backends.remote.huggingface_hub_cache_dir",
+                return_value=Path("C:/celune/huggingface/hub"),
+            ),
         ):
             proxy._start_worker(
                 backend_environment,
@@ -4768,6 +4793,14 @@ raise SystemExit(worker.main())
         self.assertEqual(
             popen.call_args.kwargs["env"]["NUMBA_CACHE_DIR"],
             str(Path("C:/celune/temp/numba")),
+        )
+        self.assertEqual(
+            popen.call_args.kwargs["env"]["HF_HOME"],
+            "C:/celune/huggingface",
+        )
+        self.assertEqual(
+            popen.call_args.kwargs["env"]["HF_HUB_CACHE"],
+            "C:/celune/huggingface/hub",
         )
         configure_numba_cache.assert_called_once_with()
         self.assertEqual(popen.call_args.kwargs["env"]["USERNAME"], "test-user")

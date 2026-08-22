@@ -15,6 +15,29 @@ _TERMINAL_TITLE_CONTROL_RE = re.compile(
     r"|[\x00-\x1f\x7f\x80-\x9f\r\n]"
 )
 
+RUNTIME_LOG_FILTER_MESSAGES = frozenset(
+    {
+        "`torch_dtype` is deprecated! Use `dtype` instead!",
+        "Skipped loading some keys due to shape mismatch:",
+        "cfm loaded",
+        "length_regulator loaded",
+        "Removing weight norm...",
+        "Loading weights from",
+        "Loading Text2Semantic weights from",
+        "Loading Text2Semantic Weights from",
+        "min value is",
+        "max value is",
+        "generation flags are not valid and may be ignored:",
+        "it/s]",
+        "s/it]",
+        "inputs will be cast",
+        "Ignoring clean_up_tokenization_spaces=True for BPE tokenizer",
+        "You are sending unauthenticated requests",
+        "triton not found",
+        "A custom logits processor of type",
+    }
+)
+
 
 def supports_ansi(stream: Optional[IO[str]] = None) -> bool:
     """Return whether the current terminal supports ANSI escape codes.

@@ -8,6 +8,7 @@ from typing import Optional
 from textual.widget import Widget
 from textual.widgets import Static
 from textual.app import ComposeResult
+from textual.timer import Timer
 from textual.css.query import NoMatches
 from textual.containers import Center, Vertical, Horizontal
 
@@ -36,7 +37,10 @@ class CeluneLoadingScreen(Widget):
         self._startup_messages: list[str] = []
         self._status_message = string("status.initializing")
         self._latest_log_message = string("ui.loading_waiting_for_log")
-        self._error_message = ""
+        self._wait_message = string("ui.loading_wait")
+        self._footer_message = string("ui.loading_starting", app_name=APP_NAME)
+        self._spinner_timer: Optional[Timer] = None
+        self._failed = False
 
     @property
     def opacity(self) -> float:
@@ -74,18 +78,13 @@ class CeluneLoadingScreen(Widget):
                 )
             yield Static(self._spinner_frames[0], id="loading-spinner", markup=False)
             yield Static(
-                string("ui.loading_wait"),
+                self._wait_message,
                 id="loading-wait",
-                markup=False,
-            )
-            yield Static(
-                self._error_message,
-                id="loading-error",
                 markup=False,
             )
         with Horizontal(id="loading-footer"):
             yield Static(
-                string("ui.loading_starting", app_name=APP_NAME),
+                self._footer_message,
                 id="loading-footer-starting",
                 markup=False,
             )
@@ -97,8 +96,10 @@ class CeluneLoadingScreen(Widget):
 
     def on_mount(self) -> None:
         """Start the loading spinner after the overlay is mounted."""
-        self._update_error_widget()
-        self.set_interval(0.26, self._advance_spinner)
+        if self._failed:
+            self.query_one("#loading-spinner", Static).display = False
+            return
+        self._spinner_timer = self.set_interval(0.26, self._advance_spinner)
 
     def _advance_spinner(self) -> None:
         """Advance the loading spinner by one frame."""
@@ -116,6 +117,8 @@ class CeluneLoadingScreen(Widget):
         Args:
             message: Log message to display below the loading state.
         """
+        if self._failed:
+            return
         self._latest_log_message = message
         try:
             self.query_one("#loading-log-message", Static).update(message)
@@ -156,6 +159,8 @@ class CeluneLoadingScreen(Widget):
         Args:
             message: Current status text.
         """
+        if self._failed:
+            return
         self._status_message = message
         try:
             self.query_one("#loading-state-label", Static).update(message)
@@ -163,20 +168,28 @@ class CeluneLoadingScreen(Widget):
             pass
 
     def show_error(self, message: str) -> None:
-        """Show an initialization error without hiding the overlay.
+        """Switch the overlay from startup progress to its failure state.
 
         Args:
             message: Initialization failure to show to the user.
         """
-        self._error_message = message
-        self._update_error_widget()
-
-    def _update_error_widget(self) -> None:
-        """Refresh the optional initialization error widget."""
+        self._failed = True
+        self._status_message = string("status.failed_to_start")
+        self._latest_log_message = message
+        self._wait_message = string(
+            "ui.loading_cannot_continue",
+            app_name=APP_NAME,
+        )
+        self._footer_message = string("ui.app_could_not_start", app_name=APP_NAME)
+        if self._spinner_timer is not None:
+            self._spinner_timer.pause()
         try:
-            error = self.query_one("#loading-error", Static)
+            self.query_one("#loading-state-label", Static).update(self._status_message)
+            self.query_one("#loading-log-message", Static).update(message)
+            self.query_one("#loading-wait", Static).update(self._wait_message)
+            self.query_one("#loading-spinner", Static).display = False
+            self.query_one("#loading-footer-starting", Static).update(
+                self._footer_message
+            )
         except NoMatches:
-            return
-
-        error.update(self._error_message)
-        error.display = bool(self._error_message)
+            pass

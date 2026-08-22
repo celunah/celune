@@ -29,6 +29,14 @@ worker cannot directly corrupt the panel. Switching themes repaints existing
 entries with the selected severity colors. The same entries are also appended
 to Celune's persisted `celune.log` file for troubleshooting.
 
+## Startup failures
+
+If initialization fails, the loading overlay remains visible as an error report.
+Its state reads `Failed to start`, the initialization error remains in the
+diagnostic area, the spinner is removed, and the overlay says `Celune can't
+continue.` The lower-left status changes to `Celune could not start`; no further
+startup progress is pending.
+
 ## Slash commands
 
 Commands are entered in the input box and start with `/`.

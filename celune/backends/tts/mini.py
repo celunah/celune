@@ -13,7 +13,7 @@ import numpy as np
 from pocket_tts import TTSModel
 from huggingface_hub import snapshot_download
 
-from ...paths import temp_data_dir, huggingface_progress
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import custom_assert
 from ...cevoice import CEVoiceLoader, default_loader
 from ...typing.aliases import AudioChunk, AudioChunks
@@ -315,7 +315,10 @@ class Mini(CeluneBackend[TTSModel]):
         if not available or snapshot_path is None:
             self.log("Downloading TTS model...", "info")
             with huggingface_progress(self.report_progress):
-                snapshot_path = snapshot_download(repo_id=model_id)
+                snapshot_path = snapshot_download(
+                    repo_id=model_id,
+                    cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                )
 
         generated_config_path = self._build_generated_config_path(
             snapshot_path, requested_language

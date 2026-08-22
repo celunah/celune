@@ -124,6 +124,12 @@ supports it. Progress packets are throttled to approximately 100 ms. Streaming
 outputs carry typed audio or backend-generation values and finish with a
 terminal response/event.
 
+Worker stderr is retained for failure diagnostics, but CEDTS applies the same
+known-benign runtime-message suppression list used by Celune's local runtime
+log redirect. This keeps isolated workers from reintroducing filtered model,
+Transformers, tqdm, and Triton notices into the UI log; actionable worker
+messages remain visible and retained for error reporting.
+
 State events use `loading`, `ready`, `processing`, `streaming`, `paused`,
 `cancelling`, `cancelled`, `completed`, `failed`, and `shutdown_requested`.
 Event operations include the matching state names plus `fatal`.

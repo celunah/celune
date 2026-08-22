@@ -292,12 +292,12 @@ class TestCeluneCore(CeluneTestCase):
                 return_value=FakeBackend(),
             ),
         ):
-            celune = Celune(config={"mode": "voice_conversion"}, backend="passthrough")
+            celune = Celune(config={"mode": "voice_conversion"}, backend="seed-vc")
             self.addCleanup(self._close_celune, celune)
 
         assert celune.vc_backend is not None
         assert celune.vc_backend is not None
-        assert celune.vc_backend.name == "passthrough"
+        assert celune.vc_backend.name == "seed-vc"
 
     def test_constructor_uses_explicit_locale_override_from_config(self) -> None:
         """Verify an explicit config locale wins over system auto-detection."""
@@ -1977,7 +1977,7 @@ class TestCeluneCore(CeluneTestCase):
         celune.change_voice_lock_state_callback.assert_not_called()
         celune._try_play_signal.assert_not_called()
         celune.log_callback.assert_called_once_with(
-            "unknown backend: qwen (available: mini, qwen3, dotstts, voxcpm2, gpt-sovits, passthrough, seed-vc)",
+            "unknown backend: qwen (available: mini, qwen3, dotstts, voxcpm2, gpt-sovits, seed-vc)",
             "warning",
         )
         assert celune.cur_state == "idle"
@@ -2277,10 +2277,10 @@ class TestCeluneCore(CeluneTestCase):
 
         say_pipeline.assert_not_called()
 
-    def test_constructor_accepts_passthrough_vc_backend_in_voice_conversion_mode(
+    def test_constructor_defaults_to_seedvc_vc_backend_in_voice_conversion_mode(
         self,
     ) -> None:
-        """Verify VC mode resolves the default passthrough backend cleanly."""
+        """Verify VC mode resolves the default Seed-VC backend cleanly."""
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
@@ -2292,7 +2292,7 @@ class TestCeluneCore(CeluneTestCase):
             self.addCleanup(self._close_celune, celune)
 
         assert celune.input_mode == "voice_conversion"
-        assert celune.voice_conversion_backend == "passthrough"
+        assert celune.voice_conversion_backend == "seed-vc"
 
     def test_constructor_rejects_unknown_vc_backend_cleanly(self) -> None:
         """Verify unsupported VC backends surface a readable backend error."""

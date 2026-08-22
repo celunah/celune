@@ -43,7 +43,7 @@ void launcher_reset_terminal_state(void) {
         "\033[?1015l"
         "\033[?1049l"
         "\033[?2004l"
-        "\033[999B\r";
+        "\r";
 
     if (!saved_terminal_state_valid) {
         return;
@@ -61,7 +61,7 @@ void launcher_reset_terminal_state(void) {
 
 void launcher_prepare_failure_output(void) {
     if (isatty(STDERR_FILENO)) {
-        fputs("\033[999B\r", stderr);
+        fputs("\r", stderr);
         fflush(stderr);
     }
 }

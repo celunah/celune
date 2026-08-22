@@ -29,7 +29,9 @@ Typical output files are:
 | Linux | `bin/celune`, `bin/celune-bin`, `bin/celune.AppImage`, `bin/celune-update.json`, `bin/Celune-linux-x64.zip` |
 
 The launcher sets the compiled environment, owns update handoff, and preserves
-process-loss behavior. `celune-bin` is not the user-facing command.
+process-loss behavior. Its terminal cleanup restores modes without scrolling
+the cursor through the console buffer, so returning to the shell does not leave
+a large blank region. `celune-bin` is not the user-facing command.
 
 ## Relocatable data
 
@@ -37,8 +39,9 @@ Compiled launches resolve the project root beside the executable and use the
 Celune application-data directory for configuration, model caches, runtime
 downloads, voice packs, Persona memory, and backend environments. The bundled
 `default_config.yaml`, `voices/`, and package assets are copied/located as
-release data. Source-tree launches use the repository root and host caches
-unless the runtime explicitly configures portable cache behavior.
+release data. Source-tree launches use the repository root, but Hugging Face
+downloads still use the same Celune application-data cache as compiled
+launches. Explicit `HF_HOME` and `HF_HUB_CACHE` values remain authoritative.
 
 ## Updates
 
