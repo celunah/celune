@@ -42,20 +42,26 @@ development headers for `sounddevice`. The CI workflow installs
 
 From a clean checkout:
 
-```bash
-uv sync --all-extras --dev
-```
-
-The project uses `uv` for dependency resolution. The optional `api` extra adds
-FastAPI, Uvicorn, multipart upload support, Pydantic, and Gradio. The optional
-`live-vc-ai` extra adds Silero VAD for AI-assisted live voice-conversion capture;
-`openzl` adds OpenZL-compressed CECHAR v4 support.
-
-The interactive setup helper is also available:
+The project uses `uv` for dependency resolution. Run the setup helper from the
+repository root:
 
 ```bash
-python setup.py
+python configure.py
 ```
+
+The helper installs required system tools, synchronizes the Python environment,
+creates Celune's AppData directories, and seeds the default configuration and
+voice pack. On Linux it uses `uv sync --dev --all-extras`; on Windows it uses
+`uv sync --dev --extra api` because OpenZL is not currently buildable there.
+If all setup criteria are already satisfied, it asks, `You have already
+configured Celune. Repair Celune?`; answer `yes` to repeat the repair steps or
+press Enter to leave the existing installation unchanged.
+The optional `live-vc-ai` extra adds Silero VAD for AI-assisted live
+voice-conversion capture; `openzl` adds OpenZL-compressed CECHAR v4 support on
+Linux.
+
+For a dependency-only manual setup, use `uv sync --dev --all-extras` on Linux
+or `uv sync --dev --extra api` on Windows.
 
 Backend-specific dependencies are normally installed by Celune's isolated
 backend environment manager. Do not add backend packages to core application

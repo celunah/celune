@@ -1,10 +1,11 @@
 # Configuration
 
-Celune loads YAML configuration from the user application-data directory. On
-first launch it creates `config.yaml` from the repository's
-`default_config.yaml`, then merges newly introduced defaults into an existing
-file without discarding the user's values. `celune config view` prints the
-active file and `celune config edit` opens it in the system editor.
+Celune loads YAML configuration from the user application-data directory. The
+`configure.py` setup helper creates `config.yaml` from the repository's
+`default_config.yaml`; if setup was skipped, the first launch creates it
+instead. Celune then merges newly introduced defaults into an existing file
+without discarding the user's values. `celune config view` prints the active
+file and `celune config edit` opens it in the system editor.
 
 ## Core settings
 

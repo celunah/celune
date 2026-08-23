@@ -46,7 +46,9 @@ Textual UI return codes are propagated to this launcher, so callback failures
 use the same preserved-output failure path as startup errors. Search traversal
 is breadth-first, so progress levels are processed in ascending order. Level
 transitions repaint immediately; repeated updates within one level are
-throttled.
+throttled. The loading screen's terminal-title and early-shutdown helpers stay
+lightweight, so exiting before runtime initialization cannot enter an undefined
+or heavy runtime-import path.
 
 The repository root is identified by a `.celune-root` marker containing a
 version, abbreviated commit, and date in the form `v5.0.0 (d870260),
@@ -61,9 +63,10 @@ fallback when the hook is not installed.
 
 Compiled launches resolve the project root beside the executable and use the
 Celune application-data directory for configuration, model caches, runtime
-downloads, voice packs, Persona memory, and backend environments. The bundled
-`default_config.yaml`, `voices/`, and package assets are copied/located as
-release data. Source-tree launches use the repository root, but Hugging Face
+downloads, voice packs, Persona memory, and backend environments. The
+`configure.py` setup helper seeds AppData with `config.yaml` and the default
+voice pack from the bundled `default_config.yaml` and `voices/` files. Package
+assets remain alongside the installed Python package. Source-tree launches use the repository root, but Hugging Face
 downloads still use the same Celune application-data cache as compiled
 launches. Explicit `HF_HOME` and `HF_HUB_CACHE` values remain authoritative.
 

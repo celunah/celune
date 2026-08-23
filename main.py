@@ -26,7 +26,7 @@ def _print_too_old_python_notice(command: Optional[str] = None) -> None:
     print(f"{APP_NAME} will not run on Python {version}.")
     print("Please use at least Python 3.12 to use the CLI.")
     print(
-        f"Run `uv sync` in {APP_NAME}'s directory to set up the supported environment."
+        f"Run `python configure.py` in {APP_NAME}'s directory to set up the supported environment."
     )
     if command == "doctor":
         print(f"`{APP_NAME.lower()} doctor` can't run on this interpreter.")

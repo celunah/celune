@@ -690,7 +690,7 @@ int launcher_run(int argc, char **argv) {
     char target[1024];
     char python[1024];
     char main_py[1024];
-    char setup_py[1024];
+    char configure_py[1024];
 
     char launcher_pid[32];
     snprintf(launcher_pid, sizeof(launcher_pid), "%ld", (long)getpid());
@@ -726,11 +726,11 @@ int launcher_run(int argc, char **argv) {
 
     int python_len = snprintf(python, sizeof(python), "%s/.venv/bin/python", repo_root);
     int main_py_len = snprintf(main_py, sizeof(main_py), "%s/main.py", repo_root);
-    int setup_py_len = snprintf(setup_py, sizeof(setup_py), "%s/setup.py", repo_root);
+    int configure_py_len = snprintf(configure_py, sizeof(configure_py), "%s/configure.py", repo_root);
 
     if (python_len < 0 || (size_t)python_len >= sizeof(python) ||
         main_py_len < 0 || (size_t)main_py_len >= sizeof(main_py) ||
-        setup_py_len < 0 || (size_t)setup_py_len >= sizeof(setup_py)) {
+        configure_py_len < 0 || (size_t)configure_py_len >= sizeof(configure_py)) {
         report_lookup_failure();
         return 1;
     }
@@ -816,12 +816,12 @@ int launcher_run(int argc, char **argv) {
         int found_system_python = 0;
         int setup_status = 1;
 
-        if (access(setup_py, R_OK) != 0) {
-            printfe("Celune: Python environment is missing and setup.py is unavailable.\n");
+        if (access(configure_py, R_OK) != 0) {
+            printfe("Celune: Python environment is missing and configure.py is unavailable.\n");
             return 1;
         }
 
-        printfe("Celune: Python environment missing; running setup.py.\n");
+        printfe("Celune: Python environment missing; running configure.py.\n");
 
         for (size_t i = 0; i < sizeof(system_python) / sizeof(system_python[0]); i++) {
             pid_t setup_pid = fork();
@@ -832,7 +832,7 @@ int launcher_run(int argc, char **argv) {
 
             if (setup_pid == 0) {
                 launcher_restore_child_terminal();
-                char *args[] = {(char *)system_python[i], setup_py, NULL};
+                char *args[] = {(char *)system_python[i], configure_py, NULL};
                 if (chdir(repo_root) != 0) {
                     perror("chdir failed");
                     _exit(1);
@@ -855,17 +855,17 @@ int launcher_run(int argc, char **argv) {
         }
 
         if (!found_system_python) {
-            printfe("Celune: no system Python interpreter was found for setup.py.\n");
+            printfe("Celune: no system Python interpreter was found for configure.py.\n");
             return 1;
         }
 
         if (!WIFEXITED(setup_status) || WEXITSTATUS(setup_status) != 0) {
-            printfe("Celune: setup.py failed.\n");
+            printfe("Celune: configure.py failed.\n");
             return WIFEXITED(setup_status) ? WEXITSTATUS(setup_status) : 1;
         }
 
         if (access(python, X_OK) != 0) {
-            printfe("Celune: setup.py completed but the Python environment is still unavailable.\n");
+            printfe("Celune: configure.py completed but the Python environment is still unavailable.\n");
             return 1;
         }
     }

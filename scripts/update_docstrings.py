@@ -15,7 +15,7 @@ TARGETS = [
     ROOT / "tests",
     ROOT / "extensions",
     ROOT / "main.py",
-    ROOT / "setup.py",
+    ROOT / "configure.py",
 ]
 
 

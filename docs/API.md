@@ -16,7 +16,7 @@ If no token is configured, Celune binds the API to `127.0.0.1`.
 If a token is configured through `api.token` or `CELUNE_API_TOKEN`, Celune can bind to `0.0.0.0`.
 
 The API is an optional core extra. Install it with `uv sync --extra api` (or
-include `--all-extras` during development). Keep a network-facing listener
+include `--all-extras` during Linux development). Keep a network-facing listener
 behind authentication and an appropriate firewall; the API can start speech,
 load voices, and play uploaded audio.
 

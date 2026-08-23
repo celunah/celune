@@ -5,10 +5,11 @@ selection, and the checks that confirm Celune is ready to speak.
 
 ## Start with a safe baseline
 
-1. Install the core and optional dependencies with `uv sync --all-extras --dev`.
+1. Run `python configure.py` from the repository root. It installs the core
+   environment, creates AppData, and copies the default configuration and voice
+   pack there.
 2. Run `uv run python main.py doctor` and resolve failed prerequisites.
-3. Start Celune once. It creates the user configuration by copying
-   `default_config.yaml` into the platform-specific application-data directory.
+3. Start Celune once. Existing configuration and voice data are preserved.
 4. Leave `backend: null`, `voice_bundle: default`, `mode: converse`, and
    `vram: medium` until the basic engine is working.
 5. Use `/help` in the Textual UI to see commands supported by the active

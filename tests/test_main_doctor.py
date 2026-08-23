@@ -98,8 +98,8 @@ class TestDoctorCommand(CeluneTestCase):
         assert exit_info.value.code == 7
         entry_main.assert_called_once_with(["celune", "doctor"])
 
-    def test_run_doctor_fix_invokes_repo_setup(self) -> None:
-        """Verify `--fix` executes the repository-local setup.py with the current interpreter."""
+    def test_run_doctor_fix_invokes_repo_configuration(self) -> None:
+        """Verify `--fix` executes the repository-local configure.py helper."""
         checks = [entrypoint.DoctorCheck("Python", True, "3.12.0")]
 
         with (
@@ -112,7 +112,7 @@ class TestDoctorCommand(CeluneTestCase):
 
         assert exit_code == 0
         run.assert_called_once_with(
-            [str(entrypoint.doctor_running_python()), str(entrypoint.SETUP_PATH)],
+            [str(entrypoint.doctor_running_python()), str(entrypoint.CONFIGURE_PATH)],
             cwd=entrypoint.PROJECT_ROOT,
             check=False,
         )
@@ -144,7 +144,7 @@ class TestDoctorCommand(CeluneTestCase):
         assert PureWindowsPath(command[0]) == PureWindowsPath(
             r"C:\repo\.venv\Scripts\python.exe"
         )
-        assert command[1] == str(entrypoint.SETUP_PATH)
+        assert command[1] == str(entrypoint.CONFIGURE_PATH)
         assert kwargs["cwd"] == entrypoint.PROJECT_ROOT
         assert not kwargs["check"]
 

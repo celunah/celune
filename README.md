@@ -233,7 +233,7 @@ Then, follow these steps:
 
 ```bash
 # Quick setup
-python setup.py
+python configure.py
 
 # Manual setup
 # Install uv
@@ -248,10 +248,9 @@ uv --version
 # Expected output:
 # uv 0.11.2 (02036a8ba 2026-03-26 x86_64-pc-windows-msvc) (or similar version)
 
-# Create environment
-# Celune expects Python 3.12 or 3.13.
-# The core environment contains Celune's shared requirements.
-uv sync
+# Manual environment setup
+# Linux: uv sync --dev --all-extras
+# Windows: uv sync --dev --extra api
 # The selected backend is installed automatically into Celune's AppData
 # environment the first time it is used.
 

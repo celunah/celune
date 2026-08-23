@@ -64,8 +64,6 @@ Homepage = "https://github.com/celunah"
 Repository = "https://github.com/celunah/celune"
 Issues = "https://github.com/celunah/celune/issues"
 
-# Why does CodeRabbit think I'm uploading Celune to PyPI?
-# Her package is not standalone.
 [tool.setuptools.package-data]
 celune = ["assets/*.wav", "lang/*.json"]
 
@@ -274,7 +272,7 @@ project-includes = [
     "tests",
     "scripts",
     "main.py",
-    "setup.py",
+    "configure.py",
 ]
 
 project-excludes = [

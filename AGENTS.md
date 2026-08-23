@@ -199,7 +199,7 @@ Make sure to only modify user-facing strings (both normal and dev mode strings),
 
 * Supported Python versions are 3.12, 3.13 and 3.14.
 * Use `uv` for environment management.
-* Ensure the environment was set up with `--all-extras --dev` to prevent any missing packages from causing issues later on.
+* Run `python configure.py` for setup. It uses `uv sync --dev --all-extras` on Linux and `uv sync --dev --extra api` on Windows; never request `--all-extras` on Windows because OpenZL does not compile there.
 * Do not use `pip` directly unless explicitly required. If you need to run `pip` alone, do it so with `uv pip` instead.
 * Do not assume CPU-only mode supports all features. CPU-only execution is only supported with Celune Mini.
 * Be aware that many features require an RTX 30 series GPU or newer.

@@ -105,7 +105,7 @@ jobs:
 
       - name: Sync dependencies
         shell: powershell
-        run: python .\scripts\ci_warnings.py -- uv sync --dev
+        run: python .\scripts\ci_warnings.py -- uv sync --dev --extra api
 
       - name: Build Windows launcher artifacts
         shell: powershell

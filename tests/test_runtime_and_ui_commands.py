@@ -64,6 +64,17 @@ class TestRuntime(CeluneTestCase):
         """Verify deferred UI imports retain the formatter used by error paths."""
         assert ui_app.format_error(RuntimeError("startup"), "info") == "startup"
 
+    def test_ui_terminal_title_remains_available_before_runtime_import(self) -> None:
+        """Verify early shutdown can update the terminal title before runtime loading."""
+        terminal = mock.Mock()
+
+        ui_app.set_terminal_title((APP_NAME, "Ready", "Idle"), terminal)
+
+        terminal.write.assert_called_once_with(
+            f"\x1b]0;{APP_NAME} ・ Ready ・ Idle\x07"
+        )
+        terminal.flush.assert_called_once_with()
+
     def test_entrypoint_runtime_loader_keeps_heavy_imports_deferred(self) -> None:
         """Verify the pre-UI entrypoint import path stays torch-free."""
         project_root = Path(__file__).resolve().parents[1]
