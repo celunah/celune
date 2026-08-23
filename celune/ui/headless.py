@@ -7,7 +7,7 @@ import ctypes
 import signal
 import warnings
 from types import FrameType
-from typing import Optional, cast
+from typing import Optional, Never, ClassVar, cast, final
 from collections.abc import Callable
 
 from ..i18n import string
@@ -19,10 +19,14 @@ from ..constants import SIGTSTP, APP_NAME
 from ..watchdog import launcher_loss_requested
 
 
+@final
 class CeluneHeadlessUI:
-    """Headless interface methods."""
+    """Celune's bare terminal interface."""
 
-    _instance: Optional["CeluneHeadlessUI"] = None
+    def __init_subclass__(cls, **kwargs: Never) -> Never:
+        raise TypeError(f"{__class__.__name__} is final and cannot be subclassed")
+
+    _instance: ClassVar[Optional["CeluneHeadlessUI"]] = None
 
     def __init__(self, config: Optional[Config] = None) -> None:
         if CeluneHeadlessUI._instance is not None:

@@ -56,9 +56,10 @@ from fastapi import (
 from .i18n import string
 from .celune import Celune
 from .ui.app import CeluneUI
-from .dsp import resample_audio
+from .audio.dsp import resample_audio
 from .utils import format_error
-from . import colors, __version__
+from . import __version__
+from .theme import colors
 from .cevoice import default_loader
 from .constants import BASE_SR, APP_NAME
 from .ui import resources as ui_resources

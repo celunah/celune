@@ -28,7 +28,17 @@ import threading
 import contextlib
 from io import TextIOWrapper
 from uuid import uuid4
-from typing import TYPE_CHECKING, Union, TextIO, Optional, Protocol, cast
+from typing import (
+    TYPE_CHECKING,
+    Union,
+    TextIO,
+    Optional,
+    Protocol,
+    Never,
+    ClassVar,
+    cast,
+    final,
+)
 from pathlib import Path
 from dataclasses import field, dataclass
 from collections.abc import Callable, Iterator
@@ -52,43 +62,35 @@ from textual.css.query import NoMatches
 from textual.css.types import EdgeStyle
 from textual.containers import Vertical, Horizontal
 
-from .. import colors
 from ..i18n import string
 from .theme import CELUNE_CSS, severity_color
-from ..paths import config_path, main_window_log_path
-from ..utils import (
-    indent,
-    discard,
-    replace_ipa,
-    format_error,
-    typing_delay,
-    supports_ansi,
-    is_april_fools,
-    typing_animation,
-)
-from ..config import format_audio_device_name, resolve_audio_device_with_info
-from ..exceptions import CEDTSError
 from .loading import CeluneLoadingScreen
-from .terminal import LogRedirect, UILogHandler, is_celune_log_record
-from ..terminal import (
-    RUNTIME_LOG_FILTER_MESSAGES,
-    set_terminal_title,
-    terminal_title_escape,
-)
-from ..watchdog import launcher_loss_requested
 from ..constants import SIGTSTP, APP_NAME
+from ..theme.defaults import default_theme_family
+from ..watchdog import launcher_loss_requested
 from ..typing.agent import AgentTaskState
+from ..typing.config import AudioDeviceInfoValue
 from ..typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentLockRequirement,
 )
-from ..typing.aliases import (  # noqa: F401  # pylint: disable=unused-import
-    AudioDeviceScalar,
-    _VCAudioCallback,
-)
 
 if TYPE_CHECKING:
+    from ..theme import colors
+    from ..config import format_audio_device_name, resolve_audio_device_with_info
+    from ..exceptions import CEDTSError
+    from ..paths import config_path, main_window_log_path
+    from ..terminal import set_terminal_title, terminal_title_escape
+    from ..utils import (
+        discard,
+        is_april_fools,
+        replace_ipa,
+        typing_animation,
+        typing_delay,
+    )
+    from ..typing.aliases import _VCAudioCallback
+    from .terminal import LogRedirect, UILogHandler, is_celune_log_record
     import yaml
     import numpy as np
     import sounddevice as sd
@@ -163,6 +165,56 @@ default_loader: Optional[Callable[[], Optional[CEVoiceLoader]]] = None
 ui_resources: Optional[_UIResources] = None
 _RUNTIME_DEPENDENCIES_LOADED = False
 
+_RUNTIME_LOG_REDIRECT_FILTER_MESSAGES: frozenset[str] = frozenset()
+
+if not TYPE_CHECKING:
+    _VCAudioCallback = Callable[..., None]
+
+
+def format_error(error: Exception, log_level: Union[LogLevel, bool]) -> str:
+    """Format an error without importing the heavy utility module at startup."""
+    from ..utils import format_error as format_error_helper
+
+    return format_error_helper(error, log_level)
+
+
+def indent(text: str, spaces: int, direction: str = "left") -> str:
+    """Indent lightweight UI text without importing the heavy utility module."""
+    if direction == "left":
+        return " " * spaces + text
+    if direction == "right":
+        return text + " " * spaces
+
+    raise ValueError("can't indent from this direction")
+
+
+def supports_ansi(stream: Optional[TextIO] = None) -> bool:
+    """Check terminal ANSI support without importing the heavy utility module."""
+    from ..terminal import supports_ansi as terminal_supports_ansi
+
+    return terminal_supports_ansi(stream)
+
+
+def __getattr__(name: str):
+    """Resolve legacy runtime globals only when callers explicitly request them."""
+    if name == "colors":
+        from ..theme import colors
+
+        return colors
+    if name in {
+        "launcher_loss_requested",
+        "resolve_audio_device_with_info",
+    }:
+        if name == "launcher_loss_requested":
+            from ..watchdog import launcher_loss_requested as requested
+
+            return requested
+        if name == "resolve_audio_device_with_info":
+            from ..config import resolve_audio_device_with_info
+
+            return resolve_audio_device_with_info
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 def _load_ui_runtime_dependencies() -> None:
     """Load optional UI integrations after the first loading frame is visible."""
@@ -171,6 +223,7 @@ def _load_ui_runtime_dependencies() -> None:
         return
 
     global AudioOutput
+    global CEDTSError
     global DEFAULT_PERSONA_SPEECH_MODEL_ID
     global FOOTER_ROTATE_SECONDS
     global LiveVoiceActivityDetector
@@ -181,10 +234,19 @@ def _load_ui_runtime_dependencies() -> None:
     global WhisperSegment
     global WhisperTranscriber
     global clamp_vc_pitch_shift
+    global colors
+    global config_path
+    global discard
+    global format_audio_device_name
     global create_live_voice_activity_detector
     global current_playback_status
     global default_loader
     global finish_streaming_sfx_audio
+    global indent
+    global is_april_fools
+    global launcher_loss_requested
+    global LogRedirect
+    global main_window_log_path
     global np
     global npt
     global persona_config
@@ -192,7 +254,15 @@ def _load_ui_runtime_dependencies() -> None:
     global persona_talkback_enabled
     global process_ui_command
     global queue_streaming_sfx_audio
+    global replace_ipa
+    global resolve_audio_device_with_info
     global sd
+    global set_terminal_title
+    global supports_ansi
+    global terminal_title_escape
+    global typing_animation
+    global typing_delay
+    global UILogHandler
     global ui_resources
     global vc_input_has_voice
     global vc_input_rms
@@ -201,7 +271,29 @@ def _load_ui_runtime_dependencies() -> None:
     global vc_vad_hangover_frames
     global vc_vad_preroll_frames
     global yaml
+    global is_celune_log_record
+    global _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES
 
+    from ..theme import colors
+    from ..config import format_audio_device_name, resolve_audio_device_with_info
+    from ..exceptions import CEDTSError
+    from ..paths import config_path, main_window_log_path
+    from ..terminal import (
+        RUNTIME_LOG_FILTER_MESSAGES,
+        set_terminal_title,
+        terminal_title_escape,
+    )
+    from ..utils import (
+        discard,
+        indent,
+        is_april_fools,
+        replace_ipa,
+        supports_ansi,
+        typing_animation,
+        typing_delay,
+    )
+    from ..watchdog import launcher_loss_requested as loaded_launcher_loss_requested
+    from .terminal import LogRedirect, UILogHandler, is_celune_log_record
     import yaml
     import numpy as np
     import sounddevice as sd
@@ -243,10 +335,10 @@ def _load_ui_runtime_dependencies() -> None:
     )
     from ..dataclasses.pipeline import AudioOutput
 
+    launcher_loss_requested = loaded_launcher_loss_requested
+    _RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = RUNTIME_LOG_FILTER_MESSAGES
     _RUNTIME_DEPENDENCIES_LOADED = True
 
-
-_RUNTIME_LOG_REDIRECT_FILTER_MESSAGES = RUNTIME_LOG_FILTER_MESSAGES
 
 _CAPTION_FADE_SECONDS = 0.36
 _LOADING_FADE_SECONDS = 1.0
@@ -276,7 +368,7 @@ _AGENT_AWAITING_STATES = frozenset(
 _AGENT_PAUSED_STATES = frozenset({AgentTaskState.PAUSED, AgentTaskState.INTERRUPTED})
 
 
-def _device_scalar_int(value: Optional[AudioDeviceScalar], default: int) -> int:
+def _device_scalar_int(value: Optional[AudioDeviceInfoValue], default: int) -> int:
     """Return one audio-device metadata value as an integer when possible."""
     if isinstance(value, bool):
         return default
@@ -455,12 +547,16 @@ def _forward_ui_property(container_name: str, field_name: str) -> property:
     return property(getter, setter)
 
 
+@final
 class CeluneUI(App):
-    """User interface."""
+    """Celune's main user interface."""
+
+    def __init_subclass__(cls, **kwargs: Never) -> Never:
+        raise TypeError(f"{__class__.__name__} is final and cannot be subclassed")
 
     ENABLE_COMMAND_PALETTE = False
     CSS = CELUNE_CSS
-    _instance: Optional[CeluneUI] = None
+    _instance: ClassVar[Optional[CeluneUI]] = None
 
     def __init__(
         self,
@@ -476,18 +572,8 @@ class CeluneUI(App):
         if CeluneUI._instance is not None:
             raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
 
-        if is_april_fools() and os.getenv("CELUNE_DISABLE_APRIL_FOOLS") not in {
-            "1",
-            "true",
-            "on",
-            "yes",
-            "enabled",
-        }:
-            themes = ("celune_april_fools", "celune_april_fools")
-            active_theme_name = "celune_april_fools"
-        else:
-            themes = ("celune", "celune_light")
-            active_theme_name = "celune"
+        themes = ("celune", "celune_light")
+        active_theme_name = "celune"
 
         self._widgets = CeluneUIWidgetState()
         self._theme_state = CeluneUIThemeState(
@@ -498,7 +584,7 @@ class CeluneUI(App):
         self._log_capture_state = CeluneUILogCaptureState(
             old_stdout=sys.stdout,
             old_stderr=sys.stderr,
-            log_file_path=main_window_log_path(create_parent=True),
+            log_file_path=Path(),
         )
         self._interaction_state = CeluneUIInteractionState()
         self._terminal_status: Optional[tuple[str, str, str]] = None
@@ -820,6 +906,14 @@ class CeluneUI(App):
             self.register_theme(colors.THEME_APRIL_FOOLS)
         self._register_runtime_error_themes()
 
+    def _prepare_loading_theme(self) -> None:
+        """Apply Celune's palette before the first loading frame is rendered."""
+        dark_theme, light_theme = default_theme_family()
+        self.register_theme(dark_theme)
+        self.register_theme(light_theme)
+        self.theme = self.active_theme_name
+        self.refresh_css(animate=False)
+
     def _apply_theme(self, theme_name: str) -> None:
         """Apply theme and repaint theme-sensitive widgets."""
         self._clear_border_pulses()
@@ -835,6 +929,8 @@ class CeluneUI(App):
 
     def prepare_theme(self) -> None:
         """Prepare the selected Celune theme before the first rendered frame."""
+        if not _RUNTIME_DEPENDENCIES_LOADED:
+            _load_ui_runtime_dependencies()
         colors.configure_theme()
 
         if self._has_celune():
@@ -1525,17 +1621,17 @@ class CeluneUI(App):
         self.header = self.query_one("#header", Label)
         self.header_lines = tuple(cast(Label, widget) for widget in self.query(".line"))
 
-        self.prepare_theme()
         self.set_focus(None)
-        self._refresh_status()
-        self._refresh_theme_text()
-        self._refresh_logs()
-        self.safe_status(string("status.initializing"))
+        self._prepare_loading_theme()
         self._show_loading_screen()
-        if self.celune is None and self._startup_loader is not None:
-            self.call_after_refresh(self._start_deferred_runtime)
-        elif self.celune is not None:
-            self.attach_celune(self.celune)
+        if self._loading_screen is not None:
+            self._loading_screen.set_status_message(string("status.initializing"))
+        self._status_text = string("status.initializing")
+        if self._startup_loader is not None or self.celune is not None:
+            if self._startup_loader is not None:
+                self.call_after_refresh(self._start_deferred_runtime)
+            else:
+                self.attach_celune(self.celune)
 
     def _start_deferred_runtime(self) -> None:
         """Start constructing Celune after the initial loading frame renders."""
@@ -1557,15 +1653,18 @@ class CeluneUI(App):
 
     def _load_deferred_runtime(self) -> None:
         """Construct the engine and load optional UI integrations off the UI thread."""
-        if self._startup_loader is None:
+        if self._startup_loader is None and self.celune is None:
             return
         try:
-            celune = self._startup_loader()
+            celune = self.celune
+            if self._startup_loader is not None:
+                celune = self._startup_loader()
             _load_ui_runtime_dependencies()
         except Exception as exc:
             self.call_from_thread(self._handle_deferred_runtime_error, exc)
             return
-        self.call_from_thread(self.attach_celune, celune)
+        if celune is not None:
+            self.call_from_thread(self.attach_celune, celune)
 
     def _handle_deferred_runtime_error(self, error: Exception) -> None:
         """Show a deferred startup failure without tearing down the UI."""
@@ -1588,6 +1687,7 @@ class CeluneUI(App):
 
         if default_loader is None or ui_resources is None:
             _load_ui_runtime_dependencies()
+        self._log_file_path = main_window_log_path(create_parent=True)
         self._unbind_agent_events()
         self.celune = celune
         self._bind_runtime_callbacks()
@@ -2854,6 +2954,9 @@ class CeluneUI(App):
         ):
             return
 
+        if not _RUNTIME_DEPENDENCIES_LOADED:
+            _load_ui_runtime_dependencies()
+
         if severity not in colors.SEVERITY_COLORS["celune"]:
             self.safe_log(
                 f"[WARNING] Unknown severity '{severity}', defaulting to info",
@@ -2904,6 +3007,9 @@ class CeluneUI(App):
         )
         if levels.get(active_log_level, 0) < levels.get(loglevel, 0):
             return
+
+        if not _RUNTIME_DEPENDENCIES_LOADED:
+            _load_ui_runtime_dependencies()
 
         if severity not in colors.SEVERITY_COLORS["celune"]:
             severity = "info"
@@ -3112,14 +3218,14 @@ class CeluneUI(App):
             copy=False,
         )
 
-    def _queue_persona_recording_item_locked(self, final: bool) -> None:
+    def _queue_persona_recording_item_locked(self, final_value: bool) -> None:
         """Queue a partial or final Persona transcription snapshot."""
         recording_queue = self._persona_recording_queue
         if recording_queue is None:
             return
 
         audio = self._persona_recording_audio_locked().copy()
-        if final:
+        if final_value:
             while True:
                 try:
                     recording_queue.get_nowait()
@@ -3198,7 +3304,7 @@ class CeluneUI(App):
         """Transcribe Persona microphone snapshots off the UI thread."""
         partial_error_reported = False
         while True:
-            audio, final = recording_queue.get()
+            audio, final_value = recording_queue.get()
             transcript = ""
             error: Optional[Exception] = None
             if audio.size:
@@ -3212,8 +3318,8 @@ class CeluneUI(App):
 
             if (
                 error is not None
-                and (final or not partial_error_reported)
-                and not final
+                and (final_value or not partial_error_reported)
+                and not final_value
             ):
                 partial_error_reported = True
                 self.safe_log(
@@ -3226,7 +3332,7 @@ class CeluneUI(App):
                     "warning",
                 )
 
-            if not final:
+            if not final_value:
                 continue
 
             with self._persona_recording_lock:
@@ -3274,7 +3380,7 @@ class CeluneUI(App):
             if self._persona_recording_stop_requested:
                 return True
             self._persona_recording_stop_requested = True
-            self._queue_persona_recording_item_locked(final=True)
+            self._queue_persona_recording_item_locked(final_value=True)
 
         self.safe_status(string("ui.persona_transcribing"))
         return True
@@ -3306,10 +3412,10 @@ class CeluneUI(App):
                 "input",
             )
             device_info = (
-                cast(dict[str, AudioDeviceScalar], dict(direct_device_info))
+                cast(dict[str, AudioDeviceInfoValue], dict(direct_device_info))
                 if direct_device_info is not None
                 else cast(
-                    dict[str, AudioDeviceScalar],
+                    dict[str, AudioDeviceInfoValue],
                     sd.query_devices(device=input_device, kind="input"),
                 )
             )
@@ -3355,6 +3461,8 @@ class CeluneUI(App):
             time_info: Optional[tuple[float, float, float]],
             status: Optional[sd.CallbackFlags],
         ) -> None:
+            from ..utils import discard
+
             discard(frames)
             discard(time_info)
             discard(status)
@@ -3389,7 +3497,7 @@ class CeluneUI(App):
                         time.monotonic() - self._persona_recording_last_partial_at
                         >= 0.8
                     ):
-                        self._queue_persona_recording_item_locked(final=False)
+                        self._queue_persona_recording_item_locked(final_value=False)
                         self._persona_recording_last_partial_at = time.monotonic()
 
                 if (
@@ -3401,7 +3509,7 @@ class CeluneUI(App):
                     >= PERSONA_SPEECH_NO_INPUT_TIMEOUT_SECONDS
                 ):
                     self._persona_recording_stop_requested = True
-                    self._queue_persona_recording_item_locked(final=True)
+                    self._queue_persona_recording_item_locked(final_value=True)
                     should_stop = True
 
             if should_stop:
@@ -3954,10 +4062,10 @@ class CeluneUI(App):
 
         try:
             device_info = (
-                cast(dict[str, AudioDeviceScalar], dict(direct_device_info))
+                cast(dict[str, AudioDeviceInfoValue], dict(direct_device_info))
                 if direct_device_info is not None
                 else cast(
-                    dict[str, AudioDeviceScalar],
+                    dict[str, AudioDeviceInfoValue],
                     sd.query_devices(device=input_device, kind="input"),
                 )
             )
@@ -4106,6 +4214,8 @@ class CeluneUI(App):
             time_info: Optional[tuple[float, float, float]],
             status: Optional[sd.CallbackFlags],
         ) -> None:
+            from ..utils import discard
+
             discard(frames)
             discard(time_info)
             discard(status)
@@ -4911,6 +5021,8 @@ class CeluneUI(App):
 
     def _signal_handler(self, sig: int, frame: Optional[types.FrameType]) -> None:
         """Handle incoming signals."""
+        from ..utils import discard
+
         discard(frame)
 
         if SIGTSTP is not None and sig == SIGTSTP:

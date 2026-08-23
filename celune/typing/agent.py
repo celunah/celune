@@ -5,17 +5,27 @@ from __future__ import annotations
 
 from enum import Enum
 from dataclasses import field, dataclass
-from typing import Union, Optional, Protocol, TypedDict, NotRequired, cast
+from typing import (
+    TYPE_CHECKING,
+    Union,
+    Optional,
+    Protocol,
+    TypedDict,
+    NotRequired,
+    cast,
+)
 
 from .modes import OperationMode
 from .locks import ComponentBusyResult
 from .common import JSON, JSONSerializable
-from ..persona.capabilities import PersonaCapabilities
 from ..constants import (
     AGENT_CONTEXT_SPACE,
     AGENT_MAX_ITERATIONS,
     AGENT_CONTEXT_COMPACTION_THRESHOLD,
 )
+
+if TYPE_CHECKING:
+    from ..persona.capabilities import PersonaCapabilities
 
 
 class NeedleToolParameterSpec(TypedDict, total=False):

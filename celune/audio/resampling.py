@@ -6,7 +6,7 @@ import math
 import numpy as np
 from scipy.signal import resample_poly
 
-from .i18n import string
+from ..i18n import string
 
 
 def resample_audio(

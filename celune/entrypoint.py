@@ -1219,7 +1219,7 @@ def start(
             ) -> None:
                 """Finish the selected explicit test through the core boundary."""
                 if active_test_mode == "agent" and success:
-                    from celune.test_mode import run_agent_test
+                    from celune.test import run_agent_test
 
                     run_agent_test(core)
                     return
@@ -1253,6 +1253,8 @@ def start(
             ui.prepare_theme()
             try:
                 ui.run()
+                if ui.return_code not in (None, 0):
+                    sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
             finally:
                 _STARTUP_DIAGNOSTIC_SINK = None
             if test_mode is None:
@@ -1435,6 +1437,8 @@ def start(
             _STARTUP_DIAGNOSTIC_SINK = ui.receive_startup_diagnostic
             try:
                 ui.run()
+                if ui.return_code not in (None, 0):
+                    sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
             finally:
                 _STARTUP_DIAGNOSTIC_SINK = None
         elif headless:

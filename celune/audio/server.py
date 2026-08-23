@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from collections.abc import Sequence
 
-from .i18n import string
+from ..i18n import string
 
 _WINDOWS_AUDIO_SERVICE = "Audiosrv"
 _WINDOWS_ELEVATED_RESTART_SCRIPT = (

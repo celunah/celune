@@ -8,10 +8,10 @@ import numpy as np
 from scipy.signal import butter, sosfilt
 from pedalboard import Reverb, Pedalboard, PitchShift
 
-from .typing.aliases import AudioChunk
-from .constants import BASE_SR, UtteranceLoudnessTier
-from .exceptions import BadAudioError, AudioMismatchError
-from .audio_resampling import resample_audio as _resample_array
+from ..typing.aliases import AudioChunk
+from ..constants import BASE_SR, UtteranceLoudnessTier
+from ..exceptions import BadAudioError, AudioMismatchError
+from .resampling import resample_audio as _resample_array
 
 _SIGNAL_CACHE: dict[str, AudioChunk] = {}
 _READINESS_FREQUENCIES = (261.63, 329.63, 369.99, 440.0, 493.88, 739.99)

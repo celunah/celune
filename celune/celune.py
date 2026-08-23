@@ -12,7 +12,7 @@ import shutil
 import asyncio
 import threading
 import contextlib
-from typing import Union, Optional, cast
+from typing import Union, Optional, Never, ClassVar, cast, final
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Callable, Generator
@@ -407,10 +407,14 @@ def _shutdown_backend(
     _unload_backend_model(backend, release_cuda_cache)
 
 
+@final
 class Celune(CeluneStateAccessors):
     """The character engine for Celune."""
 
-    _instance: Optional["Celune"] = None
+    def __init_subclass__(cls, **kwargs: Never) -> Never:
+        raise TypeError(f"{__class__.__name__} is final and cannot be subclassed")
+
+    _instance: ClassVar[Optional["Celune"]] = None
 
     @dataclass
     class _ReloadSnapshot:

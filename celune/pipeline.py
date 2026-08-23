@@ -102,7 +102,7 @@ from .dataclasses.pipeline import (
     PlaybackSourceDone,
     VoiceConversionRequest,
 )
-from .dsp import (
+from .audio.dsp import (
     split,
     soften,
     to_48khz,

@@ -97,7 +97,7 @@ def resolve_backend(
             ) from e
 
         if isolated and key in BACKEND_MANIFESTS:
-            from ..remote import RemoteBackendProxy
+            from ...cedts.remote import RemoteBackendProxy
 
             return RemoteBackendProxy(
                 BACKEND_MANIFESTS[key],

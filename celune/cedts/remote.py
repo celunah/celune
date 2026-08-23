@@ -26,8 +26,8 @@ from ..paths import (
     project_root,
 )
 from ..terminal import RUNTIME_LOG_FILTER_MESSAGES
-from .vc.base import CeluneVCBackend
-from .tts.base import CeluneBackend
+from ..backends.vc.base import CeluneVCBackend
+from ..backends.tts.base import CeluneBackend
 from ..exceptions import (
     CEDTSError,
     BackendError,
@@ -37,7 +37,7 @@ from ..exceptions import (
     CEDTSTimeoutError,
     CEDTSProtocolError,
 )
-from .environment import (
+from ..backends.environment import (
     BackendManifest,
     BackendEnvironment,
     BackendEnvironmentManager,
@@ -49,7 +49,7 @@ from ..typing.worker import (
     WorkerPayloadDescriptor,
 )
 from ..typing.aliases import LogLevel, LogCallback
-from .worker_protocol import (
+from .protocol import (
     CEDTS_VERSION,
     CORE_CAPABILITIES,
     DEFAULT_CEDTS_LIMITS,
@@ -377,7 +377,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             core_binary_output, worker_binary_output = os.pipe()
             command = [
                 str(environment.python),
-                str(project_root() / "celune" / "backend_worker_bootstrap.py"),
+                str(project_root() / "celune" / "cedts" / "bootstrap.py"),
                 "--backend",
                 self._manifest.backend_id,
                 "--backend-kwargs",

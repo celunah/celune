@@ -22,7 +22,7 @@ from ..exceptions import (
     CEDTSPayloadError,
     CEDTSProtocolError,
 )
-from .environment import BackendManifest, backend_manifest
+from ..backends.environment import BackendManifest, backend_manifest
 from ..typing.common import JSONSerializable
 from ..typing.worker import (
     WorkerValue,
@@ -32,7 +32,7 @@ from ..typing.worker import (
     WorkerPayloadDescriptor,
 )
 from ..typing.aliases import LogLevel
-from .worker_protocol import (
+from .protocol import (
     CEDTS_VERSION,
     WORKER_CAPABILITIES,
     DEFAULT_CEDTS_LIMITS,
@@ -98,42 +98,42 @@ def _remember_message_id(
 
 def _mini_constructor() -> Callable[..., _BackendRuntime]:
     """Load the approved Mini backend constructor on demand."""
-    from .tts.mini import Mini
+    from ..backends.tts.mini import Mini
 
     return cast(Callable[..., _BackendRuntime], Mini)
 
 
 def _qwen3_constructor() -> Callable[..., _BackendRuntime]:
     """Load the approved Qwen3 backend constructor on demand."""
-    from .tts.qwen3 import Qwen3
+    from ..backends.tts.qwen3 import Qwen3
 
     return cast(Callable[..., _BackendRuntime], Qwen3)
 
 
 def _dotstts_constructor() -> Callable[..., _BackendRuntime]:
     """Load the approved DotsTTS backend constructor on demand."""
-    from .tts.dotstts import DotsTtsMF
+    from ..backends.tts.dotstts import DotsTtsMF
 
     return cast(Callable[..., _BackendRuntime], DotsTtsMF)
 
 
 def _voxcpm2_constructor() -> Callable[..., _BackendRuntime]:
     """Load the approved VoxCPM2 backend constructor on demand."""
-    from .tts.voxcpm2 import VoxCPM2
+    from ..backends.tts.voxcpm2 import VoxCPM2
 
     return cast(Callable[..., _BackendRuntime], VoxCPM2)
 
 
 def _gpt_sovits_constructor() -> Callable[..., _BackendRuntime]:
     """Load the approved GPT-SoVITS backend constructor on demand."""
-    from .tts.gpt_sovits import GPTSoVITS
+    from ..backends.tts.gpt_sovits import GPTSoVITS
 
     return cast(Callable[..., _BackendRuntime], GPTSoVITS)
 
 
 def _seed_vc_constructor() -> Callable[..., _BackendRuntime]:
     """Load the approved Seed-VC backend constructor on demand."""
-    from .vc.seedvc import CeluneSeedVCBackend
+    from ..backends.vc.seedvc import CeluneSeedVCBackend
 
     return cast(Callable[..., _BackendRuntime], CeluneSeedVCBackend)
 

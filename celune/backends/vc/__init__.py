@@ -68,7 +68,7 @@ def resolve_vc_backend(
             ) from e
 
         if isolated and key in BACKEND_MANIFESTS:
-            from ..remote import RemoteVCBackendProxy
+            from ...cedts.remote import RemoteVCBackendProxy
 
             return RemoteVCBackendProxy(BACKEND_MANIFESTS[key], log=log)
 

@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Textual theme assets."""
 
-from ..colors import SEVERITY_COLORS
-
 # this CSS draws its palette from the currently loaded CEVOICE/CECHAR pack
 CELUNE_CSS = """
     Screen {
@@ -282,5 +280,7 @@ def severity_color(theme_name: str, severity: str = "info") -> str:
     Returns:
         str: The configured UI severity color for this theme.
     """
+    from ..colors import SEVERITY_COLORS
+
     palette = SEVERITY_COLORS.get(theme_name, SEVERITY_COLORS["celune"])
     return palette.get(severity, palette["info"])
