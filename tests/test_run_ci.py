@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the CI process runner's interruption cleanup."""
 
-from unittest import TestCase, mock
+from unittest import mock
 
 from scripts import run_ci
 
 
-class RunCiTests(TestCase):
+class TestRunCi:
     """Verify CI process cleanup behavior."""
 
     def test_windows_start_keeps_console_interrupts_on_runner(self) -> None:
@@ -20,7 +20,7 @@ class RunCiTests(TestCase):
             ) as popen,
             mock.patch.object(run_ci, "_attach_windows_job"),
         ):
-            self.assertIs(run_ci._start_process(), process)
+            assert run_ci._start_process() is process
 
         popen.assert_called_once_with(run_ci.POE_COMMAND, text=True)
 
@@ -80,5 +80,5 @@ class RunCiTests(TestCase):
         with mock.patch.object(run_ci.time, "monotonic", side_effect=(0.0, 0.0, 0.2)):
             exit_code = run_ci._wait_for_process(process, 600.0)
 
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(process.wait.call_count, 2)
+        assert exit_code == 0
+        assert process.wait.call_count == 2

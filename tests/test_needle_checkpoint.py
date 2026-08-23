@@ -5,12 +5,15 @@ import json
 import hashlib
 from pathlib import Path
 from typing import Optional
-from unittest import TestCase
+
 from collections.abc import Mapping
 from tempfile import TemporaryDirectory
 
 import torch
 from safetensors.torch import save_file
+
+import pytest
+
 from celune.typing.common import JSONSerializable
 from celune.agent.needle_model import NeedleModel, NeedleConfig
 from celune.agent.needle_checkpoint import (
@@ -64,7 +67,7 @@ def _write_checkpoint(
     return validate_needle_safetensors(path, values)
 
 
-class NeedleCheckpointValidationTests(TestCase):
+class TestNeedleCheckpointValidation:
     """Verify strict validation and typed failures for checkpoint artifacts."""
 
     def test_valid_checkpoint_inventory_and_metadata_are_serializable(self) -> None:
@@ -85,19 +88,16 @@ class NeedleCheckpointValidationTests(TestCase):
                 config_path=config_path,
             )
 
-            self.assertEqual(prepared.metadata.source_format, "safetensors")
-            self.assertEqual(prepared.metadata.tensor_count, inventory.tensor_count)
-            self.assertEqual(
-                prepared.metadata.parameter_count,
-                inventory.parameter_count,
+            assert prepared.metadata.source_format == "safetensors"
+            assert prepared.metadata.tensor_count == inventory.tensor_count
+            assert prepared.metadata.parameter_count == inventory.parameter_count
+            assert (
+                prepared.metadata.canonical_sha256
+                == hashlib.sha256(source_path.read_bytes()).hexdigest()
             )
-            self.assertEqual(
-                prepared.metadata.canonical_sha256,
-                hashlib.sha256(source_path.read_bytes()).hexdigest(),
-            )
-            self.assertEqual(
-                json.loads(json.dumps(prepared.metadata.to_json()))["source_filename"],
-                "model.safetensors",
+            assert (
+                json.loads(json.dumps(prepared.metadata.to_json()))["source_filename"]
+                == "model.safetensors"
             )
 
     def test_invalid_tensor_names_are_rejected_by_strict_validation(self) -> None:
@@ -115,7 +115,7 @@ class NeedleCheckpointValidationTests(TestCase):
             checkpoint = root / "invalid.safetensors"
             save_file(state, str(checkpoint))
 
-            with self.assertRaises(NeedleCheckpointError):
+            with pytest.raises(NeedleCheckpointError):
                 validate_needle_safetensors(checkpoint, values)
 
     def test_invalid_tensor_shape_and_dtype_are_rejected(self) -> None:
@@ -136,7 +136,7 @@ class NeedleCheckpointValidationTests(TestCase):
             checkpoint = root / "invalid.safetensors"
             save_file(state, str(checkpoint))
 
-            with self.assertRaises(NeedleCheckpointError):
+            with pytest.raises(NeedleCheckpointError):
                 validate_needle_safetensors(checkpoint, values)
 
     def test_invalid_configuration_is_reported_as_checkpoint_error(self) -> None:
@@ -149,7 +149,7 @@ class NeedleCheckpointValidationTests(TestCase):
             checkpoint = root / "checkpoint.safetensors"
             _write_checkpoint(checkpoint, values)
 
-            with self.assertRaises(NeedleCheckpointError):
+            with pytest.raises(NeedleCheckpointError):
                 validate_needle_safetensors(checkpoint, invalid_values)
 
     def test_source_artifact_and_hash_are_checked_before_preparation(self) -> None:
@@ -162,7 +162,7 @@ class NeedleCheckpointValidationTests(TestCase):
             _write_config(config_path, values)
             _write_checkpoint(source_path, values)
 
-            with self.assertRaises(NeedleCheckpointError):
+            with pytest.raises(NeedleCheckpointError):
                 prepare_needle_checkpoint(
                     "test/model",
                     "revision-1",
@@ -172,7 +172,7 @@ class NeedleCheckpointValidationTests(TestCase):
                     config_path=config_path,
                 )
 
-            with self.assertRaises(NeedleCheckpointError):
+            with pytest.raises(NeedleCheckpointError):
                 prepare_needle_checkpoint(
                     "test/model",
                     "revision-1",
@@ -192,7 +192,7 @@ class NeedleCheckpointValidationTests(TestCase):
             _write_config(config_path, values)
             source_path.write_bytes(b"legacy checkpoint")
 
-            with self.assertRaises(NeedleUnsupportedConverterError):
+            with pytest.raises(NeedleUnsupportedConverterError):
                 prepare_needle_checkpoint(
                     "test/model",
                     "revision-1",
@@ -210,7 +210,7 @@ class NeedleCheckpointValidationTests(TestCase):
                 """Represent a converter that cannot safely handle the source."""
                 raise NotImplementedError
 
-            with self.assertRaises(NeedleUnsupportedConverterError):
+            with pytest.raises(NeedleUnsupportedConverterError):
                 prepare_needle_checkpoint(
                     "test/model",
                     "revision-1",
@@ -239,7 +239,7 @@ class NeedleCheckpointValidationTests(TestCase):
                 """Write an artifact from an incompatible architecture."""
                 save_file({"unexpected.weight": torch.zeros((1, 1))}, str(destination))
 
-            with self.assertRaises(NeedleCheckpointError):
+            with pytest.raises(NeedleCheckpointError):
                 prepare_needle_checkpoint(
                     "test/model",
                     "revision-1",
@@ -291,12 +291,12 @@ class NeedleCheckpointValidationTests(TestCase):
                 converter_version="converter-1",
             )
 
-            self.assertEqual(len(calls), 1)
-            self.assertEqual(first.path, second.path)
-            self.assertEqual(first.metadata.source_format, "jax_flax_pickle")
-            self.assertTrue(first.path.is_file())
-            self.assertFalse(
-                any(path.suffix == ".tmp" for path in first.path.parent.iterdir())
+            assert len(calls) == 1
+            assert first.path == second.path
+            assert first.metadata.source_format == "jax_flax_pickle"
+            assert first.path.is_file()
+            assert not any(
+                path.suffix == ".tmp" for path in first.path.parent.iterdir()
             )
 
             source_path.write_bytes(b"legacy checkpoint v2")
@@ -310,7 +310,7 @@ class NeedleCheckpointValidationTests(TestCase):
                 pickle_converter=converter,
                 converter_version="converter-1",
             )
-            self.assertEqual(len(calls), 2)
+            assert len(calls) == 2
 
             prepare_needle_checkpoint(
                 "test/model",
@@ -322,4 +322,4 @@ class NeedleCheckpointValidationTests(TestCase):
                 pickle_converter=converter,
                 converter_version="converter-2",
             )
-            self.assertEqual(len(calls), 3)
+            assert len(calls) == 3

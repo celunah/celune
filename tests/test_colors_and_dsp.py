@@ -6,7 +6,8 @@ from unittest import mock
 
 import numpy as np
 import pytest
-from celune import colors, dsp
+from celune.audio import dsp
+from celune.theme import colors
 from celune.constants import UtteranceLoudnessTier
 from celune.exceptions import BadAudioError, AudioMismatchError
 
@@ -137,9 +138,11 @@ class TestDsp(CeluneTestCase):
         base = np.ones((4, 2), dtype=np.float32)
 
         with (
-            mock.patch("celune.dsp._load_readiness_signal", return_value=base) as load,
             mock.patch(
-                "celune.dsp.pad_note",
+                "celune.audio.dsp._load_readiness_signal", return_value=base
+            ) as load,
+            mock.patch(
+                "celune.audio.dsp.pad_note",
                 return_value=base,
             ) as generate,
         ):

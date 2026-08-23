@@ -21,7 +21,8 @@ from textual import events
 from textual.app import App
 from textual.containers import Vertical
 from textual.widgets import Label, Button, Static, RichLog, TextArea, ProgressBar
-from celune import colors, runtime
+from celune import runtime
+from celune.theme import colors
 from celune.i18n import string
 from celune.utils import discard
 from celune.celune import Celune
@@ -50,6 +51,19 @@ from tests.support import CeluneTestCase, FakeBackend, FakeVCBackend
 class TestRuntime(CeluneTestCase):
     """Tests for runtime environment checks."""
 
+    def test_core_runtime_classes_are_final_at_runtime(self) -> None:
+        """Verify final core classes reject runtime subclass creation."""
+        final_classes = (Celune, CeluneUI, CeluneHeadlessUI)
+
+        for final_class in final_classes:
+            assert getattr(final_class, "__final__", False)
+            with pytest.raises(TypeError, match="is final and cannot be subclassed"):
+                type(f"{final_class.__name__}Subclass", (final_class,), {})
+
+    def test_ui_error_formatter_remains_available_after_lazy_import(self) -> None:
+        """Verify deferred UI imports retain the formatter used by error paths."""
+        assert ui_app.format_error(RuntimeError("startup"), "info") == "startup"
+
     def test_entrypoint_runtime_loader_keeps_heavy_imports_deferred(self) -> None:
         """Verify the pre-UI entrypoint import path stays torch-free."""
         project_root = Path(__file__).resolve().parents[1]
@@ -65,6 +79,34 @@ class TestRuntime(CeluneTestCase):
                     "assert 'transformers' not in sys.modules; "
                     "assert 'celune.celune' not in sys.modules; "
                     "assert 'celune.ui.app' not in sys.modules"
+                ),
+            ],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(check.returncode, 0, check.stderr)
+
+    def test_loading_ui_import_keeps_engine_and_model_libraries_deferred(self) -> None:
+        """Verify loading-screen imports do not initialize engine dependencies."""
+        project_root = Path(__file__).resolve().parents[1]
+        check = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; "
+                    "from celune.ui import CeluneUI; "
+                    "from celune.ui import app as ui_app; "
+                    "assert CeluneUI.__name__ == 'CeluneUI'; "
+                    "assert ui_app.indent('status', spaces=2) == '  status'; "
+                    "assert ui_app.supports_ansi() is False; "
+                    "blocked = {'celune.celune', 'celune.persona', 'lingua', "
+                    "'numpy', 'psutil', 'sounddevice', 'sympy', 'torch', 'transformers'}; "
+                    "assert blocked.isdisjoint(sys.modules), "
+                    "sorted(blocked.intersection(sys.modules))"
                 ),
             ],
             cwd=project_root,
@@ -644,6 +686,20 @@ class TestUIStartup(CeluneTestCase):
         self.assertEqual(
             ui.theme_variables["background"].lower(), colors.THEME.background
         )
+
+    def test_main_ui_prepares_the_lightweight_theme_before_runtime_imports(
+        self,
+    ) -> None:
+        """Verify the loading frame uses Celune colors without the engine."""
+        ui = CeluneUI()
+
+        with mock.patch("celune.ui.app._load_ui_runtime_dependencies") as load_runtime:
+            ui._prepare_loading_theme()
+
+        load_runtime.assert_not_called()
+        self.assertEqual(ui.theme, "celune")
+        self.assertEqual(ui.current_theme.background, "#1d1826")
+        self.assertEqual(ui.current_theme.primary, "#cebaff")
 
     def test_main_ui_prepares_configured_theme_before_rendering(self) -> None:
         """Verify the main UI applies the configured theme before ``run``."""
@@ -3364,7 +3420,7 @@ class TestUIStartup(CeluneTestCase):
         self.assertEqual(fake_status.rendered, f"  {message}")
 
 
-class AgentStatusUITests(CeluneTestCase):
+class TestAgentStatusUI(CeluneTestCase):
     """Tests for the typed agent lifecycle projection in the UI."""
 
     def tearDown(self) -> None:

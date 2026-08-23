@@ -10,7 +10,6 @@ import time
 import select
 import argparse
 import tempfile
-import unittest
 import threading
 import subprocess
 from types import SimpleNamespace
@@ -23,7 +22,8 @@ from collections.abc import Callable, Generator
 
 import numpy as np
 
-from celune.backends import remote, worker, environment
+from celune.backends import environment
+from celune.cedts import remote, worker
 from celune.exceptions import (
     CEDTSError,
     BackendError,
@@ -53,7 +53,7 @@ from celune.backends.environment import (
     backend_manifest,
 )
 from celune.dataclasses.pipeline import AudioOutput, VoiceConversionRequest
-from celune.backends.worker_protocol import (
+from celune.cedts.protocol import (
     CEDTSLimits,
     WorkerPayload,
     build_packet,
@@ -177,9 +177,9 @@ class TestBackendEnvironment(CeluneTestCase):
         source = "\n".join(
             Path(path).read_text(encoding="utf-8")
             for path in (
-                "celune/backends/worker_protocol.py",
-                "celune/backends/worker.py",
-                "celune/backends/remote.py",
+                "celune/cedts/protocol.py",
+                "celune/cedts/worker.py",
+                "celune/cedts/remote.py",
             )
         )
         referenced_keys = set(
@@ -3568,7 +3568,7 @@ class TestBackendEnvironment(CeluneTestCase):
             self.skipTest("the subprocess fixture uses POSIX descriptor inheritance")
 
         child_code = """
-from celune.backends import worker
+from celune.cedts import worker
 
 
 class FakeBackend:
@@ -3733,7 +3733,7 @@ raise SystemExit(worker.main())
 
         child_code = """
 import time
-from celune.backends import worker
+from celune.cedts import worker
 
 
 class FakeBackend:
@@ -3954,7 +3954,7 @@ raise SystemExit(worker.main())
         child_code = """
 import os
 import threading
-from celune.backends import worker
+from celune.cedts import worker
 
 
 release_fd = int(os.environ["CELUNE_TEST_RELEASE_FD"])
@@ -4334,7 +4334,7 @@ finally:
 
         child_code = """
 import threading
-from celune.backends import worker
+from celune.cedts import worker
 
 
 class FakeBackend:
@@ -4757,15 +4757,15 @@ raise SystemExit(worker.main())
                 remote.subprocess, "Popen", return_value=process
             ) as popen,
             mock.patch(
-                "celune.backends.remote.configure_numba_cache",
+                "celune.cedts.remote.configure_numba_cache",
                 return_value=Path("C:/celune/temp/numba"),
             ) as configure_numba_cache,
             mock.patch(
-                "celune.backends.remote.huggingface_home_dir",
+                "celune.cedts.remote.huggingface_home_dir",
                 return_value=Path("C:/celune/huggingface"),
             ),
             mock.patch(
-                "celune.backends.remote.huggingface_hub_cache_dir",
+                "celune.cedts.remote.huggingface_hub_cache_dir",
                 return_value=Path("C:/celune/huggingface/hub"),
             ),
         ):
@@ -4796,11 +4796,11 @@ raise SystemExit(worker.main())
         )
         self.assertEqual(
             popen.call_args.kwargs["env"]["HF_HOME"],
-            "C:/celune/huggingface",
+            str(Path("C:/celune/huggingface")),
         )
         self.assertEqual(
             popen.call_args.kwargs["env"]["HF_HUB_CACHE"],
-            "C:/celune/huggingface/hub",
+            str(Path("C:/celune/huggingface/hub")),
         )
         configure_numba_cache.assert_called_once_with()
         self.assertEqual(popen.call_args.kwargs["env"]["USERNAME"], "test-user")
@@ -4844,7 +4844,7 @@ raise SystemExit(worker.main())
 
             def __str__(self) -> str:
                 """Return a mock path string."""
-                return "/root/VoiceSpeaker/backend_worker_bootstrap.py"
+                return "/root/VoiceSpeaker/celune/cedts/bootstrap.py"
 
         class StartupInfo:
             """Mock startup info."""
@@ -4887,15 +4887,15 @@ raise SystemExit(worker.main())
                 side_effect=record_startup_info,
             ),
             mock.patch(
-                "celune.backends.remote.configure_numba_cache",
+                "celune.cedts.remote.configure_numba_cache",
                 return_value=Path("C:/celune/temp/numba"),
             ),
             mock.patch(
-                "celune.backends.remote.huggingface_home_dir",
+                "celune.cedts.remote.huggingface_home_dir",
                 return_value=Path("C:/celune/huggingface"),
             ),
             mock.patch(
-                "celune.backends.remote.huggingface_hub_cache_dir",
+                "celune.cedts.remote.huggingface_hub_cache_dir",
                 return_value=Path("C:/celune/huggingface/hub"),
             ),
         ):
@@ -4955,7 +4955,3 @@ raise SystemExit(worker.main())
 
         proxy.assert_called_once()
         assert proxy.call_args.args[0] == BACKEND_MANIFESTS["mini"]
-
-
-if __name__ == "__main__":
-    unittest.main()

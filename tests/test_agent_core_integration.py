@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Optional, cast
-from unittest import TestCase, mock
+from unittest import mock
 from collections.abc import Mapping, Sequence
 
 from celune.celune import Celune
@@ -53,7 +54,7 @@ from celune.agent import (
     AgentClassificationFailureKind,
 )
 
-from .support import FakeGlow, FakeBackend
+from .support import CeluneTestCase, FakeGlow, FakeBackend
 
 
 class _PersonaResponse:
@@ -179,7 +180,7 @@ class _SpeakNeedleHandler:
         """Match the lifecycle method of a loaded Needle handler."""
 
 
-class AgentCoreIntegrationTests(TestCase):
+class TestAgentCoreIntegration(CeluneTestCase):
     """Run a complete routed task through a real lightweight Celune core."""
 
     def _make_core(
@@ -239,12 +240,12 @@ class AgentCoreIntegrationTests(TestCase):
             "query_task",
             "query_task_history",
         }
-        self.assertEqual(set(schemas), expected)
+        assert set(schemas) == expected
         for schema in schemas.values():
-            self.assertTrue(schema.description)
-            self.assertTrue(schema.display_name)
+            assert schema.description
+            assert schema.display_name
             if schema.behavior == AgentToolBehavior.MUTATING:
-                self.assertTrue(schema.approval_required)
+                assert schema.approval_required
 
     def test_local_management_registry_is_opt_in_and_warns(self) -> None:
         """Local-management tools appear only when explicitly enabled."""
@@ -271,28 +272,29 @@ class AgentCoreIntegrationTests(TestCase):
                 log_callback=capture_log,
             )
         self.addCleanup(core.close)
-        self.assertIn("local_system_info", core._agent_tool_schemas)
+        assert "local_system_info" in core._agent_tool_schemas
 
         with (
             mock.patch.object(core, "load_available_voices", return_value=False),
             mock.patch.object(core, "fatal"),
         ):
-            self.assertFalse(core.load(skip_runtime_check=True))
+            assert not core.load(skip_runtime_check=True)
 
-        self.assertTrue(logs)
-        self.assertTrue(logs[0].startswith("Celune "))
-        self.assertTrue(any("UNSANDBOXED AGENT" in message for message in logs))
-        self.assertGreater(
+        assert logs
+        assert logs[0].startswith("Celune ")
+        assert any("UNSANDBOXED AGENT" in message for message in logs)
+        assert (
             next(
-                index
-                for index, message in enumerate(logs)
-                if "UNSANDBOXED AGENT" in message
-            ),
-            0,
+                (
+                    index
+                    for index, message in enumerate(logs)
+                    if "UNSANDBOXED AGENT" in message
+                )
+            )
+            > 0
         )
-        self.assertIn(
-            "local_system_info",
-            production_agent_tool_schemas(include_local_management=True),
+        assert "local_system_info" in production_agent_tool_schemas(
+            include_local_management=True
         )
 
     def test_query_status_executes_against_the_real_core(self) -> None:
@@ -307,11 +309,10 @@ class AgentCoreIntegrationTests(TestCase):
                 core.agent_runtime.get_context(task.task_id),
             ),
         )
-        self.assertEqual(result["status"], AgentToolExecutionStatus.SUCCEEDED)
+        assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
         output = result["output"]
-        self.assertIsInstance(output, dict)
         assert isinstance(output, dict)
-        self.assertEqual(output["mode"], "agent")
+        assert output["mode"] == "agent"
         core.agent_runtime.cancel_task(task.task_id)
 
     def test_query_models_reports_configured_persona_model_id(self) -> None:
@@ -329,11 +330,10 @@ class AgentCoreIntegrationTests(TestCase):
             ),
         )
 
-        self.assertEqual(result["status"], AgentToolExecutionStatus.SUCCEEDED)
+        assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
         output = result["output"]
-        self.assertIsInstance(output, dict)
         assert isinstance(output, dict)
-        self.assertEqual(output["persona_model"], "fixture/persona-custom")
+        assert output["persona_model"] == "fixture/persona-custom"
         core.agent_runtime.cancel_task(task.task_id)
 
     def test_query_models_uses_the_default_persona_model_without_custom_config(
@@ -352,11 +352,10 @@ class AgentCoreIntegrationTests(TestCase):
             ),
         )
 
-        self.assertEqual(result["status"], AgentToolExecutionStatus.SUCCEEDED)
+        assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
         output = result["output"]
-        self.assertIsInstance(output, dict)
         assert isinstance(output, dict)
-        self.assertEqual(output["persona_model"], PERSONA_DEFAULT_MODEL_ID)
+        assert output["persona_model"] == PERSONA_DEFAULT_MODEL_ID
         core.agent_runtime.cancel_task(task.task_id)
 
     def test_core_routes_approves_and_completes_a_mutating_tool_workflow(self) -> None:
@@ -446,37 +445,34 @@ class AgentCoreIntegrationTests(TestCase):
         route = core.route_input(
             "Please remove the isolated fixture item.", persona_ready=True
         )
-        self.assertEqual(route.route.value, "task")
-        self.assertIsNotNone(route.task_request)
+        assert route.route.value == "task"
         assert route.task_request is not None
 
         with mock.patch("celune.celune.deliver_persona_response", return_value=True):
             core._run_agent_route(route)
         task = runtime.get_active_task("default")
-        self.assertIsNotNone(task)
         assert task is not None
-        self.assertEqual(task.state, AgentTaskState.AWAITING_APPROVAL)
-        self.assertEqual(executions, [])
+        assert task.state == AgentTaskState.AWAITING_APPROVAL
+        assert not executions
 
         approval = runtime.get_pending_approval(task.task_id)
-        self.assertIsNotNone(approval)
         assert approval is not None
 
         approval_route = core.route_input(
             "That is approved; continue.", persona_ready=True
         )
-        self.assertEqual(approval_route.route.value, "approval_response")
+        assert approval_route.route.value == "approval_response"
         with mock.patch("celune.celune.deliver_persona_response", return_value=True):
             core._run_agent_route(approval_route)
 
-        self.assertEqual(task.state, AgentTaskState.COMPLETED)
-        self.assertEqual(executions, [approval.tool_call])
-        self.assertEqual(task.iterations, 1)
-        self.assertIsNotNone(task.completion_metadata)
-        self.assertEqual(runtime.get_active_task("default"), None)
-        self.assertEqual(event_names.count("approval"), 1)
-        self.assertEqual(event_names.count("finished"), 1)
-        self.assertLess(event_names.index("approval"), event_names.index("finished"))
+        assert task.state == AgentTaskState.COMPLETED
+        assert executions == [approval.tool_call]
+        assert task.iterations == 1
+        assert task.completion_metadata is not None
+        assert runtime.get_active_task("default") is None
+        assert event_names.count("approval") == 1
+        assert event_names.count("finished") == 1
+        assert event_names.index("approval") < event_names.index("finished")
 
     def test_core_owns_production_path_from_persona_to_speech(self) -> None:
         """Run one safe task through core-owned Persona, Needle, and speech paths."""
@@ -504,23 +500,21 @@ class AgentCoreIntegrationTests(TestCase):
         self.addCleanup(delivery.stop)
         core.vision = cast(PersonaClient, persona)
 
-        self.assertIsNotNone(core.agent_runtime._planner)
-        self.assertIsNotNone(core.agent_runtime._tool_result_handler)
-        self.assertEqual(
-            {tool.name for tool in core.agent_runtime.tools},
-            set(production_agent_tool_schemas()),
+        assert core.agent_runtime._planner is not None
+        assert core.agent_runtime._tool_result_handler is not None
+        assert {tool.name for tool in core.agent_runtime.tools} == set(
+            production_agent_tool_schemas()
         )
 
         conversation = core.route_input("Hello.", persona_ready=False)
-        self.assertEqual(conversation.route.value, "conversation")
-        self.assertIsNone(core.agent_runtime.get_active_task("default"))
-        self.assertEqual(persona.requests, [])
+        assert conversation.route.value == "conversation"
+        assert core.agent_runtime.get_active_task("default") is None
+        assert not persona.requests
 
         route = core.route_input(
             "Could you verify the current agent status?", persona_ready=True
         )
-        self.assertEqual(route.route.value, "task")
-        self.assertIsNotNone(route.task_request)
+        assert route.route.value == "task"
         assert route.task_request is not None
         outputs: list[AgentOutput] = []
         original_run = core.agent_runtime.run
@@ -545,32 +539,30 @@ class AgentCoreIntegrationTests(TestCase):
             ) as execute,
         ):
             core._run_agent_route(route)
-        self.assertEqual(
-            outputs[0]["response"], "The agent task completed successfully."
-        )
-        self.assertTrue(outputs[0]["end"])
+        assert outputs[0]["response"] == "The agent task completed successfully."
+        assert outputs[0]["end"]
 
         metadata = route.routing_metadata
-        self.assertIsInstance(metadata, dict)
+        assert isinstance(metadata, dict)
         task_id = metadata.get("task_id")
-        self.assertIsInstance(task_id, str)
+        assert isinstance(task_id, str)
         task = core.agent_runtime.get_task(task_id)
-        self.assertEqual(task.state, AgentTaskState.COMPLETED)
-        self.assertEqual(task.iterations, 1)
-        self.assertEqual(selector.intents, ["Read the current agent status."])
-        self.assertEqual(len(persona.requests), 3)
+        assert task.state == AgentTaskState.COMPLETED
+        assert task.iterations == 1
+        assert selector.intents == ["Read the current agent status."]
+        assert len(persona.requests) == 3
         second_system = persona.requests[2]["system"]
-        self.assertIsInstance(second_system, str)
-        self.assertIn("Last tool result", second_system)
-        self.assertIn("succeeded", second_system)
-        self.assertEqual(execute.call_count, 1)
-        self.assertEqual(delivery_mock.call_count, 2)
-        self.assertEqual(speech_mock.call_count, 2)
-        self.assertEqual(
-            speech_mock.call_args.kwargs["display_text"],
-            "The agent task completed successfully.",
+        assert isinstance(second_system, str)
+        assert "Last tool result" in second_system
+        assert "succeeded" in second_system
+        assert execute.call_count == 1
+        assert delivery_mock.call_count == 2
+        assert speech_mock.call_count == 2
+        assert (
+            speech_mock.call_args.kwargs["display_text"]
+            == "The agent task completed successfully."
         )
-        self.assertIsNone(core.agent_runtime.get_active_task("default"))
+        assert core.agent_runtime.get_active_task("default") is None
 
     def test_core_logs_one_typed_route_before_downstream_processing(self) -> None:
         """Expose semantic routing diagnostics only through the debug log gate."""
@@ -585,11 +577,10 @@ class AgentCoreIntegrationTests(TestCase):
 
         route = core.route_input("Check the current agent status.", persona_ready=True)
 
-        self.assertEqual(route.route.value, "task")
-        self.assertEqual(
-            logs[-1],
-            "[ROUTE] request=Check the current agent status. "
-            "type=agent intent=inspect_status confidence=98%",
+        assert route.route.value == "task"
+        assert (
+            logs[-1]
+            == "[ROUTE] request=Check the current agent status. type=agent intent=inspect_status confidence=98%"
         )
 
     def test_core_route_log_uses_say_for_classifier_fallback(self) -> None:
@@ -601,8 +592,8 @@ class AgentCoreIntegrationTests(TestCase):
 
         route = core.route_input("Please handle this", persona_ready=False)
 
-        self.assertIsNotNone(route.failure)
-        self.assertEqual(logs[-1], "[ROUTE] request=Please handle this type=say")
+        assert route.failure is not None
+        assert logs[-1] == "[ROUTE] request=Please handle this type=say"
 
     def test_core_route_log_omits_agent_type_when_agent_mode_is_disabled(self) -> None:
         """Keep disabled agent mode on the ordinary Persona route."""
@@ -614,11 +605,10 @@ class AgentCoreIntegrationTests(TestCase):
 
         route = core.route_input("Check the current agent status.", persona_ready=False)
 
-        self.assertEqual(route.route.value, "conversation")
-        self.assertEqual(
-            logs[-1],
-            "[ROUTE] request=Check the current agent status. "
-            "type=persona confidence=100%",
+        assert route.route.value == "conversation"
+        assert (
+            logs[-1]
+            == "[ROUTE] request=Check the current agent status. type=persona confidence=100%"
         )
 
     def test_failed_agent_task_is_explained_by_active_persona(self) -> None:
@@ -645,28 +635,23 @@ class AgentCoreIntegrationTests(TestCase):
         with mock.patch(
             "celune.celune.deliver_persona_response", side_effect=record_delivery
         ):
-            self.assertTrue(core._run_agent_route(route))
+            assert core._run_agent_route(route)
 
         metadata = route.routing_metadata
-        self.assertIsInstance(metadata, dict)
         assert isinstance(metadata, dict)
         task_id = metadata.get("task_id")
-        self.assertIsInstance(task_id, str)
         assert isinstance(task_id, str)
         task = core.agent_runtime.get_task(task_id)
-        self.assertEqual(task.state, AgentTaskState.FAILED)
-        self.assertIsNotNone(task.failure_reason)
+        assert task.state == AgentTaskState.FAILED
         assert task.failure_reason is not None
-        self.assertEqual(task.failure_reason.value, "no_available_tools")
-        self.assertEqual(
-            delivered[-1:],
-            ["I could not find a suitable way to do that just now."],
-        )
+        assert task.failure_reason.value == "no_available_tools"
+        assert delivered[-1:] == [
+            "I could not find a suitable way to do that just now."
+        ]
         failure_prompt = persona.requests[-1]["system"]
-        self.assertIsInstance(failure_prompt, str)
         assert isinstance(failure_prompt, str)
-        self.assertIn("Failure response instruction", failure_prompt)
-        self.assertIn("no_available_tools", failure_prompt)
+        assert "Failure response instruction" in failure_prompt
+        assert "no_available_tools" in failure_prompt
 
     def test_classification_failure_is_explained_by_active_persona(self) -> None:
         """Use the active Persona voice when intent classification fails."""
@@ -694,20 +679,15 @@ class AgentCoreIntegrationTests(TestCase):
                 delivered.append(response) or True
             ),
         ):
-            self.assertTrue(
-                core._speak_agent_classification_failure(
-                    "Please handle this ambiguous request.",
-                    failure,
-                    route,
-                )
+            assert core._speak_agent_classification_failure(
+                "Please handle this ambiguous request.", failure, route
             )
 
-        self.assertEqual(delivered, ["I cannot confidently route that request yet."])
+        assert delivered == ["I cannot confidently route that request yet."]
         failure_prompt = persona.requests[-1]["system"]
-        self.assertIsInstance(failure_prompt, str)
         assert isinstance(failure_prompt, str)
-        self.assertIn("Classification failure", failure_prompt)
-        self.assertIn("malformed_output", failure_prompt)
+        assert "Classification failure" in failure_prompt
+        assert "malformed_output" in failure_prompt
 
     def test_typed_permission_approval_tool_and_cancel_failures_use_persona(
         self,
@@ -740,7 +720,7 @@ class AgentCoreIntegrationTests(TestCase):
                 ("approval", AgentFailureReason.APPROVAL_DENIED),
                 ("tool", AgentFailureReason.TOOL_ERROR),
             ):
-                with self.subTest(label=label):
+                with nullcontext():
                     task = core.agent_runtime.create_task(
                         AgentRequest(
                             f"Run the {label} case.",
@@ -757,7 +737,7 @@ class AgentCoreIntegrationTests(TestCase):
                         route=AgentRoute.TASK_INPUT,
                         routing_metadata={"task_id": task.task_id},
                     )
-                    self.assertTrue(core._run_agent_route(route))
+                    assert core._run_agent_route(route)
 
             task = core.agent_runtime.create_task(
                 AgentRequest(
@@ -778,15 +758,14 @@ class AgentCoreIntegrationTests(TestCase):
                 route=AgentRoute.TASK_INPUT,
                 routing_metadata={"task_id": task.task_id},
             )
-            self.assertTrue(core._run_agent_route(route))
+            assert core._run_agent_route(route)
 
-        self.assertEqual(list(responses.values()), delivered)
+        assert list(responses.values()) == delivered
         for request, label in zip(persona.requests, responses):
             prompt = request["system"]
-            self.assertIsInstance(prompt, str)
             assert isinstance(prompt, str)
-            self.assertIn("Failure response instruction", prompt)
-            self.assertIn(label, prompt)
+            assert "Failure response instruction" in prompt
+            assert label in prompt
 
     def test_terminal_speak_tool_is_the_task_result(self) -> None:
         """Run the real registered speak tool without a duplicate final response."""
@@ -810,38 +789,35 @@ class AgentCoreIntegrationTests(TestCase):
         self.addCleanup(delivery.stop)
 
         route = core.route_input("Please say hello.", persona_ready=True)
-        self.assertEqual(route.route.value, "task")
+        assert route.route.value == "task"
         core._run_agent_route(route)
         metadata = route.routing_metadata
-        self.assertIsInstance(metadata, dict)
         assert isinstance(metadata, dict)
         task_id = metadata.get("task_id")
-        self.assertIsInstance(task_id, str)
         assert isinstance(task_id, str)
         task = core.agent_runtime.get_task(task_id)
-        self.assertEqual(task.state, AgentTaskState.AWAITING_APPROVAL)
+        assert task.state == AgentTaskState.AWAITING_APPROVAL
 
         approval_route = core.route_input("Approved.", persona_ready=True)
-        self.assertEqual(approval_route.route.value, "approval_response")
-        self.assertTrue(core._run_agent_route(approval_route))
+        assert approval_route.route.value == "approval_response"
+        assert core._run_agent_route(approval_route)
 
-        self.assertEqual(task.state, AgentTaskState.COMPLETED)
+        assert task.state == AgentTaskState.COMPLETED
         result = cast(
             Optional[ToolExecutionResult],
             core.agent_runtime.get_context(task_id).last_tool_result,
         )
-        self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result["tool_id"], "speak")
-        self.assertEqual(result["status"], AgentToolExecutionStatus.SUCCEEDED)
-        self.assertEqual(result["end_task"], True)
-        self.assertEqual(delivery_mock.call_count, 1)
-        self.assertEqual(speech_mock.call_count, 2)
-        self.assertEqual(
-            [call.args[1] for call in speech_mock.call_args_list],
-            ["I will say hello.", "hello"],
-        )
-        self.assertEqual(len(persona.requests), 3)
+        assert result["tool_id"] == "speak"
+        assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
+        assert result["end_task"] is True
+        assert delivery_mock.call_count == 1
+        assert speech_mock.call_count == 2
+        assert [call.args[1] for call in speech_mock.call_args_list] == [
+            "I will say hello.",
+            "hello",
+        ]
+        assert len(persona.requests) == 3
 
     def test_needle_loading_failure_is_recorded_and_task_fails_safely(self) -> None:
         """Expose a typed terminal failure when production Needle cannot load."""
@@ -868,13 +844,12 @@ class AgentCoreIntegrationTests(TestCase):
             core._run_agent_route(route)
 
         metadata = route.routing_metadata
-        self.assertIsInstance(metadata, dict)
+        assert isinstance(metadata, dict)
         task_id = metadata.get("task_id")
-        self.assertIsInstance(task_id, str)
+        assert isinstance(task_id, str)
         task = core.agent_runtime.get_task(task_id)
-        self.assertEqual(task.state, AgentTaskState.FAILED)
-        self.assertIsNotNone(task.failure_reason)
+        assert task.state == AgentTaskState.FAILED
         assert task.failure_reason is not None
-        self.assertEqual(task.failure_reason.value, "invalid_tool_call")
-        self.assertIn("checkpoint unavailable", core.agent_needle_error or "")
-        self.assertFalse(core.agent_needle_ready)
+        assert task.failure_reason.value == "invalid_tool_call"
+        assert "checkpoint unavailable" in (core.agent_needle_error or "")
+        assert not core.agent_needle_ready

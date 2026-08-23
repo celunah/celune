@@ -173,8 +173,10 @@ class TestRuntimePath(CeluneTestCase):
             mock.patch.dict(os.environ, {}, clear=True),
         ):
             configure_huggingface_cache_environment()
-            assert os.environ["HF_HOME"] == "C:/runtime-data/huggingface"
-            assert os.environ["HF_HUB_CACHE"] == "C:/runtime-data/huggingface/hub"
+            assert os.environ["HF_HOME"] == str(Path("C:/runtime-data/huggingface"))
+            assert os.environ["HF_HUB_CACHE"] == str(
+                Path("C:/runtime-data/huggingface/hub")
+            )
 
     def test_huggingface_cache_environment_keeps_celune_defaults_in_source_tree(
         self,

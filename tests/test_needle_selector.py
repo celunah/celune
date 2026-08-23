@@ -3,11 +3,15 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import Optional, cast
-from unittest import TestCase, mock
+from unittest import mock
 
 import torch
+
+import pytest
+
 from celune.typing.common import JSONSerializable
 from celune.agent.needle_model import NeedleModel
 from celune.agent.needle import _parse_single_selection
@@ -143,7 +147,7 @@ class _FakeNeedleHandler:
         return self.selection
 
 
-class NeedleSelectorTests(TestCase):
+class TestNeedleSelector:
     """Verify strict selection, schema validation, and metadata preservation."""
 
     def test_action_intent_and_available_schema_reach_needle(self) -> None:
@@ -160,21 +164,20 @@ class NeedleSelectorTests(TestCase):
 
         result = selector(_context(), _output())
 
-        self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(selection.query, "Set a timer for five minutes")
-        self.assertEqual([item["name"] for item in selection.catalog], ["SetTimer"])
+        assert selection.query == "Set a timer for five minutes"
+        assert [item["name"] for item in selection.catalog] == ["SetTimer"]
         minutes = cast(
             NeedleToolParameterSpec,
             selection.catalog[0]["parameters"]["minutes"],
         )
-        self.assertEqual(minutes["type"], "integer")
-        self.assertEqual(result["name"], "SetTimer")
+        assert minutes["type"] == "integer"
+        assert result["name"] == "SetTimer"
         validated = cast(ValidatedToolCall, result)
-        self.assertEqual(validated["tool_id"], "set_timer")
-        self.assertEqual(validated["behavior"], AgentToolBehavior.MUTATING)
-        self.assertEqual(validated["danger"], AgentToolDangerLevel.MEDIUM)
-        self.assertTrue(validated["approval_required"])
+        assert validated["tool_id"] == "set_timer"
+        assert validated["behavior"] == AgentToolBehavior.MUTATING
+        assert validated["danger"] == AgentToolDangerLevel.MEDIUM
+        assert validated["approval_required"]
 
     def test_schema_mapping_can_be_keyed_by_tool_id(self) -> None:
         """Resolve a Phase 1 schema by its canonical tool identifier."""
@@ -189,12 +192,12 @@ class NeedleSelectorTests(TestCase):
         result = selector(_context(), _output())
 
         assert result is not None
-        self.assertEqual(cast(ValidatedToolCall, result)["tool_id"], "set_timer")
+        assert cast(ValidatedToolCall, result)["tool_id"] == "set_timer"
         minutes = cast(
             NeedleToolParameterSpec,
             handler.catalog[0]["parameters"]["minutes"],
         )
-        self.assertEqual(minutes["type"], "integer")
+        assert minutes["type"] == "integer"
 
     def test_invalid_selection_shapes_and_arguments_are_rejected(self) -> None:
         """Reject unknown tools, unavailable tools, and schema-invalid arguments."""
@@ -206,7 +209,7 @@ class NeedleSelectorTests(TestCase):
             ("SetTimer", {"minutes": 5, "unexpected": True}),
         )
         for name, arguments in cases:
-            with self.subTest(name=name, arguments=arguments):
+            with nullcontext():
                 handler = _FakeNeedleHandler(
                     {
                         "name": name,
@@ -221,7 +224,7 @@ class NeedleSelectorTests(TestCase):
                     (_tool("SetTimer"), _tool("DisabledTool")),
                     schemas=_schemas(),
                 )
-                with self.assertRaises(NeedleSelectionError):
+                with pytest.raises(NeedleSelectionError):
                     selector(_context(), _output())
 
     def test_empty_intent_and_strict_json_shapes_are_rejected(self) -> None:
@@ -232,11 +235,11 @@ class NeedleSelectorTests(TestCase):
             (_tool("SetTimer"),),
             schemas={"SetTimer": _schemas()["SetTimer"]},
         )
-        with self.assertRaises(NeedleSelectionError):
+        with pytest.raises(NeedleSelectionError):
             selector(_context(), _output(" "))
-        with self.assertRaises(NeedleSelectionError):
+        with pytest.raises(NeedleSelectionError):
             _parse_single_selection("not json", {})
-        with self.assertRaises(NeedleSelectionError):
+        with pytest.raises(NeedleSelectionError):
             _parse_single_selection(
                 '[{"name":"one","arguments":{}},{"name":"two","arguments":{}}]',
                 {},
@@ -287,8 +290,8 @@ class NeedleSelectorTests(TestCase):
             [{"name": "SetTimer", "parameters": {}}],
         )
 
-        self.assertEqual(result["name"], "SetTimer")
-        self.assertEqual(len(tokenizer.encoded), 2)
+        assert result["name"] == "SetTimer"
+        assert len(tokenizer.encoded) == 2
 
     def test_from_pretrained_loads_through_the_verified_handler(self) -> None:
         """Build the adapter through the pinned handler preparation API."""
@@ -310,7 +313,7 @@ class NeedleSelectorTests(TestCase):
                 revision="revision-1",
             )
 
-        self.assertIs(selector.handler, fake_handler)
+        assert selector.handler is fake_handler
         load.assert_called_once_with(
             model_id="Cactus-Compute/needle",
             device=None,
@@ -372,11 +375,10 @@ class NeedleSelectorTests(TestCase):
 
         result = runtime.run(task.request)
 
-        self.assertEqual(task.failure_reason, None)
-        self.assertEqual(task.state.value, "awaiting_approval")
-        self.assertEqual(len(calls), 0)
+        assert task.failure_reason is None
+        assert task.state.value == "awaiting_approval"
+        assert len(calls) == 0
         approval = runtime.get_pending_approval(task.task_id)
-        self.assertIsNotNone(approval)
         assert approval is not None
         runtime.respond_to_approval(
             task.task_id,
@@ -384,12 +386,12 @@ class NeedleSelectorTests(TestCase):
         )
         result = runtime.run(task.request)
 
-        self.assertEqual(task.state.value, "completed")
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]["name"], "SetTimer")
-        self.assertEqual(calls[0]["tool_id"], "set_timer")
-        self.assertTrue(calls[0]["approval_required"])
-        self.assertEqual(result["response"], "Timer set.")
+        assert task.state.value == "completed"
+        assert len(calls) == 1
+        assert calls[0]["name"] == "SetTimer"
+        assert calls[0]["tool_id"] == "set_timer"
+        assert calls[0]["approval_required"]
+        assert result["response"] == "Timer set."
 
     def test_needle_failure_becomes_typed_runtime_failure(self) -> None:
         """Convert selector failures into the existing invalid-call reason."""
@@ -430,15 +432,15 @@ class NeedleSelectorTests(TestCase):
 
         runtime.run(task.request)
 
-        self.assertEqual(task.failure_reason, AgentFailureReason.INVALID_TOOL_CALL)
-        self.assertEqual(task.state.value, "failed")
+        assert task.failure_reason == AgentFailureReason.INVALID_TOOL_CALL
+        assert task.state.value == "failed"
 
     def test_cancellation_and_interruption_during_selection_skip_execution(
         self,
     ) -> None:
         """Preserve Phase 4 cancellation and interruption semantics at Needle."""
         for action in ("cancel", "interrupt"):
-            with self.subTest(action=action):
+            with nullcontext():
                 runtime: AgentRuntime
 
                 class InterruptingHandler(_FakeNeedleHandler):
@@ -519,9 +521,9 @@ class NeedleSelectorTests(TestCase):
 
                 result = runtime.run(task.request)
 
-                self.assertEqual(executions, 0)
+                assert executions == 0
                 if action == "cancel":
-                    self.assertEqual(task.state.value, "cancelled")
+                    assert task.state.value == "cancelled"
                 else:
-                    self.assertTrue(result["paused"])
-                    self.assertEqual(task.state.value, "interrupted")
+                    assert result["paused"]
+                    assert task.state.value == "interrupted"

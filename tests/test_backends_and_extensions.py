@@ -164,7 +164,7 @@ class TestBackend(CeluneTestCase):
 
         download.assert_called_once_with(
             repo_id="lunahr/pocket-tts-ungated",
-            cache_dir="C:/celune/huggingface/hub",
+            cache_dir=str(Path("C:/celune/huggingface/hub")),
         )
 
     def test_gpt_sovits_bounds_nltk_downloads_and_restores_socket_timeout(

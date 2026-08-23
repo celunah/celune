@@ -7,7 +7,7 @@ from unittest import mock
 import torch
 import numpy as np
 import pytest
-from celune.colors import RGB
+from celune.theme.colors import RGB
 from celune import i18n, analysis
 from celune.chroma import AudioRGBGlow
 from celune.constants import BASE_SR, N_A_NUMERIC

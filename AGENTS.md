@@ -86,6 +86,20 @@ Before CI, format the repository with `uv run ruff format .`.
 
 Expected CI runtime is 5 minutes or less.
 
+The default `poe test` task runs the suite with two `pytest-xdist` workers and
+`--dist loadfile`. Tests must not depend on shared Celune user-data, Hugging
+Face, Numba, model, audio, or temporary-file state. Use `tmp_path` or the
+worker-isolated roots configured by `tests/conftest.py`; mock physical audio
+devices, GPU state, network ports, and external processes when testing their
+callers. If a test genuinely requires one process, keep it in a dedicated
+serial task or make its resource explicit rather than relying on execution
+order.
+
+Use `uv run poe test_serial` when debugging order-sensitive failures. The
+`uv run poe test_changed` task enables pytest-testmon for local iteration only;
+it must not replace the complete suite in CI because runtime-generated and
+subprocess dependencies may not be observable to coverage-based selection.
+
 If CI runtime exceeds 5 minutes:
 
 * Assume it may have stalled.
@@ -200,6 +214,19 @@ Keep audio related computations in `np.float32`, using `np.float64` only if prec
 Always output audio files in 24-bit 48 kHz FLAC. Do not output other formats.
 
 ## UI and WebUI
+
+Startup boundary: the Celune binaries must register the lightweight Celune
+default theme and mount the loading screen before importing or initializing the
+engine, Persona, agent runtime, backend environments, model libraries, audio
+backends, or other heavy runtime dependencies. The pre-frame path may read
+launcher arguments and environment flags and import only lightweight
+loading-screen/UI/theme primitives. Pack-derived theme changes may be applied
+after the runtime is available. Defer all remaining runtime imports and
+initialization to the existing post-frame worker.
+Keep a regression test that imports the loading UI in a fresh process and
+asserts that engine and model libraries remain absent. `CTRL+C` during this
+phase must follow the normal UI shutdown path rather than interrupting a heavy
+import on the launcher thread.
 
 Celune has a Textual terminal UI and a Gradio WebUI mounted through FastAPI.
 

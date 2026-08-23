@@ -3,7 +3,7 @@
 
 from typing import cast
 from pathlib import Path
-from unittest import TestCase
+
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 
@@ -18,10 +18,10 @@ from celune.agent.needle import (
 )
 
 
-class NeedleModelTests(TestCase):
+class TestNeedleModel:  # pylint: disable=attribute-defined-outside-init
     """Verify the model's inference and cache semantics."""
 
-    def setUp(self) -> None:
+    def setup_method(self) -> None:
         """Create a small deterministic model for fast structural checks."""
         torch.manual_seed(7)
         self.config = NeedleConfig(
@@ -68,10 +68,10 @@ class NeedleModelTests(TestCase):
 
         generated = self.model.generate(source, max_new_tokens=100)
 
-        self.assertLessEqual(generated.shape[1], self.config.max_seq_len)
+        assert generated.shape[1] <= self.config.max_seq_len
 
 
-class NeedleHandlerTests(TestCase):
+class TestNeedleHandler:
     """Verify checkpoint conversion and tool-call boundary behavior."""
 
     def test_checkpoint_conversion_removes_hugging_face_prefix(self) -> None:
@@ -85,7 +85,7 @@ class NeedleHandlerTests(TestCase):
             )
             convert_needle_safetensors(source, destination)
             state = torch.load(destination, map_location="cpu", weights_only=True)
-            self.assertEqual(set(state), {"embed_tokens.weight"})
+            assert set(state) == {"embed_tokens.weight"}
             torch.testing.assert_close(
                 state["embed_tokens.weight"],
                 torch.ones((2, 2)),
@@ -104,5 +104,5 @@ class NeedleHandlerTests(TestCase):
             {"set_timer": "SetTimer"},
         )
 
-        self.assertEqual(catalog[0]["name"], "SetTimer")
-        self.assertEqual(selection, [{"name": "SetTimer", "arguments": {"minutes": 5}}])
+        assert catalog[0]["name"] == "SetTimer"
+        assert selection == [{"name": "SetTimer", "arguments": {"minutes": 5}}]

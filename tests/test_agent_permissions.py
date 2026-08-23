@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 from typing import Optional
-from unittest import TestCase
+
+import pytest
 
 from celune.agent import (
     ToolCall,
@@ -83,7 +84,7 @@ def _output(
     }
 
 
-class AgentPermissionTests(TestCase):
+class TestAgentPermissions:
     """Verify that policy decisions control the existing executor boundary."""
 
     def test_read_only_tool_executes_without_approval(self) -> None:
@@ -105,16 +106,11 @@ class AgentPermissionTests(TestCase):
         task = runtime.create_task(_request(), task_id="read-task")
         runtime.run(task.request)
 
-        self.assertEqual(task.state, AgentTaskState.COMPLETED)
-        self.assertIsNotNone(task.permission_decision)
+        assert task.state == AgentTaskState.COMPLETED
         assert task.permission_decision is not None
-        self.assertEqual(
-            task.permission_decision.decision, AgentPermissionDecision.ALLOW
-        )
-        self.assertEqual(
-            task.permission_decision.reason, AgentPermissionReason.SAFE_READ_ONLY
-        )
-        self.assertEqual(results[0]["permission"]["decision"], "allow")
+        assert task.permission_decision.decision == AgentPermissionDecision.ALLOW
+        assert task.permission_decision.reason == AgentPermissionReason.SAFE_READ_ONLY
+        assert results[0]["permission"]["decision"] == "allow"
 
     def test_mutating_tool_waits_without_calling_executor(self) -> None:
         """Pause before a state-changing tool and retain the exact pending call."""
@@ -138,22 +134,18 @@ class AgentPermissionTests(TestCase):
         paused = runtime.run(task.request)
 
         approval = runtime.get_pending_approval(task.task_id)
-        self.assertTrue(paused["paused"])
-        self.assertEqual(task.state, AgentTaskState.AWAITING_APPROVAL)
-        self.assertEqual(task.iterations, 0)
-        self.assertEqual(executions, [])
-        self.assertIsNotNone(approval)
+        assert paused["paused"]
+        assert task.state == AgentTaskState.AWAITING_APPROVAL
+        assert task.iterations == 0
+        assert not executions
         assert approval is not None
-        self.assertEqual(approval.task_id, task.task_id)
-        self.assertEqual(approval.tool_call["id"], call["id"])
-        self.assertEqual(approval.tool_call["arguments"], call["arguments"])
-        self.assertEqual(approval.tool_call["behavior"], AgentToolBehavior.MUTATING)
-        self.assertEqual(approval.tool_call["danger"], AgentToolDangerLevel.LOW)
-        self.assertIsNotNone(approval.permission)
+        assert approval.task_id == task.task_id
+        assert approval.tool_call["id"] == call["id"]
+        assert approval.tool_call["arguments"] == call["arguments"]
+        assert approval.tool_call["behavior"] == AgentToolBehavior.MUTATING
+        assert approval.tool_call["danger"] == AgentToolDangerLevel.LOW
         assert approval.permission is not None
-        self.assertEqual(
-            approval.permission.reason, AgentPermissionReason.MUTATING_TOOL
-        )
+        assert approval.permission.reason == AgentPermissionReason.MUTATING_TOOL
 
         runtime.respond_to_approval(
             task.task_id,
@@ -161,12 +153,11 @@ class AgentPermissionTests(TestCase):
         )
         runtime.run(task.request)
 
-        self.assertEqual(task.state, AgentTaskState.COMPLETED)
-        self.assertEqual(executions, [approval.tool_call])
-        self.assertIsNotNone(task.permission_decision)
+        assert task.state == AgentTaskState.COMPLETED
+        assert executions == [approval.tool_call]
         assert task.permission_decision is not None
-        self.assertEqual(
-            task.permission_decision.approval_decision, AgentApprovalDecision.APPROVED
+        assert (
+            task.permission_decision.approval_decision == AgentApprovalDecision.APPROVED
         )
 
     def test_dangerous_tool_denies_when_approval_is_unavailable(self) -> None:
@@ -192,15 +183,15 @@ class AgentPermissionTests(TestCase):
 
         runtime.run(task.request)
 
-        self.assertEqual(task.state, AgentTaskState.FAILED)
-        self.assertEqual(task.failure_reason, AgentFailureReason.PERMISSION_DENIED)
-        self.assertIsNotNone(task.permission_decision)
+        assert task.state == AgentTaskState.FAILED
+        assert task.failure_reason == AgentFailureReason.PERMISSION_DENIED
         assert task.permission_decision is not None
-        self.assertEqual(
-            task.permission_decision.reason, AgentPermissionReason.APPROVAL_UNAVAILABLE
+        assert (
+            task.permission_decision.reason
+            == AgentPermissionReason.APPROVAL_UNAVAILABLE
         )
-        self.assertEqual(executions, [])
-        self.assertIsNone(runtime.get_pending_approval(task.task_id))
+        assert not executions
+        assert runtime.get_pending_approval(task.task_id) is None
 
     def test_explicitly_disallowed_tool_is_denied(self) -> None:
         """Reject a tool ID on the policy deny list before execution."""
@@ -225,13 +216,10 @@ class AgentPermissionTests(TestCase):
 
         runtime.run(task.request)
 
-        self.assertEqual(task.failure_reason, AgentFailureReason.PERMISSION_DENIED)
-        self.assertIsNotNone(task.permission_decision)
+        assert task.failure_reason == AgentFailureReason.PERMISSION_DENIED
         assert task.permission_decision is not None
-        self.assertEqual(
-            task.permission_decision.reason, AgentPermissionReason.TOOL_DISALLOWED
-        )
-        self.assertEqual(executions, [])
+        assert task.permission_decision.reason == AgentPermissionReason.TOOL_DISALLOWED
+        assert not executions
 
     def test_denied_approval_never_reaches_executor(self) -> None:
         """Turn a denied policy approval into a typed terminal failure."""
@@ -261,14 +249,13 @@ class AgentPermissionTests(TestCase):
             AgentApprovalResponse(approval.request_id, AgentApprovalDecision.DENIED),
         )
 
-        self.assertEqual(task.state, AgentTaskState.FAILED)
-        self.assertEqual(task.failure_reason, AgentFailureReason.PERMISSION_DENIED)
-        self.assertIsNotNone(task.permission_decision)
+        assert task.state == AgentTaskState.FAILED
+        assert task.failure_reason == AgentFailureReason.PERMISSION_DENIED
         assert task.permission_decision is not None
-        self.assertEqual(
-            task.permission_decision.approval_decision, AgentApprovalDecision.DENIED
+        assert (
+            task.permission_decision.approval_decision == AgentApprovalDecision.DENIED
         )
-        self.assertEqual(executions, [])
+        assert not executions
 
     def test_duplicate_or_mismatched_approval_cannot_execute_twice(self) -> None:
         """Reject stale responses and execute one approved call exactly once."""
@@ -295,7 +282,7 @@ class AgentPermissionTests(TestCase):
         approval = runtime.get_pending_approval(task.task_id)
         assert approval is not None
 
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             runtime.respond_to_approval(
                 other.task_id,
                 AgentApprovalResponse(
@@ -306,7 +293,7 @@ class AgentPermissionTests(TestCase):
             task.task_id,
             AgentApprovalResponse(approval.request_id, AgentApprovalDecision.APPROVED),
         )
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             runtime.respond_to_approval(
                 task.task_id,
                 AgentApprovalResponse(
@@ -315,8 +302,8 @@ class AgentPermissionTests(TestCase):
             )
         runtime.run(task.request)
 
-        self.assertEqual(len(executions), 1)
-        self.assertEqual(task.state, AgentTaskState.COMPLETED)
+        assert len(executions) == 1
+        assert task.state == AgentTaskState.COMPLETED
 
     def test_unavailable_tool_is_denied_and_cancellation_clears_approval(self) -> None:
         """Deny unavailable tools and cancel an independent pending approval cleanly."""
@@ -336,14 +323,11 @@ class AgentPermissionTests(TestCase):
             _request("unavailable-session"), task_id="unavailable-task"
         )
         unavailable.run(unavailable_task.request)
-        self.assertEqual(
-            unavailable_task.failure_reason, AgentFailureReason.PERMISSION_DENIED
-        )
-        self.assertIsNotNone(unavailable_task.permission_decision)
+        assert unavailable_task.failure_reason == AgentFailureReason.PERMISSION_DENIED
         assert unavailable_task.permission_decision is not None
-        self.assertEqual(
-            unavailable_task.permission_decision.reason,
-            AgentPermissionReason.TOOL_UNAVAILABLE,
+        assert (
+            unavailable_task.permission_decision.reason
+            == AgentPermissionReason.TOOL_UNAVAILABLE
         )
 
         pending_call = _call("mutate_later")
@@ -360,13 +344,7 @@ class AgentPermissionTests(TestCase):
             _request("cancel-session"), task_id="cancel-task"
         )
         pending.run(pending_task.request)
-        self.assertIsNotNone(pending.get_pending_approval(pending_task.task_id))
+        assert pending.get_pending_approval(pending_task.task_id) is not None
         pending.cancel_task(pending_task.task_id)
-        self.assertEqual(pending_task.state, AgentTaskState.CANCELLED)
-        self.assertIsNone(pending.get_pending_approval(pending_task.task_id))
-
-
-if __name__ == "__main__":
-    import unittest
-
-    unittest.main()
+        assert pending_task.state == AgentTaskState.CANCELLED
+        assert pending.get_pending_approval(pending_task.task_id) is None

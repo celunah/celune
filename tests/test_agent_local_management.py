@@ -3,9 +3,10 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import cast
 from pathlib import Path
-from unittest import TestCase, mock
+from unittest import mock
 
 from celune.celune import Celune
 from celune.typing.modes import OperationMode
@@ -16,9 +17,10 @@ from celune.agent.tools import (
     local_management_tools,
     local_management_tool_schemas,
 )
+from .support import CeluneTestCase
 
 
-class LocalManagementToolTests(TestCase):
+class TestLocalManagementTools(CeluneTestCase):
     """Verify typed local filesystem and diagnostic behavior without a shell."""
 
     def _context(self) -> AgentContext:
@@ -36,7 +38,7 @@ class LocalManagementToolTests(TestCase):
             for tool in local_management_tools(cast(Celune, object()))
             if tool.name == tool_id
         )
-        self.assertIsInstance(tool, OfflineAgentTool)
+        assert isinstance(tool, OfflineAgentTool)
         return tool
 
     def test_registry_schemas_are_typed_and_permission_aware(self) -> None:
@@ -62,15 +64,15 @@ class LocalManagementToolTests(TestCase):
             "local_launch_application",
             "local_close_application",
         }
-        self.assertEqual(set(schemas), expected)
+        assert set(schemas) == expected
         for schema in schemas.values():
-            self.assertTrue(schema.tool_id)
-            self.assertTrue(schema.display_name)
-            self.assertTrue(schema.description)
-            self.assertTrue(schema.available)
-            self.assertEqual(schema.to_json()["tool_id"], schema.tool_id)
+            assert schema.tool_id
+            assert schema.display_name
+            assert schema.description
+            assert schema.available
+            assert schema.to_json()["tool_id"] == schema.tool_id
             if schema.behavior.value == "mutating":
-                self.assertTrue(schema.approval_required)
+                assert schema.approval_required
 
     def test_current_working_directory_returns_the_resolved_process_directory(
         self,
@@ -86,13 +88,13 @@ class LocalManagementToolTests(TestCase):
                 },
                 self._context(),
             )
-        self.assertEqual(result["status"], AgentToolExecutionStatus.SUCCEEDED)
+        assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
         output = cast(dict[str, object], result["output"])
-        self.assertEqual(output["path"], str(directory))
+        assert output["path"] == str(directory)
 
     def test_local_filesystem_operations_use_exact_absolute_paths(self) -> None:
         """Read and write operations report exact targets and reject ambiguous paths."""
-        with self.subTest("read and write"):
+        with nullcontext():
             root = Path.cwd() / ".agent-local-management-test"
             root.mkdir(exist_ok=True)
             path = root / "sample.txt"
@@ -112,7 +114,7 @@ class LocalManagementToolTests(TestCase):
                 },
                 self._context(),
             )
-            self.assertEqual(write["status"], AgentToolExecutionStatus.SUCCEEDED)
+            assert write["status"] == AgentToolExecutionStatus.SUCCEEDED
             read = self._tool("local_read_text").execute(
                 {
                     "id": "read",
@@ -121,8 +123,8 @@ class LocalManagementToolTests(TestCase):
                 },
                 self._context(),
             )
-            self.assertEqual(read["status"], AgentToolExecutionStatus.SUCCEEDED)
-            self.assertEqual(cast(dict[str, object], read["output"])["text"], "hello")
+            assert read["status"] == AgentToolExecutionStatus.SUCCEEDED
+            assert cast(dict[str, object], read["output"])["text"] == "hello"
 
         invalid = self._tool("local_read_text").execute(
             {
@@ -132,10 +134,8 @@ class LocalManagementToolTests(TestCase):
             },
             self._context(),
         )
-        self.assertEqual(invalid["status"], AgentToolExecutionStatus.FAILED)
-        self.assertEqual(
-            cast(dict[str, object], invalid["output"])["result"], "invalid_path"
-        )
+        assert invalid["status"] == AgentToolExecutionStatus.FAILED
+        assert cast(dict[str, object], invalid["output"])["result"] == "invalid_path"
 
     def test_local_system_info_is_a_safe_registered_operation(self) -> None:
         """The diagnostic operation returns bounded structured local state."""
@@ -143,8 +143,8 @@ class LocalManagementToolTests(TestCase):
             {"id": "system", "name": "local_system_info", "arguments": {}},
             self._context(),
         )
-        self.assertEqual(result["status"], AgentToolExecutionStatus.SUCCEEDED)
+        assert result["status"] == AgentToolExecutionStatus.SUCCEEDED
         output = cast(dict[str, object], result["output"])
-        self.assertEqual(output["result"], "success")
-        self.assertIn("platform", output)
-        self.assertIn("cuda", output)
+        assert output["result"] == "success"
+        assert "platform" in output
+        assert "cuda" in output

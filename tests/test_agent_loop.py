@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from unittest import TestCase
+from contextlib import nullcontext
 from typing import Optional, cast
 
 from celune.extensions.events import EventDispatcher
@@ -93,7 +93,7 @@ def _validated_call(call: ToolCall) -> ValidatedToolCall:
     }
 
 
-class AgentLoopTests(TestCase):
+class TestAgentLoop:
     """Verify bounded orchestration with replaceable dependencies."""
 
     def test_one_step_completion_consumes_phase_three_task(self) -> None:
@@ -106,10 +106,10 @@ class AgentLoopTests(TestCase):
 
         result = runtime.run(request)
 
-        self.assertIs(runtime.get_task("task-1"), task)
-        self.assertEqual(task.state, AgentTaskState.COMPLETED)
-        self.assertEqual(task.iterations, 1)
-        self.assertEqual(result["response"], "Done.")
+        assert runtime.get_task("task-1") is task
+        assert task.state == AgentTaskState.COMPLETED
+        assert task.iterations == 1
+        assert result["response"] == "Done."
 
     def test_multi_step_result_returns_to_planner(self) -> None:
         """Pass a typed tool result into the next planner context."""
@@ -129,12 +129,12 @@ class AgentLoopTests(TestCase):
             return output["tool_call"]
 
         def execute(_context, selected):
-            self.assertEqual(selected, call)
+            assert selected == call
             return _result(call)
 
         def handle(context, result):
             handled_results.append(result)
-            self.assertIs(context.last_tool_result, result)
+            assert context.last_tool_result is result
             return _output(response="Result received.")
 
         runtime = AgentRuntime(
@@ -147,12 +147,12 @@ class AgentLoopTests(TestCase):
         task = runtime.create_task(_request(), task_id="task-1")
         result = runtime.run(task.request)
 
-        self.assertEqual(task.state, AgentTaskState.COMPLETED)
-        self.assertEqual(task.iterations, 2)
-        self.assertEqual(len(handled_results), 1)
-        self.assertIsNone(planner_contexts[0].last_tool_result)
-        self.assertEqual(planner_contexts[1].last_tool_result, handled_results[0])
-        self.assertEqual(result["response"], "It is running.")
+        assert task.state == AgentTaskState.COMPLETED
+        assert task.iterations == 2
+        assert len(handled_results) == 1
+        assert planner_contexts[0].last_tool_result is None
+        assert planner_contexts[1].last_tool_result == handled_results[0]
+        assert result["response"] == "It is running."
 
     def test_iteration_limit_aborts_before_an_additional_decision(self) -> None:
         """Stop before planning a cycle beyond the configured iteration limit."""
@@ -179,10 +179,10 @@ class AgentLoopTests(TestCase):
 
         runtime.run(task.request)
 
-        self.assertEqual(task.state, AgentTaskState.ABORTED)
-        self.assertEqual(task.abort_reason, AgentAbortReason.MAX_ITERATIONS)
-        self.assertEqual(task.iterations, 2)
-        self.assertEqual(next_call, 2)
+        assert task.state == AgentTaskState.ABORTED
+        assert task.abort_reason == AgentAbortReason.MAX_ITERATIONS
+        assert task.iterations == 2
+        assert next_call == 2
 
     def test_generated_token_limit_is_independent_of_iterations(self) -> None:
         """Abort on generated-token accounting without consuming an iteration."""
@@ -198,10 +198,10 @@ class AgentLoopTests(TestCase):
 
         result = runtime.run(task.request)
 
-        self.assertEqual(task.state, AgentTaskState.ABORTED)
-        self.assertEqual(task.abort_reason, AgentAbortReason.MAX_GENERATED_TOKENS)
-        self.assertEqual(task.iterations, 0)
-        self.assertEqual(result["end"], True)
+        assert task.state == AgentTaskState.ABORTED
+        assert task.abort_reason == AgentAbortReason.MAX_GENERATED_TOKENS
+        assert task.iterations == 0
+        assert result["end"] is True
 
     def test_compaction_callback_runs_at_threshold(self) -> None:
         """Signal compaction through the injected dependency before planning."""
@@ -226,9 +226,9 @@ class AgentLoopTests(TestCase):
 
         runtime.run(task.request)
 
-        self.assertEqual(len(compacted), 1)
-        self.assertEqual(task.state, AgentTaskState.COMPLETED)
-        self.assertEqual(task.context_tokens, 0)
+        assert len(compacted) == 1
+        assert task.state == AgentTaskState.COMPLETED
+        assert task.context_tokens == 0
 
     def test_approval_pause_does_not_consume_iteration_or_lose_call(self) -> None:
         """Resume an approved pending call without repeating the planner cycle."""
@@ -262,18 +262,18 @@ class AgentLoopTests(TestCase):
         task = runtime.create_task(_request(), task_id="task-1")
 
         paused = runtime.run(task.request)
-        self.assertEqual(paused["paused"], True)
-        self.assertEqual(task.state, AgentTaskState.AWAITING_APPROVAL)
-        self.assertEqual(task.iterations, 0)
+        assert paused["paused"] is True
+        assert task.state == AgentTaskState.AWAITING_APPROVAL
+        assert task.iterations == 0
         runtime.respond_to_approval(
             task.task_id,
             AgentApprovalResponse("approval-1", AgentApprovalDecision.APPROVED),
         )
         runtime.run(task.request)
 
-        self.assertEqual(task.state, AgentTaskState.COMPLETED)
-        self.assertEqual(task.iterations, 1)
-        self.assertEqual(planner_calls, 1)
+        assert task.state == AgentTaskState.COMPLETED
+        assert task.iterations == 1
+        assert planner_calls == 1
 
     def test_selector_approval_pause_preserves_selected_call(self) -> None:
         """Preserve a selected call when approval is requested by the selector."""
@@ -310,17 +310,17 @@ class AgentLoopTests(TestCase):
 
         paused = runtime.run(task.request)
 
-        self.assertTrue(paused["paused"])
-        self.assertEqual(task.state, AgentTaskState.AWAITING_APPROVAL)
-        self.assertEqual(task.iterations, 0)
+        assert paused["paused"]
+        assert task.state == AgentTaskState.AWAITING_APPROVAL
+        assert task.iterations == 0
         runtime.respond_to_approval(
             task.task_id,
             AgentApprovalResponse("approval-1", AgentApprovalDecision.APPROVED),
         )
         runtime.run(task.request)
 
-        self.assertEqual(task.state, AgentTaskState.COMPLETED)
-        self.assertEqual(executions, 1)
+        assert task.state == AgentTaskState.COMPLETED
+        assert executions == 1
 
     def test_choice_pause_does_not_consume_iteration(self) -> None:
         """Resume a choice pause with the same task context and accounting."""
@@ -347,17 +347,17 @@ class AgentLoopTests(TestCase):
         task = runtime.create_task(_request(), task_id="task-1")
 
         runtime.run(task.request)
-        self.assertEqual(task.state, AgentTaskState.AWAITING_CHOICE)
-        self.assertEqual(task.iterations, 0)
+        assert task.state == AgentTaskState.AWAITING_CHOICE
+        assert task.iterations == 0
         runtime.respond_to_choice(
             task.task_id,
             AgentChoiceResponse("choice-1", choice_id="brief"),
         )
         runtime.run(task.request)
 
-        self.assertEqual(task.state, AgentTaskState.COMPLETED)
-        self.assertEqual(task.iterations, 1)
-        self.assertEqual(planner_calls, 2)
+        assert task.state == AgentTaskState.COMPLETED
+        assert task.iterations == 1
+        assert planner_calls == 2
 
     def test_dependency_cancellation_leaves_terminal_task(self) -> None:
         """Handle cancellation during planning, selection, and execution."""
@@ -395,7 +395,7 @@ class AgentLoopTests(TestCase):
             return runtime
 
         for phase in ("planning", "selection", "execution"):
-            with self.subTest(phase=phase):
+            with nullcontext():
                 runtime = make_runtime(phase)
                 task = runtime.create_task(
                     _request(session_id=f"session-{phase}"),
@@ -404,8 +404,8 @@ class AgentLoopTests(TestCase):
 
                 runtime.run(task.request)
 
-                self.assertEqual(task.state, AgentTaskState.CANCELLED)
-                self.assertTrue(runtime.get_session(task.session_id).cancelled)
+                assert task.state == AgentTaskState.CANCELLED
+                assert runtime.get_session(task.session_id).cancelled
 
     def test_planner_and_tool_failures_are_typed(self) -> None:
         """Convert planner and executor exceptions into terminal failure reasons."""
@@ -414,8 +414,8 @@ class AgentLoopTests(TestCase):
         )
         planner_task = planner_runtime.create_task(_request(), task_id="planner")
         planner_runtime.run(planner_task.request)
-        self.assertEqual(planner_task.state, AgentTaskState.FAILED)
-        self.assertEqual(planner_task.failure_reason, AgentFailureReason.MODEL_ERROR)
+        assert planner_task.state == AgentTaskState.FAILED
+        assert planner_task.failure_reason == AgentFailureReason.MODEL_ERROR
 
         tool_runtime = AgentRuntime(
             planner=lambda _context: _output(tool_call=_call()),
@@ -426,8 +426,8 @@ class AgentLoopTests(TestCase):
         )
         tool_task = tool_runtime.create_task(_request("tool-session"), task_id="tool")
         tool_runtime.run(tool_task.request)
-        self.assertEqual(tool_task.state, AgentTaskState.FAILED)
-        self.assertEqual(tool_task.failure_reason, AgentFailureReason.TOOL_ERROR)
+        assert tool_task.state == AgentTaskState.FAILED
+        assert tool_task.failure_reason == AgentFailureReason.TOOL_ERROR
 
     def test_empty_tool_catalog_is_reported_as_a_typed_failure(self) -> None:
         """Distinguish an empty tool catalog from a model or execution failure."""
@@ -438,12 +438,11 @@ class AgentLoopTests(TestCase):
 
         result = runtime.run(task.request)
 
-        self.assertEqual(task.state, AgentTaskState.FAILED)
-        self.assertEqual(task.failure_reason, AgentFailureReason.NO_TOOLS_FOUND)
+        assert task.state == AgentTaskState.FAILED
+        assert task.failure_reason == AgentFailureReason.NO_TOOLS_FOUND
         terminal = result.get("terminal")
-        self.assertIsNotNone(terminal)
         assert terminal is not None
-        self.assertEqual(terminal.failure_reason, AgentFailureReason.NO_TOOLS_FOUND)
+        assert terminal.failure_reason == AgentFailureReason.NO_TOOLS_FOUND
 
     def test_successful_terminal_tool_completes_without_result_handler(self) -> None:
         """Treat a successful terminal tool result as the task result itself."""
@@ -484,20 +483,16 @@ class AgentLoopTests(TestCase):
 
         result = runtime.run(task.request, record_output)
 
-        self.assertEqual(task.state, AgentTaskState.COMPLETED)
-        self.assertEqual(task.iterations, 1)
-        self.assertEqual(result["response"], None)
-        self.assertEqual(handled, [])
-        self.assertIsNotNone(task.completion_metadata)
+        assert task.state == AgentTaskState.COMPLETED
+        assert task.iterations == 1
+        assert result["response"] is None
+        assert not handled
         assert task.completion_metadata is not None
         tool_result = task.completion_metadata["tool_result"]
-        self.assertIsInstance(tool_result, dict)
         assert isinstance(tool_result, dict)
-        self.assertEqual(tool_result["status"], "succeeded")
-        self.assertEqual(tool_result["end_task"], True)
-        self.assertEqual(
-            [output["response"] for output in outputs], ["I will check that."]
-        )
+        assert tool_result["status"] == "succeeded"
+        assert tool_result["end_task"] is True
+        assert [output["response"] for output in outputs] == ["I will check that."]
 
     def test_failed_typed_tool_result_fails_without_claiming_success(self) -> None:
         """Convert a typed executor failure into the runtime failure path."""
@@ -529,10 +524,10 @@ class AgentLoopTests(TestCase):
 
         runtime.run(task.request)
 
-        self.assertEqual(task.state, AgentTaskState.FAILED)
-        self.assertEqual(task.failure_reason, AgentFailureReason.TOOL_ERROR)
-        self.assertEqual(task.failure_detail, "speech could not be queued")
-        self.assertEqual(handled, [])
+        assert task.state == AgentTaskState.FAILED
+        assert task.failure_reason == AgentFailureReason.TOOL_ERROR
+        assert task.failure_detail == "speech could not be queued"
+        assert not handled
 
     def test_malformed_outputs_and_repeated_actions_abort_safely(self) -> None:
         """Reject malformed dependencies and terminate repeated identical actions."""
@@ -541,7 +536,7 @@ class AgentLoopTests(TestCase):
         )
         malformed_task = malformed.create_task(_request(), task_id="malformed")
         malformed.run(malformed_task.request)
-        self.assertEqual(malformed_task.state, AgentTaskState.FAILED)
+        assert malformed_task.state == AgentTaskState.FAILED
 
         invalid_selector = AgentRuntime(
             planner=lambda _context: _output(tool_call=_call()),
@@ -554,10 +549,8 @@ class AgentLoopTests(TestCase):
             _request("invalid-session"), task_id="invalid"
         )
         invalid_selector.run(invalid_task.request)
-        self.assertEqual(invalid_task.state, AgentTaskState.FAILED)
-        self.assertEqual(
-            invalid_task.failure_reason, AgentFailureReason.INVALID_TOOL_CALL
-        )
+        assert invalid_task.state == AgentTaskState.FAILED
+        assert invalid_task.failure_reason == AgentFailureReason.INVALID_TOOL_CALL
 
         callbacks: list[AgentOutput] = []
         stuck = AgentRuntime(
@@ -577,17 +570,16 @@ class AgentLoopTests(TestCase):
             callbacks.append(output)
 
         final = stuck.run(stuck_task.request, record_output)
-        self.assertEqual(stuck_task.state, AgentTaskState.ABORTED)
-        self.assertEqual(stuck_task.abort_reason, AgentAbortReason.STUCK_TASK)
-        self.assertIsNone(final["response"])
+        assert stuck_task.state == AgentTaskState.ABORTED
+        assert stuck_task.abort_reason == AgentAbortReason.STUCK_TASK
+        assert final["response"] is None
         terminal = final.get("terminal")
-        self.assertIsNotNone(terminal)
         assert terminal is not None
-        self.assertEqual(terminal.abort_reason, AgentAbortReason.STUCK_TASK)
-        self.assertEqual(callbacks[-1].get("terminal"), terminal)
-        self.assertEqual(
-            sum(1 for callback in callbacks if callback.get("terminal") is not None),
-            1,
+        assert terminal.abort_reason == AgentAbortReason.STUCK_TASK
+        assert callbacks[-1].get("terminal") == terminal
+        assert (
+            sum(1 for callback in callbacks if callback.get("terminal") is not None)
+            == 1
         )
 
     def test_event_order_and_terminal_event_are_deterministic(self) -> None:
@@ -611,4 +603,4 @@ class AgentLoopTests(TestCase):
         runtime.run(task.request)
         runtime.run(task.request)
 
-        self.assertEqual(names, ["state"] * 6 + ["finished"])
+        assert names == ["state"] * 6 + ["finished"]

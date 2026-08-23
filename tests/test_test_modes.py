@@ -6,8 +6,10 @@ from __future__ import annotations
 import io
 import contextlib
 from typing import Optional, cast
-from unittest import TestCase, mock
 from collections.abc import Mapping, Sequence
+from unittest import mock
+
+import pytest
 
 from celune import entrypoint
 from celune.i18n import string
@@ -30,7 +32,7 @@ from celune.typing.agent import (
     AgentClassificationFailureKind,
 )
 
-from .support import FakeGlow, FakeBackend
+from .support import CeluneTestCase, FakeGlow, FakeBackend
 
 
 class _TestPersonaClient:
@@ -84,7 +86,7 @@ class _TestNeedleHandler:
         """Release the controlled adapter without external model resources."""
 
 
-class TestCommandTests(TestCase):
+class TestCommandTests:
     """Verify parent and child test command dispatch without starting Celune."""
 
     def test_parent_command_displays_available_modes(self) -> None:
@@ -92,8 +94,8 @@ class TestCommandTests(TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as output:
             entrypoint.handle_test([], "celune")
 
-        self.assertIn("Available test modes: ui, agent", output.getvalue())
-        self.assertIn("Usage: celune test [ui|agent]", output.getvalue())
+        assert "Available test modes: ui, agent" in output.getvalue()
+        assert "Usage: celune test [ui|agent]" in output.getvalue()
 
     def test_ui_command_dispatches_existing_ui_test_mode(self) -> None:
         """The UI child selects the existing fake-backend startup path."""
@@ -133,13 +135,13 @@ class TestCommandTests(TestCase):
 
     def test_agent_test_config_resolves_configured_log_level(self) -> None:
         """Resolve the agent test log level from its loaded configuration."""
-        self.assertEqual(
-            config_log_level({"log_level": "verbose"}, env_name="__missing__"),
-            "verbose",
+        assert (
+            config_log_level({"log_level": "verbose"}, env_name="__missing__")
+            == "verbose"
         )
 
 
-class TestFinishedLifecycleTests(TestCase):
+class TestFinishedLifecycleTests(CeluneTestCase):
     """Verify the stopped-but-alive boundary shared by explicit test modes."""
 
     def _make_core(self) -> Celune:
@@ -170,28 +172,32 @@ class TestFinishedLifecycleTests(TestCase):
                 task_state="none",
             )
 
-        self.assertEqual(result["success"], True)
-        self.assertEqual(core.cur_state, "stopped")
-        self.assertTrue(core.test_finished)
-        self.assertFalse(core._closed)
-        self.assertFalse(core.exit_requested)
-        self.assertFalse(
+        assert result["success"] is True
+        assert core.cur_state == "stopped"
+        assert core.test_finished
+        assert not core._closed
+        assert not core.exit_requested
+        assert not (
             any(
-                args and "Test mode ui succeeded" in args[0]
-                for args, _kwargs in log.call_args_list
+                (
+                    args and "Test mode ui succeeded" in args[0]
+                    for args, _kwargs in log.call_args_list
+                )
             )
         )
-        self.assertFalse(
+        assert not (
             any(
-                args and args[0] == string("pipeline.exiting")
-                for args, _kwargs in log.call_args_list
+                (
+                    args and args[0] == string("pipeline.exiting")
+                    for args, _kwargs in log.call_args_list
+                )
             )
         )
-        self.assertFalse(core.think("ignored"))
-        self.assertFalse(core.say("ignored"))
-        with self.assertRaises(RuntimeError):
+        assert not core.think("ignored")
+        assert not core.say("ignored")
+        with pytest.raises(RuntimeError):
             core.route_input("Check the current agent status.")
-        self.assertIs(core.finish_test_mode("ui", False), result)
+        assert core.finish_test_mode("ui", False) is result
 
     def test_failure_is_recorded_and_explicit_close_remains_available(self) -> None:
         """Failures still stop the engine and allow the explicit shutdown path."""
@@ -205,11 +211,11 @@ class TestFinishedLifecycleTests(TestCase):
             )
 
         payload = result
-        self.assertFalse(payload["success"])
-        self.assertEqual(payload["detail"], "controlled failure")
-        self.assertEqual(core.cur_state, "stopped")
+        assert not payload["success"]
+        assert payload["detail"] == "controlled failure"
+        assert core.cur_state == "stopped"
         core.close()
-        self.assertTrue(core._closed)
+        assert core._closed
 
     def test_cleanup_exception_still_reaches_stopped_state(self) -> None:
         """A cleanup failure is recorded as a failed test without stranding the core."""
@@ -221,16 +227,15 @@ class TestFinishedLifecycleTests(TestCase):
         ):
             result = core.finish_test_mode("ui", True)
 
-        self.assertFalse(result["success"])
-        self.assertEqual(core.cur_state, "stopped")
+        assert not result["success"]
+        assert core.cur_state == "stopped"
 
     def test_agent_workflow_uses_the_real_core_runtime_boundaries(self) -> None:
         """The controlled agent task completes through routing and production tools."""
         core = self._make_core()
-        self.assertEqual(core.backend_mode, "agent_test")
-        self.assertEqual(
-            tuple(tool.name for tool in core._agent_tools),
-            ("local_current_working_directory",),
+        assert core.backend_mode == "agent_test"
+        assert tuple(tool.name for tool in core._agent_tools) == (
+            "local_current_working_directory",
         )
         persona = _TestPersonaClient()
         core.vision = cast(PersonaClient, persona)
@@ -249,21 +254,20 @@ class TestFinishedLifecycleTests(TestCase):
         load_selector.assert_called_once()
 
         payload = result
-        self.assertTrue(payload["success"])
-        self.assertEqual(payload["mode"], "agent")
-        self.assertEqual(payload["engine_state"], "stopped")
-        self.assertEqual(payload["task_state"], "completed")
-        self.assertEqual(
-            persona.requests[0]["user"],
-            "Check the current working directory and report the result.",
+        assert payload["success"]
+        assert payload["mode"] == "agent"
+        assert payload["engine_state"] == "stopped"
+        assert payload["task_state"] == "completed"
+        assert (
+            persona.requests[0]["user"]
+            == "Check the current working directory and report the result."
         )
         detail = payload["detail"]
-        self.assertIsInstance(detail, str)
         assert isinstance(detail, str)
-        self.assertIn("tool=local_current_working_directory", detail)
-        self.assertIn("status=succeeded", detail)
-        self.assertEqual(core.cur_state, "stopped")
-        self.assertFalse(core.say("queued after test"))
+        assert "tool=local_current_working_directory" in detail
+        assert "status=succeeded" in detail
+        assert core.cur_state == "stopped"
+        assert not core.say("queued after test")
 
     def test_agent_test_reports_no_task_detected(self) -> None:
         """Distinguish an ordinary conversation result from a test crash."""
@@ -281,8 +285,8 @@ class TestFinishedLifecycleTests(TestCase):
         ):
             result = run_agent_test(core)
 
-        self.assertFalse(result["success"])
-        self.assertEqual(result["detail"], "no task detected")
+        assert not result["success"]
+        assert result["detail"] == "no task detected"
 
     def test_agent_test_reports_classification_failure(self) -> None:
         """Preserve the typed classifier failure category in the test result."""
@@ -304,8 +308,8 @@ class TestFinishedLifecycleTests(TestCase):
         ):
             result = run_agent_test(core)
 
-        self.assertFalse(result["success"])
-        self.assertEqual(result["detail"], "classification failed: malformed_output")
+        assert not result["success"]
+        assert result["detail"] == "classification failed: malformed_output"
 
     def test_agent_test_reports_task_detected_but_not_started(self) -> None:
         """Distinguish a task route without a runtime task identity."""
@@ -327,5 +331,5 @@ class TestFinishedLifecycleTests(TestCase):
         ):
             result = run_agent_test(core)
 
-        self.assertFalse(result["success"])
-        self.assertEqual(result["detail"], "task detected but not started")
+        assert not result["success"]
+        assert result["detail"] == "task detected but not started"

@@ -85,8 +85,10 @@ explicit = true
 [dependency-groups]
 # Install to run CI workflows.
 dev = [
-    # Is there any faster unit test-specific library to use here?
+    # Pytest plus opt-in parallel and incremental test execution.
     "pytest",
+    "pytest-testmon",
+    "pytest-xdist",
     # "I really hate pyright." - she says.
     "pyrefly>=1.2.0",
     "pylint",
@@ -287,11 +289,13 @@ min-severity = "warn"
 
 [tool.poe.tasks]
 start = "python main.py"
-test = "pytest -v tests"
+test = "pytest -v tests -n 3 --dist loadfile"
+test_serial = "pytest -v tests"
+test_changed = "pytest -v tests --testmon"
 types = "pyrefly check"
 ruff = "ruff check"
 format = "ruff format --check"
-lint = "pylint celune tests main.py"
+lint = "pylint -j 0 celune tests main.py"
 lines = "pygount --format=summary"
 
 [tool.poe.tasks.ci]

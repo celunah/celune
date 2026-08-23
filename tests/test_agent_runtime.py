@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import threading
 from types import SimpleNamespace
-from unittest import TestCase, mock
+from unittest import mock
 from typing import TYPE_CHECKING, cast
+
+import pytest
 
 from celune.extensions.events import EventDispatcher
 from celune.dataclasses.events import (
@@ -58,10 +61,11 @@ def _validated_call() -> ValidatedToolCall:
     }
 
 
-class AgentRuntimeLifecycleTests(TestCase):
+class TestAgentRuntimeLifecycle:  # pylint: disable=attribute-defined-outside-init
     """Verify lifecycle ownership without invoking a model or local tool."""
 
-    def setUp(self) -> None:
+    def setup_method(self) -> None:
+        """Create a fresh runtime and event recorder for each test."""
         self.event_names: list[str] = []
         self.state_events: list[AgentTaskStateChangedEvent] = []
         self.finished_events: list[AgentTaskFinishedEvent] = []
@@ -117,16 +121,16 @@ class AgentRuntimeLifecycleTests(TestCase):
         request = self._request()
         task = self.runtime.create_task(request, task_id="task-1")
 
-        self.assertEqual(task.state, AgentTaskState.IDLE)
-        self.assertIs(self.runtime.get_context(task.task_id).task, task)
-        self.assertIs(self.runtime.get_context(task.task_id).request, request)
+        assert task.state == AgentTaskState.IDLE
+        assert self.runtime.get_context(task.task_id).task is task
+        assert self.runtime.get_context(task.task_id).request is request
         session = self.runtime.get_session(request.session.session_id)
-        self.assertEqual(session.state, AgentSessionState.IDLE)
-        self.assertFalse(session.paused)
-        self.assertFalse(session.cancelled)
-        self.assertEqual(session.task_id, task.task_id)
-        self.assertEqual(self.state_events[0].old_state, AgentTaskState.QUEUED)
-        self.assertEqual(self.state_events[0].new_state, AgentTaskState.IDLE)
+        assert session.state == AgentSessionState.IDLE
+        assert not session.paused
+        assert not session.cancelled
+        assert session.task_id == task.task_id
+        assert self.state_events[0].old_state == AgentTaskState.QUEUED
+        assert self.state_events[0].new_state == AgentTaskState.IDLE
 
     def test_agent_diagnostics_use_the_core_log_gate(self) -> None:
         """Forward agent lifecycle diagnostics to Celune's configured logger."""
@@ -134,15 +138,13 @@ class AgentRuntimeLifecycleTests(TestCase):
         self.runtime.start_task(task.task_id)
 
         messages = [call.args[0] for call in self.agent_log.call_args_list]
-        self.assertTrue(
-            any(message.startswith("[AGENT] task_created") for message in messages)
-        )
+        assert any(message.startswith("[AGENT] task_created") for message in messages)
         transition_call = next(
             call
             for call in self.agent_log.call_args_list
             if call.args[0].startswith("[AGENT] transition")
         )
-        self.assertEqual(transition_call.kwargs["loglevel"], "debug")
+        assert transition_call.kwargs["loglevel"] == "debug"
 
     def test_valid_lifecycle_transitions_and_terminal_metadata(self) -> None:
         """Cover classification, work, pauses, interruption, and completion."""
@@ -160,31 +162,27 @@ class AgentRuntimeLifecycleTests(TestCase):
         self.runtime.resume(task.session_id)
         self.runtime.complete_task(task.task_id, {"source": "explicit_action"})
 
-        self.assertEqual(task.state, AgentTaskState.COMPLETED)
-        self.assertEqual(task.completion_metadata, {"source": "explicit_action"})
+        assert task.state == AgentTaskState.COMPLETED
+        assert task.completion_metadata == {"source": "explicit_action"}
         session = self.runtime.get_session(task.session_id)
-        self.assertEqual(session.state, AgentSessionState.COMPLETED)
-        self.assertFalse(session.paused)
-        self.assertFalse(session.cancelled)
-        self.assertEqual(len(self.finished_events), 1)
-        self.assertEqual(self.event_names, ["state"] * 8 + ["finished"])
-        self.assertEqual(
-            [(event.old_state, event.new_state) for event in self.state_events],
-            [
-                (AgentTaskState.QUEUED, AgentTaskState.IDLE),
-                (AgentTaskState.IDLE, AgentTaskState.CLASSIFYING),
-                (AgentTaskState.CLASSIFYING, AgentTaskState.WORKING),
-                (AgentTaskState.WORKING, AgentTaskState.PAUSED),
-                (AgentTaskState.PAUSED, AgentTaskState.WORKING),
-                (AgentTaskState.WORKING, AgentTaskState.INTERRUPTED),
-                (AgentTaskState.INTERRUPTED, AgentTaskState.WORKING),
-                (AgentTaskState.WORKING, AgentTaskState.COMPLETED),
-            ],
-        )
-        self.assertEqual(
-            self.finished_events[0].completion_metadata,
-            {"source": "explicit_action"},
-        )
+        assert session.state == AgentSessionState.COMPLETED
+        assert not session.paused
+        assert not session.cancelled
+        assert len(self.finished_events) == 1
+        assert self.event_names == ["state"] * 8 + ["finished"]
+        assert [(event.old_state, event.new_state) for event in self.state_events] == [
+            (AgentTaskState.QUEUED, AgentTaskState.IDLE),
+            (AgentTaskState.IDLE, AgentTaskState.CLASSIFYING),
+            (AgentTaskState.CLASSIFYING, AgentTaskState.WORKING),
+            (AgentTaskState.WORKING, AgentTaskState.PAUSED),
+            (AgentTaskState.PAUSED, AgentTaskState.WORKING),
+            (AgentTaskState.WORKING, AgentTaskState.INTERRUPTED),
+            (AgentTaskState.INTERRUPTED, AgentTaskState.WORKING),
+            (AgentTaskState.WORKING, AgentTaskState.COMPLETED),
+        ]
+        assert self.finished_events[0].completion_metadata == {
+            "source": "explicit_action"
+        }
 
     def test_approval_and_choice_pauses_preserve_context_and_iterations(self) -> None:
         """Keep context and iteration accounting stable across user responses."""
@@ -197,9 +195,9 @@ class AgentRuntimeLifecycleTests(TestCase):
             prompt="Allow the read-only status check?",
         )
         self.runtime.request_approval(task.task_id, approval)
-        self.assertEqual(task.state, AgentTaskState.AWAITING_APPROVAL)
-        self.assertIs(self.runtime.get_context(task.task_id), context)
-        self.assertEqual(task.iterations, 0)
+        assert task.state == AgentTaskState.AWAITING_APPROVAL
+        assert self.runtime.get_context(task.task_id) is context
+        assert task.iterations == 0
         self.runtime.respond_to_approval(
             task.task_id,
             AgentApprovalResponse("approval-1", AgentApprovalDecision.APPROVED),
@@ -212,20 +210,24 @@ class AgentRuntimeLifecycleTests(TestCase):
             options=(AgentChoiceOption("brief", "Brief"),),
         )
         self.runtime.request_choice(task.task_id, choice)
-        self.assertEqual(task.state, AgentTaskState.AWAITING_CHOICE)
-        self.assertIs(self.runtime.get_context(task.task_id), context)
+        assert task.state == AgentTaskState.AWAITING_CHOICE
+        assert self.runtime.get_context(task.task_id) is context
         self.runtime.respond_to_choice(
             task.task_id,
             AgentChoiceResponse("choice-1", choice_id="brief"),
         )
-        self.assertEqual(task.state, AgentTaskState.WORKING)
-        self.assertEqual(task.iterations, 0)
-        self.assertEqual(len(self.approval_events), 1)
-        self.assertEqual(len(self.choice_events), 1)
-        self.assertEqual(
-            self.event_names[-6:],
-            ["state", "approval", "state", "state", "choice", "state"],
-        )
+        assert task.state == AgentTaskState.WORKING
+        assert task.iterations == 0
+        assert len(self.approval_events) == 1
+        assert len(self.choice_events) == 1
+        assert self.event_names[-6:] == [
+            "state",
+            "approval",
+            "state",
+            "state",
+            "choice",
+            "state",
+        ]
 
     def test_steering_resumes_at_planning_and_invalidates_waiting_requests(
         self,
@@ -250,16 +252,15 @@ class AgentRuntimeLifecycleTests(TestCase):
             ),
         )
 
-        self.assertEqual(task.state, AgentTaskState.PLANNING)
-        self.assertGreater(task.generation, generation)
-        self.assertEqual(task.iterations, 1)
-        self.assertIsNone(self.runtime.get_pending_approval(task.task_id))
-        self.assertEqual(task.request.request, "Use the safer read-only path.")
-        self.assertIn(
-            "Use the safer read-only path.",
-            [entry.get("content") for entry in task.request.history],
-        )
-        with self.assertRaises(ValueError):
+        assert task.state == AgentTaskState.PLANNING
+        assert task.generation > generation
+        assert task.iterations == 1
+        assert self.runtime.get_pending_approval(task.task_id) is None
+        assert task.request.request == "Use the safer read-only path."
+        assert "Use the safer read-only path." in [
+            entry.get("content") for entry in task.request.history
+        ]
+        with pytest.raises(ValueError):
             self.runtime.respond_to_approval(
                 task.task_id,
                 AgentApprovalResponse("approval-1", AgentApprovalDecision.APPROVED),
@@ -271,7 +272,7 @@ class AgentRuntimeLifecycleTests(TestCase):
             AgentTaskState.AWAITING_APPROVAL,
             AgentTaskState.AWAITING_CHOICE,
         ):
-            with self.subTest(waiting_state=waiting_state):
+            with nullcontext():
                 runtime = AgentRuntime()
                 task = runtime.create_task(
                     self._request(session_id=f"interrupt-{waiting_state.value}"),
@@ -302,13 +303,13 @@ class AgentRuntimeLifecycleTests(TestCase):
                     AgentInterruption(AgentInterruptionKind.USER_INTERRUPT),
                 )
 
-                self.assertEqual(task.state, AgentTaskState.INTERRUPTED)
-                self.assertEqual(task.iterations, 0)
-                self.assertIsNone(runtime.get_pending_approval(task.task_id))
-                self.assertIsNone(runtime.get_pending_choice(task.task_id))
+                assert task.state == AgentTaskState.INTERRUPTED
+                assert task.iterations == 0
+                assert runtime.get_pending_approval(task.task_id) is None
+                assert runtime.get_pending_choice(task.task_id) is None
                 session = runtime.get_session(task.session_id)
-                self.assertEqual(session.state, AgentSessionState.PAUSED)
-                self.assertTrue(session.paused)
+                assert session.state == AgentSessionState.PAUSED
+                assert session.paused
 
     def test_stale_planner_output_after_interruption_is_discarded(self) -> None:
         """An interrupted planner cannot publish its old response."""
@@ -338,7 +339,7 @@ class AgentRuntimeLifecycleTests(TestCase):
             daemon=True,
         )
         worker.start()
-        self.assertTrue(started.wait(timeout=2))
+        assert started.wait(timeout=2)
 
         runtime.interrupt_task(
             task.task_id,
@@ -347,10 +348,10 @@ class AgentRuntimeLifecycleTests(TestCase):
         release.set()
         worker.join(timeout=2)
 
-        self.assertFalse(worker.is_alive())
-        self.assertEqual(task.state, AgentTaskState.INTERRUPTED)
-        self.assertEqual(outputs, [])
-        self.assertEqual(len(runtime._terminal_events), 0)
+        assert not worker.is_alive()
+        assert task.state == AgentTaskState.INTERRUPTED
+        assert not outputs
+        assert len(runtime._terminal_events) == 0
 
     def test_stale_non_cooperative_tool_result_is_diagnostic_only(self) -> None:
         """A late tool result cannot advance an interrupted task iteration."""
@@ -389,7 +390,7 @@ class AgentRuntimeLifecycleTests(TestCase):
         task = runtime.create_task(self._request(), task_id="stale-tool")
         worker = threading.Thread(target=lambda: runtime.run(task.request), daemon=True)
         worker.start()
-        self.assertTrue(started.wait(timeout=2))
+        assert started.wait(timeout=2)
 
         runtime.interrupt_task(
             task.task_id,
@@ -398,28 +399,25 @@ class AgentRuntimeLifecycleTests(TestCase):
         release.set()
         worker.join(timeout=2)
 
-        self.assertFalse(worker.is_alive())
-        self.assertEqual(task.state, AgentTaskState.INTERRUPTED)
-        self.assertIsNone(runtime.get_context(task.task_id).last_tool_result)
-        self.assertTrue(
-            any(
-                entry.get("type") == "stale_tool_result"
-                for entry in task.request.history
-            )
+        assert not worker.is_alive()
+        assert task.state == AgentTaskState.INTERRUPTED
+        assert runtime.get_context(task.task_id).last_tool_result is None
+        assert any(
+            entry.get("type") == "stale_tool_result" for entry in task.request.history
         )
 
     def test_invalid_transitions_and_response_ids_are_rejected(self) -> None:
         """Reject lifecycle calls that do not match the Phase 1 transition table."""
         task = self.runtime.create_task(self._request(), task_id="task-1")
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             self.runtime.classify_task(task.task_id)
         self.runtime.start_task(task.task_id)
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             self.runtime.start_task(task.task_id)
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             self.runtime.complete_task(task.task_id)
 
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             self.runtime.request_approval(
                 task.task_id,
                 AgentApprovalRequest(
@@ -438,7 +436,7 @@ class AgentRuntimeLifecycleTests(TestCase):
             AgentTaskState.PAUSED,
             AgentTaskState.INTERRUPTED,
         ):
-            with self.subTest(state=state):
+            with nullcontext():
                 runtime = AgentRuntime()
                 task = runtime.create_task(
                     self._request(session_id=f"session-{state.value}"),
@@ -485,7 +483,7 @@ class AgentRuntimeLifecycleTests(TestCase):
                     )
 
                 runtime.cancel_task(task.task_id)
-                self.assertEqual(task.state, AgentTaskState.CANCELLED)
+                assert task.state == AgentTaskState.CANCELLED
 
     def test_cancellation_during_approval_and_choice_clears_waiting_state(self) -> None:
         """Cancel approval and choice pauses without leaving pending requests."""
@@ -493,7 +491,7 @@ class AgentRuntimeLifecycleTests(TestCase):
             AgentTaskState.AWAITING_APPROVAL,
             AgentTaskState.AWAITING_CHOICE,
         ):
-            with self.subTest(waiting_state=waiting_state):
+            with nullcontext():
                 runtime = AgentRuntime()
                 task = runtime.create_task(
                     self._request(session_id=f"waiting-{waiting_state.value}"),
@@ -519,8 +517,8 @@ class AgentRuntimeLifecycleTests(TestCase):
                         ),
                     )
                 runtime.cancel_task(task.task_id)
-                self.assertEqual(task.state, AgentTaskState.CANCELLED)
-                with self.assertRaises(ValueError):
+                assert task.state == AgentTaskState.CANCELLED
+                with pytest.raises(ValueError):
                     if waiting_state == AgentTaskState.AWAITING_APPROVAL:
                         runtime.respond_to_approval(
                             task.task_id,
@@ -540,9 +538,9 @@ class AgentRuntimeLifecycleTests(TestCase):
         self.runtime.fail_task(
             failed.task_id, AgentFailureReason.MODEL_ERROR, "offline"
         )
-        self.assertEqual(failed.failure_reason, AgentFailureReason.MODEL_ERROR)
-        self.assertEqual(failed.failure_detail, "offline")
-        with self.assertRaises(ValueError):
+        assert failed.failure_reason == AgentFailureReason.MODEL_ERROR
+        assert failed.failure_detail == "offline"
+        with pytest.raises(ValueError):
             self.runtime.fail_task(failed.task_id, AgentFailureReason.INTERNAL_ERROR)
 
         aborted = self.runtime.create_task(
@@ -551,9 +549,9 @@ class AgentRuntimeLifecycleTests(TestCase):
         self.runtime.start_task(aborted.task_id)
         self.runtime.classify_task(aborted.task_id)
         self.runtime.abort_task(aborted.task_id, AgentAbortReason.STUCK_TASK)
-        self.assertEqual(aborted.abort_reason, AgentAbortReason.STUCK_TASK)
-        self.assertEqual(aborted.state, AgentTaskState.ABORTED)
-        self.assertEqual(len(self.finished_events), 2)
+        assert aborted.abort_reason == AgentAbortReason.STUCK_TASK
+        assert aborted.state == AgentTaskState.ABORTED
+        assert len(self.finished_events) == 2
 
     def test_cancellation_cleanup_finishes_after_lifecycle_exception(self) -> None:
         """Finalize cancellation even when the task cancellation handler raises."""
@@ -562,45 +560,38 @@ class AgentRuntimeLifecycleTests(TestCase):
             mock.patch.object(
                 task, "cancel", side_effect=RuntimeError("cancel failed")
             ),
-            self.assertRaises(RuntimeError),
+            pytest.raises(RuntimeError),
         ):
             self.runtime.cancel_task(task.task_id)
-        self.assertEqual(task.state, AgentTaskState.CANCELLED)
-        self.assertEqual(
-            [(event.old_state, event.new_state) for event in self.state_events[-2:]],
-            [
-                (AgentTaskState.WORKING, AgentTaskState.CANCELLING),
-                (AgentTaskState.CANCELLING, AgentTaskState.CANCELLED),
-            ],
+        assert task.state == AgentTaskState.CANCELLED
+        assert [
+            (event.old_state, event.new_state) for event in self.state_events[-2:]
+        ] == [
+            (AgentTaskState.WORKING, AgentTaskState.CANCELLING),
+            (AgentTaskState.CANCELLING, AgentTaskState.CANCELLED),
+        ]
+        assert (
+            self.runtime.get_session(task.session_id).state
+            == AgentSessionState.CANCELLED
         )
-        self.assertEqual(
-            self.runtime.get_session(task.session_id).state,
-            AgentSessionState.CANCELLED,
-        )
-        self.assertEqual(self.event_names.count("finished"), 1)
+        assert self.event_names.count("finished") == 1
 
     def test_legacy_session_flags_follow_explicit_task_state(self) -> None:
         """Keep paused and cancelled compatibility fields synchronized."""
         task = self._working_task()
         self.runtime.pause(task.session_id)
         paused = self.runtime.get_session(task.session_id)
-        self.assertEqual(paused.state, AgentSessionState.PAUSED)
-        self.assertTrue(paused.paused)
-        self.assertFalse(paused.cancelled)
+        assert paused.state == AgentSessionState.PAUSED
+        assert paused.paused
+        assert not paused.cancelled
         self.runtime.resume(task.session_id)
-        self.assertEqual(
-            self.runtime.get_session(task.session_id).state, AgentSessionState.ACTIVE
+        assert (
+            self.runtime.get_session(task.session_id).state == AgentSessionState.ACTIVE
         )
         self.runtime.cancel_task(
             task.task_id, AgentCancellationReason.SESSION_CANCELLED
         )
         cancelled = self.runtime.get_session(task.session_id)
-        self.assertEqual(cancelled.state, AgentSessionState.CANCELLED)
-        self.assertFalse(cancelled.paused)
-        self.assertTrue(cancelled.cancelled)
-
-
-if __name__ == "__main__":
-    import unittest
-
-    unittest.main()
+        assert cancelled.state == AgentSessionState.CANCELLED
+        assert not cancelled.paused
+        assert cancelled.cancelled
