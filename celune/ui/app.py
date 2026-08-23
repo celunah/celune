@@ -81,7 +81,6 @@ if TYPE_CHECKING:
     from ..config import format_audio_device_name, resolve_audio_device_with_info
     from ..exceptions import CEDTSError
     from ..paths import config_path, main_window_log_path
-    from ..terminal import set_terminal_title, terminal_title_escape
     from ..utils import (
         discard,
         is_april_fools,
