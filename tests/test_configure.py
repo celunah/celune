@@ -71,6 +71,7 @@ def test_configuration_complete_requires_environment_tools_and_runtime_data(
     assert initialize_app_data("Windows", source_root)
     assert configure.configuration_complete("Windows", ("sox",), source_root)
 
+    (source_root / ".venv" / "pyvenv.cfg").unlink()
     (source_root / ".venv").rmdir()
     assert not configure.configuration_complete("Windows", ("sox",), source_root)
 

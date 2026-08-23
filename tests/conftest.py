@@ -142,11 +142,11 @@ def pytest_sessionfinish(
         )
         if collection_errors:
             terminalreporter.write_line(
-                f"Collection failures recorded: {len(collection_errors)}."
+                f"Collection failures recorded: {len(collection_errors)}"
             )
         if test_failures:
             terminalreporter.write_line(
-                f"Test failures recorded: {len(test_failures)}."
+                f"Test failures recorded: {len(test_failures)}"
             )
             first_failure = test_failures[0]
             terminalreporter.write_line(
