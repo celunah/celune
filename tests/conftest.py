@@ -145,9 +145,7 @@ def pytest_sessionfinish(
                 f"Collection failures recorded: {len(collection_errors)}"
             )
         if test_failures:
-            terminalreporter.write_line(
-                f"Test failures recorded: {len(test_failures)}"
-            )
+            terminalreporter.write_line(f"Test failures recorded: {len(test_failures)}")
             first_failure = test_failures[0]
             terminalreporter.write_line(
                 "Run the first failing test directly with: `"
