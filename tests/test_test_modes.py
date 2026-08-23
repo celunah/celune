@@ -16,7 +16,7 @@ from celune.i18n import string
 from celune.celune import Celune
 from celune.typing.common import JSON
 from celune.config import config_log_level
-from celune.test_mode import run_agent_test
+from celune.test import run_agent_test
 from celune.persona.impl import PersonaClient
 from celune.typing.persona import PersonaClientResponse
 from celune.agent.needle import NeedleHandler, NeedleToolSelector
@@ -278,8 +278,8 @@ class TestFinishedLifecycleTests(CeluneTestCase):
             route=AgentRoute.CONVERSATION,
         )
         with (
-            mock.patch("celune.test_mode._wait_for_persona"),
-            mock.patch("celune.test_mode._start_agent_test_pipeline"),
+            mock.patch("celune.test._wait_for_persona"),
+            mock.patch("celune.test._start_agent_test_pipeline"),
             mock.patch.object(core, "stop_live_audio"),
             mock.patch.object(core, "route_input", return_value=route),
         ):
@@ -301,8 +301,8 @@ class TestFinishedLifecycleTests(CeluneTestCase):
             ),
         )
         with (
-            mock.patch("celune.test_mode._wait_for_persona"),
-            mock.patch("celune.test_mode._start_agent_test_pipeline"),
+            mock.patch("celune.test._wait_for_persona"),
+            mock.patch("celune.test._start_agent_test_pipeline"),
             mock.patch.object(core, "stop_live_audio"),
             mock.patch.object(core, "route_input", return_value=route),
         ):
@@ -324,8 +324,8 @@ class TestFinishedLifecycleTests(CeluneTestCase):
             routing_metadata={},
         )
         with (
-            mock.patch("celune.test_mode._wait_for_persona"),
-            mock.patch("celune.test_mode._start_agent_test_pipeline"),
+            mock.patch("celune.test._wait_for_persona"),
+            mock.patch("celune.test._start_agent_test_pipeline"),
             mock.patch.object(core, "stop_live_audio"),
             mock.patch.object(core, "route_input", return_value=route),
         ):
