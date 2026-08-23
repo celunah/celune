@@ -280,7 +280,7 @@ def severity_color(theme_name: str, severity: str = "info") -> str:
     Returns:
         str: The configured UI severity color for this theme.
     """
-    from ..colors import SEVERITY_COLORS
+    from ..theme.colors import SEVERITY_COLORS
 
     palette = SEVERITY_COLORS.get(theme_name, SEVERITY_COLORS["celune"])
     return palette.get(severity, palette["info"])

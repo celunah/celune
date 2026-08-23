@@ -16,7 +16,7 @@ import soundfile as sf
 from ..i18n import string
 from ..paths import project_root
 from ..constants import APP_NAME
-from ..audio import restart_audio_server
+from ..audio.server import restart_audio_server
 from ..exceptions import InvalidExtensionError
 from ..persona.capabilities import PersonaCapabilities
 from ..utils import replace_ipa, format_error, format_number

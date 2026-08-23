@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Union, Optional, cast
 import torch
 import numpy as np
 
-from ..dsp import resample_audio
+from ..audio.dsp import resample_audio
 from ..paths import huggingface_progress
 from ..typing.aliases import AudioChunk
 from ..typing.persona import (

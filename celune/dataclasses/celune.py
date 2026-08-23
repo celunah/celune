@@ -20,7 +20,7 @@ from ..backends.tts import CeluneBackend
 from ..persona.impl import PersonaClient
 from ..backends.vc import CeluneVCBackend
 from ..typing.backends import BackendModel
-from ..dsp import StreamingPedalboardReverb
+from ..audio.dsp import StreamingPedalboardReverb
 from ..typing.common import JSON, JSONSerializable
 from ..typing.aliases import LogLevel, AudioChunks
 from ..extensions.manager import CeluneExtensionManager

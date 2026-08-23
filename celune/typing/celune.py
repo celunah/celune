@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
     import sounddevice as sd
 
-    from ..dsp import StreamingPedalboardReverb
+    from ..audio.dsp import StreamingPedalboardReverb
     from .locks import ComponentLockOwner, ComponentBusyResult
     from ..locks import ComponentLockManager
     from ..chroma import AudioRGBGlow
