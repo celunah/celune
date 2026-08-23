@@ -4,14 +4,23 @@
 
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <dirent.h>
 #include <signal.h>
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 
 #define printfe(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
+#define LAUNCHER_SEARCH_MAX_DEPTH 8
+#define LAUNCHER_SEARCH_MAX_DIRECTORIES 10000
+#define LAUNCHER_SEARCH_MAX_MILLISECONDS 5000
+
 static int launcher_child_failed = 0;
+static size_t searched_directories = 0;
+static unsigned long long search_deadline = 0;
 
 static int file_exists(const char *path) {
     return access(path, F_OK) == 0;
@@ -67,6 +76,172 @@ static int find_repo_root(const char *start_dir, char *out, size_t size) {
         if (!copy_text(current, sizeof(current), parent)) {
             return 0;
         }
+    }
+
+    return 0;
+}
+
+static unsigned long long monotonic_milliseconds(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        return 0;
+    }
+
+    return (unsigned long long)now.tv_sec * 1000ULL +
+           (unsigned long long)now.tv_nsec / 1000000ULL;
+}
+
+static int skip_search_directory(const char *name) {
+    return strcmp(name, ".git") == 0 || strcmp(name, ".venv") == 0 ||
+           strcmp(name, "node_modules") == 0 || strcmp(name, "proc") == 0 ||
+           strcmp(name, "sys") == 0 || strcmp(name, "dev") == 0 ||
+           strcmp(name, "run") == 0;
+}
+
+static int search_runtime_directory(
+    const char *directory,
+    int depth,
+    char *runtime_dir,
+    size_t runtime_dir_size,
+    char *repo_root,
+    size_t repo_root_size
+) {
+    if (searched_directories >= LAUNCHER_SEARCH_MAX_DIRECTORIES ||
+        monotonic_milliseconds() >= search_deadline) {
+        return 0;
+    }
+    searched_directories++;
+
+    DIR *search = opendir(directory);
+    if (search == NULL) {
+        return 0;
+    }
+
+    int found = 0;
+    struct dirent *entry;
+    while ((entry = readdir(search)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 ||
+            strcmp(entry->d_name, "..") == 0 ||
+            skip_search_directory(entry->d_name)) {
+            continue;
+        }
+
+        char candidate[1200];
+        int candidate_len = snprintf(
+            candidate,
+            sizeof(candidate),
+            "%s/%s",
+            directory,
+            entry->d_name
+        );
+        if (candidate_len < 0 || (size_t)candidate_len >= sizeof(candidate)) {
+            continue;
+        }
+
+        struct stat details;
+        if (lstat(candidate, &details) != 0) {
+            continue;
+        }
+
+        if (S_ISDIR(details.st_mode)) {
+            if (depth < LAUNCHER_SEARCH_MAX_DEPTH && !S_ISLNK(details.st_mode) &&
+                search_runtime_directory(
+                    candidate,
+                    depth + 1,
+                    runtime_dir,
+                    runtime_dir_size,
+                    repo_root,
+                    repo_root_size
+                )) {
+                found = 1;
+                break;
+            }
+            continue;
+        }
+
+        if (strcmp(entry->d_name, "celune-bin") != 0 ||
+            access(candidate, X_OK) != 0 ||
+            !find_repo_root(directory, repo_root, repo_root_size) ||
+            !copy_text(runtime_dir, runtime_dir_size, directory)) {
+            continue;
+        }
+
+        found = 1;
+        break;
+    }
+
+    closedir(search);
+    return found;
+}
+
+static int set_runtime_target(
+    const char *runtime_dir,
+    char *target,
+    size_t target_size
+) {
+    int target_len = snprintf(
+        target,
+        target_size,
+        "%s/celune-bin",
+        runtime_dir
+    );
+    return target_len >= 0 && (size_t)target_len < target_size;
+}
+
+static int resolve_runtime_location(
+    const char *base,
+    char *target,
+    size_t target_size,
+    char *repo_root,
+    size_t repo_root_size
+) {
+    char runtime_dir[1024];
+    char candidate[1200];
+    int candidate_len = snprintf(
+        candidate,
+        sizeof(candidate),
+        "%s/celune-bin",
+        base
+    );
+    if (candidate_len >= 0 && (size_t)candidate_len < sizeof(candidate) &&
+        access(candidate, X_OK) == 0 &&
+        find_repo_root(base, repo_root, repo_root_size) &&
+        copy_text(runtime_dir, sizeof(runtime_dir), base)) {
+        return set_runtime_target(runtime_dir, target, target_size);
+    }
+
+    if (find_repo_root(base, repo_root, repo_root_size)) {
+        return 0;
+    }
+
+    searched_directories = 0;
+    search_deadline = monotonic_milliseconds() + LAUNCHER_SEARCH_MAX_MILLISECONDS;
+
+    char current_directory[1024];
+    const char *current = getcwd(current_directory, sizeof(current_directory));
+    const char *environment_roots[] = {
+        current,
+        getenv("HOME"),
+        getenv("XDG_DATA_HOME"),
+        "/opt",
+        "/usr/local",
+        "/usr",
+        "/"
+    };
+    for (size_t index = 0; index < sizeof(environment_roots) / sizeof(environment_roots[0]); index++) {
+        if (environment_roots[index] == NULL ||
+            !search_runtime_directory(
+                environment_roots[index],
+                0,
+                runtime_dir,
+                sizeof(runtime_dir),
+                repo_root,
+                repo_root_size
+            )) {
+            continue;
+        }
+
+        return set_runtime_target(runtime_dir, target, target_size);
     }
 
     return 0;
@@ -161,20 +336,30 @@ int launcher_run(int argc, char **argv) {
         return 1;
     }
 
-    if (!find_repo_root(base, repo_root, sizeof(repo_root))) {
-        printfe("Celune could not find the repository root with a Python virtual environment.\n");
+    int launcher_len = snprintf(launcher, sizeof(launcher), "%s/celune", base);
+    if (launcher_len < 0 || (size_t)launcher_len >= sizeof(launcher)) {
+        printfe("Celune cannot start in this location, the path is too long.\n");
         return 1;
     }
 
-    int launcher_len = snprintf(launcher, sizeof(launcher), "%s/celune", base);
-    int target_len = snprintf(target, sizeof(target), "%s/celune-bin", base);
+    target[0] = '\0';
+    if (!resolve_runtime_location(
+            base,
+            target,
+            sizeof(target),
+            repo_root,
+            sizeof(repo_root)
+        ) && !find_repo_root(base, repo_root, sizeof(repo_root))) {
+        printfe("Celune could not find her compiled runtime or repository.\n");
+        printfe("Searched beside the launcher and the available filesystem roots.\n");
+        return 1;
+    }
+
     int python_len = snprintf(python, sizeof(python), "%s/.venv/bin/python", repo_root);
     int main_py_len = snprintf(main_py, sizeof(main_py), "%s/main.py", repo_root);
     int setup_py_len = snprintf(setup_py, sizeof(setup_py), "%s/setup.py", repo_root);
 
-    if (launcher_len < 0 || (size_t)launcher_len >= sizeof(launcher) ||
-        target_len < 0 || (size_t)target_len >= sizeof(target) ||
-        python_len < 0 || (size_t)python_len >= sizeof(python) ||
+    if (python_len < 0 || (size_t)python_len >= sizeof(python) ||
         main_py_len < 0 || (size_t)main_py_len >= sizeof(main_py) ||
         setup_py_len < 0 || (size_t)setup_py_len >= sizeof(setup_py)) {
         printfe("Celune cannot start in this location, the path is too long.\n");

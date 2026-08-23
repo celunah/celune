@@ -8,8 +8,13 @@
 
 #define printfe(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
 #define STATUS_CONTROL_C_EXIT_VALUE 0xC000013AUL
+#define LAUNCHER_SEARCH_MAX_DEPTH 8
+#define LAUNCHER_SEARCH_MAX_DIRECTORIES 10000
+#define LAUNCHER_SEARCH_MAX_MILLISECONDS 5000
 
 static int launcher_child_failed = 0;
+static size_t searched_directories = 0;
+static ULONGLONG search_deadline = 0;
 
 static const char *windows_exit_detail(DWORD exit_code) {
     switch (exit_code) {
@@ -156,6 +161,229 @@ static int find_repo_root(const char *start_dir, char *out, size_t size) {
         if (!copy_text(current, sizeof(current), parent)) {
             return 0;
         }
+    }
+
+    return 0;
+}
+
+static int read_environment_path(const char *name, char *out, size_t size) {
+    char *value = NULL;
+    size_t value_size = 0;
+    if (_dupenv_s(&value, &value_size, name) != 0 || value == NULL) {
+        return 0;
+    }
+
+    int copied = copy_text(out, size, value);
+    free(value);
+    return copied;
+}
+
+static int skip_search_directory(const char *name) {
+    return _stricmp(name, ".git") == 0 ||
+           _stricmp(name, ".venv") == 0 ||
+           _stricmp(name, "$Recycle.Bin") == 0 ||
+           _stricmp(name, "System Volume Information") == 0 ||
+           _stricmp(name, "Windows") == 0 ||
+           _stricmp(name, "WindowsApps") == 0 ||
+           _stricmp(name, "AppData") == 0 ||
+           _stricmp(name, "node_modules") == 0;
+}
+
+static int search_runtime_directory(
+    const char *directory,
+    int depth,
+    char *runtime_dir,
+    size_t runtime_dir_size,
+    char *repo_root,
+    size_t repo_root_size
+) {
+    if (searched_directories >= LAUNCHER_SEARCH_MAX_DIRECTORIES ||
+        GetTickCount64() >= search_deadline) {
+        return 0;
+    }
+    searched_directories++;
+
+    char pattern[1200];
+    int pattern_len = snprintf(pattern, sizeof(pattern), "%s\\*", directory);
+    if (pattern_len < 0 || (size_t)pattern_len >= sizeof(pattern)) {
+        return 0;
+    }
+
+    WIN32_FIND_DATAA entry;
+    HANDLE search = FindFirstFileA(pattern, &entry);
+    if (search == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+
+    int found = 0;
+    do {
+        if (strcmp(entry.cFileName, ".") == 0 ||
+            strcmp(entry.cFileName, "..") == 0) {
+            continue;
+        }
+
+        char candidate[1200];
+        int candidate_len = snprintf(
+            candidate,
+            sizeof(candidate),
+            "%s\\%s",
+            directory,
+            entry.cFileName
+        );
+        if (candidate_len < 0 || (size_t)candidate_len >= sizeof(candidate)) {
+            continue;
+        }
+
+        if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+            if (depth >= LAUNCHER_SEARCH_MAX_DEPTH ||
+                (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+                skip_search_directory(entry.cFileName)) {
+                continue;
+            }
+
+            if (search_runtime_directory(
+                    candidate,
+                    depth + 1,
+                    runtime_dir,
+                    runtime_dir_size,
+                    repo_root,
+                    repo_root_size
+                )) {
+                found = 1;
+                break;
+            }
+            continue;
+        }
+
+        if (_stricmp(entry.cFileName, "celune-bin.exe") != 0 ||
+            !find_repo_root(directory, repo_root, repo_root_size) ||
+            !copy_text(runtime_dir, runtime_dir_size, directory)) {
+            continue;
+        }
+
+        found = 1;
+        break;
+    } while (FindNextFileA(search, &entry));
+
+    FindClose(search);
+    return found;
+}
+
+static int set_runtime_target(
+    const char *runtime_dir,
+    char *target,
+    size_t target_size
+) {
+    int target_len = snprintf(
+        target,
+        target_size,
+        "%s\\celune-bin.exe",
+        runtime_dir
+    );
+    return target_len >= 0 && (size_t)target_len < target_size;
+}
+
+static int resolve_runtime_location(
+    const char *base,
+    char *target,
+    size_t target_size,
+    char *repo_root,
+    size_t repo_root_size
+) {
+    char runtime_dir[1024];
+    char candidate[1200];
+
+    int candidate_len = snprintf(
+        candidate,
+        sizeof(candidate),
+        "%s\\celune-bin.exe",
+        base
+    );
+    if (candidate_len >= 0 && (size_t)candidate_len < sizeof(candidate) &&
+        file_exists(candidate) &&
+        find_repo_root(base, repo_root, repo_root_size) &&
+        copy_text(runtime_dir, sizeof(runtime_dir), base)) {
+        return copy_text(target, target_size, candidate);
+    }
+
+    searched_directories = 0;
+    search_deadline = GetTickCount64() + LAUNCHER_SEARCH_MAX_MILLISECONDS;
+
+    char current_directory[1024];
+    DWORD current_length = GetCurrentDirectoryA(
+        (DWORD)sizeof(current_directory),
+        current_directory
+    );
+    char environment_root_storage[4][1024];
+    const char *environment_roots[4];
+    size_t environment_root_count = 0;
+    const char *environment_names[] = {
+        "USERPROFILE",
+        "LOCALAPPDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)"
+    };
+    for (size_t index = 0; index < sizeof(environment_names) / sizeof(environment_names[0]); index++) {
+        if (read_environment_path(
+                environment_names[index],
+                environment_root_storage[environment_root_count],
+                sizeof(environment_root_storage[environment_root_count])
+            )) {
+            environment_roots[environment_root_count] =
+                environment_root_storage[environment_root_count];
+            environment_root_count++;
+        }
+    }
+
+    if (current_length > 0 && current_length < sizeof(current_directory) &&
+        search_runtime_directory(
+            current_directory,
+            0,
+            runtime_dir,
+            sizeof(runtime_dir),
+            repo_root,
+            repo_root_size
+        )) {
+        return set_runtime_target(runtime_dir, target, target_size);
+    }
+
+    for (size_t index = 0; index < environment_root_count; index++) {
+        if (!search_runtime_directory(
+                environment_roots[index],
+                0,
+                runtime_dir,
+                sizeof(runtime_dir),
+                repo_root,
+                repo_root_size
+            )) {
+            continue;
+        }
+
+        return set_runtime_target(runtime_dir, target, target_size);
+    }
+
+    DWORD drives = GetLogicalDrives();
+    for (char drive = 'A'; drive <= 'Z'; drive++) {
+        DWORD mask = 1UL << (drive - 'A');
+        if ((drives & mask) == 0) {
+            continue;
+        }
+
+        char drive_root[] = "A:\\";
+        drive_root[0] = drive;
+        if (GetDriveTypeA(drive_root) != DRIVE_FIXED ||
+            !search_runtime_directory(
+                drive_root,
+                0,
+                runtime_dir,
+                sizeof(runtime_dir),
+                repo_root,
+                repo_root_size
+            )) {
+            continue;
+        }
+
+        return set_runtime_target(runtime_dir, target, target_size);
     }
 
     return 0;
@@ -326,21 +554,20 @@ int launcher_run(int argc, char **argv) {
     }
 
     int launcher_len = snprintf(launcher, sizeof(launcher), "%s\\celune.exe", base);
-    int target_len = snprintf(target, sizeof(target), "%s\\celune-bin.exe", base);
-    if (launcher_len < 0 || (size_t)launcher_len >= sizeof(launcher) ||
-        target_len < 0 || (size_t)target_len >= sizeof(target)) {
+    if (launcher_len < 0 || (size_t)launcher_len >= sizeof(launcher)) {
         printfe("Celune cannot start in this location, the path is too long.\n");
         return 1;
     }
 
-    if (!file_exists(target)) {
-        printfe("Celune could not find her compiled runtime binary.\n");
-        printfe("Expected file: %s\n", target);
-        return 1;
-    }
-
-    if (!find_repo_root(base, repo_root, sizeof(repo_root))) {
-        printfe("Celune could not find the repository root with a Python virtual environment.\n");
+    if (!resolve_runtime_location(
+            base,
+            target,
+            sizeof(target),
+            repo_root,
+            sizeof(repo_root)
+        )) {
+        printfe("Celune could not find her compiled runtime or repository.\n");
+        printfe("Searched beside the launcher and the available filesystem roots.\n");
         return 1;
     }
 

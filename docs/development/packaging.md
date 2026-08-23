@@ -32,11 +32,15 @@ The launcher sets the compiled environment, owns update handoff, and preserves
 process-loss behavior. Its terminal cleanup restores modes without scrolling
 the cursor through the console buffer, so returning to the shell does not leave
 a large blank region. If startup fails, the launcher preserves the visible
-console and prepares a safe diagnostic position so stale loading-screen
-characters cannot overprint the error. It advances to the next line only when
-the child left the cursor mid-line. `celune-bin` is not the user-facing
-command. Fatal Textual UI return codes are propagated to this launcher, so
-callback failures use the same preserved-output failure path as startup errors.
+console and scans the rendered buffer for the last non-blank row before placing
+diagnostics. This avoids trusting a cursor coordinate that Rich or Textual may
+leave at the start of an earlier traceback row, so stale loading-screen
+characters cannot overprint the error. `celune-bin` is not the user-facing
+command. When the runtime is moved, the Windows and Linux launchers search
+nearby user/system roots and fixed filesystem roots for a validated runtime for
+up to five seconds before reporting that Celune cannot be found. Fatal Textual
+UI return codes are propagated to this launcher, so callback failures use the
+same preserved-output failure path as startup errors.
 
 ## Relocatable data
 

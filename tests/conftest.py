@@ -100,7 +100,7 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
 def celune_test_context(
     request: pytest.FixtureRequest,
 ) -> Iterator[None]:
-    """Celune's text context."""
+    """Celune's test context."""
     del request
     yield
 
