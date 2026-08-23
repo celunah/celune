@@ -195,6 +195,23 @@ def supports_ansi(stream: Optional[TextIO] = None) -> bool:
     return terminal_supports_ansi(stream)
 
 
+def terminal_title_escape(status: tuple[str, str, str]) -> str:
+    """Build a terminal-title escape without loading runtime UI dependencies."""
+    from ..terminal import terminal_title_escape as build_terminal_title
+
+    return build_terminal_title(status)
+
+
+def set_terminal_title(
+    status: tuple[str, str, str],
+    output: Optional[TextIO] = None,
+) -> None:
+    """Set a terminal title without loading runtime UI dependencies."""
+    from ..terminal import set_terminal_title as write_terminal_title
+
+    write_terminal_title(status, output)
+
+
 def __getattr__(name: str):
     """Resolve legacy runtime globals only when callers explicitly request them."""
     if name == "colors":

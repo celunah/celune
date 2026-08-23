@@ -52,7 +52,7 @@ INITIAL_BACKEND = os.getenv("CELUNE_BACKEND")
 LAUNCHED_VIA_LAUNCHER = _env_flag("CELUNE_LAUNCHER")
 SCRIPT_PATH = Path(__file__).resolve()
 PROJECT_ROOT = project_root()
-SETUP_PATH = PROJECT_ROOT / "setup.py"
+CONFIGURE_PATH = PROJECT_ROOT / "configure.py"
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "default_config.yaml"
 SCRIPT_NAME = "main.py"
 EXIT_CODES = ExitCodes
@@ -156,7 +156,7 @@ def _print_dependency_setup_help(package_name: str) -> None:
     print(string("cli.dependency_required", app_name=APP_NAME))
     print()
     print(string("cli.setup_automatically", app_name=APP_NAME))
-    print(string("cli.setup_cmd_setup_py"))
+    print(string("cli.setup_cmd_configure_py"))
     print()
     print(string("cli.setup_with_uv"))
     print(string("cli.setup_cmd_uv_sync"))
@@ -498,7 +498,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
             "PyTorch",
             False,
             "Module 'torch' is not installed.",
-            hint="Run `python setup.py` or `uv sync`.",
+            hint="Run `python configure.py` or `uv sync`.",
         )
         return checks
 
@@ -714,7 +714,11 @@ def _doctor_checks() -> list[DoctorCheck]:
             PROJECT_ROOT,
             "Run the launcher from the cloned repository.",
         ),
-        ("setup.py", SETUP_PATH, "Repair uses the repo-local `setup.py` bootstrapper."),
+        (
+            "configure.py",
+            CONFIGURE_PATH,
+            "Repair uses the repo-local `configure.py` setup helper.",
+        ),
         (
             "default_config.yaml",
             DEFAULT_CONFIG_PATH,
@@ -979,7 +983,7 @@ def run_doctor(argv: list[str]) -> int:
         print(string("cli.doctor_attempting_fix"))
         try:
             result = subprocess.run(
-                [str(_doctor_subprocess_python()), str(SETUP_PATH)],
+                [str(_doctor_subprocess_python()), str(CONFIGURE_PATH)],
                 cwd=PROJECT_ROOT,
                 check=False,
             )
