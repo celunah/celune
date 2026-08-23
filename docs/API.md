@@ -1,4 +1,4 @@
-# Celune REST API
+# REST API
 
 Celune can expose a local REST API for speech, sound effects, and voice control.
 The API is enabled by default in `default_config.yaml`:

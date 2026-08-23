@@ -1,4 +1,4 @@
-# CEDTS worker transport
+# CEDTS transport
 
 CEDTS is Celune's private **C**elune **E**xtensible **D**ata **T**ransport
 **S**tandard for isolated backend workers. It is an implementation contract
@@ -146,7 +146,7 @@ The transport defines these exception categories:
 `CEDTSError`, `CEDTSStreamError`, `CEDTSEOFError`, `CEDTSTimeoutError`,
 `CEDTSProtocolError`, and `CEDTSPayloadError`.
 
-The implementation lives in `celune.backends.worker_protocol` and is used by
-`celune.backends.worker` and `celune.backends.remote`. Backend authors should
+The implementation lives in `celune.cedts.protocol` and is used by
+`celune.cedts.worker` and `celune.cedts.remote`. Backend authors should
 use the existing encoders/decoders and typed descriptors rather than creating
 a parallel socket or serialization layer.

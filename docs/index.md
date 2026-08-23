@@ -12,12 +12,12 @@ custom CEVOICE/CECHAR voice-pack format and CEDTS isolated-worker protocol.
 
 | If you want to… | Start here |
 | --- | --- |
-| Install and launch Celune | [Requirements and installation](getting-started/installation.md) |
+| Install and launch Celune | [Installation](getting-started/installation.md) |
 | Understand the first startup | [First run](getting-started/first-run.md) |
 | Change runtime behavior | [Configuration](user-guide/configuration.md) |
-| Speak, converse, or use the agent | [Operation modes](user-guide/modes.md) |
-| Call Celune from another program | [REST API](API.md) or [Public Python API](reference/public-api.md) |
-| Build a voice pack or character | [CEVOICE and CECHAR](CEVOICE.md) |
+| Speak, converse, or use the agent | [Modes](user-guide/modes.md) |
+| Call Celune from another program | [REST API](API.md) or [Python API](reference/public-api.md) |
+| Build a voice pack or character | [CEVOICE/CECHAR](CEVOICE.md) |
 | Add a plugin-like extension | [Extensions](interfaces/extensions.md) |
 | Work on a backend or worker | [Architecture](development/architecture.md), [Backends](development/backends.md), and [CEDTS](formats/cedts.md) |
 

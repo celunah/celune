@@ -1,10 +1,10 @@
-# Operation modes
+# Modes
 
 Celune has three operation modes and a separate legacy input-mode layer. The
 operation mode decides how text is routed; the input mode decides whether the
 engine accepts text or audio.
 
-## Operation modes
+## Modes
 
 | Mode | Text route | Typical use |
 | --- | --- | --- |

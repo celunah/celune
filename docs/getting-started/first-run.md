@@ -23,7 +23,7 @@ creating a backend environment and downloading models before the ready state.
 Set `backend` in the active config or pass `CELUNE_BACKEND` for a one-process
 override. The backend name is one of `mini`, `qwen3`, `dotstts`, `voxcpm2`,
 `gpt-sovits`, or a voice-conversion backend such as `seed-vc`. See
-[Backends and environments](../development/backends.md) for capability and
+[Backends](../development/backends.md) for capability and
 dependency details.
 
 The backend controls language support, reference-audio requirements, model

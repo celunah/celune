@@ -1,4 +1,4 @@
-# Requirements and installation
+# Installation
 
 This page lists supported environments and system dependencies, then shows how
 to install and launch Celune from the source repository.

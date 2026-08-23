@@ -1,4 +1,4 @@
-# Command-line interface
+# CLI
 
 `main.py` is the lightweight launcher. It rejects unsupported Python versions
 before importing the heavy runtime, then dispatches to `celune.entrypoint`.

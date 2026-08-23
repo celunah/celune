@@ -1,4 +1,4 @@
-# Test execution
+# Testing
 
 This page is for Celune contributors who run or extend the pytest suite. It
 defines the parallel worker contract, the local test commands, and the limits
@@ -60,6 +60,12 @@ inside CEDTS worker subprocesses. Run `uv run poe test` before handing off a
 change and in CI.
 
 ## Verify failures
+
+The pytest hooks retain collection failures and setup, call, or teardown test
+failures. At session end, a `test failure hint` names the number of recorded
+failures and gives a direct `uv run pytest <nodeid> -vv` command for the first
+failed test. Collection-only failures instead suggest
+`uv run pytest --collect-only -vv`.
 
 When parallel execution fails:
 

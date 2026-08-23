@@ -1,4 +1,4 @@
-# Voice analysis and pack creation
+# Voice and pack design
 
 This page documents the voice-analysis calls and the `scripts/cac.py` workflows
 used to evaluate audio and create CEVOICE/CECHAR packs.

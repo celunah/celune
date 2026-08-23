@@ -22,12 +22,12 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | Path | Responsibility |
 | --- | --- |
 | `celune/pipeline.py` | Text segmentation, generation queue, smart buffer, playback worker, SFX, cancellation, and audio input routing. |
-| `celune/audio.py` | Sounddevice stream lifecycle and audio-server recovery. |
-| `celune/audio_resampling.py` | Sample-rate conversion at boundaries. |
-| `celune/dsp.py` | Pitch/speed support, readiness signals, silence detection, and streaming reverb. |
+| `celune/audio/server.py` | Host audio-server recovery. |
+| `celune/audio/resampling.py` | Sample-rate conversion at boundaries. |
+| `celune/audio/dsp.py` | Pitch/speed support, readiness signals, silence detection, and streaming reverb. |
 | `celune/vc.py` | VC normalization, RMS/VAD, preroll/hangover, and live-capture helpers. |
 | `celune/chroma.py` | OpenRGB connection, audio reactivity, sleep/wake, and fatal glow state. |
-| `celune/colors.py` | Built-in themes and pack color integration. |
+| `celune/theme/colors.py` | Built-in themes and pack color integration. |
 | `celune/analysis.py` | Voice metrics, embedding similarity, traits, assessments, plots, and reports. |
 
 ## Backend boundary
@@ -43,10 +43,10 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/backends/vc/base.py` | Voice-conversion backend contract. |
 | `celune/backends/vc/seedvc.py` | Seed-VC file and live conversion adapter. |
 | `celune/backends/environment.py` | Per-backend manifests, uv environments, fingerprints, and readiness. |
-| `celune/backends/remote.py` | Core-side proxy around a worker process. |
-| `celune/backends/worker.py` | Worker-side operation dispatch and lifecycle. |
-| `celune/backends/worker_protocol.py` | CEDTS serialization, framing, negotiation, and limits. |
-| `celune/backend_worker_bootstrap.py` | Worker process bootstrap and isolated import setup. |
+| `celune/cedts/remote.py` | Core-side proxy around a worker process. |
+| `celune/cedts/worker.py` | Worker-side operation dispatch and lifecycle. |
+| `celune/cedts/protocol.py` | CEDTS serialization, framing, negotiation, and limits. |
+| `celune/cedts/bootstrap.py` | CEDTS worker process bootstrap and isolated import setup. |
 
 ## Character and Persona
 

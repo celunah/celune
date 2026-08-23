@@ -1,4 +1,4 @@
-# Packaging and release
+# Packaging
 
 This page describes how contributors build, package, update, and deploy
 Celune's compiled artifacts and documentation.
@@ -31,7 +31,12 @@ Typical output files are:
 The launcher sets the compiled environment, owns update handoff, and preserves
 process-loss behavior. Its terminal cleanup restores modes without scrolling
 the cursor through the console buffer, so returning to the shell does not leave
-a large blank region. `celune-bin` is not the user-facing command.
+a large blank region. If startup fails, the launcher preserves the visible
+console and prepares a safe diagnostic position so stale loading-screen
+characters cannot overprint the error. It advances to the next line only when
+the child left the cursor mid-line. `celune-bin` is not the user-facing
+command. Fatal Textual UI return codes are propagated to this launcher, so
+callback failures use the same preserved-output failure path as startup errors.
 
 ## Relocatable data
 
@@ -74,6 +79,6 @@ project's GitHub integration is enabled; the published URL is
 `https://celune.readthedocs.io/en/latest/`. The repository's
 `.github/workflows/docs.yml` workflow builds the same MkDocs site in GitHub
 Actions for documentation changes, but it does not replace the ReadTheDocs
-incoming webhook. The site loads the canonical palette from `celune/colors.py`
+incoming webhook. The site loads the canonical palette from `celune/theme/colors.py`
 into `docs/assets/stylesheets/celune.css` and uses Michroma for display text
 and Outfit for body text.

@@ -1,4 +1,4 @@
-# Backends and environments
+# Backends
 
 This page describes how Celune installs, isolates, launches, and extends its
 text-to-speech and voice-conversion backends.

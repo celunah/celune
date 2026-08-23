@@ -1,10 +1,13 @@
-# Textual UI
+# TUI
 
 The Textual UI is the primary interactive surface. It has a loading phase,
 status header, log panel, caption/progress area, input editor, voice/style
-button, optional VC controls, and rotating resource information. Heavy model
-imports are deferred until the loading screen is mounted so the first frame is
-responsive.
+button, optional VC controls, and rotating resource information. Celune
+registers its default dark/light palette and mounts the loading screen before
+importing or initializing the engine, Persona, agent, audio, backend, or model
+runtime, so the first frame is both themed and responsive. Pack-derived colors
+are applied later when the runtime is available. Those dependencies load in the
+post-frame worker and report failures on the loading overlay.
 
 ## Keyboard controls
 
@@ -35,7 +38,9 @@ If initialization fails, the loading overlay remains visible as an error report.
 Its state reads `Failed to start`, the initialization error remains in the
 diagnostic area, the spinner is removed, and the overlay says `Celune can't
 continue.` The lower-left status changes to `Celune could not start`; no further
-startup progress is pending.
+startup progress is pending. Fatal Textual callback failures also set a nonzero
+UI return code, which the entrypoint passes to the outer launcher so its failure
+diagnostics remain visible instead of returning to the shell over the traceback.
 
 ## Slash commands
 

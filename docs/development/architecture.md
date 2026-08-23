@@ -27,11 +27,19 @@ playback path through an audio-input request.
 
 ## Startup and lazy imports
 
-`celune.__init__` configures cache defaults and exposes lazy root symbols. The
-entrypoint mounts the loading UI before importing heavy model/UI dependencies.
-This keeps a blank/pre-loading phase responsive and prevents a model-library
-import from taking over the first visible frame. Runtime dependencies are
-loaded only when the selected path needs them.
+`celune.__init__` configures cache defaults and exposes lazy root symbols. A
+Celune binary registers the default Celune palette and mounts the loading screen
+before importing or initializing the engine, Persona, agent runtime, backend
+environments, audio backends, or model libraries. The first-frame path is
+limited to launcher state and lightweight Textual/loading/theme primitives; the
+existing post-frame worker loads the selected runtime and later applies
+pack-derived colors. This keeps startup responsive and lets `CTRL+C` use the UI
+shutdown path even while runtime loading fails.
+
+`Celune`, `CeluneUI`, and `CeluneHeadlessUI` are marked `@final` and reject
+runtime subclass creation. Integrations should use their callbacks, protocols,
+backend interfaces, and composition points rather than inheriting from these
+single-instance runtime classes.
 
 ## Speech pipeline
 
@@ -61,7 +69,7 @@ Core application dependencies and backend dependencies are separate. A
 `BackendManifest` declares the worker requirements, module/class entrypoint,
 Python version, indexes, and fingerprint. The environment manager creates a
 per-backend `venv`, records `manifest.json`, and launches the worker with the
-matching interpreter. See [Backends and environments](backends.md).
+matching interpreter. See [Backends](backends.md).
 
 The worker's stdout/stderr is not the control channel. CEDTS control frames,
 binary payloads, progress, cancellation, and fatal state are typed and length

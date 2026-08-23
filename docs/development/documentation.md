@@ -1,4 +1,4 @@
-# Documentation standard
+# Documentation
 
 This page defines the format for Celune's technical documentation. It is for
 contributors adding or updating a page under `docs/`; `AGENTS.md` makes these

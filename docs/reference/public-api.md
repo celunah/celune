@@ -1,4 +1,4 @@
-# Public Python API
+# Python API
 
 The package root is intentionally small:
 
@@ -177,16 +177,16 @@ bytes. `write_cevoice()` writes the legacy-compatible layout;
 
 | Module | Public call families |
 | --- | --- |
-| `celune.audio_resampling` | `resample_audio()` for declared-rate conversion. |
-| `celune.audio` | `restart_audio_server()` for device/stream recovery. |
-| `celune.dsp` | `pitch_shift_audio()`, readiness/sleep/working/error signals, `is_silent_utterance()`, and `StreamingPedalboardReverb`. |
+| `celune.audio.resampling` | `resample_audio()` for declared-rate conversion. |
+| `celune.audio.server` | `restart_audio_server()` for device/stream recovery. |
+| `celune.audio.dsp` | `pitch_shift_audio()`, readiness/sleep/working/error signals, `is_silent_utterance()`, and `StreamingPedalboardReverb`. |
 | `celune.vc` | Pitch clamping, RMS/VAD helpers, frame calculations, and `LiveVoiceActivityDetector`. |
 | `celune.analysis` | Audio metrics, reference similarity, trait computation, radar plots, reports, and `analyze_voice_audio()`. |
 | `celune.paths` | App-data, runtime, Hugging Face cache, voice, backend-environment, config, output, and migration paths. |
 | `celune.extensions` | Extension base, context, manager, event dispatcher, and event decorator. |
 | `celune.api` | `configure_api_security()`, `resolve_api_host()`, `bind_celune()`, `run_api()`, `start_api()`, `audio_bytes()`, and `stream_headers()`. |
 | `celune.backends.environment` | `BackendManifest`, `BackendEnvironment`, and `BackendEnvironmentManager`. |
-| `celune.backends.worker_protocol` | CEDTS framing, typed values, handshake, and stream exceptions. |
+| `celune.cedts.protocol` | CEDTS framing, typed values, handshake, and stream exceptions. |
 
 Internal helpers, private backend implementations, UI widget methods, and
 dataclass fields not listed above are implementation details. Extend the
