@@ -29,7 +29,7 @@
   --md-default-fg-color: var(--celune-foreground);
   --md-default-fg-color--light: var(--celune-secondary);
   --md-default-fg-color--lighter: rgba(226, 206, 255, 0.62);
-  --md-default-fg-color--lightest: rgba(226, 206, 255, 0.34);
+  --md-default-fg-color--lightest: rgba(226, 206, 255, 0.1);
   --md-default-bg-color: var(--celune-background);
   --md-default-bg-color--light: var(--celune-surface);
   --md-code-fg-color: var(--celune-foreground);
@@ -166,7 +166,7 @@ h6,
 }
 
 [data-md-color-scheme="default"] .md-search {
-  --md-default-fg-color--lightest: var(--celune-foreground);
+  --md-default-fg-color--lightest: var(--celune-on-accent);
 }
 
 .md-main,
