@@ -28,7 +28,7 @@ class TestColor(CeluneTestCase):
         """
         colors.configure_theme()
         assert colors.THEME.primary == "#cebaff"
-        assert colors.THEME_LIGHT.background == "#ece8ff"
+        assert colors.THEME_LIGHT.background == "#deceff"
 
         colors.configure_theme("#101010", "#222222")
         assert colors.THEME.background == "#101010"

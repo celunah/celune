@@ -122,9 +122,11 @@ ensure_contrast = _ensure_contrast
 def _default_dark_palette() -> dict[str, str]:
     return {
         "primary": "#cebaff",
-        "secondary": "#a595cc",
+        "secondary": "#a595ce",
+        # NOTE: textual accent is not Celune's accent
+        # check the value of primary for the actual accent color
         "accent": "#7c7099",
-        "foreground": "#e2ceff",
+        "foreground": "#deceff",
         "background": "#1d1826",
         "surface": "#1d1826",
         "warning": "#f0e68c",
@@ -134,12 +136,12 @@ def _default_dark_palette() -> dict[str, str]:
 
 def _default_light_palette() -> dict[str, str]:
     return {
-        "primary": "#33293f",
-        "secondary": "#281732",
-        "accent": "#1e1126",
-        "foreground": "#473d53",
-        "background": "#ece8ff",
-        "surface": "#ece8ff",
+        "primary": "#3a304c",
+        "secondary": "#2c2439",
+        "accent": "#1d1826",
+        "foreground": "#574872",
+        "background": "#deceff",
+        "surface": "#deceff",
         "warning": "#6b5e00",
         "error": "#7a1f24",
     }
