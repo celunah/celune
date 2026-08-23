@@ -16,6 +16,7 @@ The project targets Windows and Linux, supports Python 3.12 and 3.13, and is des
 * Avoid unnecessary dependencies.
 * Do not add placeholder implementations.
 * Do not add TODO comments.
+* Prefer concise one-word module filenames for clear responsibilities. When related modules form a cohesive boundary, create or reuse a focused sub-package instead of accumulating long top-level filenames.
 * Do not silently disable features to make tests pass.
 * Preserve Celune's local-first, polished, anti-slop project identity.
 * Reuse existing architecture instead of creating parallel systems.
