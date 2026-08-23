@@ -8,6 +8,7 @@ before importing the heavy runtime, then dispatches to `celune.entrypoint`.
 | Command | Behavior |
 | --- | --- |
 | `celune` | Start Celune with the active configuration. |
+| packaged `celune --root <path>` | Start from a validated Celune root, bypassing automatic lookup. |
 | `celune start` / `celune run` | Start explicitly. |
 | `celune start --verbose` / `-v` | Start with verbose startup diagnostics. |
 | `celune start --debug` | Start with debug diagnostics. |
@@ -29,8 +30,10 @@ ambiguity.
 
 ## Environment overrides
 
-The launcher reads `CELUNE_LOG_LEVEL`, `CELUNE_BACKEND`, `CELUNE_HEADLESS`, and
-`CELUNE_LAUNCHER`. Persistent settings belong in `config.yaml`; environment
+The launcher reads `CELUNE_LOG_LEVEL`, `CELUNE_BACKEND`, `CELUNE_HEADLESS`,
+`CELUNE_LAUNCHER`, and `CELUNE_ROOT`. `CELUNE_ROOT` and the packaged launcher's
+`--root <path>` option select a validated installation when automatic lookup
+should be bypassed. Persistent settings belong in `config.yaml`; environment
 overrides are useful for one process, a service wrapper, or a packaged launcher.
 
 ## Doctor checks

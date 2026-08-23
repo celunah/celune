@@ -49,6 +49,11 @@ transitions repaint immediately; repeated updates within one level are
 throttled. The loading screen's terminal-title and early-shutdown helpers stay
 lightweight, so exiting before runtime initialization cannot enter an undefined
 or heavy runtime-import path.
+When the automatic lookup should be bypassed, the compiled launchers accept
+`CELUNE_ROOT=/path/to/celune`, `--root /path/to/celune`, or
+`--root=/path/to/celune`. The selected path must identify a valid Celune root;
+the launcher removes `--root` and its value before forwarding the remaining
+arguments to the runtime.
 
 The repository root is identified by a `.celune-root` marker containing a
 version, abbreviated commit, and date in the form `v5.0.0 (d870260),

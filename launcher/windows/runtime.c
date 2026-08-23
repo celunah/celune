@@ -720,6 +720,22 @@ static int set_runtime_target(
     return target_len >= 0 && (size_t)target_len < target_size;
 }
 
+static int resolve_forced_runtime_location(
+    const char *root,
+    char *target,
+    size_t target_size,
+    char *repo_root,
+    size_t repo_root_size
+) {
+    if (!find_repo_root(root, repo_root, repo_root_size) ||
+        !set_runtime_target(root, target, target_size) ||
+        !lookup_file_exists(target)) {
+        return 0;
+    }
+
+    return 1;
+}
+
 static int resolve_runtime_location(
     const char *base,
     char *target,
@@ -1030,6 +1046,7 @@ int launcher_run(int argc, char **argv) {
     char site_packages[1400];
     char setuptools_vendor[1600];
     char nuitka_pythonpath[5200];
+    char root_override[1024];
 
     char launcher_pid[32];
     snprintf(launcher_pid, sizeof(launcher_pid), "%lu", (unsigned long)GetCurrentProcessId());
@@ -1037,6 +1054,17 @@ int launcher_run(int argc, char **argv) {
     if (!SetEnvironmentVariableA("CELUNE_LAUNCHER", "1") ||
         !SetEnvironmentVariableA("CELUNE_LAUNCHER_PID", launcher_pid)) {
         printfe("Celune could not configure launcher environment variables.\n");
+        return 1;
+    }
+
+    int root_override_status = launcher_read_root_override(
+        &argc,
+        argv,
+        root_override,
+        sizeof(root_override)
+    );
+    if (root_override_status < 0) {
+        printfe("Celune received an invalid --root or CELUNE_ROOT override.\n");
         return 1;
     }
 
@@ -1051,13 +1079,24 @@ int launcher_run(int argc, char **argv) {
         return 1;
     }
 
-    if (!resolve_runtime_location(
-            base,
-            target,
-            sizeof(target),
-            repo_root,
-            sizeof(repo_root)
-        )) {
+    if (root_override_status > 0) {
+        if (!resolve_forced_runtime_location(
+                root_override,
+                target,
+                sizeof(target),
+                repo_root,
+                sizeof(repo_root)
+            )) {
+            printfe("Celune could not use the requested root: %s\n", root_override);
+            return 1;
+        }
+    } else if (!resolve_runtime_location(
+                   base,
+                   target,
+                   sizeof(target),
+                   repo_root,
+                   sizeof(repo_root)
+               )) {
         report_lookup_failure();
         return 1;
     }
