@@ -38,9 +38,24 @@ leave at the start of an earlier traceback row, so stale loading-screen
 characters cannot overprint the error. `celune-bin` is not the user-facing
 command. When the runtime is moved, the Windows and Linux launchers search
 nearby user/system roots and fixed filesystem roots for a validated runtime for
-up to five seconds before reporting that Celune cannot be found. Fatal Textual
-UI return codes are propagated to this launcher, so callback failures use the
-same preserved-output failure path as startup errors.
+up to sixty seconds or five hundred thousand folders before reporting that
+Celune cannot be found. Each directory enumeration has its own five-second
+budget. Before traversal, the launcher checks the directory from which it was
+invoked and uses a valid local runtime immediately when one is present. Fatal
+Textual UI return codes are propagated to this launcher, so callback failures
+use the same preserved-output failure path as startup errors. Search traversal
+is breadth-first, so progress levels are processed in ascending order. Level
+transitions repaint immediately; repeated updates within one level are
+throttled.
+
+The repository root is identified by a `.celune-root` marker containing a
+version, abbreviated commit, and date in the form `v5.0.0 (d870260),
+23/08/2026`. The native search ignores unreadable entries and all symbolic-link
+or reparse-point entries; a marker stops traversal only when its expected
+`celune-bin` runtime is also present. Configure the tracked post-commit hook once with
+`git config core.hooksPath .githooks`; on Linux, make the hook executable with
+`chmod +x .githooks/post-commit`. Builds also run `python scripts/root.py` as a
+fallback when the hook is not installed.
 
 ## Relocatable data
 

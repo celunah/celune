@@ -80,6 +80,8 @@ if [[ "$repo_root" == /mnt/* ]]; then
 fi
 mkdir -p "$UV_CACHE_DIR"
 
+uv run python "$repo_root/scripts/root.py"
+
 mkdir -p "$output_dir"
 rm -rf \
     "$archive_path" \

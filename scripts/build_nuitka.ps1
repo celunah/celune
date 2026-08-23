@@ -52,6 +52,11 @@ if (-not (Test-Path $manifestScript)) {
 
 $env:UV_CACHE_DIR = Join-Path $repoRoot ".uv-cache"
 
+& uv run python (Join-Path $repoRoot "scripts\root.py")
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to update .celune-root."
+}
+
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
 $staleBuildArtifacts = @(
