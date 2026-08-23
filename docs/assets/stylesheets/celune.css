@@ -1,8 +1,8 @@
 @import url("https://fonts.googleapis.com/css2?family=Michroma&family=Outfit:wght@100..900&display=swap");
 
 /*
- * These values mirror celune/colors.py::_default_dark_palette and
- * celune/colors.py::_default_light_palette. Keep this file synchronized with
+ * These values mirror celune/theme/colors.py::_default_dark_palette and
+ * celune/theme/colors.py::_default_light_palette. Keep this file synchronized with
  * those palettes when the application theme changes.
  */
 :root,
@@ -18,6 +18,7 @@
   --celune-error: #f07178;
   --celune-link: #deceff;
   --celune-on-accent: var(--celune-background);
+  --celune-header-placeholder: rgba(29, 24, 38, 0.7);
 
   --md-primary-fg-color: var(--celune-background);
   --md-primary-fg-color--light: var(--celune-secondary);
@@ -68,6 +69,7 @@
   --celune-error: #7a1f24;
   --celune-link: var(--celune-primary);
   --celune-on-accent: var(--celune-background);
+  --celune-header-placeholder: rgba(236, 232, 255, 0.7);
 
   --md-primary-fg-color: var(--celune-accent);
   --md-primary-fg-color--light: var(--celune-secondary);
@@ -156,7 +158,7 @@ h6,
 }
 
 .md-header .md-search__input::placeholder {
-  color: rgba(29, 24, 38, 0.7);
+  color: var(--celune-header-placeholder);
 }
 
 .md-main,
@@ -179,7 +181,7 @@ h6,
 .md-tabs__link--active,
 .md-toc__link:is(:focus, :hover),
 .md-toc__link--active {
-  color: var(--celune-link);
+  color: var(--celune-link) !important;
 }
 
 .md-typeset a,
@@ -187,13 +189,13 @@ h6,
 .md-nav__link--active,
 .md-tabs__link--active,
 .md-tabs__link:is(:focus, :hover) {
-  color: var(--celune-link);
+  color: var(--celune-link) !important;
 }
 
 .md-typeset a:hover,
 .md-nav__link:is(:focus, :hover),
 .md-tabs__link:is(:focus, :hover) {
-  color: var(--celune-link);
+  color: var(--celune-link) !important;
 }
 
 .md-typeset code,
@@ -265,7 +267,11 @@ details {
 @media screen and (max-width: 600px) {
   .md-header__topic,
   .md-header__title {
-    font-size: 0.68rem;
+    font-size: 0.62rem;
+  }
+
+  .md-nav__title {
+    font-size: 0.72rem;
   }
 
   .md-nav__link--active,
