@@ -2,7 +2,6 @@
 """Celune backend initialization manager."""
 
 from typing import Union, Optional
-from importlib import import_module
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
 
@@ -54,7 +53,6 @@ def resolve_backend(
     backend_name: Union[str, type[CeluneBackend], CeluneBackend],
     log: Optional[Callable[[str, str], None]] = None,
     fatal: Optional[Callable[[], None]] = None,
-    isolated: bool = False,
     **backend_kwargs,
 ) -> CeluneBackend:
     """Resolve a backend specification into a backend instance.
@@ -63,7 +61,6 @@ def resolve_backend(
         backend_name: A backend name, backend class, or backend instance.
         log: Optional log callback to expose during backend construction.
         fatal: Optional fatal callback to expose during backend construction.
-        isolated: Whether to construct a worker-backed backend in its private environment.
         backend_kwargs: Backend-specific constructor options.
 
     Returns:
@@ -85,29 +82,31 @@ def resolve_backend(
     if isinstance(backend_name, str):
         key = backend_name.strip().lower()
 
-        try:
-            module_name, class_name = BACKENDS[key]
-        except KeyError as e:
+        if key not in BACKENDS:
             raise ValueError(
                 string(
                     "celune.unknown_backend",
                     backend=backend_name,
                     available=", ".join(BACKENDS.keys()),
                 )
-            ) from e
-
-        if isolated and key in BACKEND_MANIFESTS:
-            from ...cedts.remote import RemoteBackendProxy
-
-            return RemoteBackendProxy(
-                BACKEND_MANIFESTS[key],
-                log=log,
-                fatal=fatal,
-                **backend_kwargs,
             )
 
-        module = import_module(module_name)
-        backend_cls = getattr(module, class_name)
-        return backend_cls(log=log, fatal=fatal, **backend_kwargs)
+        if key not in BACKEND_MANIFESTS:
+            raise ValueError(
+                string(
+                    "celune.unknown_backend",
+                    backend=backend_name,
+                    available=", ".join(BACKENDS.keys()),
+                )
+            )
+
+        from ...cedts.remote import RemoteBackendProxy
+
+        return RemoteBackendProxy(
+            BACKEND_MANIFESTS[key],
+            log=log,
+            fatal=fatal,
+            **backend_kwargs,
+        )
 
     raise TypeError(string("celune.invalid_backend_type"))

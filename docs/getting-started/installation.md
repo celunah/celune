@@ -114,7 +114,7 @@ These variables are useful for diagnostics and deployment:
 | `CELUNE_LAUNCHER` | Marks a launch as owned by the Celune launcher. |
 | `CELUNE_OVERRIDE_CELINE_DAY` | Bypasses the name-day startup pause used by the app. |
 | `CELUNE_THEME` | Overrides the selected UI theme. |
-| `CELUNE_LOCAL_MANAGEMENT` | Enables the agent's unsandboxed local-management tools; keep disabled unless explicitly needed. |
+| `CELUNE_AGENT_FS_TOOLS` | Overrides `agent.fs_tools` for the agent's unsandboxed filesystem and process tools. |
 
 Environment flags are parsed as booleans by the runtime. Configuration-file
 values remain the normal way to set persistent behavior.

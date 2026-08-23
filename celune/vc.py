@@ -6,15 +6,12 @@ import threading
 import contextlib
 import queue as queue_module
 from typing import Optional, cast
-from collections.abc import Mapping
 
 import torch
 import numpy as np
 from scipy import signal
 
-from .config import config_bool
 from .typing.aliases import AudioChunk
-from .typing.common import JSONSerializable
 from .typing.backends import _StreamingSpeechModel
 
 VC_PITCH_SHIFT_MIN = -3
@@ -381,25 +378,13 @@ class LiveVoiceActivityDetector:
             return self._speech_active
 
 
-def create_live_voice_activity_detector(
-    config: Optional[Mapping[str, JSONSerializable]],
-) -> Optional[LiveVoiceActivityDetector]:
-    """Return the optional AI VAD used by live VC capture.
-
-    Args:
-        config: Optional Celune configuration mapping.
+def create_live_voice_activity_detector() -> Optional[LiveVoiceActivityDetector]:
+    """Return the AI VAD used by live capture when its optional backend is available.
 
     Returns:
-        Optional[LiveVoiceActivityDetector]: The live VC detector when enabled and available.
+        Optional[LiveVoiceActivityDetector]: The live detector, or ``None`` when
+            Silero VAD is unavailable and the caller must use its RMS fallback.
     """
-    if not config_bool(
-        config,
-        "CELUNE_VC_LIVE_AI_VAD",
-        "voice_conversion_live_ai_vad",
-        True,
-    ):
-        return None
-
     try:
         silero_vad = importlib.import_module("silero_vad")
     except ImportError:

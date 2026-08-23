@@ -2,7 +2,6 @@
 """Celune voice-conversion backend initialization manager."""
 
 from typing import Union, Optional
-from importlib import import_module
 from collections.abc import Callable
 
 from .base import CeluneVCBackend
@@ -32,14 +31,12 @@ def _default_log(_msg: str, _severity: str = "info") -> None:
 def resolve_vc_backend(
     backend_name: Union[str, type[CeluneVCBackend], CeluneVCBackend],
     log: Optional[Callable[[str, str], None]] = None,
-    isolated: bool = False,
 ) -> CeluneVCBackend:
     """Resolve a voice-conversion backend specification into an instance.
 
     Args:
         backend_name: A backend name, backend class, or backend instance.
         log: Optional log callback to expose during backend construction.
-        isolated: Whether to construct a worker-backed backend in its private environment.
 
     Returns:
         CeluneVCBackend: The resolved voice-conversion backend instance.
@@ -59,22 +56,18 @@ def resolve_vc_backend(
     if isinstance(backend_name, str):
         key = backend_name.strip().lower()
 
-        try:
-            module_name, class_name = VC_BACKENDS[key]
-        except KeyError as e:
+        if key not in VC_BACKENDS:
             raise ValueError(
                 "unknown voice-conversion backend: "
                 f"'{backend_name}' (available: {', '.join(VC_BACKENDS.keys())})"
-            ) from e
+            )
 
-        if isolated and key in BACKEND_MANIFESTS:
-            from ...cedts.remote import RemoteVCBackendProxy
+        if key not in BACKEND_MANIFESTS:
+            raise ValueError(f"unknown voice-conversion backend: '{backend_name}'")
 
-            return RemoteVCBackendProxy(BACKEND_MANIFESTS[key], log=log)
+        from ...cedts.remote import RemoteVCBackendProxy
 
-        module = import_module(module_name)
-        backend_cls = getattr(module, class_name)
-        return backend_cls(log=log)
+        return RemoteVCBackendProxy(BACKEND_MANIFESTS[key], log=log)
 
     raise TypeError(
         "'backend_name' must be a voice-conversion backend instance, "

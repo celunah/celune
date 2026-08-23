@@ -244,6 +244,7 @@ class AgentRuntime:
         token_counter: Optional[AgentTokenCounter] = None,
         tool_schemas: Optional[Mapping[str, AgentToolSchema]] = None,
         permission_policy: Optional[AgentPermissionPolicy] = None,
+        task_config: Optional[AgentTaskConfig] = None,
     ) -> None:
         """Create a lifecycle owner around local tools and an existing event bus."""
         self.tools = tuple(tools)
@@ -260,6 +261,7 @@ class AgentRuntime:
         self._token_counter = token_counter or _default_token_counter
         self._tool_schemas = self._index_tool_schemas(tool_schemas)
         self._permission_policy = permission_policy or DefaultAgentPermissionPolicy()
+        self._task_config = task_config or AgentTaskConfig()
         self._tasks: dict[str, AgentTask] = {}
         self._contexts: dict[str, AgentContext] = {}
         self._sessions: dict[str, AgentSession] = {}
@@ -351,7 +353,7 @@ class AgentRuntime:
             task_id=resolved_task_id,
             session_id=session_id,
             request=request,
-            config=config if config is not None else AgentTaskConfig(),
+            config=config if config is not None else self._task_config,
         )
         self._tasks[task.task_id] = task
         self._contexts[task.task_id] = self.create_context(request, task)
@@ -877,13 +879,13 @@ class AgentRuntime:
                 pending_call = self._pending_tool_calls.pop(task.task_id, None)
                 call = pending_call
                 if call is None:
-                    if task.iterations >= task.config.max_iterations:
+                    if task.iterations >= task.config.max_loops:
                         self._log(
-                            f"[AGENT] max_iterations task={task.task_id} "
+                            f"[AGENT] max_loops task={task.task_id} "
                             f"iterations={task.iterations}",
                             loglevel="verbose",
                         )
-                        self.abort_task(task.task_id, AgentAbortReason.MAX_ITERATIONS)
+                        self.abort_task(task.task_id, AgentAbortReason.MAX_LOOPS)
                         return self._terminal_output(task, callback)
                     self._log(
                         f"[AGENT] plan_start task={task.task_id} "

@@ -3451,7 +3451,7 @@ class TestAgentStatusUI(CeluneTestCase):
             state=state,
             iterations=2,
             needs_context_compaction=needs_compaction,
-            config=SimpleNamespace(max_iterations=5),
+            config=SimpleNamespace(max_loops=5),
         )
         agent_runtime = SimpleNamespace(
             get_active_task=mock.Mock(return_value=task),

@@ -36,7 +36,7 @@ conversation from consuming the Persona context window.
 
 Type directly in the UI and press `CTRL+ENTER`, call `Celune.think()` or
 `think_async()`, or post to `/v1/think`. In the Textual UI, `CTRL+R` toggles
-Persona speech capture when talkback is enabled. Whisper uses the configured
+Persona speech capture. Whisper uses the configured
 speech model, automatic language detection by default, a five-second no-input
 timeout, and a 1.5-second speech-end delay.
 

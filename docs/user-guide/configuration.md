@@ -12,7 +12,6 @@ file and `celune config edit` opens it in the system editor.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `backend` | `null` | TTS or VC backend name. `null` lets Celune choose its normal backend. |
-| `isolated_backends` | `true` | Install backend dependencies in per-backend environments and use CEDTS IPC. |
 | `voice_bundle` | `default` | CEVOICE/CECHAR name or path. |
 | `log_level` | `info` | `info`, `verbose`, or `debug`. |
 | `locale` | `null` | Locale override; `null` uses system detection. |
@@ -33,29 +32,10 @@ documented namespace instead of being duplicated at the top level.
 
 ## Speech buffering and playback
 
-```yaml
-smart_buffer:
-  enabled: true
-  realtime_speed: 1.05
-  protected_playback_seconds: 20.0
-  minimum_seconds: 0.35
-  min_speed_sample_seconds: 0.75
-  max_seconds: 20.0
-  complete_below_speed: 0.5
-
-pipeline_cpu:
-  enabled: true
-  max_queue_items: 8
-  max_buffer_seconds: 4.0
-  max_drain_items: 1
-  yield_seconds: 0.001
-```
-
 Smart buffering starts playback after a minimum amount of audio, adapts the
 playback speed while generation catches up, and protects already-buffered audio
-from aggressive changes. The CPU pipeline controls how much text/audio work
-can accumulate outside the model worker. Lower queue limits reduce memory
-pressure; higher limits may improve throughput for long text.
+from aggressive changes. Playback CPU protection is an engine-owned policy and
+is not user-configurable.
 
 Runtime speech controls are also exposed as `/speed`, `/reverb`, `/seed`, and
 Python properties on `Celune`. The command values are deliberately narrower
@@ -97,7 +77,9 @@ FastAPI/Gradio deployment.
 
 ```yaml
 persona:
-  enabled: true
+  context_size: 8192
+  compact_at: 75
+  max_turns: null
   debug_overrides: false
   model_id: Qwen/Qwen3-VL-4B-Instruct
   speech_model_id: openai/whisper-large-v3-turbo
@@ -115,8 +97,28 @@ persona:
     semantic_similarity_threshold: 0.62
     fallback_token_overlap_threshold: 1
     semantic_embedding_model: sentence-transformers/all-MiniLM-L6-v2
-  talkback: true
 ```
+
+Persona is available in `converse` and `agent` modes; it is not enabled or
+disabled through a Persona-local switch. `context_size` bounds each ordinary
+Persona request, `compact_at` documents the context percentage at which
+history should be compacted, and `max_turns: null` leaves the turn count
+unbounded unless the memory settings impose a shorter history.
+
+## Agent settings
+
+```yaml
+agent:
+  fs_tools: true
+  max_loops: 20
+  max_tokens: null
+  context_size: 32768
+  compact_at: 75
+```
+
+`fs_tools` enables the local filesystem and process tool catalog. Agent task
+limits are applied when Celune creates a task; `null` for `max_tokens` means
+that generation is bounded only by the model and context limits.
 
 Persona is independent of TTS backend selection. The model registry in
 `celune.constants` pins allowed remote-code revisions; changing a model ID does
@@ -126,16 +128,10 @@ the classifier is optional and confidence-gated.
 
 ## Voice conversion
 
-```yaml
-voice_conversion_pitch_shift: 0
-voice_conversion_f0_condition: false
-voice_conversion_live_ai_vad: true
-```
-
-Pitch is in semitones from -12 to +12 in the UI. F0 conditioning selects the
-singing/intonation-preserving Seed-VC path and changes output-rate behavior.
-AI VAD requires the optional `live-vc-ai` extra; the built-in energy/VAD path
-remains available without it.
+Voice-conversion pitch shift and F0 conditioning are runtime controls rather
+than YAML settings. Live capture always performs voice-activity detection. The
+optional `live-vc-ai` extra supplies Silero VAD; when it is unavailable, Celune
+uses its built-in energy detector instead.
 
 ## Configuration precedence
 

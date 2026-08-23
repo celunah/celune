@@ -18,11 +18,7 @@ from typing import (
 from .modes import OperationMode
 from .locks import ComponentBusyResult
 from .common import JSON, JSONSerializable
-from ..constants import (
-    AGENT_CONTEXT_SPACE,
-    AGENT_MAX_ITERATIONS,
-    AGENT_CONTEXT_COMPACTION_THRESHOLD,
-)
+from ..constants import AGENT_COMPACT_AT, AGENT_CONTEXT_SPACE, AGENT_MAX_LOOPS
 
 if TYPE_CHECKING:
     from ..persona.capabilities import PersonaCapabilities
@@ -136,8 +132,8 @@ class AgentInterruptionKind(str, Enum):
 class AgentAbortReason(str, Enum):
     """Reasons a task stops without being successfully completed."""
 
-    MAX_ITERATIONS = "max_iterations"
-    MAX_GENERATED_TOKENS = "max_generated_tokens"
+    MAX_LOOPS = "max_loops"
+    MAX_TOKENS = "max_tokens"
     CONTEXT_LIMIT = "context_limit"
     STUCK_TASK = "stuck_task"
 
@@ -582,40 +578,48 @@ class AgentPermissionEvaluation:
 class AgentTaskConfig:
     """Limits and thresholds applied to one future agent task."""
 
-    max_iterations: int = AGENT_MAX_ITERATIONS
-    max_generated_tokens: Optional[int] = None
-    context_compaction_threshold: int = AGENT_CONTEXT_COMPACTION_THRESHOLD
+    max_loops: int = AGENT_MAX_LOOPS
+    max_tokens: Optional[int] = None
+    context_size: int = AGENT_CONTEXT_SPACE
+    compact_at: int = AGENT_COMPACT_AT
     stuck_task_threshold: int = 3
-    context_space: int = AGENT_CONTEXT_SPACE
 
     def __post_init__(self) -> None:
         """Validate positive task limits and detection thresholds."""
         for name, value in (
-            ("max_iterations", self.max_iterations),
-            ("context_compaction_threshold", self.context_compaction_threshold),
+            ("max_loops", self.max_loops),
+            ("context_size", self.context_size),
             ("stuck_task_threshold", self.stuck_task_threshold),
-            ("context_space", self.context_space),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"agent {name} must be a positive integer")
-        if self.max_generated_tokens is not None and (
-            isinstance(self.max_generated_tokens, bool)
-            or not isinstance(self.max_generated_tokens, int)
-            or self.max_generated_tokens <= 0
+        if (
+            isinstance(self.compact_at, bool)
+            or not isinstance(self.compact_at, int)
+            or not 1 <= self.compact_at <= 100
         ):
-            raise ValueError(
-                "agent max_generated_tokens must be a positive integer or None"
-            )
+            raise ValueError("agent compact_at must be an integer from 1 through 100")
+        if self.max_tokens is not None and (
+            isinstance(self.max_tokens, bool)
+            or not isinstance(self.max_tokens, int)
+            or self.max_tokens <= 0
+        ):
+            raise ValueError("agent max_tokens must be a positive integer or None")
 
     def to_json(self) -> JSON:
         """Serialize task limits into JSON-compatible data."""
         return {
-            "max_iterations": self.max_iterations,
-            "max_generated_tokens": self.max_generated_tokens,
-            "context_compaction_threshold": self.context_compaction_threshold,
+            "max_loops": self.max_loops,
+            "max_tokens": self.max_tokens,
+            "context_size": self.context_size,
+            "compact_at": self.compact_at,
             "stuck_task_threshold": self.stuck_task_threshold,
-            "context_space": self.context_space,
         }
+
+    @property
+    def context_compaction_threshold(self) -> int:
+        """Return the token threshold represented by ``compact_at``."""
+        return max(1, self.context_size * self.compact_at // 100)
 
 
 @dataclass(frozen=True)
@@ -1021,15 +1025,13 @@ class AgentTask:
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"agent {name} must be a non-negative integer")
-        if self.iterations > self.config.max_iterations:
-            raise ValueError("agent iterations cannot exceed max_iterations")
+        if self.iterations > self.config.max_loops:
+            raise ValueError("agent iterations cannot exceed max_loops")
         if (
-            self.config.max_generated_tokens is not None
-            and self.generated_tokens > self.config.max_generated_tokens
+            self.config.max_tokens is not None
+            and self.generated_tokens > self.config.max_tokens
         ):
-            raise ValueError(
-                "agent generated_tokens cannot exceed max_generated_tokens"
-            )
+            raise ValueError("agent generated_tokens cannot exceed max_tokens")
         if self.stalled_iterations > self.config.stuck_task_threshold:
             raise ValueError("agent stalled_iterations exceeds stuck_task_threshold")
         if self.state == AgentTaskState.CANCELLED and self.cancellation_reason is None:
@@ -1087,8 +1089,8 @@ class AgentTask:
         """Consume one planning iteration, aborting when the limit is reached."""
         if self.is_terminal:
             raise ValueError("cannot consume an iteration for a terminal agent task")
-        if self.iterations >= self.config.max_iterations:
-            self.abort(AgentAbortReason.MAX_ITERATIONS)
+        if self.iterations >= self.config.max_loops:
+            self.abort(AgentAbortReason.MAX_LOOPS)
             return False
         self.iterations += 1
         return True
@@ -1100,10 +1102,10 @@ class AgentTask:
         if self.is_terminal:
             raise ValueError("cannot add tokens to a terminal agent task")
         if (
-            self.config.max_generated_tokens is not None
-            and self.generated_tokens + count > self.config.max_generated_tokens
+            self.config.max_tokens is not None
+            and self.generated_tokens + count > self.config.max_tokens
         ):
-            self.abort(AgentAbortReason.MAX_GENERATED_TOKENS)
+            self.abort(AgentAbortReason.MAX_TOKENS)
             return False
         self.generated_tokens += count
         return True

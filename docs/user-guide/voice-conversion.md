@@ -39,15 +39,15 @@ an `AudioOutput` value back.
 
 The REST API exposes the same operation at `POST /v1/convert` as a multipart
 upload. Optional `pitch_shift` and `f0_condition` form fields override the
-configured defaults for that request.
+runtime defaults for that request.
 
 ## Live microphone conversion
 
 Press `CTRL+R` in VC mode to start or stop microphone capture. The capture path
-uses preroll, hangover, RMS checks, and a bounded submission queue so the first
-phonemes are not cut off and stale audio cannot grow without limit. With the
-optional `live-vc-ai` extra, Silero VAD can replace or complement the energy
-gate.
+uses preroll, hangover, voice-activity checks, and a bounded submission queue
+so the first phonemes are not cut off and stale audio cannot grow without
+limit. With the optional `live-vc-ai` extra, Celune uses Silero VAD; otherwise
+it uses the built-in energy detector. VAD is always active during live capture.
 
 Use `/vcmode talk` for ordinary speech and `/vcmode sing` for F0-conditioned
 singing. Use `/vcpitch <semitones>` or `/vcpitch clear` to adjust pitch. The UI

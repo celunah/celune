@@ -267,7 +267,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
             mock.patch("celune.celune.persona_is_available", return_value=False),
         ):
             core = Celune(
-                config={"mode": "agent", "agent_local_management": True},
+                config={"mode": "agent", "agent": {"fs_tools": True}},
                 tts_backend=FakeBackend,
                 log_callback=capture_log,
             )

@@ -79,7 +79,6 @@ from .constants import (
     APP_NAME,
     APP_SLUG,
     AGENT_CONTEXT_SPACE,
-    PERSONA_CONTEXT_SPACE,
     PERSONA_MEMORY_EMBEDDING_MODEL,
     PipelineStates,
 )
@@ -116,6 +115,7 @@ from .audio.dsp import (
 )
 from .persona.impl import (
     persona_config,
+    persona_context_size,
     persona_model_id,
     pack_persona_text,
     pack_identity_text,
@@ -1443,86 +1443,28 @@ def _safe_config_int(
 def _smart_buffer_config(
     engine: Celune,
 ) -> tuple[bool, float, float, float, float, float, float]:
-    """Resolve the adaptive speech buffer settings for the current engine."""
-    value = engine.config.get("smart_buffer", {})
-    config = value if isinstance(value, dict) else {}
-    enabled = bool(config.get("enabled", True))
-    realtime_speed = max(
-        0.1,
-        _config_float(config, "realtime_speed", _SMART_BUFFER_REALTIME_SPEED),
-    )
-    protected_playback_seconds = max(
-        0.0,
-        _config_float(
-            config,
-            "protected_playback_seconds",
-            _SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS,
-        ),
-    )
-    minimum_seconds = max(
-        0.0,
-        _config_float(config, "minimum_seconds", _SMART_BUFFER_MIN_SECONDS),
-    )
-    min_speed_sample_seconds = max(
-        0.0,
-        _config_float(
-            config,
-            "min_speed_sample_seconds",
-            _SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS,
-        ),
-    )
-    max_seconds = max(
-        0.0,
-        _config_float(config, "max_seconds", _SMART_BUFFER_MAX_SECONDS),
-    )
-    complete_below_speed = max(
-        0.0,
-        _config_float(
-            config,
-            "complete_below_speed",
-            _SMART_BUFFER_COMPLETE_BELOW_SPEED,
-        ),
-    )
+    """Return Celune's fixed adaptive speech-buffer settings."""
+    del engine
     return (
-        enabled,
-        realtime_speed,
-        protected_playback_seconds,
-        minimum_seconds,
-        min_speed_sample_seconds,
-        max_seconds,
-        complete_below_speed,
+        True,
+        _SMART_BUFFER_REALTIME_SPEED,
+        _SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS,
+        _SMART_BUFFER_MIN_SECONDS,
+        _SMART_BUFFER_MIN_SPEED_SAMPLE_SECONDS,
+        _SMART_BUFFER_MAX_SECONDS,
+        _SMART_BUFFER_COMPLETE_BELOW_SPEED,
     )
 
 
 def _pipeline_cpu_config(engine: Celune) -> tuple[bool, float, int, float]:
-    """Resolve cooperative CPU-pressure controls for the playback pipeline."""
-    value = engine.config.get("pipeline_cpu", {})
-    config = value if isinstance(value, dict) else {}
-    enabled = config.get("enabled", True)
-    if isinstance(enabled, bool) and not enabled:
-        return False, float("inf"), 128, 0.0
-
-    max_buffer_seconds = max(
-        0.25,
-        _config_float(
-            config,
-            "max_buffer_seconds",
-            _PIPELINE_CPU_MAX_BUFFER_SECONDS,
-        ),
+    """Return Celune's fixed cooperative CPU-pressure controls."""
+    del engine
+    return (
+        True,
+        _PIPELINE_CPU_MAX_BUFFER_SECONDS,
+        _PIPELINE_CPU_MAX_DRAIN_ITEMS,
+        _PIPELINE_CPU_YIELD_SECONDS,
     )
-    max_drain_items = max(
-        1,
-        _safe_config_int(
-            config,
-            "max_drain_items",
-            _PIPELINE_CPU_MAX_DRAIN_ITEMS,
-        ),
-    )
-    yield_seconds = max(
-        0.0,
-        _config_float(config, "yield_seconds", _PIPELINE_CPU_YIELD_SECONDS),
-    )
-    return True, max_buffer_seconds, max_drain_items, yield_seconds
 
 
 def _smart_buffer_speed_estimate(
@@ -2161,10 +2103,10 @@ def build_persona_request(
     )
     system_prompt = PersonaPromptBuilder.build(context)
     clean_request = request.strip()
-    context_space = PERSONA_CONTEXT_SPACE
+    context_size = persona_context_size(engine.config)
     if agent_context is not None:
-        context_space = (
-            agent_context.task.config.context_space
+        context_size = (
+            agent_context.task.config.context_size
             if agent_context.task is not None
             else AGENT_CONTEXT_SPACE
         )
@@ -2180,12 +2122,23 @@ def build_persona_request(
         "system": system_prompt,
         "user": clean_request,
         "request": clean_request,
-        "context_space": context_space,
+        "context_space": context_size,
         "messages": cast(
             JSONSerializable,
             build_persona_messages(engine, clean_request, context=context),
         ),
     }
+
+
+def _configured_agent_context_size(engine: Celune) -> int:
+    """Return the configured agent context size for pre-task classification."""
+    raw = engine.config.get("agent")
+    if not isinstance(raw, dict):
+        return AGENT_CONTEXT_SPACE
+    value = raw.get("context_size")
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return AGENT_CONTEXT_SPACE
 
 
 def build_agent_classification_request(
@@ -2225,7 +2178,7 @@ def build_agent_classification_request(
         "system": system_prompt,
         "user": clean_request,
         "request": clean_request,
-        "context_space": AGENT_CONTEXT_SPACE,
+        "context_space": _configured_agent_context_size(engine),
         "routing_context": routing_context,
         "messages": cast(JSONSerializable, messages),
         "max_new_tokens": 160,

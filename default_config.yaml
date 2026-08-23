@@ -9,9 +9,6 @@
 # seed-vc = VC backend, converts speech rather than generating it
 backend: null
 
-# install each selected TTS backend into its own user-local environment
-isolated_backends: true
-
 # GPT-SoVITS settings
 #
 # Celune downloads the official GPT-SoVITS source into its user-data directory
@@ -49,18 +46,6 @@ log_level: info
 # set a language code like en, en-US, or pl to force a specific locale
 locale: null
 
-# voice conversion default settings
-#
-# positive values raise the converted voice, negative values lower it
-# useful for helping cross-gender conversions land more naturally
-voice_conversion_pitch_shift: 0
-# false = talk mode, true = sing mode
-voice_conversion_f0_condition: false
-# optional AI helpers for live voice conversion input
-#
-# silero-vad detects real speech more reliably than plain RMS gating
-voice_conversion_live_ai_vad: true
-
 # audio device settings
 #
 # set either key to a sounddevice device name or numeric index
@@ -96,31 +81,6 @@ theme: dark
 # it may however lose a letter occasionally or mix up short sequences
 use_normalizer: false
 
-# smart speech buffering
-#
-# Celune can adapt its pre-playback buffer to recent and live generation speed
-# so slower generations build more headroom while fast realtime generations
-# start speaking immediately
-smart_buffer:
-  enabled: true
-  realtime_speed: 1.05
-  protected_playback_seconds: 20.0
-  minimum_seconds: 0.35
-  min_speed_sample_seconds: 0.75
-  max_seconds: 20.0
-  complete_below_speed: 0.5
-
-# playback CPU protection
-#
-# Keep fast generation from building an unbounded audio backlog. When the
-# queue or playback-ahead limit is reached, generation waits for playback.
-pipeline_cpu:
-  enabled: true
-  max_queue_items: 8
-  max_buffer_seconds: 4.0
-  max_drain_items: 1
-  yield_seconds: 0.001
-
 # IPA auto-conversion
 # Celune can auto-convert IPA strings into English-like approximations
 # if you want to try speaking the IPA raw, disable this feature
@@ -134,6 +94,14 @@ ipa: false
 # converse - Persona conversation without agent features
 # agent    - reserved for future agent features; currently redirected to converse
 mode: converse
+
+# Agent settings
+agent:
+  fs_tools: true
+  max_loops: 20
+  max_tokens: null
+  context_size: 32768
+  compact_at: 75
 
 # VRAM target settings
 # we recommend choosing medium as a safe baseline for low VRAM users
@@ -183,8 +151,9 @@ api:
 # keep a conversational context and remember you as you speak with said characters
 # it uses Qwen/Qwen3-VL-4B-Instruct to ensure it can run on consumer hardware
 persona:
-  # enabled?
-  enabled: true
+  context_size: 8192
+  compact_at: 75
+  max_turns: null
   # load same-named Persona Markdown files from the Celune app-data character directory
   debug_overrides: false
   # which Qwen model to use? (in case you want to use an FT or uncensored version)
@@ -216,5 +185,3 @@ persona:
     fallback_token_overlap_threshold: 1
     # transformer model used for semantic long-term memory retrieval when available locally
     semantic_embedding_model: sentence-transformers/all-MiniLM-L6-v2
-  # use persona or speak directly?
-  talkback: true

@@ -46,9 +46,8 @@ accepts a request asynchronously and returns `202` when the turn is accepted.
 Agent mode extends Persona with a typed, allowlisted tool catalog. A task can
 plan, call read-only tools, pause for approval, execute an approved mutating
 tool, and answer through the speech pipeline. The production limits are 20
-iterations, a 32,768-token agent context space, and compaction around 24,576
-tokens. See [Agent mode](agent.md) for every built-in tool family and its
-permissions.
+loops, a 32,768-token agent context size, and compaction at 75 percent. See
+[Agent mode](agent.md) for every built-in tool family and its permissions.
 
 ## Voice-conversion input
 

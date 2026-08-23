@@ -79,9 +79,10 @@ class TestAgentContracts:
     def test_configuration_and_tool_schema_validate_and_serialize(self) -> None:
         """Validate task limits and complete typed tool schemas."""
         config = AgentTaskConfig(
-            max_iterations=4,
-            max_generated_tokens=128,
-            context_compaction_threshold=256,
+            max_loops=4,
+            max_tokens=128,
+            context_size=256,
+            compact_at=100,
             stuck_task_threshold=2,
         )
         schema = AgentToolSchema(
@@ -104,23 +105,24 @@ class TestAgentContracts:
             available=True,
         )
 
-        assert config.to_json()["max_iterations"] == 4
+        assert config.to_json()["max_loops"] == 4
         assert schema.arguments[0].to_json()["type"] == "string"
         json.dumps(schema.to_json())
 
         default_config = AgentTaskConfig()
-        assert default_config.max_iterations == 20
-        assert default_config.max_generated_tokens is None
-        assert default_config.context_space == 32768
+        assert default_config.max_loops == 20
+        assert default_config.max_tokens is None
+        assert default_config.context_size == 32768
+        assert default_config.compact_at == 75
         assert default_config.context_compaction_threshold == 24576
-        assert default_config.to_json()["max_generated_tokens"] is None
+        assert default_config.to_json()["max_tokens"] is None
 
         with pytest.raises(ValueError):
-            AgentTaskConfig(max_iterations=0)
+            AgentTaskConfig(max_loops=0)
         with pytest.raises(ValueError):
-            AgentTaskConfig(max_generated_tokens=True)
+            AgentTaskConfig(max_tokens=True)
         with pytest.raises(ValueError):
-            AgentTaskConfig(max_generated_tokens=0)
+            AgentTaskConfig(max_tokens=0)
         with pytest.raises(ValueError):
             AgentTask(
                 task_id="task-1",
@@ -182,10 +184,10 @@ class TestAgentContracts:
         assert execution_result["status"] == AgentToolExecutionStatus.SUCCEEDED
         terminal = AgentTerminalOutcome(
             state=AgentTaskState.ABORTED,
-            abort_reason=AgentAbortReason.MAX_ITERATIONS,
+            abort_reason=AgentAbortReason.MAX_LOOPS,
             metadata={"iterations": 20},
         )
-        assert terminal.to_json()["abort_reason"] == "max_iterations"
+        assert terminal.to_json()["abort_reason"] == "max_loops"
         json.dumps(terminal.to_json())
 
         with pytest.raises(ValueError):
@@ -258,9 +260,10 @@ class TestAgentContracts:
         """Abort tasks when iteration, token, or stuck thresholds are reached."""
         task = _task(
             AgentTaskConfig(
-                max_iterations=2,
-                max_generated_tokens=3,
-                context_compaction_threshold=5,
+                max_loops=2,
+                max_tokens=3,
+                context_size=5,
+                compact_at=100,
                 stuck_task_threshold=2,
             )
         )
@@ -268,18 +271,18 @@ class TestAgentContracts:
         assert task.consume_iteration()
         assert task.consume_iteration()
         assert not task.consume_iteration()
-        assert task.abort_reason == AgentAbortReason.MAX_ITERATIONS
+        assert task.abort_reason == AgentAbortReason.MAX_LOOPS
 
-        token_task = _task(AgentTaskConfig(max_generated_tokens=3))
+        token_task = _task(AgentTaskConfig(max_tokens=3))
         token_task.transition(AgentTaskState.PLANNING)
         assert token_task.add_generated_tokens(3)
         assert not token_task.add_generated_tokens(1)
 
         unlimited_task = _task(AgentTaskConfig())
         assert unlimited_task.add_generated_tokens(100_000)
-        assert token_task.abort_reason == AgentAbortReason.MAX_GENERATED_TOKENS
+        assert token_task.abort_reason == AgentAbortReason.MAX_TOKENS
 
-        context_task = _task(AgentTaskConfig(context_compaction_threshold=5))
+        context_task = _task(AgentTaskConfig(context_size=5, compact_at=100))
         context_task.update_context_tokens(5)
         assert context_task.needs_context_compaction
 

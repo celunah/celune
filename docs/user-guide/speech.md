@@ -17,9 +17,10 @@ latency, and reference conditioning.
 | `dotstts` | Speaker similarity and diffusion quality | 6.25 chunks/s | Uses Celune's forked `dots.tts` package. |
 | `gpt-sovits` | GPT-SoVITS family compatibility | 6.25 chunks/s | Supports Chinese, English, Japanese, Korean, and Cantonese variants; may exhibit accent drift. |
 
-The backend manager installs backend-only requirements separately when
-`isolated_backends` is enabled. Core modules do not import these packages at
-startup.
+Backend-specific packages are resolved from Celune's configured application
+environment and imported lazily when the selected backend is needed. Normal
+startup does not create or manage per-backend environments; explicit CEDTS
+worker callers may still use the manifest-backed setup path.
 
 ## Voice selection
 

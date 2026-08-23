@@ -1,20 +1,15 @@
 # Backends
 
-This page describes how Celune installs, isolates, launches, and extends its
+This page describes how Celune resolves, launches, and extends its
 text-to-speech and voice-conversion backends.
 
-## Manifest-driven installation
+## Application environment
 
-The canonical backend registry is `celune.backends.environment.BACKEND_MANIFESTS`.
-Each manifest includes the backend ID, kind (`tts` or `vc`), requirements,
-worker module/class, optional Python version, PyTorch indexes, and a revision
-used for its fingerprint.
-
-With `isolated_backends: true`, environments live below the Celune application
-data directory in an `environments/` tree. The manager uses `uv`, an exclusive
-lock, and a manifest fingerprint. A ready environment contains a usable
-interpreter and `manifest.json`; changing requirements or platform details
-creates a new fingerprint rather than silently reusing an incompatible one.
+Normal backend dependencies belong to Celune's configured application
+environment. The resolver imports the selected backend lazily, so
+backend-specific packages must not be imported by core modules at startup.
+Explicit CEDTS worker callers may still use the manifest-backed environment
+manager; normal application configuration does not select that path.
 
 ## Registered manifests
 

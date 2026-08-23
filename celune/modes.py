@@ -52,10 +52,6 @@ def resolve_operation_mode(
         else:
             raise ValueError(f"unknown Celune operation mode: '{candidate}'")
 
-    if config is not None:
-        persona = config.get("persona", config.get("pyop", {}))
-        if isinstance(persona, dict) and persona.get("enabled") is False:
-            return "speak"
     return "converse"
 
 

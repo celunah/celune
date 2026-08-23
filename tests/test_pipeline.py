@@ -71,31 +71,24 @@ class TestPipeline(CeluneTestCase):
             0.001,
         )
 
-        engine.config = {
-            "pipeline_cpu": {
-                "enabled": True,
-                "max_buffer_seconds": 2,
-                "max_drain_items": 3,
-                "yield_seconds": 0,
-            }
-        }
+        engine.config = {}
         assert pipeline._pipeline_cpu_config(cast(Celune, engine)) == (
             True,
-            2.0,
-            3,
-            0.0,
+            4.0,
+            1,
+            0.001,
         )
 
-    def test_pipeline_cpu_config_can_be_disabled(self) -> None:
-        """Verify disabling the guard preserves the unbounded legacy drain behavior."""
+    def test_pipeline_cpu_config_ignores_removed_user_configuration(self) -> None:
+        """Verify playback protection remains fixed regardless of engine config."""
         engine = make_pipeline_engine()
         engine.config = {"pipeline_cpu": {"enabled": False}}
 
         assert pipeline._pipeline_cpu_config(cast(Celune, engine)) == (
-            False,
-            float("inf"),
-            128,
-            0.0,
+            True,
+            4.0,
+            1,
+            0.001,
         )
 
     class _LanguageAwareBackend:

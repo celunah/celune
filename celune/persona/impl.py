@@ -18,7 +18,6 @@ from .runtime import PersonaRuntime, response_to_json, request_from_json
 from ..modes import (
     mode_allows_persona,
     resolve_operation_mode,
-    has_explicit_operation_mode,
 )
 from ..typing.persona import (
     PersonaModel,
@@ -34,6 +33,8 @@ from ..cevoice import (
 )
 from ..constants import (
     DEFAULT_PERSONA_CONTEXT,
+    PERSONA_COMPACT_AT,
+    PERSONA_CONTEXT_SPACE,
     PERSONA_DEFAULT_MODEL_ID,
     PERSONA_HISTORY_MESSAGES,
     DEFAULT_PERSONA_DESCRIPTION,
@@ -217,12 +218,42 @@ def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
         Config: The normalized configuration data for the persona system.
     """
     raw = config.get("persona", config.get("pyop", {}))
-    if isinstance(raw, bool):
-        raw = {"enabled": raw}
-    elif raw is None or not isinstance(raw, dict):
+    if raw is None or not isinstance(raw, dict):
         raw = {}
 
     return dict(raw)
+
+
+def persona_context_size(config: Mapping[str, JSONSerializable]) -> int:
+    """Return Persona's configured prompt context size."""
+    value = persona_config(config).get("context_size")
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        else PERSONA_CONTEXT_SPACE
+    )
+
+
+def persona_compact_at(config: Mapping[str, JSONSerializable]) -> int:
+    """Return Persona's configured context compaction percentage."""
+    value = persona_config(config).get("compact_at")
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 100
+        else PERSONA_COMPACT_AT
+    )
+
+
+def persona_max_turns(config: Mapping[str, JSONSerializable]) -> Optional[int]:
+    """Return Persona's optional conversation-turn limit."""
+    value = persona_config(config).get("max_turns")
+    if value is None:
+        return None
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        else None
+    )
 
 
 def persona_debug_overrides_enabled(
@@ -462,6 +493,11 @@ def persona_short_term_history_limit(engine: PersonaEngineView) -> int:
         int: Maximum number of recent chat messages to keep in short-term memory.
     """
     config = getattr(engine, "config", {})
+    if not isinstance(config, Mapping):
+        config = {}
+    configured_turns = persona_max_turns(config)
+    if configured_turns is not None:
+        return configured_turns * 2
     memory = (
         persona_config(config).get("memory") if isinstance(config, Mapping) else None
     )
@@ -517,6 +553,11 @@ def persona_session_summary(engine: PersonaEngineView) -> str:
     """Return the bounded summary of older Persona conversation turns."""
     summary = getattr(engine, "persona_session_summary", "")
     return summary.strip() if isinstance(summary, str) else ""
+
+
+def _estimated_persona_history_tokens(history: list[JSON]) -> int:
+    """Estimate the token footprint of stored Persona message text."""
+    return sum(max(1, len(str(message.get("content", ""))) // 4) for message in history)
 
 
 def _summary_fragments(text: str) -> list[str]:
@@ -627,14 +668,20 @@ def compact_persona_history(engine: PersonaEngineView) -> None:
     if not isinstance(history, list):
         return
 
+    config = getattr(engine, "config", {})
+    if not isinstance(config, Mapping):
+        config = {}
     limit = persona_short_term_history_limit(engine)
     if limit <= 0:
         history.clear()
         return
-    if len(history) <= limit:
+    compact_threshold = persona_context_size(config) * persona_compact_at(config) // 100
+    if (
+        len(history) <= limit
+        and _estimated_persona_history_tokens(history) < compact_threshold
+    ):
         return
 
-    config = getattr(engine, "config", {})
     raw_memory = (
         persona_config(config).get("memory") if isinstance(config, Mapping) else None
     )
@@ -647,7 +694,7 @@ def compact_persona_history(engine: PersonaEngineView) -> None:
     keep_recent = memory.get("context_compaction_keep_recent_messages", min(limit, 8))
     if isinstance(keep_recent, bool) or not isinstance(keep_recent, (int, float)):
         keep_recent = min(limit, 8)
-    keep_count = max(1, min(limit, int(keep_recent)))
+    keep_count = max(1, min(limit, int(keep_recent), len(history) - 1))
 
     previous_summary = persona_session_summary(engine)
     old_messages: list[dict[str, str]] = []
@@ -742,13 +789,9 @@ def persona_enabled(config: Mapping[str, JSONSerializable]) -> bool:
     Returns:
         bool: Whether Persona is enabled.
     """
-    mode_allowed = mode_allows_persona(resolve_operation_mode(config))
-    vram_allowed = resolve_vram_preset(config).persona_enabled
-    configured_persona = bool(persona_config(config).get("enabled", True))
     return (
-        mode_allowed
-        and vram_allowed
-        and (has_explicit_operation_mode(config) or configured_persona)
+        mode_allows_persona(resolve_operation_mode(config))
+        and resolve_vram_preset(config).persona_enabled
     )
 
 
@@ -761,9 +804,7 @@ def persona_talkback_enabled(config: Mapping[str, JSONSerializable]) -> bool:
     Returns:
         bool: Whether Celune should use Persona if enabled, or not.
     """
-    return persona_enabled(config) and bool(
-        persona_config(config).get("talkback", True)
-    )
+    return persona_enabled(config)
 
 
 def persona_quantization(config: Mapping[str, JSONSerializable]) -> str:

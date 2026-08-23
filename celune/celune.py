@@ -95,7 +95,13 @@ from .pipeline import (
 from .pipeline import (
     force_stop_speech as force_stop_pipeline,
 )
-from .constants import APP_NAME, NORMALIZER_MODEL_ID
+from .constants import (
+    AGENT_COMPACT_AT,
+    AGENT_CONTEXT_SPACE,
+    AGENT_MAX_LOOPS,
+    APP_NAME,
+    NORMALIZER_MODEL_ID,
+)
 from .exceptions import (
     WarmupError,
     BackendError,
@@ -139,6 +145,7 @@ from .typing.agent import (
     AgentClassificationResult,
     AgentClassificationFailure,
     AgentClassificationFailureKind,
+    AgentTaskConfig,
 )
 from .typing.locks import (
     ComponentLockName,
@@ -231,46 +238,6 @@ def _config_int(value: JSONSerializable, default: int) -> int:
     raise TypeError("config value cannot be converted to int")
 
 
-def _configured_pipeline_queue_size(config: Config) -> int:
-    """Return the bounded audio-queue size configured for pipeline playback."""
-    value = config.get("pipeline_cpu", {})
-    if not isinstance(value, dict):
-        return 8
-    enabled = value.get("enabled", True)
-    if isinstance(enabled, bool) and not enabled:
-        return 0
-
-    queue_size = value.get("max_queue_items", 8)
-    if isinstance(queue_size, bool):
-        return 8
-    try:
-        return min(128, max(1, _config_int(queue_size, 8)))
-    except (TypeError, ValueError, OverflowError):
-        return 8
-
-
-def _configured_vc_pitch_shift(config: Config) -> int:
-    """Return the configured default pitch shift for VC backends."""
-    env_value = os.getenv("CELUNE_VC_PITCH_SHIFT")
-    if env_value is not None and env_value.strip():
-        return clamp_vc_pitch_shift(_config_int(env_value.strip(), 0))
-
-    configured_value = config_value(config, "voice_conversion_pitch_shift")
-    if configured_value is None:
-        configured_value = config_value(config, "vc_pitch_shift")
-    return clamp_vc_pitch_shift(_config_int(configured_value, 0))
-
-
-def _configured_vc_f0_condition(config: Config) -> bool:
-    """Return whether VC should run in Seed-VC singing mode by default."""
-    return config_bool(
-        config,
-        "CELUNE_VC_F0_CONDITION",
-        "voice_conversion_f0_condition",
-        False,
-    ) or config_bool(config, "CELUNE_VC_F0_CONDITION", "vc_f0_condition", False)
-
-
 def _resolve_input_mode(config: Config, requested_mode: Optional[str] = None) -> str:
     """Resolve Celune's active input mode from config and optional override."""
     candidate = requested_mode
@@ -321,6 +288,42 @@ def _core_backend_target(
         ("vc", backend_spec)
         if input_mode == "voice_conversion"
         else ("tts", backend_spec)
+    )
+
+
+def _agent_task_config(config: Config) -> AgentTaskConfig:
+    """Build the agent task limits from the nested ``agent`` settings."""
+    raw = config.get("agent")
+    values = raw if isinstance(raw, dict) else {}
+
+    def positive(name: str, default: int) -> int:
+        value = values.get(name)
+        return (
+            value
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0
+            else default
+        )
+
+    max_tokens = values.get("max_tokens")
+    return AgentTaskConfig(
+        max_loops=positive("max_loops", AGENT_MAX_LOOPS),
+        max_tokens=(
+            max_tokens
+            if (
+                isinstance(max_tokens, int)
+                and not isinstance(max_tokens, bool)
+                and max_tokens > 0
+            )
+            else None
+        ),
+        context_size=positive("context_size", AGENT_CONTEXT_SPACE),
+        compact_at=(
+            values["compact_at"]
+            if isinstance(values.get("compact_at"), int)
+            and not isinstance(values["compact_at"], bool)
+            and 1 <= values["compact_at"] <= 100
+            else AGENT_COMPACT_AT
+        ),
     )
 
 
@@ -510,9 +513,7 @@ class Celune(CeluneStateAccessors):
         )
         self._model_state = CeluneModelState()
         self._voice_state = CeluneVoiceState()
-        self._pipeline_state = CelunePipelineState(
-            audio_queue=queue.Queue(maxsize=_configured_pipeline_queue_size(config))
-        )
+        self._pipeline_state = CelunePipelineState(audio_queue=queue.Queue(maxsize=8))
         self._audio_state = CeluneAudioState()
         self._runtime_state = CeluneRuntimeState()
         self._reload_backend = None
@@ -524,21 +525,21 @@ class Celune(CeluneStateAccessors):
 
         self.config = config
         self._runtime_state.backend_mode = backend_mode
-        self._isolated_backends = config_bool(
-            config,
-            "CELUNE_ISOLATED_BACKENDS",
-            "isolated_backends",
-        )
         set_locale(_configured_locale(config) or get_system_locale())
         self.mode: OperationMode = resolve_operation_mode(config)
         if backend_mode == "agent_test":
             self._agent_tools = agent_test_tools(self)
             self._agent_tool_schemas = agent_test_tool_schemas()
         else:
-            local_management = config_bool(
-                config,
-                "CELUNE_LOCAL_MANAGEMENT",
-                "agent_local_management",
+            agent_config = config.get("agent")
+            local_management = (
+                config_bool(
+                    agent_config,
+                    "CELUNE_AGENT_FS_TOOLS",
+                    "fs_tools",
+                )
+                if isinstance(agent_config, dict)
+                else False
             )
             self._agent_tools = production_agent_tools(
                 self,
@@ -566,6 +567,7 @@ class Celune(CeluneStateAccessors):
             tool_result_handler=self._agent_persona_bridge.handle_tool_result,
             responder=self._agent_persona_bridge.respond,
             tool_schemas=self._agent_tool_schemas,
+            task_config=_agent_task_config(config),
         )
         self._agent_router = AgentInputRouter(self, self.agent_runtime)
         glow_color = "#cebaff"
@@ -593,15 +595,11 @@ class Celune(CeluneStateAccessors):
             vc_backend,
         )
         self.vc_pitch_shift = (
-            _configured_vc_pitch_shift(config)
+            0
             if vc_pitch_shift is None
             else clamp_vc_pitch_shift(_config_int(vc_pitch_shift, 0))
         )
-        self.vc_f0_condition = (
-            _configured_vc_f0_condition(config)
-            if vc_f0_condition is None
-            else vc_f0_condition
-        )
+        self.vc_f0_condition = False if vc_f0_condition is None else vc_f0_condition
         select_voice_bundle(_config_str(config_value(config, "voice_bundle")))
         preset = resolve_vram_preset(config)
 
@@ -1408,15 +1406,8 @@ class Celune(CeluneStateAccessors):
         backend_spec: TTSBackendSpec,
         **backend_kwargs,
     ) -> CeluneBackend:
-        """Resolve one TTS backend using the configured process isolation mode."""
-        if self._isolated_backends:
-            backend = resolve_backend(
-                backend_spec,
-                isolated=True,
-                **backend_kwargs,
-            )
-        else:
-            backend = resolve_backend(backend_spec, **backend_kwargs)
+        """Resolve one named TTS backend through its CEDTS worker manifest."""
+        backend = resolve_backend(backend_spec, **backend_kwargs)
         backend.bind_progress(self.progress_callback)
         return backend
 
@@ -1445,12 +1436,8 @@ class Celune(CeluneStateAccessors):
         backend_spec: VCBackendSpec,
         log: Optional[MessageCallback] = None,
     ) -> CeluneVCBackend:
-        """Resolve one VC backend using the configured process isolation mode."""
-        backend = resolve_vc_backend(
-            backend_spec,
-            log=log,
-            isolated=self._isolated_backends,
-        )
+        """Resolve one VC backend from the active application environment."""
+        backend = resolve_vc_backend(backend_spec, log=log)
         backend.bind_progress(self.progress_callback)
         return backend
 
@@ -4531,7 +4518,7 @@ class Celune(CeluneStateAccessors):
             self._closed = True
 
         # Shutdown must not wait for the reload lock or for a backend response.
-        # Reload workers can be blocked in CEDTS while holding that lock, so
+        # Reload workers can be blocked in backend operations while holding that lock, so
         # abort them before entering any serialized cleanup path.
         self._abort_backend_operations()
         with self._shutdown_runtime_lock():

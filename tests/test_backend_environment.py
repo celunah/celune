@@ -4948,10 +4948,10 @@ raise SystemExit(worker.main())
             ],
         )
 
-    def test_isolated_backend_resolution_uses_the_registered_manifest(self) -> None:
-        """Verify isolated resolution delegates construction to the worker proxy."""
+    def test_backend_resolution_uses_the_registered_manifest(self) -> None:
+        """Verify named resolution always delegates to the CEDTS worker proxy."""
         with mock.patch.object(remote, "RemoteBackendProxy") as proxy:
-            resolve_backend("mini", isolated=True)
+            resolve_backend("mini")
 
         proxy.assert_called_once()
         assert proxy.call_args.args[0] == BACKEND_MANIFESTS["mini"]

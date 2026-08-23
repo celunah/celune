@@ -59,12 +59,10 @@ PERSONA_EMOTION_MODEL = "lunahr/emotispace-128"
 # Persona receives a smaller ordinary conversation context while agent tasks
 # reserve the larger context needed for planning and tool-result history.
 PERSONA_CONTEXT_SPACE = 8192
+PERSONA_COMPACT_AT = 75
 AGENT_CONTEXT_SPACE = 32768
-AGENT_CONTEXT_COMPACTION_RATIO = 0.75
-AGENT_CONTEXT_COMPACTION_THRESHOLD = int(
-    AGENT_CONTEXT_SPACE * AGENT_CONTEXT_COMPACTION_RATIO
-)
-AGENT_MAX_ITERATIONS = 20
+AGENT_COMPACT_AT = 75
+AGENT_MAX_LOOPS = 20
 
 
 # These models are available to Persona, with exact revisions for each variant.

@@ -173,14 +173,14 @@ class TestAgentLoop:
         )
         task = runtime.create_task(
             _request(),
-            AgentTaskConfig(max_iterations=2, stuck_task_threshold=20),
+            AgentTaskConfig(max_loops=2, stuck_task_threshold=20),
             task_id="task-1",
         )
 
         runtime.run(task.request)
 
         assert task.state == AgentTaskState.ABORTED
-        assert task.abort_reason == AgentAbortReason.MAX_ITERATIONS
+        assert task.abort_reason == AgentAbortReason.MAX_LOOPS
         assert task.iterations == 2
         assert next_call == 2
 
@@ -192,14 +192,14 @@ class TestAgentLoop:
         )
         task = runtime.create_task(
             _request(),
-            AgentTaskConfig(max_generated_tokens=3),
+            AgentTaskConfig(max_tokens=3),
             task_id="task-1",
         )
 
         result = runtime.run(task.request)
 
         assert task.state == AgentTaskState.ABORTED
-        assert task.abort_reason == AgentAbortReason.MAX_GENERATED_TOKENS
+        assert task.abort_reason == AgentAbortReason.MAX_TOKENS
         assert task.iterations == 0
         assert result["end"] is True
 
@@ -219,7 +219,7 @@ class TestAgentLoop:
         )
         task = runtime.create_task(
             _request(),
-            AgentTaskConfig(context_compaction_threshold=4),
+            AgentTaskConfig(context_size=4, compact_at=100),
             task_id="task-1",
         )
         task.update_context_tokens(4)
@@ -561,7 +561,7 @@ class TestAgentLoop:
         )
         stuck_task = stuck.create_task(
             _request("stuck-session"),
-            AgentTaskConfig(stuck_task_threshold=2, max_iterations=10),
+            AgentTaskConfig(stuck_task_threshold=2, max_loops=10),
             task_id="stuck",
         )
 

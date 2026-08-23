@@ -29,8 +29,9 @@ from celune.exceptions import (
     InvalidExtensionError,
     ExtensionAlreadyRegisteredError,
 )
+from celune.backends.vc import BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS
 from celune.backends.vc import resolve_vc_backend
-from celune.backends.tts import resolve_backend
+from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
 from celune.typing.aliases import AudioChunk
 from celune.extensions.base import CeluneContext, CeluneExtension
 from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
@@ -539,10 +540,11 @@ class TestBackend(CeluneTestCase):
         assert backend.model is None
 
     def test_resolve_vc_backend_accepts_seedvc_backend_name(self) -> None:
-        """Verify the Seed-VC backend resolves through the VC backend registry."""
-        backend = resolve_vc_backend("seed-vc")
-        assert isinstance(backend, CeluneSeedVCBackend)
-        assert backend.name == "seed-vc"
+        """Verify named Seed-VC resolution selects the CEDTS manifest."""
+        with mock.patch("celune.cedts.remote.RemoteVCBackendProxy") as proxy:
+            resolve_vc_backend("seed-vc")
+
+        assert proxy.call_args.args[0] is VC_BACKEND_MANIFESTS["seed-vc"]
 
     def test_seedvc_backend_requires_reference_audio(self) -> None:
         """Verify Seed-VC refuses requests without a target reference WAV."""
@@ -906,35 +908,18 @@ class TestBackend(CeluneTestCase):
         ]
 
     def test_resolve_backend_accepts_mini_backend_name(self) -> None:
-        """Verify the Pocket TTS backend resolves through the backend registry."""
+        """Verify named TTS resolution always selects the CEDTS manifest."""
+        with mock.patch("celune.cedts.remote.RemoteBackendProxy") as proxy:
+            resolve_backend("mini")
 
-        class StubTTSModel:
-            """Import-time stand-in for the Pocket TTS package class."""
-
-        with mock.patch.dict(
-            sys.modules,
-            {"pocket_tts": SimpleNamespace(TTSModel=StubTTSModel)},
-        ):
-            mini = importlib.import_module("celune.backends.tts.mini")
-            mini_cls = mini.Mini
-
-            with mock.patch.object(mini_cls, "_validate_refs"):
-                backend = resolve_backend("mini")
-
-        assert isinstance(backend, mini_cls)
-        assert backend.name == "mini"
+        assert proxy.call_args.args[0] is BACKEND_MANIFESTS["mini"]
 
     def test_resolve_backend_accepts_dotstts_backend_name(self) -> None:
-        """Verify the dots.tts backend resolves through the backend registry."""
+        """Verify named DotsTTS resolution selects the CEDTS manifest."""
+        with mock.patch("celune.cedts.remote.RemoteBackendProxy") as proxy:
+            resolve_backend("dotstts")
 
-        with (
-            mock_dotstts_backend() as dotstts_cls,
-            mock.patch.object(dotstts_cls, "_validate_refs"),
-        ):
-            backend = resolve_backend("dotstts")
-
-        assert isinstance(backend, dotstts_cls)
-        assert backend.name == "dotstts"
+        assert proxy.call_args.args[0] is BACKEND_MANIFESTS["dotstts"]
 
     def test_voxcpm2_uses_pack_cfg_scale_when_present(self) -> None:
         """Verify CEVOICE can override VoxCPM2's per-voice CFG scale."""

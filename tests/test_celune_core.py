@@ -887,19 +887,14 @@ class TestCeluneCore(CeluneTestCase):
         assert celune.cur_state == "error"
         assert not celune.locked
 
-    def test_persona_talkback_config_can_disable_persona_input_mode(self) -> None:
-        """Verify persona talkback can be disabled without disabling Persona."""
+    def test_persona_mode_controls_persona_input_mode(self) -> None:
+        """Verify the operation mode controls Persona without legacy switches."""
         from celune.persona.impl import persona_enabled, persona_talkback_enabled
 
-        persona_config: Config = {"enabled": True, "talkback": False}
-        config: Config = {"vram": "high", "persona": persona_config}
+        config: Config = {"mode": "converse", "vram": "high", "persona": {}}
         assert persona_enabled(config)
-        assert not persona_talkback_enabled(config)
-        assert persona_talkback_enabled({"vram": "high", "persona": {}})
-        assert not persona_talkback_enabled(
-            {"vram": "high", "pyop": {"talkback": False}}
-        )
-        assert not persona_enabled({"vram": "low", "persona": {"enabled": True}})
+        assert persona_talkback_enabled(config)
+        assert not persona_enabled({"mode": "speak", "vram": "high", "persona": {}})
         assert not persona_talkback_enabled({"vram": "low", "persona": {}})
         with mock.patch("celune.vram.torch.cuda.is_available", return_value=False):
             assert persona_quantization({"vram": "high"}) == "4bit"
@@ -1450,41 +1445,35 @@ class TestCeluneCore(CeluneTestCase):
         submitted_request = convert_input.call_args.args[1]
         assert submitted_request.f0_condition
 
-    def test_constructor_reads_configured_vc_pitch_shift(self) -> None:
-        """Verify VC pitch shift is read from config during startup."""
+    def test_constructor_uses_runtime_vc_pitch_shift_default(self) -> None:
+        """Verify VC pitch shift starts at its runtime default."""
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
         ):
             celune = Celune(
-                config={
-                    "mode": "voice_conversion",
-                    "voice_conversion_pitch_shift": -3,
-                },
+                config={"mode": "voice_conversion"},
                 tts_backend=FakeBackend,
             )
             self.addCleanup(self._close_celune, celune)
 
-        assert celune.vc_pitch_shift == -3
+        assert celune.vc_pitch_shift == 0
 
-    def test_constructor_reads_configured_vc_f0_condition(self) -> None:
-        """Verify VC talk-vs-sing mode is read from config during startup."""
+    def test_constructor_uses_runtime_vc_f0_default(self) -> None:
+        """Verify F0 conditioning starts at its runtime default."""
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
         ):
             celune = Celune(
-                config={
-                    "mode": "voice_conversion",
-                    "voice_conversion_f0_condition": True,
-                },
+                config={"mode": "voice_conversion"},
                 tts_backend=FakeBackend,
             )
             self.addCleanup(self._close_celune, celune)
 
-        assert celune.vc_f0_condition
+        assert not celune.vc_f0_condition
 
     def test_convert_audio_rejects_text_to_speech_mode(self) -> None:
         """Verify direct conversion stays unavailable outside VC mode."""

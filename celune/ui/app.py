@@ -546,7 +546,7 @@ class CeluneUIInteractionState:
     agent_task_id: Optional[str] = None
     agent_task_state: Optional[AgentTaskState] = None
     agent_iterations: int = 0
-    agent_max_iterations: int = 0
+    agent_max_loops: int = 0
     agent_busy_components: tuple[ComponentLockName, ...] = ()
     agent_status_signature: Optional[tuple[str, ...]] = None
 
@@ -840,9 +840,7 @@ class CeluneUI(App):
     _agent_task_id = _forward_ui_property("_interaction_state", "agent_task_id")
     _agent_task_state = _forward_ui_property("_interaction_state", "agent_task_state")
     _agent_iterations = _forward_ui_property("_interaction_state", "agent_iterations")
-    _agent_max_iterations = _forward_ui_property(
-        "_interaction_state", "agent_max_iterations"
-    )
+    _agent_max_loops = _forward_ui_property("_interaction_state", "agent_max_loops")
     _agent_busy_components = _forward_ui_property(
         "_interaction_state", "agent_busy_components"
     )
@@ -1241,7 +1239,7 @@ class CeluneUI(App):
             return string(
                 "agent.status.working",
                 iteration=task.iterations,
-                maximum=task.config.max_iterations,
+                maximum=task.config.max_loops,
             )
         status_keys = {
             AgentTaskState.QUEUED: "agent.status.queued",
@@ -1278,7 +1276,7 @@ class CeluneUI(App):
         task_id = task.task_id if task is not None else ""
         task_state = task.state if task is not None else None
         iterations = task.iterations if task is not None else 0
-        maximum = task.config.max_iterations if task is not None else 0
+        maximum = task.config.max_loops if task is not None else 0
         signature = (
             task_id,
             task_state.value if task_state is not None else "",
@@ -1289,7 +1287,7 @@ class CeluneUI(App):
         )
         self._agent_task_state = task_state
         self._agent_iterations = iterations
-        self._agent_max_iterations = maximum
+        self._agent_max_loops = maximum
         self._agent_busy_components = busy_components
         if self._agent_status_signature == signature:
             return
@@ -3458,7 +3456,7 @@ class CeluneUI(App):
         vad_hangover_frames = self._vc_vad_hangover_frames(sample_rate) + int(
             sample_rate * self._persona_speech_end_delay_seconds()
         )
-        ai_vad = create_live_voice_activity_detector(input_config)
+        ai_vad = create_live_voice_activity_detector()
         recording_queue: queue_module.Queue[tuple[AudioChunk, bool]] = (
             queue_module.Queue(maxsize=1)
         )
@@ -4111,7 +4109,7 @@ class CeluneUI(App):
         vad_hangover_frames = self._vc_vad_hangover_frames(sample_rate)
         vad_preroll_frames = self._vc_vad_preroll_frames(sample_rate)
         live_chunk_frames = self._vc_live_chunk_frames(sample_rate)
-        ai_vad = create_live_voice_activity_detector(input_config)
+        ai_vad = create_live_voice_activity_detector()
         submission_queue: queue_module.Queue[
             Optional[tuple[AudioChunk, int, str, bool]]
         ] = queue_module.Queue(maxsize=_VC_LIVE_SUBMISSION_QUEUE_SIZE)

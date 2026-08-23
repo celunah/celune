@@ -53,10 +53,9 @@ files.
 
 ## Optional local-management tools
 
-The local-management catalog is disabled by default. Enable it explicitly with
-`agent_local_management: true` or `CELUNE_LOCAL_MANAGEMENT=1`, and understand
-that this creates an unsandboxed capability boundary. The runtime emits a
-warning when it is enabled.
+The local filesystem and process catalog is controlled by
+`agent.fs_tools: true`. It creates an unsandboxed capability boundary, so the
+runtime emits a warning when it is enabled.
 
 | Tool family | Calls | Policy |
 | --- | --- | --- |

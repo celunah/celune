@@ -48,8 +48,8 @@ active capabilities.
 ## Verify speech
 
 In speak mode, type text and press `CTRL+ENTER`. In converse mode, the same
-action sends the text through Persona; use `CTRL+R` for speech input when
-Persona talkback is enabled. Generated files are placed in the repository
+action sends the text through Persona; use `CTRL+R` for Persona speech input.
+Generated files are placed in the repository
 `outputs/` directory when saving is enabled. Celune writes 48 kHz, 24-bit FLAC
 outputs; the runtime keeps audio arrays as normalized float32.
 
