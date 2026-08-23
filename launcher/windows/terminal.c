@@ -38,7 +38,7 @@ void launcher_setup_terminal(void) {
 
 void launcher_reset_terminal_state(void) {
     HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-    HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+    HANDLE output = GetStdHandle(STD_ERROR_HANDLE);
     const char reset_sequences[] =
         "\x1b[0m"
         "\x1b[?25h"
@@ -48,8 +48,7 @@ void launcher_reset_terminal_state(void) {
         "\x1b[?1006l"
         "\x1b[?1015l"
         "\x1b[?1049l"
-        "\x1b[?2004l"
-        "\r";
+        "\x1b[?2004l";
 
     if (saved_console_modes) {
         DWORD current_output_mode;
@@ -78,29 +77,22 @@ void launcher_reset_terminal_state(void) {
 }
 
 void launcher_prepare_failure_output(void) {
-    HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+    HANDLE output = GetStdHandle(STD_ERROR_HANDLE);
     CONSOLE_SCREEN_BUFFER_INFO info;
-    COORD line_start;
-    DWORD line_width;
-    DWORD written;
+    COORD failure_start;
 
     if (output == INVALID_HANDLE_VALUE ||
         !GetConsoleScreenBufferInfo(output, &info)) {
         return;
     }
 
-    line_start.X = info.srWindow.Left;
-    line_start.Y = info.dwCursorPosition.Y;
-    line_width = (DWORD)(info.srWindow.Right - info.srWindow.Left + 1);
-    FillConsoleOutputCharacter(output, ' ', line_width, line_start, &written);
-    FillConsoleOutputAttribute(
-        output,
-        info.wAttributes,
-        line_width,
-        line_start,
-        &written
-    );
-    SetConsoleCursorPosition(output, line_start);
+    failure_start = info.dwCursorPosition;
+    if (failure_start.X != info.srWindow.Left &&
+        failure_start.Y < info.srWindow.Bottom) {
+        failure_start.Y++;
+    }
+    failure_start.X = info.srWindow.Left;
+    SetConsoleCursorPosition(output, failure_start);
 }
 
 void launcher_wait_after_failure(void) {
