@@ -18,7 +18,7 @@
   --celune-error: #f07178;
   --celune-link: #deceff;
   --celune-on-accent: var(--celune-background);
-  --celune-header-placeholder: rgba(29, 24, 38, 0.7);
+  --celune-search-background: rgba(29, 24, 38, 0.2);
 
   --md-primary-fg-color: var(--celune-background);
   --md-primary-fg-color--light: var(--celune-secondary);
@@ -69,7 +69,7 @@
   --celune-error: #7a1f24;
   --celune-link: var(--celune-primary);
   --celune-on-accent: var(--celune-background);
-  --celune-header-placeholder: rgba(236, 232, 255, 0.7);
+  --celune-search-background: rgba(236, 232, 255, 0.2);
 
   --md-primary-fg-color: var(--celune-accent);
   --md-primary-fg-color--light: var(--celune-secondary);
@@ -152,13 +152,21 @@ h6,
 }
 
 .md-header .md-search__form,
-.md-header .md-search__input {
-  background-color: rgba(29, 24, 38, 0.2);
-  color: var(--celune-background);
+.md-header .md-search__input,
+.md-header .md-search__form:hover,
+.md-header .md-search__form:focus-within {
+  background-color: var(--celune-search-background) !important;
 }
 
-.md-header .md-search__input::placeholder {
-  color: var(--celune-header-placeholder);
+.md-header .md-search__input,
+.md-header .md-search__input:focus,
+.md-header .md-search__input::placeholder,
+.md-header .md-search__icon {
+  color: var(--celune-foreground) !important;
+}
+
+[data-md-color-scheme="default"] .md-search {
+  --md-default-fg-color--lightest: var(--celune-foreground);
 }
 
 .md-main,
