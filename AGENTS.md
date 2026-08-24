@@ -316,7 +316,7 @@ When documenting licensing, distinguish between:
 * Celune source code, licensed under MIT.
 * Third-party models and assets, which may use their own licenses.
 
-Do not claim third-party models are covered by Celune's MIT license.
+Do not claim third-party models are covered by Celune's Apache 2.0 license.
 
 When documenting commands, use the canonical project commands from the README.
 

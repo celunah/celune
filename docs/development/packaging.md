@@ -16,16 +16,19 @@ bash scripts/build_nuitka.sh
 ```
 
 Windows builds use Nuitka, Visual Studio C++ tools, the launcher C sources,
-the project icon/resource, and `scripts/write_update_manifest.py`. Linux builds
-need GCC, `appimagetool`, and `zip`, then produce the executable, AppImage, and
-archive. The scripts stop existing Celune processes before replacing build
-artifacts.
+the project icon/resource, and `scripts/write_update_manifest.py`. The Windows
+script refreshes `resources/vcruntime140.dll` from the configured Visual Studio
+14.44.35112 CRT installation, includes Windows runtime DLLs during Nuitka
+compilation, places that exact DLL beside both release executables, and adds it
+to the update manifest and archive. Linux builds need GCC, `appimagetool`, and
+`zip`, then produce the executable, AppImage, and archive. The scripts stop
+existing Celune processes before replacing build artifacts.
 
 Typical output files are:
 
 | Platform | Artifacts |
 | --- | --- |
-| Windows | `bin/celune.exe`, `bin/celune-bin.exe`, `bin/celune-update.json`, `bin/Celune-win-x64.zip` |
+| Windows | `bin/celune.exe`, `bin/celune-bin.exe`, `bin/vcruntime140.dll`, `bin/celune-update.json`, `bin/Celune-win-x64.zip` |
 | Linux | `bin/celune`, `bin/celune-bin`, `bin/celune.AppImage`, `bin/celune-update.json`, `bin/Celune-linux-x64.zip` |
 
 The launcher sets the compiled environment, owns update handoff, and preserves
@@ -78,9 +81,11 @@ launches. Explicit `HF_HOME` and `HF_HUB_CACHE` values remain authoritative.
 ## Updates
 
 The update manifest records the project version, Git revision, artifact name,
-and files. The launcher can request a pending update and restart through the
-internal `__apply_update` command. Do not call that internal command directly;
-it is a launcher protocol.
+and files. Exit code 7 is `EXIT_PENDING_RESTART`: the launcher silently restarts
+Celune when no manifest is present, and uses the existing update helper and
+internal `__apply_update` command when the compiled bundle contains a manifest.
+The UI terminal title changes to `Restarting` before the handoff. Do not call
+that internal command directly; it is a launcher protocol.
 
 ## Documentation deployment
 

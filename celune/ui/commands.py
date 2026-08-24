@@ -274,8 +274,16 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(string("commands.help_tutorial", app_name=APP_NAME))
         ui.safe_log(string("commands.help_stop"))
         ui.safe_log(string("commands.help_restart_audio"))
+        ui.safe_log(string("commands.help_settings"))
         ui.safe_log(string("commands.help_exit", app_name=APP_NAME))
         ui.safe_log(string("commands.help_help"))
+        return
+    if command == "settings":
+        open_settings = getattr(ui, "open_settings_menu", None)
+        if callable(open_settings):
+            open_settings()
+        else:
+            ui.safe_log(string("commands.settings_unavailable"), "warning")
         return
     if command == "restartaudio":
 

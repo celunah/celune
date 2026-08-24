@@ -238,7 +238,7 @@ class ExitCodes(Enum):
     EXIT_MISSING_DEPENDENCIES = 4  # Celune is missing required dependencies.
     EXIT_UNKNOWN_ARGS = 5  # Celune CLI command is unknown.
     EXIT_BAD_PYTHON = 6  # Celune is trying to run on an unsupported Python interpreter.
-    EXIT_PENDING_UPDATE = 7  # Celune has a pending update.
+    EXIT_PENDING_RESTART = 7  # Celune requests a launcher-managed restart.
     EXIT_LAUNCHER_LOST = 8  # Celune lost the connection to her launcher.
 
     # the following exit codes may be disabled by the end user

@@ -59,7 +59,7 @@ Visit <https://celune.readthedocs.io/en/latest> to view Celune documentation. Th
 
 Celune is licensed under the Apache 2.0 License, but the software may download certain models from [Hugging Face](https://huggingface.co) that are of varying licenses, such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.), [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS), [GPL-3.0](https://opensource.org/license/gpl-3.0) (SeedVC), and MIT (Whisper, Silero VAD, etc.). Users of Celune are expected to read and comply with any applicable license terms for the models they intend to use.
 
-Please note that Celune 4.3.2 and older remain on the MIT license.
+Please note that Celune 4.3.2 and older remain on the Apache 2.0 license.
 
 ## Voices & samples
 

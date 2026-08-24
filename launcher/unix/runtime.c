@@ -42,6 +42,12 @@ static int file_exists(const char *path) {
     return access(path, F_OK) == 0;
 }
 
+static int launcher_has_update_manifest(const char *repo_root) {
+    char manifest[2048];
+    int written = snprintf(manifest, sizeof(manifest), "%s/celune-update.json", repo_root);
+    return written > 0 && (size_t)written < sizeof(manifest) && file_exists(manifest);
+}
+
 static int lookup_file_exists(const char *path) {
     struct stat details;
     return lstat(path, &details) == 0 && S_ISREG(details.st_mode) &&
@@ -833,8 +839,11 @@ int launcher_run(int argc, char **argv) {
 
             if (WIFEXITED(status)) {
                 int exit_code = WEXITSTATUS(status);
-                if (exit_code == CELUNE_EXIT_PENDING_UPDATE) {
-                    printfe("%s\n", launcher_exit_reason(CELUNE_EXIT_PENDING_UPDATE));
+                if (exit_code == CELUNE_EXIT_PENDING_RESTART) {
+                    if (!launcher_has_update_manifest(repo_root)) {
+                        launcher_child_failed = 0;
+                        return launcher_run(argc, argv);
+                    }
                     if (!spawn_update_helper_unix(python, main_py, launcher, repo_root, argc, argv)) {
                         printfe("Celune could not start her update helper.\n");
                         return 1;

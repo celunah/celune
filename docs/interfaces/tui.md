@@ -19,9 +19,84 @@ post-frame worker and report failures on the loading overlay.
 | `CTRL+T` | Toggle dark/light themes and persist the selection. |
 | `CTRL+R` | Wake from sleep, start/stop Persona speech capture, or start/stop live VC capture depending on mode. |
 
-The style button cycles the active voice. In VC mode the mode button toggles
-talk/sing F0 conditioning and the pitch button cycles the pitch-shift value.
-Touch users can use these visible buttons rather than keyboard shortcuts.
+The style button cycles the active voice on a normal click. Hold it to open
+`Select voice`, which lists every readable `.cevoice` and `.cechar` CEVOICE/CECHAR
+pack as one character row. Left/Right cycles the voice entry when a pack has
+multiple entries; single-entry packs omit the bracketed value. Confirming a row
+hot-loads that pack and voice. In VC mode
+the mode button toggles talk/sing F0 conditioning and the pitch button cycles
+the pitch-shift value. Touch users can use these visible buttons rather than
+keyboard shortcuts.
+
+## Value-aware selection menus
+
+`celune.ui.terminal.SelectMenuWidget` is a reusable Textual widget for compact
+configuration and voice lists. Create each row with
+`SelectMenuOption(label, value, editable, keybind, autocomplete_values,
+display_value, show_value, confirm_value)`, then mount the widget in a screen
+or app. A `footer_builder` can produce context-sensitive keybind hints for the
+highlighted row:
+
+```python
+from celune.ui.terminal import SelectMenuOption, SelectMenuWidget
+
+menu = SelectMenuWidget(
+    "Configuration manager",
+    [
+        SelectMenuOption("Backend", "mini", keybind="b"),
+        SelectMenuOption(
+            "Voice",
+            "calm",
+            autocomplete_values=("calm", "soft", "distorted"),
+        ),
+        SelectMenuOption("VRAM target", "medium"),
+        SelectMenuOption("Theme", "dark"),
+        SelectMenuOption("Information", editable=False),
+    ],
+    footer="↑/↓ select   ENTER confirm   ESC back",
+)
+```
+
+Labels begin at the same column as the `-> ` selection marker. Every displayed
+value begins two cells after the longest label, including when labels contain
+wide Unicode characters. Set `value_display="current"` to show a bracketed
+value only on the highlighted editable row; the default `"all"` shows values on
+every editable row. Use `display_value` when a row returns structured data but
+should show a shorter human-readable value in brackets. `set_value(index,
+value)` updates an editable row and raises `ValueError` for a non-editable row.
+Values that exceed the available row width are rendered with an ellipsis while
+their full value remains available through the confirmation message.
+Set `SelectMenuOption.explanation` to render a selected-row explanation above
+the footer hints. The configuration manager converts dotted YAML keys to
+human-readable labels, such as `api.enabled` to `API enabled`, while retaining
+names such as API, T2S, GPT-SoVITS, and Persona.
+The menu is a centered overlay with the themed rounded border and sizes itself
+to its content, up to the available viewport. Its surrounding layer is
+transparent but modal: mouse and keyboard input outside the menu is consumed.
+When the option list is taller than the overlay, the visible rows form a
+moving window around the highlighted row so the footer bindings remain visible.
+Application menus show only applicable navigation/value hints; hints are
+separated with `・`.
+
+Up/Down wrap through the rows. Left/Right cycle an editable row's
+`autocomplete_values`; printable keys search those candidates. When a row has
+declared candidates, text that matches none of them snaps back to the current
+valid value. Rows without candidates still accept free-form strings, while
+boolean, integer, float, and `None` values reject invalid text and retain their
+previous valid type and value. Backspace removes the last search character.
+Autocomplete candidates retain their original JSON-compatible return types,
+including strings, numbers, booleans, and `None` when explicitly supplied.
+Non-editable rows ignore value controls. An option's `keybind` or the
+constructor's `keybinds={"key": index}` mapping selects a row directly;
+navigation and value-editing keys cannot be used for these shortcuts.
+
+ENTER posts `SelectMenuWidget.Confirmed` with the selected `option_index`,
+`option`, and `value`. Set `return_value=False` to make `value` be `None` while
+retaining the selected row in the message. A non-editable row may provide
+`confirm_value` when it should still return a fixed result. ESC posts
+`SelectMenuWidget.Cancelled` with the selected row and `value=None`; the host
+screen can handle that message by popping or hiding the menu. The widget does
+not automatically change screens.
 
 ## Log panel
 
@@ -58,6 +133,7 @@ Commands are entered in the input box and start with `/`.
 | `/reverb VALUE` | Set 0–100% reverb strength. |
 | `/backend NAME` | Switch TTS/VC backend and wait for the reload worker. |
 | `/cevoice NAME\|PATH` | Load a CEVOICE/CECHAR pack. |
+| `/settings` | Open the configuration manager. ENTER saves nested YAML values and requests a silent launcher restart; ESC discards changes. |
 | `/vc FILE` | Submit a file for voice conversion; VC mode is required. |
 | `/vcmode talk\|sing` | Select ordinary speech or F0-conditioned singing. |
 | `/vcpitch SEMITONES\|clear` | Set -12 through +12 semitones or reset to 0. |

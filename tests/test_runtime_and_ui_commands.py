@@ -723,6 +723,73 @@ class TestUIStartup(CeluneTestCase):
         self.assertEqual(ui.theme, "celune_light")
         self.assertEqual(ui.current_theme.name, "celune_light")
 
+    def test_settings_menu_flattens_nested_configuration_values(self) -> None:
+        """Verify the configuration manager exposes nested YAML leaf values."""
+        ui = CeluneUI()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={"backend": "mini", "persona": {"context_size": 8192}},
+            ),
+        )
+
+        with mock.patch.object(ui, "_show_menu") as show_menu:
+            ui.open_settings_menu()
+
+        menu = show_menu.call_args.args[0]
+        assert [option.label for option in menu.options] == [
+            "Backend",
+            "Persona context size",
+        ]
+        assert menu.options[0].explanation == "Edit the Backend setting."
+        assert menu.return_value is False
+        assert ui._settings_paths == (("backend",), ("persona", "context_size"))
+
+    def test_settings_menu_saves_values_and_requests_pending_restart(self) -> None:
+        """Verify ENTER's settings result writes YAML and returns exit code 7."""
+        ui = CeluneUI()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={"backend": "mini", "persona": {"context_size": 8192}}
+            ),
+        )
+        menu = ui_terminal.SelectMenuWidget(
+            "Configuration manager",
+            [
+                ui_terminal.SelectMenuOption("backend", "qwen3"),
+                ui_terminal.SelectMenuOption("persona.context_size", 16384),
+            ],
+            return_value=False,
+        )
+        ui._settings_paths = (("backend",), ("persona", "context_size"))
+        ui.safe_log = mock.Mock()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            config_file = Path(temporary) / "config.yaml"
+            with (
+                mock.patch.object(
+                    ui_app,
+                    "config_path",
+                    return_value=config_file,
+                    create=True,
+                ),
+                mock.patch.object(ui_app, "yaml", create=True) as yaml_module,
+                mock.patch.object(ui, "_run_shutdown_step") as shutdown_step,
+                mock.patch.object(ui, "_set_terminal_status") as set_status,
+                mock.patch.object(ui, "exit") as exit_app,
+            ):
+                ui._save_settings(menu)
+                shutdown_step.call_args_list[0].args[0]()
+                set_status.assert_called_once_with("restarting", "Restarting")
+
+            yaml_module.safe_dump.assert_called_once()
+            assert ui.celune.config["backend"] == "qwen3"
+            assert ui.celune.config["persona"]["context_size"] == 16384
+            assert ui.cur_state == "restarting"
+            ui.safe_log.assert_not_called()
+            exit_app.assert_called_once_with(return_code=7)
+
     def test_loading_screen_mounts_with_canonical_textual_css(self) -> None:
         """Verify the loading screen composes and updates in a real Textual app."""
 

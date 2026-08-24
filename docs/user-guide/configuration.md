@@ -30,6 +30,12 @@ file and `celune config edit` opens it in the system editor.
 change runtime behavior. Backend-specific settings should stay in their
 documented namespace instead of being duplicated at the top level.
 
+In the Textual interface, `/settings` opens the configuration manager. Nested
+YAML values are shown with human-readable labels that preserve names such as
+API, T2S, GPT-SoVITS, and Persona. ENTER writes the edited values to the active
+`config.yaml` before requesting a silent launcher-managed restart; the terminal
+title changes to `Restarting`. ESC leaves the file unchanged.
+
 ## Speech buffering and playback
 
 Smart buffering starts playback after a minimum amount of audio, adapts the

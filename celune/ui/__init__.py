@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .app import CeluneUI
     from .headless import CeluneHeadlessUI
-    from .terminal import SelectMenu, LogRedirect
+    from .terminal import LogRedirect, SelectMenu, SelectMenuOption, SelectMenuWidget
     from .protocols import CeluneBaseUI, CeluneTextualUI, CeluneHeadlessBaseUI
 
 __all__ = [
@@ -17,6 +17,8 @@ __all__ = [
     "CeluneUI",
     "LogRedirect",
     "SelectMenu",
+    "SelectMenuOption",
+    "SelectMenuWidget",
 ]
 
 
@@ -34,7 +36,7 @@ def __getattr__(name: str) -> type:
         from . import protocols
 
         return getattr(protocols, name)
-    if name in {"LogRedirect", "SelectMenu"}:
+    if name in {"LogRedirect", "SelectMenu", "SelectMenuOption", "SelectMenuWidget"}:
         from . import terminal
 
         return getattr(terminal, name)

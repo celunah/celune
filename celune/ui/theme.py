@@ -5,8 +5,26 @@
 CELUNE_CSS = """
     Screen {
         layout: vertical;
-        layers: base loading;
+        layers: base menu loading;
         background: $background;
+    }
+
+    SelectMenuOverlay {
+        align: center middle;
+        background: transparent;
+    }
+
+    SelectMenuWidget {
+        position: relative;
+        width: auto;
+        max-width: 1fr;
+        height: auto;
+        max-height: 1fr;
+        padding: 1 2;
+        border: round $primary;
+        background: $background;
+        color: $foreground;
+        overflow-y: auto;
     }
 
     CeluneLoadingScreen {

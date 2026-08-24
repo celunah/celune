@@ -73,8 +73,8 @@ const char *launcher_exit_reason(int return_code) {
             return "Celune received an unknown command.";
         case CELUNE_EXIT_BAD_PYTHON:
             return "Celune is running on an unsupported Python interpreter.";
-        case CELUNE_EXIT_PENDING_UPDATE:
-            return "Celune has a pending update.";
+        case CELUNE_EXIT_PENDING_RESTART:
+            return NULL;
         case CELUNE_EXIT_LAUNCHER_LOST:
             return NULL;
         case CELUNE_EXIT_CELINE_DAY_SIX_SEVEN:

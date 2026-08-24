@@ -84,6 +84,17 @@ static int file_exists(const char *path) {
     return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+static int launcher_has_update_manifest(const char *repo_root) {
+    char manifest[2048];
+    int written = snprintf(
+        manifest,
+        sizeof(manifest),
+        "%s\\celune-update.json",
+        repo_root
+    );
+    return written > 0 && (size_t)written < sizeof(manifest) && file_exists(manifest);
+}
+
 static int lookup_file_exists(const char *path) {
     DWORD attr = GetFileAttributesA(path);
     return attr != INVALID_FILE_ATTRIBUTES &&
@@ -1310,8 +1321,11 @@ int launcher_run(int argc, char **argv) {
     CloseHandle(pi.hProcess);
     CloseHandle(launcher_pipe);
 
-    if ((int)exit_code == CELUNE_EXIT_PENDING_UPDATE) {
-        printfe("%s\n", launcher_exit_reason(CELUNE_EXIT_PENDING_UPDATE));
+    if ((int)exit_code == CELUNE_EXIT_PENDING_RESTART) {
+        if (!launcher_has_update_manifest(repo_root)) {
+            launcher_child_failed = 0;
+            return launcher_run(argc, argv);
+        }
         if (!file_exists(venv_python) || !file_exists(main_py)) {
             printfe("Celune could not find the Python helper needed to apply updates.\n");
             return 1;

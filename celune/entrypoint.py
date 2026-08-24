@@ -1257,6 +1257,8 @@ def start(
             ui.prepare_theme()
             try:
                 ui.run()
+                if ui.return_code == runtime.ExitCodes.EXIT_PENDING_RESTART.value:
+                    sys.exit(runtime.ExitCodes.EXIT_PENDING_RESTART.value)
                 if ui.return_code not in (None, 0):
                     sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
             finally:
@@ -1356,7 +1358,7 @@ def start(
                             )
                         )
                         time.sleep(2)
-                        sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
+                        sys.exit(runtime.ExitCodes.EXIT_PENDING_RESTART.value)
 
                     print(string("cli.updating", app_name=APP_NAME))
                     try:
@@ -1373,13 +1375,13 @@ def start(
                     else:
                         print(string("cli.update_success_restart", app_name=APP_NAME))
                         time.sleep(5)
-                        sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
+                        sys.exit(runtime.ExitCodes.EXIT_PENDING_RESTART.value)
         elif runtime.check_for_update() and not runtime.supports_ansi():
             print(string("cli.no_ansi"))
             if running_compiled():
                 print(string("cli.request_refresh_binaries"))
                 time.sleep(2)
-                sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
+                sys.exit(runtime.ExitCodes.EXIT_PENDING_RESTART.value)
 
             print(string("cli.apply_update_noninteractive"))
             try:
@@ -1392,7 +1394,7 @@ def start(
             else:
                 print(string("cli.update_success_restart", app_name=APP_NAME))
                 time.sleep(5)
-                sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
+                sys.exit(runtime.ExitCodes.EXIT_PENDING_RESTART.value)
 
         if not runtime.env_bool("CELUNE_LAUNCHER"):
             launcher_exe = "celune.exe" if os.name == "nt" else "celune.appimage"
@@ -1441,6 +1443,8 @@ def start(
             _STARTUP_DIAGNOSTIC_SINK = ui.receive_startup_diagnostic
             try:
                 ui.run()
+                if ui.return_code == runtime.ExitCodes.EXIT_PENDING_RESTART.value:
+                    sys.exit(runtime.ExitCodes.EXIT_PENDING_RESTART.value)
                 if ui.return_code not in (None, 0):
                     sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
             finally:

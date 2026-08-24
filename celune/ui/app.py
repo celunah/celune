@@ -15,6 +15,7 @@ import re
 import sys
 import math
 import time
+from copy import deepcopy
 import queue as queue_module
 import shlex
 import types
@@ -57,6 +58,7 @@ from textual.theme import Theme
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.message import Message
+from textual.screen import ModalScreen
 from textual.widgets import Label, Button, RichLog, TextArea, ProgressBar
 from textual.css.query import NoMatches
 from textual.css.types import EdgeStyle
@@ -65,10 +67,12 @@ from textual.containers import Vertical, Horizontal
 from ..i18n import string
 from .theme import CELUNE_CSS, severity_color
 from .loading import CeluneLoadingScreen
-from ..constants import SIGTSTP, APP_NAME
+from .terminal import SelectMenuOption, SelectMenuWidget
+from ..constants import SIGTSTP, APP_NAME, ExitCodes
 from ..theme.defaults import default_theme_family
 from ..watchdog import launcher_loss_requested
 from ..typing.agent import AgentTaskState
+from ..typing.common import JSONSerializable
 from ..typing.config import AudioDeviceInfoValue
 from ..typing.locks import (
     ComponentLockName,
@@ -175,6 +179,106 @@ def format_error(error: Exception, log_level: Union[LogLevel, bool]) -> str:
     from ..utils import format_error as format_error_helper
 
     return format_error_helper(error, log_level)
+
+
+class VoiceButton(Button):
+    """Button that reports a long press before its normal click message."""
+
+    class LongPressed(Message):
+        """Message emitted when the primary mouse button is held down."""
+
+        def __init__(self, button: VoiceButton) -> None:
+            super().__init__()
+            self.button = button
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        widget_id: Optional[str] = None,
+        disabled: bool = False,
+    ) -> None:
+        super().__init__(label, id=widget_id, disabled=disabled)
+        self._hold_seconds = 0.55
+        self._hold_timer: Optional[Timer] = None
+        self._long_pressed = False
+
+    async def _on_mouse_down(self, event: events.MouseDown) -> None:
+        """Start the long-press timer for the primary mouse button."""
+        if event.button == 1 and not self.disabled:
+            self._long_pressed = False
+            self._stop_hold_timer()
+            self._hold_timer = self.set_timer(
+                self._hold_seconds,
+                self._emit_long_pressed,
+            )
+        await super()._on_mouse_down(event)
+
+    async def _on_mouse_up(self, event: events.MouseUp) -> None:
+        """Cancel a short press timer and suppress a click after a long press."""
+        self._stop_hold_timer()
+        if self._long_pressed:
+            self.suppress_click()
+        await super()._on_mouse_up(event)
+
+    def _emit_long_pressed(self) -> None:
+        """Emit the long-press message while the pointer remains over the button."""
+        self._hold_timer = None
+        if self.disabled or not self.is_mouse_over:
+            return
+        self._long_pressed = True
+        self.suppress_click()
+        self.post_message(self.LongPressed(self))
+
+    def _stop_hold_timer(self) -> None:
+        """Stop the pending long-press timer, if any."""
+        if self._hold_timer is not None:
+            self._hold_timer.stop()
+            self._hold_timer = None
+
+
+class SelectMenuOverlay(ModalScreen[None]):
+    """Center one selection menu over the application content."""
+
+    def __init__(self, menu: SelectMenuWidget) -> None:
+        super().__init__()
+        self.menu = menu
+
+    def compose(self) -> ComposeResult:
+        """Yield the menu that should be centered by this overlay."""
+        yield self.menu
+
+    def on_key(self, event: events.Key) -> None:
+        """Keep unhandled keys from reaching the application underneath."""
+        event.stop()
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        """Consume mouse presses outside the menu popup."""
+        event.stop()
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        """Consume mouse releases outside the menu popup."""
+        event.stop()
+
+    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        """Consume downward scrolling outside the menu popup."""
+        event.stop()
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        """Consume upward scrolling outside the menu popup."""
+        event.stop()
+
+    def on_mouse_scroll_right(self, event: events.MouseScrollRight) -> None:
+        """Consume rightward scrolling outside the menu popup."""
+        event.stop()
+
+    def on_mouse_scroll_left(self, event: events.MouseScrollLeft) -> None:
+        """Consume leftward scrolling outside the menu popup."""
+        event.stop()
+
+    def on_click(self, event: events.Click) -> None:
+        """Consume clicks outside the menu popup."""
+        event.stop()
 
 
 def indent(text: str, spaces: int, direction: str = "left") -> str:
@@ -611,6 +715,11 @@ class CeluneUI(App):
         self._test_completion_callback = test_completion_callback
         self._runtime_intervals_started = False
         self._windows_signal_handler: Optional[Callable[[int], bool]] = None
+        self._active_menu: Optional[SelectMenuWidget] = None
+        self._active_menu_overlay: Optional[SelectMenuOverlay] = None
+        self._active_menu_kind: Optional[str] = None
+        self._settings_paths: tuple[tuple[str, ...], ...] = ()
+        self._voice_menu_paths: dict[str, Path] = {}
 
         CeluneUI._instance = self
 
@@ -1598,7 +1707,11 @@ class CeluneUI(App):
             )
             with Horizontal(id="controls"):
                 yield TextArea(id="input", placeholder=string("ui.wait_placeholder"))
-                yield Button(string("ui.no_voice_set"), id="style", disabled=True)
+                yield VoiceButton(
+                    string("ui.no_voice_set"),
+                    widget_id="style",
+                    disabled=True,
+                )
                 yield Button(string("ui.vc_mode_talk"), id="vc-mode", disabled=True)
                 yield Button(
                     string("ui.vc_pitch_button", value="+0"),
@@ -4508,6 +4621,364 @@ class CeluneUI(App):
         """
         process_ui_command(self, command, args)
 
+    def open_settings_menu(self) -> None:
+        """Open the configuration manager and prepare a restart on save."""
+        if self.celune is None or self._active_menu is not None:
+            return
+
+        options: list[SelectMenuOption] = []
+        paths: list[tuple[str, ...]] = []
+        for path, value in self._iter_config_values(self.celune.config):
+            label = self._config_label(path)
+            options.append(
+                SelectMenuOption(
+                    label=label,
+                    value=value,
+                    autocomplete_values=self._config_autocomplete(path, value),
+                    explanation=string("ui.settings_explanation", setting=label),
+                )
+            )
+            paths.append(path)
+
+        if not options:
+            self.safe_log(string("ui.settings_empty"), "warning")
+            return
+
+        self._settings_paths = tuple(paths)
+        self._show_menu(
+            SelectMenuWidget(
+                string("ui.settings_title"),
+                options,
+                value_display="all",
+                return_value=False,
+                footer_builder=lambda option: self._menu_footer(
+                    option,
+                    option_count=len(options),
+                    confirm_hint=string("ui.settings_confirm_hint"),
+                    include_search=False,
+                ),
+            ),
+            "settings",
+        )
+
+    @staticmethod
+    def _iter_config_values(
+        config: dict[str, JSONSerializable],
+        prefix: tuple[str, ...] = (),
+    ) -> Iterator[tuple[tuple[str, ...], JSONSerializable]]:
+        """Yield editable leaf values from the nested configuration mapping."""
+        for key, value in config.items():
+            path = (*prefix, key)
+            if isinstance(value, dict) and value:
+                yield from CeluneUI._iter_config_values(value, path)
+            else:
+                yield path, value
+
+    @staticmethod
+    def _config_autocomplete(
+        path: tuple[str, ...], value: JSONSerializable
+    ) -> Optional[tuple[JSONSerializable, ...]]:
+        """Return useful autocomplete candidates for one configuration value."""
+        if value is None:
+            return (None,)
+        if isinstance(value, bool):
+            return (True, False)
+
+        candidates: dict[tuple[str, ...], tuple[JSONSerializable, ...]] = {
+            ("backend",): (None, "mini", "qwen3", "dots.tts", "voxcpm2", "seed-vc"),
+            ("gpt_sovits_variant",): (
+                "auto",
+                "v1",
+                "v2",
+                "v2Pro",
+                "v2ProPlus",
+                "v3",
+                "v4",
+            ),
+            ("log_level",): ("info", "verbose", "debug"),
+            ("mode",): ("speak", "converse", "agent"),
+            ("theme",): ("dark", "light"),
+            ("vram",): ("low", "medium", "high", "xhigh"),
+            ("audio_api",): (None, "wasapi", "directsound"),
+            ("persona", "speech_language"): ("auto",),
+        }
+        return candidates.get(path)
+
+    @staticmethod
+    def _config_label(path: tuple[str, ...]) -> str:
+        """Convert a dotted configuration path into a readable setting label."""
+        label = " ".join(path).replace("_", " ")
+        for source, replacement in (
+            ("gpt sovits", "GPT-SoVITS"),
+            ("t2s", "T2S"),
+        ):
+            label = re.sub(
+                rf"\b{re.escape(source)}\b",
+                replacement,
+                label,
+                flags=re.IGNORECASE,
+            )
+
+        protected_names = {
+            "api": "API",
+            "asr": "ASR",
+            "celune": "Celune",
+            "cpu": "CPU",
+            "gpu": "GPU",
+            "gpt-sovits": "GPT-SoVITS",
+            "ipa": "IPA",
+            "persona": "Persona",
+            "qwen3": "Qwen3",
+            "t2s": "T2S",
+            "tts": "TTS",
+            "vc": "VC",
+            "vram": "VRAM",
+        }
+        words = label.split()
+        formatted = [
+            protected_names.get(word.casefold(), word.casefold()) for word in words
+        ]
+        if formatted and words[0].casefold() not in protected_names:
+            formatted[0] = formatted[0].capitalize()
+        return " ".join(formatted)
+
+    @staticmethod
+    def _menu_footer(
+        option: SelectMenuOption,
+        *,
+        option_count: int,
+        confirm_hint: str,
+        include_search: bool,
+    ) -> str:
+        """Build localized hints for the selected menu row."""
+        hints: list[str] = []
+        if option_count > 1:
+            hints.append(string("ui.menu_hint_select"))
+        if (
+            option.editable
+            and option.autocomplete_values is not None
+            and len(option.autocomplete_values) > 1
+        ):
+            hints.append(string("ui.menu_hint_choose"))
+            if include_search:
+                hints.append(string("ui.menu_hint_search"))
+        hints.extend((confirm_hint, string("ui.menu_hint_cancel")))
+        return string("ui.menu_hint_separator").join(hints)
+
+    def open_voice_menu(self) -> None:
+        """Open a voice menu containing every available CEVOICE/CECHAR entry."""
+        if self.celune is None or self._active_menu is not None:
+            return
+
+        from ..cevoice import (
+            CEVoice,
+            CEVoiceError,
+            active_bundle_path,
+            bundle_character_name,
+            bundled_voices_dir,
+        )
+
+        options: list[SelectMenuOption] = []
+        self._voice_menu_paths = {}
+        active_bundle = active_bundle_path()
+        active_voice = getattr(self.celune, "current_voice", None)
+        voice_directory = bundled_voices_dir()
+        try:
+            pack_paths = sorted(
+                path
+                for path in voice_directory.iterdir()
+                if path.is_file() and path.suffix.casefold() in {".cevoice", ".cechar"}
+            )
+        except OSError:
+            pack_paths = []
+        for path in pack_paths:
+            try:
+                bundle = CEVoice.open(path)
+            except (OSError, CEVoiceError):
+                continue
+
+            pack_name = bundle_character_name(bundle) or path.stem
+            if pack_name in self._voice_menu_paths:
+                pack_name = f"{pack_name} ({path.stem})"
+            voices = bundle.voice_order
+            if not voices:
+                continue
+            self._voice_menu_paths[pack_name] = path
+            selected_voice = voices[0]
+            if (
+                path == active_bundle
+                and isinstance(active_voice, str)
+                and active_voice in voices
+            ):
+                selected_voice = active_voice
+            options.append(
+                SelectMenuOption(
+                    label=pack_name,
+                    value=selected_voice,
+                    editable=len(voices) > 1,
+                    autocomplete_values=voices if len(voices) > 1 else None,
+                    confirm_value=voices[0] if len(voices) == 1 else None,
+                )
+            )
+
+        if not options:
+            self.safe_log(string("ui.no_voices_loaded"), "warning")
+            return
+
+        for index, option in enumerate(options):
+            if (
+                self._voice_menu_paths.get(option.label) == active_bundle
+                and option.value == active_voice
+            ):
+                options.insert(0, options.pop(index))
+                break
+
+        self._show_menu(
+            SelectMenuWidget(
+                string("ui.voice_menu_title"),
+                options,
+                value_display="all",
+                footer_builder=lambda option: self._menu_footer(
+                    option,
+                    option_count=len(options),
+                    confirm_hint=string("ui.voice_confirm_hint"),
+                    include_search=True,
+                ),
+            ),
+            "voice",
+        )
+
+    def _show_menu(self, menu: SelectMenuWidget, menu_kind: str) -> None:
+        """Mount and focus one application menu overlay."""
+        overlay = SelectMenuOverlay(menu)
+        self._active_menu = menu
+        self._active_menu_overlay = overlay
+        self._active_menu_kind = menu_kind
+        self.push_screen(overlay)
+
+    def on_voice_button_long_pressed(self, event: VoiceButton.LongPressed) -> None:
+        """Open voice selection when the voice button is held."""
+        if event.button is self.style_button:
+            self.open_voice_menu()
+
+    def on_select_menu_widget_confirmed(
+        self, event: SelectMenuWidget.Confirmed
+    ) -> None:
+        """Apply a menu confirmation and close the active menu."""
+        if event.menu is not self._active_menu:
+            return
+
+        menu = event.menu
+        menu_kind = self._active_menu_kind
+        self._close_menu()
+        if menu_kind == "settings":
+            self._save_settings(menu)
+        elif menu_kind == "voice" and isinstance(event.value, str):
+            self._apply_voice_selection(
+                {"pack": event.option.label, "entry": event.value}
+            )
+
+    def on_select_menu_widget_cancelled(
+        self, event: SelectMenuWidget.Cancelled
+    ) -> None:
+        """Close a menu without applying its changes."""
+        if event.menu is not self._active_menu:
+            return
+        self._close_menu()
+
+    def _close_menu(self) -> None:
+        """Remove a menu overlay after restoring focus to the input box."""
+        self._active_menu = None
+        overlay = self._active_menu_overlay
+        self._active_menu_overlay = None
+        self._active_menu_kind = None
+        if overlay is not None and self.screen is overlay:
+            overlay.dismiss()
+        self.set_focus(self.input_box)
+
+    def _save_settings(self, menu: SelectMenuWidget) -> None:
+        """Persist the edited configuration and request a launcher restart."""
+        if self.celune is None or len(self._settings_paths) != len(menu.options):
+            return
+
+        updated = deepcopy(self.celune.config)
+        for path, option in zip(self._settings_paths, menu.options):
+            self._set_config_value(updated, path, option.value)
+
+        try:
+            self.celune.config = updated
+            with config_path(create_parent=True).open("w", encoding="utf-8") as file:
+                yaml.safe_dump(updated, file, sort_keys=False)
+        except OSError as error:
+            self.safe_log(string("ui.settings_save_failed", error=error), "error")
+            return
+
+        self.cur_state = "restarting"
+        self._run_shutdown_step(
+            lambda: self._set_terminal_status(
+                "restarting",
+                string("osc.action_restarting"),
+            )
+        )
+        self._run_shutdown_step(self._shutdown_runtime)
+        self.exit(return_code=ExitCodes.EXIT_PENDING_RESTART.value)
+
+    @staticmethod
+    def _set_config_value(
+        config: dict[str, JSONSerializable],
+        path: tuple[str, ...],
+        value: JSONSerializable,
+    ) -> None:
+        """Replace one flattened configuration value in its nested mapping."""
+        target = config
+        for key in path[:-1]:
+            child = target.get(key)
+            if not isinstance(child, dict):
+                return
+            target = child
+        target[path[-1]] = value
+
+    @work(exclusive=True)
+    async def _apply_voice_selection(self, value: dict[str, JSONSerializable]) -> None:
+        """Load the selected pack and voice without blocking the Textual loop."""
+        if self.celune is None:
+            return
+        from ..cevoice import active_bundle_path
+
+        pack = value.get("pack")
+        entry = value.get("entry")
+        bundle_path = (
+            self._voice_menu_paths.get(pack) if isinstance(pack, str) else None
+        )
+        if bundle_path is None or not isinstance(entry, str):
+            return
+
+        try:
+            if active_bundle_path() == bundle_path:
+                loaded = await asyncio.to_thread(
+                    self.celune.set_voice_and_wait,
+                    entry,
+                )
+            else:
+                loaded = await asyncio.to_thread(
+                    self.celune.set_cevoice_and_wait,
+                    bundle_path,
+                )
+                if loaded:
+                    loaded = await asyncio.to_thread(
+                        self.celune.set_voice_and_wait,
+                        entry,
+                    )
+            if not loaded:
+                self.safe_log(string("ui.voice_change_failed"), "warning")
+                return
+            self.celune_styles = self.celune.voices
+            self.style_index = self.celune_styles.index(entry)
+            self.tts_voice_changed(entry)
+            self.change_voice_lock_state(locked=len(self.celune_styles) < 2)
+        except Exception as error:
+            self.safe_log(string("ui.voice_change_failed_error", error=error), "error")
+
     def consume_buffer(self, text_len: int) -> None:
         """Consume a sentence from live input and say it.
 
@@ -4914,11 +5385,16 @@ class CeluneUI(App):
 
     def on_unmount(self) -> None:
         """Unload Celune."""
-        self.cur_state = "exiting"
+        restarting = self.cur_state == "restarting"
+        if not restarting:
+            self.cur_state = "exiting"
         self._run_shutdown_step(self._cancel_sleep_timer)
         self._run_shutdown_step(self._clear_caption_timers)
         self._run_shutdown_step(
-            lambda: self._set_terminal_status("exiting", string("osc.action_exiting"))
+            lambda: self._set_terminal_status(
+                "restarting" if restarting else "exiting",
+                string("osc.action_restarting" if restarting else "osc.action_exiting"),
+            )
         )
         self._run_shutdown_step(self._shutdown_runtime)
 
