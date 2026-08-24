@@ -57,7 +57,7 @@ menu = SelectMenuWidget(
 )
 ```
 
-Labels begin at the same column as the `-> ` selection marker. Every displayed
+Labels begin at the same column as the `->` selection marker. Every displayed
 value begins two cells after the longest label, including when labels contain
 wide Unicode characters. Set `value_display="current"` to show a bracketed
 value only on the highlighted editable row; the default `"all"` shows values on

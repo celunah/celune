@@ -48,11 +48,12 @@ if (-not (Test-Path (Join-Path $repoRoot "resources\celune.res"))) {
     throw "resources\celune.res was not found."
 }
 
-if (-not (Test-Path $vcruntimeSource -PathType Leaf)) {
-    throw "The required Visual C++ runtime DLL was not found: $vcruntimeSource"
+if (Test-Path -LiteralPath $vcruntimeSource -PathType Leaf) {
+    Copy-Item -LiteralPath $vcruntimeSource -Destination $vcruntimeAsset -Force
 }
-
-Copy-Item -LiteralPath $vcruntimeSource -Destination $vcruntimeAsset -Force
+elseif (-not (Test-Path -LiteralPath $vcruntimeAsset -PathType Leaf)) {
+    throw "The required Visual C++ runtime DLL was not found at the Visual Studio source or in the repository: $vcruntimeSource"
+}
 
 if (-not (Test-Path $manifestScript)) {
     throw "The update manifest script was not found."
