@@ -3777,6 +3777,8 @@ raise SystemExit(worker.main())
 """.replace("IGNORE_CANCELLATION", repr(ignore_cancellation))
         worker_binary_input, core_binary_output = os.pipe()
         core_binary_input, worker_binary_output = os.pipe()
+        core_binary_input_stream = os.fdopen(core_binary_input, "rb", buffering=0)
+        core_binary_input = -1
         process: Optional[subprocess.Popen[bytes]] = None
         packets: list[WorkerControlMessage] = []
         try:
@@ -3807,6 +3809,16 @@ raise SystemExit(worker.main())
             assert process.stdin is not None
             assert process.stdout is not None
 
+            def receive_worker_packet() -> WorkerControlMessage:
+                """Read one worker packet and its matching binary boundary."""
+                packet = receive_message(process.stdout)
+                descriptors = packet.get("payloads", [])
+                receive_payloads(
+                    core_binary_input_stream,
+                    cast(list[WorkerPayloadDescriptor], descriptors),
+                )
+                return packet
+
             send_no_payload_packet(
                 process.stdin,
                 core_binary_output,
@@ -3824,8 +3836,8 @@ raise SystemExit(worker.main())
                     message_id="hello-request",
                 ),
             )
-            receive_message(process.stdout)
-            receive_message(process.stdout)
+            receive_worker_packet()
+            receive_worker_packet()
             send_no_payload_packet(
                 process.stdin,
                 core_binary_output,
@@ -3839,7 +3851,7 @@ raise SystemExit(worker.main())
                     message_id="load-request",
                 ),
             )
-            loaded = receive_message(process.stdout)
+            loaded = receive_worker_packet()
             model_id = cast(dict, loaded["data"])["value"]
             send_no_payload_packet(
                 process.stdin,
@@ -3854,8 +3866,17 @@ raise SystemExit(worker.main())
                     message_id="stream-request",
                 ),
             )
-            first_frame = receive_message(process.stdout)
-            self.assertTrue(cast(dict, first_frame["data"])["stream"])
+            first_frame = receive_worker_packet()
+            first_data = cast(dict[str, WorkerValue], first_frame["data"])
+            self.assertEqual(
+                first_frame["kind"],
+                "response",
+                f"unexpected worker packet: {first_frame!r}",
+            )
+            self.assertTrue(
+                first_data.get("stream"),
+                f"unexpected worker packet: {first_frame!r}",
+            )
             send_no_payload_packet(
                 process.stdin,
                 core_binary_output,
@@ -3867,7 +3888,7 @@ raise SystemExit(worker.main())
                 ),
             )
             while True:
-                packet = receive_message(process.stdout)
+                packet = receive_worker_packet()
                 if packet["kind"] == "shutdown_ack":
                     acknowledgement = cast(dict[str, WorkerValue], packet["data"])
                     break
@@ -3884,6 +3905,8 @@ raise SystemExit(worker.main())
                 if descriptor >= 0:
                     with suppress(OSError):
                         os.close(descriptor)
+            with suppress(OSError, ValueError):
+                core_binary_input_stream.close()
             if process is not None:
                 if process.poll() is None:
                     process.terminate()
