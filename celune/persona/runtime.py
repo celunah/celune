@@ -25,7 +25,7 @@ from ..i18n import string
 from ..vram import resolve_vram_preset
 from ..typing.common import JSONSerializable
 from .capabilities import PersonaCapabilities
-from ..utils import discard, normalize_special_characters
+from ..utils import normalize_special_characters
 from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
 from ..constants import (
     N_A_STR,
@@ -338,7 +338,6 @@ class PersonaBackend:
             raise ValueError("Persona backend is not loaded")
 
         message_dicts = [_payload_from_message(message) for message in messages]
-        used_vision = _messages_have_vision(message_dicts)
         inputs = None
         model_inputs = None
         output_ids = None
@@ -349,9 +348,10 @@ class PersonaBackend:
                 key: cast(torch.Tensor, value) for key, value in dict(inputs).items()
             }
             generation_kwargs: dict[str, ModelGenerateKwargValue] = {
+                "cache_implementation": "dynamic",
                 "stopping_criteria": StoppingCriteriaList(
                     [_PersonaCancellationCriteria(self._generation_cancelled)]
-                )
+                ),
             }
             pad_token_id = tokenizer.eos_token_id
             if pad_token_id is not None:
@@ -368,8 +368,8 @@ class PersonaBackend:
                     **generation_kwargs,
                 )
 
-            input_ids = cast(torch.Tensor, inputs["input_ids"])
-            new_ids = output_ids[0, input_ids.shape[1] :]
+            input_length = cast(torch.Tensor, inputs["input_ids"]).shape[1]
+            new_ids = output_ids[0, input_length:]
             text = normalize_special_characters(
                 tokenizer.decode(new_ids, skip_special_tokens=True).strip()
             )
@@ -380,19 +380,19 @@ class PersonaBackend:
                 quantization=self.quantization,
             )
         finally:
-            # vision requests can allocate a large amount of memory for image/video tensors
-            # drop them after the vision-related turn is complete, and let Celune know it from context
-            discard(new_ids)
-            discard(output_ids)
-            discard(model_inputs)
-            discard(inputs)
-            if used_vision:
-                gc.collect()
-                if torch.cuda.is_available():
-                    with contextlib.suppress(Exception):
-                        torch.cuda.synchronize()
-                    with contextlib.suppress(Exception):
-                        torch.cuda.empty_cache()
+            # Release every request-local tensor before clearing the CUDA allocator.
+            # Assigning None is intentional: discard() only drops its local alias and
+            # cannot clear the references held by this stack frame.
+            new_ids = None
+            output_ids = None
+            model_inputs = None
+            inputs = None
+            gc.collect()
+            if torch.cuda.is_available():
+                with contextlib.suppress(Exception):
+                    torch.cuda.synchronize()
+                with contextlib.suppress(Exception):
+                    torch.cuda.empty_cache()
 
     def _build_inputs(
         self,

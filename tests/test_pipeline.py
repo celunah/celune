@@ -1786,10 +1786,10 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             {"role": "assistant", "content": "I can help with that."},
         ]
 
-    def test_agent_classification_request_reuses_persona_prompt_and_history(
+    def test_agent_classification_request_uses_a_disposable_prompt(
         self,
     ) -> None:
-        """Build routing input from the existing Persona prompt and history path."""
+        """Build routing input without retaining conversational Persona history."""
         engine = make_pipeline_engine()
         engine.config = {
             "vram": "high",
@@ -1804,6 +1804,8 @@ class TestPipelineAsync(CeluneAsyncTestCase):
 
         self.assertEqual(payload["format"], "celune_agent_classification")
         self.assertEqual(payload["request"], "Please handle this.")
+        self.assertEqual(payload["context_space"], 8192)
+        self.assertEqual(payload["max_new_tokens"], 96)
         system_prompt = payload["system"]
         self.assertIsInstance(system_prompt, str)
         assert isinstance(system_prompt, str)
@@ -1822,9 +1824,12 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             messages[-1],
             {"role": "user", "content": "Please handle this."},
         )
-        self.assertIn(
-            {"role": "assistant", "content": "Earlier."},
+        self.assertEqual(
             messages,
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "Please handle this."},
+            ],
         )
 
     def test_agent_classification_request_includes_active_routing_context(self) -> None:

@@ -494,8 +494,8 @@ class TestPersonaApi(CeluneTestCase):
         }
         assert "do_resize" not in fake_processor.calls[0]
 
-    def test_generate_releases_transient_vram_after_vision_turn(self) -> None:
-        """Verify vision requests drop temporary GPU allocations after generation."""
+    def test_generate_releases_transient_vram_after_generation(self) -> None:
+        """Verify generation drops temporary GPU allocations after each request."""
         backend = runtime.PersonaBackend()
         backend.processor = cast(runtime.PersonaProcessor, _FakeMultimodalProcessor())
         backend.tokenizer = cast(runtime.PersonaTokenizer, _FakeTokenizer())
@@ -553,6 +553,7 @@ class TestPersonaApi(CeluneTestCase):
             runtime.StoppingCriteriaList,
             model.calls[0]["stopping_criteria"],
         )
+        assert model.calls[0]["cache_implementation"] == "dynamic"
         criterion = cast(runtime._PersonaCancellationCriteria, criteria[0])
         self.assertFalse(
             criterion(runtime.torch.tensor([[1]]), runtime.torch.tensor([])).item()

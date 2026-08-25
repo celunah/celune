@@ -35,6 +35,7 @@ type ModelGenerateKwargValue = Union[
     int,
     float,
     bool,
+    str,
     StoppingCriteriaList,
 ]
 type WhisperScalar = Union[int, float, np.number, torch.Tensor]

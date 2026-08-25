@@ -79,6 +79,8 @@ from .constants import (
     APP_NAME,
     APP_SLUG,
     AGENT_CONTEXT_SPACE,
+    AGENT_ROUTING_CONTEXT_SPACE,
+    AGENT_ROUTING_MAX_NEW_TOKENS,
     PERSONA_MEMORY_EMBEDDING_MODEL,
     PipelineStates,
 )
@@ -2108,7 +2110,7 @@ def build_persona_request(
         context_size = (
             agent_context.task.config.context_size
             if agent_context.task is not None
-            else AGENT_CONTEXT_SPACE
+            else AGENT_ROUTING_CONTEXT_SPACE
         )
     return {
         "format": "celune_persona_request",
@@ -2167,7 +2169,6 @@ def build_agent_classification_request(
         )
     clean_request = request.strip()
     messages: list[JSON] = [cast(JSON, {"role": "system", "content": system_prompt})]
-    messages.extend(persona_history_messages(engine))
     messages.append(cast(JSON, {"role": "user", "content": clean_request}))
     return {
         "format": "celune_agent_classification",
@@ -2178,10 +2179,12 @@ def build_agent_classification_request(
         "system": system_prompt,
         "user": clean_request,
         "request": clean_request,
-        "context_space": _configured_agent_context_size(engine),
+        "context_space": min(
+            _configured_agent_context_size(engine), AGENT_ROUTING_CONTEXT_SPACE
+        ),
         "routing_context": routing_context,
         "messages": cast(JSONSerializable, messages),
-        "max_new_tokens": 160,
+        "max_new_tokens": AGENT_ROUTING_MAX_NEW_TOKENS,
         "temperature": 0.0,
         "top_p": 1.0,
         "repetition_penalty": 1.0,
