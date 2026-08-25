@@ -37,6 +37,15 @@ class TestApiWebUI(CeluneTestCase):
         self.previous_theme_style = api.webui_theme_style
         self.previous_status_source = api.webui_status_source
         self.previous_status_updated_at = api.webui_status_updated_at
+        self.previous_caption_text = api.webui_caption_text
+        self.previous_caption_progress = api.webui_caption_progress
+        self.previous_caption_active = api.webui_caption_active
+        self.previous_progress_current = api.webui_progress_current
+        self.previous_progress_total = api.webui_progress_total
+        self.previous_active_theme_name = api.webui_active_theme_name
+        self.previous_timed_update_sequence = api.webui_timed_update_sequence
+        self.previous_timed_update_received_at = api.webui_timed_update_received_at
+        self.previous_timed_update_source = api.webui_timed_update_source
         self.previous_auth_token = api.auth_token
         self.previous_logs = list(api.webui_log_lines)
         api.bound_celune = None
@@ -51,10 +60,23 @@ class TestApiWebUI(CeluneTestCase):
         api.webui_voice_locked = True
         api.webui_status_source = "probe"
         api.webui_status_updated_at = 0.0
+        api.webui_caption_text = ""
+        api.webui_caption_progress = 0.0
+        api.webui_caption_active = False
+        api.webui_progress_current = None
+        api.webui_progress_total = None
+        api.webui_active_theme_name = "celune"
+        api.webui_timed_update_sequence = 0
+        api.webui_timed_update_received_at = 0.0
+        api.webui_timed_update_source = "fallback"
         api.set_webui_status("Starting up")
 
     def tearDown(self) -> None:
         """Restore global WebUI state after each test."""
+        api._unsubscribe_webui_events()
+        if api.webui_timed_update_unsubscribe is not None:
+            api.webui_timed_update_unsubscribe()
+            api.webui_timed_update_unsubscribe = None
         api.bound_celune = self.previous_celune
         api.webui_status_text = self.previous_status_text
         api.webui_status_severity = self.previous_status_severity
@@ -68,6 +90,15 @@ class TestApiWebUI(CeluneTestCase):
         api.webui_theme_style = self.previous_theme_style
         api.webui_status_source = self.previous_status_source
         api.webui_status_updated_at = self.previous_status_updated_at
+        api.webui_caption_text = self.previous_caption_text
+        api.webui_caption_progress = self.previous_caption_progress
+        api.webui_caption_active = self.previous_caption_active
+        api.webui_progress_current = self.previous_progress_current
+        api.webui_progress_total = self.previous_progress_total
+        api.webui_active_theme_name = self.previous_active_theme_name
+        api.webui_timed_update_sequence = self.previous_timed_update_sequence
+        api.webui_timed_update_received_at = self.previous_timed_update_received_at
+        api.webui_timed_update_source = self.previous_timed_update_source
         api.auth_token = self.previous_auth_token
         api.webui_log_lines.clear()
         api.webui_log_lines.extend(self.previous_logs)
@@ -258,6 +289,149 @@ class TestApiWebUI(CeluneTestCase):
         assert log_calls == [("legacy log", "warning")]
         assert status_calls == [("legacy status", "info")]
 
+    def test_webui_wrapped_callbacks_mirror_generation_lifecycle(self) -> None:
+        """Verify idle, queue, caption, progress, and error callbacks reach WebUI state."""
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                is_in_tutorial=False,
+                locked=True,
+                cur_state="speaking",
+                log_callback=lambda *_args, **_kwargs: None,
+                status_callback=lambda *_args, **_kwargs: None,
+                error_callback=lambda _message: None,
+                idle_callback=lambda: None,
+                queue_avail_callback=lambda: None,
+                progress_callback=lambda *_args: None,
+                caption_progress_callback=lambda *_args: None,
+                caption_callback=lambda _caption: None,
+                caption_timing_callback=lambda *_args: None,
+                voice_changed_callback=lambda _name: None,
+                change_input_state_callback=lambda _locked: None,
+                change_voice_lock_state_callback=lambda _locked: None,
+            ),
+        )
+        with mock.patch(
+            "celune.api.main_window_log_path",
+            return_value=mock.Mock(exists=lambda: False),
+        ):
+            api.bind_celune(celune)
+
+        celune.queue_avail_callback()
+        assert not api.webui_input_locked
+        assert api.webui_status_text == string("status.speaking")
+
+        celune.caption_callback("Hello there")
+        celune.caption_progress_callback(1.0, 2.0)
+        api.webui_progress_current = 1.0
+        api.webui_progress_total = 2.0
+        _status = api.webui_status_html()
+        assert "Hello there" in _status
+        assert "50%" in _status
+
+        celune.error_callback("backend failed")
+        assert "backend failed" in api.webui_status_html()
+        assert any(
+            message == "backend failed" and severity == "error"
+            for message, severity in api.webui_log_lines
+        )
+
+        celune.idle_callback()
+        assert api.webui_caption_text == ""
+        assert api.webui_progress_total is None
+
+    def test_webui_persona_input_uses_think_path(self) -> None:
+        """Verify browser input follows the Persona path when talkback is enabled."""
+        chunks = Queue()
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={},
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+                sleeping=False,
+                think=mock.Mock(return_value=True),
+                say_stream=mock.Mock(return_value=chunks),
+            ),
+        )
+        api.bound_celune = celune
+        with (
+            mock.patch("celune.api.persona_talkback_enabled", return_value=True),
+            mock.patch(
+                "celune.api.ui_resources.resource_pages",
+                return_value=("VRAM: first",),
+            ),
+        ):
+            list(api.webui_speak("hello"))
+
+        celune.think.assert_called_once_with("hello")
+        celune.say_stream.assert_not_called()
+
+    def test_webui_slash_command_uses_shared_handler_without_tui(self) -> None:
+        """Verify slash commands do not require a mounted Textual singleton."""
+        celune = cast(Celune, SimpleNamespace())
+        api.bound_celune = celune
+        with (
+            mock.patch("celune.api.CeluneUI._instance", None),
+            mock.patch("celune.ui.commands.process_command") as process_command,
+        ):
+            assert api._webui_run_command("/help")
+
+        process_command.assert_called_once()
+        assert process_command.call_args.args[1:] == ("help", [])
+
+    def test_webui_timed_updates_follow_cedts_sequence(self) -> None:
+        """Verify newer TUI timed updates drive browser resource and theme state."""
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced",),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+            ),
+        )
+        api.bound_celune = celune
+        update = api.UiTimedUpdate(
+            runtime_id=str(id(celune)),
+            sequence=4,
+            emitted_at=1.0,
+            resource_page=3,
+            theme_name="celune_light",
+            status_text="Status from TUI",
+            status_severity="info",
+            status_marquee_offset=2,
+        )
+        api._receive_webui_timed_update(update)
+        assert api.webui_resource_page == 3
+        assert api.webui_active_theme_name == "celune_light"
+        assert api.webui_timed_update_sequence == 4
+        assert api.webui_status_text == "Status from TUI"
+        assert api.webui_timed_update_source == "cedts"
+
+    def test_webui_seeded_multiline_log_retains_record_severity(self, tmp_path) -> None:
+        """Verify continuation lines inherit the persisted record severity."""
+        log_path = tmp_path / "celune.log"
+        log_path.write_text(
+            "[2026-08-25T12:00:00] [WARNING] first line\nsecond line\n"
+            "[2026-08-25T12:00:01] [INFO] next line\n",
+            encoding="utf-8",
+        )
+        api.webui_logs_seeded = False
+        with mock.patch("celune.api.main_window_log_path", return_value=log_path):
+            api._seed_webui_logs()
+
+        assert list(api.webui_log_lines) == [
+            ("first line\nsecond line", "warning"),
+            ("next line", "info"),
+        ]
+
     def test_webui_snapshot_shows_tutorial_placeholder(self) -> None:
         """Verify tutorial state uses the tutorial placeholder in the browser UI."""
         api.bound_celune = cast(
@@ -376,6 +550,29 @@ class TestApiWebUI(CeluneTestCase):
         assert not voice_update["interactive"]
         assert not send_update["interactive"]
         assert not input_update["interactive"]
+
+    def test_webui_vc_state_uses_core_predicate_and_disables_text_input(self) -> None:
+        """Verify a backend-reported VC state is authoritative in the browser."""
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced", "calm"),
+                input_mode="text_to_speech",
+                is_voice_conversion_mode=mock.Mock(return_value=True),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+            ),
+        )
+        api.bound_celune = celune
+        api.webui_input_locked = False
+
+        input_update = api._input_update()
+        send_update = api._send_button_update()
+
+        assert not input_update["interactive"]
+        assert not send_update["interactive"]
 
     def test_seeded_logs_strip_persisted_time_prefix(self) -> None:
         """Verify persisted log timestamps do not show up in the browser log view."""
@@ -564,13 +761,13 @@ class TestApiWebUI(CeluneTestCase):
         assert updates[0][0]["value"] == ""
         assert updates[0][1] is None
 
-    def test_webui_slash_command_warns_without_main_ui(self) -> None:
-        """Verify slash commands warn instead of speaking when no main UI exists."""
+    def test_webui_slash_command_reports_missing_core(self) -> None:
+        """Verify slash commands report a missing core instead of requiring TUI."""
         with mock.patch("celune.api.CeluneUI._instance", None):
             updates = list(api.webui_speak("/help"))
 
         assert len(updates) == 1
-        assert "must be running to run commands" in updates[0][2]
+        assert "not currently available" in updates[0][2]
 
     def test_webui_speak_returns_browser_audio_after_generation(self) -> None:
         """Verify the browser submit handler returns one browser audio payload."""

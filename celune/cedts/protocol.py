@@ -134,7 +134,8 @@ _PROTOCOL_OPERATIONS = frozenset(
         "shutdown",
     }
 )
-_VALID_OPERATIONS = SUPPORTED_OPERATIONS | _PROTOCOL_OPERATIONS
+_UI_OPERATIONS = frozenset({"ui_timed_update"})
+_VALID_OPERATIONS = SUPPORTED_OPERATIONS | _PROTOCOL_OPERATIONS | _UI_OPERATIONS
 _EVENT_OPERATIONS = frozenset(
     {
         "fatal",
@@ -149,6 +150,7 @@ _EVENT_OPERATIONS = frozenset(
         "completed",
         "failed",
         "shutdown_requested",
+        "ui_timed_update",
     }
 )
 _STATE_VALUES = frozenset(
@@ -1548,6 +1550,42 @@ def _validate_event_data(operation: str, data: dict[str, object]) -> None:
             if field_name in data and not isinstance(data[field_name], str):
                 raise _worker_protocol_error(
                     "fatal_field_is_invalid", field_name=field_name
+                )
+        return
+    if operation == "ui_timed_update":
+        _validate_exact_fields(
+            data,
+            {
+                "runtime_id",
+                "sequence",
+                "emitted_at",
+                "resource_page",
+                "theme_name",
+                "status_text",
+                "status_severity",
+                "status_marquee_offset",
+            },
+        )
+        if not isinstance(data["runtime_id"], str) or not data["runtime_id"]:
+            raise _worker_protocol_error("backend_worker_ui_runtime_id_is_invalid")
+        for field_name in ("sequence", "resource_page", "status_marquee_offset"):
+            value = data[field_name]
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise _worker_protocol_error(
+                    "backend_worker_ui_timed_update_integer_is_invalid",
+                    field_name=field_name,
+                )
+        if not isinstance(data["emitted_at"], (int, float)) or isinstance(
+            data["emitted_at"], bool
+        ):
+            raise _worker_protocol_error(
+                "backend_worker_ui_timed_update_time_is_invalid"
+            )
+        for field_name in ("theme_name", "status_text", "status_severity"):
+            if not isinstance(data[field_name], str):
+                raise _worker_protocol_error(
+                    "backend_worker_ui_timed_update_text_is_invalid",
+                    field_name=field_name,
                 )
         return
     _validate_state_data(data)

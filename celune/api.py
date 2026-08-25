@@ -4,6 +4,7 @@
 import io
 import os
 import json
+import re
 import time
 import uuid
 import errno
@@ -15,6 +16,7 @@ import datetime
 import textwrap
 import threading
 import contextlib
+from copy import deepcopy
 from html import escape
 from hmac import compare_digest
 from dataclasses import field, dataclass
@@ -32,6 +34,7 @@ import numpy as np
 import numpy.typing as npt
 import gradio as gr
 import soundfile as sf
+import yaml
 from pydantic import Field, BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import RequestResponseEndpoint
@@ -55,6 +58,7 @@ from fastapi import (
 
 from .i18n import string
 from .celune import Celune
+from .cedts.ui import UiTimedUpdate, ui_timed_update_channel
 from .ui.app import CeluneUI
 from .audio.dsp import resample_audio
 from .utils import format_error
@@ -65,7 +69,7 @@ from .constants import BASE_SR, APP_NAME
 from .ui import resources as ui_resources
 from .typing.common import JSONSerializable
 from .exceptions import TaskSubscriptionClosed
-from .paths import project_root, main_window_log_path
+from .paths import config_path, project_root, main_window_log_path
 from .vc import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
 from .typing.aliases import LogLevel, AudioChunk, AudioChunks
 from .pipeline import (
@@ -81,6 +85,15 @@ from .typing.api import (
     WebUiAudioValue,
     WebUiInputAudioValue,
 )
+from .typing.events import EventCallback, EventName
+from .extensions.events import EventDispatcher
+from .dataclasses.events import (
+    AgentApprovalRequestedEvent,
+    AgentChoiceRequestedEvent,
+    AgentTaskFinishedEvent,
+    AgentTaskStateChangedEvent,
+)
+from .persona.impl import persona_talkback_enabled
 
 api = FastAPI(title=f"{APP_NAME}API")
 bound_celune: Optional[Celune] = None
@@ -97,9 +110,21 @@ webui_log_lines: deque[tuple[str, str]] = deque(maxlen=240)
 webui_status_text = "Waiting for response"
 webui_status_severity = "info"
 webui_logs_seeded = False
+webui_caption_text = ""
+webui_caption_progress = 0.0
+webui_caption_active = False
+webui_progress_current: Optional[float] = None
+webui_progress_total: Optional[float] = None
 webui_resource_page = 0
 webui_last_resource_advance = 0.0
 webui_last_probed_state: Optional[str] = None
+webui_active_theme_name = "celune"
+webui_timed_update_sequence = 0
+webui_timed_update_received_at = 0.0
+webui_timed_update_source = "fallback"
+webui_timed_update_unsubscribe: Optional[Callable[[], None]] = None
+webui_event_dispatcher: Optional[EventDispatcher] = None
+webui_event_callbacks: tuple[tuple[EventName, EventCallback], ...] = ()
 
 
 def _invoke_message_callback(
@@ -133,6 +158,7 @@ current_api_server: Optional["StartedServer"] = None
 WEBUI_RESOURCE_ROTATE_SECONDS = 2.06
 WEBUI_POLL_INTERVAL_SECONDS = WEBUI_RESOURCE_ROTATE_SECONDS / 4
 WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS = 0.9
+WEBUI_TIMED_UPDATE_STALE_SECONDS = WEBUI_RESOURCE_ROTATE_SECONDS * 2
 
 
 class TaskEvent(BaseModel):
@@ -977,9 +1003,28 @@ def bind_celune(celune: Celune) -> None:
     bound_celune = celune
     global webui_resource_page, webui_last_resource_advance, webui_last_probed_state
     global webui_input_locked, webui_input_placeholder, webui_voice_locked
+    global webui_logs_seeded, webui_active_theme_name
+    global webui_timed_update_sequence, webui_timed_update_received_at
+    global webui_timed_update_source
+    global webui_caption_text, webui_caption_progress, webui_caption_active
+    global webui_progress_current, webui_progress_total
     webui_resource_page = 0
     webui_last_resource_advance = 0.0
     webui_last_probed_state = None
+    webui_log_lines.clear()
+    webui_logs_seeded = False
+    webui_active_theme_name = "celune"
+    webui_caption_text = ""
+    webui_caption_progress = 0.0
+    webui_caption_active = False
+    webui_progress_current = None
+    webui_progress_total = None
+    webui_timed_update_sequence = 0
+    webui_timed_update_received_at = 0.0
+    webui_timed_update_source = "fallback"
+    _unsubscribe_webui_events()
+    _subscribe_webui_events(celune)
+    _subscribe_webui_timed_updates()
     _configure_webui_theme()
     has_voice = bool(celune.current_voice) or bool(celune.voices)
     webui_input_locked = celune.locked or not has_voice
@@ -1003,9 +1048,151 @@ def bind_celune(celune: Celune) -> None:
     )
 
 
+def _unsubscribe_webui_events() -> None:
+    """Remove event subscriptions owned by the browser UI bridge."""
+    global webui_event_dispatcher, webui_event_callbacks
+    if webui_event_dispatcher is not None:
+        for event_name, callback in webui_event_callbacks:
+            webui_event_dispatcher.unsubscribe(event_name, callback)
+    webui_event_dispatcher = None
+    webui_event_callbacks = ()
+
+
+def _subscribe_webui_events(celune: Celune) -> None:
+    """Subscribe the browser UI to the shared typed agent lifecycle events."""
+    global webui_event_dispatcher, webui_event_callbacks
+    dispatcher = getattr(celune, "_event_dispatcher", None)
+    if not isinstance(dispatcher, EventDispatcher):
+        return
+
+    callbacks: tuple[tuple[EventName, EventCallback], ...] = (
+        ("agent_task_state_changed", _webui_agent_task_state_changed),
+        ("agent_approval_requested", _webui_agent_approval_requested),
+        ("agent_choice_requested", _webui_agent_choice_requested),
+        ("agent_task_finished", _webui_agent_task_finished),
+    )
+    for event_name, callback in callbacks:
+        dispatcher.subscribe(event_name, callback, "WebUI")
+    webui_event_dispatcher = dispatcher
+    webui_event_callbacks = callbacks
+
+
+def _subscribe_webui_timed_updates() -> None:
+    """Subscribe the browser UI to the shared CEDTS timed-update channel."""
+    global webui_timed_update_unsubscribe
+    if webui_timed_update_unsubscribe is not None:
+        webui_timed_update_unsubscribe()
+    webui_timed_update_unsubscribe = ui_timed_update_channel.subscribe(
+        _receive_webui_timed_update
+    )
+
+
+def _receive_webui_timed_update(update: UiTimedUpdate) -> None:
+    """Apply one newer TUI timed update to browser-owned state."""
+    global webui_resource_page, webui_active_theme_name
+    global webui_timed_update_sequence, webui_timed_update_received_at
+    global webui_timed_update_source, webui_status_text, webui_status_severity
+    celune = bound_celune
+    if celune is None or update.runtime_id != str(id(celune)):
+        return
+    if update.sequence <= webui_timed_update_sequence:
+        return
+    webui_timed_update_sequence = update.sequence
+    webui_resource_page = update.resource_page
+    webui_active_theme_name = update.theme_name
+    webui_timed_update_received_at = time.monotonic()
+    webui_timed_update_source = "cedts"
+    if update.status_text:
+        webui_status_text = update.status_text
+        webui_status_severity = update.status_severity
+
+
+def _webui_agent_status_message(
+    task_id: str,
+    fallback_state: str,
+    fallback_key: Optional[str] = None,
+) -> Optional[str]:
+    """Resolve the same compact agent status text used by the TUI."""
+    celune = bound_celune
+    if celune is None:
+        return None
+    runtime = getattr(celune, "agent_runtime", None)
+    task = None
+    get_task = getattr(runtime, "get_task", None)
+    if callable(get_task):
+        get_task_call = cast(Callable[[str], object], get_task)
+        with contextlib.suppress(KeyError, ValueError):
+            task = get_task_call(task_id)  # pylint: disable=not-callable
+    state = getattr(task, "state", fallback_state)
+    state_value = getattr(state, "value", state)
+    if not isinstance(state_value, str):
+        state_value = str(state_value)
+    if task is not None and state_value in {
+        "planning",
+        "working",
+        "executing_tool",
+        "responding",
+    }:
+        config = getattr(task, "config", None)
+        maximum = getattr(config, "max_loops", 0)
+        return string(
+            "agent.status.working",
+            iteration=getattr(task, "iterations", 0),
+            maximum=maximum,
+        )
+    key = fallback_key or f"agent.status.{state_value}"
+    message = string(key)
+    return None if message == key else message
+
+
+def _publish_webui_agent_status(
+    task_id: str,
+    fallback_state: str,
+    fallback_key: Optional[str] = None,
+) -> None:
+    """Mirror one typed agent event into the browser status line."""
+    message = _webui_agent_status_message(task_id, fallback_state, fallback_key)
+    if message is not None:
+        severity = "warning" if "awaiting" in message.casefold() else "info"
+        _set_webui_status(message, severity, source="agent")
+
+
+def _webui_agent_task_state_changed(event: AgentTaskStateChangedEvent) -> None:
+    """Mirror agent task state changes into the browser UI."""
+    state = getattr(event.new_state, "value", str(event.new_state))
+    _publish_webui_agent_status(event.task_id, state)
+
+
+def _webui_agent_approval_requested(event: AgentApprovalRequestedEvent) -> None:
+    """Mirror agent approval pauses into the browser UI."""
+    _publish_webui_agent_status(
+        event.task_id,
+        "awaiting_approval",
+        "agent.status.awaiting_approval",
+    )
+
+
+def _webui_agent_choice_requested(event: AgentChoiceRequestedEvent) -> None:
+    """Mirror agent choice pauses into the browser UI."""
+    _publish_webui_agent_status(
+        event.task_id,
+        "awaiting_choice",
+        "agent.status.awaiting_choice",
+    )
+
+
+def _webui_agent_task_finished(event: AgentTaskFinishedEvent) -> None:
+    """Mirror terminal agent task states into the browser UI."""
+    state = getattr(event.state, "value", str(event.state))
+    _publish_webui_agent_status(event.task_id, state)
+
+
 def _webui_status_color(severity: str) -> str:
     """Return the browser UI color for a given severity."""
-    palette = colors.SEVERITY_COLORS.get("celune", colors.SEVERITY_COLORS["celune"])
+    palette = colors.SEVERITY_COLORS.get(
+        webui_active_theme_name,
+        colors.SEVERITY_COLORS["celune"],
+    )
     return palette.get(severity, palette["info"])
 
 
@@ -1013,7 +1200,12 @@ def _webui_theme_html() -> str:
     """Render runtime CSS variables for the browser UI theme."""
     severity = "info"
     accent = _webui_status_color(severity)
-    background = colors.THEME.background or colors.DEFAULT_BACKGROUND
+    theme = colors.THEME
+    if webui_active_theme_name == "celune_light":
+        theme = colors.THEME_LIGHT
+    elif webui_active_theme_name == "celune_april_fools":
+        theme = colors.THEME_APRIL_FOOLS
+    background = theme.background or colors.DEFAULT_BACKGROUND
     input_bg = colors.blend(accent, background, 0.78)
     return (
         "<style>:root {"
@@ -1067,14 +1259,33 @@ def _seed_webui_logs() -> None:
     except OSError:
         return
 
+    record: list[str] = []
+    record_severity = "info"
+    record_pattern = re.compile(
+        r"^\[[^\]]+\]\s+\[(?P<severity>[^\]]+)\]\s?(?P<message>.*)$"
+    )
+
+    def append_record() -> None:
+        if record:
+            webui_log_lines.append(("\n".join(record), record_severity))
+
     for line in lines:
-        lowered = line.lower()
-        severity = "info"
-        if "[warning]" in lowered:
-            severity = "warning"
-        elif "[error]" in lowered:
-            severity = "error"
-        webui_log_lines.append((_strip_webui_log_prefix(line), severity))
+        match = record_pattern.match(line)
+        if match is not None:
+            append_record()
+            record.clear()
+            severity = match.group("severity").casefold()
+            record_severity = (
+                severity
+                if severity in {"debug", "info", "warning", "error"}
+                else "info"
+            )
+            record.append(match.group("message"))
+        elif record:
+            record.append(line)
+        else:
+            record.append(_strip_webui_log_prefix(line))
+    append_record()
 
 
 def _append_webui_log(msg: str, severity: str = "info") -> None:
@@ -1148,7 +1359,7 @@ def _probe_webui_runtime() -> None:
         if (
             webui_status_text != sleeping_status
             or webui_status_severity != sleeping_severity
-            or webui_status_source == "callback"
+            or webui_status_source in {"callback", "agent", "cedts"}
         ):
             _set_webui_status(
                 sleeping_status,
@@ -1161,7 +1372,7 @@ def _probe_webui_runtime() -> None:
         should_override_status = (
             webui_last_probed_state is None
             or webui_status_text == string("status.api_starting")
-            or webui_status_source != "callback"
+            or webui_status_source not in {"callback", "agent", "cedts"}
             or now - webui_status_updated_at >= WEBUI_STATUS_PROBE_DEBOUNCE_SECONDS
             or current_state in {"idle", "sleeping", "error"}
         )
@@ -1174,7 +1385,7 @@ def _probe_webui_runtime() -> None:
             )
         webui_last_probed_state = current_state
 
-    pages = ui_resources.resource_pages(celune, "celune")
+    pages = ui_resources.resource_pages(celune, webui_active_theme_name)
     if not pages:
         return
 
@@ -1182,7 +1393,14 @@ def _probe_webui_runtime() -> None:
         webui_last_resource_advance = now
         return
 
-    if now - webui_last_resource_advance >= WEBUI_RESOURCE_ROTATE_SECONDS:
+    timed_update_is_fresh = (
+        webui_timed_update_source == "cedts"
+        and now - webui_timed_update_received_at < WEBUI_TIMED_UPDATE_STALE_SECONDS
+    )
+    if (
+        not timed_update_is_fresh
+        and now - webui_last_resource_advance >= WEBUI_RESOURCE_ROTATE_SECONDS
+    ):
         webui_resource_page = (webui_resource_page + 1) % len(pages)
         webui_last_resource_advance = now
 
@@ -1201,6 +1419,24 @@ def _wrap_celune_callbacks(celune: Celune) -> None:
     original_progress = cast(
         Callable[[Optional[float], Optional[float]], None],
         getattr(celune, "progress_callback", lambda _progress, _total: None),
+    )
+    original_idle = cast(
+        Callable[[], None], getattr(celune, "idle_callback", lambda: None)
+    )
+    original_queue_available = cast(
+        Callable[[], None], getattr(celune, "queue_avail_callback", lambda: None)
+    )
+    original_caption_progress = cast(
+        Callable[[Optional[float], Optional[float]], None],
+        getattr(celune, "caption_progress_callback", lambda _progress, _total: None),
+    )
+    original_caption = cast(
+        Callable[[Optional[str]], None],
+        getattr(celune, "caption_callback", lambda _caption: None),
+    )
+    original_caption_timing = cast(
+        Callable[..., None],
+        getattr(celune, "caption_timing_callback", lambda *_args: None),
     )
     original_voice_changed = celune.voice_changed_callback
     original_input_state = celune.change_input_state_callback
@@ -1231,14 +1467,79 @@ def _wrap_celune_callbacks(celune: Celune) -> None:
             string("status.could_not_continue", app_name=APP_NAME),
             "error",
         )
+        _append_webui_log(msg, "error")
+        _set_webui_status(msg, "error", source="callback")
         original_error(msg)
 
     def wrapped_progress(
         progress: Optional[float],
         total: Optional[float],
     ) -> None:
+        global webui_progress_current, webui_progress_total
+        webui_progress_current = progress
+        webui_progress_total = total
         _publish_active_task_progress(progress, total)
         original_progress(progress, total)
+
+    def wrapped_idle() -> None:
+        global webui_caption_active, webui_caption_text
+        global webui_caption_progress, webui_progress_current, webui_progress_total
+        original_idle()
+        webui_caption_active = False
+        webui_caption_text = ""
+        webui_caption_progress = 0.0
+        webui_progress_current = None
+        webui_progress_total = None
+        _sync_webui_runtime_locks(celune, locked=getattr(celune, "locked", False))
+        if getattr(celune, "sleeping", False):
+            _set_webui_status(string("status.sleeping"), "sleeping", source="callback")
+        elif getattr(celune, "cur_state", "") not in {"reloading", "waking"}:
+            _set_webui_status(string("status.idle"), source="callback")
+
+    def wrapped_queue_available() -> None:
+        original_queue_available()
+        locked = bool(getattr(celune, "is_in_tutorial", False))
+        _sync_webui_runtime_locks(celune, locked=locked)
+        _set_webui_status(string("status.speaking"), source="callback")
+
+    def wrapped_caption_progress(
+        progress: Optional[float],
+        total: Optional[float],
+    ) -> None:
+        global webui_caption_progress
+        if total is not None and total > 0:
+            webui_caption_progress = max(0.0, min(1.0, (progress or 0.0) / total))
+        original_caption_progress(progress, total)
+
+    def wrapped_caption(caption: Optional[str]) -> None:
+        global webui_caption_active, webui_caption_text, webui_caption_progress
+        if caption:
+            webui_caption_active = True
+            webui_caption_text = caption
+            webui_caption_progress = 0.0
+        else:
+            webui_caption_active = False
+            webui_caption_text = ""
+            webui_caption_progress = 0.0
+        original_caption(caption)
+
+    def wrapped_caption_timing(
+        caption: str,
+        audio: AudioChunk,
+        sample_rate: int,
+        timing_text: Optional[str] = None,
+    ) -> None:
+        global webui_caption_active, webui_caption_text, webui_caption_progress
+        webui_caption_active = True
+        webui_caption_text = caption
+        webui_caption_progress = 0.0
+        try:
+            signature = inspect.signature(original_caption_timing)
+            signature.bind(caption, audio, sample_rate, timing_text)
+        except (TypeError, ValueError):
+            original_caption_timing(caption, audio, sample_rate)
+        else:
+            original_caption_timing(caption, audio, sample_rate, timing_text)
 
     def wrapped_voice_changed(name: str) -> None:
         _append_webui_log(string("webui.voice_changed", voice=name))
@@ -1277,11 +1578,31 @@ def _wrap_celune_callbacks(celune: Celune) -> None:
     celune.log_callback = wrapped_log
     celune.status_callback = wrapped_status
     celune.error_callback = wrapped_error
+    celune.idle_callback = wrapped_idle
+    celune.queue_avail_callback = wrapped_queue_available
     celune.progress_callback = wrapped_progress
+    celune.caption_progress_callback = wrapped_caption_progress
+    celune.caption_callback = wrapped_caption
+    celune.caption_timing_callback = wrapped_caption_timing
     celune.voice_changed_callback = wrapped_voice_changed
     celune.change_input_state_callback = wrapped_input_state
     celune.change_voice_lock_state_callback = wrapped_voice_lock_state
     celune._webui_callbacks_wrapped = True
+
+
+def _sync_webui_runtime_locks(celune: Celune, *, locked: bool) -> None:
+    """Synchronize browser input controls from one runtime transition."""
+    global webui_input_locked, webui_input_placeholder, webui_voice_locked
+    has_voice = bool(celune.current_voice) or bool(celune.voices)
+    webui_input_locked = locked or not has_voice
+    webui_input_placeholder = _webui_input_placeholder(
+        celune,
+        webui_input_locked,
+        has_voice,
+    )
+    webui_voice_locked = (
+        locked or len(celune.voices) < 2 or celune.is_in_tutorial or not has_voice
+    )
 
 
 def require_celune() -> Celune:
@@ -1638,10 +1959,27 @@ def _webui_logs_html() -> str:
 def _webui_status_html() -> str:
     """Render the footer status cell."""
     color = _webui_status_color(webui_status_severity)
+    details: list[str] = []
+    if webui_caption_active and webui_caption_text:
+        details.append(f'<div class="webui-caption">{escape(webui_caption_text)}</div>')
+        if webui_caption_progress > 0.0:
+            details.append(
+                f'<div class="webui-caption-progress">{round(webui_caption_progress * 100):d}%</div>'
+            )
+    if webui_progress_total is not None and webui_progress_total > 0:
+        fraction = max(
+            0.0,
+            min(
+                1.0,
+                (webui_progress_current or 0.0) / webui_progress_total,
+            ),
+        )
+        details.append(f'<div class="webui-progress">{round(fraction * 100):d}%</div>')
+    detail_html = "".join(details)
     return (
         f"{_webui_theme_html()}"
         '<div class="footer-block" '
-        f'style="color: {color};">{escape(webui_status_text)}</div>'
+        f'style="color: {color};">{escape(webui_status_text)}{detail_html}</div>'
     )
 
 
@@ -1650,7 +1988,7 @@ def _webui_resources_html() -> str:
     celune = bound_celune
     resource = ""
     if celune is not None:
-        pages = ui_resources.resource_pages(celune, "celune")
+        pages = ui_resources.resource_pages(celune, webui_active_theme_name)
         if pages:
             resource = pages[webui_resource_page % len(pages)]
     if "CTRL+" in resource:
@@ -1686,9 +2024,14 @@ def _voice_button_update() -> WebUiUpdate:
 
 def _webui_vc_mode_active(celune: Optional[Celune]) -> bool:
     """Return whether the browser UI should expose active VC controls."""
+    if celune is None:
+        return False
+    predicate = getattr(celune, "is_voice_conversion_mode", None)
+    if callable(predicate):
+        return bool(predicate())
     return bool(
-        celune is not None
-        and getattr(celune, "input_mode", "text_to_speech") == "voice_conversion"
+        getattr(celune, "input_mode", "text_to_speech") == "voice_conversion"
+        or getattr(celune, "vc_backend", None) is not None
     )
 
 
@@ -1736,11 +2079,12 @@ def _input_update(
             placeholder=string("webui.tutorial_placeholder"),
         )
     has_voice = bool(celune.current_voice) or bool(celune.voices)
+    vc_mode = _webui_vc_mode_active(celune)
     if getattr(celune, "_webui_callbacks_wrapped", False):
-        interactive = not webui_input_locked and has_voice
+        interactive = not webui_input_locked and has_voice and not vc_mode
         placeholder = _webui_input_placeholder(celune, webui_input_locked, has_voice)
     else:
-        interactive = not celune.locked and has_voice
+        interactive = not celune.locked and has_voice and not vc_mode
         placeholder = _webui_input_placeholder(celune, celune.locked, has_voice)
     if has_value:
         return gr.update(
@@ -1760,10 +2104,14 @@ def _send_button_update() -> WebUiUpdate:
     if celune is None:
         return gr.update(interactive=False)
     has_voice = bool(celune.current_voice) or bool(celune.voices)
+    vc_mode = _webui_vc_mode_active(celune)
     interactive = (
-        not webui_input_locked and has_voice
+        not webui_input_locked and has_voice and not vc_mode
         if getattr(celune, "_webui_callbacks_wrapped", False)
-        else not celune.is_in_tutorial and not celune.locked and has_voice
+        else not celune.is_in_tutorial
+        and not celune.locked
+        and has_voice
+        and not vc_mode
     )
     return gr.update(interactive=interactive)
 
@@ -1836,17 +2184,153 @@ def _webui_submit_snapshot(
     )
 
 
+def _webui_settings_value() -> dict[str, JSONSerializable]:
+    """Return a detached copy of the active runtime configuration."""
+    celune = bound_celune
+    config = getattr(celune, "config", None) if celune is not None else None
+    if not isinstance(config, dict):
+        return {}
+    return cast(dict[str, JSONSerializable], deepcopy(config))
+
+
+def _webui_save_settings(
+    updated: JSONSerializable,
+) -> tuple[
+    dict[str, JSONSerializable],
+    str,
+    str,
+    str,
+    WebUiUpdate,
+    WebUiUpdate,
+    WebUiUpdate,
+]:
+    """Persist browser-edited settings and return the refreshed browser snapshot."""
+    celune = bound_celune
+    if celune is None:
+        _append_webui_log(string("webui.not_available"), "error")
+        return _webui_settings_value(), *_webui_snapshot()
+    if not isinstance(updated, dict):
+        _append_webui_log(string("webui.settings_invalid"), "warning")
+        return _webui_settings_value(), *_webui_snapshot()
+
+    new_config = cast(dict[str, JSONSerializable], deepcopy(updated))
+    try:
+        with config_path(create_parent=True).open("w", encoding="utf-8") as file:
+            yaml.safe_dump(new_config, file, sort_keys=False)
+    except OSError as error:
+        _append_webui_log(string("webui.settings_save_failed", error=error), "error")
+        return _webui_settings_value(), *_webui_snapshot()
+
+    celune.config = new_config
+    _set_webui_status(
+        string("webui.settings_saved", app_name=APP_NAME),
+        "warning",
+        source="callback",
+    )
+    return new_config, *_webui_snapshot()
+
+
+class _WebUiInputProxy:
+    """Minimal input surface required by the shared slash-command handler."""
+
+    @staticmethod
+    def load_text(_value: str) -> None:
+        """Discard command input after the browser has submitted it."""
+
+
+class _WebUiCommandHost:
+    """Core-backed command host used when the Textual UI is not mounted."""
+
+    def __init__(self, celune: Celune) -> None:
+        self.celune = celune
+        self.input_box = _WebUiInputProxy()
+        self.consume_on_boundary = False
+        self.tutorial_token = 0
+
+    @property
+    def tutorial_active(self) -> bool:
+        """Return whether the core is currently in tutorial mode."""
+        return bool(getattr(self.celune, "is_in_tutorial", False))
+
+    def safe_log(
+        self,
+        message: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
+        """Forward command output to both WebUI state and active task logs."""
+        _publish_active_task_log(message, severity)
+        _append_webui_log(message, severity)
+        _ = loglevel
+
+    def safe_status(self, message: str, severity: str = "info") -> None:
+        """Forward a command status to the browser footer."""
+        _set_webui_status(message, severity, source="callback")
+
+    @staticmethod
+    def call_from_thread(
+        callback: Callable[..., None], *args: object, **kwargs: object
+    ) -> None:
+        """Run a command callback immediately in the API worker context."""
+        callback(*args, **kwargs)
+
+    def refresh_vc_controls(self) -> None:
+        """Refresh browser controls on the next snapshot."""
+
+    def set_vc_f0_condition(self, enabled: bool) -> None:
+        """Set VC talk or sing conditioning through the core state."""
+        self.celune.vc_f0_condition = enabled
+        backend = getattr(self.celune, "vc_backend", None)
+        if backend is not None and hasattr(backend, "f0_condition"):
+            backend.f0_condition = enabled
+
+    def set_vc_pitch_shift(self, value: int) -> None:
+        """Set the active VC pitch shift through the core state."""
+        from .vc import clamp_vc_pitch_shift
+
+        clamped = clamp_vc_pitch_shift(value)
+        self.celune.vc_pitch_shift = clamped
+        backend = getattr(self.celune, "vc_backend", None)
+        if backend is not None and hasattr(backend, "pitch_shift"):
+            backend.pitch_shift = clamped
+
+    def open_settings_menu(self) -> None:
+        """Report that the browser settings editor is available."""
+        self.safe_status(string("webui.settings_opened"))
+
+    def begin_tutorial(self) -> None:
+        """Leave tutorial lifecycle ownership to the core runtime."""
+
+    def finish_tutorial(self) -> None:
+        """Leave tutorial lifecycle ownership to the core runtime."""
+
+    def cancel_tutorial(self, _restore_input: bool = False) -> bool:
+        """Return whether the core was already outside tutorial mode."""
+        return not self.tutorial_active
+
+    def tutorial_after(self, _delay: float, callback: Callable[[], None]) -> None:
+        """Run a command tutorial callback without a second timer source."""
+        callback()
+
+    def type_and_send(self, text: str, process_commands: bool = True) -> None:
+        """Submit a tutorial string through the browser command path."""
+        if process_commands and text.startswith("/"):
+            _webui_run_command(text)
+        else:
+            self.celune.say(text)
+
+    @staticmethod
+    def pulse_border(_selector: str) -> None:
+        """Ignore a Textual-only tutorial animation in the browser host."""
+
+    def graceful_exit(self) -> None:
+        """Close the bound runtime when the browser receives `/exit`."""
+        self.celune.close()
+
+
 def _webui_run_command(text: str) -> bool:
     """Run one slash command through the main UI command path when available."""
-    # noinspection PyProtectedMember
-    ui = CeluneUI._instance
-    if ui is None:
-        _append_webui_log(
-            string("webui.must_be_running_for_commands", app_name=APP_NAME),
-            "warning",
-        )
-        return False
-
     try:
         parts = CeluneUI.split_command_input(text[1:])
     except ValueError as e:
@@ -1858,7 +2342,25 @@ def _webui_run_command(text: str) -> bool:
 
     command = parts[0].lower()
     command_args = parts[1:]
-    ui.call_from_thread(ui.process_command, command, command_args)
+    celune = bound_celune
+    if command == "settings" and celune is not None:
+        from .ui.commands import process_command as process_ui_command
+
+        process_ui_command(_WebUiCommandHost(celune), command, command_args)
+        return True
+
+    # noinspection PyProtectedMember
+    ui = CeluneUI._instance
+    if ui is not None:
+        ui.call_from_thread(ui.process_command, command, command_args)
+        return True
+
+    if celune is None:
+        _append_webui_log(string("webui.not_available"), "error")
+        return False
+    from .ui.commands import process_command as process_ui_command
+
+    process_ui_command(_WebUiCommandHost(celune), command, command_args)
     return True
 
 
@@ -1925,6 +2427,11 @@ def _webui_speak(
         return
 
     celune = require_celune()
+    if _webui_vc_mode_active(celune):
+        _append_webui_log(string("webui.text_unavailable_in_vc_mode"), "warning")
+        snapshot = _webui_submit_snapshot(text)
+        yield snapshot[0], None, *snapshot[1:]
+        return
     api_log("SPEAK(WEBUI)", text)
 
     current_state = (celune.cur_state or "").strip().lower()
@@ -1952,6 +2459,13 @@ def _webui_speak(
             snapshot = _webui_submit_snapshot(text)
             yield snapshot[0], None, *snapshot[1:]
             return
+
+    if persona_talkback_enabled(getattr(celune, "config", {})):
+        if not celune.think(text):
+            _append_webui_log(string("webui.busy_try_again"), "warning")
+        snapshot = _webui_submit_snapshot("")
+        yield snapshot[0], None, *snapshot[1:]
+        return
 
     chunks = celune.say_stream(text, save=True)
     if chunks is None:
@@ -2026,7 +2540,7 @@ def _webui_convert_audio(
         )
 
     celune = require_celune()
-    if getattr(celune, "input_mode", "text_to_speech") != "voice_conversion":
+    if not _webui_vc_mode_active(celune):
         _append_webui_log(
             string("webui.conversion_only_in_vc_mode"),
             "warning",
@@ -2153,6 +2667,242 @@ def _webui_cycle_voice() -> tuple[
     return _webui_snapshot()
 
 
+def _webui_voice_catalog(celune: Celune) -> tuple[tuple[str, str], ...]:
+    """Return readable browser choices for every available voice-pack entry."""
+    from .cevoice import (
+        CEVoice,
+        CEVoiceError,
+        bundle_character_name,
+        bundled_voices_dir,
+    )
+
+    try:
+        pack_paths = sorted(
+            path
+            for path in bundled_voices_dir().iterdir()
+            if path.is_file() and path.suffix.casefold() in {".cevoice", ".cechar"}
+        )
+    except OSError:
+        pack_paths = []
+
+    choices: list[tuple[str, str]] = []
+    used_pack_names: set[str] = set()
+    for path in pack_paths:
+        try:
+            bundle = CEVoice.open(path)
+        except (OSError, CEVoiceError):
+            continue
+        pack_name = bundle_character_name(bundle) or path.stem
+        if pack_name in used_pack_names:
+            pack_name = f"{pack_name} ({path.stem})"
+        used_pack_names.add(pack_name)
+        for voice_entry in bundle.voice_order:
+            value = json.dumps(
+                {"bundle": str(path), "entry": voice_entry},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            choices.append((f"{pack_name}: {voice_entry}", value))
+
+    if choices:
+        return tuple(choices)
+
+    return tuple(
+        (
+            str(voice),
+            json.dumps(
+                {"entry": voice},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        )
+        for voice in getattr(celune, "voices", ())
+    )
+
+
+def _webui_voice_choices() -> WebUiUpdate:
+    """Return the current readable voice list for the browser selector."""
+    celune = bound_celune
+    if celune is None:
+        return gr.update(choices=[], value=None, interactive=False)
+    from .cevoice import active_bundle_path
+
+    choices = _webui_voice_catalog(celune)
+    current_voice = getattr(celune, "current_voice", None)
+    active_bundle = str(active_bundle_path())
+    current = None
+    for _label, value in choices:
+        try:
+            selection = json.loads(value)
+        except json.JSONDecodeError:
+            continue
+        if selection.get("entry") == current_voice and (
+            not selection.get("bundle") or selection["bundle"] == active_bundle
+        ):
+            current = value
+            break
+    if current is None and choices:
+        current = choices[0][1]
+    return gr.update(
+        choices=list(choices),
+        value=current,
+        interactive=not webui_input_locked and len(choices) >= 1,
+    )
+
+
+def _webui_select_voice(
+    name: Optional[str],
+) -> tuple[
+    str,
+    str,
+    str,
+    WebUiUpdate,
+    WebUiUpdate,
+    WebUiUpdate,
+]:
+    """Select one voice through the same asynchronous core switch as the TUI."""
+    celune = bound_celune
+    if celune is None or not name:
+        return _webui_snapshot()
+    try:
+        selection = json.loads(name)
+    except json.JSONDecodeError:
+        selection = {"entry": name}
+    entry = selection.get("entry") if isinstance(selection, dict) else None
+    bundle = selection.get("bundle") if isinstance(selection, dict) else None
+    if not isinstance(entry, str) or (
+        bundle is not None and not isinstance(bundle, str)
+    ):
+        _append_webui_log(string("webui.cannot_change_voice_right_now"), "error")
+        return _webui_snapshot()
+
+    set_voice_async = cast(
+        Optional[Callable[[str], Awaitable[bool]]],
+        getattr(celune, "set_voice_async", None),
+    )
+    set_bundle_async = cast(
+        Optional[Callable[[str], Awaitable[bool]]],
+        getattr(celune, "set_cevoice_async", None),
+    )
+
+    async def select_voice() -> bool:
+        if (
+            bundle is not None
+            and set_bundle_async is not None
+            and not await set_bundle_async(bundle)  # pylint: disable=not-callable
+        ):
+            return False
+        if set_voice_async is not None:
+            return await set_voice_async(entry)
+        if bundle is not None and not celune.set_cevoice_and_wait(bundle):
+            return False
+        return celune.set_voice_and_wait(entry)
+
+    switched = _run_async_runtime_call(select_voice())
+    if not switched:
+        _append_webui_log(string("webui.cannot_change_voice_right_now"), "error")
+    return _webui_snapshot()
+
+
+def _webui_stop() -> tuple[
+    str,
+    str,
+    str,
+    WebUiUpdate,
+    WebUiUpdate,
+    WebUiUpdate,
+]:
+    """Stop the active speech request through the shared runtime lifecycle."""
+    celune = bound_celune
+    if celune is None:
+        return _webui_snapshot()
+    ui = CeluneUI._instance
+    if ui is not None:
+        recording = (
+            ui._vc_recording_active
+            if _webui_vc_mode_active(celune)
+            else ui._persona_recording_active
+        )
+        if callable(recording) and recording():
+            toggle = (
+                ui.toggle_vc_recording
+                if _webui_vc_mode_active(celune)
+                else ui.toggle_persona_recording
+            )
+            ui.call_from_thread(toggle)
+            return _webui_snapshot()
+    stop_async = cast(
+        Optional[Callable[[], Awaitable[bool]]],
+        getattr(celune, "force_stop_speech_async", None),
+    )
+    if stop_async is not None:
+        stopped = bool(_run_async_runtime_call(stop_async()))
+    else:
+        stop_sync = getattr(celune, "force_stop_speech", None)
+        stopped = (
+            bool(cast(Callable[[], bool], stop_sync)())  # pylint: disable=not-callable
+            if callable(stop_sync)
+            else False
+        )
+    if stopped:
+        _set_webui_status(string("status.stopped"), "sleeping", source="callback")
+    else:
+        _append_webui_log(string("commands.nothing_to_stop"), "warning")
+    return _webui_snapshot()
+
+
+def _webui_stop_button_update() -> WebUiUpdate:
+    """Return whether the browser stop control should be interactive."""
+    celune = bound_celune
+    if celune is None:
+        return gr.update(interactive=False)
+    state = str(getattr(celune, "cur_state", "")).casefold()
+    return gr.update(
+        interactive=state in {"speaking", "generating", "thinking"}
+        or active_speech_task_id is not None
+    )
+
+
+def _webui_record_button_update() -> WebUiUpdate:
+    """Return whether the browser can delegate live capture to the TUI runtime."""
+    celune = bound_celune
+    ui = CeluneUI._instance
+    if celune is None or ui is None or webui_input_locked:
+        return gr.update(interactive=False)
+    if getattr(celune, "is_in_tutorial", False):
+        return gr.update(interactive=False)
+    return gr.update(interactive=True)
+
+
+def _webui_toggle_recording() -> tuple[
+    str,
+    str,
+    str,
+    WebUiUpdate,
+    WebUiUpdate,
+    WebUiUpdate,
+]:
+    """Toggle the same Persona or live VC capture path used by ``CTRL+R``."""
+    celune = bound_celune
+    ui = CeluneUI._instance
+    if celune is None or ui is None:
+        _append_webui_log(string("webui.recording_requires_tui"), "warning")
+        return _webui_snapshot()
+    if getattr(celune, "sleeping", False):
+        ui.call_from_thread(ui.wake_from_sleep)
+        return _webui_snapshot()
+    if getattr(celune, "cur_state", "") == "waking":
+        return _webui_snapshot()
+
+    toggle = (
+        ui.toggle_vc_recording
+        if _webui_vc_mode_active(celune)
+        else ui.toggle_persona_recording
+    )
+    ui.call_from_thread(toggle)
+    return _webui_snapshot()
+
+
 def _build_webui() -> gr.Blocks:
     # pylint: disable=E1101
     """Create the browser UI mounted by the API."""
@@ -2177,6 +2927,14 @@ def _build_webui() -> gr.Blocks:
                         )
                     )
                     logs = gr.HTML(_webui_logs_html())
+                    voice_menu = gr.Dropdown(
+                        choices=[],
+                        value=None,
+                        label=string("webui.voice_menu_label"),
+                        show_label=True,
+                        interactive=False,
+                        elem_id="celune-voice-menu",
+                    )
                     with gr.Row(elem_id="celune-input-row"):
                         input_box = gr.Textbox(
                             value="",
@@ -2204,6 +2962,20 @@ def _build_webui() -> gr.Blocks:
                                 min_width=0,
                                 interactive=False,
                             )
+                            record_button = gr.Button(
+                                value=string("webui.record_button"),
+                                elem_id="celune-record",
+                                scale=1,
+                                min_width=0,
+                                interactive=False,
+                            )
+                            stop_button = gr.Button(
+                                value=string("webui.stop_button"),
+                                elem_id="celune-stop",
+                                scale=1,
+                                min_width=0,
+                                interactive=False,
+                            )
                     with gr.Row(elem_id="celune-footer"):
                         status = gr.HTML(_webui_status_html(), elem_id="celune-status")
                         resources = gr.HTML(
@@ -2217,6 +2989,19 @@ def _build_webui() -> gr.Blocks:
                             </p>
                         """)
                     )
+                    with gr.Accordion(
+                        string("webui.settings_label"),
+                        open=False,
+                    ):
+                        settings_json = gr.JSON(
+                            value=_webui_settings_value(),
+                            label=string("webui.settings_json_label"),
+                            elem_id="celune-settings",
+                        )
+                        settings_save_button = gr.Button(
+                            value=string("webui.settings_save_button"),
+                            elem_id="celune-settings-save",
+                        )
                 with (
                     gr.Tab(string("webui.vc_tab_label")),
                     gr.Column(elem_id="celune-convert-panel"),
@@ -2284,8 +3069,23 @@ def _build_webui() -> gr.Blocks:
             show_progress="hidden",
         )
         timer.tick(  # type: ignore[missing-attribute]
+            _webui_voice_choices,
+            outputs=[voice_menu],
+            show_progress="hidden",
+        )
+        timer.tick(  # type: ignore[missing-attribute]
             _webui_vc_controls_update,
             outputs=[source_audio, vc_pitch_shift, vc_mode, convert_button],
+            show_progress="hidden",
+        )
+        timer.tick(  # type: ignore[missing-attribute]
+            _webui_stop_button_update,
+            outputs=[stop_button],
+            show_progress="hidden",
+        )
+        timer.tick(  # type: ignore[missing-attribute]
+            _webui_record_button_update,
+            outputs=[record_button],
             show_progress="hidden",
         )
         demo.load(  # type: ignore[missing-attribute]
@@ -2294,8 +3094,28 @@ def _build_webui() -> gr.Blocks:
             show_progress="hidden",
         )
         demo.load(  # type: ignore[missing-attribute]
+            _webui_voice_choices,
+            outputs=[voice_menu],
+            show_progress="hidden",
+        )
+        demo.load(  # type: ignore[missing-attribute]
             _webui_vc_controls_update,
             outputs=[source_audio, vc_pitch_shift, vc_mode, convert_button],
+            show_progress="hidden",
+        )
+        demo.load(  # type: ignore[missing-attribute]
+            _webui_stop_button_update,
+            outputs=[stop_button],
+            show_progress="hidden",
+        )
+        demo.load(  # type: ignore[missing-attribute]
+            _webui_record_button_update,
+            outputs=[record_button],
+            show_progress="hidden",
+        )
+        demo.load(  # type: ignore[missing-attribute]
+            _webui_settings_value,
+            outputs=[settings_json],
             show_progress="hidden",
         )
         input_box.submit(  # type: ignore[missing-attribute]
@@ -2329,6 +3149,36 @@ def _build_webui() -> gr.Blocks:
         voice_button.click(  # type: ignore[missing-attribute]
             _webui_cycle_voice,
             outputs=[logs, status, resources, voice_button, send_button, input_box],
+            show_progress="hidden",
+        )
+        voice_menu.change(  # type: ignore[missing-attribute]
+            _webui_select_voice,
+            inputs=[voice_menu],
+            outputs=[logs, status, resources, voice_button, send_button, input_box],
+            show_progress="hidden",
+        )
+        stop_button.click(  # type: ignore[missing-attribute]
+            _webui_stop,
+            outputs=[logs, status, resources, voice_button, send_button, input_box],
+            show_progress="hidden",
+        )
+        record_button.click(  # type: ignore[missing-attribute]
+            _webui_toggle_recording,
+            outputs=[logs, status, resources, voice_button, send_button, input_box],
+            show_progress="hidden",
+        )
+        settings_save_button.click(  # type: ignore[missing-attribute]
+            _webui_save_settings,
+            inputs=[settings_json],
+            outputs=[
+                settings_json,
+                logs,
+                status,
+                resources,
+                voice_button,
+                send_button,
+                input_box,
+            ],
             show_progress="hidden",
         )
         convert_button.click(  # type: ignore[missing-attribute]
@@ -2868,7 +3718,7 @@ async def convert_audio(
         failed.
     """
     celune = require_celune()
-    if getattr(celune, "input_mode", "text_to_speech") != "voice_conversion":
+    if not _webui_vc_mode_active(celune):
         return _voice_conversion_unavailable_response()
 
     filename = file.filename or f"convert_{uuid.uuid4()}"
