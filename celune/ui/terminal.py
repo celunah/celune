@@ -4,17 +4,17 @@
 import re
 import sys
 import logging
+from typing import Literal, Optional
 from dataclasses import dataclass, replace
 from collections.abc import Callable, Collection, Mapping
-from typing import Literal, Optional
 
 import readchar
-from rich.cells import cell_len
 from rich.text import Text
-from textual.events import Key
-from textual.message import Message
-from textual.widget import Widget
+from rich.cells import cell_len
 from textual.dom import NoScreen
+from textual.widget import Widget
+from textual.message import Message
+from textual.events import Click, Key, Leave, MouseMove
 
 from ..typing.common import JSONSerializable
 
@@ -198,6 +198,7 @@ class SelectMenuWidget(Widget):
         self.value_display = value_display
         self.return_value = return_value
         self.selected_index = 0
+        self._hovered_index: Optional[int] = None
         self._edit_buffer: Optional[str] = None
         self._keybinds = self._build_keybinds(keybinds)
 
@@ -234,6 +235,8 @@ class SelectMenuWidget(Widget):
                 line.append(f"[ {display_value} ]")
             if index == self.selected_index:
                 line.stylize("reverse")
+            elif index == self._hovered_index:
+                line.stylize(self._hover_style())
             rendered.append(line)
             if visible_index < len(visible_indices) - 1:
                 rendered.append("\n")
@@ -272,7 +275,7 @@ class SelectMenuWidget(Widget):
         footer = self._footer_text()
         footer_lines = footer.count("\n") + 1 if footer is not None else 0
         fixed_lines = 2 + (2 + footer_lines if footer is not None else 0)
-        option_capacity = max(1, viewport_height - fixed_lines - 4)
+        option_capacity = max(1, viewport_height - fixed_lines - 3)
         if option_capacity >= len(self.options):
             return tuple(range(len(self.options)))
 
@@ -281,6 +284,62 @@ class SelectMenuWidget(Widget):
             len(self.options) - option_capacity,
         )
         return tuple(range(start, start + option_capacity))
+
+    def on_mouse_move(self, event: MouseMove) -> None:
+        """Softly highlight the option currently under the pointer."""
+        option_index = self._option_index_at(event)
+        if option_index != self._hovered_index:
+            self._hovered_index = option_index
+            self.refresh()
+        event.stop()
+
+    def on_leave(self, _event: Leave) -> None:
+        """Clear the pointer highlight after the pointer leaves the menu."""
+        if self._hovered_index is not None:
+            self._hovered_index = None
+            self.refresh()
+
+    def on_click(self, event: Click) -> None:
+        """Select clicked rows and confirm on a double-click when supported."""
+        option_index = self._option_index_at(event)
+        if option_index is None:
+            return
+
+        self._select(option_index)
+        if event.chain > 1 and self.return_value:
+            self.post_message(
+                self.Confirmed(
+                    self,
+                    option_index,
+                    self.selected_value,
+                )
+            )
+        event.stop()
+
+    def _option_index_at(self, event: MouseMove | Click) -> Optional[int]:
+        """Return the option under a mouse event, if it is an option row."""
+        content_offset = event.get_content_offset(self)
+        if content_offset is None:
+            return None
+
+        row_offset = content_offset.y - 2
+        if row_offset < 0:
+            return None
+
+        visible_indices = self._visible_option_indices()
+        if row_offset >= len(visible_indices):
+            return None
+        return visible_indices[row_offset]
+
+    def _hover_style(self) -> str:
+        """Return a subtle theme-aware style for the hovered row."""
+        try:
+            theme = self.app.current_theme
+        except NoScreen:
+            return "dim"
+
+        highlight = theme.accent or theme.secondary or theme.primary
+        return f"on {highlight}" if highlight else "dim"
 
     def on_key(self, event: Key) -> None:
         """Handle navigation, value editing, confirmation, and cancellation."""
@@ -567,6 +626,7 @@ class LogRedirect:
         self.write_callback = write_callback
         self.default_severity = default_severity
         self._buffer = ""
+        self._buffer_severity: Optional[str] = None
         self.underlying_stdout = stdout
         self.underlying_stderr = stderr
         self.filter_messages = (
@@ -636,10 +696,18 @@ class LogRedirect:
             self._buffer = self._buffer[pos + 1 :]
 
             if chunk and not self._is_filtered_message(chunk):
+                severity = self._severity_for_message(
+                    chunk,
+                    self._buffer_severity or self.default_severity,
+                )
+                if self._buffer_severity is None:
+                    self._buffer_severity = severity
                 self.write_callback(
                     chunk,
-                    self._severity_for_message(chunk, self.default_severity),
+                    severity,
                 )
+            if not self._buffer:
+                self._buffer_severity = None
 
     def ansi(self, escape: str) -> None:
         """Write ANSI escape code(s) to the terminal directly.
@@ -661,11 +729,16 @@ class LogRedirect:
         if self._buffer.strip():
             chunk = self._buffer.strip()
             if not self._is_filtered_message(chunk):
+                severity = self._severity_for_message(
+                    chunk,
+                    self._buffer_severity or self.default_severity,
+                )
                 self.write_callback(
                     chunk,
-                    self._severity_for_message(chunk, self.default_severity),
+                    severity,
                 )
         self._buffer = ""
+        self._buffer_severity = None
 
     def isatty(self) -> bool:
         """Return if the underlying terminal is a TTY.

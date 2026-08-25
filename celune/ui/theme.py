@@ -195,7 +195,7 @@ CELUNE_CSS = """
         tint: transparent;
     }
 
-    #logs, #controls, #bottom, #header-container, #caption, #progress {
+    #logs, #controls, #bottom, #header-container, #caption, #progress-container {
         margin-left: 2;
         margin-right: 2;
     }
@@ -259,9 +259,22 @@ CELUNE_CSS = """
         height: auto;
     }
 
+    #progress-container {
+        height: 1;
+        layout: horizontal;
+    }
+
     #progress {
         width: 1fr;
         padding-right: 1;
+    }
+
+    #progress-label {
+        width: 5;
+        height: 1;
+        color: $primary;
+        text-align: right;
+        content-align: right middle;
     }
 
     #progress > Bar {

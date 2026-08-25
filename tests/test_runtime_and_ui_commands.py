@@ -20,6 +20,7 @@ import pytest
 from textual import events
 from textual.app import App
 from textual.containers import Vertical
+from textual.widget import Widget
 from textual.widgets import Label, Button, Static, RichLog, TextArea, ProgressBar
 from celune import runtime
 from celune.theme import colors
@@ -28,7 +29,7 @@ from celune.utils import discard
 from celune.celune import Celune
 from celune.config import Config
 from celune.agent import AgentTaskState
-from celune.constants import APP_NAME, COST_EQUIVALENTS
+from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
 from celune.persona.asr import WhisperSegment, WhisperWord
 from celune.terminal import set_terminal_title
 from celune.typing.aliases import LogLevel
@@ -39,7 +40,13 @@ from celune.ui import terminal as ui_terminal
 from celune.ui import resources as ui_resources
 from celune.ui.theme import severity_color
 from celune.ui.headless import CeluneHeadlessUI
-from celune.ui.app import CeluneUI, UILogMessage, CeluneLoadingScreen
+from celune.ui.app import (
+    CeluneUI,
+    ProgressLabel,
+    UILogMessage,
+    CeluneLoadingScreen,
+    VoiceButton,
+)
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
@@ -74,6 +81,101 @@ class TestRuntime(CeluneTestCase):
             f"\x1b]0;{APP_NAME} ・ Ready ・ Idle\x07"
         )
         terminal.flush.assert_called_once_with()
+
+    def test_voice_button_keeps_hold_action_when_cycle_is_disabled(self) -> None:
+        """Verify voice cycling and voice-menu availability are independent."""
+        button = VoiceButton("Voice", disabled=True, hold_enabled=True)
+        ui = SimpleNamespace(
+            style_button=button,
+            update_resources=mock.Mock(),
+            _run_on_ui_thread=lambda callback: callback(),
+        )
+
+        CeluneUI.change_voice_lock_state(
+            ui,
+            locked=True,
+            can_open_menu=True,
+        )
+
+        assert button.disabled
+        assert button.hold_enabled
+
+        CeluneUI.change_voice_lock_state(
+            ui,
+            locked=False,
+            can_open_menu=False,
+        )
+
+        assert not button.disabled
+        assert not button.hold_enabled
+
+    def test_voice_button_long_press_message_waits_for_release(self) -> None:
+        """Verify a held voice button posts its modal message after release."""
+        button = VoiceButton("Voice", hold_enabled=True)
+        button._long_pressed = True
+        button._stop_hold_timer = mock.Mock()
+        button.suppress_click = mock.Mock()
+        button.post_message = mock.Mock()
+
+        async def release_button() -> None:
+            await button._on_mouse_up(SimpleNamespace())
+
+        with mock.patch.object(Widget, "_on_mouse_up", new=mock.AsyncMock()):
+            asyncio.run(release_button())
+
+        button.suppress_click.assert_called_once_with()
+        button.post_message.assert_called_once()
+        assert isinstance(
+            button.post_message.call_args.args[0], VoiceButton.LongPressed
+        )
+
+    def test_voice_selection_wakes_sleeping_celune_before_loading_voice(self) -> None:
+        """Verify choosing a voice from sleep wakes Celune before switching voices."""
+        bundle_path = Path("voice.cevoice")
+        call_order: list[str] = []
+
+        async def wake() -> bool:
+            call_order.append("wake")
+            fake_celune.sleeping = False
+            return True
+
+        def set_voice(_entry: str) -> bool:
+            call_order.append("voice")
+            return True
+
+        fake_celune = SimpleNamespace(
+            sleeping=True,
+            wake_from_sleep_async=wake,
+            set_voice_and_wait=set_voice,
+            voices=("balanced", "bold"),
+        )
+        ui = SimpleNamespace(
+            celune=fake_celune,
+            _voice_menu_paths={"Celune": bundle_path},
+            celune_styles=(),
+            style_index=0,
+            tts_voice_changed=mock.Mock(),
+            change_voice_lock_state=mock.Mock(),
+            safe_log=mock.Mock(),
+        )
+        apply_voice_selection = getattr(
+            CeluneUI._apply_voice_selection,
+            "__wrapped__",
+            CeluneUI._apply_voice_selection,
+        )
+
+        with mock.patch("celune.cevoice.active_bundle_path", return_value=bundle_path):
+            asyncio.run(
+                apply_voice_selection(
+                    ui,
+                    {"pack": "Celune", "entry": "bold"},
+                )
+            )
+
+        assert call_order == ["wake", "voice"]
+        assert ui.celune_styles == ("balanced", "bold")
+        assert ui.style_index == 1
+        ui.tts_voice_changed.assert_called_once_with("bold")
 
     def test_entrypoint_runtime_loader_keeps_heavy_imports_deferred(self) -> None:
         """Verify the pre-UI entrypoint import path stays torch-free."""
@@ -667,6 +769,62 @@ class TestUIStartup(CeluneTestCase):
         CeluneUI._instance = None
         CeluneHeadlessUI._instance = None
 
+    def test_deferred_startup_catches_system_exit_in_the_ui_worker(self) -> None:
+        """Verify startup worker exits become UI-handled errors."""
+        ui = CeluneUI(
+            startup_loader=lambda: cast(Celune, (_ for _ in ()).throw(SystemExit(4)))
+        )
+        ui.call_from_thread = mock.Mock()
+
+        ui._load_deferred_runtime()
+
+        ui.call_from_thread.assert_called_once()
+        callback, error = ui.call_from_thread.call_args.args
+        assert callback == ui._handle_deferred_runtime_error
+        assert isinstance(error, SystemExit)
+        assert error.code == 4
+
+    def test_missing_dependency_startup_waits_for_ctrl_q(self) -> None:
+        """Verify missing dependencies remain visible until the user quits."""
+        ui = CeluneUI()
+        ui.refresh_css = mock.Mock()
+        ui._show_loading_error = mock.Mock()
+        ui._write_terminal_title = mock.Mock()
+        missing = ModuleNotFoundError("No module named 'dateutil'")
+        missing.name = "dateutil"
+
+        ui._handle_deferred_runtime_error(missing)
+
+        assert ui.cur_state == "error"
+        assert ui._fatal_error_active
+        assert ui._startup_error_exit_code == ExitCodes.EXIT_MISSING_DEPENDENCIES.value
+        ui._write_terminal_title.assert_called_once_with(
+            (
+                APP_NAME,
+                string("osc.state_error"),
+                string("osc.action_missing_dependency"),
+            )
+        )
+        ui._show_loading_error.assert_called_once_with(
+            string(
+                "ui.init_error",
+                error=string(
+                    "ui.missing_dependency_error",
+                    package_name="dateutil",
+                ),
+            ),
+            status_message=string("status.early_initialization_failed"),
+            footer_message=string("status.missing_dependency"),
+        )
+
+        ui._shutdown_runtime = mock.Mock()
+        ui.exit = mock.Mock()
+        ui.action_quit()
+
+        ui.exit.assert_called_once_with(
+            return_code=ExitCodes.EXIT_MISSING_DEPENDENCIES.value
+        )
+
     def test_loading_screen_stores_latest_log_before_mount(self) -> None:
         """Verify startup log text can arrive before loading widgets mount."""
         screen = CeluneLoadingScreen()
@@ -741,7 +899,9 @@ class TestUIStartup(CeluneTestCase):
             "Backend",
             "Persona context size",
         ]
-        assert menu.options[0].explanation == "Edit the Backend setting."
+        assert menu.options[0].explanation == (
+            "Choose the speech backend Celune should use."
+        )
         assert menu.return_value is False
         assert ui._settings_paths == (("backend",), ("persona", "context_size"))
 
@@ -1099,6 +1259,7 @@ class TestUIStartup(CeluneTestCase):
             "#vc-mode": Button(),
             "#vc-pitch": Button(),
             "#progress": SimpleNamespace(update=lambda **_: None),
+            "#progress-label": Label(),
             "#header": Label(),
             "#loading-overlay": CeluneLoadingScreen(),
         }
@@ -1125,6 +1286,54 @@ class TestUIStartup(CeluneTestCase):
         if ui._loading_screen is not None:
             self.assertTrue(ui._loading_screen.display)
         call_after_refresh.assert_not_called()
+
+    def test_progress_label_switches_between_percentage_time_and_hidden(self) -> None:
+        """Verify the progress readout uses the applicable display mode."""
+        label = ProgressLabel()
+
+        label.set_progress(1, 4)
+        assert label.display
+        assert str(label.render()) == " 25%"
+
+        label.set_progress(48000, 96000, audio_playing=True, sample_rate=48000)
+        assert str(label.render()) == "00:01"
+
+        label.set_progress(None, None)
+        assert not label.display
+        assert str(label.render()) == ""
+
+    def test_safe_progress_completes_late_idle_indeterminate_updates(self) -> None:
+        """Verify stale startup progress cannot leave the idle bar indeterminate."""
+
+        class FakeProgressBar:
+            """Small progress bar test double."""
+
+            def __init__(self) -> None:
+                self.updates: list[dict[str, Optional[float]]] = []
+
+            def update(self, **values: Optional[float]) -> None:
+                """Capture progress updates."""
+                self.updates.append(values)
+
+        ui = CeluneUI()
+        progress_bar = FakeProgressBar()
+        ui.progress_bar = cast(ProgressBar, progress_bar)
+        ui.progress_label = ProgressLabel()
+        ui.celune_ready = True
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                cur_state="idle",
+                persona_loading=False,
+            ),
+        )
+
+        ui.safe_progress(1, 1)
+        ui.safe_progress(None, None)
+
+        assert progress_bar.updates[-1] == {"total": 1, "progress": 1}
+        assert ui.progress_label.display
+        assert str(ui.progress_label.render()) == "100%"
 
     def test_attach_celune_starts_runtime_after_loading_frame(self) -> None:
         """Verify engine attachment schedules normal loading in the same app."""
@@ -1184,6 +1393,7 @@ class TestUIStartup(CeluneTestCase):
             "#vc-mode": Button(),
             "#vc-pitch": Button(),
             "#progress": SimpleNamespace(update=lambda **_: None),
+            "#progress-label": Label(),
             "#header": Label(),
             "#loading-overlay": CeluneLoadingScreen(),
         }
@@ -1244,6 +1454,7 @@ class TestUIStartup(CeluneTestCase):
             "#vc-mode": Button(),
             "#vc-pitch": Button(),
             "#progress": SimpleNamespace(update=lambda **_: None),
+            "#progress-label": Label(),
             "#header": Label(),
             "#loading-overlay": CeluneLoadingScreen(),
         }
@@ -1425,6 +1636,25 @@ class TestUIStartup(CeluneTestCase):
             )
         ]
 
+    def test_log_redirect_preserves_severity_across_multiline_records(self) -> None:
+        """Verify continuation lines inherit the first line's inferred severity."""
+        stream = mock.Mock()
+        stream.isatty.return_value = True
+        captured: list[tuple[str, str]] = []
+        redirect = ui_terminal.LogRedirect(
+            stdout=stream,
+            stderr=stream,
+            write_callback=lambda msg, severity: captured.append((msg, severity)),
+            default_severity="info",
+        )
+
+        redirect.write("FutureWarning: first line\nsecond line\n")
+
+        assert captured == [
+            ("FutureWarning: first line", "warning"),
+            ("second line", "warning"),
+        ]
+
     def test_log_redirect_suppresses_filtered_partial_stdout_lines(self) -> None:
         """Verify redirected stdout suppressions match message content, not exact chunks."""
         stream = mock.Mock()
@@ -1513,7 +1743,7 @@ class TestUIStartup(CeluneTestCase):
                 load=lambda: True,
                 voices=("balanced", "bold"),
                 current_voice="balanced",
-                use_normalization=False,
+                use_normalization=True,
                 dev=False,
                 glow=SimpleNamespace(fatal=lambda: None),
                 try_play_signal=mock.Mock(return_value=True),
@@ -1541,6 +1771,7 @@ class TestUIStartup(CeluneTestCase):
 
             terminal.write.assert_called_with(f"\x1b]0;{APP_NAME} ・ Ready ・ Idle\x07")
             terminal.flush.assert_called()
+            ui.safe_progress.assert_called_once_with(1, 1)
         finally:
             sys.stdout = original_stdout
             sys.stderr = original_stderr
@@ -3179,16 +3410,22 @@ class TestUIStartup(CeluneTestCase):
 
             is_attached = False
 
-            def __init__(self) -> None:
+            def __init__(self, parent: Optional[object] = None) -> None:
                 self.display = True
                 self.styles = SimpleNamespace(opacity=1.0)
+                self.parent = parent
 
         ui = CeluneUI()
         caption = FakeCaption()
+        progress_row = SimpleNamespace(display=True)
         ui.caption = cast(Label, caption)
-        ui.progress_bar = cast(ProgressBar, FakeProgressBar())
+        ui.progress_label = ProgressLabel()
+        ui.progress_bar = cast(ProgressBar, FakeProgressBar(progress_row))
 
         ui.tts_caption("One two three")
+        assert not progress_row.display
+        assert caption.display
+        assert not ui.progress_label.display
         ui.safe_caption_progress(1, 3)
         assert caption.rendered == "One"
         ui.safe_caption_progress(2, 3)
@@ -3199,6 +3436,8 @@ class TestUIStartup(CeluneTestCase):
         ui.tts_idle()
         assert not ui._caption_active
         assert not caption.display
+        assert progress_row.display
+        assert not ui.progress_label.display
         assert cast(FakeProgressBar, ui.progress_bar).display
 
         with mock.patch.object(ui, "_animate_opacity") as animate_opacity:

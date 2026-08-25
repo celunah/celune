@@ -24,6 +24,7 @@ import signal
 import asyncio
 import logging
 import datetime
+import inspect
 import itertools
 import threading
 import contextlib
@@ -68,8 +69,8 @@ from ..i18n import string
 from .theme import CELUNE_CSS, severity_color
 from .loading import CeluneLoadingScreen
 from .terminal import SelectMenuOption, SelectMenuWidget
-from ..constants import SIGTSTP, APP_NAME, ExitCodes
-from ..theme.defaults import default_theme_family
+from ..constants import SIGTSTP, APP_NAME, ExitCodes, BASE_SR
+from ..theme.defaults import default_error_theme_family, default_theme_family
 from ..watchdog import launcher_loss_requested
 from ..typing.agent import AgentTaskState
 from ..typing.common import JSONSerializable
@@ -174,7 +175,7 @@ if not TYPE_CHECKING:
     _VCAudioCallback = Callable[..., None]
 
 
-def format_error(error: Exception, log_level: Union[LogLevel, bool]) -> str:
+def format_error(error: BaseException, log_level: Union[LogLevel, bool]) -> str:
     """Format an error without importing the heavy utility module at startup."""
     from ..utils import format_error as format_error_helper
 
@@ -182,10 +183,10 @@ def format_error(error: Exception, log_level: Union[LogLevel, bool]) -> str:
 
 
 class VoiceButton(Button):
-    """Button that reports a long press before its normal click message."""
+    """Button with independent click and held-release actions."""
 
     class LongPressed(Message):
-        """Message emitted when the primary mouse button is held down."""
+        """Message emitted after the primary mouse button is released."""
 
         def __init__(self, button: VoiceButton) -> None:
             super().__init__()
@@ -197,15 +198,17 @@ class VoiceButton(Button):
         *,
         widget_id: Optional[str] = None,
         disabled: bool = False,
+        hold_enabled: bool = False,
     ) -> None:
         super().__init__(label, id=widget_id, disabled=disabled)
         self._hold_seconds = 0.55
         self._hold_timer: Optional[Timer] = None
         self._long_pressed = False
+        self.hold_enabled = hold_enabled
 
     async def _on_mouse_down(self, event: events.MouseDown) -> None:
         """Start the long-press timer for the primary mouse button."""
-        if event.button == 1 and not self.disabled:
+        if event.button == 1 and self.hold_enabled:
             self._long_pressed = False
             self._stop_hold_timer()
             self._hold_timer = self.set_timer(
@@ -215,20 +218,23 @@ class VoiceButton(Button):
         await super()._on_mouse_down(event)
 
     async def _on_mouse_up(self, event: events.MouseUp) -> None:
-        """Cancel a short press timer and suppress a click after a long press."""
+        """Emit a held-release message or allow the normal click action."""
         self._stop_hold_timer()
-        if self._long_pressed:
+        long_pressed = self._long_pressed
+        self._long_pressed = False
+        if long_pressed:
             self.suppress_click()
         await super()._on_mouse_up(event)
+        if long_pressed:
+            self.post_message(self.LongPressed(self))
 
     def _emit_long_pressed(self) -> None:
-        """Emit the long-press message while the pointer remains over the button."""
+        """Mark a held press without opening its modal before release."""
         self._hold_timer = None
-        if self.disabled or not self.is_mouse_over:
+        if not self.hold_enabled or not self.is_mouse_over:
             return
         self._long_pressed = True
         self.suppress_click()
-        self.post_message(self.LongPressed(self))
 
     def _stop_hold_timer(self) -> None:
         """Stop the pending long-press timer, if any."""
@@ -506,6 +512,57 @@ class UILogMessage(Message):
         self.severity = severity
 
 
+class ProgressLabel(Label):
+    """Display playback time or general progress beside the progress bar."""
+
+    def __init__(self, widget_id: Optional[str] = None) -> None:
+        super().__init__("", id=widget_id)
+        self.display = False
+
+    def set_progress(
+        self,
+        progress: Optional[float],
+        total: Optional[float],
+        *,
+        audio_playing: bool = False,
+        sample_rate: float = 1.0,
+    ) -> None:
+        """Update or hide the progress readout.
+
+        Args:
+            progress: Current progress in units supplied by the callback.
+            total: Total progress in the same units, or ``None`` when unknown.
+            audio_playing: Display elapsed audio time instead of a percentage.
+            sample_rate: Units per second when ``audio_playing`` is true.
+        """
+        if (
+            progress is None
+            or total is None
+            or total <= 0
+            or progress < 0
+            or sample_rate <= 0
+        ):
+            self.display = False
+            self.update("")
+            return
+
+        if audio_playing:
+            value = self._format_time(progress / sample_rate)
+        else:
+            percentage = round(max(0.0, min(1.0, progress / total)) * 100)
+            value = f"{percentage:3d}%"
+
+        self.update(value)
+        self.display = True
+
+    @staticmethod
+    def _format_time(seconds: float) -> str:
+        """Format elapsed audio time as minutes and seconds."""
+        whole_seconds = max(0, int(seconds))
+        minutes, remaining_seconds = divmod(whole_seconds, 60)
+        return f"{minutes:02d}:{remaining_seconds:02d}"
+
+
 @dataclass
 class CeluneUIWidgetState:
     """Resolved widget references owned by the UI."""
@@ -519,6 +576,7 @@ class CeluneUIWidgetState:
     resources: Optional[Label] = None
     caption: Optional[Label] = None
     progress_bar: Optional[ProgressBar] = None
+    progress_label: Optional[ProgressLabel] = None
     header: Optional[Label] = None
     header_lines: tuple[Label, ...] = ()
 
@@ -550,9 +608,11 @@ class CeluneUIBindingState:
     celune_voices: Optional[Iterator[str]] = None
     style_index: int = 0
     cur_state: str = "active"
+    startup_error_exit_code: Optional[int] = None
     consume_on_boundary: bool = False
     suppress_input_change: bool = False
     resource_page: int = 0
+    webui_timed_update_sequence: int = 0
     input_locked: bool = True
     persona_available: bool = False
     persona_probe_running: bool = False
@@ -732,6 +792,7 @@ class CeluneUI(App):
     resources = _forward_ui_property("_widgets", "resources")
     caption = _forward_ui_property("_widgets", "caption")
     progress_bar = _forward_ui_property("_widgets", "progress_bar")
+    progress_label = _forward_ui_property("_widgets", "progress_label")
     header = _forward_ui_property("_widgets", "header")
     header_lines = _forward_ui_property("_widgets", "header_lines")
 
@@ -755,11 +816,17 @@ class CeluneUI(App):
     celune_voices = _forward_ui_property("_binding_state", "celune_voices")
     style_index = _forward_ui_property("_binding_state", "style_index")
     cur_state = _forward_ui_property("_binding_state", "cur_state")
+    _startup_error_exit_code = _forward_ui_property(
+        "_binding_state", "startup_error_exit_code"
+    )
     consume_on_boundary = _forward_ui_property("_binding_state", "consume_on_boundary")
     _suppress_input_change = _forward_ui_property(
         "_binding_state", "suppress_input_change"
     )
     _resource_page = _forward_ui_property("_binding_state", "resource_page")
+    _webui_timed_update_sequence = _forward_ui_property(
+        "_binding_state", "webui_timed_update_sequence"
+    )
     _input_locked = _forward_ui_property("_binding_state", "input_locked")
     _persona_available = _forward_ui_property("_binding_state", "persona_available")
     _persona_probe_running = _forward_ui_property(
@@ -1029,6 +1096,12 @@ class CeluneUI(App):
             self.register_theme(colors.THEME_APRIL_FOOLS)
         self._register_runtime_error_themes()
 
+    def _ensure_startup_error_themes_registered(self) -> None:
+        """Register error themes without importing full runtime dependencies."""
+        for theme in default_error_theme_family():
+            if theme.name not in self.available_themes:
+                self.register_theme(theme)
+
     def _prepare_loading_theme(self) -> None:
         """Apply Celune's palette before the first loading frame is rendered."""
         dark_theme, light_theme = default_theme_family()
@@ -1210,18 +1283,92 @@ class CeluneUI(App):
         if self.celune is None:
             return
 
-        self.celune.log_callback = self.tts_log
-        self.celune.status_callback = self.safe_status
-        self.celune.error_callback = self.error
-        self.celune.idle_callback = self.tts_idle
-        self.celune.queue_avail_callback = self.tts_queue_avail
-        self.celune.voice_changed_callback = self.tts_voice_changed
-        self.celune.change_input_state_callback = self.change_input_state
-        self.celune.change_voice_lock_state_callback = self.change_voice_lock_state
-        self.celune.progress_callback = self.safe_progress
-        self.celune.caption_progress_callback = self.safe_caption_progress
-        self.celune.caption_callback = self.tts_caption
-        self.celune.caption_timing_callback = self.tts_caption_timing
+        callbacks: tuple[tuple[str, Callable[..., None]], ...] = (
+            ("log_callback", self.tts_log),
+            ("status_callback", self.safe_status),
+            ("error_callback", self.error),
+            ("idle_callback", self.tts_idle),
+            ("queue_avail_callback", self.tts_queue_avail),
+            ("voice_changed_callback", self.tts_voice_changed),
+            ("change_input_state_callback", self.change_input_state),
+            ("change_voice_lock_state_callback", self.change_voice_lock_state),
+            ("progress_callback", self.safe_progress),
+            ("caption_progress_callback", self.safe_caption_progress),
+            ("caption_callback", self.tts_caption),
+            ("caption_timing_callback", self.tts_caption_timing),
+        )
+        for attribute, callback in callbacks:
+            self._chain_runtime_callback(attribute, callback)
+
+    def _chain_runtime_callback(
+        self,
+        attribute: str,
+        callback: Callable[..., None],
+    ) -> None:
+        """Add one UI callback without overwriting another frontend callback."""
+        if self.celune is None:
+            return
+
+        current_value = getattr(self.celune, attribute, None)
+        if not callable(current_value):
+            setattr(self.celune, attribute, callback)
+            return
+        current = cast(Callable[..., None], current_value)
+        chained_callbacks = getattr(current, "_celune_callback_chain", ())
+        if callback in chained_callbacks:
+            return
+
+        def invoke(
+            target: Callable[..., None],
+            args: tuple[object, ...],
+            kwargs: dict[str, object],
+        ) -> None:
+            try:
+                signature = inspect.signature(target)
+            except (TypeError, ValueError):
+                target(*args, **kwargs)
+                return
+            try:
+                signature.bind(*args, **kwargs)
+            except TypeError:
+                target(*args)
+            else:
+                target(*args, **kwargs)
+
+        def chained(*args: object, **kwargs: object) -> None:
+            invoke(callback, args, kwargs)
+            invoke(current, args, kwargs)
+
+        chained._celune_callback_chain = (  # type: ignore[attr-defined]
+            *chained_callbacks,
+            callback,
+        )
+        setattr(self.celune, attribute, chained)
+
+    def _publish_webui_timed_update(self) -> None:
+        """Publish the current TUI timing state through the CEDTS UI channel."""
+        if self.celune is None:
+            return
+
+        try:
+            from ..cedts.ui import UiTimedUpdate, ui_timed_update_channel
+        except ImportError:
+            return
+
+        sequence = getattr(self, "_webui_timed_update_sequence", 0) + 1
+        self._webui_timed_update_sequence = sequence
+        ui_timed_update_channel.publish(
+            UiTimedUpdate(
+                runtime_id=str(id(self.celune)),
+                sequence=sequence,
+                emitted_at=time.monotonic(),
+                resource_page=self._resource_page,
+                theme_name=self.active_theme_name,
+                status_text=self._status_text,
+                status_severity=self.status_severity,
+                status_marquee_offset=self._status_marquee_offset,
+            )
+        )
 
     def _bind_agent_events(self) -> None:
         """Subscribe the UI to the existing typed agent lifecycle events."""
@@ -1521,9 +1668,11 @@ class CeluneUI(App):
             self._refresh_theme_text()
         if len(self._status_text) <= self._status_view_width():
             self._update_status_label()
+            self._publish_webui_timed_update()
             return
         self._status_marquee_offset += 1
         self._update_status_label()
+        self._publish_webui_timed_update()
 
     def on_resize(self, _event: events.Resize) -> None:
         """Re-render width-sensitive widgets after the window size changes.
@@ -1702,9 +1851,11 @@ class CeluneUI(App):
                 yield Label("", classes="line")
             yield RichLog(id="logs", wrap=True, markup=False)
             yield Label("", id="caption", markup=False)
-            yield ProgressBar(
-                id="progress", show_percentage=True, show_eta=False, total=1
-            )
+            with Horizontal(id="progress-container"):
+                yield ProgressBar(
+                    id="progress", show_percentage=False, show_eta=False, total=1
+                )
+                yield ProgressLabel(widget_id="progress-label")
             with Horizontal(id="controls"):
                 yield TextArea(id="input", placeholder=string("ui.wait_placeholder"))
                 yield VoiceButton(
@@ -1745,6 +1896,7 @@ class CeluneUI(App):
         self.vc_mode_button = self.query_one("#vc-mode", Button)
         self.vc_pitch_button = self.query_one("#vc-pitch", Button)
         self.progress_bar = self.query_one("#progress", ProgressBar)
+        self.progress_label = self.query_one("#progress-label", ProgressLabel)
         self.header = self.query_one("#header", Label)
         self.header_lines = tuple(cast(Label, widget) for widget in self.query(".line"))
 
@@ -1787,21 +1939,65 @@ class CeluneUI(App):
             if self._startup_loader is not None:
                 celune = self._startup_loader()
             _load_ui_runtime_dependencies()
-        except Exception as exc:
+        except BaseException as exc:
             self.call_from_thread(self._handle_deferred_runtime_error, exc)
             return
         if celune is not None:
             self.call_from_thread(self.attach_celune, celune)
 
-    def _handle_deferred_runtime_error(self, error: Exception) -> None:
-        """Show a deferred startup failure without tearing down the UI."""
+    def _handle_deferred_runtime_error(self, error: BaseException) -> None:
+        """Show a deferred startup failure without tearing down the UI.
+
+        Args:
+            error: Exception raised while constructing the deferred runtime.
+        """
+        missing_dependency = isinstance(error, ModuleNotFoundError) or (
+            isinstance(error, SystemExit)
+            and error.code == ExitCodes.EXIT_MISSING_DEPENDENCIES.value
+        )
         self.cur_state = "error"
+        self._startup_error_exit_code = (
+            ExitCodes.EXIT_MISSING_DEPENDENCIES.value
+            if missing_dependency
+            else ExitCodes.EXIT_FAILURE.value
+        )
+        self._fatal_error_active = True
+        self._ensure_startup_error_themes_registered()
+        self.theme = self._runtime_theme_name()
+        self.refresh_css(animate=False)
+        if isinstance(error, ModuleNotFoundError) and error.name is not None:
+            failure_status = string("status.missing_dependency")
+            terminal_action = string("osc.action_missing_dependency")
+        else:
+            failure_status = string("status.early_initialization_failed")
+            terminal_action = string("osc.action_early_initialization_failed")
+        self._terminal_status = (
+            APP_NAME,
+            string("osc.state_error"),
+            terminal_action,
+        )
+        self._write_terminal_title(self._terminal_status)
+        if isinstance(error, ModuleNotFoundError) and error.name is not None:
+            error_text = string(
+                "ui.missing_dependency_error",
+                package_name=error.name,
+            )
+        elif isinstance(error, SystemExit):
+            error_text = string(
+                "ui.startup_exit_error",
+                code=error.code,
+            )
+        else:
+            error_text = format_error(error, "info")
         message = string(
             "ui.init_error",
-            error=format_error(error, "info"),
+            error=error_text,
         )
-        self.safe_log(message, "error")
-        self._show_loading_error(message)
+        self._show_loading_error(
+            message,
+            status_message=string("status.early_initialization_failed"),
+            footer_message=failure_status,
+        )
 
     def attach_celune(self, celune: Celune) -> None:
         """Attach the constructed engine and begin its normal initialization."""
@@ -2188,6 +2384,7 @@ class CeluneUI(App):
             resources.resource_pages(self.celune, self.active_theme_name)
         )
         self.update_resources()
+        self._publish_webui_timed_update()
 
     def _cancel_sleep_timer(self) -> None:
         """Cancel a pending automatic sleep transition."""
@@ -2240,7 +2437,10 @@ class CeluneUI(App):
                 "sleeping",
             )
             self.safe_status(string("ui.sleeping_status"), "sleeping")
-            self.change_voice_lock_state(locked=True)
+            self.change_voice_lock_state(
+                locked=True,
+                can_open_menu=bool(self.celune_styles),
+            )
 
     @work(exclusive=True)
     async def wake_from_sleep(self) -> None:
@@ -2283,16 +2483,28 @@ class CeluneUI(App):
         if self._loading_screen is not None:
             self._loading_screen.set_latest_log_message(message)
 
-    def _show_loading_error(self, message: str) -> None:
+    def _show_loading_error(
+        self,
+        message: str,
+        *,
+        status_message: Optional[str] = None,
+        footer_message: Optional[str] = None,
+    ) -> None:
         """Keep the loading screen visible while showing an initialization error.
 
         Args:
             message: Initialization error to display.
+            status_message: Optional replacement for the failure heading.
+            footer_message: Optional status to show in the lower-left footer.
         """
 
         def update() -> None:
             if self._loading_screen is not None:
-                self._loading_screen.show_error(message)
+                self._loading_screen.show_error(
+                    message,
+                    status_message=status_message,
+                    footer_message=footer_message,
+                )
 
         self._run_on_ui_thread(update)
 
@@ -2392,8 +2604,7 @@ class CeluneUI(App):
                 self.tts_voice_changed(
                     self.celune.current_voice or self.celune.voices[0]
                 )
-                if not self.celune.use_normalization:
-                    self.safe_progress(1, 1)
+                self.safe_progress(1, 1)
                 self.change_input_state(locked=False)
                 self.change_voice_lock_state(locked=len(self.celune.voices) < 2)
                 self.safe_log(string("ui.tutorial_prompt", app_name=APP_NAME))
@@ -2633,12 +2844,45 @@ class CeluneUI(App):
             return
 
         def update() -> None:
-            self.progress_bar.update(
-                total=total,
-                progress=0 if progress is None else progress,
+            celune = self.celune
+            idle_after_startup = (
+                progress is None
+                and total is None
+                and self.celune_ready
+                and self.cur_state not in {"error", "exiting"}
+                and celune is not None
+                and getattr(celune, "cur_state", None) == "idle"
+                and not getattr(celune, "persona_loading", False)
             )
+            resolved_progress = 1 if idle_after_startup else progress
+            resolved_total = 1 if idle_after_startup else total
+            self.progress_bar.update(
+                total=resolved_total,
+                progress=0 if resolved_progress is None else resolved_progress,
+            )
+            if self.progress_label is not None:
+                audio_playing = (
+                    celune is not None
+                    and getattr(celune, "cur_state", None) == "speaking"
+                )
+                self.progress_label.set_progress(
+                    resolved_progress,
+                    resolved_total,
+                    audio_playing=audio_playing,
+                    sample_rate=BASE_SR,
+                )
+                if self._caption_active:
+                    self.progress_label.display = False
 
         self._run_on_ui_thread(update)
+
+    def _set_progress_row_display(self, visible: bool) -> None:
+        """Show or hide the progress row that contains the bar and readout."""
+        if self.progress_bar is None:
+            return
+        progress_row = getattr(self.progress_bar, "parent", None)
+        if progress_row is not None:
+            progress_row.display = visible
 
     def safe_caption_progress(
         self, progress: Optional[float], total: Optional[float] = None
@@ -2722,7 +2966,10 @@ class CeluneUI(App):
             return
 
         token = self._caption_transition_token
-        self.caption.display = False
+        self._set_progress_row_display(False)
+        if self.progress_label is not None:
+            self.progress_label.set_progress(None, None)
+        self.caption.display = True
         self.caption.styles.height = 1
         self.caption.styles.opacity = 0.0
         self.progress_bar.display = True
@@ -2731,7 +2978,6 @@ class CeluneUI(App):
         def hide_progress_bar() -> None:
             if self._caption_transition_token == token and self._caption_active:
                 self.progress_bar.display = False
-                self.caption.display = True
                 self.caption.styles.height = 1
                 self._animate_opacity(self.caption, 1.0, token=token)
 
@@ -2753,6 +2999,9 @@ class CeluneUI(App):
 
         self._clear_caption_timers()
         self._caption_transition_token += 1
+        self._set_progress_row_display(False)
+        if self.progress_label is not None:
+            self.progress_label.set_progress(None, None)
         caption_active = self._caption_active
         self._caption_active = False
         if self.caption is None or self.progress_bar is None:
@@ -2769,6 +3018,7 @@ class CeluneUI(App):
             self.caption.display = False
             self.caption.styles.height = 0
             self.caption.styles.opacity = 0.0
+            self._set_progress_row_display(True)
             self.progress_bar.display = True
             self.progress_bar.styles.opacity = 1.0
             self._caption_text = ""
@@ -2788,6 +3038,7 @@ class CeluneUI(App):
             self.caption.display = False
             self.caption.styles.height = 0
             self.caption.styles.opacity = 0.0
+            self._set_progress_row_display(True)
             self.progress_bar.display = True
             self.progress_bar.styles.opacity = 0.0
             self._animate_opacity(self.progress_bar, 1.0, token=token)
@@ -2971,15 +3222,26 @@ class CeluneUI(App):
 
         schedule_frame(0, frame_delay)
 
-    def change_voice_lock_state(self, locked: bool) -> None:
-        """Lock or unlock the ability to change Celune's voice.
+    def change_voice_lock_state(
+        self,
+        locked: bool,
+        *,
+        can_open_menu: Optional[bool] = None,
+    ) -> None:
+        """Set voice-cycle and voice-menu availability independently.
 
         Args:
-            locked: Whether voice changes should be disabled.
+            locked: Whether clicking to cycle voices should be disabled.
+            can_open_menu: Whether holding the button can open the voice menu.
+                When omitted, the menu follows the click availability.
         """
+        if can_open_menu is None:
+            can_open_menu = not locked
 
         def update() -> None:
             self.style_button.disabled = locked
+            if isinstance(self.style_button, VoiceButton):
+                self.style_button.hold_enabled = can_open_menu
             self.update_resources()
 
         self._run_on_ui_thread(update)
@@ -3106,6 +3368,7 @@ class CeluneUI(App):
                 self._loading_screen.set_status_message(msg)
             self._set_terminal_status(terminal_state, terminal_action)
             self.update_resources()
+            self._publish_webui_timed_update()
 
         self._run_on_ui_thread(update)
 
@@ -4635,7 +4898,7 @@ class CeluneUI(App):
                     label=label,
                     value=value,
                     autocomplete_values=self._config_autocomplete(path, value),
-                    explanation=string("ui.settings_explanation", setting=label),
+                    explanation=self._config_explanation(path),
                 )
             )
             paths.append(path)
@@ -4741,6 +5004,18 @@ class CeluneUI(App):
         if formatted and words[0].casefold() not in protected_names:
             formatted[0] = formatted[0].capitalize()
         return " ".join(formatted)
+
+    @staticmethod
+    def _config_explanation(path: tuple[str, ...]) -> str:
+        """Return a localized explanation for one configuration value."""
+        explanation_key = "ui.settings_explanation." + ".".join(path)
+        explanation = string(explanation_key)
+        if explanation != explanation_key:
+            return explanation
+        return string(
+            "ui.settings_explanation_generic",
+            setting=CeluneUI._config_label(path),
+        )
 
     @staticmethod
     def _menu_footer(
@@ -4857,7 +5132,7 @@ class CeluneUI(App):
         self.push_screen(overlay)
 
     def on_voice_button_long_pressed(self, event: VoiceButton.LongPressed) -> None:
-        """Open voice selection when the voice button is held."""
+        """Open voice selection after the held voice button is released."""
         if event.button is self.style_button:
             self.open_voice_menu()
 
@@ -4954,6 +5229,13 @@ class CeluneUI(App):
             return
 
         try:
+            if (
+                getattr(self.celune, "sleeping", False)
+                and not await self.celune.wake_from_sleep_async()
+            ):
+                self.safe_log(string("ui.voice_change_failed"), "warning")
+                return
+
             if active_bundle_path() == bundle_path:
                 loaded = await asyncio.to_thread(
                     self.celune.set_voice_and_wait,
@@ -5140,6 +5422,7 @@ class CeluneUI(App):
         self.change_input_state(locked=True)
         self.input_box.placeholder = "Currently in tutorial mode"
         self.celune.is_in_tutorial = True
+        self.change_voice_lock_state(locked=True)
 
     def finish_tutorial(self) -> None:
         """Mark the current tutorial sequence as complete."""
@@ -5248,6 +5531,10 @@ class CeluneUI(App):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def action_quit(self) -> None:
+        """Exit through the startup-aware graceful shutdown path."""
+        self._graceful_exit(return_code=self._startup_error_exit_code)
+
     def on_key(self, event: events.Key) -> None:
         """Accept input and send text to Celune.
 
@@ -5261,7 +5548,7 @@ class CeluneUI(App):
             if event.key == "ctrl+q":
                 event.prevent_default()
                 event.stop()
-                self._graceful_exit()
+                self._graceful_exit(return_code=self._startup_error_exit_code)
                 return
 
             if (
@@ -5420,8 +5707,7 @@ class CeluneUI(App):
         if self.cur_state in {"exiting", "error"} or not self.celune_ready:
             if self.input_box is not None:
                 self.input_box.placeholder = string("ui.wait_placeholder")
-            if self.style_button is not None:
-                self.style_button.disabled = True
+            self.change_voice_lock_state(locked=True)
             return
         if celune.cur_state in {"reloading", "waking"}:
             self.change_input_state(locked=True)
@@ -5436,7 +5722,7 @@ class CeluneUI(App):
         celune.cur_state = "idle"
         if celune.is_in_tutorial:
             self.input_box.placeholder = string("ui.tutorial_placeholder")
-            self.style_button.disabled = True
+            self.change_voice_lock_state(locked=True)
         else:
             self.change_input_state(locked=False)
             self.change_voice_lock_state(locked=len(celune.voices) < 2)
@@ -5461,7 +5747,7 @@ class CeluneUI(App):
         self.safe_status(string("status.speaking"))
         if celune.is_in_tutorial:
             self.input_box.placeholder = string("ui.tutorial_placeholder")
-            self.style_button.disabled = True
+            self.change_voice_lock_state(locked=True)
         else:
             self.change_input_state(locked=False)
             self.change_voice_lock_state(locked=len(celune.voices) < 2)
@@ -5543,12 +5829,19 @@ class CeluneUI(App):
             return True
         return False
 
-    def _graceful_exit(self) -> None:
-        """Exit from Celune gracefully."""
+    def _graceful_exit(self, return_code: Optional[int] = None) -> None:
+        """Exit from Celune gracefully.
+
+        Args:
+            return_code: Optional value for Textual to return after shutdown.
+        """
         # Shut down the core before leaving Textual's main loop.
         self.cur_state = "exiting"
         self._run_shutdown_step(self._shutdown_runtime)
-        self.exit()
+        if return_code is None:
+            self.exit()
+        else:
+            self.exit(return_code=return_code)
 
     def _run_shutdown_step(self, callback: Callable[[], None]) -> None:
         """Run one shutdown action without allowing cleanup to crash the UI."""

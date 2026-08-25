@@ -3,7 +3,7 @@
 
 import pytest
 from textual.app import App
-from textual.events import Key
+from textual.events import Key, MouseMove
 from textual.message import Message
 from textual.widgets import Button, Static
 
@@ -98,13 +98,19 @@ def test_select_menu_widget_places_explanation_above_footer_hints() -> None:
     """A selected row explanation is rendered immediately above its hints."""
     menu = SelectMenuWidget(
         "Configuration manager",
-        [SelectMenuOption("API enabled", True, explanation="Edit the API setting.")],
+        [
+            SelectMenuOption(
+                "API enabled",
+                True,
+                explanation="Allow Celune to expose her local REST API.",
+            )
+        ],
         footer_builder=lambda option: "ENTER save\nESC cancel",
     )
 
     lines = menu.render().plain.splitlines()
     assert lines[-2:] == ["ENTER save", "ESC cancel"]
-    assert lines[-3] == "Edit the API setting."
+    assert lines[-3] == "Allow Celune to expose her local REST API."
 
 
 def test_select_menu_widget_can_confirm_a_static_row_value() -> None:
@@ -320,6 +326,59 @@ async def test_select_menu_widget_can_confirm_without_a_value() -> None:
 
 
 @pytest.mark.anyio
+async def test_select_menu_widget_supports_mouse_hover_and_selection() -> None:
+    """Mouse movement softly highlights rows and clicks select them."""
+    menu = SelectMenuWidget(
+        "Voice list",
+        [SelectMenuOption("Celune", "calm"), SelectMenuOption("Lune", "soft")],
+    )
+    app = _SelectMenuHarness(menu)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        event = MouseMove(
+            menu,
+            menu.region.x + 3,
+            menu.region.y + 3,
+            0,
+            0,
+            0,
+            False,
+            False,
+            False,
+            screen_x=menu.region.x + 3,
+            screen_y=menu.region.y + 3,
+        )
+        menu.on_mouse_move(event)
+        assert menu._hovered_index == 1
+        rendered = menu.render()
+        hover_offset = rendered.plain.index("Lune")
+        assert any(
+            span.start <= hover_offset < span.end and str(span.style).startswith("on ")
+            for span in rendered.spans
+        )
+        await pilot.click(menu, offset=(3, 3))
+        assert menu.selected_index == 1
+
+
+@pytest.mark.anyio
+async def test_select_menu_widget_double_click_confirms_returning_menus() -> None:
+    """Double-clicking a row confirms menus configured to return a value."""
+    menu = SelectMenuWidget(
+        "Voice list",
+        [SelectMenuOption("Celune", "calm"), SelectMenuOption("Lune", "soft")],
+    )
+    app = _SelectMenuHarness(menu)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.double_click(menu, offset=(3, 3))
+        await pilot.pause()
+
+    assert isinstance(app.received[0], SelectMenuWidget.Confirmed)
+    assert app.received[0].option_index == 1
+    assert app.received[0].value == "soft"
+
+
+@pytest.mark.anyio
 async def test_select_menu_overlay_centers_content_sized_menu() -> None:
     """The overlay centers a menu without expanding it to the screen size."""
     menu = SelectMenuWidget(
@@ -350,6 +409,22 @@ async def test_select_menu_overlay_centers_content_sized_menu() -> None:
 
 
 @pytest.mark.anyio
+async def test_select_menu_mouse_targets_rows_inside_overlay() -> None:
+    """Mouse coordinates account for the popup border and padding."""
+    menu = SelectMenuWidget(
+        "Voice list",
+        [SelectMenuOption("Celune", "calm"), SelectMenuOption("Lune", "soft")],
+    )
+    app = _OverlayHarness(menu)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.click(menu, offset=(3, 5))
+
+    assert menu.selected_index == 1
+
+
+@pytest.mark.anyio
 async def test_select_menu_keeps_configuration_rows_after_layout() -> None:
     """A long configuration menu must not collapse to its selected row."""
     menu = SelectMenuWidget(
@@ -364,4 +439,4 @@ async def test_select_menu_keeps_configuration_rows_after_layout() -> None:
         await pilot.pause()
         rendered = menu.render().plain.splitlines()
         option_lines = [line for line in rendered if line.startswith(("   ", "-> "))]
-        assert len(option_lines) == 15
+        assert len(option_lines) == 16
