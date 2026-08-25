@@ -124,7 +124,13 @@ agent:
 
 `fs_tools` enables the local filesystem and process tool catalog. Agent task
 limits are applied when Celune creates a task; `null` for `max_tokens` means
-that generation is bounded only by the model and context limits.
+that generation is bounded only by the model and context limits. Lightweight
+agent routing and classification requests use a separate 8192-token ceiling,
+even when the task context is configured higher, to limit transient KV-cache
+allocation. Routing prompts contain only the current input and active task
+metadata; they do not retain conversational history. Persona generation
+requests use the dynamic generation cache and release unused CUDA allocator
+blocks after each response.
 
 Persona is independent of TTS backend selection. The model registry in
 `celune.constants` pins allowed remote-code revisions; changing a model ID does

@@ -46,6 +46,7 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/cedts/remote.py` | Core-side proxy around a worker process. |
 | `celune/cedts/worker.py` | Worker-side operation dispatch and lifecycle. |
 | `celune/cedts/protocol.py` | CEDTS serialization, framing, negotiation, and limits. |
+| `celune/cedts/ui.py` | CEDTS-framed TUI-to-WebUI timed-update channel. |
 | `celune/cedts/bootstrap.py` | CEDTS worker process bootstrap and isolated import setup. |
 
 ## Character and Persona
@@ -69,8 +70,10 @@ own. It is the index to use when a feature needs a precise code entrypoint.
 | `celune/agent/runtime.py` | Task state, iteration accounting, approvals, choices, cancellation, and execution. |
 | `celune/agent/routing.py` | Input/approval/choice/cancellation routing. |
 | `celune/agent/tools.py` | Typed built-in and optional local-management tool catalog. |
-| `celune/agent/needle.py` | Registered-tool selection and schema validation. |
-| `celune/agent/needle_checkpoint.py` | Needle checkpoint validation/preparation. |
+| `celune/agent/needle/__init__.py` | Public Needle model, checkpoint, and tool-selection package surface. |
+| `celune/agent/needle/impl.py` | Registered-tool selection and schema validation. |
+| `celune/agent/needle/checkpoints.py` | Needle checkpoint validation/preparation. |
+| `celune/agent/needle/models.py` | Inference-only PyTorch Needle model implementation. |
 | `celune/agent/persona.py` | Persona-to-agent bridge. |
 | `celune/agent/contracts.py` | Public agent data contracts. |
 | `celune/extensions/base.py` | Extension context and base class. |

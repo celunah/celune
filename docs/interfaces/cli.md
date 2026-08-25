@@ -12,7 +12,7 @@ before importing the heavy runtime, then dispatches to `celune.entrypoint`.
 | `celune start` / `celune run` | Start explicitly. |
 | `celune start --verbose` / `-v` | Start with verbose startup diagnostics. |
 | `celune start --debug` | Start with debug diagnostics. |
-| `celune start --log-level=info\|verbose\|debug` | Choose one startup log level. |
+| <code>celune start --log-level=info&#124;verbose&#124;debug</code> | Choose one startup log level. |
 | `celune start --test` / `-t` | Run the lightweight UI test runtime. |
 | `celune test` | Print available explicit test modes. |
 | `celune test ui` | Run the UI test mode. |

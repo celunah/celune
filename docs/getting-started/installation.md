@@ -34,8 +34,12 @@ Install these before using the corresponding features:
 - Symbolic-link support on Windows when developing or using workflows that
   create links.
 
-On Debian-like Linux distributions, the project commonly needs PortAudio
-development headers for `sounddevice`. The CI workflow installs
+The setup helper can install system tools with `apt` on Debian, Ubuntu, Mint,
+and Pop!_OS; `pacman` on Arch, Manjaro, and EndeavourOS; `dnf` on Fedora,
+Rocky Linux, and AlmaLinux; and `zypper` on openSUSE. Alpine Linux is supported
+experimentally through `apk`; some packages may potentially be unsupported
+there. On Debian-like Linux distributions, the project commonly needs
+PortAudio development headers for `sounddevice`. The CI workflow installs
 `portaudio19-dev`; other distributions should use their equivalent package.
 
 ## Source installation
@@ -54,8 +58,11 @@ creates Celune's AppData directories, and seeds the default configuration and
 voice pack. On Linux it uses `uv sync --dev --all-extras`; on Windows it uses
 `uv sync --dev --extra api` because OpenZL is not currently buildable there.
 If all setup criteria are already satisfied, it asks, `You have already
-configured Celune. Repair Celune?`; answer `yes` to repeat the repair steps or
-press Enter to leave the existing installation unchanged.
+configured Celune. Repair Celune?`; answer `yes` to remove and recreate the
+project `.venv` before synchronizing dependencies, or press Enter to leave the
+existing installation unchanged. Run the helper with a system Python
+interpreter rather than the `.venv` interpreter when repairing, because the
+active environment cannot safely remove itself.
 The optional `live-vc-ai` extra adds Silero VAD for AI-assisted live
 voice-conversion capture; `openzl` adds OpenZL-compressed CECHAR v4 support on
 Linux.
@@ -109,7 +116,7 @@ These variables are useful for diagnostics and deployment:
 | --- | --- |
 | `CELUNE_LOG_LEVEL` | Initial log level: `info`, `verbose`, or `debug`. |
 | `CELUNE_BACKEND` | Overrides the configured backend name. |
-| `CELUNE_HEADLESS` | Starts without the Textual UI. |
+| `CELUNE_HEADLESS` | Overrides `headless`; enabled values start without Textual. |
 | `CELUNE_API_TOKEN` | Supplies the API bearer token when config does not contain one. |
 | `CELUNE_LAUNCHER` | Marks a launch as owned by the Celune launcher. |
 | `CELUNE_OVERRIDE_CELINE_DAY` | Bypasses the name-day startup pause used by the app. |

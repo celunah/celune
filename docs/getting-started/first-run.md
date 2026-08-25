@@ -54,8 +54,10 @@ Generated files are placed in the repository
 outputs; the runtime keeps audio arrays as normalized float32.
 
 For a headless first check, set `headless: true` and use the REST API or an
-extension. The headless UI intentionally does not provide an interactive
-terminal editor.
+extension. To let Celune choose based on the environment, set `headless: null`.
+This selects Textual on Windows and in detected Linux desktop sessions, and
+headless mode in Linux TTY or non-interactive sessions. The headless UI
+intentionally does not provide an interactive terminal editor.
 
 ## If startup fails
 
@@ -64,6 +66,11 @@ Run:
 ```bash
 uv run python main.py doctor
 ```
+
+If the loading screen changes to the red `Failed to start` state, read the
+diagnostic shown there. Celune remains open so the error can be read; press
+`CTRL+Q` to close it. A missing required dependency returns exit code `4` to
+the launcher, which can then report or repair the environment.
 
 Then inspect the application log and traceback path reported by the runtime.
 Do not delete a backend environment while it is running. If an environment is

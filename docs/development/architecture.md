@@ -72,8 +72,10 @@ per-backend `venv`, records `manifest.json`, and launches the worker with the
 matching interpreter. See [Backends](backends.md).
 
 The worker's stdout/stderr is not the control channel. CEDTS control frames,
-binary payloads, progress, cancellation, and fatal state are typed and length
-framed. See [CEDTS](../formats/cedts.md).
+binary payloads, progress, cancellation, fatal state, and frontend timed
+updates are typed and length framed. The TUI publishes timed UI state through
+the in-process frontend channel so the WebUI does not maintain a second clock.
+See [CEDTS](../formats/cedts.md).
 
 ## Persona and agent
 

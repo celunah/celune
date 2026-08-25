@@ -311,11 +311,16 @@ memory for 15 minutes and are not persisted across a restart.
 
 ## WebUI behavior
 
-The WebUI is a Gradio application mounted at `/ui`. It reuses the same engine
-and command behavior as the Textual UI, including speech, voice selection,
-voice conversion controls, logs, and responsive/mobile layouts. It is not a
-second TTS implementation. If the API extra is absent, the REST/WebUI surface
-cannot be started, but the core Python/TUI runtime remains separate.
+The WebUI is a Gradio application mounted at `/ui`. It uses the same engine,
+Persona/agent submission path, slash-command handler, voice state, VC state,
+speech lifecycle callbacks, logs, and stop control as the Textual UI. TUI
+timed state updates are delivered through the CEDTS frontend update channel;
+the browser keeps a polling fallback for reconnects and standalone API hosts.
+The browser also provides a voice selector and one-shot upload/microphone VC
+conversion. Its Record button delegates Persona or live VC capture to the
+active Textual runtime, and its Settings editor persists the same YAML
+configuration. If the API extra is absent, the REST/WebUI surface cannot be
+started, but the core Python/TUI runtime remains separate.
 
 ## Embedding the server
 

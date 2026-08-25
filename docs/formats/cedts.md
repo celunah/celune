@@ -1,9 +1,9 @@
 # CEDTS transport
 
 CEDTS is Celune's private **C**elune **E**xtensible **D**ata **T**ransport
-**S**tandard for isolated backend workers. It is an implementation contract
-between the core process and a worker, not a public network API. The current
-protocol version is `1`.
+**S**tandard for isolated backend workers and in-process frontend timed-update
+notifications. It is an implementation contract, not a public network API.
+The current protocol version is `1`.
 
 The design keeps control frames and binary payloads separate, uses explicit
 lengths, and never relies on backend stdout for protocol data. Worker logs are
@@ -56,7 +56,32 @@ Control packets use these fields:
 
 The packet kinds are `hello`, `hello_ack`, `ready`, `request`, `response`,
 `event`, `callback`, `progress`, `cancel`, `cancel_ack`, `error`, `ping`,
-`pong`, `shutdown`, and `shutdown_ack`.
+`pong`, `shutdown`, and `shutdown_ack`. The `event` kind supports the
+`ui_timed_update` operation for TUI-to-WebUI state synchronization.
+
+### Frontend timed updates
+
+The TUI publishes one CEDTS-framed `event` with operation
+`ui_timed_update` whenever shared timed state changes. The WebUI accepts only
+newer sequence numbers for the bound runtime and uses the transmitted resource
+page, theme, status text, severity, and marquee offset. Browser polling remains
+as a stale-channel fallback for standalone or reconnecting clients.
+
+The update data has this layout:
+
+| Field | Meaning |
+| --- | --- |
+| `runtime_id` | Bound Celune runtime identity. |
+| `sequence` | Monotonic update number for that runtime. |
+| `emitted_at` | TUI monotonic emission timestamp. |
+| `resource_page` | Current shared resource-footer page. |
+| `theme_name` | Active Celune theme. |
+| `status_text` | Current status text. |
+| `status_severity` | Current status severity. |
+| `status_marquee_offset` | Current TUI marquee offset. |
+
+The channel is intentionally separate from backend worker operations and does
+not expose a second public socket or permit arbitrary frontend commands.
 
 ## Handshake
 
