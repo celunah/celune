@@ -5,7 +5,7 @@ from collections.abc import Mapping
 
 from .routing import AgentInputRouter
 from ..typing.common import JSONSerializable
-from .needle_model import NeedleModel, NeedleConfig
+from .needle import NeedleModel, NeedleConfig
 from ..modes import mode_allows_agents, resolve_operation_mode
 from .runtime import AgentRuntime, DefaultAgentPermissionPolicy
 from ..exceptions import (
@@ -21,7 +21,7 @@ from .needle import (
     NeedleToolSelector,
     convert_needle_safetensors,
 )
-from .needle_checkpoint import (
+from .needle import (
     NEEDLE_PICKLE_FILE,
     NeedlePickleConverter,
     NeedleTensorInventory,

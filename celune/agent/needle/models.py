@@ -18,7 +18,7 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from ..typing.common import JSONSerializable
+from ...typing.common import JSONSerializable
 
 
 @dataclass(frozen=True)

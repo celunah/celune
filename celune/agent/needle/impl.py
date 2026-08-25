@@ -21,11 +21,11 @@ from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
 from sentencepiece import SentencePieceProcessor
 
-from ..typing.common import JSONSerializable
-from ..paths import huggingface_hub_cache_dir
-from ..exceptions import NeedleSelectionError
-from .needle_model import NeedleModel, NeedleConfig
-from .needle_checkpoint import (
+from ...typing.common import JSONSerializable
+from ...paths import huggingface_hub_cache_dir
+from ...exceptions import NeedleSelectionError
+from .models import NeedleModel, NeedleConfig
+from .checkpoints import (
     NEEDLE_MODEL_ID,
     NEEDLE_CONFIG_FILE,
     NEEDLE_PICKLE_FILE,
@@ -36,7 +36,7 @@ from .needle_checkpoint import (
     NeedlePreparedCheckpoint,
     prepare_needle_checkpoint,
 )
-from ..typing.agent import (
+from ...typing.agent import (
     ToolCall,
     AgentTool,
     AgentOutput,

@@ -11,15 +11,14 @@ from collections.abc import Mapping, Sequence
 from celune.celune import Celune
 from celune.constants import PERSONA_DEFAULT_MODEL_ID
 from celune.typing.aliases import LogLevel
+from celune.typing.agent import NeedleToolCall, NeedleToolCatalog
 from celune.persona.impl import PersonaClient
 from celune.typing.common import JSONSerializable
 from celune.typing.persona import PersonaClientResponse
 from celune.agent.tools import AgentStatusTool, production_agent_tool_schemas
 from celune.pipeline import deliver_persona_response as celune_deliver_persona_response
-from celune.agent.needle import (
+from celune.agent.needle.impl import (
     NeedleHandler,
-    NeedleToolCall,
-    NeedleToolCatalog,
     NeedleToolSelector,
 )
 from celune.dataclasses.events import (
@@ -688,6 +687,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
         assert isinstance(failure_prompt, str)
         assert "Classification failure" in failure_prompt
         assert "malformed_output" in failure_prompt
+        assert persona.requests[-1]["context_space"] == 8192
 
     def test_typed_permission_approval_tool_and_cancel_failures_use_persona(
         self,

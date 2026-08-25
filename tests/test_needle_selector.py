@@ -13,8 +13,8 @@ import torch
 import pytest
 
 from celune.typing.common import JSONSerializable
-from celune.agent.needle_model import NeedleModel
-from celune.agent.needle import _parse_single_selection
+from celune.agent.needle.models import NeedleModel
+from celune.agent.needle.impl import _parse_single_selection
 from celune.persona.capabilities import PersonaCapabilities
 from celune.typing.agent import (
     ToolCall,

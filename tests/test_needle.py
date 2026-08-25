@@ -10,8 +10,8 @@ from tempfile import TemporaryDirectory
 import torch
 from safetensors.torch import save_file
 from celune.typing.agent import AgentTool
-from celune.agent.needle_model import NeedleModel, NeedleConfig
-from celune.agent.needle import (
+from celune.agent.needle.models import NeedleModel, NeedleConfig
+from celune.agent.needle.impl import (
     NeedleHandler,
     _parse_selection,
     convert_needle_safetensors,

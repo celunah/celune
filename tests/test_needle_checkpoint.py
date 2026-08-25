@@ -15,8 +15,8 @@ from safetensors.torch import save_file
 import pytest
 
 from celune.typing.common import JSONSerializable
-from celune.agent.needle_model import NeedleModel, NeedleConfig
-from celune.agent.needle_checkpoint import (
+from celune.agent.needle.models import NeedleModel, NeedleConfig
+from celune.agent.needle.checkpoints import (
     NEEDLE_PICKLE_FILE,
     NeedleCheckpointError,
     NeedleTensorInventory,

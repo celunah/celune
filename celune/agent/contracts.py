@@ -9,7 +9,7 @@ from ..exceptions import (
     NeedleCheckpointError,
     NeedleUnsupportedConverterError,
 )
-from .needle_checkpoint import (
+from .needle.checkpoints import (
     NEEDLE_PICKLE_FILE,
     NEEDLE_MODEL_REVISION,
     NeedlePickleConverter,
