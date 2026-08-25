@@ -43,6 +43,53 @@ def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "on", "yes", "enabled"}
 
 
+def _auto_detect_headless() -> Optional[bool]:
+    """Detect whether a nullable headless setting should use the headless UI.
+
+    Returns:
+        Optional[bool]: ``True`` for a non-interactive or non-desktop Linux
+            session, ``False`` for Windows or a desktop Linux session, or
+            ``None`` when the environment cannot be inspected reliably.
+    """
+    try:
+        system_name = platform.system()
+        if system_name == "Windows":
+            return False
+        if system_name != "Linux":
+            return None
+
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            return True
+
+        desktop_variables = (
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
+            "XDG_CURRENT_DESKTOP",
+            "DESKTOP_SESSION",
+            "XDG_SESSION_DESKTOP",
+        )
+        if any(os.environ.get(name, "").strip() for name in desktop_variables):
+            return False
+
+        session_type = os.environ.get("XDG_SESSION_TYPE", "").strip().lower()
+        return session_type not in {"x11", "wayland"}
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def _resolve_headless_mode(runtime: SimpleNamespace, config: Config) -> bool:
+    """Resolve explicit headless settings and nullable auto-detection."""
+    if os.getenv("CELUNE_HEADLESS") is not None:
+        return runtime.env_bool("CELUNE_HEADLESS", False)
+
+    configured_headless = runtime.config_value(config, "headless")
+    if configured_headless is None:
+        detected_headless = _auto_detect_headless()
+        return detected_headless if detected_headless is not None else False
+
+    return runtime.config_bool(config, "CELUNE_HEADLESS", "headless")
+
+
 # refer to the app configuration for details on these parameters
 INITIAL_LOG_LEVEL = normalize_log_level(os.getenv("CELUNE_LOG_LEVEL", "info"))
 INITIAL_HEADLESS = _env_flag("CELUNE_HEADLESS")
@@ -248,8 +295,20 @@ def _load_runtime() -> SimpleNamespace:
     return _RUNTIME
 
 
-def _load_core_runtime() -> SimpleNamespace:
-    """Import the engine and full UI runtime when it is needed."""
+def _load_core_runtime(*, defer_missing_dependency: bool = False) -> SimpleNamespace:
+    """Import the engine and full UI runtime when it is needed.
+
+    Args:
+        defer_missing_dependency: Leave a missing dependency for the mounted UI
+            to report when runtime loading is happening in its startup worker.
+
+    Returns:
+        SimpleNamespace: The lazily populated runtime namespace.
+
+    Raises:
+        ModuleNotFoundError: If ``defer_missing_dependency`` is true and a core
+            runtime dependency is unavailable.
+    """
     runtime = _load_runtime()
     if hasattr(runtime, "Celune"):
         return runtime
@@ -264,6 +323,9 @@ def _load_core_runtime() -> SimpleNamespace:
         )
         from celune.celune import Celune
     except ModuleNotFoundError as package:
+        if defer_missing_dependency:
+            raise
+
         if package.name is not None:
             _print_dependency_setup_help(package.name)
 
@@ -1257,8 +1319,11 @@ def start(
             ui.prepare_theme()
             try:
                 ui.run()
-                if ui.return_code == runtime.ExitCodes.EXIT_PENDING_RESTART.value:
-                    sys.exit(runtime.ExitCodes.EXIT_PENDING_RESTART.value)
+                if ui.return_code in {
+                    runtime.ExitCodes.EXIT_MISSING_DEPENDENCIES.value,
+                    runtime.ExitCodes.EXIT_PENDING_RESTART.value,
+                }:
+                    sys.exit(ui.return_code)
                 if ui.return_code not in (None, 0):
                     sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
             finally:
@@ -1314,7 +1379,7 @@ def start(
         active_log_level = normalize_log_level(
             log_level if log_level is not None else config_log_level(config)
         )
-        headless = runtime.config_bool(config, "CELUNE_HEADLESS", "headless")
+        headless = _resolve_headless_mode(runtime, config)
         configured_backend = INITIAL_BACKEND or runtime.config_value(config, "backend")
         backend = configured_backend if isinstance(configured_backend, str) else None
 
@@ -1414,7 +1479,7 @@ def start(
 
             def prepare_interactive_runtime():
                 """Construct the engine inside the already-mounted UI worker."""
-                runtime = _load_core_runtime()
+                runtime = _load_core_runtime(defer_missing_dependency=True)
                 _print_startup_diagnostic(string("cli.startup_preparing_core"))
                 return runtime.Celune(
                     tts_backend=backend,
@@ -1443,8 +1508,11 @@ def start(
             _STARTUP_DIAGNOSTIC_SINK = ui.receive_startup_diagnostic
             try:
                 ui.run()
-                if ui.return_code == runtime.ExitCodes.EXIT_PENDING_RESTART.value:
-                    sys.exit(runtime.ExitCodes.EXIT_PENDING_RESTART.value)
+                if ui.return_code in {
+                    runtime.ExitCodes.EXIT_MISSING_DEPENDENCIES.value,
+                    runtime.ExitCodes.EXIT_PENDING_RESTART.value,
+                }:
+                    sys.exit(ui.return_code)
                 if ui.return_code not in (None, 0):
                     sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
             finally:

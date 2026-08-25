@@ -18,6 +18,79 @@ entrypoint = main.load_entrypoint_module()
 class TestDoctorCommand(CeluneTestCase):
     """Verify `celune doctor` works without booting the full app."""
 
+    def test_auto_headless_mode_selects_platform_and_session(self) -> None:
+        """Verify nullable headless mode follows the terminal environment."""
+        streams = SimpleNamespace(
+            stdin=SimpleNamespace(isatty=lambda: True),
+            stdout=SimpleNamespace(isatty=lambda: True),
+        )
+        with (
+            mock.patch.object(entrypoint.platform, "system", return_value="Windows"),
+            mock.patch.object(entrypoint.sys, "stdin", streams.stdin),
+            mock.patch.object(entrypoint.sys, "stdout", streams.stdout),
+        ):
+            assert entrypoint._auto_detect_headless() is False
+
+        with (
+            mock.patch.object(entrypoint.platform, "system", return_value="Linux"),
+            mock.patch.object(entrypoint.sys, "stdin", streams.stdin),
+            mock.patch.object(entrypoint.sys, "stdout", streams.stdout),
+            mock.patch.dict(entrypoint.os.environ, {"DISPLAY": ":0"}, clear=True),
+        ):
+            assert entrypoint._auto_detect_headless() is False
+
+        with (
+            mock.patch.object(entrypoint.platform, "system", return_value="Linux"),
+            mock.patch.object(entrypoint.sys, "stdin", streams.stdin),
+            mock.patch.object(entrypoint.sys, "stdout", streams.stdout),
+            mock.patch.dict(entrypoint.os.environ, {}, clear=True),
+        ):
+            assert entrypoint._auto_detect_headless() is True
+
+        non_interactive_streams = SimpleNamespace(
+            stdin=SimpleNamespace(isatty=lambda: False),
+            stdout=SimpleNamespace(isatty=lambda: True),
+        )
+        with (
+            mock.patch.object(entrypoint.platform, "system", return_value="Linux"),
+            mock.patch.object(entrypoint.sys, "stdin", non_interactive_streams.stdin),
+            mock.patch.object(
+                entrypoint.sys,
+                "stdout",
+                non_interactive_streams.stdout,
+            ),
+            mock.patch.dict(entrypoint.os.environ, {"DISPLAY": ":0"}, clear=True),
+        ):
+            assert entrypoint._auto_detect_headless() is True
+
+    def test_auto_headless_mode_falls_back_to_textual_on_detection_failure(
+        self,
+    ) -> None:
+        """Verify detection failures preserve the normal UI attempt."""
+        broken_stream = SimpleNamespace(
+            isatty=mock.Mock(side_effect=OSError("terminal unavailable"))
+        )
+        with (
+            mock.patch.object(entrypoint.platform, "system", return_value="Linux"),
+            mock.patch.object(entrypoint.sys, "stdin", broken_stream),
+            mock.patch.object(entrypoint.sys, "stdout", broken_stream),
+        ):
+            assert entrypoint._auto_detect_headless() is None
+
+        runtime = SimpleNamespace(
+            config_value=lambda _config, _key: None,
+            env_bool=lambda _name, fallback: fallback,
+            config_bool=mock.Mock(),
+        )
+        with (
+            mock.patch.dict(entrypoint.os.environ, {}, clear=True),
+            mock.patch.object(entrypoint, "_auto_detect_headless", return_value=None),
+        ):
+            assert (
+                entrypoint._resolve_headless_mode(runtime, {"headless": None}) is False
+            )
+        runtime.config_bool.assert_not_called()
+
     @staticmethod
     def test_close_existing_processes_never_kills_current_process() -> None:
         """Verify launcher cleanup excludes itself and waits for the old process."""

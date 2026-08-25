@@ -65,6 +65,7 @@ output_device: null
 #
 # this will disable the UI and only API/WebUI and extensions can make
 # Celune perform any actions
+# set this to null to auto-detect desktop, TTY, and non-interactive sessions
 headless: false
 # don't use ANSI colors in headless interface (defaulting to white)
 headless_nocolor: false

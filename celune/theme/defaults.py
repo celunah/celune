@@ -39,3 +39,37 @@ def default_theme_family() -> tuple[Theme, Theme]:
             dark=False,
         ),
     )
+
+
+def default_error_theme_family() -> tuple[Theme, Theme]:
+    """Return lightweight dark and light themes for startup failures.
+
+    Returns:
+        tuple[Theme, Theme]: The default dark and light error themes.
+    """
+    return (
+        Theme(
+            name="celune_error",
+            primary="#d46169",
+            secondary="#d46169",
+            accent="#f07178",
+            foreground="#ff999e",
+            background="#26181a",
+            surface="#26181a",
+            warning="#f0e68c",
+            error="#f07178",
+            dark=True,
+        ),
+        Theme(
+            name="celune_light_error",
+            primary="#d46169",
+            secondary="#d46169",
+            accent="#7a1f24",
+            foreground="#26181a",
+            background="#ffe8e8",
+            surface="#ffe8e8",
+            warning="#6b5e00",
+            error="#7a1f24",
+            dark=False,
+        ),
+    )

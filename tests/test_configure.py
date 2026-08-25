@@ -2,6 +2,7 @@
 """Tests for the source-tree configuration helper."""
 
 from pathlib import Path
+from unittest import mock
 from types import SimpleNamespace
 
 import configure
@@ -23,6 +24,53 @@ def test_sync_arguments_include_linux_extras() -> None:
         "sync",
         "--dev",
         "--all-extras",
+    ]
+
+
+def test_distro_package_keys_cover_supported_linux_distributions() -> None:
+    """Verify supported distributions select their requested package managers."""
+    expected_package_keys = {
+        "Debian": "apt",
+        "Ubuntu": "apt",
+        "Linux Mint": "apt",
+        "Pop!_OS": "apt",
+        "Arch Linux": "pacman",
+        "Manjaro": "pacman",
+        "EndeavourOS": "pacman",
+        "Fedora Linux": "dnf",
+        "Rocky Linux": "dnf",
+        "AlmaLinux": "dnf",
+        "openSUSE Tumbleweed": "zypper",
+        "Alpine Linux": "apk",
+    }
+
+    for distro_name, package_key in expected_package_keys.items():
+        assert configure._distro_package_key(distro_name) == package_key
+
+
+def test_try_install_uses_supported_package_manager_commands(monkeypatch) -> None:
+    """Verify each supported Linux manager receives its non-interactive command."""
+    commands = []
+    monkeypatch.setattr(
+        configure,
+        "_privileged_command",
+        lambda manager, arguments: [manager, *arguments],
+    )
+    monkeypatch.setattr(
+        configure,
+        "_run",
+        lambda command: commands.append(command) or True,
+    )
+
+    for manager in ("apt", "pacman", "dnf", "zypper", "apk"):
+        assert configure.try_install(manager, "sox")
+
+    assert commands == [
+        ["apt", "install", "-y", "sox"],
+        ["pacman", "-S", "--noconfirm", "sox"],
+        ["dnf", "install", "-y", "sox"],
+        ["zypper", "--non-interactive", "install", "--no-confirm", "sox"],
+        ["apk", "add", "sox"],
     ]
 
 
@@ -84,3 +132,20 @@ def test_confirm_repair_accepts_only_explicit_yes(monkeypatch) -> None:
 
     monkeypatch.setattr("builtins.input", lambda prompt: "")
     assert not configure.confirm_repair()
+
+
+def test_recreate_virtual_environment_removes_existing_tree(tmp_path: Path) -> None:
+    """Verify repair mode removes the old environment before invoking uv."""
+    virtual_environment = tmp_path / ".venv"
+    virtual_environment.mkdir()
+    (virtual_environment / "pyvenv.cfg").write_text("old", encoding="utf-8")
+    uv = tmp_path / "uv.exe"
+
+    with mock.patch.object(configure, "_run", return_value=True) as run:
+        assert configure._recreate_virtual_environment(uv, tmp_path)
+
+    assert not virtual_environment.exists()
+    run.assert_called_once_with(
+        [str(uv), "venv", str(virtual_environment.resolve())],
+        cwd=tmp_path,
+    )

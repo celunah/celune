@@ -6,11 +6,11 @@ import os
 import sys
 import shutil
 import platform
-import subprocess
 import tomllib
+import subprocess
 from pathlib import Path
-from collections.abc import Sequence
 from typing import Optional
+from collections.abc import Sequence
 
 APP_NAME = "Celune"
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -182,6 +182,43 @@ def get_distro_name(system_name: str) -> str:
         return "Linux"
 
 
+def _distro_package_key(distro_name: str) -> Optional[str]:
+    """Return the package-manager key for a supported Linux distribution."""
+    normalized_name = " ".join(distro_name.casefold().replace("_", " ").split())
+    distro_aliases = {
+        "debian": "apt",
+        "ubuntu": "apt",
+        "linux mint": "apt",
+        "mint": "apt",
+        "pop! os": "apt",
+        "arch linux": "pacman",
+        "arch": "pacman",
+        "manjaro": "pacman",
+        "manjaro linux": "pacman",
+        "endeavouros": "pacman",
+        "fedora": "dnf",
+        "fedora linux": "dnf",
+        "rocky": "dnf",
+        "rocky linux": "dnf",
+        "alma": "dnf",
+        "almalinux": "dnf",
+        "alma linux": "dnf",
+        "opensuse": "zypper",
+        "opensuse tumbleweed": "zypper",
+        "opensuse leap": "zypper",
+        "alpine": "apk",
+        "alpine linux": "apk",
+    }
+    package_key = distro_aliases.get(normalized_name)
+    if package_key is not None:
+        return package_key
+
+    for alias, package_key in distro_aliases.items():
+        if normalized_name.startswith(f"{alias} "):
+            return package_key
+    return None
+
+
 def _privileged_command(manager: str, arguments: Sequence[str]) -> list[str]:
     """Build a package-manager command with sudo when Linux needs it."""
     command = [manager, *arguments]
@@ -197,11 +234,17 @@ def _privileged_command(manager: str, arguments: Sequence[str]) -> list[str]:
 
 def try_install(manager: str, package_name: str) -> bool:
     """Install one system package with the selected package manager."""
-    manager_name = Path(manager).stem
+    manager_name = Path(manager).stem.casefold()
     if manager_name == "pacman":
         command = _privileged_command(manager, ("-S", "--noconfirm", package_name))
-    elif manager_name == "apt-get":
+    elif manager_name in {"apt", "apt-get", "dnf"}:
         command = _privileged_command(manager, ("install", "-y", package_name))
+    elif manager_name == "zypper":
+        command = _privileged_command(
+            manager, ("--non-interactive", "install", "--no-confirm", package_name)
+        )
+    elif manager_name == "apk":
+        command = _privileged_command(manager, ("add", package_name))
     elif manager_name == "scoop":
         command = [manager, "install", package_name]
     else:
@@ -319,6 +362,34 @@ def _sync_arguments(system_name: str, uv: Path) -> list[str]:
     return command
 
 
+def _recreate_virtual_environment(uv: Path, root: Path = PROJECT_ROOT) -> bool:
+    """Remove and recreate the project virtual environment for repair mode.
+
+    Args:
+        uv: Path to the uv executable.
+        root: Source-tree root containing the virtual environment.
+
+    Returns:
+        bool: Whether the new virtual environment was created successfully.
+    """
+    virtual_environment = (root / ".venv").resolve()
+    if Path(sys.prefix).resolve() == virtual_environment:
+        print(
+            "Cannot repair the active Python environment; run configure.py outside .venv."
+        )
+        return False
+
+    if virtual_environment.exists():
+        print(f"Removing existing Python environment at {virtual_environment}...")
+        try:
+            shutil.rmtree(virtual_environment)
+        except OSError as error:
+            print(f"Could not remove the existing Python environment: {error}")
+            return False
+
+    return _run([str(uv), "venv", str(virtual_environment)], cwd=root)
+
+
 def main() -> int:
     """Run system dependency, Python environment, and AppData setup."""
     system_name = platform.system()
@@ -331,15 +402,19 @@ def main() -> int:
     print(f"Setting up {APP_NAME} {get_version()} on {distro_name} ({architecture})")
 
     required_packages = {
-        "ubuntu": ("sox", "rubberband-cli"),
-        "debian": ("sox", "rubberband-cli"),
-        "arch": ("sox", "rubberband", "openrgb"),
+        "apt": ("sox", "rubberband-cli"),
+        "pacman": ("sox", "rubberband", "openrgb"),
+        "dnf": ("sox", "rubberband", "openrgb"),
+        "zypper": ("sox", "rubberband", "OpenRGB"),
+        "apk": ("sox", "rubberband", "openrgb"),
         "windows": ("sox", "rubberband", "openrgb"),
     }
     required_bins = {
-        "ubuntu": ("sox", "rubberband"),
-        "debian": ("sox", "rubberband"),
-        "arch": ("sox", "rubberband", "openrgb"),
+        "apt": ("sox", "rubberband"),
+        "pacman": ("sox", "rubberband", "openrgb"),
+        "dnf": ("sox", "rubberband", "openrgb"),
+        "zypper": ("sox", "rubberband", "openrgb"),
+        "apk": ("sox", "rubberband", "openrgb"),
         "windows": ("sox", "rubberband", "openrgb"),
     }
 
@@ -347,27 +422,28 @@ def main() -> int:
         package_manager = shutil.which("scoop") or "scoop"
         ok = True
         package_key = "windows"
-    elif distro_name == "Arch Linux":
-        package_manager = shutil.which("pacman") or "pacman"
-        ok = True
-        package_key = "arch"
-    elif distro_name in {"Debian", "Ubuntu"}:
-        package_manager = shutil.which("apt-get") or "apt-get"
-        ok = True
-        package_key = distro_name.lower()
     else:
-        print(f"Celune does not support {distro_name}.")
-        return 1
+        package_key = _distro_package_key(distro_name)
+        if package_key is None:
+            print(f"Celune does not support {distro_name}.")
+            return 1
+        package_manager = shutil.which(package_key) or package_key
+        ok = True
 
-    if (
-        configuration_complete(system_name, required_bins[package_key])
-        and not confirm_repair()
-    ):
-        return 0
+        if package_key == "apk":
+            print(
+                "Alpine Linux support is experimental; some packages may potentially be unsupported."
+            )
+
+    repair_requested = False
+    if configuration_complete(system_name, required_bins[package_key]):
+        repair_requested = confirm_repair()
+        if not repair_requested:
+            return 0
 
     if system_name == "Windows":
         ok = ensure_scoop()
-    elif shutil.which("apt-get") and not _run(
+    elif package_key == "apt" and not _run(
         _privileged_command(package_manager, ("update",))
     ):
         ok = False
@@ -393,6 +469,9 @@ def main() -> int:
 
     if uv is None:
         print("Celune cannot continue without uv.")
+        return 1
+    if repair_requested and not _recreate_virtual_environment(uv):
+        print("Celune setup did not complete successfully.")
         return 1
     if not _run(_sync_arguments(system_name, uv)):
         print("Celune's Python environment could not be synchronized.")

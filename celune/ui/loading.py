@@ -167,20 +167,31 @@ class CeluneLoadingScreen(Widget):
         except NoMatches:
             pass
 
-    def show_error(self, message: str) -> None:
+    def show_error(
+        self,
+        message: str,
+        *,
+        status_message: Optional[str] = None,
+        footer_message: Optional[str] = None,
+    ) -> None:
         """Switch the overlay from startup progress to its failure state.
 
         Args:
             message: Initialization failure to show to the user.
+            status_message: Optional replacement for the failure heading.
+            footer_message: Optional status to show in the lower-left footer.
         """
         self._failed = True
-        self._status_message = string("status.failed_to_start")
+        self._status_message = status_message or string("status.failed_to_start")
         self._latest_log_message = message
         self._wait_message = string(
             "ui.loading_cannot_continue",
             app_name=APP_NAME,
         )
-        self._footer_message = string("ui.app_could_not_start", app_name=APP_NAME)
+        self._footer_message = footer_message or string(
+            "ui.app_could_not_start",
+            app_name=APP_NAME,
+        )
         if self._spinner_timer is not None:
             self._spinner_timer.pause()
         try:

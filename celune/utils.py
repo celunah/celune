@@ -270,7 +270,7 @@ def supports_ansi(stream: Optional[TextIO] = None) -> bool:
     return terminal_supports_ansi(stream)
 
 
-def format_error(e: Exception, log_level: Union[LogLevel, bool]) -> str:
+def format_error(e: BaseException, log_level: Union[LogLevel, bool]) -> str:
     """Format an error message.
 
     Args:
