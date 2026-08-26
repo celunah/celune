@@ -780,7 +780,8 @@ class TestUIStartup(CeluneTestCase):
 
         ui.call_from_thread.assert_called_once()
         callback, error = ui.call_from_thread.call_args.args
-        assert callback == ui._handle_deferred_runtime_error
+        assert callback.__self__ is ui
+        assert callback.__func__ is ui._handle_deferred_runtime_error.__func__
         assert isinstance(error, SystemExit)
         assert error.code == 4
 
@@ -819,7 +820,7 @@ class TestUIStartup(CeluneTestCase):
 
         ui._shutdown_runtime = mock.Mock()
         ui.exit = mock.Mock()
-        ui.action_quit()
+        asyncio.run(ui.action_quit())
 
         ui.exit.assert_called_once_with(
             return_code=ExitCodes.EXIT_MISSING_DEPENDENCIES.value
@@ -3035,9 +3036,12 @@ class TestUIStartup(CeluneTestCase):
         )
         ui.safe_log = mock.Mock()
 
-        with mock.patch(
-            "celune.ui.app.resolve_audio_device_with_info",
-            side_effect=ValueError("ambiguous input device"),
+        with (
+            mock.patch.object(ui_app, "_RUNTIME_DEPENDENCIES_LOADED", True),
+            mock.patch(
+                "celune.ui.app.resolve_audio_device_with_info",
+                side_effect=ValueError("ambiguous input device"),
+            ),
         ):
             assert not ui._start_vc_recording()
 

@@ -5531,7 +5531,7 @@ class CeluneUI(App):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def action_quit(self) -> None:
+    async def action_quit(self) -> None:
         """Exit through the startup-aware graceful shutdown path."""
         self._graceful_exit(return_code=self._startup_error_exit_code)
 

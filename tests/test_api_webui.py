@@ -327,12 +327,12 @@ class TestApiWebUI(CeluneTestCase):
         celune.caption_progress_callback(1.0, 2.0)
         api.webui_progress_current = 1.0
         api.webui_progress_total = 2.0
-        _status = api.webui_status_html()
+        _status = api._webui_status_html()
         assert "Hello there" in _status
         assert "50%" in _status
 
         celune.error_callback("backend failed")
-        assert "backend failed" in api.webui_status_html()
+        assert "backend failed" in api._webui_status_html()
         assert any(
             message == "backend failed" and severity == "error"
             for message, severity in api.webui_log_lines
