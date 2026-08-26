@@ -345,6 +345,8 @@ class TestApiWebUI(CeluneTestCase):
     def test_webui_persona_input_uses_think_path(self) -> None:
         """Verify browser input follows the Persona path when talkback is enabled."""
         chunks = Queue()
+        think = mock.Mock(return_value=True)
+        say_stream = mock.Mock(return_value=chunks)
         celune = cast(
             Celune,
             SimpleNamespace(
@@ -355,8 +357,8 @@ class TestApiWebUI(CeluneTestCase):
                 locked=False,
                 cur_state="idle",
                 sleeping=False,
-                think=mock.Mock(return_value=True),
-                say_stream=mock.Mock(return_value=chunks),
+                think=think,
+                say_stream=say_stream,
             ),
         )
         api.bound_celune = celune
@@ -369,8 +371,8 @@ class TestApiWebUI(CeluneTestCase):
         ):
             list(api.webui_speak("hello"))
 
-        celune.think.assert_called_once_with("hello")
-        celune.say_stream.assert_not_called()
+        think.assert_called_once_with("hello")
+        say_stream.assert_not_called()
 
     def test_webui_slash_command_uses_shared_handler_without_tui(self) -> None:
         """Verify slash commands do not require a mounted Textual singleton."""

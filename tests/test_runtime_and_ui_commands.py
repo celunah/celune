@@ -12,6 +12,7 @@ import threading
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from collections.abc import Awaitable, Callable
 from typing import Optional, cast
 from unittest import mock
 
@@ -85,10 +86,13 @@ class TestRuntime(CeluneTestCase):
     def test_voice_button_keeps_hold_action_when_cycle_is_disabled(self) -> None:
         """Verify voice cycling and voice-menu availability are independent."""
         button = VoiceButton("Voice", disabled=True, hold_enabled=True)
-        ui = SimpleNamespace(
-            style_button=button,
-            update_resources=mock.Mock(),
-            _run_on_ui_thread=lambda callback: callback(),
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                style_button=button,
+                update_resources=mock.Mock(),
+                _run_on_ui_thread=lambda callback: callback(),
+            ),
         )
 
         CeluneUI.change_voice_lock_state(
@@ -118,7 +122,7 @@ class TestRuntime(CeluneTestCase):
         button.post_message = mock.Mock()
 
         async def release_button() -> None:
-            await button._on_mouse_up(SimpleNamespace())
+            await button._on_mouse_up(cast(events.MouseUp, SimpleNamespace()))
 
         with mock.patch.object(Widget, "_on_mouse_up", new=mock.AsyncMock()):
             asyncio.run(release_button())
@@ -158,16 +162,19 @@ class TestRuntime(CeluneTestCase):
             change_voice_lock_state=mock.Mock(),
             safe_log=mock.Mock(),
         )
-        apply_voice_selection = getattr(
-            CeluneUI._apply_voice_selection,
-            "__wrapped__",
-            CeluneUI._apply_voice_selection,
+        apply_voice_selection = cast(
+            Callable[[CeluneUI, dict[str, JSONSerializable]], Awaitable[None]],
+            getattr(
+                CeluneUI._apply_voice_selection,
+                "__wrapped__",
+                CeluneUI._apply_voice_selection,
+            ),
         )
 
         with mock.patch("celune.cevoice.active_bundle_path", return_value=bundle_path):
             asyncio.run(
                 apply_voice_selection(
-                    ui,
+                    cast(CeluneUI, ui),
                     {"pack": "Celune", "entry": "bold"},
                 )
             )

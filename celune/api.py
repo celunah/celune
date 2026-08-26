@@ -2346,7 +2346,9 @@ def _webui_run_command(text: str) -> bool:
     if command == "settings" and celune is not None:
         from .ui.commands import process_command as process_ui_command
 
-        process_ui_command(_WebUiCommandHost(celune), command, command_args)
+        process_ui_command(
+            cast(CeluneUI, _WebUiCommandHost(celune)), command, command_args
+        )
         return True
 
     # noinspection PyProtectedMember
@@ -2360,7 +2362,7 @@ def _webui_run_command(text: str) -> bool:
         return False
     from .ui.commands import process_command as process_ui_command
 
-    process_ui_command(_WebUiCommandHost(celune), command, command_args)
+    process_ui_command(cast(CeluneUI, _WebUiCommandHost(celune)), command, command_args)
     return True
 
 
@@ -2840,7 +2842,7 @@ def _webui_stop() -> tuple[
     else:
         stop_sync = getattr(celune, "force_stop_speech", None)
         stopped = (
-            bool(cast(Callable[[], bool], stop_sync)())  # pylint: disable=not-callable
+            cast(Callable[[], bool], stop_sync)()  # pylint: disable=not-callable
             if callable(stop_sync)
             else False
         )
