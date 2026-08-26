@@ -15,6 +15,7 @@ from huggingface_hub import snapshot_download
 
 from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import custom_assert
+from ...i18n import string
 from ...cevoice import CEVoiceLoader, default_loader
 from ...typing.aliases import AudioChunk, AudioChunks
 from .base import CeluneBackend, cached_hf_snapshot_path
@@ -313,7 +314,7 @@ class Mini(CeluneBackend[TTSModel]):
             model_id, requested_language
         )
         if not available or snapshot_path is None:
-            self.log("Downloading TTS model...", "info")
+            self.log(string("tts.model_download_start"), "info")
             with huggingface_progress(self.report_progress):
                 snapshot_path = snapshot_download(
                     repo_id=model_id,

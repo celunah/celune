@@ -70,3 +70,15 @@ diff review are the relevant gates; do not claim the full Python CI passed when
 no Python validation was needed or when native prerequisites prevent it. For
 format/protocol/API changes, add the corresponding focused tests and then run
 the canonical CI when the environment allows it.
+
+## Localization database
+
+The English localization table in `celune/lang/en.json` is the source of truth
+for user-facing source strings. Keep keys at 50 characters or fewer and values
+at 100 characters or fewer. Split longer notices into multiple entries. CEDTS
+protocol failures, exception details, paths, and other implementation
+diagnostics stay in code; only their user-facing summary belongs in the table.
+Diagnostic tags such as `[ERROR]` and `[Core]` are engine-owned prefixes and
+must be added by runtime code, never stored in translated values.
+The localization tests verify these limits, reject technical CEDTS namespaces,
+reject tagged values, and check static `string()` and `tagged_string()` references.

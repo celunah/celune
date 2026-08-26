@@ -12,7 +12,6 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 
-from ..i18n import string
 from ..exceptions import (
     CEDTSError,
     CEDTSEOFError,
@@ -20,6 +19,7 @@ from ..exceptions import (
     CEDTSPayloadError,
     CEDTSProtocolError,
 )
+from ..i18n import string
 from ..typing.common import JSONSerializable
 from ..typing.worker import (
     WorkerValue,
@@ -251,8 +251,11 @@ def limits_from_capabilities(
 
 
 def _worker_protocol_error(key: str, **kwargs: str) -> CEDTSError:
-    """Create a localized, typed CEDTS validation error."""
-    message = string(f"backends.worker_protocol.{key}", **kwargs)
+    """Create a typed CEDTS validation error with internal diagnostics."""
+    details = ", ".join(f"{name}={value!r}" for name, value in kwargs.items())
+    message = f"CEDTS protocol error: {key}"
+    if details:
+        message = f"{message} ({details})"
     if key.startswith(_PAYLOAD_ERROR_PREFIXES):
         return CEDTSPayloadError(message)
     return CEDTSProtocolError(message)
@@ -262,13 +265,8 @@ def _cedts_stream_error(
     direction: str,
     error: BaseException,
 ) -> CEDTSStreamError:
-    """Create a localized CEDTS stream error while retaining its cause."""
-    return CEDTSStreamError(
-        string(
-            f"backends.cedts.stream_{direction}_failed",
-            error=str(error),
-        )
-    )
+    """Create a CEDTS stream error while retaining its cause."""
+    return CEDTSStreamError(f"CEDTS stream {direction} failed: {error}")
 
 
 def build_packet(
@@ -988,7 +986,9 @@ def _decode_value(value: object, payloads: Mapping[str, WorkerPayload]) -> Worke
                 target_voice=value.get("target_voice"),
                 target_character=value.get("target_character"),
                 target_references=tuple(Path(path) for path in target_references),
-                label=_typed_string(value.get("label", "audio input"), "label"),
+                label=_typed_string(
+                    value.get("label", string("ui.audio_input_label")), "label"
+                ),
                 pitch_shift=value.get("pitch_shift"),
                 f0_condition=value.get("f0_condition"),
             )
@@ -1005,7 +1005,9 @@ def _decode_value(value: object, payloads: Mapping[str, WorkerPayload]) -> Worke
                     expected_sample_rate=sample_rate,
                 ),
                 sample_rate=sample_rate,
-                label=_typed_string(value.get("label", "audio output"), "label"),
+                label=_typed_string(
+                    value.get("label", string("ui.audio_output_label")), "label"
+                ),
             )
         if value_type == "backend_generation":
             _validate_typed_fields(

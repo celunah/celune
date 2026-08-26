@@ -195,6 +195,24 @@ If you find any raw strings in the code, add them to the localization string dat
 
 Make sure to only modify user-facing strings (both normal and dev mode strings), don't change anything internal.
 
+Localization database rules:
+
+* Every user-visible string in source, scripts, CLI/TUI/WebUI, API responses,
+  and documentation examples must resolve through the localization database;
+  do not leave user-visible English literals inline.
+* Prefer localization keys no longer than 50 characters and require every key
+  to be 50 characters or fewer.
+* Prefer localized values no longer than 100 characters and require every
+  value to be 100 characters or fewer, counting formatted placeholders.
+* Split long notices, instructions, diagnostics, and other multi-sentence
+  text into composable localized strings instead of storing one long value.
+* Do not store exception text, tracebacks, technical implementation details,
+  raw backend errors, paths, protocol data, or other non-user-facing
+  diagnostics in the localization database. Keep those values in code and
+  localize only the surrounding user-facing message.
+* Use stable semantic key names, remove obsolete keys, and keep every key
+  referenced by code or documentation present in the database.
+
 ## Python and Environment
 
 * Supported Python versions are 3.12, 3.13 and 3.14.

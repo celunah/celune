@@ -18,7 +18,6 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass
 from collections.abc import Callable, Iterator
 
-from ..i18n import string
 from ..paths import (
     configure_numba_cache,
     huggingface_home_dir,
@@ -75,8 +74,11 @@ __all__ = ["RemoteBackendProxy", "RemoteModelHandle", "RemoteVCBackendProxy"]
 
 
 def _worker_protocol_error(key: str, **kwargs: str) -> CEDTSError:
-    """Create a localized, typed worker proxy CEDTS error."""
-    message = string(f"backends.worker_proxy.{key}", **kwargs)
+    """Create a typed worker proxy CEDTS error with internal diagnostics."""
+    details = ", ".join(f"{name}={value!r}" for name, value in kwargs.items())
+    message = f"CEDTS worker proxy error: {key}"
+    if details:
+        message = f"{message} ({details})"
     if key == "worker_payload_descriptors_are_invalid":
         return CEDTSPayloadError(message)
     if key in {
@@ -271,16 +273,9 @@ def _worker_exception(error_type: Optional[str], message: str) -> Exception:
         if cedts_error_type is CEDTSTimeoutError:
             return CEDTSTimeoutError("worker response", 0.0, message=message)
         return cedts_error_type(message)
-    safe_error_type = error_type or string(
-        "backends.worker_proxy.unknown_worker_error_type"
-    )
+    safe_error_type = error_type or "unknown worker error type"
     return BackendError(
-        string(
-            "backends.worker_proxy.worker_error",
-            error_code=_WORKER_ERROR_CODE,
-            error_type=safe_error_type,
-            detail=message,
-        ),
+        f"{_WORKER_ERROR_CODE} ({safe_error_type}): {message}",
         error_code=_WORKER_ERROR_CODE,
         error_type=error_type,
     )
@@ -444,12 +439,10 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             core_binary_output = -1
             _emit_log(
                 log,
-                string(
-                    "backends.worker_proxy.worker_started",
-                    backend=self._manifest.backend_id,
-                    pid=getattr(self._process, "pid", None),
-                    python=environment.python,
-                ),
+                "[IPC] worker started "
+                f"backend={self._manifest.backend_id} "
+                f"pid={getattr(self._process, 'pid', None)} "
+                f"python={environment.python}",
                 loglevel="debug",
             )
             if self._process.stderr is not None:
@@ -738,10 +731,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                             with suppress(Exception):
                                 _emit_log(
                                     cast(Callable[..., None], log_callback),
-                                    string(
-                                        "backends.worker_proxy.packet_reader_failed",
-                                        error=str(error),
-                                    ),
+                                    f"[IPC] worker packet reader failed: {error}",
                                     "error",
                                 )
                         threading.Thread(
@@ -870,7 +860,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             if log_callback is not None:
                 _emit_log(
                     log_callback,
-                    string("backends.worker_proxy.fatal_notification"),
+                    "[IPC] received fatal worker notification",
                     loglevel="debug",
                 )
             self._notify_fatal()
@@ -883,10 +873,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 if log_callback is not None:
                     _emit_log(
                         log_callback,
-                        string(
-                            "backends.worker_proxy.event_callback_failed",
-                            error=str(error),
-                        ),
+                        f"[IPC] worker event callback failed: {error}",
                         severity="error",
                     )
 
@@ -932,12 +919,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         if log_callback is not None:
             _emit_log(
                 log_callback,
-                string(
-                    "backends.worker_proxy.response_received",
-                    ok=response.get("ok"),
-                    stream=response.get("stream", False),
-                    done=response.get("done", False),
-                ),
+                "[IPC] received response "
+                f"ok={response.get('ok')} stream={response.get('stream', False)} "
+                f"done={response.get('done', False)}",
                 loglevel="debug",
             )
         return response
@@ -949,9 +933,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         if packet.get("reply_to") != hello_id:
             raise _worker_protocol_error("worker_response_correlation_is_invalid")
         response = self._response_from_packet(packet)
-        error = response.get(
-            "error", string("backends.worker_proxy.backend_worker_failed")
-        )
+        error = response.get("error", "backend worker failed")
         error_type = response.get("error_type")
         raise _worker_exception(
             error_type if isinstance(error_type, str) else None,
@@ -1272,22 +1254,15 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             or getattr(self, "_closing", False)
         ):
             raise RuntimeError(
-                string(
-                    "backends.worker_not_running",
-                    backend=self._manifest.backend_id,
-                )
+                f"backend worker {self._manifest.backend_id!r} is not running"
             )
         if process.stdin is None or process.stdout is None:
-            raise RuntimeError(string("backends.worker_streams_unavailable"))
+            raise RuntimeError("backend worker protocol streams are unavailable")
         self._ensure_cancellation_state()
         with self._protocol_lock:
             _emit_log(
                 self._log_callback,
-                string(
-                    "backends.worker_proxy.request_sent",
-                    operation=operation,
-                    arguments=tuple(arguments),
-                ),
+                f"[IPC] send operation={operation} arguments={tuple(arguments)}",
                 loglevel="debug",
             )
             request_id = uuid4().hex
@@ -1328,9 +1303,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         if not response.get("ok", False):
             raise _worker_exception(
                 response.get("error_type"),
-                response.get(
-                    "error", string("backends.worker_proxy.backend_worker_failed")
-                ),
+                response.get("error", "backend worker failed"),
             )
         return response.get("value")
 
@@ -1429,13 +1402,10 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             or getattr(self, "_closing", False)
         ):
             raise RuntimeError(
-                string(
-                    "backends.worker_not_running",
-                    backend=self._manifest.backend_id,
-                )
+                f"backend worker {self._manifest.backend_id!r} is not running"
             )
         if process.stdin is None or process.stdout is None:
-            raise RuntimeError(string("backends.worker_streams_unavailable"))
+            raise RuntimeError("backend worker protocol streams are unavailable")
         self._ensure_cancellation_state()
         with self._protocol_lock:
             if not hasattr(self, "_stream_active"):
@@ -1443,11 +1413,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             self._stream_active.set()
             _emit_log(
                 self._log_callback,
-                string(
-                    "backends.worker_proxy.stream_request_sent",
-                    operation=operation,
-                    arguments=tuple(arguments),
-                ),
+                f"[IPC] send_stream operation={operation} arguments={tuple(arguments)}",
                 loglevel="debug",
             )
             request_id = uuid4().hex
@@ -1494,10 +1460,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     if response.get("done", False):
                         _emit_log(
                             self._log_callback,
-                            string(
-                                "backends.worker_proxy.stream_completed",
-                                frames=stream_frame_count,
-                            ),
+                            f"[STREAM] proxy completed frames={stream_frame_count}",
                             "info",
                             loglevel="debug",
                         )
@@ -1510,10 +1473,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                         if stream_frame_count <= 3:
                             _emit_log(
                                 self._log_callback,
-                                string(
-                                    "backends.worker_proxy.stream_frame_received",
-                                    frame=stream_frame_count,
-                                ),
+                                f"[STREAM] proxy received frame={stream_frame_count}",
                                 "info",
                                 loglevel="debug",
                             )
@@ -1522,11 +1482,8 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 if not completed:
                     _emit_log(
                         self._log_callback,
-                        string(
-                            "backends.worker_proxy.draining_incomplete_stream",
-                            operation=operation,
-                            frames=stream_frame_count,
-                        ),
+                        "[IPC] draining incomplete stream "
+                        f"operation={operation} frames={stream_frame_count}",
                         loglevel="debug",
                     )
                     self.cancel_active_request(request_id, wait_for_ack=False)
@@ -1569,9 +1526,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         if not response.get("ok", False) and not response.get("cancelled", False):
             raise _worker_exception(
                 response.get("error_type"),
-                response.get(
-                    "error", string("backends.worker_proxy.backend_worker_failed")
-                ),
+                response.get("error", "backend worker failed"),
             )
         return response
 
@@ -1697,12 +1652,9 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
             if isinstance(active_job_result, str):
                 reason = active_job_result
         if not isinstance(reason, str):
-            reason = string("backends.worker_proxy.backend_worker_failed")
+            reason = "backend worker failed"
         return BackendError(
-            string(
-                "backends.worker_proxy.shutdown_acknowledgement_failed",
-                reason=reason,
-            )
+            f"worker shutdown acknowledgement reported failure: {reason}"
         )
 
     def _close_process_streams(
@@ -1773,11 +1725,8 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                     return
                 _emit_log(
                     self._log_callback,
-                    string(
-                        "backends.worker_proxy.closing_worker",
-                        backend=self._manifest.backend_id,
-                        pid=process.pid,
-                    ),
+                    "[IPC] closing worker "
+                    f"backend={self._manifest.backend_id} pid={process.pid}",
                     loglevel="debug",
                 )
 

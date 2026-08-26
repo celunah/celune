@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Optional, cast
 
 import soundfile as sf
 
-from ..i18n import string
+from ..i18n import string, tagged_string
 from ..paths import project_root
 from ..constants import APP_NAME
 from ..audio.server import restart_audio_server
@@ -290,10 +290,8 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         def restart_audio() -> None:
             try:
                 restart_audio_server()
-            except RuntimeError as error:
-                ui.safe_log(
-                    string("commands.audio_restart_failed", error=error), "error"
-                )
+            except RuntimeError:
+                ui.safe_log(string("commands.audio_restart_failed"), "error")
                 return
 
             celune = getattr(ui, "celune", None)
@@ -348,8 +346,11 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.celune.extension_manager.invoke(name, *invoke_args)
         except InvalidExtensionError:
             ui.safe_log(string("commands.extension_not_found", name=name), "warning")
-        except Exception as e:
-            ui.safe_log(string("commands.extension_error", error=e), "error")
+        except Exception:
+            ui.safe_log(
+                tagged_string("commands.extension_error", "EXT ERROR"),
+                "error",
+            )
 
         return
     if command == "extensions":
@@ -604,12 +605,8 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 )
             except Exception as exc:
                 ui.safe_log(
-                    string(
-                        "commands.vc_decode_failed",
-                        error=format_error(
-                            exc, getattr(ui.celune, "log_level", "info")
-                        ),
-                    ),
+                    f"{string('commands.vc_decode_failed')}: "
+                    f"{format_error(exc, getattr(ui.celune, 'log_level', 'info'))}",
                     "error",
                 )
                 return

@@ -25,7 +25,7 @@ from textual.widget import Widget
 from textual.widgets import Label, Button, Static, RichLog, TextArea, ProgressBar
 from celune import runtime
 from celune.theme import colors
-from celune.i18n import string
+from celune.i18n import string, tagged_string
 from celune.utils import discard
 from celune.celune import Celune
 from celune.config import Config
@@ -814,13 +814,7 @@ class TestUIStartup(CeluneTestCase):
             )
         )
         ui._show_loading_error.assert_called_once_with(
-            string(
-                "ui.init_error",
-                error=string(
-                    "ui.missing_dependency_error",
-                    package_name="dateutil",
-                ),
-            ),
+            tagged_string("ui.init_error", "INIT ERROR"),
             status_message=string("status.early_initialization_failed"),
             footer_message=string("status.missing_dependency"),
         )

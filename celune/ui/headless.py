@@ -99,9 +99,9 @@ class CeluneHeadlessUI:
 
         prefix = ""
         if severity == "warning":
-            prefix = string("headless.warn_prefix")
+            prefix = "[WARN] "
         elif severity == "error":
-            prefix = string("headless.error_prefix")
+            prefix = "[ERROR] "
         print(f"{prefix}{self.severity_color(severity)}{msg}{self.reset}", flush=True)
 
     def headless_error(self, error: str) -> None:

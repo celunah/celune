@@ -33,7 +33,7 @@ import pyrubberband as rb
 from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
-from .i18n import string
+from .i18n import string, tagged_string
 from . import __version__
 from .config import resolve_audio_device
 from .analysis import analyze_voice_audio
@@ -530,7 +530,7 @@ def log_first_playback(engine: Celune, timing: Optional[SpeechTiming]) -> None:
     else:
         elapsed = _monotonic_time() - start_time
 
-    engine.log(string("pipeline.ttfp_seconds", seconds=format_number(elapsed, 2)))
+    engine.log(f"TTFP: {format_number(elapsed, 2)} seconds")
 
 
 def close_stream(engine: Celune, abort: bool = False) -> None:
@@ -693,11 +693,7 @@ def acquire_pipeline_result(
     requirements = _pipeline_requirements(action)
     with engine.say_lock:
         engine.log(
-            string(
-                "pipeline.lock_acquire_requested",
-                action=action,
-                locked=engine.locked,
-            ),
+            f"[LOCK] acquire requested by {action}, locked={engine.locked}",
             loglevel="verbose",
         )
         manager = getattr(engine, "component_locks", None)
@@ -745,12 +741,8 @@ def acquire_pipeline_result(
         engine.locked = True
         engine.playback_done.clear()
         engine.log(
-            string(
-                "pipeline.lock_acquired",
-                action=action,
-                text_queue=engine.text_queue.qsize(),
-                audio_queue=engine.audio_queue.qsize(),
-            ),
+            f"[LOCK] acquired by {action} text_queue={engine.text_queue.qsize()} "
+            f"audio_queue={engine.audio_queue.qsize()}",
             loglevel="debug",
         )
         return acquisition
@@ -789,14 +781,12 @@ def release_pipeline(engine: Celune, playback_idle: bool = True) -> None:
                 engine, "test_finished", False
             ):
                 engine.cur_state = "idle"
-        engine.log(string("pipeline.lock_released"), loglevel="verbose")
+        engine.log("[LOCK] released", loglevel="verbose")
         engine.log(
-            string(
-                "pipeline.lock_release_complete",
-                playback_done=engine.playback_done.is_set(),
-                text_queue=engine.text_queue.qsize(),
-                audio_queue=engine.audio_queue.qsize(),
-            ),
+            "[LOCK] release complete "
+            f"playback_done={engine.playback_done.is_set()} "
+            f"text_queue={engine.text_queue.qsize()} "
+            f"audio_queue={engine.audio_queue.qsize()}",
             loglevel="debug",
         )
 
@@ -940,14 +930,9 @@ def _queue_playback_chunk(
         )
     )
     engine.log(
-        string(
-            "pipeline.playback_chunk",
-            source=source_id,
-            samples=len(audio),
-            sample_rate=sample_rate,
-            generation=expected_generation,
-            audio_queue=engine.audio_queue.qsize(),
-        ),
+        "[QUEUE] playback chunk "
+        f"source={source_id} samples={len(audio)} sample_rate={sample_rate} "
+        f"generation={expected_generation} audio_queue={engine.audio_queue.qsize()}",
         loglevel="debug",
     )
     return True
@@ -1149,14 +1134,11 @@ def _queue_playback_done(
         )
     )
     engine.log(
-        string(
-            "pipeline.playback_done",
-            source=source_id,
-            generation=expected_generation,
-            release_pipeline=release_pipeline_when_finished,
-            notify_idle=notify_idle_when_finished,
-            audio_queue=engine.audio_queue.qsize(),
-        ),
+        "[QUEUE] playback done "
+        f"source={source_id} generation={expected_generation} "
+        f"release_pipeline={release_pipeline_when_finished} "
+        f"notify_idle={notify_idle_when_finished} "
+        f"audio_queue={engine.audio_queue.qsize()}",
         loglevel="debug",
     )
     return True
@@ -1319,7 +1301,7 @@ def _download_youtube_sfx(
     title = _youtube_sfx_title(url)
     out_tmpl = str(output_path.with_suffix(".%(ext)s"))
     engine.status_callback(string("status.downloading_audio"))
-    engine.log(string("pipeline.youtube_download_start", url=url))
+    engine.log(f"[SFX] Downloading audio from {url}...")
     python_executable = sys.executable
     if running_compiled():
         if os.name == "nt":
@@ -1371,17 +1353,13 @@ def _download_youtube_sfx(
 
         if attempt < total_attempts:
             engine.log(
-                string(
-                    "pipeline.download_retrying",
-                    error=failure_reason,
-                    retry_count=attempt,
-                    max_retries=_MAX_YOUTUBE_DOWNLOAD_RETRIES,
-                ),
+                f"{string('pipeline.download_failed')}: {failure_reason}; "
+                f"{string('pipeline.download_retry', retry_count=attempt, max_retries=_MAX_YOUTUBE_DOWNLOAD_RETRIES)}",
                 "warning",
             )
             continue
 
-        engine.log(string("pipeline.download_failed", error=failure_reason), "warning")
+        engine.log(f"{string('pipeline.download_failed')}: {failure_reason}", "warning")
         engine.error_callback(string("pipeline.download_youtube_failed_short"))
         return None
 
@@ -1784,10 +1762,8 @@ def _classify_persona_memories(engine: Celune, request: str) -> None:
         log = getattr(engine, "log", None)
         if callable(log):
             log(
-                string(
-                    "pipeline.persona_memory_classifier_failed",
-                    error=format_error(error, engine.log_level),
-                ),
+                f"Persona memory classification failed: "
+                f"{format_error(error, engine.log_level)}",
                 loglevel="verbose",
             )
 
@@ -2401,12 +2377,9 @@ def handle_audio_input(engine: Celune, request: AudioInputRequest) -> bool:
         )
 
     engine.log(
-        string(
-            "pipeline.audio_input_ignored",
-            label=request.label,
-            sample_rate=request.sample_rate,
-            shape=audio.shape,
-        ),
+        "Audio input was accepted but ignored in text-to-speech-only mode "
+        f"(label={request.label!r}, sample_rate={request.sample_rate}, "
+        f"shape={audio.shape!r})",
         loglevel="verbose",
     )
     return True
@@ -2661,14 +2634,10 @@ def _queue_speech_after_ready(
                 )
             )
             engine.log(
-                string(
-                    "pipeline.speech_queued",
-                    generation=engine.speech_generation,
-                    text_chars=len(speech_text),
-                    language=requested_language,
-                    stream_queue=stream_queue is not None,
-                    text_queue=engine.text_queue.qsize(),
-                ),
+                "[QUEUE] speech "
+                f"generation={engine.speech_generation} text_chars={len(speech_text)} "
+                f"language={requested_language} stream_queue={stream_queue is not None} "
+                f"text_queue={engine.text_queue.qsize()}",
                 loglevel="debug",
             )
         engine.status_callback(string("status.generating"))
@@ -3230,20 +3199,12 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 break
 
             start_time = _monotonic_time()
-            engine.log(string("pipeline.generation_text", text=display_text))
+            engine.log(f"[GEN] {display_text}")
             engine.log(
-                string(
-                    "pipeline.generation_started",
-                    generation=item.generation,
-                    text_chars=len(text),
-                    backend=getattr(
-                        engine.backend,
-                        "name",
-                        type(engine.backend).__name__,
-                    ),
-                    model=getattr(engine, "model_name", ""),
-                    language=request_language,
-                ),
+                "[GEN] start "
+                f"generation={item.generation} text_chars={len(text)} "
+                f"backend={getattr(engine.backend, 'name', type(engine.backend).__name__)} "
+                f"model={getattr(engine, 'model_name', '')} language={request_language}",
                 loglevel="debug",
             )
             speech_len = 0.0
@@ -3349,11 +3310,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
 
                         model_id = engine.backend.model_id_for_voice(active_voice)
                         engine.log(
-                            string(
-                                "pipeline.language_reload",
-                                model=model_id,
-                                language=target_language,
-                            ),
+                            f"[RELOAD] Loading {model_id} for language: {target_language}",
                             loglevel="verbose",
                         )
                         engine.backend.unload_model()
@@ -3413,21 +3370,14 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                             or not has_audio
                         ):
                             engine.log(
-                                string(
-                                    "pipeline.stream_frame_received",
-                                    frame=stream_frame_count,
-                                    samples=audio_chunk.size,
-                                    sample_rate=sr,
-                                    nonzero=has_audio,
-                                ),
+                                "[STREAM] core received "
+                                f"frame={stream_frame_count} samples={audio_chunk.size} "
+                                f"sample_rate={sr} nonzero={has_audio}",
                                 loglevel="debug",
                             )
                         if not has_audio:
                             engine.log(
-                                string(
-                                    "pipeline.stream_frame_discarded",
-                                    frame=stream_frame_count,
-                                ),
+                                f"[STREAM] core discarded frame={stream_frame_count}",
                                 loglevel="debug",
                             )
                             continue
@@ -3514,22 +3464,15 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
             generation_time = _monotonic_time() - start_time
 
             engine.log(
-                string(
-                    "pipeline.stream_complete",
-                    generation=request_generation,
-                    seconds=f"{speech_len:.3f}",
-                    elapsed=f"{generation_time:.3f}",
-                    buffered=f"{buffered_speech_len:.3f}",
-                ),
+                "[GEN] stream complete "
+                f"generation={request_generation} seconds={speech_len:.3f} "
+                f"elapsed={generation_time:.3f} buffered={buffered_speech_len:.3f}",
                 loglevel="debug",
             )
 
             engine.log(
-                string(
-                    "pipeline.stream_totals",
-                    received=stream_frame_count,
-                    accepted=accepted_stream_frame_count,
-                ),
+                f"[STREAM] core totals received={stream_frame_count} "
+                f"accepted={accepted_stream_frame_count}",
                 loglevel="debug",
             )
 
@@ -3548,31 +3491,18 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 break
 
             engine.log(
-                string(
-                    "pipeline.generation_summary",
-                    speech_seconds=format_number(speech_len, 2),
-                    generation_seconds=format_number(generation_time, 2),
-                )
+                f"[GEN] {format_number(speech_len, 2)} seconds, "
+                f"took {format_number(generation_time, 2)} seconds"
             )
             generation_speed = speech_len / generation_time
-            engine.log(
-                string(
-                    "pipeline.generation_speed",
-                    speed=format_number(generation_speed, 2),
-                )
-            )
+            engine.log(f"Speed: x{format_number(generation_speed, 2)}")
             _remember_smart_buffer_speed(engine, generation_speed)
             engine.smart_buffer_target_seconds = _smart_buffer_target_seconds(
                 engine,
                 speech_len,
                 generation_time,
             )
-            engine.log(
-                string(
-                    "pipeline.ttfc_ms",
-                    milliseconds=format_number(speech_timing.ttfc_ms(), 1),
-                )
-            )
+            engine.log(f"TTFC: {format_number(speech_timing.ttfc_ms(), 1)} ms")
 
             if buffer:
                 _flush_buffered_speech_chunks(
@@ -3585,7 +3515,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                     caption_text=display_text,
                 )
 
-            engine.log(string("pipeline.generation_done"))
+            engine.log("[GEN] done")
 
             saved_path = None
             analysis_audio = None
@@ -3732,8 +3662,9 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 break
 
             engine.log(
-                string(
+                tagged_string(
                     "pipeline.gen_error",
+                    "GEN ERROR",
                     error=format_error(e, engine.log_level),
                 ),
                 "error",
@@ -3828,13 +3759,9 @@ def _ensure_playback_stream_unlocked(engine: Celune, sample_rate: int) -> bool:
             "output",
         )
         engine.log(
-            string(
-                "pipeline.playback_device_resolved",
-                setting=output_device_key,
-                configured=engine.config.get(output_device_key),
-                audio_api=engine.config.get("audio_api"),
-                device=output_device,
-            ),
+            "[PLAY] resolved "
+            f"{output_device_key}={engine.config.get(output_device_key)!r} "
+            f"audio_api={engine.config.get('audio_api')!r} -> {output_device!r}",
             loglevel="verbose",
         )
         engine.current_sr = sample_rate
@@ -3849,10 +3776,7 @@ def _ensure_playback_stream_unlocked(engine: Celune, sample_rate: int) -> bool:
             raise NotAvailableError("audio stream is not available")
         engine.stream.start()
         engine._audio_unavailable = False
-        engine.log(
-            string("pipeline.playback_started", sample_rate=sample_rate),
-            loglevel="verbose",
-        )
+        engine.log(f"[PLAY] started stream at {sample_rate} Hz", loglevel="verbose")
         return True
     except ValueError as error:
         if not getattr(engine, "audio_unavailable", False):
@@ -4194,10 +4118,7 @@ async def playback_worker_job(engine: Celune) -> None:
                 _update_playback_progress(engine, source_buffers)
             except Exception as e:
                 engine.log(
-                    string(
-                        "pipeline.playback_error_detail",
-                        error=format_error(e, engine.log_level),
-                    ),
+                    f"[PLAY ERROR] {format_error(e, engine.log_level)}",
                     "error",
                 )
                 engine.error_callback(string("pipeline.playback_error"))

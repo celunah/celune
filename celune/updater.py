@@ -635,9 +635,7 @@ def _apply_compiled_update(install_dir: Optional[Path] = None) -> None:
         try:
             _download_release_zip(release, zip_path)
         except OSError as exc:
-            raise UpdateError(
-                string("cli.update_download_failed", error=str(exc))
-            ) from exc
+            raise UpdateError(string("cli.update_download_failed")) from exc
 
         release_manifest = _manifest_from_zip(zip_path)
         if release_manifest is None or not _release_manifest_matches(
@@ -648,9 +646,7 @@ def _apply_compiled_update(install_dir: Optional[Path] = None) -> None:
         try:
             extracted_root = _extract_artifact_root(zip_path, temp_root / "artifact")
         except (OSError, zipfile.BadZipFile, UpdateError) as exc:
-            raise UpdateError(
-                string("cli.update_unpack_failed", error=str(exc))
-            ) from exc
+            raise UpdateError(string("cli.update_unpack_failed")) from exc
 
         for source in extracted_root.iterdir():
             _replace_path(source, bundle_dir / source.name)

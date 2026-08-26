@@ -65,7 +65,7 @@ from textual.css.query import NoMatches
 from textual.css.types import EdgeStyle
 from textual.containers import Vertical, Horizontal
 
-from ..i18n import string
+from ..i18n import string, tagged_string
 from .theme import CELUNE_CSS, severity_color
 from .loading import CeluneLoadingScreen
 from .terminal import SelectMenuOption, SelectMenuWidget
@@ -1585,9 +1585,9 @@ class CeluneUI(App):
             return
         try:
             callback(self.celune, success, detail)
-        except Exception as exc:
+        except Exception:
             self.safe_log(
-                string("test.callback_failed", error=format_error(exc, "info")),
+                string("test.callback_failed"),
                 "error",
             )
         self._run_on_ui_thread(self._apply_test_finished_state)
@@ -1983,22 +1983,7 @@ class CeluneUI(App):
             terminal_action,
         )
         self._write_terminal_title(self._terminal_status)
-        if isinstance(error, ModuleNotFoundError) and error.name is not None:
-            error_text = string(
-                "ui.missing_dependency_error",
-                package_name=error.name,
-            )
-        elif isinstance(error, SystemExit):
-            error_text = string(
-                "ui.startup_exit_error",
-                code=error.code,
-            )
-        else:
-            error_text = format_error(error, "info")
-        message = string(
-            "ui.init_error",
-            error=error_text,
-        )
+        message = tagged_string("ui.init_error", "INIT ERROR")
         self._show_loading_error(
             message,
             status_message=string("status.early_initialization_failed"),
@@ -2631,10 +2616,7 @@ class CeluneUI(App):
                 )
         except Exception as e:
             self.cur_state = "error"
-            error_message = string(
-                "ui.init_error",
-                error=format_error(e, getattr(self.celune, "log_level", "info")),
-            )
+            error_message = tagged_string("ui.init_error", "INIT ERROR")
             self.safe_log(error_message, "error")
             self.celune.fatal()
             self.change_input_state(locked=True)
@@ -5014,7 +4996,42 @@ class CeluneUI(App):
     @staticmethod
     def _config_explanation(path: tuple[str, ...]) -> str:
         """Return a localized explanation for one configuration value."""
-        explanation_key = "ui.settings_explanation." + ".".join(path)
+        aliases: dict[tuple[str, ...], str] = {
+            ("gpt_sovits_t2s_weights_path",): "gpt_weights",
+            ("persona", "speech_end_delay_seconds"): "persona.speech_delay",
+            (
+                "persona",
+                "memory",
+                "max_short_term_messages",
+            ): "persona.memory.short_term",
+            ("persona", "memory", "auto_classifier"): "persona.memory.auto",
+            ("persona", "memory", "auto_classifier_min_confidence"): "mem.auto_conf",
+            (
+                "persona",
+                "memory",
+                "auto_classifier_max_candidates",
+            ): "mem.auto_candidates",
+            (
+                "persona",
+                "memory",
+                "context_compaction_enabled",
+            ): "persona.memory.compaction",
+            (
+                "persona",
+                "memory",
+                "context_compaction_keep_recent_messages",
+            ): "mem.compact_recent",
+            ("persona", "memory", "context_summary_max_characters"): "mem.summary_len",
+            ("persona", "memory", "semantic_similarity_threshold"): "mem.similarity",
+            (
+                "persona",
+                "memory",
+                "fallback_token_overlap_threshold",
+            ): "mem.token_overlap",
+            ("persona", "memory", "semantic_embedding_model"): "mem.embedding",
+        }
+        explanation_path = aliases.get(path, ".".join(path))
+        explanation_key = "ui.settings_explanation." + explanation_path
         explanation = string(explanation_key)
         if explanation != explanation_key:
             return explanation
@@ -5190,8 +5207,8 @@ class CeluneUI(App):
             self.celune.config = updated
             with config_path(create_parent=True).open("w", encoding="utf-8") as file:
                 yaml.safe_dump(updated, file, sort_keys=False)
-        except OSError as error:
-            self.safe_log(string("ui.settings_save_failed", error=error), "error")
+        except OSError:
+            self.safe_log(string("ui.settings_save_failed"), "error")
             return
 
         self.cur_state = "restarting"
@@ -5264,8 +5281,8 @@ class CeluneUI(App):
             self.style_index = self.celune_styles.index(entry)
             self.tts_voice_changed(entry)
             self.change_voice_lock_state(locked=len(self.celune_styles) < 2)
-        except Exception as error:
-            self.safe_log(string("ui.voice_change_failed_error", error=error), "error")
+        except Exception:
+            self.safe_log(string("ui.voice_change_failed_error"), "error")
 
     def consume_buffer(self, text_len: int) -> None:
         """Consume a sentence from live input and say it.
@@ -5360,9 +5377,9 @@ class CeluneUI(App):
         if process_commands and text.startswith("/"):
             try:
                 parts = self.split_command_input(text[1:])
-            except ValueError as e:
+            except ValueError:
                 self.safe_log(
-                    string("ui.command_parsing_error", error=e),
+                    string("ui.command_parsing_error"),
                     "error",
                 )
                 return False
@@ -5858,10 +5875,10 @@ class CeluneUI(App):
 
     def _report_shutdown_error(self, error: Exception) -> None:
         """Write a shutdown error to both the log and original terminal stream."""
-        message = string(
-            "celune.internal_error",
-            error=format_error(error, "info"),
-        )
+        detail = format_error(error, "info")
+        message = string("celune.internal_error")
+        if detail:
+            message = f"{message}: {detail}"
         with contextlib.suppress(Exception):
             self._persist_log_entry(message, "error")
             trace = format_error(error, "debug").rstrip()

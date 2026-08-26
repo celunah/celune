@@ -13,6 +13,7 @@ from transformers import AutoTokenizer
 from dots_tts.runtime import DotsTtsRuntime
 
 from ...utils import discard, custom_assert
+from ...i18n import string
 from ...typing.backends import _LoguruLogger
 from ...cevoice import CEVoiceLoader, default_loader
 from ...paths import huggingface_progress
@@ -229,7 +230,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
 
         target = path if available and path is not None else model_id
         if target == model_id:
-            self.log("Downloading TTS model...", "info")
+            self.log(string("tts.model_download_start"), "info")
 
         with (
             local_hf_offline_mode(available and path is not None),

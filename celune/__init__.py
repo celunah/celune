@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Union
 
 from .constants import APP_NAME
 from ._version import REVISION, __version__
+from .i18n import string
 from .paths import configure_huggingface_cache_environment
 
 configure_huggingface_cache_environment()
@@ -34,12 +35,10 @@ __codename__ = "Enlightenment"
 __comment__ = "I have achieved new heights."
 
 if hasattr(_sys, "ps1"):
-    print(f"Caution: You are running the {APP_NAME} core interactively.")
-    print("This is not an intended mode of operation, usage may differ.")
+    print(string("cli.interactive_core_warning", app_name=APP_NAME))
+    print(string("cli.interactive_core_notice"))
     print()
-    print(
-        "\"If you're just exploring, please... be careful. I don't usually speak here.\""
-    )
+    print(string("cli.interactive_core_quote"))
 
 
 def __getattr__(

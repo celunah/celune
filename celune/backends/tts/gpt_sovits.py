@@ -279,7 +279,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                 ):
                     raise
                 raise RuntimeError(
-                    string("gpt_sovits.source_download_failed", error=str(error))
+                    string("gpt_sovits.source_download_failed")
                 ) from error
 
         return destination
@@ -452,7 +452,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                         )
                 except Exception as error:
                     raise RuntimeError(
-                        string("gpt_sovits.model_download_failed", error=str(error))
+                        string("gpt_sovits.model_download_failed")
                     ) from error
                 self._model_snapshot = snapshot
 
@@ -534,21 +534,13 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                 )
             except Exception as error:
                 raise RuntimeError(
-                    string(
-                        "gpt_sovits.nltk_download_failed",
-                        package=package,
-                        error=str(error),
-                    )
+                    f"{string('gpt_sovits.nltk_download_failed')}: {error}"
                 ) from error
             finally:
                 socket.setdefaulttimeout(previous_socket_timeout)
             if not downloaded or not self._nltk_resource_available(nltk, paths):
                 raise RuntimeError(
-                    string(
-                        "gpt_sovits.nltk_download_failed",
-                        package=package,
-                        error=string("gpt_sovits.nltk_download_incomplete"),
-                    )
+                    f"{string('gpt_sovits.nltk_download_failed')}: {package}"
                 )
             self.report_progress(index + 1, total_resources)
 
@@ -568,7 +560,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                         source_cache.unlink()
                 except OSError as error:
                     raise RuntimeError(
-                        string("gpt_sovits.cache_link_failed", error=str(error))
+                        string("gpt_sovits.cache_link_failed")
                     ) from error
         elif source_cache.exists():
             raise RuntimeError(
@@ -581,7 +573,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             except OSError as error:
                 if os.name != "nt":
                     raise RuntimeError(
-                        string("gpt_sovits.cache_link_failed", error=str(error))
+                        string("gpt_sovits.cache_link_failed")
                     ) from error
                 command = f'mklink /J "{source_cache}" "{cache_dir}"'
                 try:
@@ -611,7 +603,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             ModelDownloader().download(FASTTEXT_LARGE_MODEL_URL, model_path)
         except Exception as error:
             raise RuntimeError(
-                string("gpt_sovits.fast_langdetect_download_failed", error=str(error))
+                string("gpt_sovits.fast_langdetect_download_failed")
             ) from error
 
     def model_is_available_locally(
@@ -737,7 +729,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             except OSError as error:
                 if os.name != "nt":
                     raise RuntimeError(
-                        string("gpt_sovits.cache_link_failed", error=str(error))
+                        string("gpt_sovits.cache_link_failed")
                     ) from error
                 command = f'mklink /J "{link}" "{target}"'
                 try:

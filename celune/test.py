@@ -57,9 +57,8 @@ def _agent_test_route_failure(
 ) -> Optional[str]:
     """Describe why the controlled agent input did not start a task."""
     if route.failure is not None:
-        return string(
-            "test.agent_classification_failed",
-            reason=route.failure.kind.value,
+        return (
+            f"{string('test.agent_classification_failed')}: {route.failure.kind.value}"
         )
     if route.route != AgentRoute.TASK:
         return string("test.agent_no_task_detected")

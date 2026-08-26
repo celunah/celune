@@ -8,7 +8,7 @@ import contextlib
 from typing import Optional
 from collections.abc import Mapping, Generator
 
-from ..i18n import string
+from ..i18n import string, tagged_string
 from ..config import Config
 from ..vram import resolve_vram_preset
 from ..typing.aliases import LogCallback
@@ -89,7 +89,9 @@ class PersonaClient:
             text = line.strip()
             if text:
                 self.log(
-                    string("persona.backend_diagnostic", message=text),
+                    tagged_string(
+                        "persona.backend_diagnostic", "PERSONA", message=text
+                    ),
                     "warning",
                     loglevel="verbose",
                 )

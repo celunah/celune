@@ -413,12 +413,16 @@ def resolve_audio_device_with_info(
     if len(matches) > 1:
         matches_text = "\n".join(f"- {label}" for _, label in matches)
         raise ValueError(
-            string(
-                "config.audio_device_multiple_matches",
-                device_kind=string(f"config.audio_device_kind_{query_kind}"),
-                device_name=configured_name,
-                matches=matches_text,
-                app_name=APP_NAME,
+            "\n".join(
+                (
+                    string(
+                        "config.audio_device_multiple",
+                        device_kind=string(f"config.audio_device_kind_{query_kind}"),
+                        device_name=configured_name,
+                    ),
+                    matches_text,
+                    string("config.audio_device_select", app_name=APP_NAME),
+                )
             )
         )
 

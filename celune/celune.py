@@ -25,7 +25,7 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from . import __version__
 from .vc import clamp_vc_pitch_shift
-from .i18n import string, set_locale, get_system_locale
+from .i18n import get_system_locale, set_locale, string, tagged_string
 from .vram import (
     QWEN3_0_6B_MODEL,
     VramPreset,
@@ -549,7 +549,16 @@ class Celune(CeluneStateAccessors):
                 include_local_management=local_management,
             )
             if local_management:
-                self.log(string("agent.unsandboxed_warning"), "warning")
+                self.log(
+                    "\n".join(
+                        (
+                            string("agent.unsandboxed_title"),
+                            string("agent.unsandboxed_body"),
+                            string("agent.unsandboxed_rollback"),
+                        )
+                    ),
+                    "warning",
+                )
         self._agent_needle_selector = agent_tool_selector
         self._agent_needle_error: Optional[str] = None
         self._agent_persona_bridge = PersonaAgentBridge(
@@ -1856,9 +1865,9 @@ class Celune(CeluneStateAccessors):
             self.cur_state = "idle"
             self.status_callback(string("status.idle"))
             return True
-        except Exception as e:
+        except Exception:
             self.log(
-                string("celune.reload_error", error=format_error(e, self.log_level)),
+                tagged_string("celune.reload_error", "RELOAD ERROR"),
                 "error",
             )
             if self.exit_requested:
@@ -2073,9 +2082,9 @@ class Celune(CeluneStateAccessors):
             self.cur_state = "idle"
             self.status_callback(string("status.idle"))
             return True
-        except Exception as e:
+        except Exception:
             self.log(
-                string("celune.reload_error", error=format_error(e, self.log_level)),
+                tagged_string("celune.reload_error", "RELOAD ERROR"),
                 "error",
             )
             if (
@@ -2331,10 +2340,10 @@ class Celune(CeluneStateAccessors):
                 if not is_voice_conversion:
                     self._start_wake_background_jobs(unload)
                 return True
-            except Exception as e:
+            except Exception:
                 self.fatal()
                 self.log(
-                    string("celune.wake_error", error=format_error(e, self.log_level)),
+                    tagged_string("celune.wake_error", "WAKE ERROR"),
                     "error",
                 )
                 self.status_callback(
@@ -3227,10 +3236,10 @@ class Celune(CeluneStateAccessors):
             self.progress_callback(1, 1)
             self.cur_state = "idle"
             self.status_callback(string("status.idle"))
-        except Exception as e:
+        except Exception:
             self.fatal()
             self.log(
-                string("celune.reload_error", error=format_error(e, self.log_level)),
+                tagged_string("celune.reload_error", "RELOAD ERROR"),
                 "error",
             )
             self.status_callback(
@@ -3419,7 +3428,7 @@ class Celune(CeluneStateAccessors):
             self.glow.enter()  # Celune has entered your PC
         else:
             self.fatal()
-            self.log(string("celune.warmup_failed"), "error")
+            self.log(tagged_string("celune.warmup_failed", "WARMUP"), "error")
             self._stop_pipeline_jobs()
             if raise_on_error:
                 raise BackendError("warmup failed")
@@ -3554,9 +3563,9 @@ class Celune(CeluneStateAccessors):
                 token=token,
                 requests_per_minute=requests_per_minute,
             )
-        except Exception as e:
+        except Exception:
             self.log(
-                string("celune.internal_error", error=format_error(e, self.log_level)),
+                string("celune.internal_error"),
                 "warning",
             )
             self.log(string("celune.api_unavailable", app_name=APP_NAME), "warning")
@@ -3606,8 +3615,9 @@ class Celune(CeluneStateAccessors):
                 self.progress_callback(1, 1)
             except Exception as e:
                 self.log(
-                    string(
+                    tagged_string(
                         "celune.normalizer_error",
+                        "NORMALIZER ERROR",
                         error=format_error(e, self.log_level),
                     ),
                     "error",
@@ -3639,7 +3649,7 @@ class Celune(CeluneStateAccessors):
         voice: Optional[str] = None,
     ) -> bool:
         """Warm up Celune's speech capabilities."""
-        self.log(string("celune.warmup_start"))
+        self.log(tagged_string("celune.warmup_start", "WARMUP"))
         self.status_callback(string("status.warming_up"))
         self.progress_callback(None, None)
         warmup_text = "A"
@@ -3688,7 +3698,7 @@ class Celune(CeluneStateAccessors):
         except Exception as e:
             self._last_warmup_error = e
             self.log(
-                string("celune.warmup_error", error=format_error(e, self.log_level)),
+                tagged_string("celune.warmup_error", "WARMUP ERROR"),
                 "error",
             )
             self.progress_callback(0, 1)
@@ -3815,8 +3825,9 @@ class Celune(CeluneStateAccessors):
 
             except Exception as e:
                 self.log(
-                    string(
+                    tagged_string(
                         "celune.normalization_error",
+                        "NORMALIZATION ERROR",
                         error=format_error(e, self.log_level),
                     ),
                     "error",

@@ -64,7 +64,7 @@ def load_normalizer_components(
     model_ref = path if available and path is not None else NORMALIZER_MODEL_ID
 
     if available:
-        log("Normalizer is already available in cache", "info")
+        log(string("modeling.normalizer_cached"), "info")
 
     with huggingface_progress(progress_callback):
         tokenizer = AutoTokenizer.from_pretrained(

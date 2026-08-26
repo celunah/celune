@@ -10,6 +10,7 @@ from faster_qwen3_tts import FasterQwen3TTS
 from faster_qwen3_tts import __version__ as qwen3_ver
 
 from ...utils import custom_assert
+from ...i18n import string
 from ...typing.aliases import AudioChunk
 from ...cevoice import CEVoiceLoader, default_loader
 from ...paths import configure_numba_cache, huggingface_progress
@@ -171,7 +172,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
                 self.model = FasterQwen3TTS.from_pretrained(path)
             return self.model
 
-        self.log("Downloading TTS model...", "info")
+        self.log(string("tts.model_download_start"), "info")
         with huggingface_progress(self.report_progress):
             self.model = FasterQwen3TTS.from_pretrained(model_id)
         return self.model

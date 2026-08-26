@@ -560,11 +560,7 @@ class AgentInputRouter:
             log_level = getattr(self.engine, "log_level", "info")
             if log_level in {"verbose", "debug"}:
                 log(
-                    string(
-                        "agent.classifier_failed",
-                        reason=kind.value,
-                        detail=detail or kind.value,
-                    ),
+                    f"{string('agent.classifier_failed')}: {detail or kind.value}",
                     "warning",
                     loglevel="verbose",
                 )

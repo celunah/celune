@@ -536,14 +536,14 @@ class CeluneBackend[ModelT](ABC):
         for model_id in self.all_model_ids:
             available, _ = self.model_is_available_locally(model_id)
             if not available:
-                self.log(f"Downloading {model_id}...", "info")
+                self.log(string("tts.model_downloading", model_id=model_id), "info")
                 with huggingface_progress(self.report_progress):
                     snapshot_download(
                         repo_id=model_id,
                         cache_dir=str(huggingface_hub_cache_dir(create=True)),
                     )
             else:
-                self.log(f"{model_id} is already available.", "info")
+                self.log(string("tts.model_available", model_id=model_id), "info")
 
     @abstractmethod
     def load_model(self, model_id: str, **kwargs) -> ModelT:

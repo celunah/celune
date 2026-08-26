@@ -21,8 +21,8 @@ from .base import (
 from .base import (
     _to_numpy_audio as normalize_streamed_audio,
 )
-from ...i18n import string
 from ...utils import custom_assert
+from ...i18n import string
 from ...cevoice import CEVoiceLoader, default_loader
 from ...paths import huggingface_progress
 from ...constants import BASE_SR
@@ -260,7 +260,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
 
             return self.model
 
-        self.log("Downloading TTS model...", "info")
+        self.log(string("tts.model_download_start"), "info")
         with (
             huggingface_progress(self.report_progress),
             self._suppress_backend_output(),

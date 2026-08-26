@@ -3,6 +3,7 @@
 """Main entrypoint for the app launcher."""
 
 import sys
+import json
 import importlib.util
 from pathlib import Path
 from typing import Optional
@@ -15,6 +16,17 @@ APP_SLUG = "".join(char if char.isalnum() else "_" for char in APP_NAME.lower())
 _ENTRYPOINT_MODULE: Optional[ModuleType] = None
 
 
+def _fallback_string(key: str, **kwargs: str) -> str:
+    """Load one lightweight fallback translation without importing Celune."""
+    language_path = Path(__file__).resolve().parent / "celune" / "lang" / "en.json"
+    try:
+        translations = json.loads(language_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return key
+    text = translations.get(key, key)
+    return text.format(**kwargs) if kwargs else text
+
+
 def _too_old_python() -> bool:
     """Return whether the current interpreter is too old."""
     return sys.version_info < (3, 12)
@@ -23,13 +35,15 @@ def _too_old_python() -> bool:
 def _print_too_old_python_notice(command: Optional[str] = None) -> None:
     """Print a user-facing unsupported Python version notice, bypassing app imports."""
     version = ".".join(str(part) for part in sys.version_info[:3])
-    print(f"{APP_NAME} will not run on Python {version}.")
-    print("Please use at least Python 3.12 to use the CLI.")
     print(
-        f"Run `python configure.py` in {APP_NAME}'s directory to set up the supported environment."
+        _fallback_string("cli.python_unsupported", app_name=APP_NAME, version=version)
     )
+    print(_fallback_string("cli.python_required"))
+    print(_fallback_string("cli.python_setup", app_name=APP_NAME))
     if command == "doctor":
-        print(f"`{APP_NAME.lower()} doctor` can't run on this interpreter.")
+        print(
+            _fallback_string("cli.python_doctor_unavailable", app_name=APP_NAME.lower())
+        )
 
 
 def load_entrypoint_module() -> ModuleType:

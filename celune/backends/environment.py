@@ -430,7 +430,7 @@ class BackendEnvironmentManager:
                     "backends.uv_timeout",
                     seconds=self.uv_timeout,
                 )
-            detail = f": {output}" if output else ""
-            raise BackendEnvironmentError(
-                string("backends.dependencies_install_failed", detail=detail)
-            ) from error
+            message = string("backends.dependencies_install_failed")
+            if output:
+                message = f"{message}: {output}"
+            raise BackendEnvironmentError(message) from error

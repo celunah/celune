@@ -177,3 +177,23 @@ def string(key: str, locale: Optional[str] = None, **kwargs) -> str:
         return text.format(**kwargs)
 
     return text
+
+
+def tagged_string(
+    key: str,
+    tag: str,
+    locale: Optional[str] = None,
+    **kwargs,
+) -> str:
+    """Return a localized message with an engine-owned diagnostic tag.
+
+    Args:
+        key: The translation key to look up.
+        tag: The stable diagnostic tag to prepend to the translated message.
+        locale: An optional locale override.
+        kwargs: Optional format values interpolated into the translation.
+
+    Returns:
+        str: The tagged translated message.
+    """
+    return f"[{tag}] {string(key, locale=locale, **kwargs)}"

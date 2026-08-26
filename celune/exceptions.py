@@ -3,8 +3,6 @@
 
 from typing import Optional
 
-from .i18n import string
-
 
 class CeluneError(Exception):
     """General Celune exception."""
@@ -60,7 +58,7 @@ class CEDTSEOFError(CEDTSStreamError):
         packet_name: Optional[str] = None,
     ) -> None:
         """Initialize an unexpected-end-of-stream error."""
-        super().__init__(message or string("backends.cedts.unexpected_eof"))
+        super().__init__(message or "unexpected EOF while reading stream")
         self.packet_name = packet_name
 
 
@@ -76,12 +74,7 @@ class CEDTSTimeoutError(TimeoutError, CEDTSError):
     ) -> None:
         """Initialize a timeout with the packet and deadline that expired."""
         super().__init__(
-            message
-            or string(
-                "backends.cedts.packet_timed_out",
-                packet_name=packet_name,
-                timeout_seconds=f"{timeout_seconds:g}",
-            )
+            message or f"{packet_name} timed out after {timeout_seconds:g} seconds"
         )
         self.packet_name = packet_name
         self.timeout_seconds = timeout_seconds
@@ -97,13 +90,7 @@ class CEDTSProtocolError(CEDTSError):
         packet_name: Optional[str] = None,
     ) -> None:
         """Initialize a protocol error with optional packet context."""
-        super().__init__(
-            message
-            or string(
-                "backends.cedts.invalid_packet",
-                packet_name=packet_name or "packet",
-            )
-        )
+        super().__init__(message or f"invalid packet {packet_name or 'packet'}")
         self.packet_name = packet_name
 
 
@@ -119,10 +106,8 @@ class CEDTSPayloadError(CEDTSError):
         """Initialize a payload error with optional packet context."""
         super().__init__(
             message
-            or string(
-                "backends.cedts.invalid_binary_payload",
-                packet_name=packet_name or "packet",
-            )
+            or "invalid binary payload received while processing "
+            f"{packet_name or 'packet'}"
         )
         self.packet_name = packet_name
 

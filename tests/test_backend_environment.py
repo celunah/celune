@@ -3,7 +3,6 @@
 
 import io
 import os
-import re
 import sys
 import json
 import time
@@ -172,28 +171,18 @@ class TestBackendEnvironment(CeluneTestCase):
         proxy._send_packet = mock.Mock(return_value="shutdown-id")
         return proxy, process
 
-    def test_worker_diagnostic_localization_keys_exist(self) -> None:
-        """Ensure every localized IPC diagnostic key has an English default."""
-        source = "\n".join(
-            Path(path).read_text(encoding="utf-8")
-            for path in (
-                "celune/cedts/protocol.py",
-                "celune/cedts/worker.py",
-                "celune/cedts/remote.py",
-            )
-        )
-        referenced_keys = set(
-            re.findall(
-                r"backends\.worker_(?:protocol|runtime|proxy)\.[a-z0-9_]+",
-                source,
-            )
-        )
+    def test_worker_diagnostic_text_is_not_localized(self) -> None:
+        """Keep protocol diagnostics out of the user-facing translation table."""
         translations = json.loads(
             Path("celune/lang/en.json").read_text(encoding="utf-8")
         )
 
-        self.assertTrue(referenced_keys)
-        self.assertTrue(referenced_keys.issubset(translations))
+        self.assertFalse(
+            any(
+                key.startswith(("backends.cedts", "backends.worker"))
+                for key in translations
+            )
+        )
 
     def test_manifests_cover_installed_backend_extras(self) -> None:
         """Verify every supported optional backend has a manifest."""

@@ -14,7 +14,6 @@ from contextlib import suppress
 from collections import OrderedDict
 from collections.abc import Mapping, Callable
 
-from ..i18n import string
 from ..exceptions import (
     CEDTSError,
     CEDTSEOFError,
@@ -76,8 +75,11 @@ _SHUTDOWN_CANCEL_TIMEOUT_SECONDS = 5.0
 
 
 def _worker_protocol_error(key: str, **kwargs: str) -> CEDTSError:
-    """Create a localized, typed worker CEDTS error."""
-    message = string(f"backends.worker_runtime.{key}", **kwargs)
+    """Create a typed worker CEDTS error with internal diagnostics."""
+    details = ", ".join(f"{name}={value!r}" for name, value in kwargs.items())
+    message = f"CEDTS worker error: {key}"
+    if details:
+        message = f"{message} ({details})"
     if key == "worker_payload_descriptors_are_invalid":
         return CEDTSPayloadError(message)
     return CEDTSProtocolError(message)
@@ -237,11 +239,8 @@ def _load_backend(
         expected_kind, constructor_loader = _BACKEND_REGISTRY[manifest.backend_id]
     except KeyError as error:
         raise CEDTSProtocolError(
-            string(
-                "celune.unknown_backend",
-                backend=manifest.backend_id,
-                available=", ".join(_BACKEND_REGISTRY),
-            )
+            "unknown backend "
+            f"{manifest.backend_id!r} (available: {', '.join(_BACKEND_REGISTRY)})"
         ) from error
     if manifest.kind != expected_kind:
         raise _worker_protocol_error("backend_worker_backend_kind_is_invalid")
@@ -513,11 +512,7 @@ def _run_request(
         backend,
     )
     _worker_log(
-        string(
-            "backends.worker_runtime.request_received",
-            operation=operation,
-            arguments=tuple(arguments),
-        ),
+        f"[IPC] request operation={operation} arguments={tuple(arguments)}",
         loglevel="debug",
     )
     if operation == "describe":
@@ -564,7 +559,7 @@ def _run_request(
         model_id = cast(int, arguments["model_id"])
         model = models.get(model_id)
         if model is None:
-            raise ValueError(string("backends.worker_model_missing", model_id=model_id))
+            raise ValueError(f"backend worker has no loaded model ID: {model_id}")
         stream_arguments = dict(arguments)
         del stream_arguments["model_id"]
         if cancellation_event is not None and cancellation_event.is_set():
@@ -584,11 +579,8 @@ def _run_request(
             stream_frame_count += 1
             if stream_frame_count <= 3:
                 _worker_log(
-                    string(
-                        "backends.worker_runtime.stream_frame_emitted",
-                        frame=stream_frame_count,
-                        summary=_stream_value_summary(chunk),
-                    ),
+                    "[STREAM] worker emitted "
+                    f"frame={stream_frame_count} {_stream_value_summary(chunk)}",
                     loglevel="debug",
                 )
             _send_message(
@@ -606,14 +598,11 @@ def _run_request(
         if cancellation_event is not None and cancellation_event.is_set():
             return {"ok": False, "cancelled": True, "done": True}, next_model_id
         _worker_log(
-            string(
-                "backends.worker_runtime.stream_completed",
-                frames=stream_frame_count,
-            ),
+            f"[STREAM] worker completed frames={stream_frame_count}",
             loglevel="debug",
         )
         return {"ok": True, "done": True}, next_model_id
-    raise ValueError(string("backends.worker_unknown_operation", operation=operation))
+    raise ValueError(f"unknown backend worker operation: {operation}")
 
 
 def _send_message(
@@ -632,11 +621,7 @@ def _send_message(
         send_message(protocol_stream, control, limits=limits)
         if binary_stream is None:
             if payloads:
-                raise RuntimeError(
-                    string(
-                        "backends.worker_runtime.worker_binary_output_stream_is_unavailable"
-                    )
-                )
+                raise RuntimeError("backend worker binary output stream is unavailable")
             return
         send_payloads(binary_stream, payloads, limits=limits)
 
@@ -943,20 +928,14 @@ def main() -> int:
             response = _error_response(error)
             response_kind = "error"
             _worker_log(
-                string(
-                    "backends.worker_runtime.response_failed",
-                    operation=request.get("operation"),
-                    error=type(error).__name__,
-                ),
+                "[IPC] response operation="
+                f"{request.get('operation')} ok=False error={type(error).__name__}",
                 "error",
             )
         else:
             _worker_log(
-                string(
-                    "backends.worker_runtime.response_completed",
-                    operation=request.get("operation"),
-                    ok=response.get("ok", False),
-                ),
+                "[IPC] response operation="
+                f"{request.get('operation')} ok={response.get('ok', False)}",
                 loglevel="debug",
             )
         with active_request_lock:
@@ -1134,10 +1113,7 @@ def main() -> int:
                 except Exception as error:
                     shutdown_error = error
                     _worker_log(
-                        string(
-                            "backends.worker_runtime.shutdown_cleanup_failed",
-                            error=type(error).__name__,
-                        ),
+                        f"[IPC] shutdown cleanup failed error={type(error).__name__}",
                         "error",
                     )
                 _release_worker_models(models)

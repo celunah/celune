@@ -173,7 +173,7 @@ def _print_startup_diagnostic(message: str, force: bool = False) -> None:
 def _flush_startup_diagnostics() -> None:
     """Print queued startup diagnostics for non-interactive startup paths."""
     for message in _STARTUP_DIAGNOSTICS:
-        print(string("cli.startup_diagnostic_prefix", message=message), flush=True)
+        print(f"[startup] {message}", flush=True)
     _STARTUP_DIAGNOSTICS.clear()
 
 
@@ -1049,8 +1049,8 @@ def run_doctor(argv: list[str]) -> int:
                 cwd=PROJECT_ROOT,
                 check=False,
             )
-        except OSError as exc:
-            print(string("cli.fix_failed", error=exc))
+        except OSError:
+            print(string("cli.fix_failed"))
             return EXIT_CODES.EXIT_FAILURE.value
         return result.returncode
 
@@ -1403,7 +1403,6 @@ def start(
                             string("cli.update_found"),
                             string(
                                 "cli.update_version_summary",
-                                app_name=APP_NAME,
                                 local_version=update.local_version,
                                 local_revision=update.local_revision,
                                 latest_label=latest_label,
@@ -1453,7 +1452,8 @@ def start(
                 runtime.update_to_latest()
             except runtime.UpdateError as exc:
                 detail = runtime.title_case(str(exc))
-                print(string("cli.update_failed", app_name=APP_NAME, detail=detail))
+                print(string("cli.update_failed", app_name=APP_NAME))
+                print(detail)
                 print(string("cli.continuing_current_version"))
                 time.sleep(5)
             else:
