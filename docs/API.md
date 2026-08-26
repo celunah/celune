@@ -338,4 +338,7 @@ thread = start_api(celune, host="127.0.0.1", port=2060)
 for startup confirmation. The supporting calls `bind_celune()`,
 `configure_api_security()`, `resolve_api_host()`, `audio_bytes()`, and
 `stream_headers()` are the existing integration hooks for custom hosts; use
-them instead of mounting a second FastAPI app around the engine.
+them instead of mounting a second FastAPI app around the engine. Core callback
+properties are single-registration slots: assigning the same callable to the
+same callback property again raises `ValueError`, so integrations should
+replace a handler only when they intentionally change the callback.

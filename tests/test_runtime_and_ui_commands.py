@@ -1387,6 +1387,52 @@ class TestUIStartup(CeluneTestCase):
         resources.prime_usage.assert_called_once_with()
         call_after_refresh.assert_called_once_with(start_init)
 
+    def test_callback_binding_does_not_chain_same_callback(self) -> None:
+        """Verify an already-installed callback is not invoked through a wrapper."""
+        calls: list[str] = []
+
+        def callback(message: str) -> None:
+            calls.append(message)
+
+        ui = CeluneUI()
+        fake_celune = cast(
+            Celune,
+            SimpleNamespace(log_callback=callback),
+        )
+        ui.celune = fake_celune
+
+        ui._chain_runtime_callback("log_callback", callback)
+        fake_celune.log_callback("message")
+
+        assert calls == ["message"]
+        assert fake_celune.log_callback is callback
+
+    def test_log_binding_does_not_chain_startup_sink_again(self) -> None:
+        """Verify startup log delivery does not duplicate the UI log callback."""
+        calls: list[str] = []
+
+        def ui_callback(message: str) -> None:
+            calls.append(message)
+
+        def buffered_callback(message: str) -> None:
+            ui_callback(message)
+
+        ui = CeluneUI()
+        fake_celune = cast(
+            Celune,
+            SimpleNamespace(
+                log_callback=buffered_callback,
+                _startup_log_sink=ui_callback,
+            ),
+        )
+        ui.celune = fake_celune
+
+        ui._chain_runtime_callback("log_callback", ui_callback)
+        fake_celune.log_callback("message")
+
+        assert calls == ["message"]
+        assert fake_celune.log_callback is buffered_callback
+
     def test_textual_ui_mount_enables_stdio_redirects_before_runtime_load(self) -> None:
         """Verify mount captures startup stdio before Celune begins loading."""
         ui = CeluneUI()

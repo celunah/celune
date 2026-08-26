@@ -249,6 +249,24 @@ class TestCeluneCore(CeluneTestCase):
                 target_chunk_length=0.65,
             )
 
+    def test_callback_registration_rejects_the_same_callback_twice(self) -> None:
+        """Verify Celune rejects duplicate callback registration attempts."""
+        celune = self._make_celune({})
+
+        def callback(
+            msg: str,
+            severity: str = "info",
+            *,
+            loglevel: str = "info",
+        ) -> None:
+            del msg, severity, loglevel
+
+        celune.log_callback = callback
+        with pytest.raises(ValueError, match="already registered"):
+            celune.log_callback = callback
+
+        celune.close()
+
     def test_constructor_accepts_backend_alias_for_tts_runtime(self) -> None:
         """Verify ``backend=`` can configure the TTS runtime directly."""
         with (

@@ -189,31 +189,65 @@ class CeluneRuntimeState:
 
 
 CELUNE_FORWARDED_PROPERTIES = (
-    ForwardedPropertySpec("log_callback", "_callbacks", "log_callback"),
-    ForwardedPropertySpec("status_callback", "_callbacks", "status_callback"),
-    ForwardedPropertySpec("error_callback", "_callbacks", "error_callback"),
-    ForwardedPropertySpec("idle_callback", "_callbacks", "idle_callback"),
-    ForwardedPropertySpec("queue_avail_callback", "_callbacks", "queue_avail_callback"),
     ForwardedPropertySpec(
-        "voice_changed_callback", "_callbacks", "voice_changed_callback"
+        "log_callback", "_callbacks", "log_callback", reject_duplicate=True
+    ),
+    ForwardedPropertySpec(
+        "status_callback", "_callbacks", "status_callback", reject_duplicate=True
+    ),
+    ForwardedPropertySpec(
+        "error_callback", "_callbacks", "error_callback", reject_duplicate=True
+    ),
+    ForwardedPropertySpec(
+        "idle_callback", "_callbacks", "idle_callback", reject_duplicate=True
+    ),
+    ForwardedPropertySpec(
+        "queue_avail_callback",
+        "_callbacks",
+        "queue_avail_callback",
+        reject_duplicate=True,
+    ),
+    ForwardedPropertySpec(
+        "voice_changed_callback",
+        "_callbacks",
+        "voice_changed_callback",
+        reject_duplicate=True,
     ),
     ForwardedPropertySpec(
         "change_input_state_callback",
         "_callbacks",
         "change_input_state_callback",
+        reject_duplicate=True,
     ),
     ForwardedPropertySpec(
         "change_voice_lock_state_callback",
         "_callbacks",
         "change_voice_lock_state_callback",
+        reject_duplicate=True,
     ),
-    ForwardedPropertySpec("progress_callback", "_callbacks", "progress_callback"),
     ForwardedPropertySpec(
-        "caption_progress_callback", "_callbacks", "caption_progress_callback"
+        "progress_callback",
+        "_callbacks",
+        "progress_callback",
+        reject_duplicate=True,
     ),
-    ForwardedPropertySpec("caption_callback", "_callbacks", "caption_callback"),
     ForwardedPropertySpec(
-        "caption_timing_callback", "_callbacks", "caption_timing_callback"
+        "caption_progress_callback",
+        "_callbacks",
+        "caption_progress_callback",
+        reject_duplicate=True,
+    ),
+    ForwardedPropertySpec(
+        "caption_callback",
+        "_callbacks",
+        "caption_callback",
+        reject_duplicate=True,
+    ),
+    ForwardedPropertySpec(
+        "caption_timing_callback",
+        "_callbacks",
+        "caption_timing_callback",
+        reject_duplicate=True,
     ),
     ForwardedPropertySpec("config", "_backend_state", "config"),
     ForwardedPropertySpec("_backend_spec", "_backend_state", "backend_spec"),

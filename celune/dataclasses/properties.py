@@ -16,6 +16,7 @@ class ForwardedPropertySpec:
     field_name: str
     doc: Optional[str] = None
     read_only: bool = False
+    reject_duplicate: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +34,7 @@ def forward_property(
     *,
     doc: Optional[str] = None,
     read_only: bool = False,
+    reject_duplicate: bool = False,
 ) -> property:
     """Create a property that forwards storage to a grouped state container.
 
@@ -53,7 +55,10 @@ def forward_property(
         return property(getter, doc=doc)
 
     def setter(instance, value) -> None:
-        setattr(getattr(instance, container_name), field_name, value)
+        container = getattr(instance, container_name)
+        if reject_duplicate and getattr(container, field_name) == value:
+            raise ValueError(f"callback '{field_name}' is already registered")
+        setattr(container, field_name, value)
 
     return property(getter, setter, doc=doc)
 
@@ -93,6 +98,7 @@ def bind_forwarded_properties(
             spec.field_name,
             doc=spec.doc,
             read_only=spec.read_only,
+            reject_duplicate=spec.reject_duplicate,
         )
 
 

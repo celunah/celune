@@ -1314,6 +1314,12 @@ class CeluneUI(App):
             setattr(self.celune, attribute, callback)
             return
         current = cast(Callable[..., None], current_value)
+        if current == callback:
+            return
+        if attribute == "log_callback" and callback == getattr(
+            self.celune, "_startup_log_sink", None
+        ):
+            return
         chained_callbacks = getattr(current, "_celune_callback_chain", ())
         if callback in chained_callbacks:
             return
