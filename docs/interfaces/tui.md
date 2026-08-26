@@ -29,10 +29,11 @@ the mode button toggles talk/sing F0 conditioning and the pitch button cycles
 the pitch-shift value. Touch users can use these visible buttons rather than
 keyboard shortcuts.
 
-The mounted WebUI delegates its Record and Stop controls to these same runtime
-capture and shutdown paths. The TUI publishes timed status, theme, marquee, and
-resource-page updates through the CEDTS frontend channel so the browser does not
-maintain an independent timer state; browser polling is only a reconnect
+The mounted WebUI delegates its `ALT+R` recording shortcut to these same
+runtime capture paths. It does not expose the TUI's settings, voice picker,
+Record, or Stop controls. The TUI publishes timed status, theme, marquee, and
+resource-page updates through the CEDTS frontend channel so the browser does
+not maintain an independent timer state; browser polling is only a reconnect
 fallback.
 
 The playback bar has a separate progress readout. During active audio

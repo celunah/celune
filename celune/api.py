@@ -16,7 +16,6 @@ import datetime
 import textwrap
 import threading
 import contextlib
-from copy import deepcopy
 from html import escape
 from hmac import compare_digest
 from dataclasses import field, dataclass
@@ -34,7 +33,6 @@ import numpy as np
 import numpy.typing as npt
 import gradio as gr
 import soundfile as sf
-import yaml
 from pydantic import Field, BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import RequestResponseEndpoint
@@ -56,7 +54,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 
-from .i18n import string
+from .i18n import string, tagged_string
 from .celune import Celune
 from .cedts.ui import UiTimedUpdate, ui_timed_update_channel
 from .ui.app import CeluneUI
@@ -69,7 +67,7 @@ from .constants import BASE_SR, APP_NAME
 from .ui import resources as ui_resources
 from .typing.common import JSONSerializable
 from .exceptions import TaskSubscriptionClosed
-from .paths import config_path, project_root, main_window_log_path
+from .paths import project_root, main_window_log_path
 from .vc import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
 from .typing.aliases import LogLevel, AudioChunk, AudioChunks
 from .pipeline import (
@@ -93,7 +91,7 @@ from .dataclasses.events import (
     AgentTaskFinishedEvent,
     AgentTaskStateChangedEvent,
 )
-from .persona.impl import persona_talkback_enabled
+from .persona.impl import persona_enabled, persona_talkback_enabled
 
 api = FastAPI(title=f"{APP_NAME}API")
 bound_celune: Optional[Celune] = None
@@ -149,7 +147,7 @@ def _invoke_message_callback(
 
 
 webui_input_locked = True
-webui_input_placeholder = string("webui.wait_placeholder")
+webui_input_placeholder = string("ui.wait_placeholder")
 webui_voice_locked = True
 webui_theme_style = ""
 webui_status_source = "probe"
@@ -271,12 +269,23 @@ WEBUI_HEAD = textwrap.dedent(
       }
       window.__celuneLogAutoscrollInstalled = true;
 
+      const logScrollThreshold = 24;
+
+      function isNearLogBottom(logElement) {
+        return logElement.scrollHeight - logElement.scrollTop - logElement.clientHeight
+          <= logScrollThreshold;
+      }
+
       function scrollLogToBottom() {
         const logElement = document.querySelector("#celune-log-panel pre");
         if (!logElement) {
           return;
         }
         logElement.scrollTop = logElement.scrollHeight;
+      }
+
+      function updateLogFollowState(event) {
+        window.__celuneLogAutoscrollFollow = isNearLogBottom(event.currentTarget);
       }
 
       function installLogObserver() {
@@ -286,19 +295,32 @@ WEBUI_HEAD = textwrap.dedent(
         }
 
         if (window.__celuneLogAutoscrollTarget === logElement) {
-          scrollLogToBottom();
           return;
         }
 
+        const previousLogElement = window.__celuneLogAutoscrollTarget;
+        if (previousLogElement) {
+          window.__celuneLogAutoscrollFollow = isNearLogBottom(previousLogElement);
+        } else if (typeof window.__celuneLogAutoscrollFollow !== "boolean") {
+          window.__celuneLogAutoscrollFollow = true;
+        }
+
         window.__celuneLogAutoscrollTarget = logElement;
-        scrollLogToBottom();
+        logElement.addEventListener("scroll", updateLogFollowState, {
+          passive: true,
+        });
+        if (window.__celuneLogAutoscrollFollow) {
+          window.requestAnimationFrame(scrollLogToBottom);
+        }
 
         if (window.__celuneLogAutoscrollObserver) {
           window.__celuneLogAutoscrollObserver.disconnect();
         }
 
         const observer = new MutationObserver(() => {
-          scrollLogToBottom();
+          if (window.__celuneLogAutoscrollFollow) {
+            scrollLogToBottom();
+          }
         });
         observer.observe(logElement, {
           childList: true,
@@ -328,6 +350,31 @@ WEBUI_HEAD = textwrap.dedent(
       } else {
         startLogAutoscroll();
       }
+    })();
+
+    (() => {
+      function handleRecordingShortcut(event) {
+        if (
+          !event.altKey
+          || event.ctrlKey
+          || event.metaKey
+          || event.key.toLowerCase() !== "r"
+        ) {
+          return;
+        }
+
+        const recordButton = document.querySelector(
+          "#celune-record-hotkey button, button#celune-record-hotkey",
+        );
+        if (!recordButton || recordButton.disabled) {
+          return;
+        }
+
+        event.preventDefault();
+        recordButton.click();
+      }
+
+      document.addEventListener("keydown", handleRecordingShortcut);
     })();
     </script>
     """
@@ -415,13 +462,13 @@ WEBUI_CSS = textwrap.dedent(
         color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
     }
 
-    button#celune-style, button#celune-send, button#celune-convert {
+    button#celune-send, button#celune-convert {
         background: var(--celune-button-bg, #3a304c);
         color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
         border-radius: 4px;
     }
 
-    button#celune-style:hover, button#celune-send:hover, button#celune-convert:hover {
+    button#celune-send:hover, button#celune-convert:hover {
         background: var(--celune-button-hover, #443a56);
     }
 
@@ -467,6 +514,15 @@ WEBUI_CSS = textwrap.dedent(
         color: var(--celune-ui-accent, var(--celune-primary, #cebaff));
     }
 
+    .webui-recording-hint {
+        margin-top: 0.25rem;
+        font-size: 0.9rem;
+    }
+
+    #celune-record-hotkey {
+        display: none !important;
+    }
+
     .webui-desktop-only {
         display: inline !important;
         color: inherit;
@@ -481,7 +537,6 @@ WEBUI_CSS = textwrap.dedent(
         gap: 0.75rem;
     }
 
-    button#celune-style,
     button#celune-send {
         min-height: 2.75rem;
     }
@@ -646,7 +701,6 @@ WEBUI_CSS = textwrap.dedent(
             min-width: 0 !important;
         }
 
-        button#celune-style,
         button#celune-send {
             width: 100%;
         }
@@ -667,22 +721,8 @@ WEBUI_CSS = textwrap.dedent(
             max-height: min(calc(52dvh - 2em), calc(100dvh - 14rem));
         }
 
-        button#celune-style {
-            border-radius: 4px 0 0 4px;
-            border-right: 1px solid color-mix(
-                in srgb,
-                var(--celune-ui-accent, var(--celune-primary, #cebaff)) 50%,
-                black
-            );
-        }
-
         button#celune-send {
-            border-radius: 0 4px 4px 0;
-            border-left: 1px solid color-mix(
-                in srgb,
-                var(--celune-ui-accent, var(--celune-primary, #cebaff)) 50%,
-                black
-            );
+            border-radius: 4px;
         }
 
         .webui-desktop-only {
@@ -1267,7 +1307,7 @@ def _seed_webui_logs() -> None:
 
     def append_record() -> None:
         if record:
-            webui_log_lines.append(("\n".join(record), record_severity))
+            _append_webui_log("\n".join(record), record_severity)
 
     for line in lines:
         match = record_pattern.match(line)
@@ -1290,6 +1330,8 @@ def _seed_webui_logs() -> None:
 
 def _append_webui_log(msg: str, severity: str = "info") -> None:
     """Store one browser log line."""
+    if webui_log_lines and webui_log_lines[-1] == (msg, severity):
+        return
     webui_log_lines.append((msg, severity))
 
 
@@ -1634,7 +1676,9 @@ def api_log(action: str, content: str, suffix: str = "") -> None:
     preview = content.replace("\n", "\\n").replace("\r", "\\r")[:64]
     if len(content) > 64:
         preview += "..."
-    _append_webui_log(f"{action} {preview!r}{suffix}")
+    ui = CeluneUI._instance
+    if ui is None or not getattr(ui, "_runtime_log_capture_enabled", False):
+        _append_webui_log(f"{action} {preview!r}{suffix}")
     try:
         print(f"[{timestamp}] {action} {preview!r}{suffix}", flush=True)
     except ValueError:
@@ -1991,14 +2035,21 @@ def _webui_resources_html() -> str:
         pages = ui_resources.resource_pages(celune, webui_active_theme_name)
         if pages:
             resource = pages[webui_resource_page % len(pages)]
+    recording_hint = _webui_recording_hint(celune)
+    hint_html = (
+        f'<div class="webui-recording-hint">{escape(recording_hint)}</div>'
+        if recording_hint
+        else ""
+    )
     if "CTRL+" in resource:
         return (
             '<div class="footer-block">'
+            f"{hint_html}"
             f'<span class="webui-desktop-only">{escape(resource)}</span>'
             '<span class="webui-mobile-only">Use buttons for controls</span>'
             "</div>"
         )
-    return f'<div class="footer-block">{escape(resource)}</div>'
+    return f'<div class="footer-block">{hint_html}{escape(resource)}</div>'
 
 
 def _voice_button_update() -> WebUiUpdate:
@@ -2035,6 +2086,41 @@ def _webui_vc_mode_active(celune: Optional[Celune]) -> bool:
     )
 
 
+def _webui_persona_loaded(celune: Celune) -> bool:
+    """Return whether the attached runtime has loaded Persona."""
+    persona_ready = getattr(celune, "persona_ready", None)
+    if persona_ready is None:
+        return bool(getattr(celune, "vision", None))
+    return bool(persona_ready)
+
+
+def _webui_persona_input_available(celune: Celune) -> bool:
+    """Return whether browser text input can use Persona talkback."""
+    config = getattr(celune, "config", {})
+    return (
+        _webui_persona_loaded(celune)
+        and isinstance(config, dict)
+        and persona_enabled(config)
+        and persona_talkback_enabled(config)
+    )
+
+
+def _webui_recording_hint(celune: Optional[Celune]) -> str:
+    """Return the live-recording shortcut shown in the browser footer."""
+    if (
+        celune is None
+        or CeluneUI._instance is None
+        or webui_input_locked
+        or getattr(celune, "is_in_tutorial", False)
+    ):
+        return ""
+    if _webui_vc_mode_active(celune):
+        return string("webui.recording_toggle_hint")
+    if _webui_persona_input_available(celune):
+        return string("webui.recording_voice_hint")
+    return ""
+
+
 def _webui_input_placeholder(
     celune: Celune,
     locked: bool,
@@ -2042,12 +2128,14 @@ def _webui_input_placeholder(
 ) -> str:
     """Return the current browser input placeholder string."""
     if celune.is_in_tutorial:
-        return string("webui.tutorial_placeholder")
+        return string("ui.tutorial_placeholder")
     if locked or not has_voice:
-        return string("webui.wait_placeholder")
+        return string("ui.wait_placeholder")
     if _webui_vc_mode_active(celune):
-        return string("webui.voice_changer_placeholder")
-    return string("webui.input_placeholder")
+        return string("ui.voice_changer_placeholder")
+    if _webui_persona_input_available(celune):
+        return string("ui.say_placeholder")
+    return string("ui.input_placeholder")
 
 
 def _input_update(
@@ -2061,22 +2149,22 @@ def _input_update(
             return gr.update(
                 value=value,
                 interactive=False,
-                placeholder=string("webui.wait_placeholder"),
+                placeholder=string("ui.wait_placeholder"),
             )
         return gr.update(
             interactive=False,
-            placeholder=string("webui.wait_placeholder"),
+            placeholder=string("ui.wait_placeholder"),
         )
     if celune.is_in_tutorial:
         if has_value:
             return gr.update(
                 value=value,
                 interactive=False,
-                placeholder=string("webui.tutorial_placeholder"),
+                placeholder=string("ui.tutorial_placeholder"),
             )
         return gr.update(
             interactive=False,
-            placeholder=string("webui.tutorial_placeholder"),
+            placeholder=string("ui.tutorial_placeholder"),
         )
     has_voice = bool(celune.current_voice) or bool(celune.voices)
     vc_mode = _webui_vc_mode_active(celune)
@@ -2184,52 +2272,6 @@ def _webui_submit_snapshot(
     )
 
 
-def _webui_settings_value() -> dict[str, JSONSerializable]:
-    """Return a detached copy of the active runtime configuration."""
-    celune = bound_celune
-    config = getattr(celune, "config", None) if celune is not None else None
-    if not isinstance(config, dict):
-        return {}
-    return cast(dict[str, JSONSerializable], deepcopy(config))
-
-
-def _webui_save_settings(
-    updated: JSONSerializable,
-) -> tuple[
-    dict[str, JSONSerializable],
-    str,
-    str,
-    str,
-    WebUiUpdate,
-    WebUiUpdate,
-    WebUiUpdate,
-]:
-    """Persist browser-edited settings and return the refreshed browser snapshot."""
-    celune = bound_celune
-    if celune is None:
-        _append_webui_log(string("webui.not_available"), "error")
-        return _webui_settings_value(), *_webui_snapshot()
-    if not isinstance(updated, dict):
-        _append_webui_log(string("webui.settings_invalid"), "warning")
-        return _webui_settings_value(), *_webui_snapshot()
-
-    new_config = cast(dict[str, JSONSerializable], deepcopy(updated))
-    try:
-        with config_path(create_parent=True).open("w", encoding="utf-8") as file:
-            yaml.safe_dump(new_config, file, sort_keys=False)
-    except OSError as error:
-        _append_webui_log(string("webui.settings_save_failed", error=error), "error")
-        return _webui_settings_value(), *_webui_snapshot()
-
-    celune.config = new_config
-    _set_webui_status(
-        string("webui.settings_saved", app_name=APP_NAME),
-        "warning",
-        source="callback",
-    )
-    return new_config, *_webui_snapshot()
-
-
 class _WebUiInputProxy:
     """Minimal input surface required by the shared slash-command handler."""
 
@@ -2296,8 +2338,8 @@ class _WebUiCommandHost:
             backend.pitch_shift = clamped
 
     def open_settings_menu(self) -> None:
-        """Report that the browser settings editor is available."""
-        self.safe_status(string("webui.settings_opened"))
+        """Report that configuration editing belongs to the Textual UI."""
+        self.safe_log(string("commands.settings_unavailable"), "warning")
 
     def begin_tutorial(self) -> None:
         """Leave tutorial lifecycle ownership to the core runtime."""
@@ -2333,8 +2375,8 @@ def _webui_run_command(text: str) -> bool:
     """Run one slash command through the main UI command path when available."""
     try:
         parts = CeluneUI.split_command_input(text[1:])
-    except ValueError as e:
-        _append_webui_log(string("webui.command_parsing_error", error=e), "error")
+    except ValueError:
+        _append_webui_log(string("webui.command_parsing_error"), "error")
         return False
 
     if not parts:
@@ -2497,11 +2539,11 @@ def _webui_speak(
             audio_value = None
         snapshot = _webui_submit_snapshot("")
         yield snapshot[0], audio_value, *snapshot[1:]
-    except Exception as e:
+    except Exception:
         _append_webui_log(
-            string(
+            tagged_string(
                 "webui.error",
-                error=format_error(e, getattr(celune, "log_level", "info")),
+                "WEBUI ERROR",
             ),
             "error",
         )
@@ -2572,11 +2614,11 @@ def _webui_convert_audio(
             pitch_shift=round(pitch_shift),
             f0_condition=conversion_mode.strip().lower() == "sing",
         )
-    except Exception as e:
+    except Exception:
         _append_webui_log(
-            string(
+            tagged_string(
                 "webui.error",
-                error=format_error(e, getattr(celune, "log_level", "info")),
+                "WEBUI ERROR",
             ),
             "error",
         )
@@ -2929,34 +2971,20 @@ def _build_webui() -> gr.Blocks:
                         )
                     )
                     logs = gr.HTML(_webui_logs_html())
-                    voice_menu = gr.Dropdown(
-                        choices=[],
-                        value=None,
-                        label=string("webui.voice_menu_label"),
-                        show_label=True,
-                        interactive=False,
-                        elem_id="celune-voice-menu",
-                    )
+                    voice_state = gr.State()
                     with gr.Row(elem_id="celune-input-row"):
                         input_box = gr.Textbox(
                             value="",
                             lines=1,
                             max_lines=4,
                             show_label=False,
-                            placeholder=string("webui.wait_placeholder"),
+                            placeholder=string("ui.wait_placeholder"),
                             container=False,
                             elem_id="celune-input",
                             scale=8,
                             interactive=False,
                         )
                         with gr.Row(elem_id="celune-actions", scale=2):
-                            voice_button = gr.Button(
-                                value=string("webui.default_voice_button"),
-                                elem_id="celune-style",
-                                scale=1,
-                                min_width=0,
-                                interactive=False,
-                            )
                             send_button = gr.Button(
                                 value=string("webui.send_button"),
                                 elem_id="celune-send",
@@ -2964,20 +2992,12 @@ def _build_webui() -> gr.Blocks:
                                 min_width=0,
                                 interactive=False,
                             )
-                            record_button = gr.Button(
-                                value=string("webui.record_button"),
-                                elem_id="celune-record",
-                                scale=1,
-                                min_width=0,
-                                interactive=False,
-                            )
-                            stop_button = gr.Button(
-                                value=string("webui.stop_button"),
-                                elem_id="celune-stop",
-                                scale=1,
-                                min_width=0,
-                                interactive=False,
-                            )
+                    record_hotkey = gr.Button(
+                        value="",
+                        elem_id="celune-record-hotkey",
+                        visible=True,
+                        interactive=False,
+                    )
                     with gr.Row(elem_id="celune-footer"):
                         status = gr.HTML(_webui_status_html(), elem_id="celune-status")
                         resources = gr.HTML(
@@ -2991,19 +3011,6 @@ def _build_webui() -> gr.Blocks:
                             </p>
                         """)
                     )
-                    with gr.Accordion(
-                        string("webui.settings_label"),
-                        open=False,
-                    ):
-                        settings_json = gr.JSON(
-                            value=_webui_settings_value(),
-                            label=string("webui.settings_json_label"),
-                            elem_id="celune-settings",
-                        )
-                        settings_save_button = gr.Button(
-                            value=string("webui.settings_save_button"),
-                            elem_id="celune-settings-save",
-                        )
                 with (
                     gr.Tab(string("webui.vc_tab_label")),
                     gr.Column(elem_id="celune-convert-panel"),
@@ -3067,12 +3074,7 @@ def _build_webui() -> gr.Blocks:
 
         timer.tick(  # type: ignore[missing-attribute]
             _webui_snapshot,
-            outputs=[logs, status, resources, voice_button, send_button, input_box],
-            show_progress="hidden",
-        )
-        timer.tick(  # type: ignore[missing-attribute]
-            _webui_voice_choices,
-            outputs=[voice_menu],
+            outputs=[logs, status, resources, voice_state, send_button, input_box],
             show_progress="hidden",
         )
         timer.tick(  # type: ignore[missing-attribute]
@@ -3081,23 +3083,13 @@ def _build_webui() -> gr.Blocks:
             show_progress="hidden",
         )
         timer.tick(  # type: ignore[missing-attribute]
-            _webui_stop_button_update,
-            outputs=[stop_button],
-            show_progress="hidden",
-        )
-        timer.tick(  # type: ignore[missing-attribute]
             _webui_record_button_update,
-            outputs=[record_button],
+            outputs=[record_hotkey],
             show_progress="hidden",
         )
         demo.load(  # type: ignore[missing-attribute]
             _webui_snapshot,
-            outputs=[logs, status, resources, voice_button, send_button, input_box],
-            show_progress="hidden",
-        )
-        demo.load(  # type: ignore[missing-attribute]
-            _webui_voice_choices,
-            outputs=[voice_menu],
+            outputs=[logs, status, resources, voice_state, send_button, input_box],
             show_progress="hidden",
         )
         demo.load(  # type: ignore[missing-attribute]
@@ -3106,18 +3098,8 @@ def _build_webui() -> gr.Blocks:
             show_progress="hidden",
         )
         demo.load(  # type: ignore[missing-attribute]
-            _webui_stop_button_update,
-            outputs=[stop_button],
-            show_progress="hidden",
-        )
-        demo.load(  # type: ignore[missing-attribute]
             _webui_record_button_update,
-            outputs=[record_button],
-            show_progress="hidden",
-        )
-        demo.load(  # type: ignore[missing-attribute]
-            _webui_settings_value,
-            outputs=[settings_json],
+            outputs=[record_hotkey],
             show_progress="hidden",
         )
         input_box.submit(  # type: ignore[missing-attribute]
@@ -3129,7 +3111,7 @@ def _build_webui() -> gr.Blocks:
                 logs,
                 status,
                 resources,
-                voice_button,
+                voice_state,
                 send_button,
             ],
             show_progress="hidden",
@@ -3143,44 +3125,14 @@ def _build_webui() -> gr.Blocks:
                 logs,
                 status,
                 resources,
-                voice_button,
+                voice_state,
                 send_button,
             ],
             show_progress="hidden",
         )
-        voice_button.click(  # type: ignore[missing-attribute]
-            _webui_cycle_voice,
-            outputs=[logs, status, resources, voice_button, send_button, input_box],
-            show_progress="hidden",
-        )
-        voice_menu.change(  # type: ignore[missing-attribute]
-            _webui_select_voice,
-            inputs=[voice_menu],
-            outputs=[logs, status, resources, voice_button, send_button, input_box],
-            show_progress="hidden",
-        )
-        stop_button.click(  # type: ignore[missing-attribute]
-            _webui_stop,
-            outputs=[logs, status, resources, voice_button, send_button, input_box],
-            show_progress="hidden",
-        )
-        record_button.click(  # type: ignore[missing-attribute]
+        record_hotkey.click(  # type: ignore[missing-attribute]
             _webui_toggle_recording,
-            outputs=[logs, status, resources, voice_button, send_button, input_box],
-            show_progress="hidden",
-        )
-        settings_save_button.click(  # type: ignore[missing-attribute]
-            _webui_save_settings,
-            inputs=[settings_json],
-            outputs=[
-                settings_json,
-                logs,
-                status,
-                resources,
-                voice_button,
-                send_button,
-                input_box,
-            ],
+            outputs=[logs, status, resources, voice_state, send_button, input_box],
             show_progress="hidden",
         )
         convert_button.click(  # type: ignore[missing-attribute]
@@ -3192,7 +3144,7 @@ def _build_webui() -> gr.Blocks:
                 logs,
                 status,
                 resources,
-                voice_button,
+                voice_state,
                 send_button,
             ],
             show_progress="hidden",
@@ -3522,7 +3474,7 @@ def think(body: ThinkRequest) -> JSONResponse:
         "THINK",
         body.content
         if getattr(celune, "log_level", "info") == "debug"
-        else string("api.content_protected"),
+        else f"[{string('api.content_protected')}]",
     )
     if not celune.think(body.content):
         return JSONResponse(

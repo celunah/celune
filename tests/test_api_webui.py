@@ -251,7 +251,7 @@ class TestApiWebUI(CeluneTestCase):
                 input_update2,
             ) = api.webui_snapshot()
         assert input_update2["interactive"]
-        assert input_update2["placeholder"] == string("webui.input_placeholder")
+        assert input_update2["placeholder"] == string("ui.input_placeholder")
         assert send_update2["interactive"]
         assert voice_update2["interactive"]
 
@@ -447,7 +447,7 @@ class TestApiWebUI(CeluneTestCase):
             ),
         )
         api.webui_input_locked = True
-        api.webui_input_placeholder = string("webui.tutorial_placeholder")
+        api.webui_input_placeholder = string("ui.tutorial_placeholder")
         api.webui_voice_locked = True
 
         with mock.patch(
@@ -458,7 +458,7 @@ class TestApiWebUI(CeluneTestCase):
                 api.webui_snapshot()
             )
         assert not input_update["interactive"]
-        assert input_update["placeholder"] == string("webui.tutorial_placeholder")
+        assert input_update["placeholder"] == string("ui.tutorial_placeholder")
         assert not send_update["interactive"]
         assert not voice_update["interactive"]
 
@@ -485,7 +485,7 @@ class TestApiWebUI(CeluneTestCase):
                 api.webui_snapshot()
             )
 
-        assert input_update["placeholder"] == string("webui.voice_changer_placeholder")
+        assert input_update["placeholder"] == string("ui.voice_changer_placeholder")
 
     def test_webui_vc_controls_disable_outside_voice_conversion_mode(self) -> None:
         """Verify VC controls are disabled while Celune is in the normal TTS mode."""
@@ -536,7 +536,7 @@ class TestApiWebUI(CeluneTestCase):
             ),
         )
         api.webui_input_locked = False
-        api.webui_input_placeholder = string("webui.input_placeholder")
+        api.webui_input_placeholder = string("ui.input_placeholder")
         api.webui_voice_locked = False
 
         with mock.patch(
@@ -638,7 +638,68 @@ class TestApiWebUI(CeluneTestCase):
         """Verify the WebUI head installs auto-scroll behavior for the log pane."""
         assert "#celune-log-panel pre" in api.WEBUI_HEAD
         assert "MutationObserver" in api.WEBUI_HEAD
+        assert "isNearLogBottom" in api.WEBUI_HEAD
+        assert "__celuneLogAutoscrollFollow" in api.WEBUI_HEAD
         assert "scrollTop = logElement.scrollHeight" in api.WEBUI_HEAD
+
+    def test_webui_log_buffer_deduplicates_adjacent_callback_entries(self) -> None:
+        """Verify overlapping log forwarding cannot print one WebUI line twice."""
+        api._append_webui_log("same line", "warning")
+        api._append_webui_log("same line", "warning")
+
+        assert list(api.webui_log_lines) == [("same line", "warning")]
+
+    def test_webui_persona_placeholder_matches_tui_logic(self) -> None:
+        """Verify Persona talkback uses the main TUI's input placeholder."""
+        celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced",),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+                persona_ready=True,
+                config={},
+            ),
+        )
+
+        with (
+            mock.patch("celune.api.persona_enabled", return_value=True),
+            mock.patch("celune.api.persona_talkback_enabled", return_value=True),
+        ):
+            placeholder = api._webui_input_placeholder(celune, False, True)
+
+        assert placeholder == string("ui.say_placeholder")
+
+    def test_webui_recording_hint_uses_the_existing_resource_snapshot(self) -> None:
+        """Verify the ALT+R hint is rendered with the timed footer update."""
+        api.bound_celune = cast(
+            Celune,
+            SimpleNamespace(
+                current_voice="balanced",
+                voices=("balanced",),
+                is_in_tutorial=False,
+                locked=False,
+                cur_state="idle",
+                persona_ready=True,
+                config={},
+            ),
+        )
+        api.webui_input_locked = False
+
+        with (
+            mock.patch.object(api.CeluneUI, "_instance", object()),
+            mock.patch("celune.api.persona_enabled", return_value=True),
+            mock.patch("celune.api.persona_talkback_enabled", return_value=True),
+            mock.patch(
+                "celune.api.ui_resources.resource_pages",
+                return_value=("VRAM: available",),
+            ),
+        ):
+            resources_html = api._webui_resources_html()
+
+        assert string("webui.recording_voice_hint") in resources_html
 
     def test_webui_probe_logs_sleep_transition(self) -> None:
         """Verify the browser log mirrors the sleep transition message."""
@@ -1022,6 +1083,20 @@ class TestApiWebUI(CeluneTestCase):
             string("webui.tts_tab_label"),
             string("webui.vc_tab_label"),
         ]
+
+        component_ids = {
+            component.get("props", {}).get("elem_id")
+            for component in config.get("components", [])
+        }
+        assert "celune-voice-menu" not in component_ids
+        assert "celune-style" not in component_ids
+        assert "celune-record" not in component_ids
+        assert "celune-stop" not in component_ids
+        assert "celune-settings" not in component_ids
+        assert "celune-record-hotkey" in component_ids
+        assert "Usage may differ. Some Celune features may not be available." in str(
+            config
+        )
 
     def test_webui_snapshot_probes_runtime_status_and_rotates_resources(self) -> None:
         """Verify footer polling refreshes status and rotates the resource page."""
