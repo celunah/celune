@@ -10,11 +10,11 @@ import hashlib
 import platform
 import importlib
 import subprocess
-from pathlib import Path
 from typing import Optional
-from collections.abc import Generator
-from dataclasses import asdict, dataclass
+from pathlib import Path
 from contextlib import suppress, contextmanager
+from dataclasses import asdict, dataclass
+from collections.abc import Generator
 
 from ..i18n import string
 from ..paths import backend_environments_dir
@@ -253,7 +253,7 @@ def _exclusive_lock(path: Path, timeout: float) -> Generator[None, None, None]:
             handle.close()
             if time.monotonic() - started >= timeout:
                 raise BackendEnvironmentError(
-                    string("backends.environment_lock_timeout", path=path)
+                    f"Timed out waiting for backend environment lock: {path}"
                 ) from None
             time.sleep(0.1)
         else:
@@ -376,10 +376,7 @@ class BackendEnvironmentManager:
 
         if not environment.is_ready:
             raise BackendEnvironmentError(
-                string(
-                    "backends.environment_not_created",
-                    path=environment.root,
-                )
+                f"Backend environment was not created: {environment.root}"
             )
         return environment
 
@@ -426,10 +423,7 @@ class BackendEnvironmentManager:
             if isinstance(error, subprocess.CalledProcessError):
                 output = (error.stderr or error.stdout or "").strip()
             elif isinstance(error, subprocess.TimeoutExpired):
-                output = string(
-                    "backends.uv_timeout",
-                    seconds=self.uv_timeout,
-                )
+                output = f"uv operation timed out after {self.uv_timeout:.1f} seconds"
             message = string("backends.dependencies_install_failed")
             if output:
                 message = f"{message}: {output}"

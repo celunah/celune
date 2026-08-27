@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """API layer."""
 
+# Import groups follow Celune's project-specific Ruff ordering.
+# pylint: disable=ungrouped-imports
+
 import io
 import os
-import json
 import re
+import json
 import time
 import uuid
 import errno
@@ -16,33 +19,23 @@ import datetime
 import textwrap
 import threading
 import contextlib
-from html import escape
 from hmac import compare_digest
-from dataclasses import field, dataclass
-from collections import deque, defaultdict
-from collections.abc import Callable, Iterator, Awaitable
+from html import escape
 from typing import (
     Union,
     Literal,
     Optional,
     cast,
 )
+from collections import deque, defaultdict
+from dataclasses import field, dataclass
+from collections.abc import Callable, Iterator, Awaitable
 
-import uvicorn
 import numpy as np
-import numpy.typing as npt
 import gradio as gr
+import uvicorn
 import soundfile as sf
-from pydantic import Field, BaseModel
-from starlette.concurrency import run_in_threadpool
-from starlette.middleware.base import RequestResponseEndpoint
-from fastapi.responses import (
-    Response,
-    FileResponse,
-    JSONResponse,
-    RedirectResponse,
-    StreamingResponse,
-)
+import numpy.typing as npt
 from fastapi import (
     File,
     Form,
@@ -53,28 +46,36 @@ from fastapi import (
     HTTPException,
     WebSocketDisconnect,
 )
+from pydantic import Field, BaseModel
+from fastapi.responses import (
+    Response,
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
+from starlette.concurrency import run_in_threadpool
+from starlette.middleware.base import RequestResponseEndpoint
 
-from .i18n import string, tagged_string
-from .celune import Celune
-from .cedts.ui import UiTimedUpdate, ui_timed_update_channel
-from .ui.app import CeluneUI
-from .audio.dsp import resample_audio
-from .utils import format_error
 from . import __version__
-from .theme import colors
-from .cevoice import default_loader
-from .constants import BASE_SR, APP_NAME
 from .ui import resources as ui_resources
-from .typing.common import JSONSerializable
-from .exceptions import TaskSubscriptionClosed
-from .paths import project_root, main_window_log_path
 from .vc import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
-from .typing.aliases import LogLevel, AudioChunk, AudioChunks
+from .i18n import string, tagged_string
+from .paths import project_root, main_window_log_path
+from .theme import colors
+from .utils import format_error
+from .celune import Celune
+from .ui.app import CeluneUI
+from .cevoice import default_loader
+from .cedts.ui import UiTimedUpdate, ui_timed_update_channel
 from .pipeline import (
     SpeechStreamQueue,
     prepare_playback_audio,
     current_playback_status,
 )
+from .audio.dsp import resample_audio
+from .constants import BASE_SR, APP_NAME
+from .exceptions import TaskSubscriptionClosed
 from .typing.api import (
     TaskStatus,
     WebUiUpdate,
@@ -83,15 +84,17 @@ from .typing.api import (
     WebUiAudioValue,
     WebUiInputAudioValue,
 )
-from .typing.events import EventCallback, EventName
+from .persona.impl import persona_enabled, persona_talkback_enabled
+from .typing.common import JSONSerializable
+from .typing.events import EventName, EventCallback
+from .typing.aliases import LogLevel, AudioChunk, AudioChunks
 from .extensions.events import EventDispatcher
 from .dataclasses.events import (
-    AgentApprovalRequestedEvent,
-    AgentChoiceRequestedEvent,
     AgentTaskFinishedEvent,
+    AgentChoiceRequestedEvent,
     AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
 )
-from .persona.impl import persona_enabled, persona_talkback_enabled
 
 api = FastAPI(title=f"{APP_NAME}API")
 bound_celune: Optional[Celune] = None
@@ -2707,8 +2710,8 @@ def _webui_voice_catalog(celune: Celune) -> tuple[tuple[str, str], ...]:
     from .cevoice import (
         CEVoice,
         CEVoiceError,
-        bundle_character_name,
         bundled_voices_dir,
+        bundle_character_name,
     )
 
     try:
@@ -3781,12 +3784,7 @@ def run_api(
     bind_host = resolve_api_host(token=auth_token, host=host)
 
     def _default_started(bhost: str, bport: int) -> None:
-        message = string(
-            "api.runner_started",
-            app_name=APP_NAME,
-            host=bhost,
-            port=bport,
-        )
+        message = f"{APP_NAME} API has started on http://{bhost}:{bport}"
         if celune is not None:
             celune.log(message)
         else:
@@ -3839,14 +3837,7 @@ def start_api(
     failed = threading.Event()
 
     def _started(bind_host: str, bind_port: int) -> None:
-        celune.log(
-            string(
-                "api.runner_started",
-                app_name=APP_NAME,
-                host=bind_host,
-                port=bind_port,
-            )
-        )
+        celune.log(f"{APP_NAME} API has started on http://{bind_host}:{bind_port}")
         started.set()
 
     def _runner() -> None:
@@ -3864,19 +3855,17 @@ def start_api(
             if exc.code not in (0, None):
                 failed.set()
                 celune.log(
-                    string("api.runner_exit_code", code=exc.code),
+                    f"API runner has exited. Exit code {exc.code}",
                     "warning",
                 )
         except Exception as e:
             failed.set()
             if isinstance(e, OSError) and _is_port_in_use_error(e):
-                celune.log(string("api.port_in_use", port=port), "warning")
+                celune.log(f"API port {port} is already in use.", "warning")
             else:
                 celune.log(
-                    string(
-                        "api.could_not_start",
-                        error=format_error(e, getattr(celune, "log_level", "info")),
-                    ),
+                    "Could not start the API: "
+                    f"{format_error(e, getattr(celune, 'log_level', 'info'))}",
                     "warning",
                 )
 
@@ -3888,7 +3877,8 @@ def start_api(
 
     if not started.is_set() and not failed.is_set():
         celune.log(
-            string("api.runner_timeout", seconds=startup_timeout),
+            f"API runner has not responded after {startup_timeout:.1f}s, "
+            "and has timed out.",
             "warning",
         )
 

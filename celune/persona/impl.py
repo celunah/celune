@@ -8,23 +8,14 @@ import contextlib
 from typing import Optional
 from collections.abc import Mapping, Generator
 
-from ..i18n import string, tagged_string
-from ..config import Config
+from ..i18n import string
 from ..vram import resolve_vram_preset
-from ..typing.aliases import LogCallback
-from .capabilities import PersonaCapabilities
-from ..typing.common import JSON, JSONSerializable
-from .runtime import PersonaRuntime, response_to_json, request_from_json
 from ..modes import (
     mode_allows_persona,
     resolve_operation_mode,
 )
-from ..typing.persona import (
-    PersonaModel,
-    PersonaTokenizer,
-    PersonaEngineView,
-    PersonaClientResponse,
-)
+from ..config import Config
+from .runtime import PersonaRuntime, response_to_json, request_from_json
 from ..cevoice import (
     CEVoicePersona,
     default_loader,
@@ -32,12 +23,21 @@ from ..cevoice import (
     persona_metadata_from_voice,
 )
 from ..constants import (
-    DEFAULT_PERSONA_CONTEXT,
     PERSONA_COMPACT_AT,
     PERSONA_CONTEXT_SPACE,
+    DEFAULT_PERSONA_CONTEXT,
     PERSONA_DEFAULT_MODEL_ID,
     PERSONA_HISTORY_MESSAGES,
     DEFAULT_PERSONA_DESCRIPTION,
+)
+from .capabilities import PersonaCapabilities
+from ..typing.common import JSON, JSONSerializable
+from ..typing.aliases import LogCallback
+from ..typing.persona import (
+    PersonaModel,
+    PersonaTokenizer,
+    PersonaEngineView,
+    PersonaClientResponse,
 )
 
 PERSONA_QUANTIZATION = "4bit"
@@ -88,13 +88,7 @@ class PersonaClient:
         for line in stderr_buffer.getvalue().splitlines():
             text = line.strip()
             if text:
-                self.log(
-                    tagged_string(
-                        "persona.backend_diagnostic", "PERSONA", message=text
-                    ),
-                    "warning",
-                    loglevel="verbose",
-                )
+                self.log(f"[PERSONA] {text}", "warning", loglevel="verbose")
 
     def load(
         self,

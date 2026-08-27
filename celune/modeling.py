@@ -1,19 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Normalizer loading helpers for Celune."""
 
-from collections.abc import Callable, Mapping
-from typing import Optional, Union
+from typing import Union, Optional
+from collections.abc import Mapping, Callable
 
 import torch
-from transformers.modeling_utils import PreTrainedModel
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from .i18n import string
-from .paths import huggingface_progress
 from .vram import resolve_vram_preset
-from .backends.tts import CeluneBackend
+from .paths import huggingface_progress
 from .constants import NORMALIZER_MODEL_ID
+from .backends.tts import CeluneBackend
 from .typing.common import JSONSerializable
 
 NORMALIZER_SPECIAL_TOKENS = ("<|im_start|>", "<|im_end|>", "<NORM>")
@@ -72,7 +72,7 @@ def load_normalizer_components(
         )
 
         if tokenizer is None:
-            raise RuntimeError(string("celune.normalizer_tokenizer_unavailable"))
+            raise RuntimeError("celunenorm tokenizer not available")
 
         device = normalizer_device(config)
         supported_dispatch = {"auto", "balanced", "balanced_low_0", "sequential"}

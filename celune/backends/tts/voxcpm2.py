@@ -21,10 +21,10 @@ from .base import (
 from .base import (
     _to_numpy_audio as normalize_streamed_audio,
 )
-from ...utils import custom_assert
 from ...i18n import string
-from ...cevoice import CEVoiceLoader, default_loader
 from ...paths import huggingface_progress
+from ...utils import custom_assert
+from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import BASE_SR
 from ...typing.aliases import AudioChunk, AudioChunks
 
@@ -189,7 +189,7 @@ class VoxCPM2(CeluneBackend[VoxCPM]):
         )
         runtime = getattr(model, "tts_model", None)
         if runtime is None or not hasattr(runtime, "text_tokenizer"):
-            raise RuntimeError(string("voxcpm2.tokenizer_unavailable"))
+            raise RuntimeError("VoxCPM2 did not expose a compatible text tokenizer")
         runtime.text_tokenizer = _VoxCPMTextTokenizer(tokenizer)
 
     _to_numpy_audio = staticmethod(normalize_streamed_audio)

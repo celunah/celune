@@ -3811,7 +3811,10 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         timing = pipeline.SpeechTiming(start_time=1.0, first_playback_time=1.25)
         with mock.patch("celune.pipeline._monotonic_time", return_value=1.25):
             pipeline.log_first_playback(cast(Celune, engine), timing)
-        assert engine.messages[-1] == ("TTFP: 0.25 seconds", "info")
+        assert engine.messages[-1] == ("TTFP 0.25s", "info")
+
+        assert pipeline._format_stat_duration(0.25) == "0:00"
+        assert pipeline._format_stat_duration(60.0) == "1:00"
 
         stream = FakeStream()
         holder = SimpleNamespace(stream=stream, _stream=stream, _current_sr=48000)

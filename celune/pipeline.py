@@ -53,15 +53,14 @@ from .utils import (
     detect_language,
     normalize_special_characters,
 )
-from .dataclasses.pipeline import (
-    AudioOutput,
-    SpeechTiming,
-    PlaybackChunk,
-    SpeechRequest,
-    AudioInputRequest,
-    PlaybackSourceDone,
-    VoiceConversionRequest,
+from .config import resolve_audio_device
+from .cevoice import (
+    default_loader,
+    bundle_character_name,
+    persona_files_from_bundle,
+    persona_metadata_from_manifest,
 )
+from .analysis import analyze_voice_audio
 from .audio.dsp import (
     split,
     soften,
@@ -74,14 +73,25 @@ from .audio.dsp import (
     pitch_shift_audio,
     is_silent_utterance,
 )
+from .constants import (
+    BASE_SR,
+    APP_NAME,
+    APP_SLUG,
+    AGENT_CONTEXT_SPACE,
+    AGENT_ROUTING_CONTEXT_SPACE,
+    AGENT_ROUTING_MAX_NEW_TOKENS,
+    PERSONA_MEMORY_EMBEDDING_MODEL,
+    PipelineStates,
+)
+from .exceptions import NotAvailableError
 from .persona.impl import (
     persona_config,
-    persona_context_size,
     persona_model_id,
     pack_persona_text,
     pack_identity_text,
     pack_persona_lines,
     default_persona_age,
+    persona_context_size,
     persona_quantization,
     persona_style_traits,
     default_persona_gender,
@@ -94,11 +104,85 @@ from .persona.impl import (
     persona_active_character_name,
     persona_debug_overrides_enabled,
 )
-from .vc import normalize_vc_audio
+from .typing.agent import ToolCall, AgentContext, AgentToolSchema
+from .typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentBusyResult,
+    ComponentLockAcquisition,
+    ComponentLockRequirement,
+)
+from .persona.paths import persona_override_files
+from .typing.common import JSON, JSONSerializable
+from .persona.memory import PersonaMemoryStore, classifier_memory_candidates
+from .typing.aliases import AudioChunk, AudioChunks
+from .typing.persona import PersonaModel, PersonaTokenizer
+from .persona.emotion import PersonaEmotionAnalyzer
+from .persona.prompts import (
+    PersonaCard,
+    PersonaContext,
+    CharacterProfile,
+    PersonaPromptBuilder,
+    PersonaSourceMaterial,
+    RetrievedMemoryBundle,
+)
+from .typing.pipeline import SpeechStreamQueue
+from .dataclasses.pipeline import (
+    AudioOutput,
+    SpeechTiming,
+    PlaybackChunk,
+    SpeechRequest,
+    AudioInputRequest,
+    PlaybackSourceDone,
+    VoiceConversionRequest,
+)
+from .persona.capabilities import PersonaCapabilities
 
 if TYPE_CHECKING:
     from .celune import Celune
     from .typing.persona import PersonaClientResponse
+
+
+async def _run_in_daemon_thread[PipelineResult](
+    function: Callable[[], PipelineResult],
+) -> PipelineResult:
+    """Run one blocking pipeline operation without using asyncio's default executor.
+
+    The pipeline runs in a daemon thread and can therefore outlive a cancelled
+    async task when a backend call does not return promptly. This is deliberate:
+    ``asyncio.run`` waits for its default executor during loop shutdown, while
+    pipeline shutdown already has backend abort and worker-lifetime safeguards.
+
+    Args:
+        function: Zero-argument blocking operation to execute.
+
+    Returns:
+        PipelineResult: The operation's result.
+    """
+    loop = asyncio.get_running_loop()
+    result: asyncio.Future[PipelineResult] = loop.create_future()
+
+    def complete(value: PipelineResult) -> None:
+        if not result.done():
+            result.set_result(value)
+
+    def fail(error: BaseException) -> None:
+        if not result.done():
+            result.set_exception(error)
+
+    def run() -> None:
+        try:
+            value = function()
+        except BaseException as error:
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(fail, error)
+        else:
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(complete, value)
+
+    threading.Thread(target=run, daemon=True).start()
+    return await result
+
 
 _FLAC_MAGIC = b"fLaC"
 _FLAC_STREAMINFO_BLOCK = 0
@@ -155,6 +239,13 @@ _SMART_BUFFER_REALTIME_SPEED = 1.05
 def _monotonic_time() -> float:
     """Return the current monotonic clock value for pipeline timing."""
     return time.monotonic()
+
+
+def _format_stat_duration(seconds: float) -> str:
+    """Format a duration as whole minutes and seconds for engine statistics."""
+    whole_seconds = max(0, int(seconds))
+    minutes, remaining_seconds = divmod(whole_seconds, 60)
+    return f"{minutes}:{remaining_seconds:02d}"
 
 
 _SMART_BUFFER_PROTECTED_PLAYBACK_SECONDS = 20.0
@@ -489,7 +580,7 @@ def log_first_playback(engine: Celune, timing: Optional[SpeechTiming]) -> None:
     else:
         elapsed = _monotonic_time() - start_time
 
-    engine.log(f"TTFP: {format_number(elapsed, 2)} seconds")
+    engine.log(f"TTFP {format_number(elapsed, 2)}s")
 
 
 def close_stream(engine: Celune, abort: bool = False) -> None:
@@ -2629,7 +2720,7 @@ async def queue_speech_async(
     if not _prepare_speech_readiness(engine):
         return False
 
-    await asyncio.to_thread(engine.model_ready.wait)
+    await _run_in_daemon_thread(engine.model_ready.wait)
 
     if not _finish_speech_readiness(engine):
         return False
@@ -2678,13 +2769,7 @@ def queue_sfx_audio(
         playback_sample_rate = BASE_SR
         audio_len = len(audio) / playback_sample_rate
         if log_length:
-            engine.log(
-                string(
-                    "pipeline.sample_rate_length",
-                    sample_rate=playback_sample_rate,
-                    seconds=format_number(audio_len, 2),
-                )
-            )
+            engine.log(f"{playback_sample_rate} Hz, {_format_stat_duration(audio_len)}")
 
         if keep:
             engine.kept_sfx_audio = [chunk.copy() for chunk in split(audio, BASE_SR, 1)]
@@ -2761,13 +2846,7 @@ def queue_streaming_sfx_audio(
     playback_sample_rate = BASE_SR
     audio_len = len(audio) / playback_sample_rate
     if log_length:
-        engine.log(
-            string(
-                "pipeline.sample_rate_length",
-                sample_rate=playback_sample_rate,
-                seconds=format_number(audio_len, 2),
-            )
-        )
+        engine.log(f"{playback_sample_rate} Hz, {_format_stat_duration(audio_len)}")
 
     active_generation = getattr(engine, "_playback_generation", 0)
     if generation is not None and generation != active_generation:
@@ -3219,7 +3298,7 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                     if normalized is not None:
                         if normalized == chunk_text:
                             engine.log(
-                                string("pipeline.input_already_normalized"),
+                                "This input is already normalized.",
                                 "warning",
                                 loglevel="verbose",
                             )
@@ -3449,19 +3528,19 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 engine.reverb.reset()
                 break
 
-            engine.log(
-                f"[GEN] {format_number(speech_len, 2)} seconds, "
-                f"took {format_number(generation_time, 2)} seconds"
-            )
             generation_speed = speech_len / generation_time
-            engine.log(f"Speed: x{format_number(generation_speed, 2)}")
+            engine.log(
+                f"{_format_stat_duration(speech_len)}, "
+                f"{format_number(generation_time, 2)}s, "
+                f"{format_number(generation_speed, 2)}x"
+            )
             _remember_smart_buffer_speed(engine, generation_speed)
             engine.smart_buffer_target_seconds = _smart_buffer_target_seconds(
                 engine,
                 speech_len,
                 generation_time,
             )
-            engine.log(f"TTFC: {format_number(speech_timing.ttfc_ms(), 1)} ms")
+            engine.log(f"TTFC {format_number(speech_timing.ttfc_ms(), 1)}ms")
 
             if buffer:
                 _flush_buffered_speech_chunks(

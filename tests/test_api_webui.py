@@ -3,8 +3,8 @@
 
 import asyncio
 from queue import Queue
-from typing import cast
 from types import SimpleNamespace
+from typing import cast
 from unittest import mock
 
 import numpy as np
@@ -1191,6 +1191,6 @@ class TestApiWebUI(CeluneTestCase):
             thread.join(timeout=1.0)
 
         celune.log.assert_called_once_with(
-            string("api.port_in_use", port=2060),
+            "API port 2060 is already in use.",
             "warning",
         )
