@@ -41,6 +41,19 @@ runtime subclass creation. Integrations should use their callbacks, protocols,
 backend interfaces, and composition points rather than inheriting from these
 single-instance runtime classes.
 
+When verbose or debug logging is enabled, the loading overlay shows only three
+startup checkpoints: checking dependencies immediately on process startup,
+loading the core at `Celune` construction, and initializing the core during
+`Celune.load()`. The checkpoints are emitted at those boundaries, so the
+loading screen does not present later UI/runtime/model work as separate startup
+stages. The current log line reports the latest information-level runtime
+message while initialization is in progress.
+
+The terminal title follows the same startup and runtime transitions using the
+format `Celune ・ state ・ action`. The state and action portion is limited to
+20 characters, so titles remain visible in narrow terminal tabs; detailed
+status and diagnostic text stays in the loading screen or main log.
+
 ## Speech pipeline
 
 1. A frontend submits text, audio, or an SFX request.
@@ -89,5 +102,8 @@ an explicit opt-in catalog, not a hidden fallback.
 UI unmount, `CTRL+Q`, API shutdown, process-loss detection, and `Celune.close()`
 converge on idempotent teardown. Active live recording is stopped, workers are
 asked to shut down, streams are closed, models release their state, and event
-listeners receive terminal notifications. A fatal state can stop generation
-without pretending that the engine is healthy.
+listeners receive terminal notifications. Pipeline blocking work uses daemon
+threads rather than the event loop's default executor, so a cancelled backend
+operation cannot make `asyncio.run()` wait for the executor's 300-second join
+window during restart. A fatal state can stop generation without pretending
+that the engine is healthy.
