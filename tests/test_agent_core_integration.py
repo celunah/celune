@@ -188,13 +188,18 @@ class TestAgentCoreIntegration(CeluneTestCase):
         agent_tool_selector: Optional[AgentToolSelector] = None,
     ) -> Celune:
         """Create the core with model, audio-device, and glow work replaced by fakes."""
+        cuda_patch = mock.patch(
+            "celune.vram.torch.cuda.is_available", return_value=False
+        )
+        cuda_patch.start()
+        self.addCleanup(cuda_patch.stop)
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
         ):
             core = Celune(
-                config={"mode": "agent"},
+                config={"mode": "agent", "vram": "xhigh"},
                 tts_backend=FakeBackend,
                 agent_tool_selector=agent_tool_selector,
             )
@@ -266,7 +271,11 @@ class TestAgentCoreIntegration(CeluneTestCase):
             mock.patch("celune.celune.persona_is_available", return_value=False),
         ):
             core = Celune(
-                config={"mode": "agent", "agent": {"fs_tools": True}},
+                config={
+                    "mode": "agent",
+                    "vram": "xhigh",
+                    "agent": {"fs_tools": True},
+                },
                 tts_backend=FakeBackend,
                 log_callback=capture_log,
             )
@@ -475,6 +484,11 @@ class TestAgentCoreIntegration(CeluneTestCase):
 
     def test_core_owns_production_path_from_persona_to_speech(self) -> None:
         """Run one safe task through core-owned Persona, Needle, and speech paths."""
+        cuda_patch = mock.patch(
+            "celune.vram.torch.cuda.is_available", return_value=False
+        )
+        cuda_patch.start()
+        self.addCleanup(cuda_patch.stop)
         selector = _NeedleFixture()
         persona = _PersonaFixture()
         with (
@@ -483,7 +497,7 @@ class TestAgentCoreIntegration(CeluneTestCase):
             mock.patch("celune.celune.persona_is_available", return_value=False),
         ):
             core = Celune(
-                config={"mode": "agent"},
+                config={"mode": "agent", "vram": "xhigh"},
                 tts_backend=FakeBackend,
                 agent_tool_selector=selector,
             )
@@ -826,12 +840,16 @@ class TestAgentCoreIntegration(CeluneTestCase):
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
             mock.patch("celune.pipeline.queue_speech", return_value=True),
+            mock.patch("celune.vram.torch.cuda.is_available", return_value=False),
             mock.patch(
                 "celune.celune.NeedleToolSelector.from_pretrained",
                 side_effect=RuntimeError("checkpoint unavailable"),
             ),
         ):
-            core = Celune(config={"mode": "agent"}, tts_backend=FakeBackend)
+            core = Celune(
+                config={"mode": "agent", "vram": "xhigh"},
+                tts_backend=FakeBackend,
+            )
             self.addCleanup(core.close)
             core.vision = _RoutingFixture(
                 '{"classification":"task","route":"task","confidence":0.98}',

@@ -12,6 +12,19 @@ from .support import CeluneTestCase
 class TestVram(CeluneTestCase):
     """Test VRAM-aware backend selection."""
 
+    def test_agent_mode_requires_xhigh_preset(self) -> None:
+        """Verify agent mode stays disabled below the xhigh preset."""
+        config: Config = {
+            "mode": "agent",
+            "vram": "low",
+            "persona": {"enabled": True},
+        }
+        with mock.patch("celune.vram.torch.cuda.is_available", return_value=False):
+            preset = resolve_vram_preset(config)
+            assert preset.tier == "low"
+            assert preset.persona_quantization == "4bit"
+            assert resolve_backend_name(config, "dotstts") == "mini"
+
     def test_high_persona_allows_only_light_tts_backends(self) -> None:
         """Verify high-tier Persona sessions select Mini or Qwen3 only."""
         config: Config = {"vram": "high", "persona": {"enabled": True}}

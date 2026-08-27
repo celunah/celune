@@ -3,6 +3,7 @@
 
 from typing import cast
 from types import SimpleNamespace
+from unittest import mock
 
 from celune.typing.common import Config
 from celune.modes import resolve_operation_mode
@@ -28,8 +29,8 @@ class TestOperationMode(CeluneTestCase):
         """Verify legacy input-mode values remain compatible with the new switch."""
         assert resolve_operation_mode({"mode": "voice_conversion"}) == "converse"
 
-    def test_speak_disables_persona_and_agent_mode_enables_agent_routing(self) -> None:
-        """Verify speak disables Persona while agent routing remains enabled."""
+    def test_vram_presets_gate_persona_and_agent_features(self) -> None:
+        """Verify Persona requires high and agent mode requires xhigh VRAM."""
         speak_config: Config = {
             "mode": "speak",
             "vram": "high",
@@ -40,11 +41,19 @@ class TestOperationMode(CeluneTestCase):
             "vram": "high",
             "persona": {"enabled": False},
         }
+        converse_low_config: Config = {"mode": "converse", "vram": "medium"}
+        agent_high_config: Config = {"mode": "agent", "vram": "high"}
+        agent_xhigh_config: Config = {"mode": "agent", "vram": "xhigh"}
 
-        self.assertFalse(persona_enabled(speak_config))
-        self.assertTrue(persona_enabled(converse_config))
-        self.assertTrue(agent_mode_enabled({"mode": "agent"}))
-        self.assertFalse(agent_mode_enabled({"mode": "converse"}))
+        with mock.patch("celune.vram.torch.cuda.is_available", return_value=False):
+            self.assertFalse(persona_enabled(speak_config))
+            self.assertTrue(persona_enabled(converse_config))
+            self.assertFalse(persona_enabled(converse_low_config))
+            self.assertTrue(persona_enabled(agent_high_config))
+            self.assertTrue(persona_enabled(agent_xhigh_config))
+            self.assertFalse(agent_mode_enabled(agent_high_config))
+            self.assertTrue(agent_mode_enabled(agent_xhigh_config))
+            self.assertFalse(agent_mode_enabled({"mode": "converse"}))
 
 
 class TestPersonaCapabilities(CeluneTestCase):

@@ -235,3 +235,10 @@ def backend_allowed(
     normalized = backend_name.strip().lower()
     preset = resolve_vram_preset(config)
     return normalized in _allowed_backends(config, preset)
+
+
+def agent_vram_compatible(
+    config: Optional[Mapping[str, JSONSerializable]],
+) -> bool:
+    """Return whether the resolved VRAM preset supports agent mode."""
+    return resolve_vram_preset(config).tier == "xhigh"

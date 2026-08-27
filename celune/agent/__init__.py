@@ -7,6 +7,7 @@ from .routing import AgentInputRouter
 from ..typing.common import JSONSerializable
 from .needle import NeedleModel, NeedleConfig
 from ..modes import mode_allows_agents, resolve_operation_mode
+from ..vram import agent_vram_compatible
 from .runtime import AgentRuntime, DefaultAgentPermissionPolicy
 from ..exceptions import (
     NeedleSelectionError,
@@ -92,8 +93,10 @@ from ..typing.agent import (
 def agent_mode_enabled(
     config: Mapping[str, JSONSerializable],
 ) -> bool:
-    """Return whether the global config selects the agent operation mode."""
-    return mode_allows_agents(resolve_operation_mode(config))
+    """Return whether the global config enables the agent operation mode."""
+    return mode_allows_agents(resolve_operation_mode(config)) and agent_vram_compatible(
+        config
+    )
 
 
 __all__ = [

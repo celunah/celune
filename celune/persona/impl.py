@@ -791,10 +791,11 @@ def persona_enabled(config: Mapping[str, JSONSerializable]) -> bool:
     Returns:
         bool: Whether Persona is enabled.
     """
-    return (
-        mode_allows_persona(resolve_operation_mode(config))
-        and resolve_vram_preset(config).persona_enabled
-    )
+    mode = resolve_operation_mode(config)
+    preset = resolve_vram_preset(config)
+    if not mode_allows_persona(mode):
+        return False
+    return preset.persona_enabled
 
 
 def persona_talkback_enabled(config: Mapping[str, JSONSerializable]) -> bool:

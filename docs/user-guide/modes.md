@@ -48,6 +48,11 @@ plan, call read-only tools, pause for approval, execute an approved mutating
 tool, and answer through the speech pipeline. The production limits are 20
 loops, a 32,768-token agent context size, and compaction at 75 percent. See
 [Agent mode](agent.md) for every built-in tool family and its permissions.
+Persona requires at least the `high` VRAM preset. Agent mode additionally
+requires `xhigh` while agent memory usage is being optimized. An incompatible
+preset disables the corresponding feature instead of being raised
+automatically. At `high`, `agent` keeps Persona conversation available and
+falls back to the `converse` route because agent tasks are disabled.
 
 ## Voice-conversion input
 

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Optional, cast
 from ..i18n import string
 from .runtime import AgentRuntime
 from ..modes import mode_allows_agents
+from ..vram import agent_vram_compatible
 from ..typing.common import JSON, JSONSerializable
 from ..typing.persona import PersonaClientResponse
 from ..pipeline import build_agent_classification_request
@@ -86,6 +87,9 @@ class AgentInputRouter:
         clean_text = self._clean_text(text)
         active_task = self.runtime.get_active_task(self.session_id)
         agents_enabled = mode_allows_agents(getattr(self.engine, "mode", "agent"))
+        agents_enabled = agents_enabled and agent_vram_compatible(
+            getattr(self.engine, "config", None)
+        )
         if getattr(self.engine, "backend_mode", None) == "agent_test":
             agents_enabled = True
         if not agents_enabled:

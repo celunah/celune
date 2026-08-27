@@ -16,7 +16,7 @@ file and `celune config edit` opens it in the system editor.
 | `log_level` | `info` | `info`, `verbose`, or `debug`. |
 | `locale` | `null` | Locale override; `null` uses system detection. |
 | `mode` | `converse` | `speak`, `converse`, or `agent`. |
-| `vram` | `medium` | Model-size and memory preset: `low`, `medium`, `high`, or `xhigh`. |
+| `vram` | `medium` | Model-size and memory preset: `low`, `medium`, `high`, or `xhigh`. Persona needs `high`; agent tasks need `xhigh`, with conversation fallback at `high`. |
 | `headless` | `false` | Suppress the Textual interface. |
 | `headless_nocolor` | `false` | Suppress color in headless output. |
 | `theme` | `dark` | `dark` or `light`; a pack can supply its own accent colors. |
@@ -137,6 +137,11 @@ Persona is independent of TTS backend selection. The model registry in
 not grant arbitrary remote code. Memory records are character-scoped and are
 stored under the Persona data directory. Explicit memory requests are favored;
 the classifier is optional and confidence-gated.
+
+Persona requires at least the `high` preset. Agent mode additionally requires
+the `xhigh` preset while agent memory usage is being optimized. Selecting an
+incompatible preset disables the corresponding feature; Celune does not raise
+the configured VRAM target automatically.
 
 ## Voice conversion
 

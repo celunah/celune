@@ -93,7 +93,7 @@ ipa: false
 # Global operation mode:
 # speak    - speech-only operation without Persona or agent features
 # converse - Persona conversation without agent features
-# agent    - reserved for future agent features; currently redirected to converse
+# agent    - Persona-backed typed tools; requires the xhigh VRAM target
 mode: converse
 
 # Agent settings

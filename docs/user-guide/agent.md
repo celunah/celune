@@ -5,6 +5,11 @@ arbitrary shell or computer-control agent. The runtime exposes typed,
 allowlisted operations, validates every call against its schema, and routes
 mutating work through approval policy.
 
+Agent mode requires the `xhigh` VRAM preset while its memory usage is being
+optimized. If a lower preset is selected, agent routing is disabled rather than
+raising the configured preset automatically. Persona-only conversation requires
+at least the `high` preset.
+
 ## Task lifecycle
 
 An agent request can move through `queued`, `idle`, `classifying`, `working`,

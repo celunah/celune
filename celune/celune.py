@@ -37,7 +37,6 @@ from .vram import (
 from .locks import ComponentLockLease
 from .modes import (
     OperationMode,
-    mode_allows_persona,
     resolve_operation_mode,
 )
 from .paths import project_root, temp_data_dir, huggingface_progress
@@ -3352,10 +3351,11 @@ class Celune(CeluneStateAccessors):
         if vram_message:
             self.log(vram_message, "warning")
 
+        effective_vram_preset = resolve_vram_preset(self.config)
         self.log(
             string(
                 "celune.current_vram_preset",
-                preset=str(self.config.get("vram", "unknown")).title(),
+                preset=effective_vram_preset.tier.title(),
             )
         )
 
@@ -3868,7 +3868,7 @@ class Celune(CeluneStateAccessors):
         """
         if self.test_finished or self.backend_mode == "agent_test":
             return False
-        if not mode_allows_persona(self.mode):
+        if not persona_enabled(self.config):
             return self.say(text)
         if self.input_mode != "text_to_speech":
             self.log(string("celune.text_input_unavailable_vc"), "warning")

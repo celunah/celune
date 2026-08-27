@@ -52,9 +52,21 @@ class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
 
     def setup_method(self) -> None:
         """Create a fresh router and engine fixture for each test."""
-        self.engine = SimpleNamespace(persona_history=[], config={})
+        self._cuda_patch = mock.patch(
+            "celune.vram.torch.cuda.is_available",
+            return_value=False,
+        )
+        self._cuda_patch.start()
+        self.engine = SimpleNamespace(
+            persona_history=[],
+            config={"mode": "agent", "vram": "xhigh"},
+        )
         self.runtime = AgentRuntime()
         self.router = AgentInputRouter(cast("Celune", self.engine), self.runtime)
+
+    def teardown_method(self) -> None:
+        """Restore CUDA detection after each router test."""
+        self._cuda_patch.stop()
 
     def _set_classifier(self, *payloads: dict[str, JSONSerializable]) -> None:
         """Install deterministic structured Persona routing responses."""
@@ -198,6 +210,17 @@ class TestAgentRouting:  # pylint: disable=attribute-defined-outside-init
 
         assert result.route == AgentRoute.TASK
         assert self.runtime.get_active_task("default") is not None
+
+    def test_incompatible_vram_disables_agent_routing(self) -> None:
+        """Do not route agent tasks when the selected preset is too small."""
+        self.engine.mode = "agent"
+        self.engine.config = {"mode": "agent", "vram": "high"}
+
+        result = self.router.route("Delete the fixture.", persona_ready=True)
+
+        assert result.route == AgentRoute.CONVERSATION
+        assert result.reason == "agent_mode_disabled"
+        assert self.runtime.get_active_task("default") is None
 
     def test_classifier_unavailable_keeps_input_on_conversation_path(self) -> None:
         """Do not infer a task when the semantic classifier is unavailable."""
