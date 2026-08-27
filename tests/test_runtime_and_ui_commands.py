@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for runtime validation and lightweight UI commands."""
 
+# Import groups follow Celune's project-specific Ruff ordering.
+# pylint: disable=ungrouped-imports
+
 import sys
 import time
 import queue
@@ -10,50 +13,51 @@ import tempfile
 import warnings
 import threading
 import subprocess
-from pathlib import Path
 from types import SimpleNamespace
-from collections.abc import Awaitable, Callable
 from typing import Optional, cast
+from pathlib import Path
 from unittest import mock
+from collections.abc import Callable, Awaitable
 
 import numpy as np
 import pytest
 from textual import events
 from textual.app import App
-from textual.containers import Vertical
 from textual.widget import Widget
 from textual.widgets import Label, Button, Static, RichLog, TextArea, ProgressBar
+from textual.containers import Vertical
+
 from celune import runtime
-from celune.theme import colors
-from celune.i18n import string, tagged_string
-from celune.utils import discard
-from celune.celune import Celune
-from celune.config import Config
-from celune.agent import AgentTaskState
-from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
-from celune.persona.asr import WhisperSegment, WhisperWord
-from celune.terminal import set_terminal_title
-from celune.typing.aliases import LogLevel
-from celune.typing.common import JSONSerializable
-from celune.ui.commands import process_command, attachment_source
 from celune.ui import app as ui_app
 from celune.ui import terminal as ui_terminal
 from celune.ui import resources as ui_resources
-from celune.ui.theme import severity_color
-from celune.ui.headless import CeluneHeadlessUI
+from celune.i18n import string, tagged_string
+from celune.agent import AgentTaskState
+from celune.theme import colors
+from celune.utils import discard
+from celune.celune import Celune
+from celune.config import Config
 from celune.ui.app import (
     CeluneUI,
-    ProgressLabel,
-    UILogMessage,
-    CeluneLoadingScreen,
     VoiceButton,
+    UILogMessage,
+    ProgressLabel,
+    CeluneLoadingScreen,
 )
+from tests.support import FakeBackend, FakeVCBackend, CeluneTestCase
+from celune.terminal import set_terminal_title
+from celune.ui.theme import severity_color
+from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
+from celune.persona.asr import WhisperWord, WhisperSegment
+from celune.ui.commands import process_command, attachment_source
+from celune.ui.headless import CeluneHeadlessUI
 from celune.typing.locks import (
     ComponentLockName,
     ComponentLockOwner,
     ComponentBusyResult,
 )
-from tests.support import CeluneTestCase, FakeBackend, FakeVCBackend
+from celune.typing.common import JSONSerializable
+from celune.typing.aliases import LogLevel
 
 
 class TestRuntime(CeluneTestCase):
@@ -255,7 +259,43 @@ class TestRuntime(CeluneTestCase):
         set_terminal_title((APP_NAME, "Error", "x" * 200), terminal)
 
         title_escape = terminal.write.call_args.args[0]
-        assert len(title_escape.removeprefix("\x1b]0;").removesuffix("\x07")) == 40
+        title = title_escape.removeprefix("\x1b]0;").removesuffix("\x07")
+        assert len(title.removeprefix(APP_NAME)) <= 20
+
+    def test_terminal_title_keeps_state_and_action_within_tab_budget(self) -> None:
+        """Verify the separators and compact glossary fit after the app name."""
+        terminal = mock.Mock()
+
+        set_terminal_title(
+            (
+                APP_NAME,
+                string("osc.state_recording"),
+                string("osc.action_transcribing_speech"),
+            ),
+            terminal,
+        )
+
+        title = terminal.write.call_args.args[0]
+        title = title.removeprefix("\x1b]0;").removesuffix("\x07")
+        assert title == f"{APP_NAME} ・ Record ・ Transcr."
+        assert len(title.removeprefix(APP_NAME)) <= 20
+
+    def test_terminal_title_omits_duplicate_state_and_action(self) -> None:
+        """Verify duplicate state and action labels are rendered only once."""
+        terminal = mock.Mock()
+
+        set_terminal_title(
+            (
+                APP_NAME,
+                string("osc.state_exiting"),
+                string("osc.action_exiting"),
+            ),
+            terminal,
+        )
+
+        title = terminal.write.call_args.args[0]
+        title = title.removeprefix("\x1b]0;").removesuffix("\x07")
+        assert title == f"{APP_NAME} ・ Exit"
 
     def test_check_supported_backends_reports_cpu_cuda_and_rocm(self) -> None:
         """Verify backend labels across supported runtime branches.
@@ -943,7 +983,10 @@ class TestUIStartup(CeluneTestCase):
             ):
                 ui._save_settings(menu)
                 shutdown_step.call_args_list[0].args[0]()
-                set_status.assert_called_once_with("restarting", "Restarting")
+                set_status.assert_called_once_with(
+                    "restarting",
+                    string("osc.action_restarting"),
+                )
 
             yaml_module.safe_dump.assert_called_once()
             assert ui.celune.config["backend"] == "qwen3"
@@ -979,11 +1022,15 @@ class TestUIStartup(CeluneTestCase):
                     "Backend initialized",
                 )
                 screen.set_startup_messages(
-                    ["Creating terminal interface...", "Preparing the core engine..."]
+                    [
+                        string("ui.startup_checking_dependencies"),
+                        string("ui.startup_loading_core"),
+                        string("ui.startup_initializing_core"),
+                    ]
                 )
                 self.assertEqual(
                     str(screen.query_one("#loading-diagnostics", Static).render()),
-                    "Creating terminal interface...\nPreparing the core engine...",
+                    "Checking dependencies...\nLoading core...\nInitializing core...",
                 )
                 self.assertIn(
                     str(screen.query_one("#loading-spinner", Static).render()),
@@ -1033,6 +1080,96 @@ class TestUIStartup(CeluneTestCase):
 
         loading_screen.set_latest_log_message.assert_called_once_with("info line")
 
+    def test_deferred_startup_diagnostics_follow_runtime_stages(self) -> None:
+        """Verify verbose startup diagnostics are emitted as deferred work advances."""
+        ui = CeluneUI(
+            startup_loader=mock.Mock(return_value=mock.sentinel.celune),
+            startup_log_level="verbose",
+        )
+        ui.receive_startup_diagnostic = mock.Mock()
+        ui.call_from_thread = mock.Mock()
+
+        with mock.patch.object(ui_app, "_load_ui_runtime_dependencies"):
+            ui._load_deferred_runtime()
+
+        ui.receive_startup_diagnostic.assert_not_called()
+        ui.call_from_thread.assert_called_once_with(
+            ui.attach_celune,
+            mock.sentinel.celune,
+        )
+
+    def test_deferred_startup_diagnostics_are_quiet_at_info_level(self) -> None:
+        """Verify normal startup does not add verbose stage diagnostics."""
+        ui = CeluneUI(startup_loader=mock.Mock(return_value=mock.sentinel.celune))
+        ui.receive_startup_diagnostic = mock.Mock()
+        ui.call_from_thread = mock.Mock()
+
+        with mock.patch.object(ui_app, "_load_ui_runtime_dependencies"):
+            ui._load_deferred_runtime()
+
+        ui.receive_startup_diagnostic.assert_not_called()
+
+    def test_startup_diagnostics_update_terminal_title_transitions(self) -> None:
+        """Verify each loading-screen startup stage publishes a concise title."""
+        ui = CeluneUI()
+        ui._set_terminal_status = mock.Mock()
+
+        ui.receive_startup_diagnostic(string("ui.startup_initializing_core"))
+
+        ui._set_terminal_status.assert_called_once_with(
+            "initializing",
+            string("osc.action_initializing_core"),
+        )
+
+    def test_status_messages_use_concise_terminal_title_actions(self) -> None:
+        """Verify core status transitions do not place full status text in titles."""
+        ui = CeluneUI()
+        status_cases = {
+            "status.downloading_audio": ("speaking", "osc.action_downloading"),
+            "status.generating": ("speaking", "osc.action_generating_audio"),
+            "status.normalizing": ("thinking", "osc.action_normalizing"),
+            "status.waiting_for_model": (
+                "initializing",
+                "osc.action_waiting_for_model",
+            ),
+            "status.warming_up": ("initializing", "osc.action_warming_up"),
+            "status.reloading_backend": (
+                "reloading",
+                "osc.action_loading_backend",
+            ),
+            "status.reloading_character": (
+                "reloading",
+                "osc.action_loading_voice",
+            ),
+            "status.restoring_backend": ("reloading", "osc.action_restoring"),
+            "status.missing_dependency": (
+                "error",
+                "osc.action_missing_dependency",
+            ),
+        }
+
+        for status_key, expected in status_cases.items():
+            state, action_key = expected
+            assert ui._terminal_status_for(string(status_key), "info") == (
+                state,
+                string(action_key),
+            )
+
+        for status_key in ("pipeline.playing_label", "pipeline.revoicing_label"):
+            assert ui._terminal_status_for(
+                string(status_key, label="long technical label"),
+                "info",
+            ) == ("speaking", string("osc.action_playing_audio"))
+
+        assert ui._terminal_status_for("untranslated failure", "error") == (
+            "error",
+            string("osc.action_error"),
+        )
+        assert ui._terminal_status_for("untranslated warning", "warning") == (
+            "warning",
+            string("osc.action_warning"),
+        )
+
     def test_pre_attach_logs_use_configured_startup_log_level(self) -> None:
         """Verify deferred full-mode startup logs use the configured level before attach."""
         ui = CeluneUI(startup_log_level="info")
@@ -1061,6 +1198,18 @@ class TestUIStartup(CeluneTestCase):
 
         show_loading_screen.assert_called_once_with()
         load_tts.assert_called_once_with()
+
+    def test_start_background_init_does_not_emit_redundant_diagnostic(self) -> None:
+        """Verify deferred model work does not add another startup checkpoint."""
+        ui = CeluneUI(startup_log_level="verbose")
+        ui._emit_startup_diagnostic = mock.Mock()
+        ui.load_tts = mock.Mock()
+
+        with mock.patch.object(ui, "_show_loading_screen"):
+            ui.start_background_init()
+
+        ui._emit_startup_diagnostic.assert_not_called()
+        ui.load_tts.assert_called_once_with()
 
     def test_dismiss_loading_screen_fades_then_hides_overlay(self) -> None:
         """Verify successful initialization hides the overlay in place."""
@@ -2963,6 +3112,98 @@ class TestUIStartup(CeluneTestCase):
         assert ui.cur_state == "exiting"
         ui._shutdown_live_vc_recording.assert_called_once_with()
         cast(mock.Mock, ui.celune.close).assert_called_once_with()
+        ui.exit.assert_called_once_with()
+
+    def test_graceful_exit_fades_screen_before_unmounting(self) -> None:
+        """Verify the visible screen fades before Textual is asked to exit."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui._shutdown_runtime = mock.Mock()
+        ui.exit = mock.Mock()
+        screen_styles = SimpleNamespace(
+            opacity=1.0,
+            scrollbar_size_vertical=2,
+            scrollbar_size_horizontal=1,
+        )
+        screen = SimpleNamespace(
+            styles=screen_styles,
+            query=mock.Mock(),
+            refresh=mock.Mock(),
+            _vertical_scrollbar=SimpleNamespace(display=True),
+            _horizontal_scrollbar=SimpleNamespace(display=True),
+            _scrollbar_corner=SimpleNamespace(display=True),
+            show_vertical_scrollbar=True,
+            show_horizontal_scrollbar=True,
+        )
+        child_styles = SimpleNamespace(
+            scrollbar_size_vertical=2,
+            scrollbar_size_horizontal=1,
+        )
+        child = SimpleNamespace(
+            styles=child_styles,
+            refresh=mock.Mock(),
+            _vertical_scrollbar=SimpleNamespace(display=True),
+            _horizontal_scrollbar=SimpleNamespace(display=True),
+            _scrollbar_corner=SimpleNamespace(display=True),
+            show_vertical_scrollbar=True,
+            show_horizontal_scrollbar=True,
+        )
+        screen.query.return_value = (child,)
+        fade_complete: list[Callable[[], None]] = []
+        after_refresh: list[Callable[[], None]] = []
+
+        def capture_fade(*_args, on_complete=None, **_kwargs) -> None:
+            if on_complete is not None:
+                fade_complete.append(on_complete)
+
+        def capture_after_refresh(callback: Callable[[], None]) -> None:
+            after_refresh.append(callback)
+
+        with (
+            mock.patch.object(
+                CeluneUI,
+                "screen",
+                new_callable=mock.PropertyMock,
+                return_value=screen,
+            ),
+            mock.patch.object(ui, "_animate_opacity", side_effect=capture_fade) as fade,
+            mock.patch.object(
+                ui,
+                "call_after_refresh",
+                side_effect=capture_after_refresh,
+            ),
+        ):
+            ui._graceful_exit()
+
+            fade.assert_called_once_with(
+                screen,
+                0.0,
+                on_complete=mock.ANY,
+                duration=ui_app._EXIT_FADE_SECONDS,
+            )
+            ui._shutdown_runtime.assert_not_called()
+            ui.exit.assert_not_called()
+            assert len(fade_complete) == 1
+
+            fade_complete[0]()
+
+            assert screen.refresh.call_args == mock.call(repaint=True)
+            assert screen.styles.opacity == 0.0
+            for widget in (screen, child):
+                assert widget.styles.scrollbar_size_vertical == 0
+                assert widget.styles.scrollbar_size_horizontal == 0
+                assert not widget.show_vertical_scrollbar
+                assert not widget.show_horizontal_scrollbar
+                assert not widget._vertical_scrollbar.display
+                assert not widget._horizontal_scrollbar.display
+                assert not widget._scrollbar_corner.display
+            ui._shutdown_runtime.assert_not_called()
+            ui.exit.assert_not_called()
+            assert len(after_refresh) == 1
+
+            after_refresh[0]()
+
+        ui._shutdown_runtime.assert_called_once_with()
         ui.exit.assert_called_once_with()
 
     def test_graceful_exit_survives_shutdown_exception(self) -> None:

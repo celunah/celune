@@ -12,7 +12,7 @@ import shutil
 import asyncio
 import threading
 import contextlib
-from typing import Union, Optional, Never, ClassVar, cast, final
+from typing import Never, Union, ClassVar, Optional, cast, final
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Callable, Generator
@@ -25,7 +25,7 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from . import __version__
 from .vc import clamp_vc_pitch_shift
-from .i18n import get_system_locale, set_locale, string, tagged_string
+from .i18n import string, set_locale, tagged_string, get_system_locale
 from .vram import (
     QWEN3_0_6B_MODEL,
     VramPreset,
@@ -95,10 +95,10 @@ from .pipeline import (
     force_stop_speech as force_stop_pipeline,
 )
 from .constants import (
+    APP_NAME,
+    AGENT_MAX_LOOPS,
     AGENT_COMPACT_AT,
     AGENT_CONTEXT_SPACE,
-    AGENT_MAX_LOOPS,
-    APP_NAME,
     NORMALIZER_MODEL_ID,
 )
 from .exceptions import (
@@ -133,6 +133,7 @@ from .typing.agent import (
     AgentRequest,
     AgentSession,
     AgentTaskState,
+    AgentTaskConfig,
     AgentAbortReason,
     AgentInterruption,
     AgentToolSelector,
@@ -144,7 +145,6 @@ from .typing.agent import (
     AgentClassificationResult,
     AgentClassificationFailure,
     AgentClassificationFailureKind,
-    AgentTaskConfig,
 )
 from .typing.locks import (
     ComponentLockName,
@@ -469,7 +469,13 @@ class Celune(CeluneStateAccessors):
         log_level: LogLevel = "info",
         agent_tool_selector: Optional[AgentToolSelector] = None,
         backend_mode: BackendMode = "normal",
+        startup_callback: Optional[Callable[[str], None]] = None,
     ) -> None:
+        """Create the Celune engine and retain its deferred startup callback.
+
+        The optional ``startup_callback`` receives the initialization-core
+        checkpoint when :meth:`load` begins.
+        """
         if Celune._instance is not None:
             raise RuntimeError(f"can only instantiate {self.__class__.__name__} once")
         if backend_mode not in {"normal", "ui_test", "agent_test"}:
@@ -478,6 +484,7 @@ class Celune(CeluneStateAccessors):
         self._startup_log_buffer: list[tuple[str, str, LogLevel]] = []
         self._startup_banner_emitted = False
         self._startup_log_sink = log_callback or self._noop_message
+        self._startup_callback = startup_callback
         self._callbacks = CeluneCallbackState(
             log_callback=self._buffer_startup_log,
             status_callback=status_callback or self._noop_message,

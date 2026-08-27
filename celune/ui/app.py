@@ -469,6 +469,7 @@ def _load_ui_runtime_dependencies() -> None:
 _CAPTION_FADE_SECONDS = 0.36
 _LOADING_FADE_SECONDS = 1.0
 _MAIN_UI_FADE_SECONDS = 0.6
+_EXIT_FADE_SECONDS = 0.6
 _VC_FEEDBACK_MIN_CAPTURE_SECONDS = 0.35
 _VC_FEEDBACK_REQUIRED_CONSECUTIVE_SPIKES = 2
 _VC_FEEDBACK_RMS_MIN_PREVIOUS = 0.05
@@ -1912,6 +1913,16 @@ class CeluneUI(App):
         if self._loading_screen is not None:
             self._loading_screen.set_status_message(string("status.initializing"))
         self._status_text = string("status.initializing")
+        if self._startup_messages:
+            terminal_status = self._startup_terminal_status_for(
+                self._startup_messages[-1]
+            )
+            if terminal_status is not None:
+                self._set_terminal_status(*terminal_status)
+            else:
+                self._set_terminal_status("initializing", string("osc.action_starting"))
+        else:
+            self._set_terminal_status("initializing", string("osc.action_starting"))
         if self._startup_loader is not None or self.celune is not None:
             if self._startup_loader is not None:
                 self.call_after_refresh(self._start_deferred_runtime)
@@ -1922,6 +1933,24 @@ class CeluneUI(App):
         """Start constructing Celune after the initial loading frame renders."""
         self.run_worker(self._load_deferred_runtime, thread=True, exclusive=True)
 
+    def _startup_terminal_status_for(self, message: str) -> Optional[tuple[str, str]]:
+        """Resolve a loading-screen diagnostic to its terminal title transition."""
+        startup_actions = {
+            string("ui.startup_checking_dependencies"): (
+                "initializing",
+                string("osc.action_checking_dependencies"),
+            ),
+            string("ui.startup_loading_core"): (
+                "initializing",
+                string("osc.action_loading_core"),
+            ),
+            string("ui.startup_initializing_core"): (
+                "initializing",
+                string("osc.action_initializing_core"),
+            ),
+        }
+        return startup_actions.get(message)
+
     def receive_startup_diagnostic(self, message: str) -> None:
         """Display one early startup diagnostic on the loading screen.
 
@@ -1929,12 +1958,27 @@ class CeluneUI(App):
             message: Diagnostic emitted while the runtime is being prepared.
         """
         self._startup_messages.append(message)
+        terminal_status = self._startup_terminal_status_for(message)
+        if terminal_status is not None:
+            self._set_terminal_status(*terminal_status)
 
         def update() -> None:
             if self._loading_screen is not None:
                 self._loading_screen.append_startup_message(message)
 
         self._run_on_ui_thread(update)
+
+    def _emit_startup_diagnostic(self, message: str) -> None:
+        """Display a verbose diagnostic for a stage of deferred startup.
+
+        Args:
+            message: Diagnostic text describing the current startup stage.
+        """
+        terminal_status = self._startup_terminal_status_for(message)
+        if terminal_status is not None:
+            self._set_terminal_status(*terminal_status)
+        if self._startup_log_level != "info":
+            self.receive_startup_diagnostic(message)
 
     def _load_deferred_runtime(self) -> None:
         """Construct the engine and load optional UI integrations off the UI thread."""
@@ -2116,10 +2160,100 @@ class CeluneUI(App):
 
     def _terminal_status_for(self, msg: str, severity: str) -> tuple[str, str]:
         """Resolve the terminal glossary state and action for one UI status."""
+        status_actions = {
+            string("status.api_starting"): (
+                "initializing",
+                string("osc.action_starting"),
+            ),
+            string("status.could_not_continue"): (
+                "error",
+                string("osc.action_failed"),
+            ),
+            string("status.could_not_reload"): (
+                "error",
+                string("osc.action_failed"),
+            ),
+            string("status.could_not_start"): (
+                "error",
+                string("osc.action_failed"),
+            ),
+            string("status.could_not_wake"): (
+                "error",
+                string("osc.action_failed"),
+            ),
+            string("status.downloading_audio"): (
+                "speaking",
+                string("osc.action_downloading"),
+            ),
+            string("status.early_initialization_failed"): (
+                "error",
+                string("osc.action_early_initialization_failed"),
+            ),
+            string("status.failed_to_start"): (
+                "error",
+                string("osc.action_failed"),
+            ),
+            string("status.generating"): (
+                "speaking",
+                string("osc.action_generating_audio"),
+            ),
+            string("status.idle"): ("ready", string("osc.action_idle")),
+            string("ui.idle_status"): ("ready", string("osc.action_idle")),
+            string("status.initializing"): (
+                "initializing",
+                string("osc.action_starting"),
+            ),
+            string("status.missing_dependency"): (
+                "error",
+                string("osc.action_missing_dependency"),
+            ),
+            string("status.normalizing"): (
+                "thinking",
+                string("osc.action_normalizing"),
+            ),
+            string("status.reloading"): (
+                "reloading",
+                string("osc.action_reloading"),
+            ),
+            string("status.reloading_backend"): (
+                "reloading",
+                string("osc.action_loading_backend"),
+            ),
+            string("status.reloading_character"): (
+                "reloading",
+                string("osc.action_loading_voice"),
+            ),
+            string("status.restoring_backend"): (
+                "reloading",
+                string("osc.action_restoring"),
+            ),
+            string("status.sleeping"): ("sleeping", string("osc.action_idle")),
+            string("ui.sleeping_status"): ("sleeping", string("osc.action_idle")),
+            string("status.speaking"): (
+                "speaking",
+                string("osc.action_playing_audio"),
+            ),
+            string("status.stopped"): ("stopped", string("osc.action_stopped")),
+            string("status.thinking"): ("thinking", string("osc.action_thinking")),
+            string("status.waiting_for_model"): (
+                "initializing",
+                string("osc.action_waiting_for_model"),
+            ),
+            string("status.waking_up"): (
+                "initializing",
+                string("osc.action_waking_up"),
+            ),
+            string("status.warming_up"): (
+                "initializing",
+                string("osc.action_warming_up"),
+            ),
+        }
         if severity == "error":
-            return "error", msg
+            if msg in status_actions:
+                return status_actions[msg]
+            return "error", string("osc.action_error")
         if severity == "warning":
-            return "warning", msg
+            return "warning", string("osc.action_warning")
 
         if self._persona_recording_active() or self._vc_recording_active():
             if self._persona_recording_stop_requested:
@@ -2129,6 +2263,12 @@ class CeluneUI(App):
         runtime_state = getattr(self.celune, "cur_state", "idle")
         if runtime_state == "stopped":
             return "stopped", string("osc.action_stopped")
+        if msg in status_actions:
+            return status_actions[msg]
+        if msg.startswith(string("pipeline.playing_label", label="")):
+            return "speaking", string("osc.action_playing_audio")
+        if msg.startswith(string("pipeline.revoicing_label", label="")):
+            return "speaking", string("osc.action_playing_audio")
         if not self.celune_ready:
             return "initializing", string("osc.action_loading_voice_pack")
 
@@ -2138,15 +2278,6 @@ class CeluneUI(App):
             return "paused", msg
         if self._agent_task_state in _AGENT_ACTIVE_STATES:
             return "thinking", msg
-        reload_actions = {
-            string("status.reloading"): string("osc.action_reloading"),
-            string("status.reloading_backend"): string("osc.action_loading_backend"),
-            string("status.reloading_character"): string("osc.action_loading_voice"),
-            string("status.restoring_backend"): string("osc.action_restoring"),
-        }
-        if msg in reload_actions:
-            return "reloading", reload_actions[msg]
-
         state_actions = {
             "idle": ("ready", string("osc.action_idle")),
             "thinking": ("thinking", string("osc.action_thinking")),
@@ -2156,10 +2287,12 @@ class CeluneUI(App):
             "stopped": ("stopped", string("osc.action_stopped")),
             "waking": ("initializing", string("osc.action_waking_up")),
             "reloading": ("reloading", string("osc.action_reloading")),
+            "error": ("error", string("osc.action_error")),
+            "restarting": ("restarting", string("osc.action_restarting")),
         }
         return state_actions.get(
             runtime_state,
-            ("ready", msg),
+            ("ready", string("osc.action_idle")),
         )
 
     def _install_runtime_log_redirects(self) -> None:
@@ -5852,19 +5985,79 @@ class CeluneUI(App):
             return True
         return False
 
+    def _hide_scrollbars_for_exit(self) -> None:
+        """Hide mounted scrollbars before painting the final transparent frame."""
+        try:
+            screen = self.screen
+            widgets = (screen, *screen.query(Widget))
+        except Exception:
+            return
+
+        for widget in widgets:
+            with contextlib.suppress(Exception):
+                widget.styles.scrollbar_size_vertical = 0
+                widget.styles.scrollbar_size_horizontal = 0
+                widget.show_vertical_scrollbar = False
+                widget.show_horizontal_scrollbar = False
+                for scrollbar_name in (
+                    "_vertical_scrollbar",
+                    "_horizontal_scrollbar",
+                    "_scrollbar_corner",
+                ):
+                    scrollbar = getattr(widget, scrollbar_name, None)
+                    if scrollbar is not None:
+                        scrollbar.display = False
+                widget.refresh(layout=True, repaint=True)
+
     def _graceful_exit(self, return_code: Optional[int] = None) -> None:
         """Exit from Celune gracefully.
 
         Args:
             return_code: Optional value for Textual to return after shutdown.
         """
-        # Shut down the core before leaving Textual's main loop.
+        if self.cur_state == "exiting":
+            return
         self.cur_state = "exiting"
-        self._run_shutdown_step(self._shutdown_runtime)
-        if return_code is None:
-            self.exit()
-        else:
-            self.exit(return_code=return_code)
+
+        def finish_exit() -> None:
+            """Finish shutdown after the visible UI has faded away."""
+            self._run_shutdown_step(self._shutdown_runtime)
+            if return_code is None:
+                self.exit()
+            else:
+                self.exit(return_code=return_code)
+
+        def fade_out() -> None:
+            """Fade the mounted Textual screen before requesting unmount."""
+
+            def finish_fade() -> None:
+                """Paint one final fully transparent frame before unmounting."""
+                try:
+                    self._hide_scrollbars_for_exit()
+                    self.screen.styles.opacity = 0.0
+                    self.screen.refresh(repaint=True)
+                    self.call_after_refresh(finish_exit)
+                except Exception:
+                    finish_exit()
+
+            try:
+                self._animate_opacity(
+                    self.screen,
+                    0.0,
+                    on_complete=finish_fade,
+                    duration=_EXIT_FADE_SECONDS,
+                )
+            except Exception:
+                finish_exit()
+
+        if threading.current_thread() is threading.main_thread():
+            fade_out()
+            return
+
+        try:
+            self.call_from_thread(fade_out)
+        except RuntimeError:
+            finish_exit()
 
     def _run_shutdown_step(self, callback: Callable[[], None]) -> None:
         """Run one shutdown action without allowing cleanup to crash the UI."""

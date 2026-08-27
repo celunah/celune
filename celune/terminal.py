@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Terminal handling helpers for Celune."""
 
+import ctypes
 import re
 import sys
-import ctypes
 from collections.abc import Callable
 from typing import IO, Optional, cast
 
 from .i18n import string
 
 _TERMINAL_TITLE_MAX_LENGTH = 40
+_TERMINAL_TITLE_STATUS_MAX_LENGTH = 20
 _TERMINAL_TITLE_CONTROL_RE = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])"
     r"|[\x00-\x1f\x7f\x80-\x9f\r\n]"
@@ -96,7 +97,18 @@ def terminal_title_escape(status: tuple[str, str, str]) -> str:
     app_name, state, action = (
         _TERMINAL_TITLE_CONTROL_RE.sub("", part).strip() for part in status
     )
-    title = string("osc.title", app_name=app_name, state=state, action=action)
+    title_key = "osc.title_state_only" if state == action else "osc.title"
+    title = string(title_key, app_name=app_name, state=state, action=action)
+    if title.startswith(app_name):
+        title_prefix = app_name
+        title_suffix = title[len(app_name) :]
+    else:
+        title_prefix = ""
+        title_suffix = title
+    if len(title_suffix) > _TERMINAL_TITLE_STATUS_MAX_LENGTH:
+        title = (
+            f"{title_prefix}{title_suffix[: _TERMINAL_TITLE_STATUS_MAX_LENGTH - 1]}…"
+        )
     if len(title) > _TERMINAL_TITLE_MAX_LENGTH:
         title = f"{title[: _TERMINAL_TITLE_MAX_LENGTH - 1]}…"
     return f"\x1b]0;{title}\x07"

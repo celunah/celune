@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional, cast
 from types import SimpleNamespace, MappingProxyType
 from unittest import mock
+from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -164,9 +165,13 @@ class TestCeluneCore(CeluneTestCase):
             cls._cached_celune = None
             cached_celune.close()
 
-    def _make_celune(self, config: dict) -> Celune:
+    def _make_celune(
+        self,
+        config: dict,
+        startup_callback: Optional[Callable[[str], None]] = None,
+    ) -> Celune:
         """Build a Celune instance with lightweight fakes."""
-        if not config:
+        if not config and startup_callback is None:
             cached_celune = type(self)._cached_celune
             if cached_celune is not None:
                 type(self)._reset_cached_celune(cached_celune)
@@ -178,8 +183,12 @@ class TestCeluneCore(CeluneTestCase):
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
         ):
-            celune = Celune(config=config, tts_backend=FakeBackend)
-            if not config:
+            celune = Celune(
+                config=config,
+                tts_backend=FakeBackend,
+                startup_callback=startup_callback,
+            )
+            if not config and startup_callback is None:
                 owner = type(self)
                 owner._cached_instance_keys = frozenset(celune.__dict__)
                 owner._cache_celune(celune)
@@ -392,6 +401,18 @@ class TestCeluneCore(CeluneTestCase):
             assert celune.load(skip_runtime_check=True)
 
         assert celune.historical_generated_speech_seconds == 42.5
+
+    def test_load_reports_core_initialization_startup_checkpoint(self) -> None:
+        """Verify ``load`` reports its dedicated startup checkpoint once."""
+        startup_callback = mock.Mock()
+        celune = self._make_celune({}, startup_callback=startup_callback)
+
+        with mock.patch("celune.celune.play_signal", return_value=False):
+            assert celune.load(skip_runtime_check=True)
+
+        startup_callback.assert_called_once_with(
+            i18n.string("ui.startup_initializing_core")
+        )
 
     def test_voice_loading_uses_backend_and_bundle_defaults(self) -> None:
         """Verify backend voices and bundle metadata determine defaults.

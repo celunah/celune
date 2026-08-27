@@ -15,7 +15,7 @@ post-frame worker and report failures on the loading overlay.
 | --- | --- |
 | `CTRL+ENTER` | Submit the input. During the tutorial it advances/skips the current step. |
 | `CTRL+J` | Submit the input in terminals that map Enter differently; it also cancels the tutorial. |
-| `CTRL+Q` | Shut down immediately through the graceful teardown path. |
+| `CTRL+Q` | Fade out the UI, then shut down through the graceful teardown path. |
 | `CTRL+T` | Toggle dark/light themes and persist the selection. |
 | `CTRL+R` | Wake from sleep, start/stop Persona speech capture, or start/stop live VC capture depending on mode. |
 
@@ -30,16 +30,24 @@ the pitch-shift value. Touch users can use these visible buttons rather than
 keyboard shortcuts.
 
 The mounted WebUI delegates its `ALT+R` recording shortcut to these same
-runtime capture paths. It does not expose the TUI's settings, voice picker,
-Record, or Stop controls. The TUI publishes timed status, theme, marquee, and
-resource-page updates through the CEDTS frontend channel so the browser does
-not maintain an independent timer state; browser polling is only a reconnect
+runtime capture paths and exposes a compact voice button beside its text input;
+clicking it cycles the active voice through the shared Core switching path. It
+does not expose the TUI's settings, Record, or Stop controls. The TUI publishes
+timed status, theme, marquee, and resource-page updates through the CEDTS
+frontend channel so the browser does not maintain an independent timer state;
+browser polling is only a reconnect fallback.
+
+When Celune requests an exit, the mounted Textual screen fades out as one
+surface, hides any mounted scrollbars, paints a final fully transparent frame,
+and only then does Textual unmount it. Runtime teardown completes during the
+exit transition, and unmounted or early-startup exits retain an immediate
 fallback.
 
-The playback bar has a separate progress readout. During active audio
+The TUI playback bar has a separate progress readout. During active audio
 playback it shows elapsed time as `MM:SS`; during loading and other determinate
 operations it shows a right-aligned percentage. When progress is indeterminate
-or unavailable, the readout is hidden and the bar expands into its space.
+or unavailable, the readout is hidden and the bar expands into its space. The
+WebUI has no corresponding progress bar or percentage label.
 
 ## Value-aware selection menus
 

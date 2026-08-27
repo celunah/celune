@@ -227,8 +227,6 @@ def _load_runtime() -> SimpleNamespace:
     if _RUNTIME is not None:
         return _RUNTIME
 
-    _print_startup_diagnostic(string("cli.startup_loading_runtime"))
-
     try:
         import webbrowser
 
@@ -291,7 +289,6 @@ def _load_runtime() -> SimpleNamespace:
         title_case=title_case,
         ExitCodes=ExitCodes,
     )
-    _print_startup_diagnostic(string("cli.startup_runtime_ready"))
     return _RUNTIME
 
 
@@ -344,7 +341,6 @@ def _load_core_runtime(*, defer_missing_dependency: bool = False) -> SimpleNames
     runtime.CeluneHeadlessUI = CeluneHeadlessUI
     runtime.CeluneHeadlessBaseUI = CeluneHeadlessBaseUI
     runtime.CeluneTextualUI = CeluneTextualUI
-    _print_startup_diagnostic(string("cli.startup_runtime_ready"))
     return runtime
 
 
@@ -1250,7 +1246,8 @@ def start(
     global _STARTUP_DIAGNOSTIC_SINK
 
     _FORCE_STARTUP_DIAGNOSTICS = log_level not in {None, "info"}
-    _print_startup_diagnostic(string("cli.startup_begin", app_name=APP_NAME))
+    _STARTUP_DIAGNOSTICS.clear()
+    _print_startup_diagnostic(string("ui.startup_checking_dependencies"))
     runtime = _load_runtime()
     active_log_level = normalize_log_level(log_level or INITIAL_LOG_LEVEL)
 
@@ -1260,8 +1257,6 @@ def start(
             if test_mode not in {None, "ui", "agent"}:
                 raise ValueError(f"unknown test mode: {test_mode}")
             runtime = _load_core_runtime()
-            _print_startup_diagnostic(string("cli.startup_creating_ui"))
-            _print_startup_diagnostic(string("cli.startup_handing_off_ui"))
             active_test_mode = test_mode or "ui"
             backend_mode = "ui_test" if active_test_mode == "ui" else "agent_test"
             test_config: Config = {}
@@ -1300,20 +1295,23 @@ def start(
                 test_completion_callback=finish_test,
             )
             _STARTUP_DIAGNOSTIC_SINK = ui.receive_startup_diagnostic
-            _print_startup_diagnostic(string("cli.startup_preparing_core"))
             if active_test_mode == "ui":
+                _print_startup_diagnostic(string("ui.startup_loading_core"))
                 celune = runtime.Celune(
                     config=test_config,
                     backend=_load_ui_test_backend(),
                     backend_mode=backend_mode,
                     log_level=active_log_level,
+                    startup_callback=_print_startup_diagnostic,
                 )
             else:
+                _print_startup_diagnostic(string("ui.startup_loading_core"))
                 celune = runtime.Celune(
                     config=test_config,
                     tts_backend=test_backend,
                     backend_mode=backend_mode,
                     log_level=active_log_level,
+                    startup_callback=_print_startup_diagnostic,
                 )
             ui.celune = celune
             ui.prepare_theme()
@@ -1480,7 +1478,9 @@ def start(
             def prepare_interactive_runtime():
                 """Construct the engine inside the already-mounted UI worker."""
                 runtime = _load_core_runtime(defer_missing_dependency=True)
-                _print_startup_diagnostic(string("cli.startup_preparing_core"))
+                _print_startup_diagnostic(
+                    string("ui.startup_loading_core"),
+                )
                 return runtime.Celune(
                     tts_backend=backend,
                     log_callback=ui.tts_log,
@@ -1497,9 +1497,9 @@ def start(
                     caption_timing_callback=ui.tts_caption_timing,
                     log_level=active_log_level,
                     config=config,
+                    startup_callback=_print_startup_diagnostic,
                 )
 
-            _print_startup_diagnostic(string("cli.startup_creating_ui"))
             ui = CeluneUI(
                 startup_loader=prepare_interactive_runtime,
                 startup_messages=_STARTUP_DIAGNOSTICS,
@@ -1519,24 +1519,27 @@ def start(
                 _STARTUP_DIAGNOSTIC_SINK = None
         elif headless:
             runtime = _load_core_runtime()
-            _print_startup_diagnostic(string("cli.startup_preparing_headless"))
             ui_headless = runtime.CeluneHeadlessUI(config)
-            _print_startup_diagnostic(string("cli.startup_preparing_core"))
+            _print_startup_diagnostic(string("ui.startup_loading_core"))
             celune = runtime.Celune(
                 tts_backend=backend,
                 log_callback=ui_headless.headless_log,
                 error_callback=ui_headless.headless_error,
                 log_level=active_log_level,
                 config=config,
+                startup_callback=_print_startup_diagnostic,
             )
             ui_headless.celune = celune
             _flush_startup_diagnostics()
 
             if not celune.load():
+                _flush_startup_diagnostics()
                 print(string("cli.could_not_initialize", app_name=APP_NAME))
                 celune.close()
                 time.sleep(5)
                 sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
+
+            _flush_startup_diagnostics()
 
             print(string("cli.running_headless", app_name=APP_NAME))
             print(string("cli.headless_extensions_only", app_name=APP_NAME))
