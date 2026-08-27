@@ -326,10 +326,11 @@ class TestApiWebUI(CeluneTestCase):
         celune.caption_callback("Hello there")
         celune.caption_progress_callback(1.0, 2.0)
         api.webui_progress_current = 1.0
-        api.webui_progress_total = 2.0
+        api.webui_progress_total = 1.0
         _status = api._webui_status_html()
         assert "Hello there" in _status
         assert "50%" in _status
+        assert "100%" not in _status
 
         celune.error_callback("backend failed")
         assert "backend failed" in api._webui_status_html()
@@ -1089,7 +1090,7 @@ class TestApiWebUI(CeluneTestCase):
             for component in config.get("components", [])
         }
         assert "celune-voice-menu" not in component_ids
-        assert "celune-style" not in component_ids
+        assert "celune-style" in component_ids
         assert "celune-record" not in component_ids
         assert "celune-stop" not in component_ids
         assert "celune-settings" not in component_ids

@@ -2010,15 +2010,6 @@ def _webui_status_html() -> str:
             details.append(
                 f'<div class="webui-caption-progress">{round(webui_caption_progress * 100):d}%</div>'
             )
-    if webui_progress_total is not None and webui_progress_total > 0:
-        fraction = max(
-            0.0,
-            min(
-                1.0,
-                (webui_progress_current or 0.0) / webui_progress_total,
-            ),
-        )
-        details.append(f'<div class="webui-progress">{round(fraction * 100):d}%</div>')
     detail_html = "".join(details)
     return (
         f"{_webui_theme_html()}"
@@ -2971,7 +2962,6 @@ def _build_webui() -> gr.Blocks:
                         )
                     )
                     logs = gr.HTML(_webui_logs_html())
-                    voice_state = gr.State()
                     with gr.Row(elem_id="celune-input-row"):
                         input_box = gr.Textbox(
                             value="",
@@ -2985,6 +2975,13 @@ def _build_webui() -> gr.Blocks:
                             interactive=False,
                         )
                         with gr.Row(elem_id="celune-actions", scale=2):
+                            voice_button = gr.Button(
+                                value=string("webui.default_voice_button"),
+                                elem_id="celune-style",
+                                scale=1,
+                                min_width=0,
+                                interactive=False,
+                            )
                             send_button = gr.Button(
                                 value=string("webui.send_button"),
                                 elem_id="celune-send",
@@ -3074,7 +3071,7 @@ def _build_webui() -> gr.Blocks:
 
         timer.tick(  # type: ignore[missing-attribute]
             _webui_snapshot,
-            outputs=[logs, status, resources, voice_state, send_button, input_box],
+            outputs=[logs, status, resources, voice_button, send_button, input_box],
             show_progress="hidden",
         )
         timer.tick(  # type: ignore[missing-attribute]
@@ -3089,7 +3086,7 @@ def _build_webui() -> gr.Blocks:
         )
         demo.load(  # type: ignore[missing-attribute]
             _webui_snapshot,
-            outputs=[logs, status, resources, voice_state, send_button, input_box],
+            outputs=[logs, status, resources, voice_button, send_button, input_box],
             show_progress="hidden",
         )
         demo.load(  # type: ignore[missing-attribute]
@@ -3111,7 +3108,7 @@ def _build_webui() -> gr.Blocks:
                 logs,
                 status,
                 resources,
-                voice_state,
+                voice_button,
                 send_button,
             ],
             show_progress="hidden",
@@ -3125,14 +3122,19 @@ def _build_webui() -> gr.Blocks:
                 logs,
                 status,
                 resources,
-                voice_state,
+                voice_button,
                 send_button,
             ],
             show_progress="hidden",
         )
+        voice_button.click(  # type: ignore[missing-attribute]
+            _webui_cycle_voice,
+            outputs=[logs, status, resources, voice_button, send_button, input_box],
+            show_progress="hidden",
+        )
         record_hotkey.click(  # type: ignore[missing-attribute]
             _webui_toggle_recording,
-            outputs=[logs, status, resources, voice_state, send_button, input_box],
+            outputs=[logs, status, resources, voice_button, send_button, input_box],
             show_progress="hidden",
         )
         convert_button.click(  # type: ignore[missing-attribute]
@@ -3144,7 +3146,7 @@ def _build_webui() -> gr.Blocks:
                 logs,
                 status,
                 resources,
-                voice_state,
+                voice_button,
                 send_button,
             ],
             show_progress="hidden",
