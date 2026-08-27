@@ -16,73 +16,32 @@ import pathlib
 import datetime
 import contextlib
 import subprocess
+import threading
 from uuid import uuid4
-from collections import deque
-from collections.abc import Mapping, Callable
-from dataclasses import replace
-from urllib.request import urlopen
-from urllib.parse import urlparse, urlencode
-from importlib import util as importlib_util
 from typing import TYPE_CHECKING, Union, Optional, cast
+from importlib import util as importlib_util
+from collections import deque
+from dataclasses import replace
+from urllib.parse import urlparse, urlencode
+from urllib.request import urlopen
+from collections.abc import Mapping, Callable  # pylint: disable=ungrouped-imports
 
-import torch
 import numpy as np
+import torch
 import soundfile as sf
 import sounddevice as sd
 import pyrubberband as rb
 from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue, DeprecatedLanguageValue
 
-from .i18n import string, tagged_string
 from . import __version__
-from .config import resolve_audio_device
-from .analysis import analyze_voice_audio
-from .exceptions import NotAvailableError
-from .typing.pipeline import SpeechStreamQueue
-from .persona.paths import persona_override_files
-from .typing.common import JSON, JSONSerializable
-from .typing.aliases import AudioChunk, AudioChunks
-from .persona.emotion import PersonaEmotionAnalyzer
-from .persona.capabilities import PersonaCapabilities
-from .typing.persona import PersonaModel, PersonaTokenizer
-from .typing.agent import ToolCall, AgentContext, AgentToolSchema
-from .persona.memory import PersonaMemoryStore, classifier_memory_candidates
+from .vc import normalize_vc_audio
+from .i18n import string, tagged_string
 from .paths import (
     outputs_dir,
     project_root,
     temp_data_dir,
     running_compiled,
-)
-from .cevoice import (
-    default_loader,
-    bundle_character_name,
-    persona_files_from_bundle,
-    persona_metadata_from_manifest,
-)
-from .typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentBusyResult,
-    ComponentLockAcquisition,
-    ComponentLockRequirement,
-)
-from .persona.prompts import (
-    PersonaCard,
-    PersonaContext,
-    CharacterProfile,
-    PersonaPromptBuilder,
-    PersonaSourceMaterial,
-    RetrievedMemoryBundle,
-)
-from .constants import (
-    BASE_SR,
-    APP_NAME,
-    APP_SLUG,
-    AGENT_CONTEXT_SPACE,
-    AGENT_ROUTING_CONTEXT_SPACE,
-    AGENT_ROUTING_MAX_NEW_TOKENS,
-    PERSONA_MEMORY_EMBEDDING_MODEL,
-    PipelineStates,
 )
 from .utils import (
     discard,
@@ -3689,14 +3648,16 @@ async def generation_worker_job(engine: Celune) -> None:
         engine: Runtime that owns the generation queue and playback state.
     """
     while True:
-        item = await asyncio.to_thread(engine.text_queue.get)
+        item = await _run_in_daemon_thread(engine.text_queue.get)
         engine.regenerate = False
 
         if item is engine.sentinel:
             try:
                 engine.audio_queue.put_nowait(engine.sentinel)
             except queue.Full:
-                await asyncio.to_thread(engine.audio_queue.put, engine.sentinel)
+                await _run_in_daemon_thread(
+                    lambda: engine.audio_queue.put(engine.sentinel)
+                )
             break
 
         request = cast(SpeechRequest, item)
@@ -3710,7 +3671,9 @@ async def generation_worker_job(engine: Celune) -> None:
         engine.utterance_force_stop.clear()
         engine._active_speech_generation = request.generation
         try:
-            await asyncio.to_thread(_process_generation_request, engine, request)
+            await _run_in_daemon_thread(
+                lambda request=request: _process_generation_request(engine, request)
+            )
         finally:
             engine._active_speech_generation = None
 
@@ -3930,7 +3893,7 @@ async def playback_worker_job(engine: Celune) -> None:
         _playback_source_statuses(engine).clear()
         _playback_source_meta(engine).clear()
         _reset_glow_audio_reactivity(engine)
-        await asyncio.to_thread(close_stream, engine, True)
+        await _run_in_daemon_thread(lambda: close_stream(engine, True))
         engine.playback_done.set()
         release_pipeline(engine)
         if getattr(engine, "_active_speech_generation", None) is None:
@@ -3989,7 +3952,7 @@ async def playback_worker_job(engine: Celune) -> None:
             with engine.queue_lock:
                 clear_queue(engine.audio_queue)
 
-            await asyncio.to_thread(close_stream, engine, True)
+            await _run_in_daemon_thread(lambda: close_stream(engine, True))
             release_pipeline(engine)
             if engine.cur_state not in {"error", "stopped"} and not getattr(
                 engine, "test_finished", False
@@ -4000,9 +3963,11 @@ async def playback_worker_job(engine: Celune) -> None:
         try:
             timeout = 0.01 if source_buffers else None
             if timeout is None:
-                item = await asyncio.to_thread(engine.audio_queue.get)
+                item = await _run_in_daemon_thread(engine.audio_queue.get)
             else:
-                item = await asyncio.to_thread(engine.audio_queue.get, True, timeout)
+                item = await _run_in_daemon_thread(
+                    lambda timeout=timeout: engine.audio_queue.get(True, timeout)
+                )
         except queue.Empty:
             item = None
 
@@ -4037,7 +4002,9 @@ async def playback_worker_job(engine: Celune) -> None:
             if not await drain_pending_items():
                 break
 
-            if not await asyncio.to_thread(_ensure_playback_stream, engine, BASE_SR):
+            if not await _run_in_daemon_thread(
+                lambda: _ensure_playback_stream(engine, BASE_SR)
+            ):
                 source_buffers.clear()
                 source_done.clear()
                 buffered_seconds = 0.0
@@ -4114,7 +4081,9 @@ async def playback_worker_job(engine: Celune) -> None:
                     break
                 log_first_playback(engine, timing_to_log)
                 engine.glow.schedule(mixed)
-                await asyncio.to_thread(_write_playback_block, engine, mixed)
+                await _run_in_daemon_thread(
+                    lambda mixed=mixed: _write_playback_block(engine, mixed)
+                )
                 _update_playback_progress(engine, source_buffers)
             except Exception as e:
                 engine.log(
@@ -4122,7 +4091,7 @@ async def playback_worker_job(engine: Celune) -> None:
                     "error",
                 )
                 engine.error_callback(string("pipeline.playback_error"))
-                await asyncio.to_thread(close_stream, engine, True)
+                await _run_in_daemon_thread(lambda: close_stream(engine, True))
                 engine._stream = None
                 engine._current_sr = None
                 source_buffers.clear()

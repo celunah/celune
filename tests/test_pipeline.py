@@ -1,34 +1,31 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for pipeline helpers that do not perform real synthesis."""
 
+# Import groups follow Celune's project-specific Ruff ordering.
+# pylint: disable=ungrouped-imports
+
 import os
 import sys
+import json as _json
 import queue
 import tempfile
 import threading
-import json as _json
-from pathlib import Path
-from collections.abc import Iterator
-from typing import Self, Optional, cast
-from importlib.machinery import ModuleSpec
 from types import TracebackType, SimpleNamespace
+from typing import Self, Optional, cast
+from pathlib import Path
 from unittest import mock
+from collections.abc import Iterator
+from importlib.machinery import ModuleSpec
 
 import numpy as np
-import numpy.typing as npt
 import pytest
 import soundfile as sf
+import numpy.typing as npt
+
 from celune import pipeline
 from celune.i18n import string
 from celune.utils import discard
 from celune.celune import Celune
-from celune.constants import PipelineStates
-from celune.typing.aliases import AudioChunk
-from celune.persona.impl import compact_persona_history
-from celune.typing.common import JSON, JSONSerializable
-from celune.dataclasses.pipeline import AudioInputRequest
-from celune.persona.capabilities import PersonaCapabilities
-from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
 from celune.cevoice import (
     CEVoice,
     CEVoiceLoader,
@@ -37,6 +34,8 @@ from celune.cevoice import (
     PersonaStyleValues,
     persona_files_from_bundle,
 )
+from celune.constants import PipelineStates
+from celune.persona.impl import compact_persona_history
 from celune.typing.agent import (
     ToolCall,
     AgentTask,
@@ -48,13 +47,21 @@ from celune.typing.agent import (
     AgentToolDangerLevel,
     AgentToolArgumentSchema,
 )
+from celune.typing.common import JSON, JSONSerializable
+from celune.typing.aliases import AudioChunk
+from celune.persona.prompts import PersonaPromptBuilder, render_markdown_subsection
+from celune.dataclasses.pipeline import AudioInputRequest
+from celune.persona.capabilities import PersonaCapabilities
 
 from .support import (
-    CeluneAsyncTestCase,
+    FakeStream,
+    FakeVCBackend,
     CeluneTestCase,
+    CeluneAsyncTestCase,
+    make_voice_loader,
+    make_pipeline_engine,
 )
 from .test_persona_memory import StubEmbeddingMemoryStore
-from .support import FakeStream, FakeVCBackend, make_voice_loader, make_pipeline_engine
 
 
 class TestPipeline(CeluneTestCase):
@@ -363,10 +370,10 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         """Run the async playback worker directly inside the test loop."""
         await pipeline.playback_worker_job(engine)
 
-    async def test_queue_speech_async_waits_for_model_readiness_via_to_thread(
+    async def test_queue_speech_async_waits_for_model_readiness_in_daemon_thread(
         self,
     ) -> None:
-        """Verify async speech queueing offloads model-ready waits from the event loop."""
+        """Verify speech queueing offloads model-ready waits from the event loop."""
         engine = make_pipeline_engine()
         engine.model_ready.clear()
 
@@ -375,9 +382,9 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             return True
 
         engine.model_ready.wait = mock.Mock(side_effect=mark_ready)
-        to_thread = mock.AsyncMock(side_effect=lambda func, *args: func(*args))
+        run_in_daemon_thread = mock.AsyncMock(side_effect=lambda function: function())
 
-        with mock.patch("celune.pipeline.asyncio.to_thread", to_thread):
+        with mock.patch("celune.pipeline._run_in_daemon_thread", run_in_daemon_thread):
             queued = await pipeline.queue_speech_async(
                 cast(Celune, engine),
                 "hello",
@@ -386,10 +393,16 @@ class TestPipelineAsync(CeluneAsyncTestCase):
 
         assert queued
         engine.model_ready.wait.assert_called_once_with()
-        assert to_thread.await_count == 1
+        assert run_in_daemon_thread.await_count == 1
         request = engine.text_queue.get_nowait()
         assert request.text == "hello"
         assert request.display_text == "shown"
+
+    async def test_pipeline_blocking_work_uses_daemon_threads(self) -> None:
+        """Verify blocked pipeline work cannot hold asyncio executor shutdown open."""
+        assert await pipeline._run_in_daemon_thread(
+            lambda: threading.current_thread().daemon
+        )
 
     def test_queue_speech_handles_success_and_failure_paths(self) -> None:
         """Verify speech queueing success and rejection paths.
