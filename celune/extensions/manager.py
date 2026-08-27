@@ -6,22 +6,22 @@ import inspect
 import threading
 import traceback
 import importlib.util
-from pathlib import Path
 from types import ModuleType
 from typing import Optional, cast
+from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Callable
 
-from ..i18n import string, tagged_string
-from ..utils import format_error
 from .base import CeluneContext, CeluneExtension
-from ..typing.events import EventName, EventPayload
-from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
+from ..i18n import string
+from ..utils import format_error
 from .events import (
     EventDispatcher,
     RegisteredEventHandler,
     iter_subscriptions,
 )
+from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
+from ..typing.events import EventName, EventPayload
 
 
 @dataclass(frozen=True)
@@ -76,7 +76,7 @@ class CeluneExtensionManager:
 
         if name in self.extensions:
             self.context.log(
-                tagged_string("extensions.already_registered", "Core", name=name),
+                f"[Core] {name} is already registered",
                 "warning",
             )
             raise ExtensionAlreadyRegisteredError(
@@ -86,10 +86,7 @@ class CeluneExtensionManager:
         self.extensions[name] = instance
         self._extension_modules[name] = extension_cls.__module__
         self._register_extension_handlers(instance)
-        self.context.log(
-            tagged_string("extensions.registered", "Core", name=name),
-            loglevel="verbose",
-        )
+        self.context.log(f"[Core] Registered extension: {name}", loglevel="verbose")
         return instance
 
     def unregister(self, name: str) -> None:
@@ -113,7 +110,7 @@ class CeluneExtensionManager:
                 self._unregister_owner(module_registration.owner_key)
 
         self.context.log(
-            tagged_string("extensions.unregistered", "Core", name=name),
+            f"[Core] Unregistered extension: {name}",
             loglevel="verbose",
         )
 
@@ -154,12 +151,8 @@ class CeluneExtensionManager:
                 ext.invoke(*args, **kwargs)
             except Exception as ex:
                 self.context.log(
-                    tagged_string(
-                        "extensions.invoke_failed",
-                        "Core",
-                        name=name,
-                        error=format_error(ex, self.context.log_level),
-                    ),
+                    f"[Core] Failed to invoke '{name}': "
+                    f"{format_error(ex, self.context.log_level)}",
                     "warning",
                 )
 
@@ -183,9 +176,7 @@ class CeluneExtensionManager:
 
         if not extensions_dir.exists():
             self.context.log(
-                tagged_string(
-                    "extensions.folder_not_found", "Core", path=extensions_dir
-                ),
+                f"[Core] Extension folder not found: {extensions_dir}",
                 "warning",
             )
             self.context.log(string("extensions.unavailable"), "warning")
@@ -193,9 +184,7 @@ class CeluneExtensionManager:
 
         if not extensions_dir.is_dir():
             self.context.log(
-                tagged_string(
-                    "extensions.path_not_directory", "Core", path=extensions_dir
-                )
+                f"[Core] Extension path is not a directory: {extensions_dir}"
             )
             self.context.log(string("extensions.unavailable"), "warning")
             return
@@ -215,9 +204,7 @@ class CeluneExtensionManager:
                 spec = importlib.util.spec_from_file_location(module_name, file_path)
                 if spec is None or spec.loader is None:
                     self.context.log(
-                        tagged_string(
-                            "extensions.spec_load_failed", "Core", name=file_path.name
-                        )
+                        f"[Core] Could not load spec for: {file_path.name}"
                     )
                     continue
 
@@ -225,17 +212,13 @@ class CeluneExtensionManager:
                 sys.modules[module_name] = module
                 spec.loader.exec_module(module)
             except Exception as e:
+                detail = (
+                    traceback.format_exc()
+                    if self.context.log_level != "info"
+                    else format_error(e, self.context.log_level)
+                )
                 self.context.log(
-                    tagged_string(
-                        "extensions.import_failed",
-                        "Core",
-                        name=file_path.name,
-                        error=(
-                            traceback.format_exc()
-                            if self.context.log_level != "info"
-                            else e
-                        ),
-                    ),
+                    f"[Core] Failed to import '{file_path.name}': {detail}",
                     "warning",
                 )
                 continue
@@ -260,28 +243,20 @@ class CeluneExtensionManager:
                     self.register(obj)
                     found_any = True
                 except Exception as e:
+                    detail = (
+                        traceback.format_exc()
+                        if self.context.log_level != "info"
+                        else format_error(e, self.context.log_level)
+                    )
                     self.context.log(
-                        tagged_string(
-                            "extensions.register_failed",
-                            "Core",
-                            name=obj.__name__,
-                            file_name=file_path.name,
-                            error=(
-                                traceback.format_exc()
-                                if self.context.log_level != "info"
-                                else e
-                            ),
-                        ),
+                        f"[Core] Failed to register '{obj.__name__}' from "
+                        f"'{file_path.name}': {detail}",
                         "warning",
                     )
 
             if not found_any:
                 self.context.log(
-                    tagged_string(
-                        "extensions.not_extension_skipping",
-                        "Core",
-                        file_name=file_path.name,
-                    ),
+                    f"[Core] {file_path.name} is not a Celune extension, skipping",
                     "warning",
                 )
 

@@ -3317,6 +3317,8 @@ class Celune(CeluneStateAccessors):
             RuntimeCheckError: If the runtime environment is unsupported.
             BackendError: If backend initialization fails.
         """
+        if self._startup_callback is not None:
+            self._startup_callback(string("ui.startup_initializing_core"))
         log_runtime_banner(
             self._emit_runtime_banner_line,
             self.vc_backend or self.backend,
@@ -3535,7 +3537,7 @@ class Celune(CeluneStateAccessors):
             return
 
         if not is_port_usable(port):
-            self.log(string("api.port_in_use", port=port), "warning")
+            self.log(f"API port {port} is already in use.", "warning")
             self.log(string("celune.api_unavailable", app_name=APP_NAME), "warning")
             return
 
@@ -3622,11 +3624,7 @@ class Celune(CeluneStateAccessors):
                 self.progress_callback(1, 1)
             except Exception as e:
                 self.log(
-                    tagged_string(
-                        "celune.normalizer_error",
-                        "NORMALIZER ERROR",
-                        error=format_error(e, self.log_level),
-                    ),
+                    f"[NORMALIZER ERROR] {format_error(e, self.log_level)}",
                     "error",
                 )
                 self.log(string("celune.normalizer_failed"), "warning")
@@ -3641,11 +3639,8 @@ class Celune(CeluneStateAccessors):
         thread.start()
         self.progress_callback(None, None)
         self.log(
-            string(
-                "celune.loading_normalizer",
-                model_id=NORMALIZER_MODEL_ID,
-                device=normalizer_device(self.config),
-            )
+            f"Loading normalizer {NORMALIZER_MODEL_ID} "
+            f"on {normalizer_device(self.config)}..."
         )
 
     def _warmup(
@@ -3772,7 +3767,7 @@ class Celune(CeluneStateAccessors):
                 token_ids = cast(torch.Tensor, tokens["input_ids"])
                 len_tokens = token_ids.shape[1]
 
-                self.log(string("celune.tokens_to_normalize", count=len_tokens))
+                self.log(f"Tokens to normalize: {len_tokens}")
                 if len_tokens > 512:
                     self.log(string("celune.input_too_long_to_normalize"), "warning")
                     return None
@@ -3790,10 +3785,7 @@ class Celune(CeluneStateAccessors):
                 input_ids = inputs["input_ids"]
 
                 if not isinstance(input_ids, torch.Tensor):
-                    self.log(
-                        string("celune.normalizer_output_not_tensor"),
-                        "warning",
-                    )
+                    self.log("Normalizer output was not a tensor.", "warning")
                     return None
 
                 prompt_len = input_ids.shape[1]
@@ -3801,7 +3793,7 @@ class Celune(CeluneStateAccessors):
 
                 # CeluneNorm shouldn't do this, but if it does happen, stop Celune from saying nothing
                 if new_ids.numel() == 0:
-                    self.log(string("celune.normalizer_returned_no_tokens"), "warning")
+                    self.log("Normalizer returned no tokens.", "warning")
                     return None
 
                 out = tokenizer.decode(new_ids, skip_special_tokens=True)
@@ -3816,27 +3808,18 @@ class Celune(CeluneStateAccessors):
 
                 # are we absolutely sure CeluneNorm did produce something before Celune gets to say it?
                 if not out:
-                    self.log(string("celune.normalizer_bad_output"), "warning")
+                    self.log("Normalizer did not produce normal output.", "warning")
                     return None
 
                 inf_total = time.perf_counter() - inf_start
-                self.log(string("celune.normalized_text", text=out))
-                self.log(
-                    string(
-                        "celune.normalization_took",
-                        seconds=format_number(inf_total, 2),
-                    )
-                )
+                self.log(f"Normalized text: {out}")
+                self.log(f"Normalization took {format_number(inf_total, 2)} seconds.")
 
                 return out
 
             except Exception as e:
                 self.log(
-                    tagged_string(
-                        "celune.normalization_error",
-                        "NORMALIZATION ERROR",
-                        error=format_error(e, self.log_level),
-                    ),
+                    f"[NORMALIZATION ERROR] {format_error(e, self.log_level)}",
                     "error",
                 )
                 return None
