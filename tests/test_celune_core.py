@@ -1001,7 +1001,7 @@ class TestCeluneCore(CeluneTestCase):
         Raises:
             AssertionError: Persona reconnect behavior changes unexpectedly.
         """
-        celune = self._make_celune({})
+        celune = self._make_celune({"mode": "converse", "vram": "high"})
         celune.vision = None
         celune.locked = False
         celune.cur_state = "idle"
@@ -1043,7 +1043,7 @@ class TestCeluneCore(CeluneTestCase):
 
     def test_think_queues_requests_while_persona_is_speaking(self) -> None:
         """Verify Persona requests submitted during playback run after the active reply."""
-        celune = self._make_celune({})
+        celune = self._make_celune({"mode": "converse", "vram": "high"})
         celune.error_callback = mock.Mock()
         celune.vision = mock.Mock()
         celune.persona_ready = True
@@ -1075,7 +1075,7 @@ class TestCeluneCore(CeluneTestCase):
 
     def test_think_worker_keeps_task_like_input_in_converse_mode(self) -> None:
         """Keep a valid task classification on the Persona path in converse mode."""
-        celune = self._make_celune({"mode": "converse"})
+        celune = self._make_celune({"mode": "converse", "vram": "high"})
         celune.persona_ready = True
         celune.locked = False
         celune.cur_state = "idle"
@@ -1107,6 +1107,17 @@ class TestCeluneCore(CeluneTestCase):
         think_pipeline.assert_called_once_with(celune, "Delete the fixture.")
         self.assertIsNone(celune.agent_runtime.get_active_task("default"))
 
+    def test_think_falls_back_to_speech_when_persona_vram_is_incompatible(
+        self,
+    ) -> None:
+        """Use direct speech when the selected preset cannot load Persona."""
+        celune = self._make_celune({"mode": "converse", "vram": "medium"})
+
+        with mock.patch.object(celune, "say", return_value=True) as say:
+            assert celune.think("Read this aloud.")
+
+        say.assert_called_once_with("Read this aloud.")
+
     def test_think_in_speak_mode_does_not_invoke_persona_or_agent_routing(self) -> None:
         """Send speak-mode input directly to speech without touching Persona."""
         celune = self._make_celune({"mode": "speak"})
@@ -1122,7 +1133,7 @@ class TestCeluneCore(CeluneTestCase):
         self,
     ) -> None:
         """Keep a Persona classifier transport error out of normal generation."""
-        celune = self._make_celune({"mode": "agent"})
+        celune = self._make_celune({"mode": "agent", "vram": "xhigh"})
         celune.persona_ready = True
         celune.locked = False
         celune.cur_state = "idle"
@@ -1130,6 +1141,7 @@ class TestCeluneCore(CeluneTestCase):
         celune.vision = mock.Mock()
         celune.vision.post.side_effect = RuntimeError("classifier transport failed")
         with (
+            mock.patch("celune.vram.torch.cuda.is_available", return_value=False),
             mock.patch("celune.celune.think_pipeline") as think_pipeline,
             mock.patch.object(celune, "say", return_value=False) as say,
         ):
@@ -1147,7 +1159,7 @@ class TestCeluneCore(CeluneTestCase):
         self,
     ) -> None:
         """Invalidate active speech and agent work before accepting new input."""
-        celune = self._make_celune({})
+        celune = self._make_celune({"mode": "converse", "vram": "high"})
         celune.locked = True
         celune.cur_state = "speaking"
         celune._persona_thread = mock.Mock()
