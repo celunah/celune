@@ -1,53 +1,58 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for backend resolution and extension infrastructure."""
 
-import contextlib
-import importlib
+import io
+import os
 import re
 import sys
 import tempfile
 import textwrap
+import importlib
 import threading
-from collections.abc import Generator, Iterator
-from pathlib import Path
+import contextlib
 from types import ModuleType, SimpleNamespace
-from typing import Optional, Union, cast
-from unittest import TestCase, mock
+from typing import Union, Optional, cast
+from pathlib import Path
+from unittest import mock
+from collections.abc import Iterator, Generator
 
 import numpy as np
-import soundfile as sf
 import torch
+import pytest
+import soundfile as sf
 
-from celune.backends.tts import resolve_backend
-from celune.backends.tts.gpt_sovits import GPTSoVITS, GPTSoVITSPipeline
-from celune.backends.vc import resolve_vc_backend
-from celune.backends.vc.passthrough import CelunePassthroughVCBackend
-from celune.backends.vc.seedvc import CeluneSeedVCBackend
-from celune.celune import Celune
-from celune.dataclasses.pipeline import VoiceConversionRequest
-from celune.exceptions import (
-    ExtensionAlreadyRegisteredError,
-    InvalidExtensionError,
-)
-from celune.extensions.base import CeluneContext, CeluneExtension
-from celune.extensions.manager import CeluneExtensionManager
 from celune.i18n import string
-from celune.typing.aliases import AudioChunk
-from celune.typing.backends import BackendModel
 from celune.utils import discard
+from celune.paths import huggingface_progress
+from celune.celune import Celune
+from celune.exceptions import (
+    InvalidExtensionError,
+    ExtensionAlreadyRegisteredError,
+)
+from celune.backends.vc import BACKEND_MANIFESTS as VC_BACKEND_MANIFESTS
+from celune.backends.vc import resolve_vc_backend
+from celune.backends.tts import BACKEND_MANIFESTS, resolve_backend
+from celune.typing.aliases import AudioChunk
+from celune.extensions.base import CeluneContext, CeluneExtension
+from celune.typing.backends import BackendModel, _SeedVCRealtimeModule
+from celune.backends.vc.seedvc import CeluneSeedVCBackend
+from celune.extensions.manager import CeluneExtensionManager
+from celune.dataclasses.pipeline import VoiceConversionRequest
+from celune.backends.tts.gpt_sovits import GPTSoVITS, GPTSoVITSPipeline
 
 from .support import (
     FakeBackend,
     FakeVCBackend,
+    CeluneTestCase,
     make_voice_loader,
-    mock_dotstts_backend,
     mock_mini_backend,
     mock_qwen3_backend,
     mock_voxcpm_backend,
+    mock_dotstts_backend,
 )
 
 
-class BackendTests(TestCase):
+class TestBackend(CeluneTestCase):
     """Tests for backend base behavior and backend resolution."""
 
     def test_gpt_sovits_uses_huggingface_snapshot_paths_for_model_config(self) -> None:
@@ -68,15 +73,11 @@ class BackendTests(TestCase):
             config = backend._model_config("v4")
             custom = cast(dict[str, Union[str, bool]], config["custom"])
 
-            self.assertEqual(
-                custom["t2s_weights_path"],
-                str(snapshot / "s1v3.ckpt"),
+            assert custom["t2s_weights_path"] == str(snapshot / "s1v3.ckpt")
+            assert custom["vits_weights_path"] == str(
+                snapshot / "gsv-v4-pretrained/s2Gv4.pth"
             )
-            self.assertEqual(
-                custom["vits_weights_path"],
-                str(snapshot / "gsv-v4-pretrained/s2Gv4.pth"),
-            )
-            self.assertNotIn("GPT_SoVITS/pretrained_models", str(custom))
+            assert "GPT_SoVITS/pretrained_models" not in str(custom)
 
     def test_gpt_sovits_uses_custom_t2s_checkpoint_override(self) -> None:
         """Verify a configured GPT checkpoint replaces only the variant T2S model."""
@@ -107,18 +108,192 @@ class BackendTests(TestCase):
             config = backend._model_config("v4")
             custom = cast(dict[str, Union[str, bool]], config["custom"])
 
-            self.assertEqual(custom["t2s_weights_path"], str(custom_checkpoint))
-            self.assertEqual(
-                custom["vits_weights_path"],
-                str(snapshot / "gsv-v4-pretrained/s2Gv4.pth"),
+            assert custom["t2s_weights_path"] == str(custom_checkpoint)
+            assert custom["vits_weights_path"] == str(
+                snapshot / "gsv-v4-pretrained/s2Gv4.pth"
             )
-            self.assertTrue(
-                backend._variant_is_available(
-                    snapshot,
-                    "v4",
-                    custom_checkpoint,
-                )
+            assert backend._variant_is_available(
+                snapshot,
+                "v4",
+                custom_checkpoint,
             )
+
+    def test_gpt_sovits_uses_shared_huggingface_progress(self) -> None:
+        """Verify GPT-SoVITS uses the shared Hugging Face progress bridge."""
+        backend = object.__new__(GPTSoVITS)
+        backend._model_snapshot = None
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            mock.patch(
+                "celune.backends.tts.gpt_sovits.snapshot_download",
+                return_value=str(Path(temp_dir) / "snapshot"),
+            ),
+            mock.patch(
+                "celune.backends.tts.gpt_sovits.huggingface_hub_cache_dir",
+                return_value=Path(temp_dir),
+            ),
+            mock.patch(
+                "celune.backends.tts.gpt_sovits.huggingface_progress",
+                wraps=huggingface_progress,
+            ) as progress_bridge,
+        ):
+            backend._ensure_model_snapshot()
+
+        progress_bridge.assert_called_once_with(backend.report_progress)
+
+    def test_tts_preload_uses_celune_huggingface_cache(self) -> None:
+        """Verify generic TTS preloading downloads into Celune's Hub cache."""
+        with mock_mini_backend() as mini_cls:
+            backend = object.__new__(mini_cls)
+            backend.log = mock.Mock()
+            backend._progress_callback = None
+
+            with (
+                mock.patch.object(
+                    backend,
+                    "model_is_available_locally",
+                    return_value=(False, None),
+                ),
+                mock.patch("celune.backends.tts.base.snapshot_download") as download,
+                mock.patch(
+                    "celune.backends.tts.base.huggingface_hub_cache_dir",
+                    return_value=Path("C:/celune/huggingface/hub"),
+                ),
+            ):
+                backend.preload_models()
+
+        download.assert_called_once_with(
+            repo_id="lunahr/pocket-tts-ungated",
+            cache_dir=str(Path("C:/celune/huggingface/hub")),
+        )
+
+    def test_gpt_sovits_bounds_nltk_downloads_and_restores_socket_timeout(
+        self,
+    ) -> None:
+        """Verify a stalled NLTK download becomes a bounded backend error."""
+        backend = object.__new__(GPTSoVITS)
+        backend._nltk_resources = {"test-resource": ("taggers/test-resource",)}
+        backend._nltk_download_timeout_seconds = 0.25
+        backend.log = mock.Mock()
+
+        nltk_data = SimpleNamespace(
+            path=[],
+            find=mock.Mock(side_effect=LookupError("missing resource")),
+        )
+
+        class FakeNltkModule(ModuleType):
+            """Typed NLTK module stand-in for the bounded download test."""
+
+            data: SimpleNamespace
+            download: mock.Mock
+
+        fake_nltk = FakeNltkModule("nltk")
+        fake_nltk.data = nltk_data
+        fake_nltk.download = mock.Mock(side_effect=TimeoutError("network timeout"))
+
+        with (
+            tempfile.TemporaryDirectory() as temp_dir,
+            mock.patch(
+                "celune.backends.tts.gpt_sovits.runtime_data_dir",
+                return_value=Path(temp_dir),
+            ),
+            mock.patch.dict(sys.modules, {"nltk": fake_nltk}),
+            mock.patch(
+                "celune.backends.tts.gpt_sovits.socket.getdefaulttimeout",
+                return_value=None,
+            ),
+            mock.patch(
+                "celune.backends.tts.gpt_sovits.socket.setdefaulttimeout"
+            ) as setdefaulttimeout,
+            self.assertRaisesRegex(RuntimeError, "network timeout"),
+        ):
+            backend._ensure_nltk_data()
+
+        self.assertEqual(
+            setdefaulttimeout.call_args_list,
+            [mock.call(0.25), mock.call(None)],
+        )
+
+    def test_gpt_sovits_uses_legacy_celune_nltk_data_without_downloading(
+        self,
+    ) -> None:
+        """Verify an existing legacy Celune NLTK directory is reused directly."""
+        backend = object.__new__(GPTSoVITS)
+        backend._nltk_resources = {"test-resource": ("taggers/test-resource",)}
+        backend.log = mock.Mock()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            celune_data = Path(temp_dir) / "celune"
+            legacy_data_dir = celune_data / "nltk_data"
+            nltk_data = SimpleNamespace(path=[])
+
+            def find(_resource: str) -> object:
+                if str(legacy_data_dir) in nltk_data.path:
+                    return object()
+                raise LookupError("missing resource")
+
+            nltk_data.find = find
+
+            class FakeNltkModule(ModuleType):
+                """Typed NLTK module stand-in for the existing-data test."""
+
+                data: SimpleNamespace
+                download: mock.Mock
+
+            fake_nltk = FakeNltkModule("nltk")
+            fake_nltk.data = nltk_data
+            fake_nltk.download = mock.Mock()
+
+            with (
+                mock.patch(
+                    "celune.backends.tts.gpt_sovits.runtime_data_dir",
+                    return_value=Path(temp_dir) / "runtime",
+                ),
+                mock.patch(
+                    "celune.backends.tts.gpt_sovits.app_data_dir",
+                    return_value=celune_data,
+                ),
+                mock.patch.dict(sys.modules, {"nltk": fake_nltk}),
+                mock.patch.dict(os.environ, {"NLTK_DATA": ""}),
+            ):
+                backend._ensure_nltk_data()
+
+        fake_nltk.download.assert_not_called()
+        backend.log.assert_not_called()
+
+    def test_voxcpm2_does_not_forward_transformers_only_arguments(
+        self,
+    ) -> None:
+        """Verify both VoxCPM2 loading paths match the package constructor API."""
+        with mock_voxcpm_backend() as voxcpm2_cls:
+            backend = voxcpm2_cls.__new__(voxcpm2_cls)
+            backend.log = mock.Mock()
+            model = object()
+            voxcpm_module = sys.modules[voxcpm2_cls.__module__]
+            voxcpm_loader = voxcpm_module.__dict__["VoxCPM"]
+
+            with (
+                mock.patch.object(
+                    voxcpm_loader,
+                    "from_pretrained",
+                    create=True,
+                    return_value=model,
+                ) as load_model,
+                mock.patch.object(voxcpm2_cls, "_install_checkpoint_tokenizer"),
+                mock.patch.object(
+                    backend,
+                    "model_is_available_locally",
+                    side_effect=[(True, "cached"), (False, None), (False, None)],
+                ),
+            ):
+                assert backend.load_model("openbmb/VoxCPM2") is model
+                assert backend.load_model("openbmb/VoxCPM2") is model
+
+            assert [call.kwargs for call in load_model.call_args_list] == [
+                {"load_denoiser": False, "optimize": False},
+                {"load_denoiser": False, "optimize": False},
+            ]
 
     def test_gpt_sovits_bootstrap_uses_celune_user_data_directory(self) -> None:
         """Verify missing GPT-SoVITS source is installed below Celune user data."""
@@ -126,7 +301,7 @@ class BackendTests(TestCase):
 
         with (
             mock.patch(
-                "celune.backends.tts.gpt_sovits.app_data_dir",
+                "celune.backends.tts.gpt_sovits.runtime_data_dir",
                 return_value=expected_root.parent,
             ),
             mock.patch.object(GPTSoVITS, "_candidate_roots", return_value=iter(())),
@@ -134,9 +309,31 @@ class BackendTests(TestCase):
                 GPTSoVITS, "_download_source_tree", return_value=expected_root
             ) as download,
         ):
-            self.assertEqual(GPTSoVITS._resolve_root(None), expected_root)
+            assert GPTSoVITS._resolve_root(None) == expected_root
 
         download.assert_called_once_with(expected_root)
+
+    def test_gpt_sovits_auto_selects_a_streaming_variant(self) -> None:
+        """Verify automatic GPT-SoVITS selection accepts fragment-streaming variants."""
+        backend = GPTSoVITS.__new__(GPTSoVITS)
+        backend._custom_t2s_weights_path = None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            snapshot = Path(temp_dir)
+            for relative_path in (
+                "chinese-hubert-base/config.json",
+                "chinese-roberta-wwm-ext-large/config.json",
+                "s1v3.ckpt",
+                "v2Pro/s2Gv2Pro.pth",
+                "sv/pretrained_eres2netv2w24s4ep4.ckpt",
+                "gsv-v4-pretrained/s2Gv4.pth",
+                "gsv-v4-pretrained/vocoder.pth",
+            ):
+                target = snapshot / relative_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.touch()
+
+            assert backend._select_variant(snapshot, None) == "v2Pro"
+            assert backend._select_variant(snapshot, "v4") == "v4"
 
     def test_gpt_sovits_converts_integer_pcm_to_float_audio(self) -> None:
         """Verify GPT-SoVITS int16 PCM is scaled to Celune's float audio range."""
@@ -145,19 +342,13 @@ class BackendTests(TestCase):
         audio = GPTSoVITS._to_numpy_audio(pcm)
 
         np.testing.assert_allclose(audio, [-1.0, 0.0, 32767 / 32768])
-        self.assertEqual(audio.dtype, np.float32)
+        assert audio.dtype == np.float32
 
     def test_gpt_sovits_uses_english_for_unambiguous_latin_text(self) -> None:
         """Verify automatic language selection uses English phonemization for Latin text."""
-        self.assertEqual(
-            GPTSoVITS._resolve_text_language("auto", "Hello, Celune."),
-            "en",
-        )
-        self.assertEqual(
-            GPTSoVITS._resolve_text_language("auto", "Hello, 你好."),
-            "auto",
-        )
-        self.assertEqual(GPTSoVITS._resolve_text_language("ja", "Hello."), "ja")
+        assert GPTSoVITS._resolve_text_language("auto", "Hello, Celune.") == "en"
+        assert GPTSoVITS._resolve_text_language("auto", "Hello, 你好.") == "auto"
+        assert GPTSoVITS._resolve_text_language("ja", "Hello.") == "ja"
 
     def test_gpt_sovits_rejects_reference_audio_shorter_than_three_seconds(
         self,
@@ -167,7 +358,7 @@ class BackendTests(TestCase):
             path = Path(temp_dir) / "short.wav"
             sf.write(path, np.zeros(24000, dtype=np.float32), 24000)
 
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 GPTSoVITS._validate_reference_audio("calm", path)
 
     def test_gpt_sovits_trims_quiet_reference_edges(self) -> None:
@@ -187,10 +378,10 @@ class BackendTests(TestCase):
 
             trimmed = backend._trim_reference_silence(source)
 
-            self.assertNotEqual(trimmed, source)
-            self.assertGreaterEqual(float(sf.info(trimmed).duration), 4.0)
-            self.assertLess(float(sf.info(trimmed).duration), 5.0)
-            self.assertIn(trimmed, backend._truncated_reference_paths)
+            assert trimmed != source
+            assert sf.info(trimmed).duration >= 4.0
+            assert sf.info(trimmed).duration < 5.0
+            assert trimmed in backend._truncated_reference_paths
 
     def test_gpt_sovits_refreshes_prompt_cache_after_voice_change(self) -> None:
         """Verify a changed voice reference clears official prompt state."""
@@ -211,9 +402,9 @@ class BackendTests(TestCase):
             "en",
         )
 
-        self.assertIsNone(pipeline.prompt_cache["ref_audio_path"])
-        self.assertEqual(pipeline.prompt_cache["refer_spec"], [])
-        self.assertIsNone(pipeline.prompt_cache["prompt_text"])
+        assert pipeline.prompt_cache["ref_audio_path"] is None
+        assert pipeline.prompt_cache["refer_spec"] == []
+        assert pipeline.prompt_cache["prompt_text"] is None
 
     def test_base_backend_reports_models(self) -> None:
         """Verify model metadata helpers on a fake backend.
@@ -222,10 +413,20 @@ class BackendTests(TestCase):
             AssertionError: A backend helper returns an unexpected value.
         """
         backend = FakeBackend(log=lambda _msg, _severity="info": None)
-        self.assertEqual(backend.default_model_id, "fake/balanced")
-        self.assertEqual(backend.all_model_ids, ["fake/balanced", "fake/bold"])
-        self.assertEqual(backend.voices, ["balanced", "bold"])
-        self.assertEqual(backend.model_id_for_voice("bold"), "fake/bold")
+        assert backend.default_model_id == "fake/balanced"
+        assert backend.all_model_ids == ["fake/balanced", "fake/bold"]
+        assert backend.voices == ["balanced", "bold"]
+        assert backend.model_id_for_voice("bold") == "fake/bold"
+
+    def test_base_backend_forwards_loading_progress(self) -> None:
+        """Verify backend-owned loading progress reaches Celune's callback."""
+        backend = FakeBackend(log=lambda _msg, _severity="info": None)
+        progress = mock.Mock()
+
+        backend.bind_progress(progress)
+        backend.report_progress(2, 5)
+
+        progress.assert_called_once_with(2, 5)
 
     def test_base_backend_materializes_bundle_pt_refs_when_available(self) -> None:
         """Verify CEVOICE bundles eagerly extract .pt refs alongside .wav files."""
@@ -245,14 +446,11 @@ class BackendTests(TestCase):
             backend = FakeBackend(log=lambda _msg, _severity="info": None)
             backend.validate_refs()
 
-        self.assertEqual(
-            materialize.call_args_list,
-            [
-                mock.call("balanced", "wav"),
-                mock.call("balanced", "pt"),
-                mock.call("bold", "wav"),
-            ],
-        )
+        assert materialize.call_args_list == [
+            mock.call("balanced", "wav"),
+            mock.call("balanced", "pt"),
+            mock.call("bold", "wav"),
+        ]
 
     def test_base_backend_truncates_long_reference_wav_to_ten_seconds(self) -> None:
         """Verify the shared reference helper clips long WAV prompts to ten seconds."""
@@ -268,13 +466,13 @@ class BackendTests(TestCase):
             ):
                 truncated = backend.truncate_reference(source)
 
-            self.assertNotEqual(truncated, source)
-            self.assertLessEqual(sf.info(truncated).duration, 10.0)
-            self.assertEqual(truncated.parent, canonical_temp)
-            self.assertEqual(source.exists(), True)
+            assert truncated != source
+            assert sf.info(truncated).duration <= 10.0
+            assert truncated.parent == canonical_temp
+            assert source.exists()
 
             backend.unload_model()
-            self.assertEqual(truncated.exists(), False)
+            assert not truncated.exists()
 
     def test_resolve_backend_accepts_instance_type_and_rejects_unknown(self) -> None:
         """Verify supported backend specifications and invalid input failures.
@@ -283,11 +481,11 @@ class BackendTests(TestCase):
             AssertionError: Backend resolution behavior changes unexpectedly.
         """
         instance = FakeBackend(log=lambda _msg, _severity="info": None)
-        self.assertIs(resolve_backend(instance), instance)
-        self.assertIsInstance(resolve_backend(FakeBackend), FakeBackend)
-        with self.assertRaisesRegex(
+        assert resolve_backend(instance) is instance
+        assert isinstance(resolve_backend(FakeBackend), FakeBackend)
+        with pytest.raises(
             ValueError,
-            re.escape(
+            match=re.escape(
                 string(
                     "celune.unknown_backend",
                     backend="missing",
@@ -296,17 +494,17 @@ class BackendTests(TestCase):
             ),
         ):
             resolve_backend("missing")
-        with self.assertRaisesRegex(TypeError, "backend_name"):
+        with pytest.raises(TypeError, match="backend_name"):
             resolve_backend(123)  # type: ignore[arg-type]
 
     def test_resolve_vc_backend_accepts_instance_type_and_rejects_unknown(self) -> None:
         """Verify supported VC backend specifications and invalid input failures."""
         instance = FakeVCBackend(log=lambda _msg, _severity="info": None)
-        self.assertIs(resolve_vc_backend(instance), instance)
-        self.assertIsInstance(resolve_vc_backend(FakeVCBackend), FakeVCBackend)
-        with self.assertRaisesRegex(ValueError, "unknown voice-conversion backend"):
+        assert resolve_vc_backend(instance) is instance
+        assert isinstance(resolve_vc_backend(FakeVCBackend), FakeVCBackend)
+        with pytest.raises(ValueError, match="unknown voice-conversion backend"):
             resolve_vc_backend("missing")
-        with self.assertRaisesRegex(TypeError, "voice-conversion backend"):
+        with pytest.raises(TypeError, match="voice-conversion backend"):
             resolve_vc_backend(123)  # type: ignore[arg-type]
 
     def test_unload_model_releases_nested_runtime_members(self) -> None:
@@ -337,44 +535,22 @@ class BackendTests(TestCase):
 
         backend.unload_model()
 
-        self.assertEqual(inner.closed, True)
-        self.assertEqual(cached.closed, True)
-        self.assertIsNone(backend.model)
-
-    def test_passthrough_vc_backend_returns_playable_output(self) -> None:
-        """Verify the passthrough VC backend returns decoded audio unchanged."""
-        backend = CelunePassthroughVCBackend(log=lambda _msg, _severity="info": None)
-        source = np.ones((12, 2), dtype=np.float32)
-
-        output = backend.convert(
-            VoiceConversionRequest(
-                source_audio=source,
-                sample_rate=44100,
-                target_voice="balanced",
-                target_character="Celune",
-                label="fixture audio",
-            )
-        )
-
-        self.assertEqual(output.sample_rate, 44100)
-        self.assertEqual(output.label, "fixture audio")
-        self.assertEqual(output.audio.shape, (12, 2))
-        self.assertEqual(np.array_equal(output.audio, source), True)
-        self.assertIsNot(output.audio, source)
+        assert inner.closed
+        assert cached.closed
+        assert backend.model is None
 
     def test_resolve_vc_backend_accepts_seedvc_backend_name(self) -> None:
-        """Verify the Seed-VC backend resolves through the VC backend registry."""
-        backend = resolve_vc_backend("seed-vc")
-        self.assertIsInstance(backend, CeluneSeedVCBackend)
-        self.assertEqual(backend.name, "seed-vc")
+        """Verify named Seed-VC resolution selects the CEDTS manifest."""
+        with mock.patch("celune.cedts.remote.RemoteVCBackendProxy") as proxy:
+            resolve_vc_backend("seed-vc")
+
+        assert proxy.call_args.args[0] is VC_BACKEND_MANIFESTS["seed-vc"]
 
     def test_seedvc_backend_requires_reference_audio(self) -> None:
         """Verify Seed-VC refuses requests without a target reference WAV."""
         backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
 
-        with self.assertRaisesRegex(
-            ValueError, "requires at least one target reference"
-        ):
+        with pytest.raises(ValueError, match="requires at least one target reference"):
             backend.convert(
                 VoiceConversionRequest(
                     source_audio=np.ones((8,), dtype=np.float32),
@@ -429,13 +605,141 @@ class BackendTests(TestCase):
                 )
             )
 
-        self.assertEqual(output.sample_rate, 22050)
-        self.assertEqual(output.label, "fixture audio")
-        self.assertEqual(output.audio.dtype, np.float32)
-        self.assertEqual(output.audio.tolist(), [0.25, -0.25])
-        self.assertEqual(captured["stream_output"], False)
-        self.assertEqual(captured["f0_condition"], False)
-        self.assertEqual(captured["pitch_shift"], 0)
+        assert output.sample_rate == 22050
+        assert output.label == "fixture audio"
+        assert output.audio.dtype == np.float32
+        assert output.audio.tolist() == [0.25, -0.25]
+        assert not captured["stream_output"]
+        assert not captured["f0_condition"]
+        assert captured["pitch_shift"] == 0
+
+    def test_seedvc_live_backend_uses_native_session_without_offline_wrapper(
+        self,
+    ) -> None:
+        """Verify live VC sends blocks to Seed-VC's native session directly."""
+        backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
+        source = np.ones((8640, 2), dtype=np.float32)
+        reference = Path("reference.wav")
+        request = VoiceConversionRequest(
+            source_audio=source,
+            sample_rate=48000,
+            target_references=(reference,),
+            label="live fixture",
+        )
+        realtime_module = ModuleType("seed_vc.real_time")
+        model_set = (
+            "model",
+            "semantic",
+            "vocoder",
+            "campplus",
+            "mel",
+            {"sampling_rate": 22050},
+        )
+
+        with (
+            mock.patch.object(
+                backend,
+                "_get_live_runtime",
+                return_value=(realtime_module, model_set),
+            ),
+            mock.patch.object(backend, "_initialize_live_session") as initialize,
+            mock.patch.object(
+                backend,
+                "_convert_live_audio",
+                return_value=np.array([2.0, -2.0], dtype=np.float32),
+            ) as convert,
+        ):
+            output = backend.convert_live(request)
+
+        initialize.assert_called_once_with(
+            realtime_module,
+            model_set,
+            reference,
+            48000,
+        )
+        convert.assert_called_once_with(source, 48000)
+        assert output.sample_rate == 48000
+        assert output.label == "live fixture"
+        np.testing.assert_array_equal(
+            output.audio,
+            np.array([0.95, -0.95], dtype=np.float32),
+        )
+
+    def test_seedvc_live_loader_uses_the_module_source_directory(self) -> None:
+        """Verify native Seed-VC relative resources resolve from its package root."""
+        backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
+        module = ModuleType("seed_vc.real_time")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_root = Path(temp_dir)
+            original_cwd = Path.cwd()
+            source_file = source_root / "real-time-gui.py"
+            source_file.touch()
+            module.__file__ = str(source_file)
+            captured: dict[str, Path] = {}
+            load_count = 0
+
+            def load_models(_args: SimpleNamespace) -> tuple[object, ...]:
+                """Capture the working directory used by native model loading."""
+                nonlocal load_count
+                load_count += 1
+                captured["cwd"] = Path.cwd()
+                return ("model", "semantic", "vocoder", "campplus", "mel", {})
+
+            setattr(module, "load_models", load_models)  # noqa: B010
+            captured_stdout = io.StringIO()
+            with (
+                contextlib.redirect_stdout(captured_stdout),
+                mock.patch.object(backend, "_load_live_module", return_value=module),
+            ):
+                backend._get_live_runtime()
+                backend._get_live_runtime()
+
+        self.assertEqual(captured["cwd"], source_root)
+        self.assertEqual(Path.cwd(), original_cwd)
+        self.assertEqual(load_count, 1)
+        self.assertEqual(captured_stdout.getvalue(), "")
+
+    def test_seedvc_live_inference_keeps_native_stdout_off_the_worker_stream(
+        self,
+    ) -> None:
+        """Verify native live inference diagnostics cannot corrupt worker framing."""
+        backend = CeluneSeedVCBackend(log=lambda _msg, _severity="info": None)
+        module = ModuleType("seed_vc.real_time")
+
+        def custom_infer(*_args: object) -> torch.Tensor:
+            """Emit diagnostics that the native implementation writes during inference."""
+            print("target_lengths: tensor([1])")
+            print("0%| | 0/10", file=sys.stderr)
+            return torch.zeros(4)
+
+        setattr(module, "custom_infer", custom_infer)  # noqa: B010
+        backend._live_module = cast(_SeedVCRealtimeModule, module)
+        backend._live_model_set = ("model",)
+        backend._live_reference_path = Path("reference.wav")
+        backend._live_reference_wav = np.zeros(4, dtype=np.float32)
+        backend._live_model_sample_rate = 22050
+        backend._live_block_frame = 4
+        backend._live_block_frame_16k = 1
+        backend._live_input_wav = torch.zeros(4)
+        captured_stdout = io.StringIO()
+        captured_stderr = io.StringIO()
+
+        with (
+            contextlib.redirect_stdout(captured_stdout),
+            contextlib.redirect_stderr(captured_stderr),
+            mock.patch.object(
+                backend,
+                "_apply_live_sola",
+                return_value=torch.zeros(4),
+            ),
+        ):
+            output = backend._convert_live_block(
+                np.zeros(4, dtype=np.float32),
+            )
+
+        assert captured_stdout.getvalue() == ""
+        assert captured_stderr.getvalue() == ""
+        assert output.shape == (4,)
 
     def test_seedvc_backend_uses_configured_pitch_shift_for_wrapper_requests(
         self,
@@ -484,7 +788,7 @@ class BackendTests(TestCase):
                 )
             )
 
-        self.assertEqual(captured["pitch_shift"], 9)
+        assert captured["pitch_shift"] == 9
 
     def test_seedvc_backend_prefers_request_f0_condition_over_backend_default(
         self,
@@ -533,8 +837,8 @@ class BackendTests(TestCase):
                 )
             )
 
-        self.assertEqual(captured["f0_condition"], True)
-        self.assertEqual(output.sample_rate, 44100)
+        assert captured["f0_condition"]
+        assert output.sample_rate == 44100
 
     def test_seedvc_backend_redirects_package_checkpoint_downloads_into_hf_cache(
         self,
@@ -554,14 +858,18 @@ class BackendTests(TestCase):
             captured.append((repo_id, filename, cache_dir))
             return str(Path(cache_dir) / filename)
 
-        setattr(fake_hf_utils, "hf_hub_download", fake_hf_hub_download)
-        setattr(
+        setattr(fake_hf_utils, "hf_hub_download", fake_hf_hub_download)  # noqa: B010
+        setattr(  # noqa: B010
             fake_hf_utils,
             "load_custom_model_from_hf",
             lambda *args, **kwargs: None,
         )
-        setattr(fake_wrapper, "load_custom_model_from_hf", lambda *args, **kwargs: None)
-        setattr(fake_wrapper, "SeedVCWrapper", type("FakeSeedVCWrapper", (), {}))
+        setattr(  # noqa: B010
+            fake_wrapper,
+            "load_custom_model_from_hf",
+            lambda *args, **kwargs: None,
+        )
+        setattr(fake_wrapper, "SeedVCWrapper", type("FakeSeedVCWrapper", (), {}))  # noqa: B010
 
         def import_module(name: str) -> ModuleType:
             if name == "seed_vc.hf_utils":
@@ -584,54 +892,34 @@ class BackendTests(TestCase):
                 ),
             ):
                 backend._load_wrapper_type()
-                resolved = getattr(fake_wrapper, "load_custom_model_from_hf")(
+                resolved = getattr(fake_wrapper, "load_custom_model_from_hf")(  # noqa: B009
                     "funasr/campplus",
                     "campplus_cn_common.bin",
                     None,
                 )
 
-        self.assertEqual(Path(resolved), expected_cache_dir / "campplus_cn_common.bin")
-        self.assertEqual(
-            captured,
-            [
-                (
-                    "funasr/campplus",
-                    "campplus_cn_common.bin",
-                    str(expected_cache_dir),
-                )
-            ],
-        )
+        assert Path(resolved) == expected_cache_dir / "campplus_cn_common.bin"
+        assert captured == [
+            (
+                "funasr/campplus",
+                "campplus_cn_common.bin",
+                str(expected_cache_dir),
+            )
+        ]
 
     def test_resolve_backend_accepts_mini_backend_name(self) -> None:
-        """Verify the Pocket TTS backend resolves through the backend registry."""
+        """Verify named TTS resolution always selects the CEDTS manifest."""
+        with mock.patch("celune.cedts.remote.RemoteBackendProxy") as proxy:
+            resolve_backend("mini")
 
-        class StubTTSModel:
-            """Import-time stand-in for the Pocket TTS package class."""
-
-        with mock.patch.dict(
-            sys.modules,
-            {"pocket_tts": SimpleNamespace(TTSModel=StubTTSModel)},
-        ):
-            mini = importlib.import_module("celune.backends.tts.mini")
-            mini_cls = mini.Mini
-
-            with mock.patch.object(mini_cls, "_validate_refs"):
-                backend = resolve_backend("mini")
-
-        self.assertIsInstance(backend, mini_cls)
-        self.assertEqual(backend.name, "mini")
+        assert proxy.call_args.args[0] is BACKEND_MANIFESTS["mini"]
 
     def test_resolve_backend_accepts_dotstts_backend_name(self) -> None:
-        """Verify the dots.tts backend resolves through the backend registry."""
+        """Verify named DotsTTS resolution selects the CEDTS manifest."""
+        with mock.patch("celune.cedts.remote.RemoteBackendProxy") as proxy:
+            resolve_backend("dotstts")
 
-        with (
-            mock_dotstts_backend() as dotstts_cls,
-            mock.patch.object(dotstts_cls, "_validate_refs"),
-        ):
-            backend = resolve_backend("dotstts")
-
-        self.assertIsInstance(backend, dotstts_cls)
-        self.assertEqual(backend.name, "dotstts")
+        assert proxy.call_args.args[0] is BACKEND_MANIFESTS["dotstts"]
 
     def test_voxcpm2_uses_pack_cfg_scale_when_present(self) -> None:
         """Verify CEVOICE can override VoxCPM2's per-voice CFG scale."""
@@ -678,7 +966,27 @@ class BackendTests(TestCase):
                     )
                 )
 
-            self.assertEqual(model.cfg_value, 4.2)
+            assert model.cfg_value == 4.2
+
+    def test_voxcpm2_reloads_the_checkpoint_tokenizer(self) -> None:
+        """Verify VoxCPM2 replaces its package loader's incompatible tokenizer."""
+        with mock_voxcpm_backend() as voxcpm2_cls:
+            tokenizer = mock.Mock()
+            model = SimpleNamespace(tts_model=SimpleNamespace(text_tokenizer=None))
+            with mock.patch(
+                "celune.backends.tts.voxcpm2.AutoTokenizer.from_pretrained",
+                return_value=tokenizer,
+            ) as from_pretrained:
+                voxcpm2_cls._install_checkpoint_tokenizer(model, "snapshot")
+
+            tokenizer.encode.return_value = [11]
+            assert model.tts_model.text_tokenizer("hello") == [11]
+            tokenizer.encode.assert_called_once_with("hello", add_special_tokens=False)
+            from_pretrained.assert_called_once_with(
+                "snapshot",
+                local_files_only=True,
+                trust_remote_code=True,
+            )
 
     @staticmethod
     def test_voxcpm2_requires_reference_text_for_valid_voice_identifiers() -> None:
@@ -738,7 +1046,7 @@ class BackendTests(TestCase):
                     )
                 )
 
-            self.assertEqual(model.reference_wav_path, Path("trimmed.wav"))
+            assert model.reference_wav_path == Path("trimmed.wav")
 
     @staticmethod
     def test_voxcpm2_requires_a_compatible_voice_pack() -> None:
@@ -819,7 +1127,7 @@ class BackendTests(TestCase):
                 model = FakeModel()
                 list(backend.generate_stream(model, text="hello", voice="calm"))
 
-            self.assertEqual(model.audio_conditioning, str(Path("trimmed.wav")))
+            assert model.audio_conditioning == str(Path("trimmed.wav"))
 
     def test_mini_does_not_apply_reference_wav_truncation_to_reference_text(
         self,
@@ -839,7 +1147,7 @@ class BackendTests(TestCase):
                 ),
             ):
                 backend = mini_cls(log=lambda _msg, _severity="info": None)
-                self.assertEqual(backend.voices, ["calm"])
+                assert backend.voices == ["calm"]
 
     @staticmethod
     def test_mini_requires_a_compatible_voice_pack() -> None:
@@ -894,7 +1202,36 @@ class BackendTests(TestCase):
                 model = FakeModel()
                 list(backend.generate_stream(model, text="hello", voice="calm"))
 
-            self.assertEqual(model.ref_text, "Pack reference.")
+            assert model.ref_text == "Pack reference."
+
+    def test_qwen3_uses_writable_numba_cache_before_loading(self, tmp_path) -> None:
+        """Verify Qwen3 avoids dependency import stalls in its read-only environment."""
+
+        with mock_qwen3_backend() as qwen3_cls:
+            model = object()
+            with (
+                mock.patch.object(qwen3_cls, "_validate_refs"),
+                mock.patch.object(
+                    qwen3_cls,
+                    "model_is_available_locally",
+                    return_value=(True, str(tmp_path / "snapshot")),
+                ),
+                mock.patch(
+                    "celune.paths.temp_data_dir",
+                    return_value=tmp_path,
+                ),
+                mock.patch(
+                    "celune.backends.tts.qwen3.FasterQwen3TTS.from_pretrained",
+                    create=True,
+                    return_value=model,
+                ) as from_pretrained,
+                mock.patch.dict(os.environ, {}, clear=False),
+            ):
+                backend = qwen3_cls(log=lambda _msg, _severity="info": None)
+                assert backend.load_model("Qwen/test") is model
+                assert os.environ["NUMBA_CACHE_DIR"] == str(tmp_path / "numba")
+
+            from_pretrained.assert_called_once_with(str(tmp_path / "snapshot"))
 
     def test_qwen3_uses_truncated_reference_wav_when_present(self) -> None:
         """Verify Qwen3 passes reference audio through the shared truncation hook."""
@@ -936,8 +1273,8 @@ class BackendTests(TestCase):
                 model = FakeModel()
                 list(backend.generate_stream(model, text="hello", voice="calm"))
 
-            self.assertEqual(model.ref_text, "Pack reference.")
-            self.assertEqual(model.ref_audio, Path("trimmed.wav"))
+            assert model.ref_text == "Pack reference."
+            assert model.ref_audio == Path("trimmed.wav")
 
     def test_dotstts_uses_pack_reference_text_when_present(self) -> None:
         """Verify CEVOICE can override dots.tts reference text."""
@@ -979,7 +1316,32 @@ class BackendTests(TestCase):
                 model = FakeModel()
                 list(backend.generate_stream(model, text="hello", voice="calm"))
 
-            self.assertEqual(model.prompt_text, "Pack reference.")
+            assert model.prompt_text == "Pack reference."
+
+    def test_dotstts_reloads_the_tokenizer_with_the_mistral_regex_fix(self) -> None:
+        """Verify dots.tts applies Transformers' Mistral tokenizer compatibility flag."""
+        with mock_dotstts_backend() as dotstts_cls:
+            tokenizer = object()
+            model = SimpleNamespace(
+                pretrained_path=Path("snapshot"),
+                model=SimpleNamespace(
+                    tokenizer=object(),
+                    core=SimpleNamespace(tokenizer=object()),
+                ),
+            )
+            with mock.patch(
+                "celune.backends.tts.dotstts.AutoTokenizer.from_pretrained",
+                return_value=tokenizer,
+            ) as load_tokenizer:
+                dotstts_cls._fix_checkpoint_tokenizer(model)
+
+            load_tokenizer.assert_called_once_with(
+                "snapshot",
+                local_files_only=True,
+                fix_mistral_regex=True,
+            )
+            assert model.model.tokenizer is tokenizer
+            assert model.model.core.tokenizer is tokenizer
 
     def test_dotstts_uses_truncated_reference_wav_when_present(self) -> None:
         """Verify dots.tts passes reference audio through the shared truncation hook."""
@@ -1021,8 +1383,8 @@ class BackendTests(TestCase):
                 model = FakeModel()
                 list(backend.generate_stream(model, text="hello", voice="calm"))
 
-            self.assertEqual(model.prompt_text, "Pack reference.")
-            self.assertEqual(model.prompt_audio_path, str(Path("trimmed.wav")))
+            assert model.prompt_text == "Pack reference."
+            assert model.prompt_audio_path == str(Path("trimmed.wav"))
 
     def test_dotstts_falls_back_to_the_active_pack_voice_ids(self) -> None:
         """Verify dots.tts uses the pack voice when the backend default is absent."""
@@ -1064,8 +1426,8 @@ class BackendTests(TestCase):
                 model = FakeModel()
                 list(backend.generate_stream(model, text="hello"))
 
-            self.assertEqual(model.prompt_audio_path, str(Path("calm.wav")))
-            self.assertEqual(model.prompt_text, "Pack reference.")
+            assert model.prompt_audio_path == str(Path("calm.wav"))
+            assert model.prompt_text == "Pack reference."
 
     @staticmethod
     def test_dotstts_requires_reference_text_for_valid_voice_identifiers() -> None:
@@ -1159,10 +1521,10 @@ class BackendTests(TestCase):
                     backend.generate_stream(model, text="hello", voice="calm")
                 )
 
-            self.assertEqual(len(chunks), 2)
-            self.assertEqual(chunks[0][1], 48000)
-            self.assertEqual(chunks[1][0].tolist(), [1.0])
-            self.assertEqual(model.stream.closed, True)
+            assert len(chunks) == 2
+            assert chunks[0][1] == 48000
+            assert chunks[1][0].tolist() == [1.0]
+            assert model.stream.closed
 
     @staticmethod
     def test_dotstts_suppresses_loguru_runtime_noise() -> None:
@@ -1292,10 +1654,10 @@ class BackendTests(TestCase):
                     backend.generate_stream(model, text="hello", voice="calm")
                 )
 
-            self.assertEqual(len(chunks), 2)
-            self.assertEqual(chunks[0][1], 24000)
-            self.assertEqual(chunks[1][0].tolist(), [1.0])
-            self.assertEqual(model.stream.closed, True)
+            assert len(chunks) == 2
+            assert chunks[0][1] == 24000
+            assert chunks[1][0].tolist() == [1.0]
+            assert model.stream.closed
 
     def test_qwen3_marks_final_chunk_when_eos_was_not_observed(self) -> None:
         """Verify Qwen3 marks exhausted generations that never surfaced EOS."""
@@ -1342,7 +1704,7 @@ class BackendTests(TestCase):
                     backend.generate_stream(FakeModel(), text="hello", voice="calm")
                 )
 
-            self.assertEqual(chunk[2]["missing_eos"], True)
+            assert chunk[2]["missing_eos"]
 
     def test_voxcpm2_marks_final_chunk_when_stop_token_was_not_observed(self) -> None:
         """Verify VoxCPM2 marks exhausted generations that never surfaced a stop."""
@@ -1387,13 +1749,14 @@ class BackendTests(TestCase):
                     )
                 )
 
-            self.assertEqual(chunks[-1][2]["missing_eos"], True)
+            assert chunks[-1][2]["missing_eos"]
 
 
-class ExtensionTests(TestCase):
+class TestExtension(CeluneTestCase):
     """Tests for extension context and manager behavior."""
 
     def setUp(self) -> None:
+        """Reset extension-manager state before each extension test."""
         self.backend_override = mock.Mock(
             side_effect=lambda backend_name: contextlib.nullcontext(
                 cast(Celune, SimpleNamespace())
@@ -1406,12 +1769,13 @@ class ExtensionTests(TestCase):
             )
         )
         self.logs: list[tuple[str, str]] = []
-        self.dev_logs: list[tuple[str, str]] = []
         self.invocations: list[tuple[str, tuple[str, ...]]] = []
         self.play_calls: list[tuple[str, bool, float]] = []
         self.context = CeluneContext(
-            log=lambda msg, severity="info": self.logs.append((msg, severity)),
-            log_dev=lambda msg, severity="info": self.dev_logs.append((msg, severity)),
+            log=lambda msg, severity="info", **kwargs: self.logs.append(
+                (msg, severity)
+            ),
+            log_level="verbose",
             say=lambda text, save=True, display_text=None: True,
             think=lambda text: True,
             play=lambda sound_path, keep=False, volume=1.0: (
@@ -1433,17 +1797,17 @@ class ExtensionTests(TestCase):
         """
         extension = DemoExtension(self.context)
         self.context.expose("token", "value")
-        self.assertEqual(self.context.get("token"), "value")
-        self.assertEqual(extension.state, "idle")
+        assert self.context.get("token") == "value"
+        assert extension.state == "idle"
         extension.log("hello")
-        self.assertEqual(self.logs[-1], ("[Demo] hello", "info"))
-        self.assertEqual(extension.say("hello"), True)
-        self.assertEqual(extension.think("hello"), True)
-        self.assertEqual(extension.play("tone.wav"), True)
-        self.assertEqual(self.play_calls[-1], ("tone.wav", False, 1.0))
-        self.assertEqual(extension.play("quiet.wav", keep=True, volume=0.25), True)
-        self.assertEqual(self.play_calls[-1], ("quiet.wav", True, 0.25))
-        self.assertEqual(extension.set_voice("bold"), True)
+        assert self.logs[-1] == ("[Demo] hello", "info")
+        assert extension.say("hello")
+        assert extension.think("hello")
+        assert extension.play("tone.wav")
+        assert self.play_calls[-1] == ("tone.wav", False, 1.0)
+        assert extension.play("quiet.wav", keep=True, volume=0.25)
+        assert self.play_calls[-1] == ("quiet.wav", True, 0.25)
+        assert extension.set_voice("bold")
         with extension.with_backend("mini"):
             pass
         with extension.with_cevoice("nova"):
@@ -1459,10 +1823,10 @@ class ExtensionTests(TestCase):
         """
         manager = CeluneExtensionManager(self.context)
         manager.register(DemoExtension)
-        self.assertEqual(manager.list_extensions(), ["Demo"])
-        with self.assertRaises(ExtensionAlreadyRegisteredError):
+        assert manager.list_extensions() == ["Demo"]
+        with pytest.raises(ExtensionAlreadyRegisteredError):
             manager.register(DemoExtension)
-        with self.assertRaises(InvalidExtensionError):
+        with pytest.raises(InvalidExtensionError):
             manager.register(int)  # type: ignore[arg-type]
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1482,30 +1846,15 @@ class ExtensionTests(TestCase):
                 encoding="utf-8",
             )
             manager.autoload(temp_dir)
-        self.assertIn("Loaded", manager.list_extensions())
+        assert "Loaded" in manager.list_extensions()
 
-    def test_manager_invoke_and_autostart_run_in_threads(self) -> None:
-        """Verify threaded extension invocation and autostart behavior.
+    def test_manager_invoke_runs_in_a_thread(self) -> None:
+        """Verify threaded extension invocation.
 
         Raises:
             AssertionError: Threaded extension behavior changes unexpectedly.
         """
-        event = threading.Event()
-
-        class AutoExtension(DemoExtension):
-            """Autostart extension used by one manager test."""
-
-            EXTENSION_NAME = "Auto"
-            AUTOSTART = True
-
-            def autostart(self) -> None:
-                event.set()
-
         manager = CeluneExtensionManager(self.context)
-        manager.register(AutoExtension)
-        manager.autostart_all()
-        self.assertTrue(event.wait(timeout=1))
-
         invoke_event = threading.Event()
 
         class InvokeExtension(DemoExtension):
@@ -1518,8 +1867,8 @@ class ExtensionTests(TestCase):
 
         manager.register(InvokeExtension)
         manager.invoke("Invoke", "x")
-        self.assertTrue(invoke_event.wait(timeout=5))
-        with self.assertRaises(InvalidExtensionError):
+        assert invoke_event.wait(timeout=5)
+        with pytest.raises(InvalidExtensionError):
             manager.invoke("Missing")
 
 

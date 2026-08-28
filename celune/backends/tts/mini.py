@@ -1,24 +1,25 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Pocket TTS backend implementation for Celune."""
 
-import contextlib
-import tempfile
 import time
-from collections.abc import Callable, Iterator, Mapping
+import tempfile
+import contextlib
 from pathlib import Path
 from typing import Optional, cast
+from collections.abc import Mapping, Callable, Iterator
 
-import numpy as np
 import yaml
-from huggingface_hub import snapshot_download
+import numpy as np
 from pocket_tts import TTSModel
+from huggingface_hub import snapshot_download
 
-from ...cevoice import CEVoiceLoader, default_loader
-from ...paths import temp_data_dir
-from ...typing.aliases import AudioChunk, AudioChunks
-from ...typing.backends import MiniModel, MiniPromptState
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
 from ...utils import custom_assert
+from ...i18n import string
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.aliases import AudioChunk, AudioChunks
 from .base import CeluneBackend, cached_hf_snapshot_path
+from ...typing.backends import MiniModel, MiniPromptState
 
 
 class Mini(CeluneBackend[TTSModel]):
@@ -27,7 +28,7 @@ class Mini(CeluneBackend[TTSModel]):
     name: str = "mini"
     uses_voice_bundles: bool = True
     chunk_rate: float = 12.5
-    supported_languages: tuple[str, ...] = ("en", "fr", "de", "it", "pt", "es")  # noqa
+    supported_languages: tuple[str, ...] = ("en", "fr", "de", "it", "pt", "es")
 
     voice_models: Optional[Mapping[str, str]] = {
         "balanced": "lunahr/pocket-tts-ungated",
@@ -63,7 +64,7 @@ class Mini(CeluneBackend[TTSModel]):
             loader.materialize(name, "wav")
 
     @property
-    def voices(self) -> list[str]:  # noqa
+    def voices(self) -> list[str]:
         """Return the voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:
@@ -313,8 +314,12 @@ class Mini(CeluneBackend[TTSModel]):
             model_id, requested_language
         )
         if not available or snapshot_path is None:
-            self.log("Downloading TTS model...", "info")
-            snapshot_path = snapshot_download(repo_id=model_id)
+            self.log(string("tts.model_download_start"), "info")
+            with huggingface_progress(self.report_progress):
+                snapshot_path = snapshot_download(
+                    repo_id=model_id,
+                    cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                )
 
         generated_config_path = self._build_generated_config_path(
             snapshot_path, requested_language
@@ -329,8 +334,12 @@ class Mini(CeluneBackend[TTSModel]):
         self._voice_states.clear()
         return self.model
 
-    def unload_model(self) -> None:
-        """Release the loaded model and cached voice states."""
+    def unload_model(self, release_cuda_cache: bool = True) -> None:
+        """Release the loaded model and cached voice states.
+
+        Args:
+            release_cuda_cache: Whether to synchronize CUDA and release cached accelerator blocks.
+        """
         generated_config_path = self._generated_config_path
         self._voice_states.clear()
         self._generated_config_path = None
@@ -338,7 +347,7 @@ class Mini(CeluneBackend[TTSModel]):
             with contextlib.suppress(OSError):
                 generated_config_path.unlink(missing_ok=True)
                 generated_config_path.parent.rmdir()
-        super().unload_model()
+        super().unload_model(release_cuda_cache=release_cuda_cache)
 
     def generate_stream(
         self, model: TTSModel, **kwargs

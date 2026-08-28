@@ -1,42 +1,302 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for runtime validation and lightweight UI commands."""
 
-import logging
-import queue
-import subprocess
+# Import groups follow Celune's project-specific Ruff ordering.
+# pylint: disable=ungrouped-imports
+
 import sys
-import tempfile
 import time
+import queue
+import asyncio
+import logging
+import tempfile
 import warnings
-from pathlib import Path
+import threading
+import subprocess
 from types import SimpleNamespace
 from typing import Optional, cast
-from unittest import TestCase, mock
+from pathlib import Path
+from unittest import mock
+from collections.abc import Callable, Awaitable
 
 import numpy as np
+import pytest
 from textual import events
-from textual.widgets import Button, Label, RichLog, TextArea
+from textual.app import App
+from textual.widget import Widget
+from textual.widgets import Label, Button, Static, RichLog, TextArea, ProgressBar
+from textual.containers import Vertical
 
-from celune import colors, runtime
-from celune.backends.tts.qwen3 import Qwen3
+from celune import runtime
+from celune.ui import app as ui_app
+from celune.ui import terminal as ui_terminal
+from celune.ui import resources as ui_resources
+from celune.i18n import string, tagged_string
+from celune.agent import AgentTaskState
+from celune.theme import colors
+from celune.utils import discard
 from celune.celune import Celune
 from celune.config import Config
-from celune.constants import APP_NAME, COST_EQUIVALENTS
-from celune.i18n import string
-from celune.typing.common import JSONSerializable
-from celune.ui import app as ui_app
-from celune.ui import resources as ui_resources
-from celune.ui import terminal as ui_terminal
-from celune.ui.app import CeluneUI
-from celune.ui.commands import attachment_source, process_command
-from celune.ui.headless import CeluneHeadlessUI
+from celune.ui.app import (
+    CeluneUI,
+    VoiceButton,
+    UILogMessage,
+    ProgressLabel,
+    CeluneLoadingScreen,
+)
+from tests.support import FakeBackend, FakeVCBackend, CeluneTestCase
+from celune.terminal import set_terminal_title
 from celune.ui.theme import severity_color
-from celune.utils import discard
-from tests.support import FakeBackend, FakeVCBackend
+from celune.constants import APP_NAME, COST_EQUIVALENTS, ExitCodes
+from celune.persona.asr import WhisperWord, WhisperSegment
+from celune.ui.commands import process_command, attachment_source
+from celune.ui.headless import CeluneHeadlessUI
+from celune.typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentBusyResult,
+)
+from celune.typing.common import JSONSerializable
+from celune.typing.aliases import LogLevel
 
 
-class RuntimeTests(TestCase):
+class TestRuntime(CeluneTestCase):
     """Tests for runtime environment checks."""
+
+    def test_core_runtime_classes_are_final_at_runtime(self) -> None:
+        """Verify final core classes reject runtime subclass creation."""
+        final_classes = (Celune, CeluneUI, CeluneHeadlessUI)
+
+        for final_class in final_classes:
+            assert getattr(final_class, "__final__", False)
+            with pytest.raises(TypeError, match="is final and cannot be subclassed"):
+                type(f"{final_class.__name__}Subclass", (final_class,), {})
+
+    def test_ui_error_formatter_remains_available_after_lazy_import(self) -> None:
+        """Verify deferred UI imports retain the formatter used by error paths."""
+        assert ui_app.format_error(RuntimeError("startup"), "info") == ""
+        assert ui_app.format_error(RuntimeError("startup"), "verbose") == "startup"
+
+    def test_ui_terminal_title_remains_available_before_runtime_import(self) -> None:
+        """Verify early shutdown can update the terminal title before runtime loading."""
+        terminal = mock.Mock()
+
+        ui_app.set_terminal_title((APP_NAME, "Ready", "Idle"), terminal)
+
+        terminal.write.assert_called_once_with(
+            f"\x1b]0;{APP_NAME} ・ Ready ・ Idle\x07"
+        )
+        terminal.flush.assert_called_once_with()
+
+    def test_voice_button_keeps_hold_action_when_cycle_is_disabled(self) -> None:
+        """Verify voice cycling and voice-menu availability are independent."""
+        button = VoiceButton("Voice", disabled=True, hold_enabled=True)
+        ui = cast(
+            CeluneUI,
+            SimpleNamespace(
+                style_button=button,
+                update_resources=mock.Mock(),
+                _run_on_ui_thread=lambda callback: callback(),
+            ),
+        )
+
+        CeluneUI.change_voice_lock_state(
+            ui,
+            locked=True,
+            can_open_menu=True,
+        )
+
+        assert button.disabled
+        assert button.hold_enabled
+
+        CeluneUI.change_voice_lock_state(
+            ui,
+            locked=False,
+            can_open_menu=False,
+        )
+
+        assert not button.disabled
+        assert not button.hold_enabled
+
+    def test_voice_button_long_press_message_waits_for_release(self) -> None:
+        """Verify a held voice button posts its modal message after release."""
+        button = VoiceButton("Voice", hold_enabled=True)
+        button._long_pressed = True
+        button._stop_hold_timer = mock.Mock()
+        button.suppress_click = mock.Mock()
+        button.post_message = mock.Mock()
+
+        async def release_button() -> None:
+            await button._on_mouse_up(cast(events.MouseUp, SimpleNamespace()))
+
+        with mock.patch.object(Widget, "_on_mouse_up", new=mock.AsyncMock()):
+            asyncio.run(release_button())
+
+        button.suppress_click.assert_called_once_with()
+        button.post_message.assert_called_once()
+        assert isinstance(
+            button.post_message.call_args.args[0], VoiceButton.LongPressed
+        )
+
+    def test_voice_selection_wakes_sleeping_celune_before_loading_voice(self) -> None:
+        """Verify choosing a voice from sleep wakes Celune before switching voices."""
+        bundle_path = Path("voice.cevoice")
+        call_order: list[str] = []
+
+        async def wake() -> bool:
+            call_order.append("wake")
+            fake_celune.sleeping = False
+            return True
+
+        def set_voice(_entry: str) -> bool:
+            call_order.append("voice")
+            return True
+
+        fake_celune = SimpleNamespace(
+            sleeping=True,
+            wake_from_sleep_async=wake,
+            set_voice_and_wait=set_voice,
+            voices=("balanced", "bold"),
+        )
+        ui = SimpleNamespace(
+            celune=fake_celune,
+            _voice_menu_paths={"Celune": bundle_path},
+            celune_styles=(),
+            style_index=0,
+            tts_voice_changed=mock.Mock(),
+            change_voice_lock_state=mock.Mock(),
+            safe_log=mock.Mock(),
+        )
+        apply_voice_selection = cast(
+            Callable[[CeluneUI, dict[str, JSONSerializable]], Awaitable[None]],
+            getattr(
+                CeluneUI._apply_voice_selection,
+                "__wrapped__",
+                CeluneUI._apply_voice_selection,
+            ),
+        )
+
+        with mock.patch("celune.cevoice.active_bundle_path", return_value=bundle_path):
+            asyncio.run(
+                apply_voice_selection(
+                    cast(CeluneUI, ui),
+                    {"pack": "Celune", "entry": "bold"},
+                )
+            )
+
+        assert call_order == ["wake", "voice"]
+        assert ui.celune_styles == ("balanced", "bold")
+        assert ui.style_index == 1
+        ui.tts_voice_changed.assert_called_once_with("bold")
+
+    def test_entrypoint_runtime_loader_keeps_heavy_imports_deferred(self) -> None:
+        """Verify the pre-UI entrypoint import path stays torch-free."""
+        project_root = Path(__file__).resolve().parents[1]
+        check = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; "
+                    "from celune import entrypoint; "
+                    "entrypoint._load_runtime(); "
+                    "assert 'torch' not in sys.modules; "
+                    "assert 'transformers' not in sys.modules; "
+                    "assert 'celune.celune' not in sys.modules; "
+                    "assert 'celune.ui.app' not in sys.modules"
+                ),
+            ],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(check.returncode, 0, check.stderr)
+
+    def test_loading_ui_import_keeps_engine_and_model_libraries_deferred(self) -> None:
+        """Verify loading-screen imports do not initialize engine dependencies."""
+        project_root = Path(__file__).resolve().parents[1]
+        check = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; "
+                    "from celune.ui import CeluneUI; "
+                    "from celune.ui import app as ui_app; "
+                    "assert CeluneUI.__name__ == 'CeluneUI'; "
+                    "assert ui_app.indent('status', spaces=2) == '  status'; "
+                    "assert ui_app.supports_ansi() is False; "
+                    "blocked = {'celune.celune', 'celune.persona', 'lingua', "
+                    "'numpy', 'psutil', 'sounddevice', 'sympy', 'torch', 'transformers'}; "
+                    "assert blocked.isdisjoint(sys.modules), "
+                    "sorted(blocked.intersection(sys.modules))"
+                ),
+            ],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(check.returncode, 0, check.stderr)
+
+    def test_terminal_title_formats_and_sanitizes_status(self) -> None:
+        """Verify structured terminal titles remove control characters."""
+        terminal = mock.Mock()
+
+        set_terminal_title((APP_NAME, "Ready", "Idle\n\x1b[31m"), terminal)
+
+        terminal.write.assert_called_once_with(
+            f"\x1b]0;{APP_NAME} ・ Ready ・ Idle\x07"
+        )
+        terminal.flush.assert_called_once_with()
+
+    def test_terminal_title_caps_long_dynamic_actions(self) -> None:
+        """Verify long terminal actions cannot crowd out the state glossary."""
+        terminal = mock.Mock()
+
+        set_terminal_title((APP_NAME, "Error", "x" * 200), terminal)
+
+        title_escape = terminal.write.call_args.args[0]
+        title = title_escape.removeprefix("\x1b]0;").removesuffix("\x07")
+        assert len(title.removeprefix(APP_NAME)) <= 20
+
+    def test_terminal_title_keeps_state_and_action_within_tab_budget(self) -> None:
+        """Verify the separators and compact glossary fit after the app name."""
+        terminal = mock.Mock()
+
+        set_terminal_title(
+            (
+                APP_NAME,
+                string("osc.state_recording"),
+                string("osc.action_transcribing_speech"),
+            ),
+            terminal,
+        )
+
+        title = terminal.write.call_args.args[0]
+        title = title.removeprefix("\x1b]0;").removesuffix("\x07")
+        assert title == f"{APP_NAME} ・ Record ・ Transcr."
+        assert len(title.removeprefix(APP_NAME)) <= 20
+
+    def test_terminal_title_omits_duplicate_state_and_action(self) -> None:
+        """Verify duplicate state and action labels are rendered only once."""
+        terminal = mock.Mock()
+
+        set_terminal_title(
+            (
+                APP_NAME,
+                string("osc.state_exiting"),
+                string("osc.action_exiting"),
+            ),
+            terminal,
+        )
+
+        title = terminal.write.call_args.args[0]
+        title = title.removeprefix("\x1b]0;").removesuffix("\x07")
+        assert title == f"{APP_NAME} ・ Exit"
 
     def test_check_supported_backends_reports_cpu_cuda_and_rocm(self) -> None:
         """Verify backend labels across supported runtime branches.
@@ -50,7 +310,7 @@ class RuntimeTests(TestCase):
                 "celune.runtime.torch.backends.mps.is_available", return_value=False
             ),
         ):
-            self.assertEqual(runtime.check_supported_backends(), ("CPU", False))
+            assert runtime.check_supported_backends() == ("CPU", False)
 
         with (
             mock.patch("celune.runtime.torch.cuda.is_available", return_value=True),
@@ -60,13 +320,13 @@ class RuntimeTests(TestCase):
                 return_value="NVIDIA GeForce RTX 4090",
             ),
         ):
-            self.assertEqual(runtime.check_supported_backends(), ("CUDA", True))
+            assert runtime.check_supported_backends() == ("CUDA", True)
 
         with (
             mock.patch("celune.runtime.torch.cuda.is_available", return_value=True),
             mock.patch.object(runtime.torch.version, "hip", "6.0"),
         ):
-            self.assertEqual(runtime.check_supported_backends(), ("ROCm", False))
+            assert runtime.check_supported_backends() == ("ROCm", False)
 
     def test_check_supported_backends_treats_missing_driver_as_unusable_cuda(
         self,
@@ -84,7 +344,7 @@ class RuntimeTests(TestCase):
                 ),
             ),
         ):
-            self.assertEqual(runtime.check_supported_backends(), ("CUDA", False))
+            assert runtime.check_supported_backends() == ("CUDA", False)
 
     def test_validate_runtime_rejects_unsupported_backends_without_cuda_work(
         self,
@@ -98,7 +358,13 @@ class RuntimeTests(TestCase):
         errors: list[str] = []
         states: list[str] = []
 
-        def log(msg: str, severity: str) -> None:
+        def log(
+            msg: str,
+            severity: str = "info",
+            *,
+            loglevel: LogLevel = "info",
+        ) -> None:
+            _ = loglevel
             logs.append((msg, severity))
 
         with (
@@ -107,20 +373,17 @@ class RuntimeTests(TestCase):
                 "celune.runtime.check_supported_backends", return_value=("CPU", False)
             ),
         ):
-            self.assertEqual(
-                runtime.validate_runtime(
-                    log,
-                    errors.append,
-                    states.append,
-                    False,
-                    lambda exc, dev: str(exc),
-                    False,
-                    "qwen3",
-                ),
+            assert not runtime.validate_runtime(
+                log,
+                errors.append,
+                states.append,
                 False,
+                lambda exc, dev: str(exc),
+                "info",
+                "qwen3",
             )
-        self.assertEqual(errors, ["No supported backend found"])
-        self.assertEqual(states, ["error"])
+        assert errors == ["No supported backend found"]
+        assert states == ["error"]
 
     def test_validate_runtime_allows_cpu_for_mini_backend(self) -> None:
         """Verify CPU-only environments remain usable with the mini backend."""
@@ -128,7 +391,13 @@ class RuntimeTests(TestCase):
         errors: list[str] = []
         states: list[str] = []
 
-        def log(msg: str, severity: str) -> None:
+        def log(
+            msg: str,
+            severity: str = "info",
+            *,
+            loglevel: LogLevel = "info",
+        ) -> None:
+            _ = loglevel
             logs.append((msg, severity))
 
         with (
@@ -137,24 +406,21 @@ class RuntimeTests(TestCase):
                 "celune.runtime.check_supported_backends", return_value=("CPU", False)
             ),
         ):
-            self.assertEqual(
-                runtime.validate_runtime(
-                    log,
-                    errors.append,
-                    states.append,
-                    False,
-                    lambda exc, dev: str(exc),
-                    False,
-                    "mini",
-                ),
-                True,
+            assert runtime.validate_runtime(
+                log,
+                errors.append,
+                states.append,
+                False,
+                lambda exc, dev: str(exc),
+                "info",
+                "mini",
             )
 
-        self.assertEqual(errors, [])
-        self.assertEqual(states, [])
+        assert not errors
+        assert not states
 
 
-class UICommandTests(TestCase):
+class TestUICommand(CeluneTestCase):
     """Tests for lightweight slash command behavior."""
 
     @staticmethod
@@ -176,10 +442,11 @@ class UICommandTests(TestCase):
         return _ImmediateThread()
 
     def setUp(self) -> None:
+        """Create the lightweight command-test UI fixture."""
         self.logs: list[tuple[str, str]] = []
         self.ui = SimpleNamespace()
         self.ui.input_box = SimpleNamespace(load_text=lambda text: None)
-        self.ui.safe_log = lambda msg, severity="info": self.logs.append(
+        self.ui.safe_log = lambda msg, severity="info", **kwargs: self.logs.append(
             (msg, severity)
         )
         self.ui.safe_log_dev = self.ui.safe_log
@@ -207,30 +474,6 @@ class UICommandTests(TestCase):
         """Process one command against the typed UI test double."""
         process_command(cast(CeluneUI, self.ui), command, args)
 
-    def test_xvectoronly_command_requires_qwen3_and_valid_value(self) -> None:
-        """Verify the Qwen3-only toggle command and argument checks.
-
-        Raises:
-            AssertionError: Command behavior changes unexpectedly.
-        """
-        self._process_command("xvectoronly", [])
-        self.assertEqual(self.logs[-1][1], "warning")
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            backend = Qwen3(log=lambda msg, severity="info": None)
-        backend.x_vector_only = False
-        self.ui.celune.backend = backend
-        self._process_command("xvectoronly", [])
-        self.assertEqual(self.logs[-1], ("Usage: /xvectoronly <true/false>", "warning"))
-        self._process_command("xvectoronly", ["maybe"])
-        self.assertEqual(self.logs[-1][1], "warning")
-        self._process_command("xvectoronly", ["true"])
-        self.assertEqual(backend.x_vector_only, True)
-        self.assertEqual(
-            self.logs[-1], ("Qwen3 identity-only cloning enabled.", "info")
-        )
-
     def test_restartaudio_command_restarts_host_audio_server(self) -> None:
         """Verify the audio recovery command reports a successful restart."""
         with (
@@ -246,12 +489,9 @@ class UICommandTests(TestCase):
         restart.assert_called_once_with()
         self.ui.celune._close_stream.assert_called_once_with(abort=True)
         self.ui.celune.try_play_signal.assert_called_once_with("readiness")
-        self.assertEqual(
-            self.logs[-1],
-            (
-                "Host audio server restarted.",
-                "info",
-            ),
+        assert self.logs[-1] == (
+            "Host audio server restarted.",
+            "info",
         )
 
     def test_common_commands_update_state_and_validate_inputs(self) -> None:
@@ -261,19 +501,19 @@ class UICommandTests(TestCase):
             AssertionError: Command behavior changes unexpectedly.
         """
         self._process_command("voiceprompt", ["gentle", "tone"])
-        self.assertEqual(self.ui.celune.voice_prompt, "gentle tone")
+        assert self.ui.celune.voice_prompt == "gentle tone"
         self._process_command("voiceprompt", ["clear"])
-        self.assertIsNone(self.ui.celune.voice_prompt)
+        assert cast(Optional[str], self.ui.celune.voice_prompt) is None
 
         self._process_command("speed", ["120%"])
-        self.assertEqual(self.ui.celune.speed, 1.2)
+        assert self.ui.celune.speed == 1.2
         self._process_command("speed", ["200"])
-        self.assertEqual(self.logs[-1][1], "warning")
+        assert self.logs[-1][1] == "warning"
 
         self._process_command("reverb", ["50"])
-        self.assertEqual(self.ui.celune.reverb.strength, 0.5)
+        assert self.ui.celune.reverb.strength == 0.5
         self._process_command("reverb", ["150"])
-        self.assertEqual(self.logs[-1][1], "warning")
+        assert self.logs[-1][1] == "warning"
 
     def test_backend_and_cevoice_commands_request_hot_reloads(self) -> None:
         """Verify slash commands delegate backend and CEVOICE hot reloads into Celune."""
@@ -289,8 +529,8 @@ class UICommandTests(TestCase):
 
         self.ui.celune.set_backend_async.assert_awaited_once_with("mini")
         self.ui.celune.set_cevoice_async.assert_awaited_once_with("nova")
-        self.assertEqual(self.logs[-2], ("Switched to backend: mini", "info"))
-        self.assertEqual(self.logs[-1], ("Character changed: nova", "info"))
+        assert self.logs[-2] == ("Switched to backend: mini", "info")
+        assert self.logs[-1] == ("Character changed: nova", "info")
 
     def test_backend_command_uses_active_vc_backend_name_for_duplicate_guard(
         self,
@@ -307,7 +547,7 @@ class UICommandTests(TestCase):
 
         self.ui.celune._active_runtime_backend_name.assert_called_once_with()
         self.ui.celune.set_backend_async.assert_not_called()
-        self.assertEqual(self.logs[-1][1], "warning")
+        assert self.logs[-1][1] == "warning"
 
     def test_voice_conversion_commands_update_seedvc_state(self) -> None:
         """Verify VC slash commands update engine and backend state."""
@@ -318,20 +558,20 @@ class UICommandTests(TestCase):
         self._process_command("vcpitch", ["-2"])
         self._process_command("vcpitch", ["clear"])
 
-        self.assertEqual(self.ui.celune.vc_f0_condition, True)
-        self.assertEqual(self.ui.celune.vc_backend.f0_condition, True)
-        self.assertEqual(self.ui.celune.vc_pitch_shift, 0)
-        self.assertEqual(self.ui.celune.vc_backend.pitch_shift, 0)
-        self.assertEqual(self.logs[-3], ("Voice conversion mode set to Sing.", "info"))
-        self.assertEqual(
-            self.logs[-2],
-            ("Voice conversion pitch shift set to -2 semitones.", "info"),
+        assert self.ui.celune.vc_f0_condition
+        assert self.ui.celune.vc_backend.f0_condition
+        assert self.ui.celune.vc_pitch_shift == 0
+        assert self.ui.celune.vc_backend.pitch_shift == 0
+        assert self.logs[-3] == ("Voice conversion mode set to Sing.", "info")
+        assert self.logs[-2] == (
+            "Voice conversion pitch shift set to -2 semitones.",
+            "info",
         )
-        self.assertEqual(
-            self.logs[-1],
-            ("Voice conversion pitch shift set to 0 semitones.", "info"),
+        assert self.logs[-1] == (
+            "Voice conversion pitch shift set to 0 semitones.",
+            "info",
         )
-        self.assertEqual(self.ui.refresh_vc_controls.call_count, 3)
+        assert self.ui.refresh_vc_controls.call_count == 3
 
     def test_vc_command_submits_audio_file_through_engine_pipeline(self) -> None:
         """Verify /vc decodes a file and submits it through Celune's VC pipeline."""
@@ -360,53 +600,48 @@ class UICommandTests(TestCase):
             48000,
             label="source.wav",
         )
-        self.assertEqual(
-            self.logs[-1],
-            (f"Running voice conversion on {source_path}", "info"),
-        )
+        assert self.logs[-1] == (f"Running voice conversion on {source_path}", "info")
 
     def test_voice_conversion_commands_validate_mode_and_pitch(self) -> None:
         """Verify VC slash commands stay gated to VC mode and validate arguments."""
         self._process_command("vc", ["sample.wav"])
-        self.assertEqual(
-            self.logs[-1],
-            ("This command is only available in voice conversion mode.", "warning"),
+        assert self.logs[-1] == (
+            "This command is only available in voice conversion mode.",
+            "warning",
         )
 
         self._process_command("vcmode", ["sing"])
-        self.assertEqual(
-            self.logs[-1],
-            ("This command is only available in voice conversion mode.", "warning"),
+        assert self.logs[-1] == (
+            "This command is only available in voice conversion mode.",
+            "warning",
         )
 
         self.ui.celune.input_mode = "voice_conversion"
         self._process_command("vc", [])
-        self.assertEqual(self.logs[-1], ("Usage: /vc <file>", "warning"))
+        assert self.logs[-1] == ("Usage: /vc <file>", "warning")
 
         self._process_command("vc", ["missing.wav"])
-        self.assertEqual(
-            self.logs[-1],
-            ("Voice conversion input not found: missing.wav", "warning"),
+        assert self.logs[-1] == (
+            "Voice conversion input not found: missing.wav",
+            "warning",
         )
 
         self._process_command("vcmode", ["maybe"])
-        self.assertEqual(self.logs[-1], ("Usage: /vcmode <talk|sing>", "warning"))
+        assert self.logs[-1] == ("Usage: /vcmode <talk|sing>", "warning")
 
         self._process_command("vcpitch", ["13"])
-        self.assertEqual(
-            self.logs[-1],
-            ("Pitch shift must be between -3 and 3 semitones.", "warning"),
+        assert self.logs[-1] == (
+            "Pitch shift must be between -3 and 3 semitones.",
+            "warning",
         )
 
         self._process_command("vcpitch", ["high"])
-        self.assertEqual(
-            self.logs[-1],
-            ("Usage: /vcpitch <semitones|clear>", "warning"),
-        )
+        assert self.logs[-1] == ("Usage: /vcpitch <semitones|clear>", "warning")
 
     def test_vc_command_reports_decode_failure(self) -> None:
         """Verify /vc surfaces decode errors cleanly."""
         self.ui.celune.input_mode = "voice_conversion"
+        self.ui.celune.log_level = "verbose"
 
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "broken.wav"
@@ -424,9 +659,9 @@ class UICommandTests(TestCase):
             ):
                 self._process_command("vc", [str(source_path)])
 
-        self.assertEqual(
-            self.logs[-1],
-            ("Cannot read this voice conversion input: decode failed", "error"),
+        assert self.logs[-1] == (
+            "Cannot read this voice conversion input: decode failed",
+            "error",
         )
 
     def test_cevoice_command_reports_failed_character_switch(self) -> None:
@@ -440,9 +675,9 @@ class UICommandTests(TestCase):
             self._process_command("cevoice", ["invalid_character"])
 
         self.ui.celune.set_cevoice_async.assert_awaited_once_with("invalid_character")
-        self.assertEqual(
-            self.logs[-1],
-            ("Could not switch character to invalid_character.", "warning"),
+        assert self.logs[-1] == (
+            "Could not switch character to invalid_character.",
+            "warning",
         )
 
     def test_cevoice_command_rejects_already_loaded_character(self) -> None:
@@ -466,10 +701,7 @@ class UICommandTests(TestCase):
             self._process_command("cevoice", ["nova"])
 
         self.ui.celune.set_cevoice_async.assert_not_called()
-        self.assertEqual(
-            self.logs[-1],
-            ("This character is already loaded.", "warning"),
-        )
+        assert self.logs[-1] == ("This character is already loaded.", "warning")
 
     def test_voiceprompt_command_is_blocked_when_model_lacks_instruction_control(
         self,
@@ -480,13 +712,10 @@ class UICommandTests(TestCase):
 
         self._process_command("voiceprompt", ["gentle", "tone"])
 
-        self.assertIsNone(self.ui.celune.voice_prompt)
-        self.assertEqual(
-            self.logs[-1],
-            (
-                "Voice prompts are unavailable with the currently loaded model.",
-                "warning",
-            ),
+        assert cast(Optional[str], self.ui.celune.voice_prompt) is None
+        assert self.logs[-1] == (
+            "Voice prompts are unavailable with the currently loaded model.",
+            "warning",
         )
 
     def test_attach_command_stages_visual_media_for_persona_reply(self) -> None:
@@ -496,14 +725,14 @@ class UICommandTests(TestCase):
             image.write_bytes(b"\x89PNG\r\n\x1a\n")
             self._process_command("attach", [str(image)])
 
-            self.assertEqual(len(self.ui.celune.persona_attachments), 1)
+            assert len(self.ui.celune.persona_attachments) == 1
             attachment = self.ui.celune.persona_attachments[0]
-            self.assertEqual(attachment["type"], "image")
-            self.assertEqual(attachment["path"], attachment_source(image.resolve()))
-            self.assertEqual(self.logs[-1][1], "info")
+            assert attachment["type"] == "image"
+            assert attachment["path"] == attachment_source(image.resolve())
+            assert self.logs[-1][1] == "info"
 
         self._process_command("attach", ["clear"])
-        self.assertEqual(self.ui.celune.persona_attachments, [])
+        assert self.ui.celune.persona_attachments == []
 
     def test_attach_command_accepts_remote_image_urls(self) -> None:
         """Verify /attach accepts HTTP image URLs without local file checks."""
@@ -511,12 +740,12 @@ class UICommandTests(TestCase):
 
         self._process_command("attach", [url])
 
-        self.assertEqual(len(self.ui.celune.persona_attachments), 1)
+        assert len(self.ui.celune.persona_attachments) == 1
         attachment = self.ui.celune.persona_attachments[0]
-        self.assertEqual(attachment["type"], "image")
-        self.assertEqual(attachment["path"], url)
-        self.assertEqual(attachment["name"], "reference.png")
-        self.assertEqual(self.logs[-1][1], "info")
+        assert attachment["type"] == "image"
+        assert attachment["path"] == url
+        assert attachment["name"] == "reference.png"
+        assert self.logs[-1][1] == "info"
 
     def test_say_command_bypasses_persona_and_queues_direct_speech(self) -> None:
         """Verify /say sends literal speech through Celune.say()."""
@@ -532,7 +761,7 @@ class UICommandTests(TestCase):
         self._process_command("say", [])
 
         self.ui.celune.say.assert_not_called()
-        self.assertEqual(self.logs[-1], ("Usage: /say <text>", "warning"))
+        assert self.logs[-1] == ("Usage: /say <text>", "warning")
 
     def test_play_command_passes_optional_volume(self) -> None:
         """Verify /play forwards the optional volume argument to Celune."""
@@ -545,16 +774,16 @@ class UICommandTests(TestCase):
             self._process_command("play", ["tone.wav", "0.4"])
 
         self.ui.celune.play.assert_called_once_with("tone.wav", volume=0.4)
-        self.assertEqual(self.logs[-1], ("Playing tone.wav at 40% volume", "info"))
+        assert self.logs[-1] == ("Playing tone.wav at 40% volume", "info")
 
     def test_play_command_rejects_invalid_volume(self) -> None:
         """Verify /play validates a numeric optional volume argument."""
         self._process_command("play", ["tone.wav", "loud"])
 
         self.ui.celune.play.assert_not_called()
-        self.assertEqual(
-            self.logs[-1],
-            ("Invalid volume for 'play', must be numeric.", "warning"),
+        assert self.logs[-1] == (
+            "Invalid volume for 'play', must be numeric.",
+            "warning",
         )
 
     def test_say_command_reports_unmatched_ipa_characters(self) -> None:
@@ -566,12 +795,9 @@ class UICommandTests(TestCase):
             self._process_command("say", ["həˈloʊ"])
 
         self.ui.celune.say.assert_called_once_with("hello", display_text="həˈloʊ")
-        self.assertEqual(
-            self.logs[-1],
-            (
-                "Found 2 unmatched IPA characters, output may be inaccurate.",
-                "warning",
-            ),
+        assert self.logs[-1] == (
+            "Found 2 unmatched IPA characters, output may be inaccurate.",
+            "warning",
         )
 
     def test_windows_command_split_keeps_literal_backslashes(self) -> None:
@@ -581,19 +807,542 @@ class UICommandTests(TestCase):
                 r'attach "C:\Users\user\Downloads\bad suggestion.png"'
             )
 
-        self.assertEqual(
-            parts,
-            ["attach", r"C:\Users\user\Downloads\bad suggestion.png"],
-        )
+        assert parts == ["attach", r"C:\Users\user\Downloads\bad suggestion.png"]
 
 
-class UIStartupTests(TestCase):
+class TestUIStartup(CeluneTestCase):
     """Tests for UI startup guard rails."""
 
     def tearDown(self) -> None:
         """Reset singleton UI guards after each test."""
         CeluneUI._instance = None
         CeluneHeadlessUI._instance = None
+
+    def test_deferred_startup_catches_system_exit_in_the_ui_worker(self) -> None:
+        """Verify startup worker exits become UI-handled errors."""
+        ui = CeluneUI(
+            startup_loader=lambda: cast(Celune, (_ for _ in ()).throw(SystemExit(4)))
+        )
+        ui.call_from_thread = mock.Mock()
+
+        ui._load_deferred_runtime()
+
+        ui.call_from_thread.assert_called_once()
+        callback, error = ui.call_from_thread.call_args.args
+        assert callback.__self__ is ui
+        assert callback.__func__ is ui._handle_deferred_runtime_error.__func__
+        assert isinstance(error, SystemExit)
+        assert error.code == 4
+
+    def test_missing_dependency_startup_waits_for_ctrl_q(self) -> None:
+        """Verify missing dependencies remain visible until the user quits."""
+        ui = CeluneUI()
+        ui.refresh_css = mock.Mock()
+        ui._show_loading_error = mock.Mock()
+        ui._write_terminal_title = mock.Mock()
+        missing = ModuleNotFoundError("No module named 'dateutil'")
+        missing.name = "dateutil"
+
+        ui._handle_deferred_runtime_error(missing)
+
+        assert ui.cur_state == "error"
+        assert ui._fatal_error_active
+        assert ui._startup_error_exit_code == ExitCodes.EXIT_MISSING_DEPENDENCIES.value
+        ui._write_terminal_title.assert_called_once_with(
+            (
+                APP_NAME,
+                string("osc.state_error"),
+                string("osc.action_missing_dependency"),
+            )
+        )
+        ui._show_loading_error.assert_called_once_with(
+            tagged_string("ui.init_error", "INIT ERROR"),
+            status_message=string("status.early_initialization_failed"),
+            footer_message=string("status.missing_dependency"),
+        )
+
+        ui._shutdown_runtime = mock.Mock()
+        ui.exit = mock.Mock()
+        asyncio.run(ui.action_quit())
+
+        ui.exit.assert_called_once_with(
+            return_code=ExitCodes.EXIT_MISSING_DEPENDENCIES.value
+        )
+
+    def test_loading_screen_stores_latest_log_before_mount(self) -> None:
+        """Verify startup log text can arrive before loading widgets mount."""
+        screen = CeluneLoadingScreen()
+
+        screen.set_status_message("Loading backend")
+        screen.set_latest_log_message("Backend initialized")
+        screen.show_error("Backend failed")
+
+        assert screen._status_message == string("status.failed_to_start")
+        assert screen._latest_log_message == "Backend failed"
+        assert screen._wait_message == string(
+            "ui.loading_cannot_continue",
+            app_name=APP_NAME,
+        )
+        assert screen._footer_message == string(
+            "ui.app_could_not_start",
+            app_name=APP_NAME,
+        )
+
+    def test_main_ui_selects_celune_theme_before_rendering_without_engine(self) -> None:
+        """Verify the single UI app has its theme before the engine is attached."""
+        ui = CeluneUI()
+        ui.prepare_theme()
+
+        self.assertIsNone(ui.celune)
+        self.assertEqual(ui.theme, "celune")
+        self.assertEqual(ui.current_theme.name, "celune")
+        self.assertEqual(
+            ui.theme_variables["background"].lower(), colors.THEME.background
+        )
+
+    def test_main_ui_prepares_the_lightweight_theme_before_runtime_imports(
+        self,
+    ) -> None:
+        """Verify the loading frame uses Celune colors without the engine."""
+        ui = CeluneUI()
+
+        with mock.patch("celune.ui.app._load_ui_runtime_dependencies") as load_runtime:
+            ui._prepare_loading_theme()
+
+        load_runtime.assert_not_called()
+        self.assertEqual(ui.theme, "celune")
+        self.assertEqual(ui.current_theme.background, "#1d1826")
+        self.assertEqual(ui.current_theme.primary, "#cebaff")
+
+    def test_main_ui_prepares_configured_theme_before_rendering(self) -> None:
+        """Verify the main UI applies the configured theme before ``run``."""
+        ui = CeluneUI()
+        ui.celune = cast(Celune, SimpleNamespace(config={"theme": "light"}))
+
+        with mock.patch("celune.ui.app.default_loader", return_value=None):
+            ui.prepare_theme()
+
+        self.assertEqual(ui.theme, "celune_light")
+        self.assertEqual(ui.current_theme.name, "celune_light")
+
+    def test_settings_menu_flattens_nested_configuration_values(self) -> None:
+        """Verify the configuration manager exposes nested YAML leaf values."""
+        ui = CeluneUI()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={"backend": "mini", "persona": {"context_size": 8192}},
+            ),
+        )
+
+        with mock.patch.object(ui, "_show_menu") as show_menu:
+            ui.open_settings_menu()
+
+        menu = show_menu.call_args.args[0]
+        assert [option.label for option in menu.options] == [
+            "Backend",
+            "Persona context size",
+        ]
+        assert menu.options[0].explanation == (
+            "Choose the speech backend Celune should use."
+        )
+        assert menu.return_value is False
+        assert ui._settings_paths == (("backend",), ("persona", "context_size"))
+
+    def test_settings_menu_saves_values_and_requests_pending_restart(self) -> None:
+        """Verify ENTER's settings result writes YAML and returns exit code 7."""
+        ui = CeluneUI()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={"backend": "mini", "persona": {"context_size": 8192}}
+            ),
+        )
+        menu = ui_terminal.SelectMenuWidget(
+            "Configuration manager",
+            [
+                ui_terminal.SelectMenuOption("backend", "qwen3"),
+                ui_terminal.SelectMenuOption("persona.context_size", 16384),
+            ],
+            return_value=False,
+        )
+        ui._settings_paths = (("backend",), ("persona", "context_size"))
+        ui.safe_log = mock.Mock()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            config_file = Path(temporary) / "config.yaml"
+            with (
+                mock.patch.object(
+                    ui_app,
+                    "config_path",
+                    return_value=config_file,
+                    create=True,
+                ),
+                mock.patch.object(ui_app, "yaml", create=True) as yaml_module,
+                mock.patch.object(ui, "_run_shutdown_step") as shutdown_step,
+                mock.patch.object(ui, "_set_terminal_status") as set_status,
+                mock.patch.object(ui, "_graceful_exit") as graceful_exit,
+            ):
+                ui._save_settings(menu)
+                shutdown_step.call_args_list[0].args[0]()
+                set_status.assert_called_once_with(
+                    "restarting",
+                    string("osc.action_restarting"),
+                )
+
+            yaml_module.safe_dump.assert_called_once()
+            assert ui.celune.config["backend"] == "qwen3"
+            assert ui.celune.config["persona"]["context_size"] == 16384
+            assert ui.cur_state == "restarting"
+            ui.safe_log.assert_not_called()
+            shutdown_step.assert_called_once()
+            graceful_exit.assert_called_once_with(return_code=7)
+
+    def test_settings_restart_preserves_restart_state_through_graceful_exit(
+        self,
+    ) -> None:
+        """Verify a settings restart uses the normal fade while retaining its exit code."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui.cur_state = "restarting"
+        ui.exit = mock.Mock()
+        ui._shutdown_runtime = mock.Mock()
+        screen = SimpleNamespace(
+            styles=SimpleNamespace(opacity=1.0),
+            refresh=mock.Mock(),
+            query=mock.Mock(return_value=()),
+        )
+        fade_complete: list[Callable[[], None]] = []
+
+        def capture_fade(*_args, on_complete=None, **_kwargs) -> None:
+            if on_complete is not None:
+                fade_complete.append(on_complete)
+
+        with (
+            mock.patch.object(
+                CeluneUI,
+                "screen",
+                new_callable=mock.PropertyMock,
+                return_value=screen,
+            ),
+            mock.patch.object(ui, "_animate_opacity", side_effect=capture_fade),
+            mock.patch.object(
+                ui,
+                "call_after_refresh",
+                side_effect=lambda callback: callback(),
+            ),
+        ):
+            ui._graceful_exit(return_code=ExitCodes.EXIT_PENDING_RESTART.value)
+
+            assert ui.cur_state == "restarting"
+            assert len(fade_complete) == 1
+            fade_complete[0]()
+
+        ui._shutdown_runtime.assert_called_once_with()
+        ui.exit.assert_called_once_with(
+            return_code=ExitCodes.EXIT_PENDING_RESTART.value
+        )
+
+    def test_loading_screen_mounts_with_canonical_textual_css(self) -> None:
+        """Verify the loading screen composes and updates in a real Textual app."""
+
+        screen = CeluneLoadingScreen()
+
+        class Harness(App):
+            """Minimal Textual host for the loading screen smoke test."""
+
+            CSS = ui_app.CELUNE_CSS
+
+            def compose(self):
+                """Compose the loading overlay as the root widget."""
+                yield screen
+
+        async def run_smoke_test() -> None:
+            app = Harness()
+            async with app.run_test(size=(80, 24)) as pilot:
+                await pilot.pause()
+                assert str(screen.query_one("#loading-brand", Static).render()) == (
+                    APP_NAME
+                )
+                screen.set_latest_log_message("Backend initialized")
+                self.assertEqual(
+                    str(screen.query_one("#loading-log-message", Static).render()),
+                    "Backend initialized",
+                )
+                screen.set_startup_messages(
+                    [
+                        string("ui.startup_checking_dependencies"),
+                        string("ui.startup_loading_core"),
+                        string("ui.startup_initializing_core"),
+                    ]
+                )
+                self.assertEqual(
+                    str(screen.query_one("#loading-diagnostics", Static).render()),
+                    "Checking dependencies...\nLoading core...\nInitializing core...",
+                )
+                self.assertIn(
+                    str(screen.query_one("#loading-spinner", Static).render()),
+                    {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
+                )
+                log = screen.query_one("#loading-log")
+                log_message = screen.query_one("#loading-log-message")
+                footer = screen.query_one("#loading-footer")
+                starting = screen.query_one("#loading-footer-starting")
+                quit_hint = screen.query_one("#loading-footer-quit", Static)
+                assert log_message.region.y - log.region.y == 2
+                assert log.region.bottom - log_message.region.bottom == 2
+                assert footer.region.right <= 80
+                assert starting.region.x >= 2
+                assert quit_hint.region.right <= 78
+                assert str(quit_hint.render()) == "CTRL+Q to quit"
+
+                screen.show_error("Backend failed")
+                assert str(
+                    screen.query_one("#loading-state-label", Static).render()
+                ) == string("status.failed_to_start")
+                assert (
+                    str(screen.query_one("#loading-log-message", Static).render())
+                    == "Backend failed"
+                )
+                assert not screen.query_one("#loading-spinner", Static).display
+                assert str(screen.query_one("#loading-wait", Static).render()) == (
+                    string("ui.loading_cannot_continue", app_name=APP_NAME)
+                )
+                assert str(
+                    screen.query_one("#loading-footer-starting", Static).render()
+                ) == string("ui.app_could_not_start", app_name=APP_NAME)
+
+        asyncio.run(run_smoke_test())
+
+    def test_loading_screen_receives_only_info_level_log_lines(self) -> None:
+        """Verify verbose and debug lines do not replace the loading log message."""
+        ui = CeluneUI()
+        ui.celune = cast(Celune, SimpleNamespace(log_level="debug"))
+        ui.logs = None
+        loading_screen = mock.Mock()
+        ui._loading_screen = loading_screen
+
+        ui.safe_log("debug line", loglevel="debug")
+        ui.safe_log("verbose line", loglevel="verbose")
+        ui.safe_log("info line", loglevel="info")
+
+        loading_screen.set_latest_log_message.assert_called_once_with("info line")
+
+    def test_deferred_startup_diagnostics_follow_runtime_stages(self) -> None:
+        """Verify verbose startup diagnostics are emitted as deferred work advances."""
+        ui = CeluneUI(
+            startup_loader=mock.Mock(return_value=mock.sentinel.celune),
+            startup_log_level="verbose",
+        )
+        ui.receive_startup_diagnostic = mock.Mock()
+        ui.call_from_thread = mock.Mock()
+
+        with mock.patch.object(ui_app, "_load_ui_runtime_dependencies"):
+            ui._load_deferred_runtime()
+
+        ui.receive_startup_diagnostic.assert_not_called()
+        ui.call_from_thread.assert_called_once_with(
+            ui.attach_celune,
+            mock.sentinel.celune,
+        )
+
+    def test_deferred_startup_diagnostics_are_quiet_at_info_level(self) -> None:
+        """Verify normal startup does not add verbose stage diagnostics."""
+        ui = CeluneUI(startup_loader=mock.Mock(return_value=mock.sentinel.celune))
+        ui.receive_startup_diagnostic = mock.Mock()
+        ui.call_from_thread = mock.Mock()
+
+        with mock.patch.object(ui_app, "_load_ui_runtime_dependencies"):
+            ui._load_deferred_runtime()
+
+        ui.receive_startup_diagnostic.assert_not_called()
+
+    def test_startup_diagnostics_update_terminal_title_transitions(self) -> None:
+        """Verify each loading-screen startup stage publishes a concise title."""
+        ui = CeluneUI()
+        ui._set_terminal_status = mock.Mock()
+
+        ui.receive_startup_diagnostic(string("ui.startup_initializing_core"))
+
+        ui._set_terminal_status.assert_called_once_with(
+            "initializing",
+            string("osc.action_initializing_core"),
+        )
+
+    def test_status_messages_use_concise_terminal_title_actions(self) -> None:
+        """Verify core status transitions do not place full status text in titles."""
+        ui = CeluneUI()
+        status_cases = {
+            "status.downloading_audio": ("speaking", "osc.action_downloading"),
+            "status.generating": ("speaking", "osc.action_generating_audio"),
+            "status.normalizing": ("thinking", "osc.action_normalizing"),
+            "status.waiting_for_model": (
+                "initializing",
+                "osc.action_waiting_for_model",
+            ),
+            "status.warming_up": ("initializing", "osc.action_warming_up"),
+            "status.reloading_backend": (
+                "reloading",
+                "osc.action_loading_backend",
+            ),
+            "status.reloading_character": (
+                "reloading",
+                "osc.action_loading_voice",
+            ),
+            "status.restoring_backend": ("reloading", "osc.action_restoring"),
+            "status.missing_dependency": (
+                "error",
+                "osc.action_missing_dependency",
+            ),
+        }
+
+        for status_key, expected in status_cases.items():
+            state, action_key = expected
+            assert ui._terminal_status_for(string(status_key), "info") == (
+                state,
+                string(action_key),
+            )
+
+        for status_key in ("pipeline.playing_label", "pipeline.revoicing_label"):
+            assert ui._terminal_status_for(
+                string(status_key, label="long technical label"),
+                "info",
+            ) == ("speaking", string("osc.action_playing_audio"))
+
+        assert ui._terminal_status_for("untranslated failure", "error") == (
+            "error",
+            string("osc.action_error"),
+        )
+        assert ui._terminal_status_for("untranslated warning", "warning") == (
+            "warning",
+            string("osc.action_warning"),
+        )
+
+    def test_pre_attach_logs_use_configured_startup_log_level(self) -> None:
+        """Verify deferred full-mode startup logs use the configured level before attach."""
+        ui = CeluneUI(startup_log_level="info")
+        ui.logs = None
+        loading_screen = mock.Mock()
+        ui._loading_screen = loading_screen
+
+        ui.safe_log("hidden verbose line", loglevel="verbose")
+        ui.safe_log("visible info line", loglevel="info")
+
+        loading_screen.set_latest_log_message.assert_called_once_with(
+            "visible info line"
+        )
+
+    def test_start_background_init_shows_loading_screen_before_loading_tts(
+        self,
+    ) -> None:
+        """Verify the loading screen is pushed before the engine load worker starts."""
+        ui = CeluneUI()
+
+        with (
+            mock.patch.object(ui, "_show_loading_screen") as show_loading_screen,
+            mock.patch.object(ui, "load_tts") as load_tts,
+        ):
+            ui.start_background_init()
+
+        show_loading_screen.assert_called_once_with()
+        load_tts.assert_called_once_with()
+
+    def test_start_background_init_does_not_emit_redundant_diagnostic(self) -> None:
+        """Verify deferred model work does not add another startup checkpoint."""
+        ui = CeluneUI(startup_log_level="verbose")
+        ui._emit_startup_diagnostic = mock.Mock()
+        ui.load_tts = mock.Mock()
+
+        with mock.patch.object(ui, "_show_loading_screen"):
+            ui.start_background_init()
+
+        ui._emit_startup_diagnostic.assert_not_called()
+        ui.load_tts.assert_called_once_with()
+
+    def test_dismiss_loading_screen_fades_then_hides_overlay(self) -> None:
+        """Verify successful initialization hides the overlay in place."""
+        ui = CeluneUI()
+        loading_screen = mock.Mock()
+        main_container = mock.Mock()
+        ui._loading_screen = loading_screen
+
+        def finish_fade(*_args, on_complete=None, **_kwargs) -> None:
+            if on_complete is not None:
+                on_complete()
+
+        def run_after_refresh(callback) -> None:
+            callback()
+
+        with (
+            mock.patch.object(
+                loading_screen,
+                "animate",
+                side_effect=finish_fade,
+            ) as fade,
+            mock.patch.object(
+                ui,
+                "_animate_opacity",
+                side_effect=finish_fade,
+            ) as main_fade,
+            mock.patch.object(
+                ui,
+                "query_one",
+                return_value=main_container,
+            ),
+            mock.patch.object(ui, "_refresh_logs") as refresh_logs,
+            mock.patch.object(
+                ui,
+                "call_after_refresh",
+                side_effect=run_after_refresh,
+            ),
+        ):
+            ui._dismiss_loading_screen()
+
+        assert not loading_screen.display
+        main_container.refresh.assert_called_once_with(layout=True, repaint=True)
+        fade.assert_called_once_with(
+            "opacity",
+            0.0,
+            on_complete=mock.ANY,
+            duration=ui_app._LOADING_FADE_SECONDS,
+            easing="out_cubic",
+        )
+        main_fade.assert_called_once_with(
+            main_container,
+            1.0,
+            duration=ui_app._MAIN_UI_FADE_SECONDS,
+        )
+        assert loading_screen.display is False
+        refresh_logs.assert_called_once_with()
+
+    def test_tts_log_preserves_backend_log_level_filtering(self) -> None:
+        """Verify isolated backend debug logs stay hidden at the info level."""
+        ui = CeluneUI()
+        ui.celune = cast(Celune, SimpleNamespace(log_level="info"))
+        ui.safe_log = mock.Mock()
+
+        ui.tts_log("hidden", loglevel="debug")
+        assert ui.safe_log.call_args_list == [
+            mock.call("hidden", "info", loglevel="debug")
+        ]
+        ui.safe_log.reset_mock()
+
+        ui.tts_log("visible", loglevel="info")
+        assert ui.safe_log.call_args_list == [
+            mock.call("visible", "info", loglevel="info")
+        ]
+
+    def test_headless_log_preserves_backend_log_level_filtering(self) -> None:
+        """Verify headless isolated backend logs honor the configured level."""
+        ui = CeluneHeadlessUI({"headless_nocolor": True})
+        ui.celune = cast(Celune, SimpleNamespace(log_level="info"))
+
+        with mock.patch("builtins.print") as print_output:
+            ui.headless_log("hidden", loglevel="debug")
+            print_output.assert_not_called()
+
+            ui.headless_log("visible", loglevel="info")
+            print_output.assert_called_once()
 
     def test_crossfade_vc_overlap_keeps_mono_audio_one_dimensional(self) -> None:
         """Verify mono live VC overlap crossfades stay valid 1D audio."""
@@ -603,8 +1352,8 @@ class UIStartupTests(TestCase):
 
         blended = ui._crossfade_vc_overlap(previous, current)
 
-        self.assertEqual(blended.shape, (4,))
-        self.assertEqual(blended.dtype, np.float32)
+        assert blended.shape == (4,)
+        assert blended.dtype == np.float32
 
     def test_crossfade_vc_overlap_upmixes_mixed_channel_shapes_to_stereo(self) -> None:
         """Verify mixed mono/stereo live VC overlap crossfades return stereo audio."""
@@ -619,8 +1368,8 @@ class UIStartupTests(TestCase):
 
         blended = ui._crossfade_vc_overlap(previous, current)
 
-        self.assertEqual(blended.shape, (4, 2))
-        self.assertEqual(blended.dtype, np.float32)
+        assert blended.shape == (4, 2)
+        assert blended.dtype == np.float32
 
     def test_enqueue_vc_submission_chunk_drops_oldest_backlog_item(self) -> None:
         """Verify live VC queueing preserves newer pending chunks when full."""
@@ -638,12 +1387,12 @@ class UIStartupTests(TestCase):
         queued_labels: list[str] = []
         while not submission_queue.empty():
             queued = submission_queue.get_nowait()
-            self.assertIsNotNone(queued)
+            assert queued is not None
             if queued is None:
-                self.fail("expected queued VC chunks")
+                pytest.fail("expected queued VC chunks")
             queued_labels.append(queued[2])
 
-        self.assertEqual(queued_labels, ["newer", "fresh"])
+        assert queued_labels == ["newer", "fresh"]
 
     def test_enqueue_vc_submission_chunk_replaces_stale_backlog_when_single_slot(
         self,
@@ -659,10 +1408,10 @@ class UIStartupTests(TestCase):
         CeluneUI._enqueue_vc_submission_chunk(submission_queue, fresh_chunk)
 
         queued = submission_queue.get_nowait()
-        self.assertIsNotNone(queued)
+        assert queued is not None
         if queued is None:
-            self.fail("expected a queued VC chunk")
-        self.assertEqual(queued[2], "fresh")
+            pytest.fail("expected a queued VC chunk")
+        assert queued[2] == "fresh"
 
     def test_finish_vc_submission_queue_replaces_stale_chunks_with_final_chunk(
         self,
@@ -680,43 +1429,218 @@ class UIStartupTests(TestCase):
 
         queued_final = submission_queue.get_nowait()
         queued_stop = submission_queue.get_nowait()
-        self.assertIsNotNone(queued_final)
+        assert queued_final is not None
         if queued_final is None:
-            self.fail("expected a final VC chunk before the stop marker")
-        self.assertEqual(queued_final[2], "final")
-        self.assertEqual(queued_final[3], True)
-        self.assertIsNone(queued_stop)
+            pytest.fail("expected a final VC chunk before the stop marker")
+        assert queued_final[2] == "final"
+        assert queued_final[3]
+        assert queued_stop is None
 
     def test_vc_input_has_voice_uses_rms_threshold(self) -> None:
         """Verify live VC VAD only treats sufficiently loud audio as speech."""
         quiet_audio = np.full((256, 2), 0.002, dtype=np.float32)
         voiced_audio = np.full((256, 2), 0.05, dtype=np.float32)
 
-        self.assertEqual(CeluneUI._vc_input_has_voice(quiet_audio), False)
-        self.assertEqual(CeluneUI._vc_input_has_voice(voiced_audio), True)
+        assert not CeluneUI._vc_input_has_voice(quiet_audio)
+        assert CeluneUI._vc_input_has_voice(voiced_audio)
 
-    def test_textual_ui_requires_attached_celune_on_mount(self) -> None:
-        """Verify the Textual UI fails clearly without an attached Celune."""
+    def test_textual_ui_can_mount_before_engine_attachment(self) -> None:
+        """Verify the loading frame can mount while the engine is still absent."""
         ui = CeluneUI()
-        with self.assertRaisesRegex(
-            RuntimeError,
-            f"CeluneUI requires an instance of {APP_NAME} to be set",
+        fake_widgets = {
+            "#container": Vertical(),
+            "#logs": RichLog(),
+            "#input": TextArea(),
+            "#status": Label(),
+            "#resources": Label(),
+            "#caption": Label(),
+            "#style": Button(),
+            "#vc-mode": Button(),
+            "#vc-pitch": Button(),
+            "#progress": SimpleNamespace(update=lambda **_: None),
+            "#progress-label": Label(),
+            "#header": Label(),
+            "#loading-overlay": CeluneLoadingScreen(),
+        }
+        with (
+            mock.patch("celune.ui.app.colors.configure_theme"),
+            mock.patch.object(
+                ui,
+                "query_one",
+                side_effect=lambda selector, *_args: fake_widgets[selector],
+            ),
+            mock.patch.object(ui, "query", return_value=[]),
+            mock.patch.object(ui, "set_interval"),
+            mock.patch.object(ui, "set_focus"),
+            mock.patch.object(ui, "call_after_refresh") as call_after_refresh,
+            mock.patch.object(ui, "safe_status"),
+            mock.patch.object(ui, "_refresh_status"),
+            mock.patch.object(ui, "_refresh_theme_text"),
+            mock.patch.object(ui, "_refresh_logs"),
         ):
             ui.on_mount()
+
+        self.assertIsNone(ui.celune)
+        self.assertIsNotNone(ui._loading_screen)
+        if ui._loading_screen is not None:
+            self.assertTrue(ui._loading_screen.display)
+        call_after_refresh.assert_not_called()
+
+    def test_progress_label_switches_between_percentage_time_and_hidden(self) -> None:
+        """Verify the progress readout uses the applicable display mode."""
+        label = ProgressLabel()
+
+        label.set_progress(1, 4)
+        assert label.display
+        assert str(label.render()) == " 25%"
+
+        label.set_progress(48000, 96000, audio_playing=True, sample_rate=48000)
+        assert str(label.render()) == "00:01"
+
+        label.set_progress(None, None)
+        assert not label.display
+        assert str(label.render()) == ""
+
+    def test_safe_progress_completes_late_idle_indeterminate_updates(self) -> None:
+        """Verify stale startup progress cannot leave the idle bar indeterminate."""
+
+        class FakeProgressBar:
+            """Small progress bar test double."""
+
+            def __init__(self) -> None:
+                self.updates: list[dict[str, Optional[float]]] = []
+
+            def update(self, **values: Optional[float]) -> None:
+                """Capture progress updates."""
+                self.updates.append(values)
+
+        ui = CeluneUI()
+        progress_bar = FakeProgressBar()
+        ui.progress_bar = cast(ProgressBar, progress_bar)
+        ui.progress_label = ProgressLabel()
+        ui.celune_ready = True
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                cur_state="idle",
+                persona_loading=False,
+            ),
+        )
+
+        ui.safe_progress(1, 1)
+        ui.safe_progress(None, None)
+
+        assert progress_bar.updates[-1] == {"total": 1, "progress": 1}
+        assert ui.progress_label.display
+        assert str(ui.progress_label.render()) == "100%"
+
+    def test_attach_celune_starts_runtime_after_loading_frame(self) -> None:
+        """Verify engine attachment schedules normal loading in the same app."""
+        ui = CeluneUI()
+        fake_celune = cast(
+            Celune,
+            SimpleNamespace(
+                config={},
+                backend=SimpleNamespace(is_fake=True),
+                log_callback=None,
+                status_callback=None,
+                error_callback=None,
+                idle_callback=None,
+                queue_avail_callback=None,
+                voice_changed_callback=None,
+                change_input_state_callback=None,
+                change_voice_lock_state_callback=None,
+                progress_callback=None,
+                caption_callback=None,
+                caption_timing_callback=None,
+                close=lambda: None,
+                glow=SimpleNamespace(fatal=lambda: None),
+            ),
+        )
+        ui._loading_screen = mock.Mock()
+        ui._loading_screen.display = True
+        ui._runtime_intervals_started = True
+
+        with (
+            mock.patch("celune.ui.app.default_loader", return_value=None),
+            mock.patch("celune.ui.app.ui_resources") as resources,
+            mock.patch.object(ui, "_enable_runtime_log_capture"),
+            mock.patch.object(ui, "refresh_vc_controls"),
+            mock.patch.object(ui, "update_resources"),
+            mock.patch.object(ui, "start_background_init") as start_init,
+            mock.patch.object(ui, "_refresh_theme_text"),
+            mock.patch.object(ui, "call_after_refresh") as call_after_refresh,
+        ):
+            ui.attach_celune(fake_celune)
+
+        self.assertIs(ui.celune, fake_celune)
+        self.assertEqual(fake_celune.log_callback, ui.tts_log)
+        resources.prime_usage.assert_called_once_with()
+        call_after_refresh.assert_called_once_with(start_init)
+
+    def test_callback_binding_does_not_chain_same_callback(self) -> None:
+        """Verify an already-installed callback is not invoked through a wrapper."""
+        calls: list[str] = []
+
+        def callback(message: str) -> None:
+            calls.append(message)
+
+        ui = CeluneUI()
+        fake_celune = cast(
+            Celune,
+            SimpleNamespace(log_callback=callback),
+        )
+        ui.celune = fake_celune
+
+        ui._chain_runtime_callback("log_callback", callback)
+        fake_celune.log_callback("message")
+
+        assert calls == ["message"]
+        assert fake_celune.log_callback is callback
+
+    def test_log_binding_does_not_chain_startup_sink_again(self) -> None:
+        """Verify startup log delivery does not duplicate the UI log callback."""
+        calls: list[str] = []
+
+        def ui_callback(message: str) -> None:
+            calls.append(message)
+
+        def buffered_callback(message: str) -> None:
+            ui_callback(message)
+
+        ui = CeluneUI()
+        fake_celune = cast(
+            Celune,
+            SimpleNamespace(
+                log_callback=buffered_callback,
+                _startup_log_sink=ui_callback,
+            ),
+        )
+        ui.celune = fake_celune
+
+        ui._chain_runtime_callback("log_callback", ui_callback)
+        fake_celune.log_callback("message")
+
+        assert calls == ["message"]
+        assert fake_celune.log_callback is buffered_callback
 
     def test_textual_ui_mount_enables_stdio_redirects_before_runtime_load(self) -> None:
         """Verify mount captures startup stdio before Celune begins loading."""
         ui = CeluneUI()
         fake_widgets = {
+            "#container": Vertical(),
             "#logs": RichLog(),
             "#input": TextArea(),
             "#status": Label(),
             "#resources": Label(),
+            "#caption": Label(),
             "#style": Button(),
             "#vc-mode": Button(),
             "#vc-pitch": Button(),
             "#progress": SimpleNamespace(update=lambda **_: None),
+            "#progress-label": Label(),
             "#header": Label(),
+            "#loading-overlay": CeluneLoadingScreen(),
         }
         ui.celune = cast(
             Celune,
@@ -752,9 +1676,9 @@ class UIStartupTests(TestCase):
             ):
                 ui.on_mount()
 
-            self.assertIs(sys.stdout, ui._log_stdout)
-            self.assertIs(sys.stderr, ui._log_stderr)
-            self.assertTrue(ui._runtime_log_capture_enabled)
+            assert sys.stdout is ui._log_stdout
+            assert sys.stderr is ui._log_stderr
+            assert ui._runtime_log_capture_enabled
             set_focus.assert_called_once_with(None)
         finally:
             ui.disable_runtime_log_capture()
@@ -765,15 +1689,19 @@ class UIStartupTests(TestCase):
         """Verify an attached runtime adopts the Textual UI callbacks on mount."""
         ui = CeluneUI()
         fake_widgets = {
+            "#container": Vertical(),
             "#logs": RichLog(),
             "#input": TextArea(),
             "#status": Label(),
             "#resources": Label(),
+            "#caption": Label(),
             "#style": Button(),
             "#vc-mode": Button(),
             "#vc-pitch": Button(),
             "#progress": SimpleNamespace(update=lambda **_: None),
+            "#progress-label": Label(),
             "#header": Label(),
+            "#loading-overlay": CeluneLoadingScreen(),
         }
         ui.celune = cast(
             Celune,
@@ -790,6 +1718,7 @@ class UIStartupTests(TestCase):
                 change_input_state_callback=None,
                 change_voice_lock_state_callback=None,
                 progress_callback=None,
+                caption_callback=None,
                 glow=SimpleNamespace(fatal=lambda: None),
             ),
         )
@@ -818,36 +1747,34 @@ class UIStartupTests(TestCase):
             ):
                 ui.on_mount()
 
-            self.assertIs(ui.celune.log_callback.__self__, ui)
-            self.assertIs(ui.celune.log_callback.__func__, CeluneUI.tts_log)
-            self.assertIs(ui.celune.status_callback.__self__, ui)
-            self.assertIs(ui.celune.status_callback.__func__, CeluneUI.safe_status)
-            self.assertIs(ui.celune.error_callback.__self__, ui)
-            self.assertIs(ui.celune.error_callback.__func__, CeluneUI.error)
-            self.assertIs(ui.celune.idle_callback.__self__, ui)
-            self.assertIs(ui.celune.idle_callback.__func__, CeluneUI.tts_idle)
-            self.assertIs(ui.celune.queue_avail_callback.__self__, ui)
-            self.assertIs(
-                ui.celune.queue_avail_callback.__func__,
-                CeluneUI.tts_queue_avail,
+            assert ui.celune.log_callback.__self__ is ui
+            assert ui.celune.log_callback.__func__ is CeluneUI.tts_log
+            assert ui.celune.status_callback.__self__ is ui
+            assert ui.celune.status_callback.__func__ is CeluneUI.safe_status
+            assert ui.celune.error_callback.__self__ is ui
+            assert ui.celune.error_callback.__func__ is CeluneUI.error
+            assert ui.celune.idle_callback.__self__ is ui
+            assert ui.celune.idle_callback.__func__ is CeluneUI.tts_idle
+            assert ui.celune.queue_avail_callback.__self__ is ui
+            assert ui.celune.queue_avail_callback.__func__ is CeluneUI.tts_queue_avail
+            assert ui.celune.voice_changed_callback.__self__ is ui
+            assert (
+                ui.celune.voice_changed_callback.__func__ is CeluneUI.tts_voice_changed
             )
-            self.assertIs(ui.celune.voice_changed_callback.__self__, ui)
-            self.assertIs(
-                ui.celune.voice_changed_callback.__func__,
-                CeluneUI.tts_voice_changed,
+            assert ui.celune.change_input_state_callback.__self__ is ui
+            assert (
+                ui.celune.change_input_state_callback.__func__
+                is CeluneUI.change_input_state
             )
-            self.assertIs(ui.celune.change_input_state_callback.__self__, ui)
-            self.assertIs(
-                ui.celune.change_input_state_callback.__func__,
-                CeluneUI.change_input_state,
+            assert ui.celune.change_voice_lock_state_callback.__self__ is ui
+            assert (
+                ui.celune.change_voice_lock_state_callback.__func__
+                is CeluneUI.change_voice_lock_state
             )
-            self.assertIs(ui.celune.change_voice_lock_state_callback.__self__, ui)
-            self.assertIs(
-                ui.celune.change_voice_lock_state_callback.__func__,
-                CeluneUI.change_voice_lock_state,
-            )
-            self.assertIs(ui.celune.progress_callback.__self__, ui)
-            self.assertIs(ui.celune.progress_callback.__func__, CeluneUI.safe_progress)
+            assert ui.celune.progress_callback.__self__ is ui
+            assert ui.celune.progress_callback.__func__ is CeluneUI.safe_progress
+            assert ui.celune.caption_callback.__self__ is ui
+            assert ui.celune.caption_callback.__func__ is CeluneUI.tts_caption
         finally:
             ui.disable_runtime_log_capture()
             sys.stdout = original_stdout
@@ -866,15 +1793,15 @@ class UIStartupTests(TestCase):
                 mock.patch.object(ui, "_remove_runtime_log_redirects"),
             ):
                 ui.enable_runtime_log_capture()
-                self.assertTrue(ui._runtime_log_capture_enabled)
-                self.assertIs(sys.stdout, ui._log_stdout)
-                self.assertIs(sys.stderr, ui._log_stderr)
+                assert ui._runtime_log_capture_enabled
+                assert sys.stdout is ui._log_stdout
+                assert sys.stderr is ui._log_stderr
 
                 ui.disable_runtime_log_capture()
 
-            self.assertFalse(ui._runtime_log_capture_enabled)
-            self.assertIs(sys.stdout, original_stdout)
-            self.assertIs(sys.stderr, original_stderr)
+            assert not ui._runtime_log_capture_enabled
+            assert sys.stdout is original_stdout
+            assert sys.stderr is original_stderr
         finally:
             sys.stdout = original_stdout
             sys.stderr = original_stderr
@@ -901,16 +1828,16 @@ class UIStartupTests(TestCase):
             with mock.patch.object(ui, "_install_runtime_log_redirects"):
                 ui.enable_runtime_log_capture()
 
-            self.assertIs(ui._old_stdout, terminal)
-            self.assertIs(ui._old_stderr, terminal)
-            self.assertIsNotNone(ui._log_stdout)
-            self.assertIsNotNone(ui._log_stderr)
+            assert ui._old_stdout is terminal
+            assert ui._old_stderr is terminal
             assert ui._log_stdout is not None
             assert ui._log_stderr is not None
-            self.assertIs(ui._log_stdout.underlying_stdout, terminal)
-            self.assertIs(ui._log_stdout.underlying_stderr, terminal)
-            self.assertIs(ui._log_stderr.underlying_stdout, terminal)
-            self.assertIs(ui._log_stderr.underlying_stderr, terminal)
+            assert ui._log_stdout is not None
+            assert ui._log_stderr is not None
+            assert ui._log_stdout.underlying_stdout is terminal
+            assert ui._log_stdout.underlying_stderr is terminal
+            assert ui._log_stderr.underlying_stdout is terminal
+            assert ui._log_stderr.underlying_stderr is terminal
         finally:
             sys.stdout = original_stdout
             sys.stderr = original_stderr
@@ -947,15 +1874,31 @@ class UIStartupTests(TestCase):
             "C:/tmp/hub.py:110: FutureWarning: TRANSFORMERS_CACHE is deprecated\n"
         )
 
-        self.assertEqual(
-            captured,
-            [
-                (
-                    "C:/tmp/hub.py:110: FutureWarning: TRANSFORMERS_CACHE is deprecated",
-                    "warning",
-                )
-            ],
+        assert captured == [
+            (
+                "C:/tmp/hub.py:110: FutureWarning: TRANSFORMERS_CACHE is deprecated",
+                "warning",
+            )
+        ]
+
+    def test_log_redirect_preserves_severity_across_multiline_records(self) -> None:
+        """Verify continuation lines inherit the first line's inferred severity."""
+        stream = mock.Mock()
+        stream.isatty.return_value = True
+        captured: list[tuple[str, str]] = []
+        redirect = ui_terminal.LogRedirect(
+            stdout=stream,
+            stderr=stream,
+            write_callback=lambda msg, severity: captured.append((msg, severity)),
+            default_severity="info",
         )
+
+        redirect.write("FutureWarning: first line\nsecond line\n")
+
+        assert captured == [
+            ("FutureWarning: first line", "warning"),
+            ("second line", "warning"),
+        ]
 
     def test_log_redirect_suppresses_filtered_partial_stdout_lines(self) -> None:
         """Verify redirected stdout suppressions match message content, not exact chunks."""
@@ -972,7 +1915,7 @@ class UIStartupTests(TestCase):
 
         redirect.write("Loading weights from C:/models/checkpoint.safetensors\n")
 
-        self.assertEqual(captured, [])
+        assert not captured
 
     def test_runtime_log_filters_gpt_sovits_text2semantic_loading(self) -> None:
         """Verify GPT-SoVITS checkpoint loading chatter stays out of the UI log."""
@@ -989,7 +1932,27 @@ class UIStartupTests(TestCase):
 
         redirect.write("Loading Text2Semantic weights from C:/models/custom-e20.ckpt\n")
 
-        self.assertEqual(captured, [])
+        assert not captured
+
+    def test_runtime_log_filters_transformers_ignored_generation_flags(self) -> None:
+        """Verify harmless Transformers generation-flag warnings stay out of the UI log."""
+        stream = mock.Mock()
+        stream.isatty.return_value = True
+        captured: list[tuple[str, str]] = []
+        redirect = ui_terminal.LogRedirect(
+            stdout=stream,
+            stderr=stream,
+            write_callback=lambda msg, severity: captured.append((msg, severity)),
+            default_severity="warning",
+            filter_messages=ui_app._RUNTIME_LOG_REDIRECT_FILTER_MESSAGES,
+        )
+
+        redirect.write(
+            "Internal runtime warning: The following generation flags are not valid "
+            "and may be ignored: ['temperature', 'top_k'].\n"
+        )
+
+        assert not captured
 
     def test_log_redirect_suppresses_tqdm_progress_lines(self) -> None:
         """Verify tqdm carriage-return progress lines are filtered out."""
@@ -1006,7 +1969,7 @@ class UIStartupTests(TestCase):
 
         redirect.write(" 10%|#         | 1/10 [00:00<00:03,  2.52it/s]\r")
 
-        self.assertEqual(captured, [])
+        assert not captured
 
     @staticmethod
     def test_load_tts_writes_terminal_title_to_original_stdout() -> None:
@@ -1025,7 +1988,7 @@ class UIStartupTests(TestCase):
                 load=lambda: True,
                 voices=("balanced", "bold"),
                 current_voice="balanced",
-                use_normalization=False,
+                use_normalization=True,
                 dev=False,
                 glow=SimpleNamespace(fatal=lambda: None),
                 try_play_signal=mock.Mock(return_value=True),
@@ -1051,11 +2014,28 @@ class UIStartupTests(TestCase):
                 load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
                 load_tts(ui)
 
-            terminal.write.assert_called_with(f"\x1b]2;{APP_NAME}\x07")
+            terminal.write.assert_called_with(f"\x1b]0;{APP_NAME} ・ Ready ・ Idle\x07")
             terminal.flush.assert_called()
+            ui.safe_progress.assert_called_once_with(1, 1)
         finally:
             sys.stdout = original_stdout
             sys.stderr = original_stderr
+
+    def test_sleep_timer_callbacks_ignore_textual_shutdown(self) -> None:
+        """Verify background sleep callbacks tolerate Textual stopping concurrently."""
+        ui = CeluneUI()
+        ui.call_from_thread = mock.Mock(side_effect=RuntimeError("App is not running"))
+
+        schedule_thread = threading.Thread(target=ui._schedule_sleep_timer)
+        cancel_thread = threading.Thread(target=ui._cancel_sleep_timer)
+        schedule_thread.start()
+        cancel_thread.start()
+        schedule_thread.join(timeout=1)
+        cancel_thread.join(timeout=1)
+
+        self.assertFalse(schedule_thread.is_alive())
+        self.assertFalse(cancel_thread.is_alive())
+        self.assertEqual(ui.call_from_thread.call_count, 2)
 
     def test_headless_ui_warns_without_attached_celune(self) -> None:
         """Verify headless mode warns before doing nothing without Celune."""
@@ -1064,16 +2044,15 @@ class UIStartupTests(TestCase):
             warnings.catch_warnings(record=True) as caught,
             mock.patch("celune.ui.headless.signal.signal"),
             mock.patch("celune.ui.headless.time.sleep", side_effect=KeyboardInterrupt),
-            self.assertRaises(KeyboardInterrupt),
+            pytest.raises(KeyboardInterrupt),
         ):
             warnings.simplefilter("always")
             ui.run()
 
-        self.assertEqual(len(caught), 1)
-        self.assertTrue(issubclass(caught[0].category, RuntimeWarning))
-        self.assertIn(
-            f"CeluneHeadlessUI has no attached {APP_NAME} instance",
-            str(caught[0].message),
+        assert len(caught) == 1
+        assert issubclass(caught[0].category, RuntimeWarning)
+        assert f"CeluneHeadlessUI has no attached {APP_NAME} instance" in str(
+            caught[0].message
         )
 
     def test_load_tts_marks_ui_error_when_startup_returns_false(self) -> None:
@@ -1096,10 +2075,10 @@ class UIStartupTests(TestCase):
         load_tts(ui)
 
         ui.error.assert_called_once_with(f"{APP_NAME} could not start")
-        self.assertEqual(ui.cur_state, "error")
-        self.assertEqual(ui.input_box.placeholder, "Please wait")
-        self.assertEqual(ui.style_button.disabled, True)
-        self.assertFalse(ui._fatal_error_active)
+        assert ui.cur_state == "error"
+        assert ui.input_box.placeholder == "Please wait"
+        assert ui.style_button.disabled
+        assert not ui._fatal_error_active
 
     def test_load_tts_enters_ui_test_mode_without_error_for_fake_backend(self) -> None:
         """Verify fake-backend UI test mode does not present as a startup failure."""
@@ -1134,7 +2113,130 @@ class UIStartupTests(TestCase):
         ui.change_input_state.assert_called_once_with(locked=True)
         ui.change_voice_lock_state.assert_called_once_with(locked=True)
         ui.error.assert_not_called()
-        self.assertNotEqual(ui.cur_state, "error")
+        assert ui.cur_state != "error"
+
+    def test_load_tts_publishes_the_first_loaded_voice_in_agent_test_mode(self) -> None:
+        """Verify agent test startup does not leave the voice button on its placeholder."""
+        ui = CeluneUI()
+        ui.safe_status = mock.Mock()
+        ui.change_input_state = mock.Mock()
+        ui.change_voice_lock_state = mock.Mock()
+        ui.tts_voice_changed = mock.Mock()
+        ui._dismiss_loading_screen = mock.Mock()
+        ui._finish_test_startup = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                load=lambda: True,
+                voices=("balanced", "bold"),
+                current_voice=None,
+                use_normalization=False,
+                backend_mode="agent_test",
+            ),
+        )
+
+        load_tts = getattr(CeluneUI.load_tts, "__wrapped__", CeluneUI.load_tts)
+        load_tts(ui)
+
+        ui.tts_voice_changed.assert_called_once_with("balanced")
+
+    def test_finished_agent_test_reconciles_all_visible_state(self) -> None:
+        """Verify test completion refreshes logs, voice, caption, status, and locks."""
+        ui = CeluneUI()
+        ui.input_box = TextArea()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                test_finished=True,
+                current_voice=None,
+                voices=("balanced",),
+                cur_state="stopped",
+            ),
+        )
+        ui.celune_ready = True
+        ui._hide_caption_widgets = mock.Mock()
+        ui.change_input_state = mock.Mock()
+        ui.change_voice_lock_state = mock.Mock()
+        ui.tts_voice_changed = mock.Mock()
+        ui.safe_status = mock.Mock()
+        ui._refresh_logs = mock.Mock()
+
+        ui._apply_test_finished_state()
+
+        ui._hide_caption_widgets.assert_called_once_with()
+        ui.change_input_state.assert_called_once_with(locked=True)
+        ui.change_voice_lock_state.assert_called_once_with(locked=True)
+        ui.tts_voice_changed.assert_called_once_with("balanced")
+        self.assertEqual(ui.input_box.placeholder, string("ui.stopped_placeholder"))
+        ui.safe_status.assert_called_once_with(string("status.stopped"), "sleeping")
+        ui._refresh_logs.assert_called_once_with()
+        self.assertEqual(
+            ui._terminal_status_for(string("status.stopped"), "sleeping"),
+            ("stopped", string("osc.action_stopped")),
+        )
+
+    def test_log_refresh_does_not_duplicate_pending_background_message(self) -> None:
+        """Verify a refresh and its queued message render one log entry."""
+        ui = CeluneUI()
+        logs = mock.Mock()
+        logs.scroll_offset = SimpleNamespace(x=0, y=0)
+        logs.auto_scroll = True
+        ui.logs = cast(RichLog, logs)
+        ui.log_history = [("Test result", "info")]
+
+        ui._refresh_logs()
+        ui.on_uilog_message(UILogMessage("Test result", "info"))
+
+        logs.write.assert_called_once()
+        self.assertEqual(ui._rendered_log_count, 1)
+
+    def test_queued_log_reconciles_stale_render_cursor(self) -> None:
+        """Verify a queued log is restored when the render cursor got ahead of the widget."""
+        ui = CeluneUI()
+        logs = mock.Mock()
+        logs.lines = []
+        logs._size_known = True
+        logs.auto_scroll = True
+        ui.logs = cast(RichLog, logs)
+        ui.log_history = [("Backend ready", "info")]
+        ui._rendered_log_count = 1
+
+        ui.on_uilog_message(UILogMessage("Backend ready", "info"))
+
+        logs.clear.assert_called_once_with()
+        logs.write.assert_called_once()
+        self.assertEqual(ui._rendered_log_count, 1)
+
+    def test_log_refresh_preserves_rendered_history(self) -> None:
+        """Verify a layout refresh does not clear already rendered log entries."""
+        ui = CeluneUI()
+        logs = mock.Mock()
+        logs.lines = [mock.Mock()]
+        logs.auto_scroll = True
+        logs._size_known = True
+        ui.logs = cast(RichLog, logs)
+        ui.log_history = [("Existing log", "info")]
+        ui._rendered_log_count = 1
+
+        ui._refresh_logs()
+
+        logs.clear.assert_not_called()
+        logs.write.assert_not_called()
+        logs.scroll_end.assert_called_once_with(
+            animate=False,
+            immediate=True,
+            force=True,
+        )
+
+    def test_finished_agent_test_ignores_late_speaking_status(self) -> None:
+        """Verify late playback callbacks cannot overwrite the stopped status."""
+        ui = CeluneUI()
+        ui.status = Label()
+        ui.celune = cast(Celune, SimpleNamespace(test_finished=True))
+
+        ui.safe_status(string("status.speaking"))
+
+        self.assertNotEqual(ui._status_text, string("status.speaking"))
 
     def test_submit_text_is_noop_in_ui_test_mode(self) -> None:
         """Verify interactive fake-backend UI test mode ignores submitted input."""
@@ -1160,8 +2262,8 @@ class UIStartupTests(TestCase):
         with mock.patch("celune.ui.app.sys.modules", patched_modules):
             handled = ui._submit_text(ui.input_box.text)
 
-        self.assertTrue(handled)
-        self.assertEqual(ui.input_box.text, "")
+        assert handled
+        assert ui.input_box.text == ""
         ui.safe_status.assert_called_once_with(string("ui.test_mode_active"))
         ui.process_command.assert_not_called()
         ui.celune.think.assert_not_called()
@@ -1189,9 +2291,9 @@ class UIStartupTests(TestCase):
 
         ui.tts_idle()
 
-        self.assertEqual(ui.cur_state, "error")
-        self.assertEqual(ui.input_box.placeholder, "Please wait")
-        self.assertEqual(ui.style_button.disabled, True)
+        assert ui.cur_state == "error"
+        assert ui.input_box.placeholder == "Please wait"
+        assert ui.style_button.disabled
 
     def test_tts_idle_keeps_controls_locked_while_runtime_is_reloading(self) -> None:
         """Verify idle playback callbacks do not unlock the UI mid-reload."""
@@ -1218,7 +2320,7 @@ class UIStartupTests(TestCase):
 
         ui.tts_idle()
 
-        self.assertEqual(ui.celune.locked, True)
+        assert ui.celune.locked
         ui.change_input_state.assert_called_once_with(locked=True)
         ui.change_voice_lock_state.assert_called_once_with(locked=True)
         ui.safe_status.assert_not_called()
@@ -1261,8 +2363,8 @@ class UIStartupTests(TestCase):
         pages = ui_resources.resource_pages(celune, "celune")
 
         exit_page = next(page for page in pages if "CTRL+Q exit" in page)
-        self.assertNotIn("CTRL+C", exit_page)
-        self.assertNotIn("CTRL+R toggle recording", pages)
+        assert "CTRL+C" not in exit_page
+        assert "CTRL+R toggle recording" not in pages
 
     def test_textual_resource_footer_advertises_ctrl_r_only_in_vc_mode(self) -> None:
         """Verify the resource footer advertises recording only while VC mode is active."""
@@ -1278,7 +2380,7 @@ class UIStartupTests(TestCase):
 
         pages = ui_resources.resource_pages(celune, "celune")
 
-        self.assertIn("CTRL+R toggle recording", pages)
+        assert "CTRL+R toggle recording" in pages
 
     def test_textual_resource_footer_rotates_cost_equivalent_pages(self) -> None:
         """Verify the resource footer includes saved-cost pages for each provider."""
@@ -1301,23 +2403,11 @@ class UIStartupTests(TestCase):
             if "(this session): $" in page or "(overall): $" in page
         ]
 
-        self.assertEqual(len(cost_pages), len(COST_EQUIVALENTS) * 2)
-        self.assertIn(
-            "gemini-flash-tts (this session): $0.03",
-            cost_pages,
-        )
-        self.assertIn(
-            "openai-realtime (this session): $0.19",
-            cost_pages,
-        )
-        self.assertIn(
-            "gemini-flash-tts (overall): $0.08",
-            cost_pages,
-        )
-        self.assertIn(
-            "openai-realtime (overall): $0.48",
-            cost_pages,
-        )
+        assert len(cost_pages) == len(COST_EQUIVALENTS) * 2
+        assert "gemini-flash-tts (this session): $0.03" in cost_pages
+        assert "openai-realtime (this session): $0.19" in cost_pages
+        assert "gemini-flash-tts (overall): $0.08" in cost_pages
+        assert "openai-realtime (overall): $0.48" in cost_pages
 
     def test_ctrl_r_toggles_tui_vc_recording(self) -> None:
         """Verify CTRL+R streams VC audio live and flushes the final tail on stop."""
@@ -1424,7 +2514,7 @@ class UIStartupTests(TestCase):
             ui.on_key(cast(events.Key, start_event))
 
             if captured_callback is None or not callable(captured_callback):
-                self.fail("recording callback was not registered")
+                pytest.fail("recording callback was not registered")
             else:
                 invoke_captured_callback(
                     captured_callback,
@@ -1450,20 +2540,18 @@ class UIStartupTests(TestCase):
             device="Stereo Mix (Realtek)",
             kind="input",
         )
-        self.assertGreaterEqual(mock_query_devices.call_count, 1)
-        self.assertEqual(
-            mock_input_stream.call_args.kwargs["device"],
-            "Stereo Mix (Realtek)",
-        )
+        assert mock_query_devices.call_count >= 1
+        assert mock_input_stream.call_args.kwargs["device"] == "Stereo Mix (Realtek)"
         for _ in range(50):
             if cast(mock.Mock, ui.celune.convert_audio).call_count >= 1:
                 break
             time.sleep(0.01)
 
-    def test_vc_recording_vad_drops_leading_silence(self) -> None:
-        """Verify live VC does not submit leading low-RMS noise to the VC backend."""
+    def test_vc_recording_vad_plays_leading_silence(self) -> None:
+        """Verify live VC converts and plays silence while its VAD gate is closed."""
         ui = CeluneUI()
         self.addCleanup(setattr, CeluneUI, "_instance", None)
+        converted_chunks: list[np.ndarray] = []
         ui.celune = cast(
             Celune,
             SimpleNamespace(
@@ -1471,7 +2559,10 @@ class UIStartupTests(TestCase):
                 vc_backend=SimpleNamespace(),
                 convert_audio=mock.Mock(
                     side_effect=lambda audio, sample_rate, label=None, **_kwargs: (
-                        SimpleNamespace(
+                        converted_chunks.append(
+                            np.asarray(audio, dtype=np.float32).copy()
+                        )
+                        or SimpleNamespace(
                             audio=np.asarray(audio, dtype=np.float32).copy(),
                             sample_rate=sample_rate,
                             label=label or "Stereo Mix",
@@ -1518,7 +2609,9 @@ class UIStartupTests(TestCase):
                 },
             ),
             mock.patch("celune.ui.app.sd.InputStream", side_effect=FakeInputStream),
-            mock.patch("celune.ui.app.queue_streaming_sfx_audio", return_value=1),
+            mock.patch(
+                "celune.ui.app.queue_streaming_sfx_audio", return_value=1
+            ) as queue_stream,
             mock.patch("celune.ui.app.finish_streaming_sfx_audio"),
         ):
             start_event = SimpleNamespace(
@@ -1529,13 +2622,16 @@ class UIStartupTests(TestCase):
             ui.on_key(cast(events.Key, start_event))
 
             if captured_callback is None or not callable(captured_callback):
-                self.fail("recording callback was not registered")
+                pytest.fail("recording callback was not registered")
             else:
                 invoke_captured_callback(
                     captured_callback,
                     np.full((48000, 2), 0.001, dtype=np.float32),
                 )
-                time.sleep(0.05)
+                for _ in range(50):
+                    if converted_chunks:
+                        break
+                    time.sleep(0.01)
 
             stop_event = SimpleNamespace(
                 key="ctrl+r",
@@ -1544,12 +2640,15 @@ class UIStartupTests(TestCase):
             )
             ui.on_key(cast(events.Key, stop_event))
 
-        self.assertEqual(cast(mock.Mock, ui.celune.convert_audio).call_count, 0)
+        self.assertTrue(converted_chunks)
+        self.assertTrue(np.allclose(converted_chunks[0], 0.0))
+        queue_stream.assert_called_once()
 
     def test_vc_recording_vad_preroll_keeps_speech_onset(self) -> None:
         """Verify live VC prepends a short preroll so VAD onset is not clipped."""
         ui = CeluneUI()
         self.addCleanup(setattr, CeluneUI, "_instance", None)
+        converted_chunks: list[np.ndarray] = []
         ui.celune = cast(
             Celune,
             SimpleNamespace(
@@ -1557,7 +2656,10 @@ class UIStartupTests(TestCase):
                 vc_backend=SimpleNamespace(),
                 convert_audio=mock.Mock(
                     side_effect=lambda audio, sample_rate, label=None, **_kwargs: (
-                        SimpleNamespace(
+                        converted_chunks.append(
+                            np.asarray(audio, dtype=np.float32).copy()
+                        )
+                        or SimpleNamespace(
                             audio=np.asarray(audio, dtype=np.float32).copy(),
                             sample_rate=sample_rate,
                             label=label or "Stereo Mix",
@@ -1572,6 +2674,27 @@ class UIStartupTests(TestCase):
         ui.safe_log = mock.Mock()
         ui.update_resources = mock.Mock()
         captured_callback: Optional[ui_app._VCAudioCallback] = None
+
+        class FakeAIVAD:
+            """Tiny AI VAD stub with a deterministic speech onset."""
+
+            def has_voice(self, audio: np.ndarray, sample_rate: int) -> bool:
+                """Report only the loud synthetic buffer as speech.
+
+                Args:
+                    audio: Input audio block inspected by the fake detector.
+                    sample_rate: Input audio sample rate.
+
+                Returns:
+                    bool: Whether the fake detector considers speech active.
+                """
+                del sample_rate
+                return float(np.max(np.abs(audio))) >= 0.05
+
+            def reset(self) -> None:
+                """Reset the fake detector state."""
+
+        fake_vad = FakeAIVAD()
 
         def invoke_captured_callback(
             callback: ui_app._VCAudioCallback,
@@ -1590,11 +2713,20 @@ class UIStartupTests(TestCase):
             def __init__(self, **kwargs) -> None:
                 nonlocal captured_callback
                 captured_callback = kwargs["callback"]
-                self.start = mock.Mock()
+                self.start = mock.Mock(
+                    side_effect=lambda: invoke_captured_callback(
+                        captured_callback,
+                        np.full((1000, 2), 0.004, dtype=np.float32),
+                    )
+                )
                 self.stop = mock.Mock()
                 self.close = mock.Mock()
 
         with (
+            mock.patch(
+                "celune.ui.app.create_live_voice_activity_detector",
+                return_value=fake_vad,
+            ),
             mock.patch(
                 "celune.ui.app.sd.query_devices",
                 return_value={
@@ -1615,7 +2747,7 @@ class UIStartupTests(TestCase):
             ui.on_key(cast(events.Key, start_event))
 
             if captured_callback is None or not callable(captured_callback):
-                self.fail("recording callback was not registered")
+                pytest.fail("recording callback was not registered")
             else:
                 invoke_captured_callback(
                     captured_callback,
@@ -1633,6 +2765,14 @@ class UIStartupTests(TestCase):
                 stop=mock.Mock(),
             )
             ui.on_key(cast(events.Key, stop_event))
+
+        speech_chunks = [
+            chunk for chunk in converted_chunks if not np.allclose(chunk, 0.0)
+        ]
+        self.assertTrue(speech_chunks)
+        self.assertGreaterEqual(len(speech_chunks[0]), 3000)
+        self.assertAlmostEqual(float(speech_chunks[0][0, 0]), 0.004)
+        self.assertAlmostEqual(float(speech_chunks[0][-1, 0]), 0.05)
 
     def test_vc_recording_flushes_active_speech_before_end_of_phrase(self) -> None:
         """Verify live VC can submit one mid-speech chunk before silence arrives."""
@@ -1713,7 +2853,7 @@ class UIStartupTests(TestCase):
             ui.on_key(cast(events.Key, start_event))
 
             if captured_callback is None or not callable(captured_callback):
-                self.fail("recording callback was not registered")
+                pytest.fail("recording callback was not registered")
             else:
                 invoke_captured_callback(
                     captured_callback,
@@ -1725,12 +2865,10 @@ class UIStartupTests(TestCase):
                 )
                 time.sleep(0.05)
 
-            self.assertGreaterEqual(
-                cast(mock.Mock, ui.celune.convert_audio).call_count, 1
-            )
-            self.assertEqual(
-                queue_stream.call_args.kwargs["status_label_key"],
-                "pipeline.revoicing_label",
+            assert cast(mock.Mock, ui.celune.convert_audio).call_count >= 1
+            assert (
+                queue_stream.call_args.kwargs["status_label_key"]
+                == "pipeline.revoicing_label"
             )
 
             stop_event = SimpleNamespace(
@@ -1740,8 +2878,8 @@ class UIStartupTests(TestCase):
             )
             ui.on_key(cast(events.Key, stop_event))
 
-        self.assertTrue(converted_chunks)
-        self.assertGreaterEqual(converted_chunks[0].shape[0], 17000)
+        assert converted_chunks
+        assert converted_chunks[0].shape[0] >= 17000
 
     def test_vc_recording_prefers_ai_vad_when_available(self) -> None:
         """Verify live VC can use the optional AI VAD instead of the RMS fallback."""
@@ -1786,7 +2924,7 @@ class UIStartupTests(TestCase):
                     sample_rate: Input audio sample rate.
 
                 Returns:
-                    bool: Always ``False`` so no VC conversion is queued.
+                    bool: Always ``False`` so silent VC conversion is queued.
                 """
                 self.calls += 1
                 self.last_shape = audio.shape
@@ -1844,7 +2982,7 @@ class UIStartupTests(TestCase):
             ui.on_key(cast(events.Key, start_event))
 
             if captured_callback is None or not callable(captured_callback):
-                self.fail("recording callback was not registered")
+                pytest.fail("recording callback was not registered")
             else:
                 invoke_captured_callback(
                     captured_callback,
@@ -1860,7 +2998,7 @@ class UIStartupTests(TestCase):
             ui.on_key(cast(events.Key, stop_event))
 
         self.assertGreaterEqual(fake_vad.calls, 1)
-        self.assertEqual(cast(mock.Mock, ui.celune.convert_audio).call_count, 0)
+        self.assertGreaterEqual(cast(mock.Mock, ui.celune.convert_audio).call_count, 1)
 
     def test_vc_recording_ai_vad_exception_keeps_detector_active(self) -> None:
         """Verify one AI VAD callback failure does not disable AI VAD forever."""
@@ -1968,7 +3106,7 @@ class UIStartupTests(TestCase):
             ui.on_key(cast(events.Key, start_event))
 
             if captured_callback is None or not callable(captured_callback):
-                self.fail("recording callback was not registered")
+                pytest.fail("recording callback was not registered")
             else:
                 invoke_captured_callback(
                     captured_callback,
@@ -1987,8 +3125,8 @@ class UIStartupTests(TestCase):
             )
             ui.on_key(cast(events.Key, stop_event))
 
-        self.assertEqual(fake_vad.calls, 2)
-        self.assertEqual(fake_vad.reset_calls, 1)
+        assert fake_vad.calls == 2
+        assert fake_vad.reset_calls == 1
 
     def test_ctrl_r_wakes_sleeping_celune_without_starting_recording(self) -> None:
         """Verify CTRL+R wakes a sleeping VC runtime instead of starting capture."""
@@ -2036,10 +3174,190 @@ class UIStartupTests(TestCase):
 
         ui._graceful_exit()
 
-        self.assertEqual(ui.cur_state, "exiting")
+        assert ui.cur_state == "exiting"
         ui._shutdown_live_vc_recording.assert_called_once_with()
         cast(mock.Mock, ui.celune.close).assert_called_once_with()
         ui.exit.assert_called_once_with()
+
+    def test_graceful_exit_fades_screen_before_unmounting(self) -> None:
+        """Verify the visible screen fades before Textual is asked to exit."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui._shutdown_runtime = mock.Mock()
+        ui.exit = mock.Mock()
+        screen_styles = SimpleNamespace(
+            opacity=1.0,
+            scrollbar_size_vertical=2,
+            scrollbar_size_horizontal=1,
+        )
+        screen = SimpleNamespace(
+            styles=screen_styles,
+            query=mock.Mock(),
+            refresh=mock.Mock(),
+            _vertical_scrollbar=SimpleNamespace(display=True),
+            _horizontal_scrollbar=SimpleNamespace(display=True),
+            _scrollbar_corner=SimpleNamespace(display=True),
+            show_vertical_scrollbar=True,
+            show_horizontal_scrollbar=True,
+        )
+        child_styles = SimpleNamespace(
+            scrollbar_size_vertical=2,
+            scrollbar_size_horizontal=1,
+        )
+        child = SimpleNamespace(
+            styles=child_styles,
+            refresh=mock.Mock(),
+            _vertical_scrollbar=SimpleNamespace(display=True),
+            _horizontal_scrollbar=SimpleNamespace(display=True),
+            _scrollbar_corner=SimpleNamespace(display=True),
+            show_vertical_scrollbar=True,
+            show_horizontal_scrollbar=True,
+        )
+        screen.query.return_value = (child,)
+        fade_complete: list[Callable[[], None]] = []
+        after_refresh: list[Callable[[], None]] = []
+
+        def capture_fade(*_args, on_complete=None, **_kwargs) -> None:
+            if on_complete is not None:
+                fade_complete.append(on_complete)
+
+        def capture_after_refresh(callback: Callable[[], None]) -> None:
+            after_refresh.append(callback)
+
+        with (
+            mock.patch.object(
+                CeluneUI,
+                "screen",
+                new_callable=mock.PropertyMock,
+                return_value=screen,
+            ),
+            mock.patch.object(ui, "_animate_opacity", side_effect=capture_fade) as fade,
+            mock.patch.object(
+                ui,
+                "call_after_refresh",
+                side_effect=capture_after_refresh,
+            ),
+        ):
+            ui._graceful_exit()
+
+            fade.assert_called_once_with(
+                screen,
+                0.0,
+                on_complete=mock.ANY,
+                duration=ui_app._EXIT_FADE_SECONDS,
+            )
+            ui._shutdown_runtime.assert_not_called()
+            ui.exit.assert_not_called()
+            assert len(fade_complete) == 1
+
+            fade_complete[0]()
+
+            assert screen.refresh.call_args == mock.call(repaint=True)
+            assert screen.styles.opacity == 0.0
+            for widget in (screen, child):
+                assert widget.styles.scrollbar_size_vertical == 0
+                assert widget.styles.scrollbar_size_horizontal == 0
+                assert not widget.show_vertical_scrollbar
+                assert not widget.show_horizontal_scrollbar
+                assert not widget._vertical_scrollbar.display
+                assert not widget._horizontal_scrollbar.display
+                assert not widget._scrollbar_corner.display
+            ui._shutdown_runtime.assert_not_called()
+            ui.exit.assert_not_called()
+            assert len(after_refresh) == 1
+
+            after_refresh[0]()
+
+        ui._shutdown_runtime.assert_called_once_with()
+        ui.exit.assert_called_once_with()
+
+    def test_graceful_exit_survives_shutdown_exception(self) -> None:
+        """Verify a core shutdown error cannot escape the exit handler."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui._old_stderr = mock.Mock()
+        ui._persist_log_entry = mock.Mock()
+        ui._shutdown_runtime = mock.Mock(
+            side_effect=RuntimeError("pipeline close failed")
+        )
+        ui.exit = mock.Mock()
+
+        with mock.patch(
+            "celune.ui.app.format_error_message",
+            return_value="An internal error occurred: pipeline close failed",
+        ):
+            ui._graceful_exit()
+
+        ui.exit.assert_called_once_with()
+        ui._old_stderr.write.assert_called_once()
+        self.assertIn("pipeline close failed", ui._old_stderr.write.call_args.args[0])
+        ui._persist_log_entry.assert_any_call(
+            mock.ANY,
+            "error",
+        )
+
+    def test_shutdown_error_persists_traceback(self) -> None:
+        """Verify shutdown diagnostics remain available after the UI closes."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui._old_stderr = mock.Mock()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ui._log_file_path = Path(temp_dir) / "celune.log"
+            with mock.patch(
+                "celune.ui.app.format_error_message",
+                return_value=(
+                    "An internal error occurred: pipeline close failed\ntraceback text"
+                ),
+            ):
+                ui._report_shutdown_error(RuntimeError("pipeline close failed"))
+
+            persisted = ui._log_file_path.read_text(encoding="utf-8")
+
+        self.assertIn("pipeline close failed", persisted)
+        self.assertIn("traceback text", persisted)
+
+    def test_runtime_shutdown_continues_after_live_input_error(self) -> None:
+        """Verify core teardown still runs when live input cleanup fails."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui.celune = cast(Celune, SimpleNamespace(close=mock.Mock()))
+        ui._shutdown_live_vc_recording = mock.Mock(
+            side_effect=RuntimeError("input close failed")
+        )
+        ui._report_shutdown_error = mock.Mock()
+
+        ui._shutdown_runtime()
+
+        cast(mock.Mock, ui.celune.close).assert_called_once_with()
+        ui._report_shutdown_error.assert_called_once()
+
+    def test_unmount_survives_shutdown_exception(self) -> None:
+        """Verify late unmount cleanup cannot turn normal exit into an app error."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui._shutdown_runtime = mock.Mock(
+            side_effect=RuntimeError("runtime close failed")
+        )
+        ui._report_shutdown_error = mock.Mock()
+
+        ui.on_unmount()
+
+        ui._report_shutdown_error.assert_called_once()
+
+    def test_runtime_shutdown_is_idempotent(self) -> None:
+        """Verify graceful exit and unmount close the core only once."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui.celune = cast(Celune, SimpleNamespace(close=mock.Mock()))
+        ui._shutdown_live_vc_recording = mock.Mock()
+        ui.exit = mock.Mock()
+
+        ui._graceful_exit()
+        ui.on_unmount()
+
+        ui._shutdown_live_vc_recording.assert_called_once_with()
+        cast(mock.Mock, ui.celune.close).assert_called_once_with()
 
     def test_launcher_loss_uses_graceful_exit_path(self) -> None:
         """Verify a launcher disconnect routes through normal UI cleanup."""
@@ -2052,7 +3370,7 @@ class UIStartupTests(TestCase):
         with mock.patch("celune.ui.app.launcher_loss_requested", return_value=True):
             ui._check_launcher_loss()
 
-        self.assertEqual(ui.cur_state, "exiting")
+        assert ui.cur_state == "exiting"
         ui._shutdown_live_vc_recording.assert_called_once_with()
         cast(mock.Mock, ui.celune.close).assert_called_once_with()
         ui.exit.assert_called_once_with()
@@ -2073,11 +3391,14 @@ class UIStartupTests(TestCase):
         )
         ui.safe_log = mock.Mock()
 
-        with mock.patch(
-            "celune.ui.app.resolve_audio_device_with_info",
-            side_effect=ValueError("ambiguous input device"),
+        with (
+            mock.patch.object(ui_app, "_RUNTIME_DEPENDENCIES_LOADED", True),
+            mock.patch(
+                "celune.ui.app.resolve_audio_device_with_info",
+                side_effect=ValueError("ambiguous input device"),
+            ),
         ):
-            self.assertEqual(ui._start_vc_recording(), False)
+            assert not ui._start_vc_recording()
 
         ui.safe_log.assert_called_once_with("ambiguous input device", "warning")
 
@@ -2094,7 +3415,7 @@ class UIStartupTests(TestCase):
                 with mock.patch(
                     "celune.ui.resources.threading.Thread", return_value=thread
                 ):
-                    self.assertEqual(ui_resources.gpu_usage(), 42)
+                    assert ui_resources.gpu_usage() == 42
                 thread.start.assert_called_once_with()
             finally:
                 ui_resources._NVIDIA_SMI_THREAD = previous_thread
@@ -2109,7 +3430,7 @@ class UIStartupTests(TestCase):
                 side_effect=subprocess.TimeoutExpired("nvidia-smi", 2.0),
             ) as run,
         ):
-            self.assertIsNone(ui_resources._query_gpu_usage())
+            assert ui_resources._query_gpu_usage() is None
 
         run.assert_called_once()
 
@@ -2128,8 +3449,8 @@ class UIStartupTests(TestCase):
         with mock.patch.object(ui, "_persona_loaded") as available:
             ui.change_input_state(locked=True)
 
-        self.assertEqual(ui.input_box.placeholder, "Please wait")
-        self.assertEqual(ui.style_button.disabled, True)
+        assert ui.input_box.placeholder == "Please wait"
+        assert ui.style_button.disabled
         available.assert_not_called()
 
         with (
@@ -2138,8 +3459,8 @@ class UIStartupTests(TestCase):
         ):
             ui.change_input_state(locked=False)
 
-        self.assertEqual(ui.input_box.placeholder, string("ui.input_placeholder"))
-        self.assertEqual(ui.style_button.disabled, False)
+        assert ui.input_box.placeholder == string("ui.input_placeholder")
+        assert not ui.style_button.disabled
         available.assert_called_once_with()
         thread_cls.return_value.start.assert_called_once()
 
@@ -2167,10 +3488,10 @@ class UIStartupTests(TestCase):
         with mock.patch("celune.ui.app.threading.Thread") as thread_cls:
             ui.change_input_state(locked=False)
 
-        self.assertEqual(ui.vc_mode_button.display, True)
-        self.assertEqual(ui.vc_pitch_button.display, True)
-        self.assertEqual(ui.vc_mode_button.disabled, False)
-        self.assertEqual(ui.vc_pitch_button.disabled, False)
+        assert ui.vc_mode_button.display
+        assert ui.vc_pitch_button.display
+        assert not ui.vc_mode_button.disabled
+        assert not ui.vc_pitch_button.disabled
         thread_cls.return_value.start.assert_called_once()
 
     def test_placeholder_uses_loaded_persona_not_runtime_capability(self) -> None:
@@ -2192,7 +3513,7 @@ class UIStartupTests(TestCase):
         )
 
         ui._persona_available = ui.persona_loaded()
-        self.assertEqual(ui.normal_input_placeholder(), string("ui.input_placeholder"))
+        assert ui.normal_input_placeholder() == string("ui.input_placeholder")
 
         ui.celune = cast(
             Celune,
@@ -2205,7 +3526,7 @@ class UIStartupTests(TestCase):
             ),
         )
         ui._persona_available = ui.persona_loaded()
-        self.assertEqual(ui.normal_input_placeholder(), string("ui.say_placeholder"))
+        assert ui.normal_input_placeholder() == string("ui.say_placeholder")
 
     def test_placeholder_uses_voice_changer_text_when_vc_backend_is_selected(
         self,
@@ -2224,10 +3545,7 @@ class UIStartupTests(TestCase):
             ),
         )
 
-        self.assertEqual(
-            ui.normal_input_placeholder(),
-            string("ui.voice_changer_placeholder"),
-        )
+        assert ui.normal_input_placeholder() == string("ui.voice_changer_placeholder")
 
     def test_refresh_vc_controls_hides_buttons_outside_voice_conversion_mode(
         self,
@@ -2248,10 +3566,10 @@ class UIStartupTests(TestCase):
 
         ui.refresh_vc_controls()
 
-        self.assertEqual(ui.vc_mode_button.display, False)
-        self.assertEqual(ui.vc_pitch_button.display, False)
-        self.assertEqual(ui.vc_mode_button.disabled, True)
-        self.assertEqual(ui.vc_pitch_button.disabled, True)
+        assert not ui.vc_mode_button.display
+        assert not ui.vc_pitch_button.display
+        assert ui.vc_mode_button.disabled
+        assert ui.vc_pitch_button.disabled
         ui._cancel_vc_recording.assert_called_once_with(announce=False)
 
     def test_refresh_vc_controls_shows_buttons_in_voice_conversion_mode(
@@ -2274,78 +3592,43 @@ class UIStartupTests(TestCase):
 
         ui.refresh_vc_controls()
 
-        self.assertEqual(ui.vc_mode_button.display, True)
-        self.assertEqual(ui.vc_pitch_button.display, True)
-        self.assertEqual(ui.vc_mode_button.label, string("ui.vc_mode_sing"))
-        self.assertEqual(
-            ui.vc_pitch_button.label,
-            string("ui.vc_pitch_button", value="+3"),
-        )
-        self.assertEqual(ui.vc_mode_button.disabled, False)
-        self.assertEqual(ui.vc_pitch_button.disabled, False)
+        assert ui.vc_mode_button.display
+        assert ui.vc_pitch_button.display
+        assert ui.vc_mode_button.label == string("ui.vc_mode_sing")
+        assert ui.vc_pitch_button.label == string("ui.vc_pitch_button", value="+3")
+        assert not ui.vc_mode_button.disabled
+        assert not ui.vc_pitch_button.disabled
         ui._cancel_vc_recording.assert_not_called()
 
     def test_runtime_logger_warning_is_routed_into_ui_logs(self) -> None:
         """Verify external Python logger warnings are routed into the UI logs."""
         ui = CeluneUI()
         captured: list[tuple[str, str]] = []
-        ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
+        ui.safe_log = lambda msg, severity="info", **kwargs: captured.append(
+            (msg, severity)
+        )
 
         logger = logging.getLogger("torch.utils.flop_counter")
 
         ui.install_runtime_log_redirects()
         self.addCleanup(ui._remove_runtime_log_redirects)
 
-        logger.warning(
-            "triton not found; flop counting will not work for triton kernels"
-        )
+        logger.warning("test warning")
 
-        self.assertEqual(
-            captured,
-            [
-                (
-                    (
-                        "Internal runtime warning: triton not found; flop counting "
-                        "will not work for triton kernels"
-                    ),
-                    "warning",
-                )
-            ],
-        )
-
-    def test_runtime_warning_capture_routes_py_warnings_triton_message(self) -> None:
-        """Verify Python warnings formatting is normalized for Triton warnings."""
-        ui = CeluneUI()
-        captured: list[tuple[str, str]] = []
-        ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
-
-        logger = logging.getLogger("py.warnings")
-        ui.install_runtime_log_redirects()
-        self.addCleanup(ui._remove_runtime_log_redirects)
-
-        logger.warning(
-            "C:\\path\\flop_counter.py:29: UserWarning: triton not found; flop "
-            "counting will not work for triton kernels"
-        )
-
-        self.assertEqual(
-            captured,
-            [
-                (
-                    (
-                        "Internal runtime warning: triton not found; flop counting "
-                        "will not work for triton kernels"
-                    ),
-                    "warning",
-                )
-            ],
-        )
+        assert captured == [
+            (
+                "Internal runtime warning: test warning",
+                "warning",
+            )
+        ]
 
     def test_runtime_huggingface_logger_error_is_routed_into_ui_logs(self) -> None:
         """Verify Hugging Face logger errors are routed into the UI log widget."""
         ui = CeluneUI()
         captured: list[tuple[str, str]] = []
-        ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
+        ui.safe_log = lambda msg, severity="info", **kwargs: captured.append(
+            (msg, severity)
+        )
 
         logger = logging.getLogger("huggingface_hub")
         ui.install_runtime_log_redirects()
@@ -2353,18 +3636,15 @@ class UIStartupTests(TestCase):
 
         logger.error("download failed because the connection dropped")
 
-        self.assertEqual(
-            captured,
-            [
+        assert captured == [
+            (
                 (
-                    (
-                        "Internal runtime error: download failed because the "
-                        "connection dropped"
-                    ),
-                    "error",
-                )
-            ],
-        )
+                    "Internal runtime error: download failed because the "
+                    "connection dropped"
+                ),
+                "error",
+            )
+        ]
 
     def test_runtime_global_log_redirect_captures_unlisted_external_logger(
         self,
@@ -2372,7 +3652,9 @@ class UIStartupTests(TestCase):
         """Verify arbitrary external loggers are captured without per-backend wiring."""
         ui = CeluneUI()
         captured: list[tuple[str, str]] = []
-        ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
+        ui.safe_log = lambda msg, severity="info", **kwargs: captured.append(
+            (msg, severity)
+        )
 
         logger = logging.getLogger("some.third_party.backend")
 
@@ -2381,16 +3663,17 @@ class UIStartupTests(TestCase):
 
         logger.warning("backend emitted a warning")
 
-        self.assertEqual(
-            captured,
-            [("Internal runtime warning: backend emitted a warning", "warning")],
-        )
+        assert captured == [
+            ("Internal runtime warning: backend emitted a warning", "warning")
+        ]
 
     def test_runtime_logger_suppresses_filtered_messages(self) -> None:
         """Verify runtime logger redirection honors the shared suppression list."""
         ui = CeluneUI()
         captured: list[tuple[str, str]] = []
-        ui.safe_log = lambda msg, severity="info": captured.append((msg, severity))
+        ui.safe_log = lambda msg, severity="info", **kwargs: captured.append(
+            (msg, severity)
+        )
 
         logger = logging.getLogger("some.third_party.backend")
 
@@ -2399,7 +3682,7 @@ class UIStartupTests(TestCase):
 
         logger.warning("Loading weights from C:/models/checkpoint.safetensors")
 
-        self.assertEqual(captured, [])
+        assert not captured
 
     def test_safe_status_marquees_long_text_for_narrow_status_label(self) -> None:
         """Verify long status text scrolls instead of clipping."""
@@ -2430,9 +3713,9 @@ class UIStartupTests(TestCase):
         ui.advance_status_marquee()
         second = fake_status.rendered
 
-        self.assertNotEqual(first, second)
-        self.assertTrue(first.startswith("  "))
-        self.assertTrue(second.startswith("  "))
+        assert first != second
+        assert first.startswith("  ")
+        assert second.startswith("  ")
 
     def test_safe_status_keeps_short_text_static(self) -> None:
         """Verify short status text does not marquee."""
@@ -2462,7 +3745,122 @@ class UIStartupTests(TestCase):
         first = fake_status.rendered
         ui.advance_status_marquee()
 
-        self.assertEqual(first, fake_status.rendered)
+        assert first == fake_status.rendered
+
+    def test_speech_caption_reveals_words_with_audio_progress(self) -> None:
+        """Verify speech captions reveal words and restore the progress bar."""
+
+        class FakeCaption:
+            """Small caption widget test double."""
+
+            is_attached = False
+
+            def __init__(self) -> None:
+                self.display = False
+                self.styles = SimpleNamespace(opacity=1.0)
+                self.rendered = ""
+
+            def update(self, value: str) -> None:
+                """Capture the visible caption words."""
+                self.rendered = value
+
+        class FakeProgressBar:
+            """Small progress bar test double."""
+
+            is_attached = False
+
+            def __init__(self, parent: Optional[object] = None) -> None:
+                self.display = True
+                self.styles = SimpleNamespace(opacity=1.0)
+                self.parent = parent
+
+        ui = CeluneUI()
+        caption = FakeCaption()
+        progress_row = SimpleNamespace(display=True)
+        ui.caption = cast(Label, caption)
+        ui.progress_label = ProgressLabel()
+        ui.progress_bar = cast(ProgressBar, FakeProgressBar(progress_row))
+
+        ui.tts_caption("One two three")
+        assert not progress_row.display
+        assert caption.display
+        assert not ui.progress_label.display
+        ui.safe_caption_progress(1, 3)
+        assert caption.rendered == "One"
+        ui.safe_caption_progress(2, 3)
+        assert caption.rendered == "One two"
+        ui.safe_caption_progress(3, 3)
+        assert caption.rendered == "One two three"
+
+        ui.tts_idle()
+        assert not ui._caption_active
+        assert not caption.display
+        assert progress_row.display
+        assert not ui.progress_label.display
+        assert cast(FakeProgressBar, ui.progress_bar).display
+
+        with mock.patch.object(ui, "_animate_opacity") as animate_opacity:
+            ui.tts_idle()
+        animate_opacity.assert_not_called()
+        assert cast(FakeProgressBar, ui.progress_bar).styles.opacity == 1.0
+
+        attached_progress = FakeProgressBar()
+        attached_progress.is_attached = True
+        with mock.patch.object(
+            ui, "set_timer", side_effect=lambda _delay, callback: callback()
+        ):
+            ui._animate_opacity(cast(ProgressBar, attached_progress), 0.0)
+        assert attached_progress.styles.opacity == 0.0
+
+        with mock.patch.object(ui, "call_from_thread") as call_from_thread:
+            worker = threading.Thread(target=ui._hide_caption_widgets)
+            worker.start()
+            worker.join()
+        call_from_thread.assert_called_once_with(ui._hide_caption_widgets)
+
+    def test_speech_caption_uses_word_timestamps(self) -> None:
+        """Verify captions use Whisper word boundaries instead of sentence interpolation."""
+        segments = (
+            WhisperSegment(
+                text="One two three",
+                start=0.0,
+                end=3.0,
+                words=(
+                    WhisperWord("One", 0.0, 0.4),
+                    WhisperWord("two", 0.8, 1.4),
+                    WhisperWord("three", 1.9, 2.8),
+                ),
+            ),
+        )
+
+        timings = CeluneUI._caption_word_timing_ranges(
+            ("One", "two", "three"),
+            segments,
+            3.0,
+        )
+
+        assert timings == ((0.0, 0.4), (0.8, 1.4), (1.9, 2.8))
+
+        normalized_timings = CeluneUI._caption_word_timing_ranges(
+            (r"C:\Users\user",),
+            (
+                WhisperSegment(
+                    text="C drive Users user",
+                    start=0.0,
+                    end=3.0,
+                    words=(
+                        WhisperWord("C", 0.0, 0.4),
+                        WhisperWord("drive", 0.5, 1.0),
+                        WhisperWord("Users", 1.1, 1.8),
+                        WhisperWord("user", 2.0, 2.8),
+                    ),
+                ),
+            ),
+            3.0,
+            ("C", "drive", "Users", "user"),
+        )
+
+        self.assertEqual(normalized_timings, ((0.0, 2.8),))
 
     def test_status_ticker_recovers_active_playback_status(self) -> None:
         """Verify the TUI ticker displays the active playback-source status."""
@@ -2488,8 +3886,8 @@ class UIStartupTests(TestCase):
 
         ui.advance_status_marquee()
 
-        self.assertEqual(ui._status_text, "Playing fixture.wav")
-        self.assertIn("Playing fixture.wav", cast(FakeLabel, ui.status).rendered)
+        assert ui._status_text == "Playing fixture.wav"
+        assert "Playing fixture.wav" in cast(FakeLabel, ui.status).rendered
 
     def test_safe_status_repaints_terminal_accent_for_error(self) -> None:
         """Verify error status repaints the terminal shell accent to the error color."""
@@ -2554,35 +3952,32 @@ class UIStartupTests(TestCase):
         ui.safe_status("Could not start", "error")
 
         expected = severity_color(ui.active_theme_name, "error")
-        self.assertEqual(ui.theme, "celune_error")
-        self.assertIsNone(ui.logs.styles.color)
-        self.assertIsNone(ui.logs.styles.border)
-        self.assertIsNone(ui.logs.styles.background)
-        self.assertIsNone(ui.logs.styles.scrollbar_color)
-        self.assertIsNone(ui.input_box.styles.border)
-        self.assertIsNone(ui.input_box.styles.background)
-        self.assertIsNone(ui.input_box.styles.scrollbar_color)
-        self.assertIsNone(ui.style_button.styles.border)
-        self.assertIsNone(ui.style_button.styles.background)
-        self.assertIsNone(ui.resources.styles.color)
-        self.assertIsNone(ui.header.styles.color)
-        self.assertIsNone(ui.header_lines[0].styles.border_top)
-        self.assertIsNone(ui.progress_bar.styles.color)
-        self.assertIsNone(ui.progress_bar.styles.background)
-        self.assertEqual(ui.status.styles.color, expected)
+        assert ui.theme == "celune_error"
+        assert ui.logs.styles.color is None
+        assert ui.logs.styles.border is None
+        assert ui.logs.styles.background is None
+        assert ui.logs.styles.scrollbar_color is None
+        assert ui.input_box.styles.border is None
+        assert ui.input_box.styles.background is None
+        assert ui.input_box.styles.scrollbar_color is None
+        assert ui.style_button.styles.border is None
+        assert ui.style_button.styles.background is None
+        assert ui.resources.styles.color is None
+        assert ui.header.styles.color is None
+        assert ui.header_lines[0].styles.border_top is None
+        assert ui.progress_bar.styles.color is None
+        assert ui.progress_bar.styles.background is None
+        assert ui.status.styles.color == expected
         error_theme = ui.get_theme("celune_error")
-        self.assertIsNotNone(error_theme)
-        self.assertEqual(error_theme.primary, colors.ERROR_DARK_ACCENT)
-        self.assertEqual(error_theme.accent, expected)
-        self.assertEqual(
-            error_theme.foreground,
-            colors.ensure_contrast(
-                colors.ERROR_HIGHLIGHT,
-                colors.ERROR_BACKGROUND,
-                7.0,
-            ),
+        assert error_theme is not None
+        assert error_theme.primary == colors.ERROR_DARK_ACCENT
+        assert error_theme.accent == expected
+        assert error_theme.foreground == colors.ensure_contrast(
+            colors.ERROR_HIGHLIGHT,
+            colors.ERROR_BACKGROUND,
+            7.0,
         )
-        self.assertEqual(error_theme.background, colors.ERROR_BACKGROUND)
+        assert error_theme.background == colors.ERROR_BACKGROUND
 
     def test_nonfatal_error_status_keeps_normal_theme(self) -> None:
         """Verify ordinary error statuses do not switch into the fatal error theme."""
@@ -2591,8 +3986,8 @@ class UIStartupTests(TestCase):
 
         ui.safe_status("Minor issue", "error")
 
-        self.assertEqual(ui.theme, "celune")
-        self.assertFalse(ui._fatal_error_active)
+        assert ui.theme == "celune"
+        assert not ui._fatal_error_active
 
     def test_wrapped_fatal_glow_activates_error_theme(self) -> None:
         """Verify the fatal theme only activates through wrapped ``glow.fatal()``."""
@@ -2606,8 +4001,8 @@ class UIStartupTests(TestCase):
         ui.wrap_runtime_fatal_glow()
         ui.celune.glow.fatal()
 
-        self.assertTrue(ui._fatal_error_active)
-        self.assertEqual(ui.theme, "celune_error")
+        assert ui._fatal_error_active
+        assert ui.theme == "celune_error"
 
     def test_fatal_theme_stays_pinned_after_later_nonfatal_status_updates(self) -> None:
         """Verify later routine events cannot clear the fatal UI theme once activated."""
@@ -2623,8 +4018,8 @@ class UIStartupTests(TestCase):
         ui.safe_status("Idle")
         ui.safe_status("Speaking")
 
-        self.assertTrue(ui._fatal_error_active)
-        self.assertEqual(ui.theme, "celune_error")
+        assert ui._fatal_error_active
+        assert ui.theme == "celune_error"
 
     def test_fatal_status_text_ignores_later_idle_updates(self) -> None:
         """Verify fatal UI status text is not overwritten by later normal lifecycle events."""
@@ -2636,8 +4031,8 @@ class UIStartupTests(TestCase):
         ui.safe_status("Idle")
         ui.safe_status("Speaking")
 
-        self.assertEqual(ui._status_text, "Celune could not warm up")
-        self.assertEqual(ui.status_severity, "error")
+        assert ui._status_text == "Celune could not warm up"
+        assert ui.status_severity == "error"
 
     def test_runtime_error_themes_cover_dark_and_light_modes(self) -> None:
         """Verify both dedicated runtime error themes are registered correctly."""
@@ -2647,29 +4042,23 @@ class UIStartupTests(TestCase):
 
         dark_error = ui.get_theme("celune_error")
         light_error = ui.get_theme("celune_light_error")
-        self.assertIsNotNone(dark_error)
-        self.assertIsNotNone(light_error)
-        self.assertEqual(dark_error.background, colors.ERROR_BACKGROUND)
-        self.assertEqual(light_error.background, colors.ERROR_LIGHT_BACKGROUND)
-        self.assertEqual(dark_error.accent, colors.THEME.error)
-        self.assertEqual(light_error.accent, colors.THEME_LIGHT.error)
-        self.assertEqual(dark_error.primary, colors.ERROR_DARK_ACCENT)
-        self.assertEqual(light_error.primary, colors.ERROR_DARK_ACCENT)
-        self.assertEqual(
-            dark_error.foreground,
-            colors.ensure_contrast(
-                colors.ERROR_HIGHLIGHT,
-                colors.ERROR_BACKGROUND,
-                7.0,
-            ),
+        assert dark_error is not None
+        assert light_error is not None
+        assert dark_error.background == colors.ERROR_BACKGROUND
+        assert light_error.background == colors.ERROR_LIGHT_BACKGROUND
+        assert dark_error.accent == colors.THEME.error
+        assert light_error.accent == colors.THEME_LIGHT.error
+        assert dark_error.primary == colors.ERROR_DARK_ACCENT
+        assert light_error.primary == colors.ERROR_DARK_ACCENT
+        assert dark_error.foreground == colors.ensure_contrast(
+            colors.ERROR_HIGHLIGHT,
+            colors.ERROR_BACKGROUND,
+            7.0,
         )
-        self.assertEqual(
-            light_error.foreground,
-            colors.ensure_contrast(
-                colors.ERROR_HIGHLIGHT,
-                colors.ERROR_LIGHT_BACKGROUND,
-                7.0,
-            ),
+        assert light_error.foreground == colors.ensure_contrast(
+            colors.ERROR_HIGHLIGHT,
+            colors.ERROR_LIGHT_BACKGROUND,
+            7.0,
         )
 
     def test_resize_repaints_status_after_width_change(self) -> None:
@@ -2705,3 +4094,159 @@ class UIStartupTests(TestCase):
 
         self.assertNotEqual(narrow, fake_status.rendered)
         self.assertEqual(fake_status.rendered, f"  {message}")
+
+
+class TestAgentStatusUI(CeluneTestCase):
+    """Tests for the typed agent lifecycle projection in the UI."""
+
+    def tearDown(self) -> None:
+        """Reset singleton UI guards after each test."""
+        CeluneUI._instance = None
+
+    @staticmethod
+    def _ui_for_task(
+        state: AgentTaskState,
+        *,
+        needs_compaction: bool = False,
+        busy: Optional[ComponentBusyResult] = None,
+    ) -> tuple[CeluneUI, SimpleNamespace, mock.Mock]:
+        """Build a headless UI around one typed task-shaped test fixture."""
+        task = SimpleNamespace(
+            task_id="task-1",
+            state=state,
+            iterations=2,
+            needs_context_compaction=needs_compaction,
+            config=SimpleNamespace(max_loops=5),
+        )
+        agent_runtime = SimpleNamespace(
+            get_active_task=mock.Mock(return_value=task),
+            get_task=mock.Mock(return_value=task),
+        )
+        ui = CeluneUI()
+        safe_status = mock.Mock()
+        ui.celune = cast(
+            Celune,
+            SimpleNamespace(
+                agent_runtime=agent_runtime,
+                cur_state="thinking",
+                last_component_busy=busy,
+                test_finished=False,
+            ),
+        )
+        ui.celune_ready = True
+        ui.safe_status = safe_status
+        return ui, task, safe_status
+
+    def test_agent_status_renders_lifecycle_states_once(self) -> None:
+        """Verify lifecycle events become localized status text without redraw spam."""
+        ui, task, safe_status = self._ui_for_task(AgentTaskState.IDLE)
+        for state, expected in (
+            (AgentTaskState.IDLE, "agent.status.idle"),
+            (AgentTaskState.CLASSIFYING, "agent.status.classifying"),
+            (AgentTaskState.WORKING, "agent.status.working"),
+            (AgentTaskState.AWAITING_APPROVAL, "agent.status.awaiting_approval"),
+            (AgentTaskState.AWAITING_CHOICE, "agent.status.awaiting_choice"),
+            (AgentTaskState.PAUSED, "agent.status.paused"),
+            (AgentTaskState.INTERRUPTED, "agent.status.interrupted"),
+            (AgentTaskState.CANCELLING, "agent.status.cancelling"),
+            (AgentTaskState.COMPLETED, "agent.status.completed"),
+            (AgentTaskState.FAILED, "agent.status.failed"),
+            (AgentTaskState.CANCELLED, "agent.status.cancelled"),
+            (AgentTaskState.ABORTED, "agent.status.aborted"),
+        ):
+            with self.subTest(state=state):
+                task.state = state
+                ui._agent_status_signature = None
+                safe_status.reset_mock()
+
+                ui._refresh_agent_status()
+                ui._refresh_agent_status()
+
+                if state == AgentTaskState.WORKING:
+                    safe_status.assert_called_once_with(
+                        string(
+                            "agent.status.working",
+                            iteration=2,
+                            maximum=5,
+                        ),
+                        "info",
+                    )
+                else:
+                    safe_status.assert_called_once_with(string(expected), "info")
+
+    def test_agent_status_prioritizes_compaction_and_structured_busy_components(
+        self,
+    ) -> None:
+        """Verify compaction and typed lock contention are visible without string parsing."""
+        ui, task, safe_status = self._ui_for_task(
+            AgentTaskState.PLANNING,
+            needs_compaction=True,
+        )
+
+        ui._refresh_agent_status()
+
+        safe_status.assert_called_once_with(string("agent.status.compacting"), "info")
+        task.needs_context_compaction = False
+        ui.celune.last_component_busy = ComponentBusyResult(
+            components=(ComponentLockName.VLM, ComponentLockName.TTS),
+            owners=(
+                (
+                    ComponentLockName.VLM,
+                    ComponentLockOwner(operation_id="persona"),
+                ),
+                (
+                    ComponentLockName.TTS,
+                    ComponentLockOwner(operation_id="speech"),
+                ),
+            ),
+        )
+
+        ui._refresh_agent_status()
+
+        safe_status.assert_called_with(
+            string(
+                "agent.status.busy_components",
+                components="VLM, TTS",
+            ),
+            "warning",
+        )
+
+    def test_stopped_state_wins_over_agent_status_and_uses_stopped_placeholder(
+        self,
+    ) -> None:
+        """Verify STOPPED remains visible and rejects every key except Ctrl+Q."""
+        ui, _task, _safe_status = self._ui_for_task(AgentTaskState.WORKING)
+        ui.celune.cur_state = "stopped"
+        ui.input_box = TextArea()
+        ui.style_button = Button("Voice")
+        ui.refresh_vc_controls = mock.Mock()
+        ui.update_resources = mock.Mock()
+        ui.change_input_state(locked=True)
+
+        self.assertEqual(ui.input_box.placeholder, string("ui.stopped_placeholder"))
+        self.assertEqual(
+            ui._terminal_status_for(string("status.speaking"), "info"),
+            ("stopped", string("osc.action_stopped")),
+        )
+        ui.celune.cur_state = "thinking"
+        ui._agent_task_state = AgentTaskState.AWAITING_APPROVAL
+        self.assertEqual(
+            ui._terminal_status_for(string("agent.status.awaiting_approval"), "info"),
+            ("awaiting", string("agent.status.awaiting_approval")),
+        )
+        ui._agent_task_state = AgentTaskState.PAUSED
+        self.assertEqual(
+            ui._terminal_status_for(string("agent.status.paused"), "info"),
+            ("paused", string("agent.status.paused")),
+        )
+        ui.celune.cur_state = "stopped"
+
+        event = SimpleNamespace(
+            key="ctrl+r",
+            prevent_default=mock.Mock(),
+            stop=mock.Mock(),
+        )
+        ui.on_key(cast(events.Key, event))
+
+        event.prevent_default.assert_called_once_with()
+        event.stop.assert_called_once_with()

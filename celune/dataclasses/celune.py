@@ -1,40 +1,45 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Grouped Celune runtime state containers and property specs."""
 
 import queue
 import threading
-from dataclasses import dataclass, field
-from typing import Optional, Union
+from typing import Union, Optional
+from dataclasses import field, dataclass
 
 import sounddevice as sd
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from ..backends.tts import CeluneBackend
-from ..backends.vc import CeluneVCBackend
-from ..cevoice import CEVoicePersona
-from ..chroma import AudioRGBGlow
 from ..config import Config
+from ..chroma import AudioRGBGlow
+from ..cevoice import CEVoicePersona
 from ..constants import PipelineStates
-from ..dsp import StreamingPedalboardReverb
-from ..extensions.manager import CeluneExtensionManager
+from ..typing.modes import BackendMode
+from ..locks import ComponentLockManager
+from ..backends.tts import CeluneBackend
 from ..persona.impl import PersonaClient
-from ..typing.aliases import AudioChunks
+from ..backends.vc import CeluneVCBackend
 from ..typing.backends import BackendModel
+from ..audio.dsp import StreamingPedalboardReverb
+from ..typing.common import JSON, JSONSerializable
+from ..typing.aliases import LogLevel, AudioChunks
+from ..extensions.manager import CeluneExtensionManager
+from ..typing.locks import ComponentLockOwner, ComponentBusyResult
+from .properties import ConstantPropertySpec, ForwardedPropertySpec
 from ..typing.celune import (
-    ErrorCallback,
     IdleCallback,
-    InputStateCallback,
+    ErrorCallback,
+    CaptionCallback,
     MessageCallback,
-    ProgressCallback,
-    QueueAvailableCallback,
-    TTSBackendRecipe,
     VCBackendRecipe,
+    ProgressCallback,
+    TTSBackendRecipe,
+    InputStateCallback,
     VoiceChangedCallback,
+    CaptionTimingCallback,
+    QueueAvailableCallback,
     VoiceLockStateCallback,
 )
-from ..typing.common import JSONSerializable
-from .properties import ConstantPropertySpec, ForwardedPropertySpec
 
 
 @dataclass
@@ -50,6 +55,9 @@ class CeluneCallbackState:
     change_input_state_callback: InputStateCallback
     change_voice_lock_state_callback: VoiceLockStateCallback
     progress_callback: ProgressCallback
+    caption_progress_callback: ProgressCallback
+    caption_callback: CaptionCallback
+    caption_timing_callback: CaptionTimingCallback
 
 
 @dataclass
@@ -69,7 +77,7 @@ class CeluneBackendState:
     input_mode: str = "text_to_speech"
     chunk_size: int = 0
     language: str = "Auto"
-    dev: bool = False
+    log_level: LogLevel = "info"
     use_normalization: bool = False
 
 
@@ -94,6 +102,7 @@ class CeluneVoiceState:
     current_character_persona: Optional[CEVoicePersona] = None
     voice_bundle_is_default: bool = True
     persona_history: list[dict[str, str]] = field(default_factory=list)
+    persona_session_summary: str = ""
     persona_attachments: list[dict[str, str]] = field(default_factory=list)
     voices: tuple[str, ...] = ()
     voice_prompt: Optional[str] = None
@@ -127,7 +136,10 @@ class CelunePipelineState:
     playback_done: threading.Event = field(default_factory=threading.Event)
     say_lock: threading.Lock = field(default_factory=threading.Lock)
     wake_lock: threading.Lock = field(default_factory=threading.Lock)
-    model_lock: threading.RLock = field(default_factory=threading.RLock)  # noqa
+    model_lock: threading.RLock = field(default_factory=threading.RLock)
+    component_locks: ComponentLockManager = field(default_factory=ComponentLockManager)
+    pipeline_lock_owner: Optional[ComponentLockOwner] = None
+    last_component_busy: Optional[ComponentBusyResult] = None
     exit_requested: bool = False
 
 
@@ -137,6 +149,7 @@ class CeluneAudioState:
 
     stream: Optional[sd.OutputStream] = None
     current_sr: Optional[int] = None
+    stream_lock: threading.RLock = field(default_factory=threading.RLock)
     audio_unavailable: bool = False
     can_use_rubberband: bool = True
     speed: float = 1.0
@@ -153,10 +166,13 @@ class CeluneAudioState:
 class CeluneRuntimeState:
     """Top-level lifecycle and runtime integration state."""
 
+    closed: bool = False
+    backend_mode: BackendMode = "normal"
     regenerate: bool = False
     locked: bool = True
     loaded: bool = False
     reload_pending: bool = False
+    reload_backend: Optional[Union[CeluneBackend, CeluneVCBackend]] = None
     sleeping: bool = False
     last_flavor: Optional[str] = None
     ready_announced: bool = False
@@ -165,28 +181,74 @@ class CeluneRuntimeState:
     extension_manager: Optional[CeluneExtensionManager] = None
     glow: Optional[AudioRGBGlow] = None
     vision: Optional[PersonaClient] = None
+    persona_ready: bool = False
+    persona_loading: bool = False
+    persona_load_thread: Optional[threading.Thread] = None
+    test_finished: bool = False
+    test_result: Optional[JSON] = None
 
 
 CELUNE_FORWARDED_PROPERTIES = (
-    ForwardedPropertySpec("log_callback", "_callbacks", "log_callback"),
-    ForwardedPropertySpec("status_callback", "_callbacks", "status_callback"),
-    ForwardedPropertySpec("error_callback", "_callbacks", "error_callback"),
-    ForwardedPropertySpec("idle_callback", "_callbacks", "idle_callback"),
-    ForwardedPropertySpec("queue_avail_callback", "_callbacks", "queue_avail_callback"),
     ForwardedPropertySpec(
-        "voice_changed_callback", "_callbacks", "voice_changed_callback"
+        "log_callback", "_callbacks", "log_callback", reject_duplicate=True
+    ),
+    ForwardedPropertySpec(
+        "status_callback", "_callbacks", "status_callback", reject_duplicate=True
+    ),
+    ForwardedPropertySpec(
+        "error_callback", "_callbacks", "error_callback", reject_duplicate=True
+    ),
+    ForwardedPropertySpec(
+        "idle_callback", "_callbacks", "idle_callback", reject_duplicate=True
+    ),
+    ForwardedPropertySpec(
+        "queue_avail_callback",
+        "_callbacks",
+        "queue_avail_callback",
+        reject_duplicate=True,
+    ),
+    ForwardedPropertySpec(
+        "voice_changed_callback",
+        "_callbacks",
+        "voice_changed_callback",
+        reject_duplicate=True,
     ),
     ForwardedPropertySpec(
         "change_input_state_callback",
         "_callbacks",
         "change_input_state_callback",
+        reject_duplicate=True,
     ),
     ForwardedPropertySpec(
         "change_voice_lock_state_callback",
         "_callbacks",
         "change_voice_lock_state_callback",
+        reject_duplicate=True,
     ),
-    ForwardedPropertySpec("progress_callback", "_callbacks", "progress_callback"),
+    ForwardedPropertySpec(
+        "progress_callback",
+        "_callbacks",
+        "progress_callback",
+        reject_duplicate=True,
+    ),
+    ForwardedPropertySpec(
+        "caption_progress_callback",
+        "_callbacks",
+        "caption_progress_callback",
+        reject_duplicate=True,
+    ),
+    ForwardedPropertySpec(
+        "caption_callback",
+        "_callbacks",
+        "caption_callback",
+        reject_duplicate=True,
+    ),
+    ForwardedPropertySpec(
+        "caption_timing_callback",
+        "_callbacks",
+        "caption_timing_callback",
+        reject_duplicate=True,
+    ),
     ForwardedPropertySpec("config", "_backend_state", "config"),
     ForwardedPropertySpec("_backend_spec", "_backend_state", "backend_spec"),
     ForwardedPropertySpec("_backend_kwargs", "_backend_state", "backend_kwargs"),
@@ -204,7 +266,7 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("input_mode", "_backend_state", "input_mode"),
     ForwardedPropertySpec("chunk_size", "_backend_state", "chunk_size"),
     ForwardedPropertySpec("language", "_backend_state", "language"),
-    ForwardedPropertySpec("dev", "_backend_state", "dev"),
+    ForwardedPropertySpec("log_level", "_backend_state", "log_level"),
     ForwardedPropertySpec("use_normalization", "_backend_state", "use_normalization"),
     ForwardedPropertySpec("model", "_model_state", "model"),
     ForwardedPropertySpec("model_name", "_model_state", "model_name"),
@@ -229,6 +291,11 @@ CELUNE_FORWARDED_PROPERTIES = (
         "voice_bundle_is_default",
     ),
     ForwardedPropertySpec("persona_history", "_voice_state", "persona_history"),
+    ForwardedPropertySpec(
+        "persona_session_summary",
+        "_voice_state",
+        "persona_session_summary",
+    ),
     ForwardedPropertySpec("persona_attachments", "_voice_state", "persona_attachments"),
     ForwardedPropertySpec("voices", "_voice_state", "voices"),
     ForwardedPropertySpec("voice_prompt", "_voice_state", "voice_prompt"),
@@ -288,6 +355,21 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("_say_lock", "_pipeline_state", "say_lock"),
     ForwardedPropertySpec("_wake_lock", "_pipeline_state", "wake_lock"),
     ForwardedPropertySpec("_model_lock", "_pipeline_state", "model_lock"),
+    ForwardedPropertySpec(
+        "_component_locks",
+        "_pipeline_state",
+        "component_locks",
+    ),
+    ForwardedPropertySpec(
+        "_pipeline_lock_owner",
+        "_pipeline_state",
+        "pipeline_lock_owner",
+    ),
+    ForwardedPropertySpec(
+        "_last_component_busy",
+        "_pipeline_state",
+        "last_component_busy",
+    ),
     ForwardedPropertySpec("_exit_requested", "_pipeline_state", "exit_requested"),
     ForwardedPropertySpec("_stream", "_audio_state", "stream"),
     ForwardedPropertySpec("_current_sr", "_audio_state", "current_sr"),
@@ -318,18 +400,34 @@ CELUNE_FORWARDED_PROPERTIES = (
     ForwardedPropertySpec("recently_saved", "_audio_state", "recently_saved"),
     ForwardedPropertySpec("kept_sfx_audio", "_audio_state", "kept_sfx_audio"),
     ForwardedPropertySpec("regenerate", "_runtime_state", "regenerate"),
+    ForwardedPropertySpec("backend_mode", "_runtime_state", "backend_mode"),
     ForwardedPropertySpec("locked", "_runtime_state", "locked"),
     ForwardedPropertySpec("loaded", "_runtime_state", "loaded"),
     ForwardedPropertySpec("sleeping", "_runtime_state", "sleeping"),
     ForwardedPropertySpec("_last_flavor", "_runtime_state", "last_flavor"),
     ForwardedPropertySpec("_ready_announced", "_runtime_state", "ready_announced"),
     ForwardedPropertySpec("_reload_pending", "_runtime_state", "reload_pending"),
+    ForwardedPropertySpec("_reload_backend", "_runtime_state", "reload_backend"),
+    ForwardedPropertySpec("_closed", "_runtime_state", "closed"),
     ForwardedPropertySpec("cur_state", "_runtime_state", "cur_state"),
     ForwardedPropertySpec("is_in_tutorial", "_runtime_state", "is_in_tutorial"),
     ForwardedPropertySpec("extension_manager", "_runtime_state", "extension_manager"),
     ForwardedPropertySpec("glow", "_runtime_state", "glow"),
     ForwardedPropertySpec("vision", "_runtime_state", "vision"),
+    ForwardedPropertySpec("persona_ready", "_runtime_state", "persona_ready"),
+    ForwardedPropertySpec("persona_loading", "_runtime_state", "persona_loading"),
+    ForwardedPropertySpec("test_finished", "_runtime_state", "test_finished"),
+    ForwardedPropertySpec("test_result", "_runtime_state", "test_result"),
+    ForwardedPropertySpec(
+        "_persona_load_thread", "_runtime_state", "persona_load_thread"
+    ),
     ForwardedPropertySpec("stream", "_audio_state", "stream"),
+    ForwardedPropertySpec(
+        "stream_lock",
+        "_audio_state",
+        "stream_lock",
+        read_only=True,
+    ),
     ForwardedPropertySpec("say_lock", "_pipeline_state", "say_lock", read_only=True),
     ForwardedPropertySpec(
         "utterance_force_stop",
@@ -363,6 +461,18 @@ CELUNE_FORWARDED_PROPERTIES = (
     ),
     ForwardedPropertySpec(
         "model_lock", "_pipeline_state", "model_lock", read_only=True
+    ),
+    ForwardedPropertySpec(
+        "component_locks",
+        "_pipeline_state",
+        "component_locks",
+        read_only=True,
+    ),
+    ForwardedPropertySpec(
+        "last_component_busy",
+        "_pipeline_state",
+        "last_component_busy",
+        read_only=True,
     ),
     ForwardedPropertySpec(
         "audio_unavailable",

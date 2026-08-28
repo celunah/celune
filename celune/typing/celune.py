@@ -1,17 +1,19 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Core Celune protocols and callback types."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Protocol, Union
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Union, Optional, Protocol
 
 import torch
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
-from .common import Config, JSONSerializable
+from .aliases import LogLevel
+from .modes import BackendMode, OperationMode
+from .common import JSON, Config, JSONSerializable
 
 if TYPE_CHECKING:
     import queue
@@ -19,15 +21,19 @@ if TYPE_CHECKING:
 
     import sounddevice as sd
 
-    from ..backends.tts import BackendModel, CeluneBackend
-    from ..backends.vc import CeluneVCBackend
-    from ..cevoice import CEVoicePersona
+    from ..audio.dsp import StreamingPedalboardReverb
+    from .locks import ComponentLockOwner, ComponentBusyResult
+    from ..locks import ComponentLockManager
     from ..chroma import AudioRGBGlow
+    from .aliases import AudioChunk, AudioChunks
+    from ..cevoice import CEVoicePersona
     from ..constants import PipelineStates
-    from ..dsp import StreamingPedalboardReverb
-    from ..extensions.manager import CeluneExtensionManager
+    from ..backends.vc import CeluneVCBackend
+    from ..backends.tts import BackendModel, CeluneBackend
     from ..persona.impl import PersonaClient
-    from .aliases import AudioChunks
+    from ..persona.memory import PersonaMemoryStore
+    from ..persona.emotion import PersonaEmotionAnalyzer
+    from ..extensions.manager import CeluneExtensionManager
 
 
 type GenerationKwarg = Union[torch.Tensor, int, bool, None]
@@ -143,9 +149,15 @@ class NormalizerTokenizer(Protocol):
 
 
 class MessageCallback(Protocol):
-    """Callback accepting a message and optional severity."""
+    """Callback accepting a message, severity, and log-level threshold."""
 
-    def __call__(self, msg: str, severity: str = "info") -> None:
+    def __call__(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
         """Handle a message emitted by Celune."""
         raise NotImplementedError("protocol not defined")
 
@@ -174,6 +186,28 @@ class ProgressCallback(Protocol):
         raise NotImplementedError("protocol not defined")
 
 
+class CaptionCallback(Protocol):
+    """Callback accepting the active speech caption, or ``None`` when finished."""
+
+    def __call__(self, caption: Optional[str]) -> None:
+        """Handle a speech caption lifecycle update."""
+        raise NotImplementedError("protocol not defined")
+
+
+class CaptionTimingCallback(Protocol):
+    """Callback receiving generated speech for optional caption timing."""
+
+    def __call__(
+        self,
+        caption: str,
+        audio: AudioChunk,
+        sample_rate: int,
+        timing_text: Optional[str] = None,
+    ) -> None:
+        """Analyze generated speech to refine caption timing."""
+        raise NotImplementedError("protocol not defined")
+
+
 type ErrorCallback = Callable[[str], None]
 type IdleCallback = Callable[[], None]
 type QueueAvailableCallback = Callable[[], None]
@@ -197,7 +231,11 @@ class CeluneStateAccessors:
     change_input_state_callback: InputStateCallback
     change_voice_lock_state_callback: VoiceLockStateCallback
     progress_callback: ProgressCallback
+    caption_progress_callback: ProgressCallback
+    caption_callback: CaptionCallback
+    caption_timing_callback: CaptionTimingCallback
     config: Config
+    backend_mode: BackendMode
     _backend_spec: Optional[TTSBackendRecipe]
     _backend_kwargs: dict[str, JSONSerializable]
     backend: CeluneBackend
@@ -207,10 +245,11 @@ class CeluneStateAccessors:
     voice_conversion_backend: str
     vc_pitch_shift: int
     vc_f0_condition: bool
+    mode: OperationMode
     input_mode: str
     chunk_size: int
     language: str
-    dev: bool
+    log_level: LogLevel
     use_normalization: bool
     model: Optional[BackendModel]
     model_name: str
@@ -223,6 +262,7 @@ class CeluneStateAccessors:
     current_character_persona: Optional[CEVoicePersona]
     voice_bundle_is_default: bool
     persona_history: list[dict[str, str]]
+    persona_session_summary: str
     persona_attachments: list[dict[str, str]]
     voices: tuple[str, ...]
     voice_prompt: Optional[str]
@@ -248,7 +288,10 @@ class CeluneStateAccessors:
     _playback_done: threading.Event
     _say_lock: threading.Lock
     _wake_lock: threading.Lock
-    _model_lock: threading.RLock  # noqa
+    _model_lock: threading.RLock
+    _component_locks: ComponentLockManager
+    _pipeline_lock_owner: Optional[ComponentLockOwner]
+    _last_component_busy: Optional[ComponentBusyResult]
     _exit_requested: bool
     _stream: Optional[sd.OutputStream]
     _current_sr: Optional[int]
@@ -269,10 +312,20 @@ class CeluneStateAccessors:
     sleeping: bool
     _last_flavor: Optional[str]
     _ready_announced: bool
+    _closed: bool
     is_in_tutorial: bool
     extension_manager: Optional[CeluneExtensionManager]
     glow: AudioRGBGlow
     vision: Optional[PersonaClient]
+    persona_emotion_analyzer: Optional[PersonaEmotionAnalyzer]
+    persona_memory_store: Optional[PersonaMemoryStore]
+    persona_ready: bool
+    persona_loading: bool
+    test_finished: bool
+    test_result: Optional[JSON]
+    _persona_load_thread: Optional[threading.Thread]
+    _active_speech_generation: Optional[int]
+    _webui_callbacks_wrapped: bool
     stream: Optional[sd.OutputStream]
     say_lock: threading.Lock
     utterance_force_stop: threading.Event
@@ -285,12 +338,14 @@ class CeluneStateAccessors:
     generation_thread: Optional[threading.Thread]
     playback_thread: Optional[threading.Thread]
     exit_requested: bool
-    model_lock: threading.RLock  # noqa
+    model_lock: threading.RLock
+    component_locks: ComponentLockManager
+    last_component_busy: Optional[ComponentBusyResult]
     audio_unavailable: bool
     current_sr: Optional[int]
 
     @property
-    def cur_state(self) -> str:  # noqa
+    def cur_state(self) -> str:
         """Return the current runtime-state label.
 
         Raises:
@@ -299,7 +354,7 @@ class CeluneStateAccessors:
         raise NotImplementedError("typing surface only")
 
     @cur_state.setter
-    def cur_state(self, value: str) -> None:  # noqa
+    def cur_state(self, value: str) -> None:
         """Store the current runtime-state label.
 
         Args:
@@ -311,7 +366,7 @@ class CeluneStateAccessors:
         raise NotImplementedError("typing surface only")
 
     @property
-    def persona_queue(self) -> queue.Queue:  # noqa
+    def persona_queue(self) -> queue.Queue:
         """Return the queue receiving Persona input text.
 
         Returns:
@@ -320,7 +375,7 @@ class CeluneStateAccessors:
         return self._persona_queue
 
     @property
-    def speech_generation(self) -> int:  # noqa
+    def speech_generation(self) -> int:
         """Return the current speech-generation counter.
 
         Returns:
@@ -329,9 +384,9 @@ class CeluneStateAccessors:
         return self._speech_generation
 
 
-class _BundleWithPath(Protocol):
+class _BundleWithPath(Protocol):  # noqa: PYI046
     """Protocol for bundle-like objects that expose a path."""
 
     @property
-    def path(self) -> Union[str, Path]:  # noqa
+    def path(self) -> Union[str, Path]:
         """Return the bundle path."""

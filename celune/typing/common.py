@@ -1,8 +1,8 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Shared Celune type aliases."""
 
 from collections.abc import Mapping
-from typing import Literal, Optional, Union
+from typing import Union, Literal, Optional
 
 type JSONSerializable = Union[
     None,

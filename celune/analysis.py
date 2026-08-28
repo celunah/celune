@@ -1,37 +1,40 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Analyze a WAV file and generate a radar chart plus a text report."""
 
-import contextlib
 import pathlib
 import warnings
+import contextlib
 from pathlib import Path
+from collections.abc import Callable
 from typing import Optional, cast
 
+import torch
 import librosa
 import matplotlib
 import numpy as np
 import numpy.typing as npt
-import torch
-from matplotlib import colors as mcolors
-from matplotlib import font_manager, rcParams
 from matplotlib import pyplot as plt
+from matplotlib import colors as mcolors
 from matplotlib.projections import PolarAxes
+from matplotlib import rcParams, font_manager
 from transformers import AutoModel, AutoProcessor
 
+from .i18n import string
+from .paths import huggingface_progress
+from .typing.aliases import AudioChunk
 from .cevoice import ManifestValue, default_loader
 from .constants import (
     N_A_NUMERIC,
     VOICE_EMBEDDING_MODEL,
     remote_code_model_revision,
 )
-from .typing.aliases import AudioChunk
 from .typing.analysis import (
+    TextConfig,
+    VoiceMatch,
     EmbeddingModel,
+    TextConfigValue,
     EmbeddingPayload,
     EmbeddingProcessor,
-    TextConfig,
-    TextConfigValue,
-    VoiceMatch,
 )
 
 matplotlib.use("Agg")
@@ -209,7 +212,7 @@ def compute_raw_metrics(y: npt.NDArray[np.float32], sr: int) -> dict:
         "sample_rate": sr,
     }
 
-    rms_frames = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0]  # noqa
+    rms_frames = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0]
     metrics["rms_mean"] = float(np.mean(rms_frames))
     metrics["rms_std"] = float(np.std(rms_frames))
 
@@ -251,10 +254,10 @@ def compute_raw_metrics(y: npt.NDArray[np.float32], sr: int) -> dict:
         num_voiced_frames * hop_duration_s / max(metrics["duration_s"], 1e-6)
     )
 
-    centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=512)[0]  # noqa
+    centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=512)[0]
     metrics["spectral_centroid_mean"] = float(np.mean(centroid))
 
-    zcr = librosa.feature.zero_crossing_rate(y, hop_length=512)[0]  # noqa
+    zcr = librosa.feature.zero_crossing_rate(y, hop_length=512)[0]
     metrics["zcr_mean"] = float(np.mean(zcr))
 
     stft = np.abs(librosa.stft(y, hop_length=512))
@@ -275,7 +278,7 @@ def _embedding_tensor_to_numpy(value: EmbeddingPayload) -> npt.NDArray[np.float3
         elif len(value) == 1:
             value = next(iter(value.values()))
         else:
-            raise ValueError("reference embedding dict has no speaker_embedding key")
+            raise ValueError(string("analysis.reference_embedding_dict_missing_key"))
 
     if isinstance(value, torch.Tensor):
         array = value.detach().cpu().float().numpy()
@@ -284,9 +287,16 @@ def _embedding_tensor_to_numpy(value: EmbeddingPayload) -> npt.NDArray[np.float3
 
     array = np.squeeze(array).astype(np.float32, copy=False)
     if array.ndim != 1:
-        raise ValueError(f"expected a 1D embedding, got shape {array.shape}")
+        raise ValueError(
+            string("analysis.reference_embedding_dimension_invalid", shape=array.shape)
+        )
     if array.shape[0] != 2048:
-        raise ValueError(f"expected a 2048-size embedding, got {array.shape[0]}")
+        raise ValueError(
+            string(
+                "analysis.reference_embedding_size_invalid",
+                size=array.shape[0],
+            )
+        )
     return array
 
 
@@ -294,14 +304,35 @@ def _load_reference_embedding(voice: str) -> npt.NDArray[np.float32]:
     """Load a packaged Qwen3 reference embedding for your character's voice."""
     loader = default_loader()
     if loader is None:
-        raise FileNotFoundError(
-            "no compatible CEVOICE/CECHAR package with reference embeddings is loaded"
-        )
+        raise FileNotFoundError(string("analysis.reference_embedding_bundle_missing"))
     try:
         ref_path = loader.materialize(voice, "pt")
     except KeyError as error:
-        raise FileNotFoundError(f"{voice}.pt not found") from error
-    return _embedding_tensor_to_numpy(torch.load(ref_path, map_location="cpu"))
+        raise FileNotFoundError(
+            string("analysis.reference_embedding_not_found", voice=voice)
+        ) from error
+    try:
+        value = torch.load(ref_path, map_location="cpu", weights_only=True)
+    except Exception as error:
+        raise ValueError(
+            string("analysis.invalid_reference_embedding", voice=voice)
+        ) from error
+
+    if isinstance(value, dict):
+        if set(value) != {"speaker_embedding"}:
+            raise ValueError(
+                string("analysis.invalid_reference_embedding", voice=voice)
+            )
+        value = value["speaker_embedding"]
+    if not isinstance(value, torch.Tensor):
+        raise TypeError(string("analysis.invalid_reference_embedding", voice=voice))
+    if value.dtype != torch.float32 or value.ndim not in {1, 2}:
+        raise ValueError(string("analysis.invalid_reference_embedding", voice=voice))
+    if value.shape not in {(2048,), (1, 2048)}:
+        raise ValueError(string("analysis.invalid_reference_embedding", voice=voice))
+    if not bool(torch.isfinite(value).all()):
+        raise ValueError(string("analysis.invalid_reference_embedding", voice=voice))
+    return _embedding_tensor_to_numpy(value)
 
 
 def _available_reference_voices() -> list[str]:
@@ -320,28 +351,33 @@ def _available_reference_voices() -> list[str]:
     )
 
 
-def _load_embedding_model() -> tuple[EmbeddingProcessor, EmbeddingModel]:
+def _load_embedding_model(
+    progress_callback: Optional[
+        Callable[[Optional[float], Optional[float]], None]
+    ] = None,
+) -> tuple[EmbeddingProcessor, EmbeddingModel]:
     """Load and cache the Qwen3 speaker embedding processor/model."""
     global _EMBEDDING_MODEL, _EMBEDDING_PROCESSOR
 
     if _EMBEDDING_MODEL is None or _EMBEDDING_PROCESSOR is None:
         revision = remote_code_model_revision(VOICE_EMBEDDING_MODEL)
-        _EMBEDDING_PROCESSOR = cast(
-            EmbeddingProcessor,
-            AutoProcessor.from_pretrained(
-                VOICE_EMBEDDING_MODEL,
-                trust_remote_code=True,
-                revision=revision,
-            ),
-        )
-        _EMBEDDING_MODEL = cast(
-            EmbeddingModel,
-            AutoModel.from_pretrained(
-                VOICE_EMBEDDING_MODEL,
-                trust_remote_code=True,
-                revision=revision,
-            ),
-        )
+        with huggingface_progress(progress_callback):
+            _EMBEDDING_PROCESSOR = cast(
+                EmbeddingProcessor,
+                AutoProcessor.from_pretrained(
+                    VOICE_EMBEDDING_MODEL,
+                    trust_remote_code=True,
+                    revision=revision,
+                ),
+            )
+            _EMBEDDING_MODEL = cast(
+                EmbeddingModel,
+                AutoModel.from_pretrained(
+                    VOICE_EMBEDDING_MODEL,
+                    trust_remote_code=True,
+                    revision=revision,
+                ),
+            )
         _EMBEDDING_MODEL.eval()
         with contextlib.suppress(AttributeError):
             _EMBEDDING_MODEL.to(torch.device("cpu"))
@@ -352,9 +388,12 @@ def _load_embedding_model() -> tuple[EmbeddingProcessor, EmbeddingModel]:
 def _compute_qwen3_embedding(
     y: npt.NDArray[np.float32],
     sr: int,
+    progress_callback: Optional[
+        Callable[[Optional[float], Optional[float]], None]
+    ] = None,
 ) -> npt.NDArray[np.float32]:
     """Compute a Qwen3 ECAPA-TDNN speaker embedding for a mono waveform."""
-    processor, model = _load_embedding_model()
+    processor, model = _load_embedding_model(progress_callback)
     inputs = processor(y, sampling_rate=sr)
     inputs = {
         key: value.to("cpu") if isinstance(value, torch.Tensor) else value
@@ -374,7 +413,7 @@ def _cosine_similarity_percent(
     """Return cosine similarity and a clipped percentage-style score."""
     denom = float(np.linalg.norm(embedding) * np.linalg.norm(reference))
     if denom <= 1e-9:
-        raise ValueError("embedding norm is zero")
+        raise ValueError(string("analysis.embedding_norm_is_zero"))
 
     cosine = float(np.dot(embedding, reference) / denom)
     cosine = float(np.clip(cosine, -1.0, 1.0))
@@ -405,6 +444,9 @@ def add_reference_similarity_metrics(
     y: npt.NDArray[np.float32],
     sr: int,
     reference_voice: Optional[str],
+    progress_callback: Optional[
+        Callable[[Optional[float], Optional[float]], None]
+    ] = None,
 ) -> None:
     """Add Qwen3 speaker embedding similarity metrics when possible.
 
@@ -413,13 +455,14 @@ def add_reference_similarity_metrics(
         y: The NumPy array of the voice.
         sr: The sample rete of the voice.
         reference_voice: The reference voice to check against.
+        progress_callback: Callback receiving Hugging Face transfer progress.
     """
     if not reference_voice:
         return
 
     metrics["reference_voice"] = reference_voice
     try:
-        generated_embedding = _compute_qwen3_embedding(y, sr)
+        generated_embedding = _compute_qwen3_embedding(y, sr, progress_callback)
         reference_embedding = _load_reference_embedding(reference_voice)
         cosine, percent = _cosine_similarity_percent(
             generated_embedding,
@@ -441,7 +484,10 @@ def add_reference_similarity_metrics(
             )
     except Exception as exc:
         metrics["voice_similarity_ok"] = False
-        metrics["voice_similarity_error"] = str(exc)
+        metrics["voice_similarity_error"] = string(
+            "analysis.reference_similarity_error",
+            reason=str(exc),
+        )
         return
 
     matches.sort(key=lambda smatch: smatch["percent"], reverse=True)
@@ -481,7 +527,7 @@ def _blend_colors(color_a: str, color_b: str, mix: float) -> str:
     color_b_rgb = np.array(mcolors.to_rgb(color_b))
     blended = (1.0 - mix) * color_a_rgb + mix * color_b_rgb
     rgb = tuple(float(channel) for channel in blended)
-    return mcolors.to_hex(cast(tuple[float, float, float], rgb))  # noqa
+    return mcolors.to_hex(cast(tuple[float, float, float], rgb))
 
 
 def _summarize_trait_status(traits: dict) -> tuple[str, str]:
@@ -699,11 +745,7 @@ def generate_assessment(m: dict, traits: dict) -> list[str]:
             )
         )
     elif "voice_similarity_error" in m:
-        lines.append(
-            _text("assessment", "reference_similarity_failed").format(
-                reason=m["voice_similarity_error"]
-            )
-        )
+        lines.append(m["voice_similarity_error"])
 
     return lines
 
@@ -988,13 +1030,22 @@ def _analyze_voice_data(
     out_dir: pathlib.Path,
     stem: str,
     reference_voice: Optional[str] = None,
+    progress_callback: Optional[
+        Callable[[Optional[float], Optional[float]], None]
+    ] = None,
 ) -> None:
     """Analyze voice audio and write report artifacts."""
     radar_path = out_dir / f"{stem}_radar.png"
     report_path = out_dir / f"{stem}_report.txt"
 
     metrics = compute_raw_metrics(y, sr)
-    add_reference_similarity_metrics(metrics, y, sr, reference_voice)
+    add_reference_similarity_metrics(
+        metrics,
+        y,
+        sr,
+        reference_voice,
+        progress_callback,
+    )
     traits = compute_traits(metrics)
     assessment = generate_assessment(metrics, traits)
     plot_radar(traits, voice.name, radar_path, metrics)
@@ -1008,6 +1059,9 @@ def analyze_voice_audio(
     out_dir: pathlib.Path,
     stem: str,
     reference_voice: Optional[str] = None,
+    progress_callback: Optional[
+        Callable[[Optional[float], Optional[float]], None]
+    ] = None,
 ) -> None:
     """Analyze in-memory voice audio without any saved SFX prefix.
 
@@ -1018,6 +1072,7 @@ def analyze_voice_audio(
         out_dir: Directory where report artifacts should be written.
         stem: File stem to use for report artifacts.
         reference_voice: Optional voice whose reference embedding should be compared with the analyzed audio.
+        progress_callback: Callback receiving Hugging Face transfer progress.
     """
     y = np.asarray(audio, dtype=np.float32)
     if y.ndim == 2:
@@ -1030,6 +1085,7 @@ def analyze_voice_audio(
         out_dir,
         stem,
         reference_voice,
+        progress_callback,
     )
 
 

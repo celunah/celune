@@ -1,10 +1,11 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Persona runtime dataclasses."""
 
-from dataclasses import dataclass, field
 from typing import Optional
+from dataclasses import field, dataclass
 
-from ..typing.persona import MessageContent, Role
+from ..constants import PERSONA_CONTEXT_SPACE
+from ..typing.persona import Role, MessageContent
 
 
 @dataclass(slots=True)
@@ -29,6 +30,16 @@ class GenerateRequest:
     temperature: float = 0.75
     top_p: float = 0.9
     repetition_penalty: float = 1.05
+    context_space: int = PERSONA_CONTEXT_SPACE
+
+    def __post_init__(self) -> None:
+        """Validate the requested Persona input context space."""
+        if (
+            isinstance(self.context_space, bool)
+            or not isinstance(self.context_space, int)
+            or self.context_space <= 0
+        ):
+            raise ValueError("Persona context_space must be a positive integer")
 
 
 @dataclass(slots=True)

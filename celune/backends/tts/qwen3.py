@@ -1,18 +1,20 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Qwen3 backend implementation for Celune."""
 
-import contextlib
 import time
-from collections.abc import Callable, Iterator
+import contextlib
 from typing import Optional
+from collections.abc import Callable, Iterator
 
 from faster_qwen3_tts import FasterQwen3TTS
-from faster_qwen3_tts import __version__ as qwen3_ver  # noqa
+from faster_qwen3_tts import __version__ as qwen3_ver
 
-from ...cevoice import CEVoiceLoader, default_loader
-from ...typing.aliases import AudioChunk
 from ...utils import custom_assert
-from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
+from ...i18n import string
+from ...typing.aliases import AudioChunk
+from ...cevoice import CEVoiceLoader, default_loader
+from ...paths import configure_numba_cache, huggingface_progress
+from .base import CeluneBackend, local_hf_offline_mode, cached_hf_snapshot_path
 
 
 class Qwen3(CeluneBackend[FasterQwen3TTS]):
@@ -73,7 +75,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
             loader.materialize(name, "wav")
 
     @property
-    def default_model_id(self) -> str:  # noqa
+    def default_model_id(self) -> str:
         """Return the model loaded by default for Qwen3 cloning.
 
         Returns:
@@ -82,7 +84,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         return self.clone_model_id
 
     @property
-    def all_model_ids(self) -> list[str]:  # noqa
+    def all_model_ids(self) -> list[str]:
         """Return every model required by Qwen3 cloning.
 
         Returns:
@@ -91,7 +93,7 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         return [self.clone_model_id]
 
     @property
-    def voices(self) -> list[str]:  # noqa
+    def voices(self) -> list[str]:
         """Return the voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:
@@ -123,6 +125,12 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
         assert voice in voice_names
 
         return self.clone_model_id
+
+    def prepare_model_loading(self) -> None:
+        """Import Qwen's lazy model dependencies before request execution."""
+        from qwen_tts import Qwen3TTSModel
+
+        del Qwen3TTSModel
 
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
@@ -157,14 +165,16 @@ class Qwen3(CeluneBackend[FasterQwen3TTS]):
             FasterQwen3TTS: The loaded Qwen3 TTS model instance.
         """
         available, path = self.model_is_available_locally(model_id)
+        configure_numba_cache()
 
         if available and path is not None:
-            with local_hf_offline_mode():
+            with local_hf_offline_mode(), huggingface_progress(self.report_progress):
                 self.model = FasterQwen3TTS.from_pretrained(path)
             return self.model
 
-        self.log("Downloading TTS model...", "info")
-        self.model = FasterQwen3TTS.from_pretrained(model_id)
+        self.log(string("tts.model_download_start"), "info")
+        with huggingface_progress(self.report_progress):
+            self.model = FasterQwen3TTS.from_pretrained(model_id)
         return self.model
 
     def generate_stream(

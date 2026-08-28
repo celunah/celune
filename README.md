@@ -3,41 +3,63 @@
 
 ---
 
-![Python](https://img.shields.io/badge/Python-3.12%2F3.13-cebaff) ![License](https://img.shields.io/badge/License-MIT-cebaff) ![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff) ![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
+![Python](https://img.shields.io/badge/Python-3.12–3.14-cebaff) ![License](https://img.shields.io/badge/License-Apache%202.0-cebaff) ![Platform](https://img.shields.io/badge/Platform-Windows%2FLinux-cebaff) ![VRAM](https://img.shields.io/badge/VRAM-6%20GB–16%20GB+-cebaff)
 
-Celune is a real-time AI TTS character engine which can be used for a variety of use cases.
+Celune is a conversational character engine with agentic features.
 
-Whether it's roleplay, PA systems, or something else, it can do it all.
+You can use it to speak, use it to talk, or even use it to manage.
 
-It has been designed to provide fast, high-quality voice generation, even on consumer-grade hardware.
+No matter what you want to do, it is there to help you.
 
-It was proudly made in 🇵🇱 for your listening pleasure.
+It was proudly made in 🇵🇱 for the finest of uses.
 
 ## Features
 
 - Real-time buffered speech generation pipeline
 - Distinct default voice styles: calm, balanced, bold, upbeat
-- Multiple operation modes: frontend, API and extensions
+- Multiple operation modes: speak, converse and agent
 - Stable long-form narration with low risk of drifting
 - Native audio controls & effects via built-in DSP
 - Optimized GPU inference where possible
 - Configurable character voices via CEVOICE voice packs
 - Characters can respond back to you
 - Can voice change into character voices
+- Automatic memory saving
+- Agentic capabilities with tools
+
+## Operation modes
+
+Celune can operate in three major modes, each meant for different uses.
+
+Set the following value in Celune's configuration to change the operation mode:
+
+```yaml
+mode: converse  # speak|converse|agent
+```
+
+- `speak` uses only Celune's speech features. It is best suited for performance use. It does not use any extra features.
+- `converse` uses Persona, allowing you to talk with any characters you've set up with Celune.
+- `agent` turns Celune into a conversational local agent, allowing her to perform actions on your computer while speaking as needed.
 
 ## Note on development
 
 Celune is against the stance of "vibe coding" used in development.
 
-None of the 40,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
+None of the 50,000+ lines of code in Celune were created solely using AI. AI tools (e.g. Codex) were only used to assist in faster development, iteration and solving issues.
 
 All decisions and implementations were reviewed, validated, and approved by human developers.
 
 Celune never was, and will never become an "AI slop" project.
 
+## Documentation
+
+Visit <https://celune.readthedocs.io/en/latest> to view Celune documentation. They will help you learn to use Celune.
+
 ## License note
 
-Celune is licensed under the [MIT license](https://opensource.org/license/mit), but the software may download certain models from [Hugging Face](https://huggingface.co) that are of varying licenses, such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.), [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS), [GPL-3.0](https://opensource.org/license/gpl-3.0) (SeedVC), as well as Celune's own license: MIT (Whisper, Silero VAD, etc.). Users of Celune are expected to read and comply with any applicable license terms for the models they intend to use.
+Celune is licensed under the Apache 2.0 License, but the software may download certain models from [Hugging Face](https://huggingface.co) that are of varying licenses, such as [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) (Qwen, etc.), [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/deed.en) (Pocket TTS), [GPL-3.0](https://opensource.org/license/gpl-3.0) (SeedVC), and MIT (Whisper, Silero VAD, etc.). Users of Celune are expected to read and comply with any applicable license terms for the models they intend to use.
+
+Please note that Celune 4.3.2 and older remain on the Apache 2.0 license.
 
 ## Voices & samples
 
@@ -117,7 +139,7 @@ Browse the `demos` directory for demonstration content from the current version 
 
 Samples were captured directly from Celune's output directory. No extra post-processing was applied.
 
-For details on voice production, check [VOICES.md](./VOICES.md).
+For details on voice production, check [VOICES.md](./docs/VOICES.md).
 
 ## System Requirements
 
@@ -211,7 +233,7 @@ Then, follow these steps:
 
 ```bash
 # Quick setup
-python setup.py
+python configure.py
 
 # Manual setup
 # Install uv
@@ -226,16 +248,11 @@ uv --version
 # Expected output:
 # uv 0.11.2 (02036a8ba 2026-03-26 x86_64-pc-windows-msvc) (or similar version)
 
-# Create environment
-# Celune expects Python 3.12 or 3.13.
-# Use --extra [backend names] to specify backend support groups to install,
-# or --all-extras to install all backend support groups.
-# You must specify at least one backend support group, or else Celune won't work.
-#
-# Install a single backend
-uv sync --extra qwen3
-# Install all backends
-uv sync --all-extras
+# Manual environment setup
+# Linux: uv sync --dev --all-extras
+# Windows: uv sync --dev --extra api
+# The selected backend is installed automatically into Celune's AppData
+# environment the first time it is used.
 
 # Run
 # Command Prompt users
@@ -354,7 +371,7 @@ Without this, Celune may require elevated permissions or fall back to slower beh
 
 ## REST API
 
-See [API.md](./API.md) for REST API configuration, authentication, endpoints, and cURL examples.
+See [API.md](./docs/API.md) for REST API configuration, authentication, endpoints, and cURL examples.
 The API allows programmatic usage of all Celune features. It can be used both as a public and local interface.
 
 ## Extensions
@@ -392,3 +409,5 @@ It can be accessed via `/ui` on Celune's exposed API URL.
 > *"Your voice, your way."*
 
 ![Celune 88x31 badge](./resources/branding/celune_88x31_206.png "enlightened by Celune")
+
+Need a quick and easy shortlink to spread Celune to the public? [Copy link](https://go.lunah.site/celune)

@@ -1,23 +1,21 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Emotion analysis helpers for Persona conversation state."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import Optional, cast
+from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
 
-import numpy as np
 import torch
-from transformers import AutoModel, AutoModelForSequenceClassification, AutoTokenizer
+import numpy as np
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-from ..constants import PERSONA_EMOTION_MODEL
-from ..typing.aliases import AudioChunk, EmbeddingVector
-from ..typing.common import JSONSerializable
-from ..typing.persona import _EmotionModelConfig
 from ..utils import discard
+from ..typing.common import JSONSerializable
+from ..typing.aliases import AudioChunk, EmbeddingVector
+from ..typing.persona import PersonaModel, PersonaTokenizer, _EmotionModelConfig
 
 GOEMOTIONS_LABELS: tuple[str, ...] = (
     "admiration",
@@ -92,6 +90,39 @@ _POSITIVE_EMOTION_TARGETS: dict[str, str] = {
     "relief": "softly relieved",
     "surprise": "gently surprised",
 }
+_EMOTION_RESPONSE_BEHAVIORS: dict[str, str] = {
+    "anger": "Remain patient and non-defensive; validate the concern; de-escalate instead of mirroring hostility.",
+    "annoyance": "Stay patient and practical; acknowledge the friction; avoid sounding dismissive or defensive.",
+    "confusion": "Explain clearly and step by step; avoid assuming prior knowledge or sounding patronizing.",
+    "disappointment": "Acknowledge what went wrong first; use gentle, validating language; "
+    "offer practical help afterward.",
+    "disapproval": "Remain composed and understanding; address the concern without arguing or becoming defensive.",
+    "disgust": "Stay matter-of-fact and composed; do not amplify contemptuous or graphic language.",
+    "embarrassment": "Be kind and reassuring; protect the user's dignity; "
+    "avoid teasing or drawing extra attention to the mistake.",
+    "fear": "Use calm, grounding language; reduce uncertainty; give one clear next step; avoid alarmist wording.",
+    "grief": "Acknowledge the loss before offering help; use tender, patient language; do not force optimism.",
+    "nervousness": "Use calm, supportive language; reduce uncertainty; keep the next step simple and manageable.",
+    "remorse": "Respond warmly and without shaming; recognize the regret; focus on repair or a constructive next step.",
+    "sadness": "Acknowledge the distress first; use gentle, validating language; avoid jokes or forced cheerfulness.",
+    "admiration": "Use warm, sincere affirmation; avoid exaggerated flattery or empty praise.",
+    "amusement": "Allow light warmth and playfulness; keep it natural and avoid overwhelming the conversation.",
+    "approval": "Use warm, affirming language; reinforce what worked without overpraising.",
+    "caring": "Use attentive, considerate language; show care through relevant help without overclaiming intimacy.",
+    "curiosity": "Be engaged and inviting; answer directly; encourage exploration without unnecessary padding.",
+    "desire": "Be responsive and engaged; clarify the goal; move efficiently toward what the user wants.",
+    "excitement": "Match positive energy with restrained warmth; avoid excessive exclamation or hype.",
+    "gratitude": "Respond with sincere warmth; "
+    "acknowledge the appreciation without making the exchange overly sentimental.",
+    "joy": "Allow gentle positive energy; remain natural and avoid excessive cheerfulness or exclamation.",
+    "love": "Use warm, attentive, sincere language; avoid overclaiming intimacy or emotional certainty.",
+    "optimism": "Use encouraging, grounded language; support hope without making unrealistic promises.",
+    "pride": "Use warm, affirming language; recognize the achievement without sounding boastful.",
+    "realization": "Make the insight clear and grounded; explain its implication without overdramatic emphasis.",
+    "relief": "Use calm, warm reassurance; acknowledge that pressure has eased; avoid abruptly changing the subject.",
+    "surprise": "Acknowledge the unexpected element; stay clear and grounded rather than escalating the reaction.",
+    "neutral": "Stay calm, clear, and conversational; do not force an emotional tone.",
+}
 
 
 @dataclass(frozen=True)
@@ -118,11 +149,12 @@ class PersonaEmotionState:
     target_state: str
     user_label: str
     assistant_label: str
+    target_intensity: float = 0.0
 
 
 @dataclass(frozen=True)
 class _EmotionBackend:
-    """Loaded tokenizer/model pair for one emotion model."""
+    """Loaded tokenizer/model pair for the active Persona VLM."""
 
     tokenizer: PreTrainedTokenizerBase
     model: PreTrainedModel
@@ -130,23 +162,24 @@ class _EmotionBackend:
 
 
 class PersonaEmotionAnalyzer:
-    """Analyze conversation emotion and produce a softened Persona target state."""
+    """Analyze conversation emotion and produce a behavioral Persona target."""
 
     def __init__(
         self,
-        model_name: str = PERSONA_EMOTION_MODEL,
+        model_name: str = "",
         *,
         user_weight: float = 0.75,
         assistant_weight: float = 0.25,
         history_decay_power: float = 3.0,
     ) -> None:
-        self.model_name = model_name.strip() or PERSONA_EMOTION_MODEL
+        self.model_name = model_name.strip()
         self.user_weight = self._clamp_weight(user_weight, 0.75)
         self.assistant_weight = self._clamp_weight(assistant_weight, 0.25)
         self.history_decay_power = max(1.0, history_decay_power)
         self._backend: Optional[_EmotionBackend] = None
         self._failed = False
         self._prototype_cache: dict[str, EmbeddingVector] = {}
+        self._emotion_baseline: Optional[EmbeddingVector] = None
         self.last_error: str = ""
 
     @staticmethod
@@ -159,35 +192,42 @@ class PersonaEmotionAnalyzer:
         return max(0.0, float(value))
 
     def _load_backend(self) -> Optional[_EmotionBackend]:
-        """Load the underlying model backend when available."""
-        if self._failed:
-            return None
-        if self._backend is not None:
-            return self._backend
+        """Return the currently bound Persona VLM backend, if loaded."""
+        return None if self._failed else self._backend
 
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            try:
-                model = AutoModelForSequenceClassification.from_pretrained(
-                    self.model_name
-                )
-            except (RuntimeError, AssertionError, ValueError, OSError):
-                model = AutoModel.from_pretrained(self.model_name)
-            model.eval()
-            model.to(torch.device("cpu"))
-            labels = self._resolve_labels(getattr(model, "config", None))
-            self.last_error = ""
-        except (RuntimeError, AssertionError, ValueError, OSError) as error:
-            self._failed = True
-            self.last_error = str(error)
-            return None
+    def bind_vlm(self, tokenizer: PersonaTokenizer, model: PersonaModel) -> None:
+        """Bind emotion probing to the already loaded Persona VLM.
+
+        Args:
+            tokenizer: The tokenizer owned by the active Persona runtime.
+            model: The active Persona VLM.
+        """
+        typed_tokenizer = cast(PreTrainedTokenizerBase, tokenizer)
+        typed_model = cast(PreTrainedModel, model)
+        if (
+            self._backend is not None
+            and self._backend.tokenizer is typed_tokenizer
+            and self._backend.model is typed_model
+        ):
+            return
 
         self._backend = _EmotionBackend(
-            tokenizer=tokenizer,
-            model=model,
-            labels=labels,
+            tokenizer=typed_tokenizer,
+            model=typed_model,
+            labels=GOEMOTIONS_LABELS,
         )
-        return self._backend
+        self._failed = False
+        self._prototype_cache.clear()
+        self._emotion_baseline = None
+        self.last_error = ""
+
+    def clear_vlm(self) -> None:
+        """Release the bound VLM without loading a replacement model."""
+        self._backend = None
+        self._prototype_cache.clear()
+        self._emotion_baseline = None
+        self._failed = False
+        self.last_error = ""
 
     @staticmethod
     def _resolve_labels(config: Optional[_EmotionModelConfig]) -> tuple[str, ...]:
@@ -230,24 +270,29 @@ class PersonaEmotionAnalyzer:
             Optional[list[EmotionAnalysis]]: Per-text emotion results, or ``None`` when the model is unavailable.
         """
         backend = self._load_backend()
-        if backend is None or not texts:
+        if backend is None:
+            self.last_error = "Persona VLM is not loaded"
+            return None
+        if not texts:
             return None
 
         try:
             encoded = backend.tokenizer(
-                list(texts),
+                text=list(texts),
                 padding=True,
                 truncation=True,
                 return_tensors="pt",
             )
-            with torch.no_grad():
+            encoded = encoded.to(backend.model.device)
+            with torch.inference_mode():
                 outputs = backend.model(
                     **encoded,
                     output_hidden_states=True,
                     return_dict=True,
                 )
             hidden_states = cast(
-                Optional[tuple[torch.Tensor, ...]], outputs.hidden_states
+                Optional[tuple[torch.Tensor, ...]],
+                getattr(outputs, "hidden_states", None),
             )
             if hidden_states is not None and hidden_states != ():
                 last_hidden = hidden_states[-1]
@@ -256,21 +301,14 @@ class PersonaEmotionAnalyzer:
                     Optional[torch.Tensor], getattr(outputs, "last_hidden_state", None)
                 )
             if last_hidden is None:
-                self.last_error = f"{self.model_name} did not expose hidden states or last_hidden_state"
+                self.last_error = (
+                    "Persona VLM did not expose hidden states or last_hidden_state"
+                )
                 return None
-            attention_mask = cast(torch.Tensor, encoded["attention_mask"])
-            attention = attention_mask.unsqueeze(-1).to(last_hidden.dtype)
-            pooled = (last_hidden * attention).sum(dim=1) / attention.sum(dim=1).clamp(
-                min=1
-            )
+            attention_mask = cast(Optional[torch.Tensor], encoded.get("attention_mask"))
+            pooled = _last_token_hidden_state(last_hidden, attention_mask)
             normalized = torch.nn.functional.normalize(pooled, p=2, dim=1)
-            embeddings = normalized.cpu().numpy().astype(np.float32)
-            logits = cast(Optional[torch.Tensor], getattr(outputs, "logits", None))
-            probabilities = (
-                torch.sigmoid(logits).cpu().numpy().astype(np.float32)
-                if logits is not None
-                else None
-            )
+            embeddings = normalized.to(device="cpu", dtype=torch.float32).numpy()
             self.last_error = ""
         except (RuntimeError, AssertionError, ValueError, OSError, KeyError) as error:
             self._failed = True
@@ -280,13 +318,11 @@ class PersonaEmotionAnalyzer:
             return None
 
         analyses: list[EmotionAnalysis] = []
-        for index, embedding in enumerate(embeddings):
-            row = probabilities[index] if probabilities is not None else None
-            predictions = self._row_predictions(row, backend.labels)
+        for _, embedding in enumerate(embeddings):
             analyses.append(
                 EmotionAnalysis(
                     embedding=cast(EmbeddingVector, embedding),
-                    predictions=predictions,
+                    predictions=(),
                 )
             )
         return analyses
@@ -310,7 +346,7 @@ class PersonaEmotionAnalyzer:
         return tuple(ranked)
 
     def _prototype_embeddings(self) -> Optional[dict[str, EmbeddingVector]]:
-        """Return prototype emotion embeddings keyed by label."""
+        """Return VLM-derived emotion directions keyed by label."""
         backend = self._load_backend()
         if backend is None:
             return None
@@ -318,16 +354,23 @@ class PersonaEmotionAnalyzer:
             return dict(self._prototype_cache)
 
         prompts = [
-            f"This feels like {label.replace('_', ' ')}." for label in backend.labels
+            f"The character feels {label.replace('_', ' ')}."
+            for label in backend.labels
         ]
-        analyses = self.analyze_texts(prompts)
-        if analyses is None or len(analyses) != len(prompts):
+        baseline_prompt = "The character feels calm and neutral."
+        analyses = self.analyze_texts([*prompts, baseline_prompt])
+        if analyses is None or len(analyses) != len(prompts) + 1:
             return None
 
-        self._prototype_cache = {
-            label: analysis.embedding
-            for label, analysis in zip(backend.labels, analyses)
-        }
+        baseline = analyses[-1].embedding
+        self._emotion_baseline = baseline
+        self._prototype_cache = compute_emotion_directions(
+            {
+                label: analysis.embedding
+                for label, analysis in zip(backend.labels, analyses[:-1])
+            },
+            baseline,
+        )
         return dict(self._prototype_cache)
 
     @staticmethod
@@ -456,7 +499,7 @@ class PersonaEmotionAnalyzer:
             cast(EmbeddingVector, blended.astype(np.float32))
         )
 
-        target_label = self._nearest_label(target_embedding)
+        target_label, target_intensity = self._nearest_emotion(target_embedding)
         user_label = self._blend_predictions(weighted_user)
         assistant_label = self._blend_predictions(weighted_assistant)
         if user_label == "neutral" and user_embedding is not None:
@@ -467,42 +510,135 @@ class PersonaEmotionAnalyzer:
             target_label=target_label,
             target_state=self._render_target_state(
                 target_label,
+                target_intensity,
                 user_label,
                 assistant_label,
             ),
             user_label=user_label,
             assistant_label=assistant_label,
+            target_intensity=target_intensity,
         )
+
+    def _nearest_emotion(
+        self,
+        target_embedding: EmbeddingVector,
+    ) -> tuple[str, float]:
+        """Return the strongest emotion label and its positive vector score."""
+        prototypes = self._prototype_embeddings()
+        if not prototypes:
+            return "neutral", 0.0
+        if self._emotion_baseline is not None:
+            target_embedding = self._normalize_embedding(
+                (target_embedding - self._emotion_baseline).astype(np.float32),
+            )
+        best_label = "neutral"
+        best_score = 0.0
+        for label, score in compute_emotion_scores(
+            target_embedding,
+            prototypes,
+        ).items():
+            if score > best_score:
+                best_label, best_score = label, score
+        return best_label, float(np.clip(best_score, 0.0, 1.0))
 
     def _nearest_label(self, target_embedding: EmbeddingVector) -> str:
         """Return the nearest emotion label for one blended embedding."""
-        prototypes = self._prototype_embeddings()
-        if not prototypes:
-            return "neutral"
-        best_label = "neutral"
-        best_score = -1.0
-        for label, embedding in prototypes.items():
-            score = self._cosine_similarity(target_embedding, embedding)
-            if score > best_score:
-                best_label = label
-                best_score = score
-        return best_label
+        return self._nearest_emotion(target_embedding)[0]
 
     @staticmethod
     def _render_target_state(
         target_label: str,
+        target_intensity: float,
         user_label: str,
         assistant_label: str,
     ) -> str:
-        """Return the Persona prompt text for one target emotion blend."""
+        """Return a concrete Persona response direction for one target emotion."""
         discard(user_label)
         discard(assistant_label)
         if target_label in _NEGATIVE_EMOTION_TARGETS:
-            softened = _NEGATIVE_EMOTION_TARGETS[target_label]
-            return f"Target emotion: {softened}."
+            softened = _NEGATIVE_EMOTION_TARGETS.get(target_label)
+        elif target_label in _POSITIVE_EMOTION_TARGETS:
+            softened = _POSITIVE_EMOTION_TARGETS.get(target_label)
+        else:
+            softened = f"softly {target_label.replace('_', ' ')} and grounded"
 
-        if target_label in _POSITIVE_EMOTION_TARGETS:
-            softened = _POSITIVE_EMOTION_TARGETS[target_label]
-            return f"Target emotion: {softened}."
+        behavior = _EMOTION_RESPONSE_BEHAVIORS.get(
+            target_label, _EMOTION_RESPONSE_BEHAVIORS["neutral"]
+        )
+        return (
+            f"Target emotion: {softened}.\n"
+            f"Emotion direction: {target_label.replace('_', ' ')} "
+            f"(intensity {target_intensity:.2f}).\n"
+            f"Response behavior: {behavior}"
+        )
 
-        return f"Target emotion: softly {target_label.replace('_', ' ')} and grounded."
+
+def _last_token_hidden_state(
+    hidden_state: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+) -> torch.Tensor:
+    """Select the final non-padding hidden state for each text in a batch."""
+    if attention_mask is None:
+        return hidden_state[:, -1, :]
+
+    positions = torch.arange(
+        attention_mask.shape[1],
+        device=attention_mask.device,
+    ).expand_as(attention_mask)
+    last_positions = (positions * attention_mask).max(dim=1).values
+    rows = torch.arange(hidden_state.shape[0], device=hidden_state.device)
+    return hidden_state[rows, last_positions, :]
+
+
+def compute_emotion_directions(
+    concept_vectors: Mapping[str, EmbeddingVector],
+    baseline_vector: EmbeddingVector,
+) -> dict[str, EmbeddingVector]:
+    """Convert VLM concept activations into normalized emotion directions.
+
+    Args:
+        concept_vectors: One VLM activation vector per emotion concept.
+        baseline_vector: The activation vector for a calm, neutral concept.
+
+    Returns:
+        dict[str, EmbeddingVector]: Contrastive emotion directions.
+    """
+    return {
+        label: _normalize_vector(
+            (vector - baseline_vector).astype(np.float32),
+        )
+        for label, vector in concept_vectors.items()
+        if label != "neutral"
+    }
+
+
+def compute_emotion_scores(
+    vector: EmbeddingVector,
+    emotion_directions: Mapping[str, EmbeddingVector],
+) -> dict[str, float]:
+    """Map one VLM vector to cosine scores for the existing emotion labels.
+
+    Args:
+        vector: A normalized or unnormalized VLM activation vector.
+        emotion_directions: Contrastive directions keyed by emotion label.
+
+    Returns:
+        dict[str, float]: Floating-point similarity scores keyed by label.
+    """
+    normalized = _normalize_vector(vector)
+    scores: dict[str, float] = {}
+    for label, direction in emotion_directions.items():
+        direction_norm = _normalize_vector(direction)
+        denom = float(np.linalg.norm(normalized) * np.linalg.norm(direction_norm))
+        scores[label] = (
+            float(np.dot(normalized, direction_norm) / denom) if denom > 0 else -1.0
+        )
+    return scores
+
+
+def _normalize_vector(vector: EmbeddingVector) -> EmbeddingVector:
+    """Return one L2-normalized vector without changing its dtype."""
+    norm = float(np.linalg.norm(vector))
+    if norm <= 0:
+        return vector
+    return (vector / norm).astype(np.float32)

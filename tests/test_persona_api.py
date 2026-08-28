@@ -1,15 +1,25 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the shared Persona runtime helpers."""
 
 import contextlib
 from types import SimpleNamespace
 from typing import Optional, Union, cast
-from unittest import TestCase, mock
+from unittest import mock
+import pytest
 
-from celune.constants import PERSONA_MODEL_REVISION
+from celune.i18n import string
+from celune.utils import discard
+from celune.typing.common import JSON
 from celune.persona import impl, runtime
 from celune.typing.aliases import RecordedKwargValue
-from celune.utils import discard
+from celune.constants import (
+    PERSONA_MODELS,
+    PERSONA_DEFAULT_MODEL_ID,
+    persona_model_tier,
+    remote_code_model_revision,
+)
+
+from .support import CeluneTestCase
 
 
 class _FakeEncoded:
@@ -38,8 +48,17 @@ class _FakeTokenizer:
         self.calls: list[tuple[str, str]] = []
         self.eos_token_id = 7
 
-    def __call__(self, *, text: str, return_tensors: str) -> _FakeEncoded:
+    def __call__(
+        self,
+        *,
+        text: str,
+        return_tensors: str,
+        truncation: bool = False,
+        max_length: Optional[int] = None,
+    ) -> _FakeEncoded:
         """Record text-only encoding requests."""
+        discard(truncation)
+        discard(max_length)
         self.calls.append((text, return_tensors))
         return _FakeEncoded()
 
@@ -149,7 +168,7 @@ class _FakeQwenVlConfig:
     model_type = "qwen3_vl"
 
 
-class PersonaApiTests(TestCase):
+class TestPersonaApi(CeluneTestCase):
     """Tests for shared Persona runtime behavior."""
 
     @staticmethod
@@ -219,59 +238,45 @@ class PersonaApiTests(TestCase):
 
             load_backend.assert_called_once_with("fixture/model", "8bit")
 
-            with self.assertRaisesRegex(
-                ValueError, "not available for VRAM tier 'low'"
-            ):
+            with pytest.raises(ValueError, match="not available for VRAM tier 'low'"):
                 runtime_low.load("fixture/model", "8bit")
 
     def test_messages_have_vision_only_for_explicit_media_items(self) -> None:
         """Verify visual mode is enabled only for explicit media attachments."""
-        self.assertEqual(
-            runtime.messages_have_vision([self._text_message("user", "hello")]),
-            False,
+        assert not runtime.messages_have_vision([self._text_message("user", "hello")])
+        assert not runtime.messages_have_vision(
+            [
+                self._content_message(
+                    "user",
+                    [runtime.TextContentItem(type="text", text="hello")],
+                )
+            ]
         )
-        self.assertEqual(
-            runtime.messages_have_vision(
-                [
-                    self._content_message(
-                        "user",
-                        [runtime.TextContentItem(type="text", text="hello")],
-                    )
-                ]
-            ),
-            False,
+        assert runtime.messages_have_vision(
+            [
+                self._content_message(
+                    "user",
+                    [
+                        runtime.ImageContentItem(
+                            type="image",
+                            image="file:///frame.png",
+                        )
+                    ],
+                )
+            ]
         )
-        self.assertEqual(
-            runtime.messages_have_vision(
-                [
-                    self._content_message(
-                        "user",
-                        [
-                            runtime.ImageContentItem(
-                                type="image",
-                                image="file:///frame.png",
-                            )
-                        ],
-                    )
-                ]
-            ),
-            True,
-        )
-        self.assertEqual(
-            runtime.messages_have_vision(
-                [
-                    self._content_message(
-                        "user",
-                        [
-                            runtime.VideoContentItem(
-                                type="video",
-                                video="file:///clip.mp4",
-                            )
-                        ],
-                    )
-                ]
-            ),
-            True,
+        assert runtime.messages_have_vision(
+            [
+                self._content_message(
+                    "user",
+                    [
+                        runtime.VideoContentItem(
+                            type="video",
+                            video="file:///clip.mp4",
+                        )
+                    ],
+                )
+            ]
         )
 
     def test_text_only_inputs_do_not_enter_vision_processing(self) -> None:
@@ -290,12 +295,9 @@ class PersonaApiTests(TestCase):
         ) as render:
             encoded = backend.build_inputs(messages)
 
-        self.assertIsInstance(encoded, _FakeEncoded)
-        self.assertEqual(encoded.device, "cpu")
-        self.assertEqual(
-            fake_tokenizer.calls,
-            [("User: hello\n\nAssistant:", "pt")],
-        )
+        assert isinstance(encoded, _FakeEncoded)
+        assert encoded.device == "cpu"
+        assert fake_tokenizer.calls == [("User: hello\n\nAssistant:", "pt")]
         render.assert_called_once_with(fake_tokenizer, messages)
 
     def test_load_uses_causal_lm_for_qwen_vl_backend(self) -> None:
@@ -305,6 +307,7 @@ class PersonaApiTests(TestCase):
         fake_model.eval.return_value = None
         fake_tokenizer = _FakeTokenizer()
         fake_processor = _FakeProcessor(tokenizer=fake_tokenizer)
+        revision = cast(str, remote_code_model_revision(PERSONA_DEFAULT_MODEL_ID))
 
         with self._mock_qwen_vl_load(
             processor=fake_processor,
@@ -316,12 +319,12 @@ class PersonaApiTests(TestCase):
         loaders["config_loader"].assert_called_once_with(
             "Qwen/Qwen3-VL-4B-Instruct",
             trust_remote_code=True,
-            revision=PERSONA_MODEL_REVISION,
+            revision=revision,
         )
         loaders["processor_loader"].assert_called_once_with(
             "Qwen/Qwen3-VL-4B-Instruct",
             trust_remote_code=True,
-            revision=PERSONA_MODEL_REVISION,
+            revision=revision,
         )
         loaders["model_loader"].assert_called_once()
         self.assertEqual(
@@ -332,16 +335,79 @@ class PersonaApiTests(TestCase):
             loaders["model_loader"].call_args.kwargs,
             {
                 "trust_remote_code": True,
-                "revision": PERSONA_MODEL_REVISION,
+                "revision": revision,
                 "device_map": "auto",
                 "dtype": runtime.torch.bfloat16,
             },
         )
         loaders["tokenizer_loader"].assert_not_called()
         fake_model.eval.assert_called_once_with()
-        self.assertIs(backend.processor, fake_processor)
-        self.assertIs(backend.tokenizer, fake_tokenizer)
-        self.assertTrue(backend.supports_vision)
+        assert backend.processor is fake_processor
+        assert backend.tokenizer is fake_tokenizer
+        assert backend.supports_vision
+
+    def test_trusted_model_revision_allows_abliterated_qwen_vl_model(self) -> None:
+        """Verify the pinned abliterated Qwen VL derivative is trusted."""
+        model_id = "huihui-ai/Huihui-Qwen3-VL-4B-Instruct-abliterated"
+        revision = cast(str, remote_code_model_revision(model_id))
+        self.assertEqual(
+            runtime.PersonaBackend._resolve_model_revision(model_id),
+            revision,
+        )
+
+    def test_persona_registry_derives_supported_variants_and_tiers(self) -> None:
+        """Verify each compact registry entry expands to both trusted model IDs."""
+        self.assertEqual(
+            tuple(
+                (definition["model"], definition["organization"], definition["tier"])
+                for definition in PERSONA_MODELS
+            ),
+            (
+                ("Qwen3-VL-4B-Instruct", "Qwen", "standard"),
+                ("Qwen3-VL-8B-Instruct", "Qwen", "smart"),
+                ("Qwen3-VL-8B-Thinking", "Qwen", "smart"),
+                ("Qwen3.5-4B", "Qwen", "standard"),
+                ("Qwen3.5-9B", "Qwen", "smart"),
+                ("gemma-4-E2B-it", "google", "standard"),
+                ("gemma-4-E4B-it", "google", "smart"),
+            ),
+        )
+
+        for definition in PERSONA_MODELS:
+            official_id = f"{definition['organization']}/{definition['model']}"
+            abliterated_id = f"huihui-ai/Huihui-{definition['model']}-abliterated"
+            self.assertEqual(
+                remote_code_model_revision(official_id),
+                definition["revisions"]["official"],
+            )
+            self.assertEqual(
+                remote_code_model_revision(abliterated_id),
+                definition["revisions"]["abliterated"],
+            )
+            self.assertEqual(persona_model_tier(official_id), definition["tier"])
+            self.assertEqual(persona_model_tier(abliterated_id), definition["tier"])
+
+    def test_load_warns_for_unknown_remote_code_models(self) -> None:
+        """Verify Persona warns before loading an unknown model."""
+        backend = runtime.PersonaBackend()
+        with (
+            self._mock_qwen_vl_load(
+                processor=_FakeProcessor(tokenizer=_FakeTokenizer()),
+                model=mock.Mock(),
+                tokenizer=_FakeTokenizer(),
+            ) as loaders,
+            mock.patch.object(runtime._LOGGER, "warning") as warning,
+        ):
+            backend.load("untrusted/example", "none")
+
+        warning.assert_called_once_with(
+            string("persona.unsupported_model", model_id="untrusted/example")
+        )
+        loaders["config_loader"].assert_called_once_with(
+            "untrusted/example",
+            trust_remote_code=True,
+            revision="main",
+        )
 
     def test_load_treats_multimodal_processor_as_vision_capable(self) -> None:
         """Verify multimodal processors are accepted even without chat templates."""
@@ -359,8 +425,8 @@ class PersonaApiTests(TestCase):
             backend.load("Qwen/Qwen3-VL-4B-Instruct", "none")
 
         loaders["tokenizer_loader"].assert_not_called()
-        self.assertIs(backend.processor, fake_processor)
-        self.assertTrue(backend.supports_vision)
+        assert backend.processor is fake_processor
+        assert backend.supports_vision
 
     def test_load_raises_when_processor_fails_for_vlm_model(self) -> None:
         """Verify Persona does not silently downgrade a VLM to tokenizer-only mode."""
@@ -375,14 +441,14 @@ class PersonaApiTests(TestCase):
                 tokenizer=None,
                 processor_side_effect=RuntimeError("processor boom"),
             ),
-            self.assertRaisesRegex(
+            pytest.raises(
                 ValueError,
-                "Persona processor failed to load for model 'Qwen/Qwen3-VL-4B-Instruct'",
+                match="Persona processor failed to load for model 'Qwen/Qwen3-VL-4B-Instruct'",
             ) as exc_info,
         ):
             backend.load("Qwen/Qwen3-VL-4B-Instruct", "none")
 
-        self.assertIsInstance(exc_info.exception.__cause__, RuntimeError)
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
 
     def test_vision_inputs_use_qwen_vl_utils_when_processor_is_loaded(self) -> None:
         """Verify image requests go through qwen-vl-utils without capability gating."""
@@ -417,22 +483,19 @@ class PersonaApiTests(TestCase):
         ):
             encoded = backend.build_inputs(messages)
 
-        self.assertIsInstance(encoded, _FakeEncoded)
-        self.assertEqual(encoded.device, "cpu")
-        self.assertEqual(len(fake_processor.calls), 1)
-        self.assertEqual(fake_processor.calls[0]["text"], "User: [image]\n\nAssistant:")
-        self.assertEqual(fake_processor.calls[0]["images"], [b"image"])
-        self.assertEqual(
-            captured_kwargs,
-            {
-                "return_video_kwargs": True,
-                "return_video_metadata": True,
-            },
-        )
-        self.assertNotIn("do_resize", fake_processor.calls[0])
+        assert isinstance(encoded, _FakeEncoded)
+        assert encoded.device == "cpu"
+        assert len(fake_processor.calls) == 1
+        assert fake_processor.calls[0]["text"] == "User: [image]\n\nAssistant:"
+        assert fake_processor.calls[0]["images"] == [b"image"]
+        assert captured_kwargs == {
+            "return_video_kwargs": True,
+            "return_video_metadata": True,
+        }
+        assert "do_resize" not in fake_processor.calls[0]
 
-    def test_generate_releases_transient_vram_after_vision_turn(self) -> None:
-        """Verify vision requests drop temporary GPU allocations after generation."""
+    def test_generate_releases_transient_vram_after_generation(self) -> None:
+        """Verify generation drops temporary GPU allocations after each request."""
         backend = runtime.PersonaBackend()
         backend.processor = cast(runtime.PersonaProcessor, _FakeMultimodalProcessor())
         backend.tokenizer = cast(runtime.PersonaTokenizer, _FakeTokenizer())
@@ -464,16 +527,47 @@ class PersonaApiTests(TestCase):
         ):
             response = backend.generate(request)
 
-        self.assertEqual(response.text, "decoded")
+        assert response.text == "decoded"
         collect.assert_called_once_with()
         sync.assert_called_once_with()
         empty_cache.assert_called_once_with()
 
-    def test_persona_client_routes_backend_output_to_dev_logs(self) -> None:
-        """Verify Persona backend stdout/stderr is captured into developer logs."""
+    def test_generation_stopping_criteria_observes_interrupt(self) -> None:
+        """Verify Persona's model generation receives the shutdown cancellation hook."""
+        backend = runtime.PersonaBackend()
+        backend.processor = cast(runtime.PersonaProcessor, _FakeProcessor())
+        backend.tokenizer = cast(runtime.PersonaTokenizer, _FakeTokenizer())
+        model = _FakeGenerativeModel()
+        backend.model = cast(runtime.PersonaModel, model)
+        backend.model_id = "fixture/model"
+        backend.quantization = "4bit"
+
+        with mock.patch.object(
+            backend,
+            "_build_inputs",
+            return_value={"input_ids": runtime.torch.tensor([[1, 2]])},
+        ):
+            backend.generate(runtime.GenerateRequest(user="hello"))
+
+        criteria = cast(
+            runtime.StoppingCriteriaList,
+            model.calls[0]["stopping_criteria"],
+        )
+        assert model.calls[0]["cache_implementation"] == "dynamic"
+        criterion = cast(runtime._PersonaCancellationCriteria, criteria[0])
+        self.assertFalse(
+            criterion(runtime.torch.tensor([[1]]), runtime.torch.tensor([])).item()
+        )
+        backend.interrupt_generation()
+        self.assertTrue(
+            criterion(runtime.torch.tensor([[1]]), runtime.torch.tensor([])).item()
+        )
+
+    def test_persona_client_routes_backend_output_to_verbose_logs(self) -> None:
+        """Verify Persona backend stdout/stderr is captured into verbose logs."""
         logs: list[tuple[str, str]] = []
         client = impl.PersonaClient(
-            log_dev=lambda msg, severity="info": logs.append((msg, severity))
+            log=lambda msg, severity="info", **kwargs: logs.append((msg, severity))
         )
 
         with mock.patch.object(
@@ -486,9 +580,29 @@ class PersonaApiTests(TestCase):
         ):
             client.load("fixture/model", "4bit")
 
-        self.assertEqual(
-            logs,
-            [
-                ("[PERSONA] warn 4bit", "warning"),
-            ],
-        )
+        assert logs == [
+            ("[PERSONA] warn 4bit", "warning"),
+        ]
+
+    def test_persona_client_summarizes_without_character_prompt(self) -> None:
+        """Verify conversation summaries use a neutral VLM request contract."""
+        client = impl.PersonaClient(config={"persona": {"model_id": "fixture/model"}})
+        response = mock.Mock()
+        response.json.return_value = {"response": "The user reported a TTS cutoff."}
+
+        with mock.patch.object(client, "post", return_value=response) as post:
+            summary = client.summarize_history(
+                [{"role": "user", "content": "The TTS cut off."}],
+                "The conversation concerns speech output.",
+                300,
+            )
+
+        payload = cast(JSON, post.call_args.args[0])
+        system = cast(str, payload["system"])
+        user = cast(str, payload["user"])
+        assert summary == "The user reported a TTS cutoff."
+        assert "neutral conversation summarizer" in system
+        assert "CEVOICE" not in system
+        assert "active character" not in system
+        assert "Existing summary:" in user
+        assert "Conversation turns:" in user

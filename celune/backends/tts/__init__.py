@@ -1,19 +1,22 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Celune backend initialization manager."""
 
+from typing import Union, Optional
 from collections.abc import Callable
-from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
-from typing import Optional, Union
 
 from ...i18n import string
-from ...typing.backends import BackendModel
 from .base import CeluneBackend
+from ...typing.backends import BackendModel
+from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
 
 __all__ = [
     "BACKENDS",
+    "BACKEND_MANIFESTS",
+    "BackendManifest",
     "BackendModel",
     "CeluneBackend",
+    "backend_manifest",
     "get_version",
     "resolve_backend",
 ]
@@ -79,19 +82,31 @@ def resolve_backend(
     if isinstance(backend_name, str):
         key = backend_name.strip().lower()
 
-        try:
-            module_name, class_name = BACKENDS[key]
-        except KeyError as e:
+        if key not in BACKENDS:
             raise ValueError(
                 string(
                     "celune.unknown_backend",
                     backend=backend_name,
                     available=", ".join(BACKENDS.keys()),
                 )
-            ) from e
+            )
 
-        module = import_module(module_name)
-        backend_cls = getattr(module, class_name)
-        return backend_cls(log=log, fatal=fatal, **backend_kwargs)
+        if key not in BACKEND_MANIFESTS:
+            raise ValueError(
+                string(
+                    "celune.unknown_backend",
+                    backend=backend_name,
+                    available=", ".join(BACKENDS.keys()),
+                )
+            )
+
+        from ...cedts.remote import RemoteBackendProxy
+
+        return RemoteBackendProxy(
+            BACKEND_MANIFESTS[key],
+            log=log,
+            fatal=fatal,
+            **backend_kwargs,
+        )
 
     raise TypeError(string("celune.invalid_backend_type"))

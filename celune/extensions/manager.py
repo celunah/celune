@@ -1,29 +1,26 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Celune's extension manager methods and classes."""
 
-import importlib.util
-import inspect
 import sys
+import inspect
 import threading
-import traceback
-import warnings
-from collections.abc import Callable
-from dataclasses import dataclass
-from pathlib import Path
+import importlib.util
 from types import ModuleType
 from typing import Optional, cast
+from pathlib import Path
+from dataclasses import dataclass
+from collections.abc import Callable
 
-from ..dataclasses.events import ReadyEvent
-from ..exceptions import ExtensionAlreadyRegisteredError, InvalidExtensionError
-from ..i18n import string
-from ..typing.events import EventName, EventPayload
-from ..utils import discard, format_error
 from .base import CeluneContext, CeluneExtension
+from ..i18n import string
+from ..utils import format_error_message
 from .events import (
     EventDispatcher,
     RegisteredEventHandler,
     iter_subscriptions,
 )
+from ..exceptions import InvalidExtensionError, ExtensionAlreadyRegisteredError
+from ..typing.events import EventName, EventPayload
 
 
 @dataclass(frozen=True)
@@ -45,13 +42,13 @@ class CeluneExtensionManager:
         self.context = context
         self.dispatcher = dispatcher or EventDispatcher(
             log_warning=context.log,
-            dev=context.dev,
+            log_debug=lambda message: context.log(message, loglevel="debug"),
+            log_level=context.log_level,
         )
         self.extensions: dict[str, CeluneExtension] = {}
         self._event_registrations: dict[str, list[RegisteredEventHandler]] = {}
         self._module_registrations: dict[str, _ModuleRegistration] = {}
         self._extension_modules: dict[str, str] = {}
-        self.auto_started = False
 
     def register(self, extension_cls: type[CeluneExtension]) -> CeluneExtension:
         """Register a Celune extension class.
@@ -77,7 +74,10 @@ class CeluneExtensionManager:
         name = instance.name
 
         if name in self.extensions:
-            self.context.log(f"[Core] {name} is already registered", "warning")
+            self.context.log(
+                f"[Core] {name} is already registered",
+                "warning",
+            )
             raise ExtensionAlreadyRegisteredError(
                 f"extension '{name}' is already registered"
             )
@@ -85,8 +85,7 @@ class CeluneExtensionManager:
         self.extensions[name] = instance
         self._extension_modules[name] = extension_cls.__module__
         self._register_extension_handlers(instance)
-        self._register_legacy_autostart_handler(instance)
-        self.context.log_dev(f"[Core] Registered extension: {name}")
+        self.context.log(f"[Core] Registered extension: {name}", loglevel="verbose")
         return instance
 
     def unregister(self, name: str) -> None:
@@ -109,7 +108,10 @@ class CeluneExtensionManager:
             if module_registration is not None:
                 self._unregister_owner(module_registration.owner_key)
 
-        self.context.log_dev(f"[Core] Unregistered extension: {name}")
+        self.context.log(
+            f"[Core] Unregistered extension: {name}",
+            loglevel="verbose",
+        )
 
     def unregister_all(self) -> None:
         """Unregister all loaded extensions and auto-registered handlers."""
@@ -127,48 +129,6 @@ class CeluneExtensionManager:
             event: Typed payload instance to deliver.
         """
         self.dispatcher.emit(event_name, event)
-
-    def autostart_all(self) -> None:
-        """Run deprecated legacy autostart handlers."""
-        if self.auto_started:
-            self.context.log(
-                string("extensions.autostart_once"),
-                "warning",
-            )
-            return
-
-        warnings.warn(
-            string("extensions.autostart_all_deprecated"),
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        started = 0
-        for name, ext in self.extensions.items():
-            if self._uses_legacy_autostart(ext):
-                self.context.log_dev(f"[Core] Running autostart for: {name}")
-
-                def runner(e=ext, n=name):
-                    try:
-                        e.autostart()
-                    except Exception as ex:
-                        self.context.log(
-                            string(
-                                "extensions.autostart_failed",
-                                name=n,
-                                error=(
-                                    traceback.format_exc() if self.context.dev else ex
-                                ),
-                            ),
-                            "warning",
-                        )
-
-                started += 1
-                threading.Thread(target=runner, daemon=True).start()
-
-        if not started:
-            self.context.log_dev("[Core] No extensions to autostart.")
-        else:
-            self.auto_started = True
 
     def invoke(self, name: str, *args, **kwargs) -> None:
         """Manually invoke a Celune extension.
@@ -190,10 +150,10 @@ class CeluneExtensionManager:
                 ext.invoke(*args, **kwargs)
             except Exception as ex:
                 self.context.log(
-                    string(
-                        "extensions.invoke_failed",
-                        name=name,
-                        error=format_error(ex, self.context.dev),
+                    format_error_message(
+                        f"[Core] Failed to invoke '{name}'",
+                        ex,
+                        self.context.log_level,
                     ),
                     "warning",
                 )
@@ -218,7 +178,7 @@ class CeluneExtensionManager:
 
         if not extensions_dir.exists():
             self.context.log(
-                string("extensions.folder_not_found", path=extensions_dir),
+                f"[Core] Extension folder not found: {extensions_dir}",
                 "warning",
             )
             self.context.log(string("extensions.unavailable"), "warning")
@@ -226,12 +186,15 @@ class CeluneExtensionManager:
 
         if not extensions_dir.is_dir():
             self.context.log(
-                string("extensions.path_not_directory", path=extensions_dir)
+                f"[Core] Extension path is not a directory: {extensions_dir}"
             )
             self.context.log(string("extensions.unavailable"), "warning")
             return
 
-        self.context.log_dev(f"[Core] Scanning extension folder: {extensions_dir}")
+        self.context.log(
+            f"[Core] Scanning extension folder: {extensions_dir}",
+            loglevel="verbose",
+        )
 
         for file_path in sorted(extensions_dir.glob("*.py")):
             if file_path.name.startswith("_"):
@@ -243,7 +206,7 @@ class CeluneExtensionManager:
                 spec = importlib.util.spec_from_file_location(module_name, file_path)
                 if spec is None or spec.loader is None:
                     self.context.log(
-                        string("extensions.spec_load_failed", name=file_path.name)
+                        f"[Core] Could not load spec for: {file_path.name}"
                     )
                     continue
 
@@ -252,10 +215,10 @@ class CeluneExtensionManager:
                 spec.loader.exec_module(module)
             except Exception as e:
                 self.context.log(
-                    string(
-                        "extensions.import_failed",
-                        name=file_path.name,
-                        error=traceback.format_exc() if self.context.dev else e,
+                    format_error_message(
+                        f"[Core] Failed to import '{file_path.name}'",
+                        e,
+                        self.context.log_level,
                     ),
                     "warning",
                 )
@@ -282,21 +245,18 @@ class CeluneExtensionManager:
                     found_any = True
                 except Exception as e:
                     self.context.log(
-                        string(
-                            "extensions.register_failed",
-                            name=obj.__name__,
-                            file_name=file_path.name,
-                            error=traceback.format_exc() if self.context.dev else e,
+                        format_error_message(
+                            f"[Core] Failed to register '{obj.__name__}' from "
+                            f"'{file_path.name}'",
+                            e,
+                            self.context.log_level,
                         ),
                         "warning",
                     )
 
             if not found_any:
                 self.context.log(
-                    string(
-                        "extensions.not_extension_skipping",
-                        file_name=file_path.name,
-                    ),
+                    f"[Core] {file_path.name} is not a Celune extension, skipping",
                     "warning",
                 )
 
@@ -315,8 +275,9 @@ class CeluneExtensionManager:
             callback = bound
             for subscription in subscriptions:
                 if not subscription.enabled:
-                    self.context.log_dev(
-                        f"[Core] Disabled subscription skipped for extension: {extension.name}"
+                    self.context.log(
+                        f"[Core] Disabled subscription skipped for extension: {extension.name}",
+                        loglevel="verbose",
                     )
                     continue
                 registered = self._register_handler(
@@ -328,49 +289,6 @@ class CeluneExtensionManager:
 
         if handlers:
             self._event_registrations[extension.name] = handlers
-
-    def _register_legacy_autostart_handler(self, extension: CeluneExtension) -> None:
-        """Bridge deprecated ``autostart()`` handlers onto the ``ready`` event."""
-        if not self._uses_legacy_autostart(extension):
-            return
-
-        warnings.warn(
-            string("extensions.autostart_deprecated"),
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        def legacy_ready_callback(
-            event: ReadyEvent, ext: CeluneExtension = extension
-        ) -> None:
-            discard(event)
-
-            def runner() -> None:
-                try:
-                    ext.autostart()
-                except Exception as ex:
-                    self.context.log(
-                        f"[Core] Could not autostart {ext.name}: "
-                        f"{format_error(ex, self.context.dev)}",
-                        "warning",
-                    )
-
-            threading.Thread(target=runner, daemon=True).start()
-
-        handler = self._register_handler(
-            owner_name=extension.name,
-            event_name="ready",
-            callback=legacy_ready_callback,
-        )
-        self._event_registrations.setdefault(extension.name, []).append(handler)
-
-    @staticmethod
-    def _uses_legacy_autostart(extension: CeluneExtension) -> bool:
-        """Return whether one extension still relies on deprecated autostart hooks."""
-        extension_type = type(extension)
-        return extension_type.AUTOSTART or (
-            extension_type.autostart is not CeluneExtension.autostart
-        )
 
     def _register_module_handlers(
         self,
@@ -391,8 +309,9 @@ class CeluneExtensionManager:
 
             for subscription in subscriptions:
                 if not subscription.enabled:
-                    self.context.log_dev(
-                        f"[Core] Disabled module subscription skipped for: {owner_name}"
+                    self.context.log(
+                        f"[Core] Disabled module subscription skipped for: {owner_name}",
+                        loglevel="verbose",
                     )
                     continue
                 handlers.append(
@@ -415,8 +334,9 @@ class CeluneExtensionManager:
             module_name=module.__name__,
             owner_key=owner_key,
         )
-        self.context.log_dev(
-            f"[Core] Registered {len(handlers)} event handler(s) from module: {owner_name}"
+        self.context.log(
+            f"[Core] Registered {len(handlers)} event handler(s) from module: {owner_name}",
+            loglevel="verbose",
         )
         return True
 

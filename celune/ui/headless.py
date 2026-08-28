@@ -1,26 +1,32 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Headless UI."""
 
-import ctypes
 import os
-import signal
 import time
+import ctypes
+import signal
 import warnings
 from types import FrameType
-from typing import Optional, cast
+from typing import Optional, Never, ClassVar, cast, final
+from collections.abc import Callable
 
-from ..celune import Celune
-from ..config import Config, config_bool
-from ..constants import APP_NAME, SIGTSTP
 from ..i18n import string
-from ..watchdog import launcher_loss_requested
 from ..utils import discard
+from ..celune import Celune
+from ..typing.aliases import LogLevel
+from ..config import Config, config_bool
+from ..constants import SIGTSTP, APP_NAME
+from ..watchdog import launcher_loss_requested
 
 
+@final
 class CeluneHeadlessUI:
-    """Headless interface methods."""
+    """Celune's bare terminal interface."""
 
-    _instance: Optional["CeluneHeadlessUI"] = None
+    def __init_subclass__(cls, **kwargs: Never) -> Never:
+        raise TypeError(f"{__class__.__name__} is final and cannot be subclassed")
+
+    _instance: ClassVar[Optional["CeluneHeadlessUI"]] = None
 
     def __init__(self, config: Optional[Config] = None) -> None:
         if CeluneHeadlessUI._instance is not None:
@@ -44,6 +50,7 @@ class CeluneHeadlessUI:
         )
         self.reset = "\x1b[0m" if not self.no_color else ""
         self._exit = False
+        self._windows_signal_handler: Optional[Callable[[int], bool]] = None
 
         CeluneHeadlessUI._instance = self
 
@@ -71,18 +78,30 @@ class CeluneHeadlessUI:
         # sleeping severity does not have a match in the VGA palette
         return self.colors["magenta"]
 
-    def headless_log(self, msg: str, severity: str = "info") -> None:
+    def headless_log(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
         """Log to the headless interface.
 
         Args:
             msg: The log message to print.
             severity: The log severity level.
+            loglevel: The minimum configured log level required to display the message.
         """
+        levels = {"info": 0, "verbose": 1, "debug": 2}
+        active_log_level = getattr(self.celune, "log_level", "info")
+        if levels.get(active_log_level, 0) < levels.get(loglevel, 0):
+            return
+
         prefix = ""
         if severity == "warning":
-            prefix = string("headless.warn_prefix")
+            prefix = "[WARN] "
         elif severity == "error":
-            prefix = string("headless.error_prefix")
+            prefix = "[ERROR] "
         print(f"{prefix}{self.severity_color(severity)}{msg}{self.reset}", flush=True)
 
     def headless_error(self, error: str) -> None:

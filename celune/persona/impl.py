@@ -1,32 +1,64 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Celune-managed Persona runtime helpers."""
 
-import contextlib
 import io
 import os
-from collections.abc import Generator, Mapping
+import re
+import contextlib
 from typing import Optional
+from collections.abc import Mapping, Generator
 
+from ..i18n import string
+from ..vram import resolve_vram_preset
+from ..modes import (
+    mode_allows_persona,
+    resolve_operation_mode,
+)
+from ..config import Config
+from .runtime import PersonaRuntime, response_to_json, request_from_json
 from ..cevoice import (
     CEVoicePersona,
     default_loader,
     merge_persona_metadata,
     persona_metadata_from_voice,
 )
-from ..config import Config
 from ..constants import (
+    PERSONA_COMPACT_AT,
+    PERSONA_CONTEXT_SPACE,
     DEFAULT_PERSONA_CONTEXT,
-    DEFAULT_PERSONA_DESCRIPTION,
+    PERSONA_DEFAULT_MODEL_ID,
     PERSONA_HISTORY_MESSAGES,
-    PERSONA_MODEL_ID,
+    DEFAULT_PERSONA_DESCRIPTION,
 )
-from ..typing.aliases import DevLogCallback
+from .capabilities import PersonaCapabilities
 from ..typing.common import JSON, JSONSerializable
-from ..typing.persona import PersonaClientResponse, PersonaEngineView
-from ..vram import resolve_vram_preset
-from .runtime import PersonaRuntime, request_from_json, response_to_json
+from ..typing.aliases import LogCallback
+from ..typing.persona import (
+    PersonaModel,
+    PersonaTokenizer,
+    PersonaEngineView,
+    PersonaClientResponse,
+)
 
 PERSONA_QUANTIZATION = "4bit"
+_CONVERSATION_SUMMARY_SYSTEM_PROMPT = (
+    "You are a neutral conversation summarizer. Do not roleplay, imitate a "
+    "character, answer the user, or use a character's speaking style. Summarize "
+    "the supplied conversation in concise factual prose. Preserve important "
+    "facts, decisions, preferences, unresolved issues, and relevant emotional "
+    "context. Ignore greetings and filler. Output only the summary prose, with "
+    "no XML tags, role labels, or heading."
+)
+_SUMMARY_PREFIX = "Conversation context:"
+_SUMMARY_SPLIT_RE = re.compile(
+    r"(?:\r?\n+|(?<=[.!?\u3002\uff01\uff1f\u061f])\s*|[;\uff1b]\s*)"
+)
+_SUMMARY_WRAPPER_RE = re.compile(r"</?(?:conversation_summary|summary)>", re.IGNORECASE)
+_SUMMARY_LABEL_RE = re.compile(
+    r"^\s*(?:summary|earlier summary|conversation summary|conversation context|"
+    r"user|assistant|celune)\s*:\s*",
+    re.IGNORECASE,
+)
 
 
 class PersonaClient:
@@ -35,16 +67,17 @@ class PersonaClient:
     def __init__(
         self,
         config: Optional[Mapping[str, JSONSerializable]] = None,
-        log_dev: Optional[DevLogCallback] = None,
+        log: Optional[LogCallback] = None,
+        log_dev: Optional[LogCallback] = None,
     ) -> None:
         self.runtime = PersonaRuntime(config=config)
         self.config = config
-        self.log_dev = log_dev
+        self.log = log or log_dev
 
     @contextlib.contextmanager
     def _capture_backend_output(self) -> Generator[None, None, None]:
-        """Route Persona backend stdout/stderr into Celune developer logs."""
-        if self.log_dev is None:
+        """Route Persona backend stderr into Celune developer logs."""
+        if self.log is None:
             yield
             return
 
@@ -55,7 +88,7 @@ class PersonaClient:
         for line in stderr_buffer.getvalue().splitlines():
             text = line.strip()
             if text:
-                self.log_dev(f"[PERSONA] {text}", "warning")
+                self.log(f"[PERSONA] {text}", "warning", loglevel="verbose")
 
     def load(
         self,
@@ -85,9 +118,90 @@ class PersonaClient:
             response = self.runtime.generate(request)
         return PersonaClientResponse(response_to_json(response))
 
+    def classify_memory(
+        self, json: dict[str, JSONSerializable]
+    ) -> PersonaClientResponse:
+        """Classify durable user-memory candidates through the same Persona runtime.
+
+        Args:
+            json: A structured memory-classification request.
+
+        Returns:
+            PersonaClientResponse: The classifier response using the local Persona model.
+        """
+        return self.post(json)
+
+    def summarize_history(
+        self,
+        messages: list[JSON],
+        previous_summary: str = "",
+        maximum_characters: int = 1200,
+    ) -> str:
+        """Summarize conversation context without the CEVOICE persona prompt.
+
+        Args:
+            messages: Older conversation turns that are being compacted.
+            previous_summary: The summary produced by the previous compaction pass.
+            maximum_characters: Maximum desired length of the returned summary.
+
+        Returns:
+            str: Neutral summary prose returned by the active Persona model.
+        """
+        context_sections: list[str] = []
+        if previous_summary.strip():
+            context_sections.append(f"Existing summary:\n{previous_summary.strip()}")
+        if messages:
+            turns = "\n".join(
+                f"{message.get('role', 'unknown')}: {' '.join(str(message.get('content', '')).split())}"
+                for message in messages
+            )
+            context_sections.append(f"Conversation turns:\n{turns}")
+        context = "\n\n".join(context_sections).strip()
+        if not context:
+            return ""
+
+        response = self.post(
+            {
+                "format": "celune_conversation_summary",
+                "format_version": 1,
+                "model": persona_model_id(self.config),
+                "quantization": persona_quantization(self.config or {}),
+                "quantized": True,
+                "system": _CONVERSATION_SUMMARY_SYSTEM_PROMPT,
+                "user": context,
+                "request": context,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": _CONVERSATION_SUMMARY_SYSTEM_PROMPT,
+                    },
+                    {"role": "user", "content": context},
+                ],
+                "max_new_tokens": max(64, min(240, maximum_characters // 3)),
+                "temperature": 0.0,
+                "top_p": 1.0,
+                "repetition_penalty": 1.0,
+            }
+        )
+        payload = response.json()
+        summary = payload.get("response", payload.get("text", ""))
+        return summary.strip() if isinstance(summary, str) else ""
+
     def close(self) -> None:
         """Release Persona runtime state."""
         self.runtime.close()
+
+    def interrupt(self) -> None:
+        """Request cancellation of an active Persona generation."""
+        self.runtime.interrupt()
+
+    def emotion_backend(self) -> Optional[tuple[PersonaTokenizer, PersonaModel]]:
+        """Return the active VLM components for local emotion analysis."""
+        return self.runtime.emotion_backend()
+
+    def capabilities(self) -> PersonaCapabilities:
+        """Return the capabilities of the active Persona architecture."""
+        return self.runtime.capabilities()
 
 
 def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
@@ -100,12 +214,42 @@ def persona_config(config: Mapping[str, JSONSerializable]) -> Config:
         Config: The normalized configuration data for the persona system.
     """
     raw = config.get("persona", config.get("pyop", {}))
-    if isinstance(raw, bool):
-        raw = {"enabled": raw}
-    elif raw is None or not isinstance(raw, dict):
+    if raw is None or not isinstance(raw, dict):
         raw = {}
 
     return dict(raw)
+
+
+def persona_context_size(config: Mapping[str, JSONSerializable]) -> int:
+    """Return Persona's configured prompt context size."""
+    value = persona_config(config).get("context_size")
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        else PERSONA_CONTEXT_SPACE
+    )
+
+
+def persona_compact_at(config: Mapping[str, JSONSerializable]) -> int:
+    """Return Persona's configured context compaction percentage."""
+    value = persona_config(config).get("compact_at")
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 100
+        else PERSONA_COMPACT_AT
+    )
+
+
+def persona_max_turns(config: Mapping[str, JSONSerializable]) -> Optional[int]:
+    """Return Persona's optional conversation-turn limit."""
+    value = persona_config(config).get("max_turns")
+    if value is None:
+        return None
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        else None
+    )
 
 
 def persona_debug_overrides_enabled(
@@ -286,7 +430,7 @@ def default_persona_gender(engine: PersonaEngineView) -> str:
         str: Default gender string for the active persona source.
     """
     if uses_default_celune_identity(engine):
-        return "female"
+        return string("persona.default_gender")
     return "unknown"
 
 
@@ -345,6 +489,11 @@ def persona_short_term_history_limit(engine: PersonaEngineView) -> int:
         int: Maximum number of recent chat messages to keep in short-term memory.
     """
     config = getattr(engine, "config", {})
+    if not isinstance(config, Mapping):
+        config = {}
+    configured_turns = persona_max_turns(config)
+    if configured_turns is not None:
+        return configured_turns * 2
     memory = (
         persona_config(config).get("memory") if isinstance(config, Mapping) else None
     )
@@ -396,6 +545,184 @@ def persona_history_messages(engine: PersonaEngineView) -> list[JSON]:
     return messages
 
 
+def persona_session_summary(engine: PersonaEngineView) -> str:
+    """Return the bounded summary of older Persona conversation turns."""
+    summary = getattr(engine, "persona_session_summary", "")
+    return summary.strip() if isinstance(summary, str) else ""
+
+
+def _estimated_persona_history_tokens(history: list[JSON]) -> int:
+    """Estimate the token footprint of stored Persona message text."""
+    return sum(max(1, len(str(message.get("content", ""))) // 4) for message in history)
+
+
+def _summary_fragments(text: str) -> list[str]:
+    """Extract clean, sentence-sized fragments from one summary source."""
+    cleaned = _SUMMARY_WRAPPER_RE.sub(" ", text)
+    fragments: list[str] = []
+    for raw_fragment in _SUMMARY_SPLIT_RE.split(cleaned):
+        fragment = raw_fragment.strip()
+        while True:
+            unlabeled = _SUMMARY_LABEL_RE.sub("", fragment)
+            if unlabeled == fragment:
+                break
+            fragment = unlabeled.strip()
+        fragment = " ".join(fragment.split()).strip(" -:;")
+        if len(fragment) >= 12:
+            fragments.append(fragment)
+    return fragments
+
+
+def _summary_fragment_key(fragment: str) -> str:
+    """Normalize one summary fragment for duplicate detection."""
+    return " ".join(fragment.casefold().strip(".!?").split())
+
+
+def _build_persona_summary(
+    previous_summary: str,
+    old_messages: list[dict[str, str]],
+    maximum_characters: int,
+) -> str:
+    """Build a bounded deterministic fallback digest without recursive nesting."""
+    sources: list[str] = [
+        content
+        for message in old_messages
+        for content in [message.get("content", "")]
+        if isinstance(content, str)
+    ]
+
+    if previous_summary:
+        sources.append(previous_summary)
+
+    fragments: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        for fragment in _summary_fragments(source):
+            key = _summary_fragment_key(fragment)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            fragments.append(fragment)
+
+    if not fragments:
+        return ""
+
+    prefix_length = len(_SUMMARY_PREFIX) + 1
+    available = max(0, maximum_characters - prefix_length)
+    selected: list[str] = []
+    used = 0
+    for fragment in fragments:
+        separator_length = 1 if selected else 0
+        remaining = available - used - separator_length
+        if remaining < 12:
+            break
+        if len(fragment) > remaining:
+            fragment = f"{fragment[: max(0, remaining - 3)].rstrip()}..."
+        selected.append(fragment)
+        used += separator_length + len(fragment)
+
+    return f"{_SUMMARY_PREFIX} {' '.join(selected)}".strip()
+
+
+def _vlm_persona_summary(
+    engine: PersonaEngineView,
+    previous_summary: str,
+    old_messages: list[dict[str, str]],
+    maximum_characters: int,
+) -> str:
+    """Ask the active Persona VLM for a neutral summary when supported."""
+    vision = getattr(engine, "vision", None)
+    summarize_history = getattr(vision, "summarize_history", None)
+    if not callable(summarize_history):
+        return ""
+
+    try:
+        generated = summarize_history(
+            old_messages,
+            previous_summary,
+            maximum_characters,
+        )
+    except Exception:
+        return ""
+    if not isinstance(generated, str) or not generated.strip():
+        return ""
+
+    return _build_persona_summary(
+        "",
+        [{"role": "assistant", "content": generated}],
+        maximum_characters,
+    )
+
+
+def compact_persona_history(engine: PersonaEngineView) -> None:
+    """Compact older Persona turns through a neutral VLM summary request.
+
+    Args:
+        engine: Celune-like runtime whose Persona history should be summarized.
+    """
+    history = getattr(engine, "persona_history", None)
+    if not isinstance(history, list):
+        return
+
+    config = getattr(engine, "config", {})
+    if not isinstance(config, Mapping):
+        config = {}
+    limit = persona_short_term_history_limit(engine)
+    if limit <= 0:
+        history.clear()
+        return
+    compact_threshold = persona_context_size(config) * persona_compact_at(config) // 100
+    if (
+        len(history) <= limit
+        and _estimated_persona_history_tokens(history) < compact_threshold
+    ):
+        return
+
+    raw_memory = (
+        persona_config(config).get("memory") if isinstance(config, Mapping) else None
+    )
+    memory = raw_memory if isinstance(raw_memory, dict) else {}
+    enabled = memory.get("context_compaction_enabled", True)
+    if isinstance(enabled, bool) and not enabled:
+        del history[:-limit]
+        return
+
+    keep_recent = memory.get("context_compaction_keep_recent_messages", min(limit, 8))
+    if isinstance(keep_recent, bool) or not isinstance(keep_recent, (int, float)):
+        keep_recent = min(limit, 8)
+    keep_count = max(1, min(limit, int(keep_recent), len(history) - 1))
+
+    previous_summary = persona_session_summary(engine)
+    old_messages: list[dict[str, str]] = []
+    for message in history[:-keep_count]:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        content = message.get("content")
+        if role not in {"user", "assistant"} or not isinstance(content, str):
+            continue
+        normalized = " ".join(content.split())
+        if not normalized:
+            continue
+        old_messages.append({"role": role, "content": normalized})
+
+    maximum_characters = memory.get("context_summary_max_characters", 1200)
+    if isinstance(maximum_characters, bool) or not isinstance(
+        maximum_characters, (int, float)
+    ):
+        maximum_characters = 1200
+    maximum_characters = max(240, int(maximum_characters))
+    summary = _vlm_persona_summary(
+        engine,
+        previous_summary,
+        old_messages,
+        maximum_characters,
+    ) or _build_persona_summary(previous_summary, old_messages, maximum_characters)
+
+    engine.persona_session_summary = summary
+    del history[:-keep_count]
+
+
 def persona_attachment_source(path: str) -> str:
     """Return a qwen-vl-utils-safe attachment path or URI.
 
@@ -426,6 +753,16 @@ def persona_pending_attachments(engine: PersonaEngineView) -> list[JSON]:
     if not isinstance(attachments, list):
         return []
 
+    vision = getattr(engine, "vision", None)
+    get_capabilities = getattr(vision, "capabilities", None)
+    if callable(get_capabilities):
+        capabilities = get_capabilities()
+        if (
+            isinstance(capabilities, PersonaCapabilities)
+            and not capabilities.image_uploads
+        ):
+            return []
+
     content: list[JSON] = []
     for attachment in attachments:
         if not isinstance(attachment, dict):
@@ -448,9 +785,11 @@ def persona_enabled(config: Mapping[str, JSONSerializable]) -> bool:
     Returns:
         bool: Whether Persona is enabled.
     """
-    return resolve_vram_preset(config).persona_enabled and bool(
-        persona_config(config).get("enabled", True)
-    )
+    mode = resolve_operation_mode(config)
+    preset = resolve_vram_preset(config)
+    if not mode_allows_persona(mode):
+        return False
+    return preset.persona_enabled
 
 
 def persona_talkback_enabled(config: Mapping[str, JSONSerializable]) -> bool:
@@ -462,9 +801,7 @@ def persona_talkback_enabled(config: Mapping[str, JSONSerializable]) -> bool:
     Returns:
         bool: Whether Celune should use Persona if enabled, or not.
     """
-    return persona_enabled(config) and bool(
-        persona_config(config).get("talkback", True)
-    )
+    return persona_enabled(config)
 
 
 def persona_quantization(config: Mapping[str, JSONSerializable]) -> str:
@@ -493,7 +830,7 @@ def persona_model_id(config: Optional[Mapping[str, JSONSerializable]] = None) ->
         if isinstance(configured, str) and configured.strip():
             return configured.strip()
 
-    return PERSONA_MODEL_ID
+    return PERSONA_DEFAULT_MODEL_ID
 
 
 def persona_is_available() -> bool:
@@ -505,19 +842,20 @@ def persona_is_available() -> bool:
     try:
         PersonaRuntime()
         return True
-    except Exception:  # noqa
+    except Exception:
         return False
 
 
 def create_persona_client(
     config: Optional[Mapping[str, JSONSerializable]] = None,
-    log_dev: Optional[DevLogCallback] = None,
+    log: Optional[LogCallback] = None,
+    log_dev: Optional[LogCallback] = None,
 ) -> Optional[PersonaClient]:
     """Create a Celune-managed in-process Persona client when enabled.
 
     Args:
         config: Celune's current configuration.
-        log_dev: The logging callback to Celune's UI.
+        log: The logging callback to Celune's UI.
 
     Returns:
         Optional[PersonaClient]: ``PersonaClient`` if Persona is enabled, else ``None``.
@@ -528,4 +866,4 @@ def create_persona_client(
     if not persona_is_available():
         return None
 
-    return PersonaClient(config=config, log_dev=log_dev)
+    return PersonaClient(config=config, log=log, log_dev=log_dev)

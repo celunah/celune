@@ -1,26 +1,27 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Shared runtime helpers for Celune voice conversion."""
 
 import importlib
-from collections.abc import Mapping
+import threading
+import contextlib
+import queue as queue_module
 from typing import Optional, cast
 
-import numpy as np
 import torch
+import numpy as np
 from scipy import signal
 
-from .config import config_bool
 from .typing.aliases import AudioChunk
 from .typing.backends import _StreamingSpeechModel
-from .typing.common import JSONSerializable
 
 VC_PITCH_SHIFT_MIN = -3
 VC_PITCH_SHIFT_MAX = 3
 VC_VAD_RMS_THRESHOLD = 0.005
 VC_VAD_HANGOVER_SECONDS = 0.3
 VC_VAD_PREROLL_SECONDS = 0.18
-VC_LIVE_CHUNK_SECONDS = 1.5
-VC_LIVE_CHUNK_OVERLAP_SECONDS = VC_LIVE_CHUNK_SECONDS / 5
+VC_LIVE_CHUNK_SECONDS = 0.18
+VC_LIVE_CHUNK_OVERLAP_SECONDS = 0.0
+_VC_AUDIO_PEAK = 0.95
 
 _LIVE_VAD_TARGET_SAMPLE_RATE = 16000
 _LIVE_VAD_FRAME_SAMPLES = 512
@@ -38,6 +39,7 @@ __all__ = [
     "LiveVoiceActivityDetector",
     "clamp_vc_pitch_shift",
     "create_live_voice_activity_detector",
+    "normalize_vc_audio",
     "vc_input_has_voice",
     "vc_input_rms",
     "vc_live_chunk_frames",
@@ -59,6 +61,30 @@ def clamp_vc_pitch_shift(value: int) -> int:
     return max(VC_PITCH_SHIFT_MIN, min(VC_PITCH_SHIFT_MAX, value))
 
 
+def normalize_vc_audio(audio: AudioChunk) -> AudioChunk:
+    """Return finite float32 audio safe for a CEDTS VC payload.
+
+    Args:
+        audio: Audio samples that will cross the voice-conversion boundary.
+
+    Returns:
+        AudioChunk: A finite float32 array with a small peak headroom margin.
+    """
+    normalized = np.nan_to_num(
+        np.asarray(audio, dtype=np.float32),
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
+    if normalized.size == 0:
+        return normalized
+
+    peak = float(np.max(np.abs(normalized)))
+    if peak > _VC_AUDIO_PEAK:
+        normalized = normalized * (_VC_AUDIO_PEAK / peak)
+    return np.asarray(normalized, dtype=np.float32)
+
+
 def vc_input_rms(audio: AudioChunk) -> float:
     """Return RMS energy for one microphone callback buffer.
 
@@ -70,7 +96,7 @@ def vc_input_rms(audio: AudioChunk) -> float:
     """
     if audio.size == 0:
         return 0.0
-    return float(np.sqrt(np.mean(np.square(audio), dtype=np.float64)))
+    return float(np.sqrt(np.mean(np.square(audio), dtype=np.float32)))
 
 
 def vc_vad_hangover_frames(sample_rate: int) -> int:
@@ -128,8 +154,11 @@ def vc_live_chunk_overlap_frames(sample_rate: int) -> int:
         sample_rate: Sample rate used by the live VC input stream.
 
     Returns:
-        int: How many tail frames to retain for the next live VC chunk.
+        int: Zero when no overlap is configured because Seed-VC's native live path
+            owns crossfade alignment; otherwise the configured overlap in frames.
     """
+    if VC_LIVE_CHUNK_OVERLAP_SECONDS <= 0:
+        return 0
     return max(1, int(sample_rate * VC_LIVE_CHUNK_OVERLAP_SECONDS))
 
 
@@ -168,11 +197,10 @@ def _resample_audio(
 
 def _torch_probability(output: torch.Tensor) -> float:
     """Convert one model output tensor into a scalar probability."""
-    values = output.detach().cpu().numpy()
-    values = np.asarray(values, dtype=np.float32).reshape(-1)
-    if values.size <= 0:
+    values = output.detach().reshape(-1)
+    if values.numel() <= 0:
         return 0.0
-    return float(values[-1])
+    return float(values[-1].item())
 
 
 class LiveVoiceActivityDetector:
@@ -194,18 +222,134 @@ class LiveVoiceActivityDetector:
         self.frame_samples = frame_samples
         self._pending = np.zeros(0, dtype=np.float32)
         self._speech_active = False
+        self._state_lock = threading.Lock()
+        self._model_lock = threading.Lock()
+        self._generation = 0
+        self._input_queue: queue_module.Queue[Optional[tuple[AudioChunk, int]]] = (
+            queue_module.Queue(maxsize=2)
+        )
+        self._stop_event = threading.Event()
+        self._worker: Optional[threading.Thread] = None
 
         reset_states = getattr(self.model, "reset_states", None)
         if callable(reset_states):
             reset_states()
+
+    def _ensure_worker(self) -> None:
+        """Start the detector worker lazily when live audio first arrives."""
+        worker = self._worker
+        if worker is not None and worker.is_alive():
+            return
+
+        self._stop_event.clear()
+        self._worker = threading.Thread(
+            target=self._run,
+            name="celune-live-vad",
+            daemon=True,
+        )
+        self._worker.start()
+
+    def _reset_locked(self) -> None:
+        """Reset detector buffers while holding the state lock."""
+        self._pending = np.zeros(0, dtype=np.float32)
+        self._speech_active = False
+
+    def _reset_model(self) -> None:
+        """Reset the model's streaming state outside the audio callback."""
+        reset_states = getattr(self.model, "reset_states", None)
+        if callable(reset_states):
+            reset_states()
+
+    def _process_audio(self, audio: AudioChunk, sample_rate: int) -> None:
+        """Process one queued callback buffer on the detector worker."""
+        mono_audio = _normalize_live_audio(audio)
+        resampled = _resample_audio(
+            mono_audio,
+            sample_rate,
+            self.target_sample_rate,
+        )
+        with self._state_lock:
+            if self._pending.size > 0:
+                resampled = np.concatenate((self._pending, resampled))
+            generation = self._generation
+            speech_active = self._speech_active
+
+            complete_frames = (
+                len(resampled) // self.frame_samples
+            ) * self.frame_samples
+            if complete_frames <= 0:
+                self._pending = resampled
+                return
+
+        with self._model_lock, torch.inference_mode():
+            for start in range(0, complete_frames, self.frame_samples):
+                frame = resampled[start : start + self.frame_samples]
+                probability = _torch_probability(
+                    self.model(
+                        torch.from_numpy(frame),
+                        self.target_sample_rate,
+                    )
+                )
+                if speech_active:
+                    if probability < self.negative_threshold:
+                        speech_active = False
+                elif probability >= self.threshold:
+                    speech_active = True
+
+        with self._state_lock:
+            if generation != self._generation:
+                return
+            self._speech_active = speech_active
+            self._pending = np.asarray(resampled[complete_frames:], dtype=np.float32)
+
+    def _run(self) -> None:
+        """Consume microphone buffers without running inference in PortAudio."""
+        while not self._stop_event.is_set():
+            item = self._input_queue.get()
+            if item is None:
+                if self._stop_event.is_set():
+                    return
+                with self._model_lock:
+                    self._reset_model()
+                continue
+            audio, sample_rate = item
+            try:
+                self._process_audio(audio, sample_rate)
+            except (RuntimeError, AssertionError, ValueError):
+                with self._state_lock:
+                    self._reset_locked()
+                    self._speech_active = vc_input_has_voice(audio)
+                with self._model_lock:
+                    self._reset_model()
 
     def reset(self) -> None:
         """Reset buffered audio and the streaming detector state."""
-        self._pending = np.zeros(0, dtype=np.float32)
-        self._speech_active = False
-        reset_states = getattr(self.model, "reset_states", None)
-        if callable(reset_states):
-            reset_states()
+        with self._state_lock:
+            self._generation += 1
+            self._reset_locked()
+
+        worker = self._worker
+        if worker is None or not worker.is_alive():
+            self._reset_model()
+            return
+
+        with contextlib.suppress(queue_module.Full):
+            self._input_queue.put_nowait(None)
+            return
+        with contextlib.suppress(queue_module.Empty):
+            self._input_queue.get_nowait()
+        with contextlib.suppress(queue_module.Full):
+            self._input_queue.put_nowait(None)
+
+    def close(self) -> None:
+        """Stop the detector worker and release its queued callback buffers."""
+        self._stop_event.set()
+        with contextlib.suppress(queue_module.Full):
+            self._input_queue.put_nowait(None)
+        worker = self._worker
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(timeout=1.0)
+        self._worker = None
 
     def has_voice(
         self,
@@ -221,61 +365,26 @@ class LiveVoiceActivityDetector:
         Returns:
             bool: Whether speech appears active in the current callback window.
         """
-        mono_audio = _normalize_live_audio(audio)
-        resampled = _resample_audio(
-            mono_audio,
-            sample_rate,
-            self.target_sample_rate,
-        )
-        if self._pending.size > 0:
-            resampled = np.concatenate((self._pending, resampled))
-
-        complete_frames = (len(resampled) // self.frame_samples) * self.frame_samples
-        if complete_frames <= 0:
-            self._pending = resampled
+        self._ensure_worker()
+        queued_audio = np.asarray(audio, dtype=np.float32)
+        try:
+            self._input_queue.put_nowait((queued_audio, sample_rate))
+        except queue_module.Full:
+            with contextlib.suppress(queue_module.Empty):
+                self._input_queue.get_nowait()
+            with contextlib.suppress(queue_module.Full):
+                self._input_queue.put_nowait((queued_audio, sample_rate))
+        with self._state_lock:
             return self._speech_active
 
-        had_speech = self._speech_active
-        for start in range(0, complete_frames, self.frame_samples):
-            frame = np.asarray(
-                resampled[start : start + self.frame_samples],
-                dtype=np.float32,
-            )
-            probability = _torch_probability(
-                self.model(
-                    torch.from_numpy(frame),
-                    self.target_sample_rate,
-                )
-            )
-            if self._speech_active:
-                if probability < self.negative_threshold:
-                    self._speech_active = False
-            elif probability >= self.threshold:
-                self._speech_active = True
 
-        self._pending = np.asarray(resampled[complete_frames:], dtype=np.float32)
-        return had_speech or self._speech_active
-
-
-def create_live_voice_activity_detector(
-    config: Optional[Mapping[str, JSONSerializable]],
-) -> Optional[LiveVoiceActivityDetector]:
-    """Return the optional AI VAD used by live VC capture.
-
-    Args:
-        config: Optional Celune configuration mapping.
+def create_live_voice_activity_detector() -> Optional[LiveVoiceActivityDetector]:
+    """Return the AI VAD used by live capture when its optional backend is available.
 
     Returns:
-        Optional[LiveVoiceActivityDetector]: The live VC detector when enabled and available.
+        Optional[LiveVoiceActivityDetector]: The live detector, or ``None`` when
+            Silero VAD is unavailable and the caller must use its RMS fallback.
     """
-    if not config_bool(
-        config,
-        "CELUNE_VC_LIVE_AI_VAD",
-        "voice_conversion_live_ai_vad",
-        True,
-    ):
-        return None
-
     try:
         silero_vad = importlib.import_module("silero_vad")
     except ImportError:

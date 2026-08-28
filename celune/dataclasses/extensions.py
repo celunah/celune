@@ -1,23 +1,23 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Extension-facing dataclasses."""
 
-from collections.abc import Callable
-from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from collections.abc import Callable
+from dataclasses import field, dataclass
+from contextlib import AbstractContextManager
+from typing import TYPE_CHECKING, Union, Optional
 
 from .. import __version__
+from ..typing.aliases import LogLevel
 from ..typing.common import JSONSerializable
 from ..typing.extensions import (
-    DevLogCallable,
-    GetStateCallable,
     LogCallable,
-    PlayCallable,
     SayCallable,
-    SetVoiceCallable,
-    StatusCallable,
+    PlayCallable,
     ThinkCallable,
+    StatusCallable,
+    GetStateCallable,
+    SetVoiceCallable,
     WaitUntilReadyCallable,
 )
 
@@ -32,7 +32,6 @@ class CeluneContext:
     """Celune's extension context."""
 
     log: LogCallable
-    log_dev: DevLogCallable
     say: SayCallable
     think: ThinkCallable
     play: PlayCallable
@@ -47,7 +46,7 @@ class CeluneContext:
     name: str = "Celune"
     version: str = CELUNE_VERSION
     shared: dict[str, JSONSerializable] = field(default_factory=dict)
-    dev: bool = False
+    log_level: LogLevel = "info"
 
     def expose(self, key: str, value: JSONSerializable) -> None:
         """Expose a shared object.

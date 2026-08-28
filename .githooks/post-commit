@@ -1,0 +1,8 @@
+#!/bin/sh
+
+repository_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+if ! python "$repository_root/scripts/root.py"; then
+    printf '%s\n' 'Celune marker update failed; run python scripts/root.py manually.' >&2
+else
+    git -C "$repository_root" add -- .celune-root
+fi

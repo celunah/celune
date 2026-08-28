@@ -1,29 +1,41 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """CLI entrypoint helpers."""
 
-import contextlib
-import datetime
-import importlib
-import importlib.util
 import os
-import platform
-import random
-import shutil
-import subprocess
 import sys
 import time
+import random
+import shutil
+import datetime
+import platform
 import warnings
-from dataclasses import dataclass
+import importlib
+import importlib.util
+import contextlib
+import subprocess
 from pathlib import Path
+from dataclasses import dataclass
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Optional
 from types import ModuleType, SimpleNamespace
-from typing import Optional
 
-from celune import REVISION, __tagline__, __version__
-from celune.constants import APP_NAME, APP_SLUG, ExitCodes
 from celune.i18n import string
-from celune.watchdog import launcher_loss_requested, start_watchdog
-from celune.paths import project_root, running_compiled
+from celune.typing.common import Config
+from celune.terminal import set_terminal_title
 from celune.updater import apply_update_and_restart
+from celune import REVISION, __tagline__, __version__
+from celune.config import config_log_level, normalize_log_level
+from celune.watchdog import start_watchdog, launcher_loss_requested
+from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
+from celune.paths import (
+    project_root,
+    running_compiled,
+    migrate_legacy_app_data,
+    configure_huggingface_runtime,
+)
+
+if TYPE_CHECKING:
+    from celune.celune import Celune
 
 
 def _env_flag(name: str) -> bool:
@@ -31,8 +43,55 @@ def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "on", "yes", "enabled"}
 
 
+def _auto_detect_headless() -> Optional[bool]:
+    """Detect whether a nullable headless setting should use the headless UI.
+
+    Returns:
+        Optional[bool]: ``True`` for a non-interactive or non-desktop Linux
+            session, ``False`` for Windows or a desktop Linux session, or
+            ``None`` when the environment cannot be inspected reliably.
+    """
+    try:
+        system_name = platform.system()
+        if system_name == "Windows":
+            return False
+        if system_name != "Linux":
+            return None
+
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            return True
+
+        desktop_variables = (
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
+            "XDG_CURRENT_DESKTOP",
+            "DESKTOP_SESSION",
+            "XDG_SESSION_DESKTOP",
+        )
+        if any(os.environ.get(name, "").strip() for name in desktop_variables):
+            return False
+
+        session_type = os.environ.get("XDG_SESSION_TYPE", "").strip().lower()
+        return session_type not in {"x11", "wayland"}
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def _resolve_headless_mode(runtime: SimpleNamespace, config: Config) -> bool:
+    """Resolve explicit headless settings and nullable auto-detection."""
+    if os.getenv("CELUNE_HEADLESS") is not None:
+        return runtime.env_bool("CELUNE_HEADLESS", False)
+
+    configured_headless = runtime.config_value(config, "headless")
+    if configured_headless is None:
+        detected_headless = _auto_detect_headless()
+        return detected_headless if detected_headless is not None else False
+
+    return runtime.config_bool(config, "CELUNE_HEADLESS", "headless")
+
+
 # refer to the app configuration for details on these parameters
-INITIAL_DEV = _env_flag("CELUNE_DEV")
+INITIAL_LOG_LEVEL = normalize_log_level(os.getenv("CELUNE_LOG_LEVEL", "info"))
 INITIAL_HEADLESS = _env_flag("CELUNE_HEADLESS")
 INITIAL_BACKEND = os.getenv("CELUNE_BACKEND")
 
@@ -40,12 +99,14 @@ INITIAL_BACKEND = os.getenv("CELUNE_BACKEND")
 LAUNCHED_VIA_LAUNCHER = _env_flag("CELUNE_LAUNCHER")
 SCRIPT_PATH = Path(__file__).resolve()
 PROJECT_ROOT = project_root()
-SETUP_PATH = PROJECT_ROOT / "setup.py"
+CONFIGURE_PATH = PROJECT_ROOT / "configure.py"
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "default_config.yaml"
 SCRIPT_NAME = "main.py"
 EXIT_CODES = ExitCodes
 _RUNTIME: Optional[SimpleNamespace] = None
 _FORCE_STARTUP_DIAGNOSTICS = False
+_STARTUP_DIAGNOSTICS: list[str] = []
+_STARTUP_DIAGNOSTIC_SINK: Optional[Callable[[str], None]] = None
 _CELUNE_PROCESS_NAMES = frozenset(
     {"celune", "celune-bin", "celune-bin.exe", "celune.appimage", "celune.exe"}
 )
@@ -59,22 +120,61 @@ def _load_ui_test_backend() -> type:
     return support.FakeBackend
 
 
+def _load_test_runtime_config(runtime: SimpleNamespace) -> tuple[Config, Optional[str]]:
+    """Load the user's runtime config without enabling normal services."""
+    active_config_path, created_config = runtime.ensure_config_path(
+        active_path=runtime.config_path(create_parent=True),
+        default_path=runtime.default_config_path(),
+    )
+    if created_config:
+        print(string("cli.config_created", app_name=APP_NAME))
+
+    with open(active_config_path, encoding="utf-8") as cfg:
+        config = runtime.yaml.safe_load(cfg)
+    with open(runtime.default_config_path(), encoding="utf-8") as cfg:
+        defaults = runtime.yaml.safe_load(cfg)
+
+    if not isinstance(config, dict):
+        config = {}
+    if not isinstance(defaults, dict):
+        defaults = {}
+    merged, _ = runtime.merge_missing_defaults(config, defaults)
+    merged["mode"] = "agent"
+    configured_backend = INITIAL_BACKEND or runtime.config_value(merged, "backend")
+    backend = configured_backend if isinstance(configured_backend, str) else None
+    return merged, backend
+
+
 def _startup_diagnostics_enabled(force: bool = False) -> bool:
     """Return whether pre-UI startup diagnostics should be printed."""
     return (
         force
         or _FORCE_STARTUP_DIAGNOSTICS
-        or INITIAL_DEV
+        or INITIAL_LOG_LEVEL != "info"
         or _env_flag("CELUNE_BOOT_DIAGNOSTICS")
     )
 
 
 def _print_startup_diagnostic(message: str, force: bool = False) -> None:
-    """Print one early-startup diagnostic line before Textual takes over."""
+    """Queue or forward one early-startup diagnostic line.
+
+    Args:
+        message: Diagnostic text to display during startup.
+        force: Whether to include the diagnostic regardless of log level.
+    """
     if not _startup_diagnostics_enabled(force=force):
         return
 
-    print(string("cli.startup_diagnostic_prefix", message=message), flush=True)
+    _STARTUP_DIAGNOSTICS.append(message)
+    if _STARTUP_DIAGNOSTIC_SINK is not None:
+        _STARTUP_DIAGNOSTIC_SINK(message)
+
+
+def _flush_startup_diagnostics() -> None:
+    """Print queued startup diagnostics for non-interactive startup paths."""
+    for message in _STARTUP_DIAGNOSTICS:
+        print(f"[startup] {message}", flush=True)
+    _STARTUP_DIAGNOSTICS.clear()
 
 
 def normalize_argv0(argv: Optional[list[str]] = None) -> list[str]:
@@ -97,13 +197,32 @@ def _display_version() -> tuple[str, str]:
     return __version__, REVISION
 
 
+_CPU_FEATURE_LABELS = {
+    "sse3": "SSE3",
+    "ssse3": "SSSE3",
+    "sse4.1": "SSE4.1",
+    "sse4.2": "SSE4.2",
+    "popcnt": "POPCNT",
+    "cx16": "CMPXCHG16B",
+    "lahf_lm": "LAHF/SAHF",
+    "avx": "AVX",
+    "avx2": "AVX2",
+    "avx512f": "AVX-512F",
+}
+
+
+def _format_cpu_features(features: tuple[str, ...]) -> str:
+    """Return canonical CPU feature names for user-facing diagnostics."""
+    return ", ".join(_CPU_FEATURE_LABELS.get(feature, feature) for feature in features)
+
+
 def _print_dependency_setup_help(package_name: str) -> None:
     """Print the shared missing-dependency guidance used by startup paths."""
     print(string("cli.dependency_missing", package_name=package_name))
     print(string("cli.dependency_required", app_name=APP_NAME))
     print()
     print(string("cli.setup_automatically", app_name=APP_NAME))
-    print(string("cli.setup_cmd_setup_py"))
+    print(string("cli.setup_cmd_configure_py"))
     print()
     print(string("cli.setup_with_uv"))
     print(string("cli.setup_cmd_uv_sync"))
@@ -122,47 +241,38 @@ def _print_dependency_setup_help(package_name: str) -> None:
 
 
 def _load_runtime() -> SimpleNamespace:
-    """Import runtime-heavy modules only when a startup path needs them."""
+    """Import lightweight CLI helpers without importing the engine or UI."""
     global _RUNTIME
     if _RUNTIME is not None:
         return _RUNTIME
 
-    _print_startup_diagnostic(string("cli.startup_loading_runtime"))
-
     try:
         import webbrowser
 
-        import psutil
         import yaml
+        import psutil
 
-        from celune.celune import Celune
-        from celune.config import (
-            config_bool,
-            config_value,
-            env_bool,
-            merge_missing_defaults,
-        )
-        from celune.exceptions import No, UpdateError
-        from celune.namedays import has_name_day
+        from celune.ui import SelectMenu
         from celune.paths import (
             config_path,
-            default_config_path,
             ensure_config_path,
+            default_config_path,
         )
-        from celune.ui import (
-            CeluneHeadlessBaseUI,
-            CeluneHeadlessUI,
-            CeluneTextualUI,
-            CeluneUI,
-            SelectMenu,
+        from celune.utils import indent, title_case, detected_ide, supports_ansi
+        from celune.config import (
+            env_bool,
+            config_bool,
+            config_value,
+            merge_missing_defaults,
         )
         from celune.updater import check_for_update, update_to_latest
-        from celune.utils import detected_ide, indent, supports_ansi, title_case
+        from celune.namedays import has_name_day
+        from celune.exceptions import No, UpdateError
     except ModuleNotFoundError as package:
         if package.name is not None:
             _print_dependency_setup_help(package.name)
 
-        if INITIAL_DEV:
+        if INITIAL_LOG_LEVEL != "info":
             with contextlib.suppress(ModuleNotFoundError):
                 from rich.traceback import install
 
@@ -179,16 +289,11 @@ def _load_runtime() -> SimpleNamespace:
         __version__=__version__,
         REVISION=REVISION,
         __tagline__=__tagline__,
-        Celune=Celune,
         No=No,
         UpdateError=UpdateError,
         has_name_day=has_name_day,
         check_for_update=check_for_update,
         update_to_latest=update_to_latest,
-        CeluneUI=CeluneUI,
-        CeluneHeadlessUI=CeluneHeadlessUI,
-        CeluneHeadlessBaseUI=CeluneHeadlessBaseUI,
-        CeluneTextualUI=CeluneTextualUI,
         SelectMenu=SelectMenu,
         config_bool=config_bool,
         config_value=config_value,
@@ -203,8 +308,59 @@ def _load_runtime() -> SimpleNamespace:
         title_case=title_case,
         ExitCodes=ExitCodes,
     )
-    _print_startup_diagnostic(string("cli.startup_runtime_ready"))
     return _RUNTIME
+
+
+def _load_core_runtime(*, defer_missing_dependency: bool = False) -> SimpleNamespace:
+    """Import the engine and full UI runtime when it is needed.
+
+    Args:
+        defer_missing_dependency: Leave a missing dependency for the mounted UI
+            to report when runtime loading is happening in its startup worker.
+
+    Returns:
+        SimpleNamespace: The lazily populated runtime namespace.
+
+    Raises:
+        ModuleNotFoundError: If ``defer_missing_dependency`` is true and a core
+            runtime dependency is unavailable.
+    """
+    runtime = _load_runtime()
+    if hasattr(runtime, "Celune"):
+        return runtime
+
+    try:
+        configure_huggingface_runtime()
+        from celune.ui import (
+            CeluneUI,
+            CeluneTextualUI,
+            CeluneHeadlessUI,
+            CeluneHeadlessBaseUI,
+        )
+        from celune.celune import Celune
+    except ModuleNotFoundError as package:
+        if defer_missing_dependency:
+            raise
+
+        if package.name is not None:
+            _print_dependency_setup_help(package.name)
+
+        if INITIAL_LOG_LEVEL != "info":
+            with contextlib.suppress(ModuleNotFoundError):
+                from rich.traceback import install
+
+                install()
+
+            raise
+
+        sys.exit(EXIT_CODES.EXIT_MISSING_DEPENDENCIES.value)
+
+    runtime.Celune = Celune
+    runtime.CeluneUI = CeluneUI
+    runtime.CeluneHeadlessUI = CeluneHeadlessUI
+    runtime.CeluneHeadlessBaseUI = CeluneHeadlessBaseUI
+    runtime.CeluneTextualUI = CeluneTextualUI
+    return runtime
 
 
 @dataclass
@@ -349,35 +505,9 @@ def _doctor_detect_backend(torch_module: ModuleType) -> tuple[str, bool]:
         if getattr(torch_module.version, "hip", None) is not None:
             return "ROCm", False
 
-        nvidia_keywords = (
-            "nvidia",
-            "geforce",
-            "rtx",
-            "gtx",
-            "quadro",
-            "tesla",
-            "rtx pro",
-            "a1",
-            "a3",
-            "a4",
-            "h1",
-            "h2",
-            "b1",
-            "b2",
-            "l4",
-            "blackwell",
-            "ada",
-            "hopper",
-            "ampere",
-            "turing",
-            "pascal",
-            "volta",
-            "maxwell",
-        )
-
         if any(
             keyword in str(torch_module.cuda.get_device_name(0)).lower()
-            for keyword in nvidia_keywords
+            for keyword in NVIDIA_DEVICE_KEYWORDS
         ):
             return "CUDA", True
         return "ZLUDA", True
@@ -445,7 +575,7 @@ def _doctor_torch_details() -> list[DoctorCheck]:
             "PyTorch",
             False,
             "Module 'torch' is not installed.",
-            hint="Run `python setup.py` or `uv sync`.",
+            hint="Run `python configure.py` or `uv sync`.",
         )
         return checks
 
@@ -641,18 +771,45 @@ def _doctor_checks() -> list[DoctorCheck]:
         hint=f"{APP_NAME} currently supports Windows and Linux only.",
     )
 
-    python_ok = (3, 12) <= sys.version_info < (3, 14)
+    from celune.cpu import check_cpu_features
+
+    cpu_check = check_cpu_features()
+    required_cpu = _format_cpu_features(cpu_check.required)
+    if cpu_check.supported:
+        cpu_detail = string(
+            "cli.doctor_cpu_supported",
+            features=required_cpu or string("cli.doctor_cpu_none"),
+        )
+        cpu_hint = None
+    elif cpu_check.detectable:
+        cpu_detail = string(
+            "cli.doctor_cpu_missing",
+            features=_format_cpu_features(cpu_check.missing),
+        )
+        cpu_hint = string("cli.doctor_cpu_required", features=required_cpu)
+    else:
+        cpu_detail = string("cli.doctor_cpu_unavailable")
+        cpu_hint = string("cli.doctor_cpu_required", features=required_cpu)
+    _doctor_add(
+        checks,
+        string("cli.doctor_cpu_label"),
+        cpu_check.supported,
+        cpu_detail,
+        hint=cpu_hint,
+    )
+
+    python_ok = (3, 12) <= sys.version_info < (3, 15)
     python_detail = (
-        f"{platform.python_version()} (supported: 3.12 or 3.13)"
+        f"{platform.python_version()} (supported: 3.12, 3.13, or 3.14)"
         if python_ok
-        else f"{platform.python_version()} (unsupported: expected 3.12 or 3.13)"
+        else f"{platform.python_version()} (unsupported: expected 3.12, 3.13, or 3.14)"
     )
     _doctor_add(
         checks,
         "Python",
         python_ok,
         python_detail,
-        hint=f"{APP_NAME} currently supports Python 3.12 and 3.13.",
+        hint=f"{APP_NAME} currently supports Python 3.12, 3.13, and 3.14.",
     )
 
     for label, path, hint in (
@@ -661,7 +818,11 @@ def _doctor_checks() -> list[DoctorCheck]:
             PROJECT_ROOT,
             "Run the launcher from the cloned repository.",
         ),
-        ("setup.py", SETUP_PATH, "Repair uses the repo-local `setup.py` bootstrapper."),
+        (
+            "configure.py",
+            CONFIGURE_PATH,
+            "Repair uses the repo-local `configure.py` setup helper.",
+        ),
         (
             "default_config.yaml",
             DEFAULT_CONFIG_PATH,
@@ -926,12 +1087,12 @@ def run_doctor(argv: list[str]) -> int:
         print(string("cli.doctor_attempting_fix"))
         try:
             result = subprocess.run(
-                [str(_doctor_subprocess_python()), str(SETUP_PATH)],
+                [str(_doctor_subprocess_python()), str(CONFIGURE_PATH)],
                 cwd=PROJECT_ROOT,
                 check=False,
             )
-        except OSError as exc:
-            print(string("cli.fix_failed", error=exc))
+        except OSError:
+            print(string("cli.fix_failed"))
             return EXIT_CODES.EXIT_FAILURE.value
         return result.returncode
 
@@ -994,6 +1155,65 @@ def handle_config(command_args: list[str], prog_name: str) -> None:
         sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
 
 
+def handle_test(command_args: list[str], prog_name: str) -> None:
+    """Dispatch the explicit Celune test command hierarchy."""
+    if not command_args:
+        print(string("test.available_modes"))
+        print(string("test.usage", program=prog_name))
+        return
+
+    allowed_args = {"--verbose", "-v", "--debug"}
+    value_args = [arg for arg in command_args if arg.startswith("--log-level=")]
+    mode_args = [
+        arg
+        for arg in command_args
+        if arg not in allowed_args and not arg.startswith("--log-level=")
+    ]
+    if any(
+        arg not in allowed_args
+        and arg not in {"ui", "agent"}
+        and not arg.startswith("--log-level=")
+        for arg in command_args
+    ):
+        print(string("test.available_modes"))
+        print(string("test.usage", program=prog_name))
+        sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+
+    requested_levels = [
+        arg.partition("=")[2] for arg in value_args if arg.partition("=")[2]
+    ]
+    if len(requested_levels) > 1 or (
+        requested_levels
+        and normalize_log_level(requested_levels[0]) != requested_levels[0].lower()
+    ):
+        print(string("test.available_modes"))
+        print(string("test.usage", program=prog_name))
+        sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+
+    if len(mode_args) != 1 or mode_args[0] not in {"ui", "agent"}:
+        print(string("test.available_modes"))
+        print(string("test.usage", program=prog_name))
+        sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+
+    requested_log_level = (
+        requested_levels[0]
+        if requested_levels
+        else "debug"
+        if "--debug" in command_args
+        else "verbose"
+        if any(arg in {"--verbose", "-v"} for arg in command_args)
+        else None
+    )
+    if requested_log_level is None:
+        start(testing=True, test_mode=mode_args[0])
+    else:
+        start(
+            log_level=requested_log_level,
+            testing=True,
+            test_mode=mode_args[0],
+        )
+
+
 def _close_existing_celune_processes(runtime: SimpleNamespace) -> None:
     """Prompt before terminating other Celune processes found by the launcher."""
     current_pids = {os.getpid(), os.getppid()}
@@ -1052,36 +1272,117 @@ def _close_existing_celune_processes(runtime: SimpleNamespace) -> None:
             sys.exit(EXIT_CODES.EXIT_ALREADY_RUNNING.value)
 
 
-def start(verbose: bool = False, testing: bool = False) -> None:
+def start(
+    log_level: Optional[str] = None,
+    testing: bool = False,
+    test_mode: Optional[str] = None,
+) -> None:
     """Instantiate and start the app.
 
     Args:
-        verbose: Whether the app should be started in verbose (developer) mode.
+        log_level: Optional startup log level override.
         testing: Whether the app should be started in UI test mode.
+        test_mode: Explicit test mode selected by the test command hierarchy.
 
     Raises:
         No: Raised on Celune's name day unless explicitly overridden.
         Exception: Re-raised after printing a traceback in developer mode.
     """
     global _FORCE_STARTUP_DIAGNOSTICS
+    global _STARTUP_DIAGNOSTIC_SINK
 
-    _FORCE_STARTUP_DIAGNOSTICS = verbose
-    _print_startup_diagnostic(string("cli.startup_begin", app_name=APP_NAME))
+    _FORCE_STARTUP_DIAGNOSTICS = log_level not in {None, "info"}
+    _STARTUP_DIAGNOSTICS.clear()
+    _print_startup_diagnostic(string("ui.startup_checking_dependencies"))
     runtime = _load_runtime()
+    active_log_level = normalize_log_level(log_level or INITIAL_LOG_LEVEL)
 
     try:
+        migrate_legacy_app_data()
         if testing:
-            _print_startup_diagnostic(string("cli.startup_creating_ui"))
-            ui = runtime.CeluneUI()
-            _print_startup_diagnostic(string("cli.startup_preparing_core"))
-            celune = runtime.Celune(config={}, backend=_load_ui_test_backend())
+            if test_mode not in {None, "ui", "agent"}:
+                raise ValueError(f"unknown test mode: {test_mode}")
+            runtime = _load_core_runtime()
+            active_test_mode = test_mode or "ui"
+            backend_mode = "ui_test" if active_test_mode == "ui" else "agent_test"
+            test_config: Config = {}
+            test_backend: Optional[str] = None
+            configured_test_config, configured_test_backend = _load_test_runtime_config(
+                runtime
+            )
+            active_log_level = normalize_log_level(
+                log_level
+                if log_level is not None
+                else config_log_level(configured_test_config)
+            )
+            if active_test_mode == "agent":
+                test_config = configured_test_config
+                test_backend = configured_test_backend
+
+            def finish_test(
+                core: "Celune",
+                success: bool,
+                detail: Optional[str],
+            ) -> None:
+                """Finish the selected explicit test through the core boundary."""
+                if active_test_mode == "agent" and success:
+                    from celune.test import run_agent_test
+
+                    run_agent_test(core)
+                    return
+                core.finish_test_mode(
+                    active_test_mode,
+                    success,
+                    detail=detail,
+                )
+
+            ui = runtime.CeluneUI(
+                startup_messages=_STARTUP_DIAGNOSTICS,
+                test_completion_callback=finish_test,
+            )
+            _STARTUP_DIAGNOSTIC_SINK = ui.receive_startup_diagnostic
+            if active_test_mode == "ui":
+                _print_startup_diagnostic(string("ui.startup_loading_core"))
+                celune = runtime.Celune(
+                    config=test_config,
+                    backend=_load_ui_test_backend(),
+                    backend_mode=backend_mode,
+                    log_level=active_log_level,
+                    startup_callback=_print_startup_diagnostic,
+                )
+            else:
+                _print_startup_diagnostic(string("ui.startup_loading_core"))
+                celune = runtime.Celune(
+                    config=test_config,
+                    tts_backend=test_backend,
+                    backend_mode=backend_mode,
+                    log_level=active_log_level,
+                    startup_callback=_print_startup_diagnostic,
+                )
             ui.celune = celune
-            _print_startup_diagnostic(string("cli.startup_handing_off_ui"))
-            ui.run()
-            sys.exit(EXIT_CODES.EXIT_SUCCESS.value)
+            ui.prepare_theme()
+            try:
+                ui.run()
+                if ui.return_code in {
+                    runtime.ExitCodes.EXIT_MISSING_DEPENDENCIES.value,
+                    runtime.ExitCodes.EXIT_PENDING_RESTART.value,
+                }:
+                    sys.exit(ui.return_code)
+                if ui.return_code not in (None, 0):
+                    sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
+            finally:
+                _STARTUP_DIAGNOSTIC_SINK = None
+            if test_mode is None:
+                sys.exit(EXIT_CODES.EXIT_SUCCESS.value)
+            return
         if runtime.supports_ansi():
-            sys.stdout.write(f"\x1b]2;{string('osc.starting', app_name=APP_NAME)}\x07")
-            sys.stdout.flush()
+            set_terminal_title(
+                (
+                    APP_NAME,
+                    string("osc.state_initializing"),
+                    string("osc.action_starting"),
+                )
+            )
         date = datetime.datetime.now(datetime.UTC)
         if runtime.has_name_day("Celine", date) and not runtime.env_bool(
             "CELUNE_OVERRIDE_CELINE_DAY"
@@ -1119,8 +1420,10 @@ def start(verbose: bool = False, testing: bool = False) -> None:
                 runtime.yaml.safe_dump(config, cfg, sort_keys=False)
             print(string("cli.config_updated_defaults", app_name=APP_NAME))
 
-        dev = verbose or runtime.config_bool(config, "CELUNE_DEV", "dev")
-        headless = runtime.config_bool(config, "CELUNE_HEADLESS", "headless")
+        active_log_level = normalize_log_level(
+            log_level if log_level is not None else config_log_level(config)
+        )
+        headless = _resolve_headless_mode(runtime, config)
         configured_backend = INITIAL_BACKEND or runtime.config_value(config, "backend")
         backend = configured_backend if isinstance(configured_backend, str) else None
 
@@ -1144,7 +1447,6 @@ def start(verbose: bool = False, testing: bool = False) -> None:
                             string("cli.update_found"),
                             string(
                                 "cli.update_version_summary",
-                                app_name=APP_NAME,
                                 local_version=update.local_version,
                                 local_revision=update.local_revision,
                                 latest_label=latest_label,
@@ -1164,7 +1466,7 @@ def start(verbose: bool = False, testing: bool = False) -> None:
                             )
                         )
                         time.sleep(2)
-                        sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
+                        sys.exit(runtime.ExitCodes.EXIT_PENDING_RESTART.value)
 
                     print(string("cli.updating", app_name=APP_NAME))
                     try:
@@ -1181,26 +1483,27 @@ def start(verbose: bool = False, testing: bool = False) -> None:
                     else:
                         print(string("cli.update_success_restart", app_name=APP_NAME))
                         time.sleep(5)
-                        sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
+                        sys.exit(runtime.ExitCodes.EXIT_PENDING_RESTART.value)
         elif runtime.check_for_update() and not runtime.supports_ansi():
             print(string("cli.no_ansi"))
             if running_compiled():
                 print(string("cli.request_refresh_binaries"))
                 time.sleep(2)
-                sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
+                sys.exit(runtime.ExitCodes.EXIT_PENDING_RESTART.value)
 
             print(string("cli.apply_update_noninteractive"))
             try:
                 runtime.update_to_latest()
             except runtime.UpdateError as exc:
                 detail = runtime.title_case(str(exc))
-                print(string("cli.update_failed", app_name=APP_NAME, detail=detail))
+                print(string("cli.update_failed", app_name=APP_NAME))
+                print(detail)
                 print(string("cli.continuing_current_version"))
                 time.sleep(5)
             else:
                 print(string("cli.update_success_restart", app_name=APP_NAME))
                 time.sleep(5)
-                sys.exit(runtime.ExitCodes.EXIT_PENDING_UPDATE.value)
+                sys.exit(runtime.ExitCodes.EXIT_PENDING_RESTART.value)
 
         if not runtime.env_bool("CELUNE_LAUNCHER"):
             launcher_exe = "celune.exe" if os.name == "nt" else "celune.appimage"
@@ -1216,49 +1519,79 @@ def start(verbose: bool = False, testing: bool = False) -> None:
             _close_existing_celune_processes(runtime)
 
         if not headless and runtime.supports_ansi():
-            _print_startup_diagnostic(string("cli.startup_creating_ui"))
-            ui = runtime.CeluneUI()
-            _print_startup_diagnostic(string("cli.startup_preparing_core"))
-            celune = runtime.Celune(
-                tts_backend=backend,
-                log_callback=ui.tts_log,
-                status_callback=ui.safe_status,
-                error_callback=ui.error,
-                idle_callback=ui.tts_idle,
-                queue_avail_callback=ui.tts_queue_avail,
-                voice_changed_callback=ui.tts_voice_changed,
-                change_input_state_callback=ui.change_input_state,
-                change_voice_lock_state_callback=ui.change_voice_lock_state,
-                progress_callback=ui.safe_progress,
-                dev=dev,
-                config=config,
+            from celune.ui import CeluneUI
+
+            def prepare_interactive_runtime():
+                """Construct the engine inside the already-mounted UI worker."""
+                runtime = _load_core_runtime(defer_missing_dependency=True)
+                _print_startup_diagnostic(
+                    string("ui.startup_loading_core"),
+                )
+                return runtime.Celune(
+                    tts_backend=backend,
+                    log_callback=ui.tts_log,
+                    status_callback=ui.safe_status,
+                    error_callback=ui.error,
+                    idle_callback=ui.tts_idle,
+                    queue_avail_callback=ui.tts_queue_avail,
+                    voice_changed_callback=ui.tts_voice_changed,
+                    change_input_state_callback=ui.change_input_state,
+                    change_voice_lock_state_callback=ui.change_voice_lock_state,
+                    progress_callback=ui.safe_progress,
+                    caption_progress_callback=ui.safe_caption_progress,
+                    caption_callback=ui.tts_caption,
+                    caption_timing_callback=ui.tts_caption_timing,
+                    log_level=active_log_level,
+                    config=config,
+                    startup_callback=_print_startup_diagnostic,
+                )
+
+            ui = CeluneUI(
+                startup_loader=prepare_interactive_runtime,
+                startup_messages=_STARTUP_DIAGNOSTICS,
+                startup_log_level=active_log_level,
             )
-            ui.celune = celune
-            _print_startup_diagnostic(string("cli.startup_handing_off_ui"))
-            ui.run()
+            _STARTUP_DIAGNOSTIC_SINK = ui.receive_startup_diagnostic
+            try:
+                ui.run()
+                if ui.return_code in {
+                    runtime.ExitCodes.EXIT_MISSING_DEPENDENCIES.value,
+                    runtime.ExitCodes.EXIT_PENDING_RESTART.value,
+                }:
+                    sys.exit(ui.return_code)
+                if ui.return_code not in (None, 0):
+                    sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
+            finally:
+                _STARTUP_DIAGNOSTIC_SINK = None
         elif headless:
-            _print_startup_diagnostic(string("cli.startup_preparing_headless"))
+            runtime = _load_core_runtime()
             ui_headless = runtime.CeluneHeadlessUI(config)
-            _print_startup_diagnostic(string("cli.startup_preparing_core"))
+            _print_startup_diagnostic(string("ui.startup_loading_core"))
             celune = runtime.Celune(
                 tts_backend=backend,
                 log_callback=ui_headless.headless_log,
                 error_callback=ui_headless.headless_error,
-                dev=dev,
+                log_level=active_log_level,
                 config=config,
+                startup_callback=_print_startup_diagnostic,
             )
             ui_headless.celune = celune
+            _flush_startup_diagnostics()
 
             if not celune.load():
+                _flush_startup_diagnostics()
                 print(string("cli.could_not_initialize", app_name=APP_NAME))
                 celune.close()
                 time.sleep(5)
                 sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
 
+            _flush_startup_diagnostics()
+
             print(string("cli.running_headless", app_name=APP_NAME))
             print(string("cli.headless_extensions_only", app_name=APP_NAME))
             ui_headless.run()
         else:
+            _flush_startup_diagnostics()
             print(string("cli.no_ansi"))
             print(string("cli.cannot_start_normal_mode", app_name=APP_NAME))
             print(string("cli.hint"))
@@ -1275,15 +1608,25 @@ def start(verbose: bool = False, testing: bool = False) -> None:
             sys.stdout = stdout
             sys.stderr = stderr
 
-            print(string("cli.internal_error_running", app_name=APP_NAME))
-            if INITIAL_DEV:
+            if active_log_level == "debug":
                 with contextlib.suppress(ModuleNotFoundError):
                     from rich.traceback import install
 
                     install()
 
                 raise
-            print(str(exc) or string("cli.no_error_description"))
+            if active_log_level == "verbose":
+                from celune.utils import format_error_message
+
+                print(
+                    format_error_message(
+                        string("cli.internal_error_running", app_name=APP_NAME),
+                        exc,
+                        active_log_level,
+                    )
+                )
+                sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
+            print(string("cli.internal_error_running", app_name=APP_NAME))
             print(string("cli.full_traceback_title"))
             if os.name == "nt":
                 print(string("cli.traceback_cmd_set_dev"))
@@ -1351,11 +1694,13 @@ def main(argv: Optional[list[str]] = None) -> None:
         try:
             sys.exit(apply_update_and_restart(parent_pid, launcher_path, args[3:]))
         except Exception as exc:
+            from celune.utils import format_error_message
+
             print(
-                string(
-                    "cli.apply_launcher_update_failed",
-                    app_name=APP_NAME,
-                    error=exc,
+                format_error_message(
+                    string("cli.apply_launcher_update_failed", app_name=APP_NAME),
+                    exc,
+                    INITIAL_LOG_LEVEL,
                 )
             )
             sys.exit(EXIT_CODES.EXIT_FAILURE.value)
@@ -1363,18 +1708,41 @@ def main(argv: Optional[list[str]] = None) -> None:
     if not args:
         start()
     elif args[0] in {"start", "run"}:
-        allowed_args = {"--verbose", "-v", "--test", "-t"}
-        if any(arg not in allowed_args for arg in args[1:]):
+        allowed_args = {"--verbose", "-v", "--debug", "--test", "-t"}
+        value_args = [arg for arg in args[1:] if arg.startswith("--log-level=")]
+        if any(arg not in allowed_args for arg in args[1:] if arg not in value_args):
             print(string("cli.invalid_argument"))
             print()
             print(string("cli.start_usage", program=resolved_argv[0], command=args[0]))
             print(string("cli.start_description", app_name=APP_NAME))
             sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
-        verbose = any(arg in {"--verbose", "-v"} for arg in args[1:])
+        requested_levels = [
+            arg.partition("=")[2] for arg in value_args if arg.partition("=")[2]
+        ]
+        if len(requested_levels) > 1:
+            print(string("cli.invalid_argument"))
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+        if (
+            requested_levels
+            and normalize_log_level(requested_levels[0]) != requested_levels[0].lower()
+        ):
+            print(string("cli.invalid_argument"))
+            sys.exit(EXIT_CODES.EXIT_UNKNOWN_ARGS.value)
+        requested_log_level = (
+            requested_levels[0]
+            if requested_levels
+            else "debug"
+            if "--debug" in args[1:]
+            else "verbose"
+            if any(arg in {"--verbose", "-v"} for arg in args[1:])
+            else None
+        )
         testing = any(arg in {"--test", "-t"} for arg in args[1:])
-        start(verbose=verbose, testing=testing)
+        start(log_level=requested_log_level, testing=testing)
     elif args[0] == "config":
         handle_config(args[1:], resolved_argv[0])
+    elif args[0] == "test":
+        handle_test(args[1:], resolved_argv[0])
     elif args[0] == "doctor":
         if len(args) > 1 and args[1] != "--fix":
             print(string("cli.invalid_argument"))
@@ -1397,6 +1765,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         print()
         print(string("cli.help_available_commands"))
         print(string("cli.help_start", app_name=APP_NAME))
+        print(string("cli.help_test"))
         print(string("cli.help_config", app_name=APP_NAME))
         print(string("cli.help_doctor", app_name=APP_NAME))
         print(string("cli.help_help"))

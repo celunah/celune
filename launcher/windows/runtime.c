@@ -2,14 +2,70 @@
 
 #include <windows.h>
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
 #define printfe(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
 #define STATUS_CONTROL_C_EXIT_VALUE 0xC000013AUL
+#define LAUNCHER_SEARCH_MAX_DEPTH 16
+#define LAUNCHER_SEARCH_MAX_DIRECTORIES 500000
+#define LAUNCHER_SEARCH_MAX_MILLISECONDS 60000
+#define LAUNCHER_SEARCH_MAX_READ_MILLISECONDS 5000
+
+enum search_limit_reason {
+    SEARCH_LIMIT_NONE,
+    SEARCH_LIMIT_DEPTH,
+    SEARCH_LIMIT_FOLDERS,
+    SEARCH_LIMIT_TIME,
+    SEARCH_ROOT_NOT_CELUNE
+};
 
 static int launcher_child_failed = 0;
+static size_t searched_directories = 0;
+static ULONGLONG search_deadline = 0;
+static ULONGLONG search_started = 0;
+static ULONGLONG next_status_update = 0;
+static int search_status_started = 0;
+static int search_status_console = 0;
+static int search_status_level = 0;
+static COORD search_status_origin;
+static enum search_limit_reason search_limit = SEARCH_LIMIT_NONE;
+
+int launcher_cpu_supports_avx(void) {
+#if defined(_M_X64) || defined(_M_IX86)
+#ifndef PF_AVX_INSTRUCTIONS_AVAILABLE
+#define PF_AVX_INSTRUCTIONS_AVAILABLE 39
+#endif
+    return IsProcessorFeaturePresent(PF_AVX_INSTRUCTIONS_AVAILABLE) != 0;
+#else
+    return 1;
+#endif
+}
+
+static const char *windows_exit_detail(DWORD exit_code) {
+    switch (exit_code) {
+        case 0xC0000005UL:
+            return "access violation";
+        case 0xC0000006UL:
+            return "in-page error";
+        case 0xC000001DUL:
+            return "illegal instruction";
+        case 0xC0000094UL:
+            return "integer divide by zero";
+        case 0xC0000135UL:
+            return "required DLL was not found";
+        case 0xC0000139UL:
+            return "entry point was not found in a required DLL";
+        case 0xC0000374UL:
+            return "heap corruption";
+        case 0xC0000409UL:
+            return "stack buffer overrun";
+        default:
+            return NULL;
+    }
+}
 
 static HANDLE create_launcher_pipe(char *name, size_t size) {
     int written = snprintf(
@@ -39,6 +95,24 @@ static int file_exists(const char *path) {
     return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+static int launcher_has_update_manifest(const char *repo_root) {
+    char manifest[2048];
+    int written = snprintf(
+        manifest,
+        sizeof(manifest),
+        "%s\\celune-update.json",
+        repo_root
+    );
+    return written > 0 && (size_t)written < sizeof(manifest) && file_exists(manifest);
+}
+
+static int lookup_file_exists(const char *path) {
+    DWORD attr = GetFileAttributesA(path);
+    return attr != INVALID_FILE_ATTRIBUTES &&
+           !(attr & FILE_ATTRIBUTE_DIRECTORY) &&
+           !(attr & FILE_ATTRIBUTE_REPARSE_POINT);
+}
+
 static int dir_exists(const char *path) {
     DWORD attr = GetFileAttributesA(path);
     return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY);
@@ -53,6 +127,262 @@ static int copy_text(char *dest, size_t size, const char *src) {
 
     memcpy(dest, src, len + 1);
     return 1;
+}
+
+static int trim_line(char *line);
+
+static int valid_celune_root_text(const char *text) {
+    const char *cursor = text;
+    if (*cursor++ != 'v' || !isdigit((unsigned char)*cursor)) {
+        return 0;
+    }
+
+    while (isdigit((unsigned char)*cursor)) {
+        cursor++;
+    }
+    while (*cursor == '.') {
+        cursor++;
+        if (!isdigit((unsigned char)*cursor)) {
+            return 0;
+        }
+        while (isdigit((unsigned char)*cursor)) {
+            cursor++;
+        }
+    }
+
+    if (cursor[0] != ' ' || cursor[1] != '(') {
+        return 0;
+    }
+    cursor += 2;
+    const char *commit = cursor;
+    while (isxdigit((unsigned char)*cursor)) {
+        cursor++;
+    }
+    if ((size_t)(cursor - commit) < 7 || cursor[0] != ')' || cursor[1] != ',') {
+        return 0;
+    }
+    cursor += 2;
+    if (*cursor++ != ' ') {
+        return 0;
+    }
+
+    for (int index = 0; index < 10; index++) {
+        if (index == 2 || index == 5) {
+            if (*cursor++ != '/') {
+                return 0;
+            }
+        } else if (!isdigit((unsigned char)*cursor++)) {
+            return 0;
+        }
+    }
+
+    return *cursor == '\0';
+}
+
+static int read_celune_root(const char *directory) {
+    char marker_path[1200];
+    int marker_len = snprintf(
+        marker_path,
+        sizeof(marker_path),
+        "%s\\.celune-root",
+        directory
+    );
+    if (marker_len < 0 || (size_t)marker_len >= sizeof(marker_path)) {
+        return 0;
+    }
+
+    DWORD attributes = GetFileAttributesA(marker_path);
+    if (attributes == INVALID_FILE_ATTRIBUTES ||
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ||
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        return 0;
+    }
+
+    FILE *marker = fopen(marker_path, "r");
+    if (marker == NULL) {
+        return 0;
+    }
+
+    char line[256];
+    int readable = fgets(line, sizeof(line), marker) != NULL;
+    fclose(marker);
+    if (!readable) {
+        return 0;
+    }
+
+    trim_line(line);
+    return valid_celune_root_text(line);
+}
+
+static const char *search_limit_text(void) {
+    switch (search_limit) {
+        case SEARCH_LIMIT_DEPTH:
+            return "Depth limit exceeded.";
+        case SEARCH_LIMIT_FOLDERS:
+            return "Folder limit exceeded.";
+        case SEARCH_LIMIT_TIME:
+            return "Time limit exceeded.";
+        case SEARCH_ROOT_NOT_CELUNE:
+            return "Current Celune root is incomplete.";
+        default:
+            return NULL;
+    }
+}
+
+static void report_lookup_failure(void) {
+    printfe("Could not find Celune.\n");
+    const char *limit = search_limit_text();
+    if (limit != NULL) {
+        printfe("%s\n", limit);
+    }
+}
+
+static int write_console_status_line(
+    HANDLE output,
+    SHORT row,
+    const char *line,
+    const CONSOLE_SCREEN_BUFFER_INFO *info
+) {
+    if (search_status_origin.X >= info->dwSize.X || row < 0 || row >= info->dwSize.Y) {
+        return 0;
+    }
+
+    COORD position = {search_status_origin.X, row};
+    DWORD width = (DWORD)(info->dwSize.X - search_status_origin.X);
+    DWORD written;
+    if (!FillConsoleOutputCharacterA(output, ' ', width, position, &written) ||
+        !FillConsoleOutputAttribute(output, info->wAttributes, width, position, &written) ||
+        !SetConsoleCursorPosition(output, position)) {
+        return 0;
+    }
+
+    DWORD length = (DWORD)strlen(line);
+    if (length >= width) {
+        length = width - 1;
+    }
+    return WriteConsoleA(output, line, length, &written, NULL) != 0;
+}
+
+static int render_console_status(
+    HANDLE output,
+    const char *file_line,
+    const char *level_line,
+    const CONSOLE_SCREEN_BUFFER_INFO *info
+) {
+    if (search_status_origin.Y > info->dwSize.Y - 3) {
+        return 0;
+    }
+
+    return write_console_status_line(
+               output,
+               search_status_origin.Y,
+               "Looking for Celune...",
+               info
+           ) &&
+           write_console_status_line(
+               output,
+               search_status_origin.Y + 1,
+               file_line,
+               info
+           ) &&
+           write_console_status_line(
+               output,
+               search_status_origin.Y + 2,
+               level_line,
+               info
+           );
+}
+
+static void show_search_status(const char *path, int level) {
+    ULONGLONG now = GetTickCount64();
+    if (level < 1) {
+        level = 1;
+    } else if (level > LAUNCHER_SEARCH_MAX_DEPTH) {
+        level = LAUNCHER_SEARCH_MAX_DEPTH;
+    }
+    if (search_status_started && now < next_status_update &&
+        level == search_status_level) {
+        return;
+    }
+    next_status_update = now + 100;
+    search_status_level = level;
+
+    char file_line[1400];
+    char level_line[256];
+    snprintf(file_line, sizeof(file_line), "File: %s", path);
+    snprintf(
+        level_line,
+        sizeof(level_line),
+        "Level: %d/%d | Folders: %zu/%d | Time: %.2fs",
+        level,
+        LAUNCHER_SEARCH_MAX_DEPTH,
+        searched_directories,
+        LAUNCHER_SEARCH_MAX_DIRECTORIES,
+        (double)(now - search_started) / 1000.0
+    );
+
+    if (!search_status_started) {
+        search_status_started = 1;
+        search_status_console = 0;
+        HANDLE output = GetStdHandle(STD_ERROR_HANDLE);
+        CONSOLE_SCREEN_BUFFER_INFO info;
+        if (output != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(output, &info)) {
+            search_status_origin = info.dwCursorPosition;
+            if (render_console_status(output, file_line, level_line, &info)) {
+                search_status_console = 1;
+                return;
+            }
+        }
+
+        printfe("Looking for Celune...\n");
+        printfe("%s\n%s\n", file_line, level_line);
+        fflush(stderr);
+        return;
+    }
+
+    if (search_status_console) {
+        HANDLE output = GetStdHandle(STD_ERROR_HANDLE);
+        CONSOLE_SCREEN_BUFFER_INFO info;
+        if (output != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(output, &info) &&
+            render_console_status(output, file_line, level_line, &info)) {
+            return;
+        }
+        search_status_console = 0;
+    }
+
+    printfe("%s\n%s\n", file_line, level_line);
+    fflush(stderr);
+}
+
+static void clear_search_status(void) {
+    if (!search_status_started) {
+        return;
+    }
+
+    if (search_status_console) {
+        HANDLE output = GetStdHandle(STD_ERROR_HANDLE);
+        CONSOLE_SCREEN_BUFFER_INFO info;
+        if (output != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(output, &info) &&
+            search_status_origin.X < info.dwSize.X &&
+            search_status_origin.Y <= info.dwSize.Y - 1) {
+            DWORD width = (DWORD)(info.dwSize.X - search_status_origin.X);
+            DWORD written;
+            for (SHORT offset = 0; offset < 3; offset++) {
+                SHORT row = search_status_origin.Y + offset;
+                if (row >= info.dwSize.Y) {
+                    break;
+                }
+                COORD position = {search_status_origin.X, row};
+                FillConsoleOutputCharacterA(output, ' ', width, position, &written);
+                FillConsoleOutputAttribute(output, info.wAttributes, width, position, &written);
+            }
+            SetConsoleCursorPosition(output, search_status_origin);
+        }
+    } else {
+        printfe("\n");
+    }
+    fflush(stderr);
+    search_status_started = 0;
 }
 
 static int parent_dir_of(const char *path, char *out, size_t size) {
@@ -111,6 +441,10 @@ static int find_repo_root(const char *start_dir, char *out, size_t size) {
     }
 
     while (1) {
+        if (read_celune_root(current)) {
+            return copy_text(out, size, current);
+        }
+
         char pyvenv_cfg[1200];
         int written = snprintf(pyvenv_cfg, sizeof(pyvenv_cfg), "%s\\.venv\\pyvenv.cfg", current);
         if (written > 0 && (size_t)written < sizeof(pyvenv_cfg) && file_exists(pyvenv_cfg)) {
@@ -135,6 +469,453 @@ static int find_repo_root(const char *start_dir, char *out, size_t size) {
         }
     }
 
+    return 0;
+}
+
+static int read_environment_path(const char *name, char *out, size_t size) {
+    char *value = NULL;
+    size_t value_size = 0;
+    if (_dupenv_s(&value, &value_size, name) != 0 || value == NULL) {
+        return 0;
+    }
+
+    int copied = copy_text(out, size, value);
+    free(value);
+    return copied;
+}
+
+static int skip_search_directory(const char *name) {
+    return _stricmp(name, ".git") == 0 ||
+           _stricmp(name, ".venv") == 0 ||
+           _stricmp(name, "$Recycle.Bin") == 0 ||
+           _stricmp(name, "System Volume Information") == 0 ||
+           _stricmp(name, "Windows") == 0 ||
+           _stricmp(name, "WindowsApps") == 0 ||
+           _stricmp(name, "AppData") == 0 ||
+           _stricmp(name, "node_modules") == 0;
+}
+
+static int set_runtime_target(
+    const char *runtime_dir,
+    char *target,
+    size_t target_size
+);
+
+struct search_queue_entry {
+    char *path;
+    int depth;
+};
+
+struct search_queue {
+    struct search_queue_entry *entries;
+    size_t count;
+    size_t next;
+    size_t capacity;
+};
+
+static int search_queue_add(
+    struct search_queue *queue,
+    const char *path,
+    int depth
+) {
+    if (queue->count >= LAUNCHER_SEARCH_MAX_DIRECTORIES) {
+        search_limit = SEARCH_LIMIT_FOLDERS;
+        return 0;
+    }
+
+    if (queue->count == queue->capacity) {
+        size_t capacity = queue->capacity == 0 ? 64 : queue->capacity * 2;
+        struct search_queue_entry *entries = (struct search_queue_entry *)realloc(
+            queue->entries,
+            capacity * sizeof(*entries)
+        );
+        if (entries == NULL) {
+            return 0;
+        }
+        queue->entries = entries;
+        queue->capacity = capacity;
+    }
+
+    size_t length = strlen(path);
+    char *copy = (char *)malloc(length + 1);
+    if (copy == NULL) {
+        return 0;
+    }
+    memcpy(copy, path, length + 1);
+    queue->entries[queue->count].path = copy;
+    queue->entries[queue->count].depth = depth;
+    queue->count++;
+    return 1;
+}
+
+static void search_queue_clear(struct search_queue *queue) {
+    for (size_t index = queue->next; index < queue->count; index++) {
+        free(queue->entries[index].path);
+    }
+    free(queue->entries);
+    queue->entries = NULL;
+    queue->count = 0;
+    queue->next = 0;
+    queue->capacity = 0;
+}
+
+static int search_directory_contents(
+    const char *directory,
+    int depth,
+    char *runtime_dir,
+    size_t runtime_dir_size,
+    char *repo_root,
+    size_t repo_root_size,
+    struct search_queue *queue
+) {
+    ULONGLONG now = GetTickCount64();
+    if (now >= search_deadline) {
+        search_limit = SEARCH_LIMIT_TIME;
+        return 0;
+    }
+    if (searched_directories >= LAUNCHER_SEARCH_MAX_DIRECTORIES) {
+        search_limit = SEARCH_LIMIT_FOLDERS;
+        return 0;
+    }
+    searched_directories++;
+    show_search_status(directory, depth + 1);
+
+    if (read_celune_root(directory)) {
+        char marker_target[1200];
+        if (set_runtime_target(directory, marker_target, sizeof(marker_target)) &&
+            lookup_file_exists(marker_target)) {
+            return copy_text(runtime_dir, runtime_dir_size, directory) &&
+                   copy_text(repo_root, repo_root_size, directory);
+        }
+        search_limit = SEARCH_ROOT_NOT_CELUNE;
+        return 0;
+    }
+
+    char pattern[1200];
+    int pattern_len = snprintf(pattern, sizeof(pattern), "%s\\*", directory);
+    if (pattern_len < 0 || (size_t)pattern_len >= sizeof(pattern)) {
+        return 0;
+    }
+
+    WIN32_FIND_DATAA entry;
+    HANDLE search = FindFirstFileA(pattern, &entry);
+    if (search == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+
+    ULONGLONG read_deadline = GetTickCount64() + LAUNCHER_SEARCH_MAX_READ_MILLISECONDS;
+    int found = 0;
+    do {
+        ULONGLONG read_now = GetTickCount64();
+        if (read_now >= search_deadline || read_now >= read_deadline) {
+            search_limit = SEARCH_LIMIT_TIME;
+            break;
+        }
+        if (strcmp(entry.cFileName, ".") == 0 ||
+            strcmp(entry.cFileName, "..") == 0) {
+            continue;
+        }
+
+        char candidate[1200];
+        int candidate_len = snprintf(
+            candidate,
+            sizeof(candidate),
+            "%s\\%s",
+            directory,
+            entry.cFileName
+        );
+        if (candidate_len < 0 || (size_t)candidate_len >= sizeof(candidate)) {
+            continue;
+        }
+
+        if ((entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+            continue;
+        }
+
+        if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+            if (depth >= LAUNCHER_SEARCH_MAX_DEPTH) {
+                search_limit = SEARCH_LIMIT_DEPTH;
+                continue;
+            }
+            if (skip_search_directory(entry.cFileName)) {
+                continue;
+            }
+
+            search_queue_add(queue, candidate, depth + 1);
+            continue;
+        }
+
+        if (_stricmp(entry.cFileName, "celune-bin.exe") != 0 ||
+            !find_repo_root(directory, repo_root, repo_root_size) ||
+            !copy_text(runtime_dir, runtime_dir_size, directory)) {
+            continue;
+        }
+
+        found = 1;
+        break;
+    } while (FindNextFileA(search, &entry) &&
+             GetTickCount64() < read_deadline &&
+             GetTickCount64() < search_deadline);
+
+    if (!found && search_limit == SEARCH_LIMIT_NONE) {
+        ULONGLONG finished_at = GetTickCount64();
+        if (finished_at >= search_deadline || finished_at >= read_deadline) {
+            search_limit = SEARCH_LIMIT_TIME;
+        }
+    }
+
+    FindClose(search);
+    return found;
+}
+
+static int search_runtime_directory(
+    const char *directory,
+    int depth,
+    char *runtime_dir,
+    size_t runtime_dir_size,
+    char *repo_root,
+    size_t repo_root_size
+) {
+    struct search_queue queue = {0};
+    if (!search_queue_add(&queue, directory, depth)) {
+        search_queue_clear(&queue);
+        return 0;
+    }
+
+    int found = 0;
+    while (queue.next < queue.count) {
+        struct search_queue_entry entry = queue.entries[queue.next++];
+        found = search_directory_contents(
+            entry.path,
+            entry.depth,
+            runtime_dir,
+            runtime_dir_size,
+            repo_root,
+            repo_root_size,
+            &queue
+        );
+        free(entry.path);
+        if (found || search_limit == SEARCH_LIMIT_TIME ||
+            search_limit == SEARCH_LIMIT_FOLDERS) {
+            break;
+        }
+    }
+
+    search_queue_clear(&queue);
+    return found;
+}
+
+static int set_runtime_target(
+    const char *runtime_dir,
+    char *target,
+    size_t target_size
+) {
+    char candidate[1200];
+    int candidate_len = snprintf(
+        candidate,
+        sizeof(candidate),
+        "%s\\celune-bin.exe",
+        runtime_dir
+    );
+    if (candidate_len >= 0 && (size_t)candidate_len < sizeof(candidate) &&
+        lookup_file_exists(candidate)) {
+        return copy_text(target, target_size, candidate);
+    }
+
+    candidate_len = snprintf(
+        candidate,
+        sizeof(candidate),
+        "%s\\bin\\celune-bin.exe",
+        runtime_dir
+    );
+    if (candidate_len >= 0 && (size_t)candidate_len < sizeof(candidate) &&
+        lookup_file_exists(candidate)) {
+        return copy_text(target, target_size, candidate);
+    }
+
+    int target_len = snprintf(
+        target,
+        target_size,
+        "%s\\bin\\celune-bin.exe",
+        runtime_dir
+    );
+    return target_len >= 0 && (size_t)target_len < target_size;
+}
+
+static int resolve_forced_runtime_location(
+    const char *root,
+    char *target,
+    size_t target_size,
+    char *repo_root,
+    size_t repo_root_size
+) {
+    if (!find_repo_root(root, repo_root, repo_root_size) ||
+        !set_runtime_target(root, target, target_size) ||
+        !lookup_file_exists(target)) {
+        return 0;
+    }
+
+    return 1;
+}
+
+static int resolve_runtime_location(
+    const char *base,
+    char *target,
+    size_t target_size,
+    char *repo_root,
+    size_t repo_root_size
+) {
+    char runtime_dir[1024];
+    char candidate[1200];
+
+    int candidate_len = snprintf(
+        candidate,
+        sizeof(candidate),
+        "%s\\celune-bin.exe",
+        base
+    );
+    if (candidate_len >= 0 && (size_t)candidate_len < sizeof(candidate) &&
+        lookup_file_exists(candidate) &&
+        find_repo_root(base, repo_root, repo_root_size) &&
+        copy_text(runtime_dir, sizeof(runtime_dir), base)) {
+        return copy_text(target, target_size, candidate);
+    }
+
+    searched_directories = 0;
+    search_deadline = GetTickCount64() + LAUNCHER_SEARCH_MAX_MILLISECONDS;
+    search_started = GetTickCount64();
+    next_status_update = search_started;
+    search_status_started = 0;
+    search_status_level = 0;
+    search_limit = SEARCH_LIMIT_NONE;
+
+    char current_directory[1024];
+    DWORD current_length = GetCurrentDirectoryA(
+        (DWORD)sizeof(current_directory),
+        current_directory
+    );
+
+    if (current_length > 0 && current_length < sizeof(current_directory) &&
+        find_repo_root(current_directory, repo_root, repo_root_size) &&
+        set_runtime_target(current_directory, target, target_size) &&
+        lookup_file_exists(target)) {
+        return 1;
+    }
+
+    char environment_root_storage[3][1024];
+    const char *environment_roots[3];
+    size_t environment_root_count = 0;
+    const char *environment_names[] = {
+        "LOCALAPPDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)"
+    };
+    for (size_t index = 0; index < sizeof(environment_names) / sizeof(environment_names[0]); index++) {
+        if (read_environment_path(
+                environment_names[index],
+                environment_root_storage[environment_root_count],
+                sizeof(environment_root_storage[environment_root_count])
+            )) {
+            environment_roots[environment_root_count] =
+                environment_root_storage[environment_root_count];
+            environment_root_count++;
+        }
+    }
+
+    char user_profile[1024];
+    int found = 0;
+    if (read_environment_path("USERPROFILE", user_profile, sizeof(user_profile))) {
+        found = search_runtime_directory(
+            user_profile,
+            0,
+            runtime_dir,
+            sizeof(runtime_dir),
+            repo_root,
+            repo_root_size
+        );
+        if (search_limit == SEARCH_ROOT_NOT_CELUNE) {
+            clear_search_status();
+            return 0;
+        }
+    }
+    if (found) {
+        clear_search_status();
+        return set_runtime_target(runtime_dir, target, target_size);
+    }
+
+    if (current_length > 0 && current_length < sizeof(current_directory)) {
+        found = search_runtime_directory(
+            current_directory,
+            0,
+            runtime_dir,
+            sizeof(runtime_dir),
+            repo_root,
+            repo_root_size
+        );
+        if (search_limit == SEARCH_ROOT_NOT_CELUNE) {
+            clear_search_status();
+            return 0;
+        }
+    }
+    if (found) {
+        clear_search_status();
+        return set_runtime_target(runtime_dir, target, target_size);
+    }
+
+    for (size_t index = 0; index < environment_root_count; index++) {
+        found = search_runtime_directory(
+                environment_roots[index],
+                0,
+                runtime_dir,
+                sizeof(runtime_dir),
+                repo_root,
+                repo_root_size
+        );
+        if (search_limit == SEARCH_ROOT_NOT_CELUNE) {
+            clear_search_status();
+            return 0;
+        }
+        if (!found) {
+            continue;
+        }
+
+        clear_search_status();
+        return set_runtime_target(runtime_dir, target, target_size);
+    }
+
+    DWORD drives = GetLogicalDrives();
+    for (char drive = 'A'; drive <= 'Z'; drive++) {
+        DWORD mask = 1UL << (drive - 'A');
+        if ((drives & mask) == 0) {
+            continue;
+        }
+
+        char drive_root[] = "A:\\";
+        drive_root[0] = drive;
+        if (GetDriveTypeA(drive_root) != DRIVE_FIXED) {
+            continue;
+        }
+        found = search_runtime_directory(
+                drive_root,
+                0,
+                runtime_dir,
+                sizeof(runtime_dir),
+                repo_root,
+                repo_root_size
+        );
+        if (search_limit == SEARCH_ROOT_NOT_CELUNE) {
+            clear_search_status();
+            return 0;
+        }
+        if (!found) {
+            continue;
+        }
+
+        clear_search_status();
+        return set_runtime_target(runtime_dir, target, target_size);
+    }
+
+    clear_search_status();
     return 0;
 }
 
@@ -287,6 +1068,7 @@ int launcher_run(int argc, char **argv) {
     char site_packages[1400];
     char setuptools_vendor[1600];
     char nuitka_pythonpath[5200];
+    char root_override[1024];
 
     char launcher_pid[32];
     snprintf(launcher_pid, sizeof(launcher_pid), "%lu", (unsigned long)GetCurrentProcessId());
@@ -297,27 +1079,52 @@ int launcher_run(int argc, char **argv) {
         return 1;
     }
 
+    int root_override_status = launcher_read_root_override(
+        &argc,
+        argv,
+        root_override,
+        sizeof(root_override)
+    );
+    if (root_override_status < 0) {
+        printfe("Celune received an invalid --root or CELUNE_ROOT override.\n");
+        return 1;
+    }
+
     if (!get_exe_dir(base, sizeof(base))) {
-        printfe("Celune could not determine the launcher location.\n");
+        report_lookup_failure();
         return 1;
     }
 
     int launcher_len = snprintf(launcher, sizeof(launcher), "%s\\celune.exe", base);
-    int target_len = snprintf(target, sizeof(target), "%s\\celune-bin.exe", base);
-    if (launcher_len < 0 || (size_t)launcher_len >= sizeof(launcher) ||
-        target_len < 0 || (size_t)target_len >= sizeof(target)) {
-        printfe("Celune cannot start in this location, the path is too long.\n");
+    if (launcher_len < 0 || (size_t)launcher_len >= sizeof(launcher)) {
+        report_lookup_failure();
         return 1;
     }
 
-    if (!file_exists(target)) {
-        printfe("Celune could not find her compiled runtime binary.\n");
-        printfe("Expected file: %s\n", target);
+    if (root_override_status > 0) {
+        if (!resolve_forced_runtime_location(
+                root_override,
+                target,
+                sizeof(target),
+                repo_root,
+                sizeof(repo_root)
+            )) {
+            printfe("Celune could not use the requested root: %s\n", root_override);
+            return 1;
+        }
+    } else if (!resolve_runtime_location(
+                   base,
+                   target,
+                   sizeof(target),
+                   repo_root,
+                   sizeof(repo_root)
+               )) {
+        report_lookup_failure();
         return 1;
     }
 
-    if (!find_repo_root(base, repo_root, sizeof(repo_root))) {
-        printfe("Celune could not find the repository root with a Python virtual environment.\n");
+    if (!lookup_file_exists(target)) {
+        report_lookup_failure();
         return 1;
     }
 
@@ -333,7 +1140,7 @@ int launcher_run(int argc, char **argv) {
         main_py_len < 0 || (size_t)main_py_len >= sizeof(main_py) ||
         site_packages_len < 0 || (size_t)site_packages_len >= sizeof(site_packages) ||
         setuptools_vendor_len < 0 || (size_t)setuptools_vendor_len >= sizeof(setuptools_vendor)) {
-        printfe("Celune cannot start in this location, the path is too long.\n");
+        report_lookup_failure();
         return 1;
     }
 
@@ -346,7 +1153,7 @@ int launcher_run(int argc, char **argv) {
     int python_lib_len = snprintf(python_lib, sizeof(python_lib), "%s\\Lib", python_home);
     if (python_dlls_len < 0 || (size_t)python_dlls_len >= sizeof(python_dlls) ||
         python_lib_len < 0 || (size_t)python_lib_len >= sizeof(python_lib)) {
-        printfe("Celune cannot start in this location, the path is too long.\n");
+        report_lookup_failure();
         return 1;
     }
 
@@ -368,7 +1175,7 @@ int launcher_run(int argc, char **argv) {
         setuptools_vendor
     );
     if (nuitka_pythonpath_len < 0 || (size_t)nuitka_pythonpath_len >= sizeof(nuitka_pythonpath)) {
-        printfe("Celune cannot set up her Python path, the path is too long.\n");
+        report_lookup_failure();
         return 1;
     }
 
@@ -412,7 +1219,7 @@ int launcher_run(int argc, char **argv) {
     if (updated_path_len < 0 || (size_t)updated_path_len >= path_value_size) {
         free(path_value);
         free(updated_path);
-        printfe("Celune cannot set up %%PATH%%, the path is too long.\n");
+        report_lookup_failure();
         return 1;
     }
 
@@ -525,8 +1332,11 @@ int launcher_run(int argc, char **argv) {
     CloseHandle(pi.hProcess);
     CloseHandle(launcher_pipe);
 
-    if ((int)exit_code == CELUNE_EXIT_PENDING_UPDATE) {
-        printfe("%s\n", launcher_exit_reason(CELUNE_EXIT_PENDING_UPDATE));
+    if ((int)exit_code == CELUNE_EXIT_PENDING_RESTART) {
+        if (!launcher_has_update_manifest(repo_root)) {
+            launcher_child_failed = 0;
+            return launcher_run(argc, argv);
+        }
         if (!file_exists(venv_python) || !file_exists(main_py)) {
             printfe("Celune could not find the Python helper needed to apply updates.\n");
             return 1;
@@ -550,12 +1360,24 @@ void launcher_report_failure(int return_code) {
         return;
     }
 
-    if (!launcher_child_failed) {
+    if (!launcher_child_failed && return_code != CELUNE_EXIT_UNSUPPORTED_CPU) {
         return;
     }
 
     const char *reason = launcher_exit_reason(return_code);
     if (reason != NULL) {
         printfe("%s\n", reason);
+    }
+
+    DWORD exit_code = (DWORD)return_code;
+    printfe(
+        "Exit code: 0x%08lX (%lu)\n",
+        (unsigned long)exit_code,
+        (unsigned long)exit_code
+    );
+
+    const char *detail = windows_exit_detail(exit_code);
+    if (detail != NULL) {
+        printfe("Windows exception: %s.\n", detail);
     }
 }

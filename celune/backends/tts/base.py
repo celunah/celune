@@ -1,35 +1,36 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Unified backend abstractions for Celune."""
 
-import contextlib
 import gc
-import glob
-import hashlib
 import os
+import glob
 import random
+import hashlib
 import secrets
 import threading
+import contextlib
 import unittest.mock
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Generator, Iterator, Mapping
-from pathlib import Path
 from typing import (
+    Union,
     Optional,
     cast,
 )
+from pathlib import Path
+from collections.abc import Mapping, Callable, Iterator, Generator
 
 import numpy as np
-import soundfile as sf
 import torch
+import soundfile as sf
 from huggingface_hub import snapshot_download
 
+from ...i18n import string
+from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_dir
+from ...utils import discard
 from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import N_A_NUMERIC
-from ...i18n import string
-from ...paths import huggingface_hub_cache_dir, temp_data_dir
-from ...typing.aliases import AudioChunk, RuntimeValue
+from ...typing.aliases import AudioChunk, LogLevel, RuntimeValue
 from ...typing.backends import BackendModel
-from ...utils import discard
 
 __all__ = [
     "BackendModel",
@@ -42,6 +43,30 @@ __all__ = [
 _HF_HUB_OFFLINE_LOCK = threading.Lock()
 _MAX_REFERENCE_SECONDS = 10.0
 _RUNTIME_PRIMITIVE_TYPES = (str, bytes, bytearray, int, float, bool, type(None))
+
+
+def _to_numpy_audio(chunk: Union[torch.Tensor, np.ndarray]) -> AudioChunk:
+    """Convert one streamed tensor or array to normalized one-dimensional audio."""
+    if isinstance(chunk, torch.Tensor):
+        audio = (
+            chunk.detach().float().cpu().numpy()
+            if chunk.is_floating_point()
+            else chunk.detach().cpu().numpy()
+        )
+    else:
+        audio = np.asarray(chunk)
+
+    if np.issubdtype(audio.dtype, np.integer):
+        limits = np.iinfo(audio.dtype)
+        if np.issubdtype(audio.dtype, np.unsignedinteger):
+            scale = (limits.max + 1) / 2
+            normalized = (audio.astype(np.float32) - scale) / scale
+        else:
+            scale = max(abs(limits.min), abs(limits.max))
+            normalized = audio.astype(np.float32) / scale
+    else:
+        normalized = np.asarray(audio, dtype=np.float32)
+    return np.ascontiguousarray(normalized.reshape(-1), dtype=np.float32)
 
 
 def _call_runtime_hook_if_present(value: RuntimeValue, name: str) -> bool:
@@ -206,6 +231,7 @@ class CeluneBackend[ModelT](ABC):
     uses_voice_bundles: bool = False
     max_new_tokens: int = 512
     is_fake: bool = False
+    log_level: LogLevel = "info"
 
     def __init__(
         self,
@@ -224,6 +250,9 @@ class CeluneBackend[ModelT](ABC):
         self.model: Optional[ModelT] = None
         self.log = log
         self._fatal_callback = fatal
+        self._progress_callback: Optional[
+            Callable[[Optional[float], Optional[float]], None]
+        ] = None
         self.current_seed: Optional[int] = None
         self.random_seed = True
         self._truncated_reference_paths: set[Path] = set()
@@ -239,6 +268,31 @@ class CeluneBackend[ModelT](ABC):
             fatal: Callback invoked when the backend must transition Celune into a fatal state.
         """
         self._fatal_callback = fatal
+
+    def bind_progress(
+        self,
+        progress: Optional[Callable[[Optional[float], Optional[float]], None]],
+    ) -> None:
+        """Bind the active Celune progress callback to this backend instance.
+
+        Args:
+            progress: Callback receiving current progress and an optional total.
+        """
+        self._progress_callback = progress
+
+    def report_progress(
+        self, progress: Optional[float], total: Optional[float] = None
+    ) -> None:
+        """Forward backend-owned loading or download progress to Celune.
+
+        Args:
+            progress: Current progress, or ``None`` for an indeterminate update.
+            total: Total progress, or ``None`` when the total is unavailable.
+        """
+        callback = getattr(self, "_progress_callback", None)
+        if callback is not None:
+            with contextlib.suppress(Exception):
+                callback(progress, total)
 
     @staticmethod
     def _get_default_loader() -> Optional[CEVoiceLoader]:
@@ -341,7 +395,7 @@ class CeluneBackend[ModelT](ABC):
         """
 
     @property
-    def default_model_id(self) -> str:  # noqa
+    def default_model_id(self) -> str:
         """Return the default model identifier for this backend.
 
         Returns:
@@ -359,7 +413,7 @@ class CeluneBackend[ModelT](ABC):
         raise ValueError(f"{self.name} does not define a default model")
 
     @property
-    def all_model_ids(self) -> list[str]:  # noqa
+    def all_model_ids(self) -> list[str]:
         """Return every known model identifier for this backend.
 
         Returns:
@@ -374,7 +428,7 @@ class CeluneBackend[ModelT](ABC):
         return []
 
     @property
-    def voices(self) -> list[str]:  # noqa
+    def voices(self) -> list[str]:
         """Return the available voice names for this backend.
 
         Returns:
@@ -444,8 +498,12 @@ class CeluneBackend[ModelT](ABC):
         self.model = self.load_model(self.model_name)
         return self.model
 
-    def unload_model(self) -> None:
-        """Release references held by the backend to its loaded model."""
+    def unload_model(self, release_cuda_cache: bool = True) -> None:
+        """Release references held by the backend to its loaded model.
+
+        Args:
+            release_cuda_cache: Whether to synchronize CUDA and release cached accelerator blocks.
+        """
         model = self.model
         self.model = None
         if model is not None:
@@ -463,7 +521,7 @@ class CeluneBackend[ModelT](ABC):
             _release_runtime_object_members(model, seen)
 
         gc.collect()
-        if torch.cuda.is_available():
+        if release_cuda_cache and torch.cuda.is_available():
             with contextlib.suppress(Exception):
                 torch.cuda.synchronize()
             with contextlib.suppress(Exception):
@@ -479,10 +537,14 @@ class CeluneBackend[ModelT](ABC):
         for model_id in self.all_model_ids:
             available, _ = self.model_is_available_locally(model_id)
             if not available:
-                self.log(f"Downloading {model_id}...", "info")
-                snapshot_download(repo_id=model_id)
+                self.log(string("tts.model_downloading", model_id=model_id), "info")
+                with huggingface_progress(self.report_progress):
+                    snapshot_download(
+                        repo_id=model_id,
+                        cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                    )
             else:
-                self.log(f"{model_id} is already available.", "info")
+                self.log(string("tts.model_available", model_id=model_id), "info")
 
     @abstractmethod
     def load_model(self, model_id: str, **kwargs) -> ModelT:

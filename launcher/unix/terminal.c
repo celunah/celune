@@ -58,6 +58,13 @@ void launcher_reset_terminal_state(void) {
     tcflush(STDIN_FILENO, TCIFLUSH);
 }
 
+void launcher_prepare_failure_output(void) {
+    if (isatty(STDERR_FILENO)) {
+        fputs("\r\n", stderr);
+        fflush(stderr);
+    }
+}
+
 void launcher_wait_after_failure(void) {
     struct termios oldt;
     struct termios newt;

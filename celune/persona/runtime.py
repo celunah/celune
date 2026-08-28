@@ -1,48 +1,79 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Shared Persona runtime helpers for Celune-managed generation."""
 
-import contextlib
 import gc
 import os
+import logging
 import threading
-from collections.abc import Mapping, Sequence
-from typing import Optional, Union, cast
+import contextlib
+from typing import Union, Optional, cast
+from collections.abc import Mapping, Sequence, Generator
 
 import torch
+from transformers.tokenization_utils_base import BatchEncoding
 from transformers import (
     AutoConfig,
     AutoProcessor,
     AutoTokenizer,
+    StoppingCriteria,
     BitsAndBytesConfig,
+    StoppingCriteriaList,
     Qwen3VLForConditionalGeneration,
 )
-from transformers.tokenization_utils_base import BatchEncoding
 
+from ..i18n import string
+from ..vram import resolve_vram_preset
+from ..typing.common import JSONSerializable
+from .capabilities import PersonaCapabilities
+from ..utils import normalize_special_characters
+from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
 from ..constants import (
     N_A_STR,
-    PERSONA_MODEL_ID,
+    PERSONA_CONTEXT_SPACE,
+    PERSONA_DEFAULT_MODEL_ID,
     remote_code_model_revision,
 )
-from ..dataclasses.persona import ChatMessage, GenerateRequest, GenerateResponse
-from ..typing.common import JSONSerializable
 from ..typing.persona import (
-    ChatMessagePayload,
-    ChatTemplateRenderer,
+    Role,
     ContentItem,
-    ImageContentItem,
-    MessageContent,
+    VisionInput,
     PersonaModel,
+    VideoMetadata,
+    MessageContent,
+    TextContentItem,
+    ImageContentItem,
     PersonaProcessor,
     PersonaTokenizer,
-    Role,
-    TextContentItem,
     VideoContentItem,
-    VideoMetadata,
-    VisionInput,
+    ChatMessagePayload,
+    ChatTemplateRenderer,
     VisionProcessorOutput,
+    ModelGenerateKwargValue,
 )
-from ..utils import discard, normalize_special_characters
-from ..vram import resolve_vram_preset
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class _PersonaCancellationCriteria(StoppingCriteria):
+    """Stop Hugging Face generation when Celune requests shutdown."""
+
+    def __init__(self, cancellation_event: threading.Event) -> None:
+        self._cancellation_event = cancellation_event
+
+    def __call__(
+        self,
+        input_ids: torch.Tensor,
+        scores: torch.Tensor,
+        **kwargs: ModelGenerateKwargValue,
+    ) -> torch.Tensor:
+        """Return one stop flag per sequence in the current generation batch."""
+        del scores, kwargs
+        return torch.full(
+            (input_ids.shape[0],),
+            self._cancellation_event.is_set(),
+            dtype=torch.bool,
+            device=input_ids.device,
+        )
 
 
 def _render_chat_prompt(
@@ -92,6 +123,16 @@ def _payload_from_message(message: ChatMessage) -> ChatMessagePayload:
     return ChatMessagePayload(role=message.role, content=message.content)
 
 
+def _model_supports_emotion_probes(model: PersonaModel) -> bool:
+    """Return whether a loaded text model exposes a usable hidden-state shape."""
+    model_config = getattr(model, "config", None)
+    hidden_size = getattr(model_config, "hidden_size", None)
+    if hidden_size is None:
+        text_config = getattr(model_config, "text_config", None)
+        hidden_size = getattr(text_config, "hidden_size", None)
+    return isinstance(hidden_size, int) and hidden_size > 0
+
+
 class PersonaBackend:
     """Character-agnostic backend for Persona generation."""
 
@@ -102,6 +143,16 @@ class PersonaBackend:
         self.tokenizer: Optional[PersonaTokenizer] = None
         self.model: Optional[PersonaModel] = None
         self.supports_vision = False
+        self.supports_emotion_probes = False
+        self._generation_cancelled = threading.Event()
+
+    def interrupt_generation(self) -> None:
+        """Request cancellation of the current model generation."""
+        self._generation_cancelled.set()
+
+    def _reset_generation_cancellation(self) -> None:
+        """Allow a new generation after a previous cancellation request."""
+        self._generation_cancelled.clear()
 
     def load(self, model_id: str, quantization: str) -> None:
         """Load the requested model, quantized by default.
@@ -122,13 +173,13 @@ class PersonaBackend:
         ):
             return
 
+        revision = self._resolve_model_revision(model_id)
+        load_revision = revision or "main"
         self.unload()
-        revision = remote_code_model_revision(model_id)
-
         config = AutoConfig.from_pretrained(
             model_id,
             trust_remote_code=True,
-            revision=revision,
+            revision=load_revision,
         )
         model_type = getattr(config, "model_type", N_A_STR)
         wanted_type = "qwen3_vl"
@@ -147,7 +198,7 @@ class PersonaBackend:
                 Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
-                    revision=revision,
+                    revision=load_revision,
                     device_map="auto",
                     quantization_config=BitsAndBytesConfig(
                         load_in_4bit=True,
@@ -165,7 +216,7 @@ class PersonaBackend:
                 Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
-                    revision=revision,
+                    revision=load_revision,
                     device_map="auto",
                     quantization_config=BitsAndBytesConfig(load_in_8bit=True),
                 ),
@@ -176,7 +227,7 @@ class PersonaBackend:
                 Qwen3VLForConditionalGeneration.from_pretrained(
                     model_id,
                     trust_remote_code=True,
-                    revision=revision,
+                    revision=load_revision,
                     device_map="auto",
                     dtype=torch.bfloat16,
                 ),
@@ -190,7 +241,7 @@ class PersonaBackend:
                 AutoProcessor.from_pretrained(
                     model_id,
                     trust_remote_code=True,
-                    revision=revision,
+                    revision=load_revision,
                 ),
             )
         except Exception as exc:
@@ -206,7 +257,7 @@ class PersonaBackend:
                 AutoTokenizer.from_pretrained(
                     model_id,
                     trust_remote_code=True,
-                    revision=revision,
+                    revision=load_revision,
                 ),
             )
 
@@ -217,6 +268,15 @@ class PersonaBackend:
         self.model_id = model_id
         self.quantization = quantization
         self.supports_vision = supports_vision
+        self.supports_emotion_probes = _model_supports_emotion_probes(model)
+
+    @staticmethod
+    def _resolve_model_revision(model_id: str) -> Optional[str]:
+        """Return a pinned revision or warn before using an unknown model."""
+        revision = remote_code_model_revision(model_id)
+        if revision is None:
+            _LOGGER.warning(string("persona.unsupported_model", model_id=model_id))
+        return revision
 
     def unload(self) -> None:
         """Unload the active Persona model and related processor state."""
@@ -226,13 +286,36 @@ class PersonaBackend:
         self.model_id = ""
         self.quantization = ""
         self.supports_vision = False
+        self.supports_emotion_probes = False
         gc.collect()
 
-        if torch.cuda.is_available():
-            with contextlib.suppress(Exception):
-                torch.cuda.synchronize()
-            with contextlib.suppress(Exception):
-                torch.cuda.empty_cache()
+    def emotion_backend(self) -> Optional[tuple[PersonaTokenizer, PersonaModel]]:
+        """Return the loaded VLM components used for emotion probing."""
+        if (
+            self.tokenizer is None
+            or self.model is None
+            or not self.supports_emotion_probes
+        ):
+            return None
+        return self.tokenizer, self.model
+
+    def capabilities(self) -> PersonaCapabilities:
+        """Return the capabilities of the loaded Persona architecture."""
+        loaded = self.tokenizer is not None and self.model is not None
+        multimodal = loaded and self.processor_supports_vision()
+        return PersonaCapabilities(
+            text=True,
+            vision=multimodal,
+            image_uploads=multimodal,
+            emotion_probes=loaded and self.supports_emotion_probes,
+        )
+
+    def processor_supports_vision(self) -> bool:
+        """Return whether the loaded processor can accept multimodal content."""
+        processor = self.processor
+        if processor is None:
+            return False
+        return self.supports_vision or _processor_supports_vision(processor)
 
     def generate(self, request: GenerateRequest) -> GenerateResponse:
         """Generate a persona-formatted response.
@@ -255,18 +338,21 @@ class PersonaBackend:
             raise ValueError("Persona backend is not loaded")
 
         message_dicts = [_payload_from_message(message) for message in messages]
-        used_vision = _messages_have_vision(message_dicts)
-        inputs: Optional[BatchEncoding] = None
-        model_inputs: Optional[dict[str, torch.Tensor]] = None
-        output_ids: Optional[torch.Tensor] = None
-        new_ids: Optional[torch.Tensor] = None
+        inputs = None
+        model_inputs = None
+        output_ids = None
+        new_ids = None
         try:
-            inputs = self._build_inputs(message_dicts)
+            inputs = self._build_inputs(message_dicts, request.context_space)
             model_inputs = {
-                str(key): cast(torch.Tensor, value)  # noqa
-                for key, value in dict(inputs).items()
+                key: cast(torch.Tensor, value) for key, value in dict(inputs).items()
             }
-            generation_kwargs: dict[str, int] = {}
+            generation_kwargs: dict[str, ModelGenerateKwargValue] = {
+                "cache_implementation": "dynamic",
+                "stopping_criteria": StoppingCriteriaList(
+                    [_PersonaCancellationCriteria(self._generation_cancelled)]
+                ),
+            }
             pad_token_id = tokenizer.eos_token_id
             if pad_token_id is not None:
                 generation_kwargs["pad_token_id"] = pad_token_id
@@ -282,8 +368,8 @@ class PersonaBackend:
                     **generation_kwargs,
                 )
 
-            input_ids = cast(torch.Tensor, inputs["input_ids"])  # noqa
-            new_ids = output_ids[0, input_ids.shape[1] :]
+            input_length = cast(torch.Tensor, inputs["input_ids"]).shape[1]
+            new_ids = output_ids[0, input_length:]
             text = normalize_special_characters(
                 tokenizer.decode(new_ids, skip_special_tokens=True).strip()
             )
@@ -294,27 +380,35 @@ class PersonaBackend:
                 quantization=self.quantization,
             )
         finally:
-            # vision requests can allocate a large amount of memory for image/video tensors
-            # drop them after the vision-related turn is complete, and let Celune know it from context
-            discard(new_ids)
-            discard(output_ids)
-            discard(model_inputs)
-            discard(inputs)
-            if used_vision:
-                gc.collect()
-                if torch.cuda.is_available():
-                    with contextlib.suppress(Exception):
-                        torch.cuda.synchronize()
-                    with contextlib.suppress(Exception):
-                        torch.cuda.empty_cache()
+            # Release every request-local tensor before clearing the CUDA allocator.
+            # Assigning None is intentional: discard() only drops its local alias and
+            # cannot clear the references held by this stack frame.
+            new_ids = None
+            output_ids = None
+            model_inputs = None
+            inputs = None
+            gc.collect()
+            if torch.cuda.is_available():
+                with contextlib.suppress(Exception):
+                    torch.cuda.synchronize()
+                with contextlib.suppress(Exception):
+                    torch.cuda.empty_cache()
 
-    def _build_inputs(self, messages: Sequence[ChatMessagePayload]) -> BatchEncoding:
-        """Build model inputs, including optional image and video content."""
+    def _build_inputs(
+        self,
+        messages: Sequence[ChatMessagePayload],
+        context_space: int = PERSONA_CONTEXT_SPACE,
+    ) -> BatchEncoding:
+        """Build bounded model inputs, including optional image and video content."""
         model = self.model
         if model is None:
             raise ValueError("Persona backend is not loaded")
 
         if _messages_have_vision(messages):
+            if not self.capabilities().vision:
+                raise ValueError(
+                    "Persona's active architecture does not support vision input"
+                )
             processor = self.processor
             if processor is None:
                 raise ValueError(
@@ -333,6 +427,8 @@ class PersonaBackend:
                         add_generation_prompt=True,
                         return_dict=True,
                         return_tensors="pt",
+                        truncation=True,
+                        max_length=context_space,
                     )
                     return cast(BatchEncoding, encoded).to(model.device)
                 raise ValueError(
@@ -374,6 +470,8 @@ class PersonaBackend:
                 videos=processed_video_inputs,
                 video_metadata=video_metadata,
                 return_tensors="pt",
+                truncation=True,
+                max_length=context_space,
                 **video_kwargs,
             ).to(model.device)
 
@@ -384,7 +482,12 @@ class PersonaBackend:
             self.processor if self.processor is not None else tokenizer
         )
         prompt = _render_chat_prompt(renderer, messages)
-        return tokenizer(text=prompt, return_tensors="pt").to(model.device)
+        return tokenizer(
+            text=prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=context_space,
+        ).to(model.device)
 
     build_inputs = _build_inputs
 
@@ -401,7 +504,7 @@ class PersonaRuntime:
         self.lock = threading.Lock()
 
     @property
-    def model_id(self) -> str:  # noqa
+    def model_id(self) -> str:
         """Return the currently loaded model identifier.
 
         Returns:
@@ -410,7 +513,7 @@ class PersonaRuntime:
         return self.backend.model_id
 
     @property
-    def quantization(self) -> str:  # noqa
+    def quantization(self) -> str:
         """Return the currently loaded quantization mode.
 
         Returns:
@@ -438,7 +541,9 @@ class PersonaRuntime:
         Returns:
             GenerateResponse: A generated Persona response.
         """
-        model_id = request.model or os.getenv("PERSONA_MODEL") or PERSONA_MODEL_ID
+        model_id = (
+            request.model or os.getenv("PERSONA_MODEL") or PERSONA_DEFAULT_MODEL_ID
+        )
         quantization = (
             request.quantization
             or os.getenv("PERSONA_QUANTIZATION")
@@ -446,13 +551,39 @@ class PersonaRuntime:
         )
         quantization = self._allowed_quantization(quantization)
         with self.lock:
+            self.backend._reset_generation_cancellation()
             self.backend.load(model_id, quantization)
             return self.backend.generate(request)
 
+    def interrupt(self) -> None:
+        """Request cancellation of an active Persona generation."""
+        self.backend.interrupt_generation()
+
     def close(self) -> None:
         """Unload the active Persona backend state."""
+        with self._close_lock() as acquired:
+            if acquired:
+                self.backend.unload()
+
+    @contextlib.contextmanager
+    def _close_lock(self) -> Generator[bool, None, None]:
+        """Acquire the Persona lock briefly without delaying shutdown indefinitely."""
+        acquired = self.lock.acquire(timeout=0.5)
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                self.lock.release()
+
+    def emotion_backend(self) -> Optional[tuple[PersonaTokenizer, PersonaModel]]:
+        """Return the loaded VLM components used for emotion probing."""
         with self.lock:
-            self.backend.unload()
+            return self.backend.emotion_backend()
+
+    def capabilities(self) -> PersonaCapabilities:
+        """Return the capabilities of the loaded Persona architecture."""
+        with self.lock:
+            return self.backend.capabilities()
 
     def _allowed_quantization(self, requested: str) -> str:
         """Clamp Persona quantization to what the VRAM preset allows."""
@@ -488,6 +619,7 @@ def request_from_json(payload: dict[str, JSONSerializable]) -> GenerateRequest:
     temperature = payload.get("temperature")
     top_p = payload.get("top_p")
     repetition_penalty = payload.get("repetition_penalty")
+    context_space = payload.get("context_space")
     if isinstance(raw_messages, list):
         for item in raw_messages:
             message = _message_from_json(item)
@@ -504,6 +636,11 @@ def request_from_json(payload: dict[str, JSONSerializable]) -> GenerateRequest:
         max_new_tokens=int(max_new_tokens)
         if isinstance(max_new_tokens, (int, float))
         else 220,
+        context_space=(
+            int(context_space)
+            if isinstance(context_space, (int, float))
+            else PERSONA_CONTEXT_SPACE
+        ),
         temperature=float(temperature)
         if isinstance(temperature, (int, float))
         else 0.75,
@@ -564,6 +701,19 @@ def _processor_supports_native_vision(processor: PersonaProcessor) -> bool:
     """Return whether the processor exposes native multimodal chat rendering."""
     apply_chat_template = getattr(processor, "apply_chat_template", None)
     return callable(apply_chat_template)
+
+
+def _processor_supports_vision(processor: PersonaProcessor) -> bool:
+    """Return whether a processor advertises a compatible vision pathway."""
+    return (
+        _processor_supports_native_vision(processor)
+        or getattr(
+            processor,
+            "image_processor",
+            None,
+        )
+        is not None
+    )
 
 
 def _content_from_json(value: JSONSerializable) -> Optional[MessageContent]:

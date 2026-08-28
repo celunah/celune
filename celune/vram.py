@@ -1,15 +1,15 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """VRAM preset resolution helpers for Celune."""
 
 import math
-from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Optional, cast
+from dataclasses import dataclass
+from collections.abc import Mapping
 
 import torch
 
 from .constants import TIERS, VRAM_REQUIREMENTS
-from .typing.common import JSONSerializable, VramTier
+from .typing.common import VramTier, JSONSerializable
 
 QWEN3_0_6B_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 QWEN3_1_7B_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
@@ -235,3 +235,10 @@ def backend_allowed(
     normalized = backend_name.strip().lower()
     preset = resolve_vram_preset(config)
     return normalized in _allowed_backends(config, preset)
+
+
+def agent_vram_compatible(
+    config: Optional[Mapping[str, JSONSerializable]],
+) -> bool:
+    """Return whether the resolved VRAM preset supports agent mode."""
+    return resolve_vram_preset(config).tier == "xhigh"

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Typed Celune lifecycle and extension event payloads."""
 
 from __future__ import annotations
@@ -8,6 +8,15 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from ..celune import Celune
+    from ..typing.agent import (
+        AgentTaskState,
+        AgentAbortReason,
+        AgentChoiceRequest,
+        AgentFailureReason,
+        AgentApprovalRequest,
+        AgentCancellationReason,
+    )
+    from ..typing.common import JSON
 
 
 @dataclass(slots=True)
@@ -146,3 +155,48 @@ class CharacterChangedEvent:
     old_bundle_path: Optional[str]
     new_bundle_path: Optional[str]
     new_is_default: bool
+
+
+@dataclass(slots=True)
+class AgentTaskStateChangedEvent:
+    """Payload emitted when one agent task changes lifecycle state."""
+
+    celune: Celune
+    task_id: str
+    session_id: str
+    old_state: AgentTaskState
+    new_state: AgentTaskState
+
+
+@dataclass(slots=True)
+class AgentApprovalRequestedEvent:
+    """Payload emitted when an agent task pauses for tool approval."""
+
+    celune: Celune
+    task_id: str
+    session_id: str
+    request: AgentApprovalRequest
+
+
+@dataclass(slots=True)
+class AgentChoiceRequestedEvent:
+    """Payload emitted when an agent task pauses for a user choice."""
+
+    celune: Celune
+    task_id: str
+    session_id: str
+    request: AgentChoiceRequest
+
+
+@dataclass(slots=True)
+class AgentTaskFinishedEvent:
+    """Payload emitted when an agent task reaches a terminal outcome."""
+
+    celune: Celune
+    task_id: str
+    session_id: str
+    state: AgentTaskState
+    abort_reason: Optional[AgentAbortReason] = None
+    failure_reason: Optional[AgentFailureReason] = None
+    cancellation_reason: Optional[AgentCancellationReason] = None
+    completion_metadata: Optional[JSON] = None

@@ -1,19 +1,22 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Celune voice-conversion backend initialization manager."""
 
+from typing import Union, Optional
 from collections.abc import Callable
-from importlib import import_module
-from typing import Optional, Union
 
 from .base import CeluneVCBackend
+from ..environment import BACKEND_MANIFESTS, BackendManifest, backend_manifest
 
-__all__ = ["VC_BACKENDS", "CeluneVCBackend", "resolve_vc_backend"]
+__all__ = [
+    "BACKEND_MANIFESTS",
+    "VC_BACKENDS",
+    "BackendManifest",
+    "CeluneVCBackend",
+    "backend_manifest",
+    "resolve_vc_backend",
+]
 
 VC_BACKENDS = {
-    "passthrough": (
-        "celune.backends.vc.passthrough",
-        "CelunePassthroughVCBackend",
-    ),
     "seed-vc": (
         "celune.backends.vc.seedvc",
         "CeluneSeedVCBackend",
@@ -53,17 +56,18 @@ def resolve_vc_backend(
     if isinstance(backend_name, str):
         key = backend_name.strip().lower()
 
-        try:
-            module_name, class_name = VC_BACKENDS[key]
-        except KeyError as e:
+        if key not in VC_BACKENDS:
             raise ValueError(
                 "unknown voice-conversion backend: "
                 f"'{backend_name}' (available: {', '.join(VC_BACKENDS.keys())})"
-            ) from e
+            )
 
-        module = import_module(module_name)
-        backend_cls = getattr(module, class_name)
-        return backend_cls(log=log)
+        if key not in BACKEND_MANIFESTS:
+            raise ValueError(f"unknown voice-conversion backend: '{backend_name}'")
+
+        from ...cedts.remote import RemoteVCBackendProxy
+
+        return RemoteVCBackendProxy(BACKEND_MANIFESTS[key], log=log)
 
     raise TypeError(
         "'backend_name' must be a voice-conversion backend instance, "

@@ -1,0 +1,78 @@
+# First run
+
+This page walks new users through the first safe launch, backend and voice
+selection, and the checks that confirm Celune is ready to speak.
+
+## Start with a safe baseline
+
+1. Run `python configure.py` from the repository root. It installs the core
+   environment, creates AppData, and copies the default configuration and voice
+   pack there.
+2. Run `uv run python main.py doctor` and resolve failed prerequisites.
+3. Start Celune once. Existing configuration and voice data are preserved.
+4. Leave `backend: null`, `voice_bundle: default`, `mode: converse`, and
+   `vram: medium` until the basic engine is working.
+5. Use `/help` in the Textual UI to see commands supported by the active
+   backend and mode.
+
+The default configuration enables the REST API on loopback port 2060 and keeps
+isolated backend environments enabled. A first launch can therefore spend time
+creating a backend environment and downloading models before the ready state.
+
+## Select a backend
+
+Set `backend` in the active config or pass `CELUNE_BACKEND` for a one-process
+override. The backend name is one of `mini`, `qwen3`, `dotstts`, `voxcpm2`,
+`gpt-sovits`, or a voice-conversion backend such as `seed-vc`. See
+[Backends](../development/backends.md) for capability and
+dependency details.
+
+The backend controls language support, reference-audio requirements, model
+size, chunk rate, and whether the active voice pack can be used. An unknown
+voice or a missing compatible pack is reported as a load error rather than
+silently falling back to a different identity.
+
+## Select a voice pack
+
+Celune resolves `voice_bundle` as follows:
+
+- `default` selects `voices/default.cevoice` from the repository or package.
+- A bare name such as `my_pack` selects `voices/my_pack.cevoice` in the
+  user-local voice directory.
+- An explicit relative or absolute path is used as written.
+
+Use `/cevoice <name|path>` or the Python `set_cevoice_and_wait()` call to load a
+different pack. Then use `/voiceprompt`, `/backend`, and `/help` to inspect the
+active capabilities.
+
+## Verify speech
+
+In speak mode, type text and press `CTRL+ENTER`. In converse mode, the same
+action sends the text through Persona; use `CTRL+R` for Persona speech input.
+Generated files are placed in the repository
+`outputs/` directory when saving is enabled. Celune writes 48 kHz, 24-bit FLAC
+outputs; the runtime keeps audio arrays as normalized float32.
+
+For a headless first check, set `headless: true` and use the REST API or an
+extension. To let Celune choose based on the environment, set `headless: null`.
+This selects Textual on Windows and in detected Linux desktop sessions, and
+headless mode in Linux TTY or non-interactive sessions. The headless UI
+intentionally does not provide an interactive terminal editor.
+
+## If startup fails
+
+Run:
+
+```bash
+uv run python main.py doctor
+```
+
+If the loading screen changes to the red `Failed to start` state, read the
+diagnostic shown there. Celune remains open so the error can be read; press
+`CTRL+Q` to close it. A missing required dependency returns exit code `4` to
+the launcher, which can then report or repair the environment.
+
+Then inspect the application log and traceback path reported by the runtime.
+Do not delete a backend environment while it is running. If an environment is
+corrupt, use `celune doctor --fix` where the doctor offers a repair, or remove
+only the named backend environment after Celune has fully exited.

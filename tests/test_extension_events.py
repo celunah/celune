@@ -1,40 +1,41 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for Celune's extension event subsystem."""
 
 import sys
 import tempfile
 import textwrap
+from typing import cast
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
-from unittest import TestCase, mock
+from unittest import mock
 
 from celune import subscribe
 from celune.celune import Celune
+from celune.extensions.base import CeluneExtension
+from celune.typing.events import ReadyEventCallback
+from celune.dataclasses.extensions import CeluneContext
+from celune.extensions.manager import CeluneExtensionManager
+from celune.extensions.events import EventDispatcher, iter_subscriptions
 from celune.dataclasses.events import (
-    AudioEndEvent,
-    AudioStartEvent,
-    CharacterChangedEvent,
-    CharacterLoadedEvent,
-    CharacterUnloadedEvent,
     ReadyEvent,
+    AudioEndEvent,
     ShutdownEvent,
+    AudioStartEvent,
     StateChangedEvent,
     VoiceChangedEvent,
+    CharacterLoadedEvent,
+    CharacterChangedEvent,
+    CharacterUnloadedEvent,
 )
-from celune.dataclasses.extensions import CeluneContext
-from celune.extensions.base import CeluneExtension
-from celune.extensions.events import EventDispatcher, iter_subscriptions
-from celune.extensions.manager import CeluneExtensionManager
-from celune.typing.events import ReadyEventCallback
 
-from .support import FakeBackend, FakeGlow
+from .support import CeluneTestCase, FakeBackend, FakeGlow
 
 
-class DispatcherTests(TestCase):
+class TestDispatcher(CeluneTestCase):
     """Tests for low-level event dispatch behavior."""
 
     def setUp(self) -> None:
+        """Create an isolated event dispatcher for each test."""
         self.logs: list[tuple[str, str]] = []
         self.dispatcher = EventDispatcher(
             log_warning=lambda msg, severity="info": self.logs.append((msg, severity))
@@ -62,11 +63,11 @@ class DispatcherTests(TestCase):
             owner_name="second",
         )
         self.dispatcher.emit("ready", ready_event)
-        self.assertEqual(calls, ["first", "second"])
+        assert calls == ["first", "second"]
 
         self.dispatcher.unsubscribe("ready", first)
         self.dispatcher.emit("ready", ready_event)
-        self.assertEqual(calls, ["first", "second", "second"])
+        assert calls == ["first", "second", "second"]
 
     def test_dispatcher_logs_handler_failures_and_continues(self) -> None:
         """Verify one failing handler does not block later handlers."""
@@ -93,20 +94,22 @@ class DispatcherTests(TestCase):
 
         self.dispatcher.emit("ready", ready_event)
 
-        self.assertEqual(calls, ["broken", "healthy"])
-        self.assertEqual(self.logs[-1][1], "warning")
-        self.assertIn("Event callback failed", self.logs[-1][0])
+        assert calls == ["broken", "healthy"]
+        assert self.logs[-1][1] == "warning"
+        assert "Event callback failed" in self.logs[-1][0]
 
 
-class ManagerEventTests(TestCase):
+class TestManagerEvent(CeluneTestCase):
     """Tests for extension-manager event integration."""
 
     def setUp(self) -> None:
+        """Create an isolated extension context for each test."""
         self.logs: list[tuple[str, str]] = []
-        self.dev_logs: list[tuple[str, str]] = []
         self.context = CeluneContext(
-            log=lambda msg, severity="info": self.logs.append((msg, severity)),
-            log_dev=lambda msg, severity="info": self.dev_logs.append((msg, severity)),
+            log=lambda msg, severity="info", **kwargs: self.logs.append(
+                (msg, severity)
+            ),
+            log_level="verbose",
             say=lambda text, save=True, display_text=None: True,
             think=lambda text: True,
             play=lambda sound_path, keep=False, volume=1.0: True,
@@ -127,9 +130,9 @@ class ManagerEventTests(TestCase):
             return None
 
         subscriptions = iter_subscriptions(on_ready)
-        self.assertEqual(len(subscriptions), 1)
-        self.assertEqual(subscriptions[0].event_name, "ready")
-        self.assertEqual(subscriptions[0].enabled, True)
+        assert len(subscriptions) == 1
+        assert subscriptions[0].event_name == "ready"
+        assert subscriptions[0].enabled
 
     def test_manager_discovers_extension_handlers_and_unregisters_them(self) -> None:
         """Verify decorated extension methods auto-register and clean up on unload."""
@@ -155,11 +158,11 @@ class ManagerEventTests(TestCase):
         manager = CeluneExtensionManager(self.context, self.dispatcher)
         manager.register(EventExtension)
         self.dispatcher.emit("ready", ReadyEvent(celune=mock.Mock(spec=Celune)))
-        self.assertEqual(received, ["ready"])
+        assert received == ["ready"]
 
         manager.unregister("Events")
         self.dispatcher.emit("ready", ReadyEvent(celune=mock.Mock(spec=Celune)))
-        self.assertEqual(received, ["ready"])
+        assert received == ["ready"]
 
     def test_manager_can_disable_subscriptions_per_handler(self) -> None:
         """Verify extensions can opt out of individual handlers."""
@@ -202,7 +205,7 @@ class ManagerEventTests(TestCase):
                 new_voice="bold",
             ),
         )
-        self.assertEqual(received, ["voice"])
+        assert received == ["voice"]
 
     def test_manager_autoloads_module_level_handlers(self) -> None:
         """Verify event-only extension modules can subscribe through ``@celune.subscribe``."""
@@ -229,10 +232,10 @@ class ManagerEventTests(TestCase):
             module = sys.modules["user_extension_fixture"]
             self.dispatcher.emit("ready", ReadyEvent(celune=mock.Mock(spec=Celune)))
 
-        self.assertEqual(module.EVENTS, ["ReadyEvent"])
+        assert module.EVENTS == ["ReadyEvent"]
 
 
-class EngineEventIntegrationTests(TestCase):
+class TestEngineEventIntegration(CeluneTestCase):
     """Tests for Celune runtime event emission."""
 
     @staticmethod
@@ -262,10 +265,11 @@ class EngineEventIntegrationTests(TestCase):
 
         celune.cur_state = "speaking"
         celune.close()
+        celune.close()
 
-        self.assertEqual(state_events[-1].old_state, "init")
-        self.assertEqual(state_events[-1].new_state, "speaking")
-        self.assertEqual(len(shutdown_events), 1)
+        assert state_events[-1].old_state == "init"
+        assert state_events[-1].new_state == "speaking"
+        assert len(shutdown_events) == 1
 
     def test_voice_change_emits_typed_event(self) -> None:
         """Verify successful voice changes emit a ``VoiceChangedEvent`` payload."""
@@ -282,9 +286,9 @@ class EngineEventIntegrationTests(TestCase):
         with mock.patch("celune.celune.play_signal", return_value=False):
             celune.change_voice("bold")
 
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0].old_voice, "balanced")
-        self.assertEqual(events[0].new_voice, "bold")
+        assert len(events) == 1
+        assert events[0].old_voice == "balanced"
+        assert events[0].new_voice == "bold"
 
     def test_character_bundle_events_emit_typed_payloads(self) -> None:
         """Verify CEVOICE lifecycle transitions emit load, unload, and change events."""
@@ -323,18 +327,18 @@ class EngineEventIntegrationTests(TestCase):
                 ],
             ),
         ):
-            self.assertEqual(celune.load_voice_bundle(Path("celune.cevoice")), True)
-            self.assertEqual(celune.load_voice_bundle(Path("nova.cevoice")), True)
-            self.assertEqual(celune.load_voice_bundle(None), True)
+            assert celune.load_voice_bundle(Path("celune.cevoice"))
+            assert celune.load_voice_bundle(Path("nova.cevoice"))
+            assert celune.load_voice_bundle(None)
 
-        self.assertEqual(len(loaded_events), 1)
-        self.assertEqual(loaded_events[0].character_name, "Celune")
-        self.assertEqual(loaded_events[0].bundle_path, str(Path("celune.cevoice")))
-        self.assertEqual(len(changed_events), 1)
-        self.assertEqual(changed_events[0].old_character, "Celune")
-        self.assertEqual(changed_events[0].new_character, "Nova")
-        self.assertEqual(len(unloaded_events), 1)
-        self.assertEqual(unloaded_events[0].character_name, "Nova")
+        assert len(loaded_events) == 1
+        assert loaded_events[0].character_name == "Celune"
+        assert loaded_events[0].bundle_path == str(Path("celune.cevoice"))
+        assert len(changed_events) == 1
+        assert changed_events[0].old_character == "Celune"
+        assert changed_events[0].new_character == "Nova"
+        assert len(unloaded_events) == 1
+        assert unloaded_events[0].character_name == "Nova"
 
     def test_typed_event_payloads_expose_expected_attributes(self) -> None:
         """Verify runtime event payload dataclasses carry the documented fields."""
@@ -353,12 +357,12 @@ class EngineEventIntegrationTests(TestCase):
             saved_path="outputs/test.flac",
         )
 
-        self.assertEqual(audio_start.label, "fixture")
-        self.assertEqual(audio_end.saved_path, "outputs/test.flac")
+        assert audio_start.label == "fixture"
+        assert audio_end.saved_path == "outputs/test.flac"
         character_loaded = CharacterLoadedEvent(
             celune=celune,
             character_name="Celune",
             bundle_path="celune.cevoice",
             is_default=True,
         )
-        self.assertEqual(character_loaded.character_name, "Celune")
+        assert character_loaded.character_name == "Celune"

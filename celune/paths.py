@@ -1,10 +1,15 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Runtime filesystem paths and global Hugging Face runtime setup for Celune."""
 
+import contextlib
 import os
+from pathlib import Path
 import shutil
 import sys
-from pathlib import Path
+import sysconfig
+import threading
+import time
+from collections.abc import Callable, Generator
 from typing import Optional
 
 from platformdirs import user_data_dir
@@ -15,6 +20,13 @@ _REPO_MARKERS = ("celune", "default_config.yaml", "pyproject.toml")
 _HF_HOME_ENV = "HF_HOME"
 _HF_HUB_CACHE_ENV = "HF_HUB_CACHE"
 _HF_HUB_DISABLE_PROGRESS_BARS_ENV = "HF_HUB_DISABLE_PROGRESS_BARS"
+_HF_PROGRESS_PATCH_LOCK = threading.RLock()
+_LEGACY_APP_DATA_MIGRATIONS = (
+    ("backends", ("environments",)),
+    ("fast_langdetect", ("runtime", "fast_langdetect")),
+    ("gpt_sovits", ("runtime", "gpt_sovits")),
+    ("nltk_data", ("runtime", "nltk_data")),
+)
 
 
 def running_compiled() -> bool:
@@ -73,6 +85,21 @@ def persona_data_dir(create: bool = False) -> Path:
     return path
 
 
+def runtime_data_dir(create: bool = False) -> Path:
+    """Return Celune's directory for runtime-owned loose data.
+
+    Args:
+        create: Whether this directory should be created before being returned.
+
+    Returns:
+        Path: Celune's runtime data directory.
+    """
+    path = app_data_dir(create=create) / "runtime"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def huggingface_home_dir(create: bool = False) -> Path:
     """Return Celune's default Hugging Face home directory.
 
@@ -103,25 +130,13 @@ def huggingface_hub_cache_dir(create: bool = False) -> Path:
     return path
 
 
-def configure_huggingface_cache_environment(force: bool = False) -> None:
-    """Point Hugging Face caches at Celune's user data directory in portable mode.
-
-    Args:
-        force: Whether to apply the portable cache defaults even outside compiled builds.
-    """
+def configure_huggingface_cache_environment() -> None:
+    """Point Hugging Face caches at Celune's user data directory."""
     default_hf_home = str(huggingface_home_dir())
     default_hf_hub_cache = str(huggingface_hub_cache_dir())
 
-    if not force and not running_compiled():
-        # If this process previously enabled Celune's portable defaults,
-        # clear them again for source-tree runs so local development and tests
-        # continue to use the host Hugging Face cache.
-        if os.environ.get(_HF_HOME_ENV) == default_hf_home:
-            os.environ.pop(_HF_HOME_ENV, None)
-        if os.environ.get(_HF_HUB_CACHE_ENV) == default_hf_hub_cache:
-            os.environ.pop(_HF_HUB_CACHE_ENV, None)
-        return
-
+    # Keep explicit deployment or host overrides, but make Celune's cache
+    # deterministic for source-tree, compiled, and isolated worker processes.
     if _HF_HOME_ENV not in os.environ:
         os.environ[_HF_HOME_ENV] = default_hf_home
     if _HF_HUB_CACHE_ENV not in os.environ:
@@ -136,6 +151,96 @@ def configure_huggingface_runtime() -> None:
     os.environ.setdefault(_HF_HUB_DISABLE_PROGRESS_BARS_ENV, "1")
     disable_progress_bar()
     disable_progress_bars()
+
+
+def configure_numba_cache() -> Path:
+    """Configure a writable process cache for Numba-backed dependencies.
+
+    Returns:
+        Path: The writable Numba cache directory.
+    """
+    cache_dir = temp_data_dir(create=True) / "numba"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["NUMBA_CACHE_DIR"] = str(cache_dir)
+    return cache_dir
+
+
+@contextlib.contextmanager
+def huggingface_progress(
+    callback: Optional[Callable[[Optional[float], Optional[float]], None]],
+) -> Generator[None, None, None]:
+    """Forward Hugging Face transfer progress to one Celune progress callback.
+
+    Args:
+        callback: Receiver for downloaded bytes and their total, or ``None`` to leave the Hub unchanged.
+    """
+    if callback is None:
+        yield
+        return
+
+    import importlib
+
+    from huggingface_hub.utils.tqdm import tqdm as HuggingFaceTqdm
+
+    file_download = importlib.import_module("huggingface_hub.file_download")
+    snapshot_download = importlib.import_module("huggingface_hub._snapshot_download")
+
+    class CeluneHuggingFaceTqdm(HuggingFaceTqdm):
+        """Keep Hugging Face bars quiet while forwarding their transfer state."""
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            initial = kwargs.get("initial", 0)
+            self._celune_downloaded = (
+                float(initial) if isinstance(initial, (int, float)) else 0.0
+            )
+            self._celune_progress_callback = callback
+            self._celune_progress_lock = threading.Lock()
+            self._celune_last_report = 0.0
+            super().__init__(*args, **kwargs)
+            self._report_celune_progress(force=True)
+
+        def update(self, n: Optional[float] = 1) -> Optional[bool]:
+            if isinstance(n, (int, float)) and not isinstance(n, bool):
+                self._celune_downloaded = max(
+                    0.0,
+                    self._celune_downloaded + float(n),
+                )
+            result = super().update(n)
+            self._report_celune_progress()
+            return result
+
+        def close(self) -> None:
+            self._report_celune_progress(force=True)
+            super().close()
+
+        def _report_celune_progress(self, force: bool = False) -> None:
+            total = getattr(self, "total", None)
+            normalized_total = (
+                float(total)
+                if isinstance(total, (int, float))
+                and not isinstance(total, bool)
+                and total > 0
+                else None
+            )
+            progress = self._celune_downloaded if normalized_total is not None else None
+            now = time.monotonic()
+            with self._celune_progress_lock:
+                if not force and now - self._celune_last_report < 0.1:
+                    return
+                self._celune_last_report = now
+            with contextlib.suppress(Exception):
+                self._celune_progress_callback(progress, normalized_total)
+
+    with _HF_PROGRESS_PATCH_LOCK:
+        previous_file_tqdm = file_download.__dict__["tqdm"]
+        previous_snapshot_tqdm = snapshot_download.__dict__["hf_tqdm"]
+        file_download.__dict__["tqdm"] = CeluneHuggingFaceTqdm
+        snapshot_download.__dict__["hf_tqdm"] = CeluneHuggingFaceTqdm
+        try:
+            yield
+        finally:
+            file_download.__dict__["tqdm"] = previous_file_tqdm
+            snapshot_download.__dict__["hf_tqdm"] = previous_snapshot_tqdm
 
 
 def memory_data_dir(create: bool = False) -> Path:
@@ -181,6 +286,56 @@ def voices_data_dir(create: bool = False) -> Path:
     if create:
         path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def backend_environments_dir(create: bool = False) -> Path:
+    """Return the directory containing isolated backend environments.
+
+    Args:
+        create: Whether this directory should be created before being returned.
+
+    Returns:
+        Path: The Celune-local backend environment directory.
+    """
+    path = app_data_dir(create=create) / "environments"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _merge_directory_contents(source: Path, destination: Path) -> None:
+    """Move non-conflicting contents from one directory into another."""
+    destination.mkdir(parents=True, exist_ok=True)
+    for child in source.iterdir():
+        target = destination / child.name
+        if target.exists():
+            if child.is_dir() and target.is_dir():
+                _merge_directory_contents(child, target)
+            continue
+        shutil.move(str(child), str(target))
+
+    with contextlib.suppress(OSError):
+        source.rmdir()
+
+
+def migrate_legacy_app_data() -> None:
+    """Move legacy loose data into Celune's organized AppData layout.
+
+    Existing destination files and directories are preserved. When a destination
+    already exists, only non-conflicting legacy contents are moved, so an
+    interrupted migration can safely resume on the next startup.
+    """
+    root = app_data_dir()
+    for source_name, destination_parts in _LEGACY_APP_DATA_MIGRATIONS:
+        source = root / source_name
+        destination = root.joinpath(*destination_parts)
+        if not source.is_dir():
+            continue
+        if not destination.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(destination))
+        elif source.is_dir() and destination.is_dir():
+            _merge_directory_contents(source, destination)
 
 
 def config_path(create_parent: bool = False) -> Path:
@@ -253,6 +408,34 @@ def project_root() -> Path:
         return _compiled_project_root()
 
     return Path(__file__).resolve().parent.parent
+
+
+def core_python_executable() -> Path:
+    """Return the Python interpreter that owns Celune's core environment."""
+    if running_compiled():
+        interpreter_name = "python.exe" if os.name == "nt" else "python"
+        return (
+            project_root()
+            / ".venv"
+            / ("Scripts" if os.name == "nt" else "bin")
+            / interpreter_name
+        )
+
+    return Path(sys.executable).resolve()
+
+
+def core_site_packages_dir() -> Path:
+    """Return the site-packages directory for Celune's core environment."""
+    if not running_compiled():
+        return Path(sysconfig.get_paths()["purelib"]).resolve()
+
+    interpreter = core_python_executable()
+    virtualenv = interpreter.parent.parent
+    if os.name == "nt":
+        return virtualenv / "Lib" / "site-packages"
+
+    python_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    return virtualenv / "lib" / python_version / "site-packages"
 
 
 def default_config_path() -> Path:

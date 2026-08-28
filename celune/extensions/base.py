@@ -1,25 +1,25 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Celune's extension annotations and classes."""
 
 from abc import ABC
 from pathlib import Path
-from typing import Optional, Union
+from typing import Union, Optional
 
-from ..dataclasses.extensions import CeluneContext
+from ..typing.aliases import LogLevel
 from ..exceptions import IncompleteExtensionError
+from ..dataclasses.extensions import CeluneContext
 
 
 class CeluneExtension(ABC):
     """Celune extension abstract base class."""
 
     EXTENSION_NAME = "unknown"
-    AUTOSTART = False
 
     def __init__(self, context: CeluneContext) -> None:
         self.ctx = context
 
     @property
-    def name(self) -> str:  # noqa
+    def name(self) -> str:
         """Return the extension's display name.
 
         Returns:
@@ -28,17 +28,13 @@ class CeluneExtension(ABC):
         return self.EXTENSION_NAME
 
     @property
-    def state(self) -> str:  # noqa
+    def state(self) -> str:
         """Read Celune's current state.
 
         Returns:
             str: The current Celune runtime state string.
         """
         return self.ctx.get_state()
-
-    def autostart(self) -> None:
-        """Run deprecated extension startup logic."""
-        self.log(f"{self.name} has no autostart, skipping", "warning")
 
     def invoke(self, *args, **kwargs) -> None:
         """Run extension invocation logic.
@@ -54,14 +50,21 @@ class CeluneExtension(ABC):
             f"{self.__class__.__name__}.invoke() is not implemented"
         )
 
-    def log(self, msg: str, severity: str = "info") -> None:
+    def log(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
         """Log to Celune's logs.
 
         Args:
             msg: The message to append to Celune's log output.
             severity: The message severity level.
+            loglevel: The minimum configured log level required to append the line.
         """
-        self.ctx.log(f"[{self.name}] {msg}", severity)
+        self.ctx.log(f"[{self.name}] {msg}", severity, loglevel=loglevel)
 
     def say(
         self,

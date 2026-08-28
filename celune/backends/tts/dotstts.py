@@ -1,39 +1,31 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """dots.tts MeanFlow backend implementation for Celune."""
 
-import contextlib
 import os
 import time
-from collections.abc import Callable, Generator, Iterator, Mapping
-from typing import Optional, Protocol, cast
+import contextlib
+from typing import Optional, cast
+from collections.abc import Mapping, Callable, Iterator, Generator
 
 import loguru
 import numpy as np
-import torch
+from transformers import AutoTokenizer
 from dots_tts.runtime import DotsTtsRuntime
 
+from ...utils import discard, custom_assert
+from ...i18n import string
+from ...typing.backends import _LoguruLogger
 from ...cevoice import CEVoiceLoader, default_loader
+from ...paths import huggingface_progress
 from ...typing.aliases import AudioChunk, AudioChunks
-from ...utils import custom_assert, discard
-from .base import CeluneBackend, cached_hf_snapshot_path, local_hf_offline_mode
-
-
-class _LoguruLogger(Protocol):
-    """Subset of Loguru's logger interface used by the backend noise suppressor."""
-
-    def disable(self, name: str) -> None:
-        """Disable one logger namespace.
-
-        Args:
-            name: Logger namespace that should be silenced temporarily.
-        """
-
-    def enable(self, name: str) -> None:
-        """Enable one logger namespace.
-
-        Args:
-            name: Logger namespace that should be re-enabled after suppression.
-        """
+from .base import (
+    _to_numpy_audio as normalize_streamed_audio,
+)
+from .base import (
+    CeluneBackend,
+    local_hf_offline_mode,
+    cached_hf_snapshot_path,
+)
 
 
 class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
@@ -43,7 +35,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
     uses_voice_bundles: bool = True
     chunk_rate: float = 6.25
     max_new_tokens: int = 512
-    supported_languages: tuple[str, ...] = (  # noqa
+    supported_languages: tuple[str, ...] = (
         "ar",
         "my",
         "zh-cn",
@@ -107,7 +99,7 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
             loader.materialize(name, "wav")
 
     @property
-    def voices(self) -> list[str]:  # noqa
+    def voices(self) -> list[str]:
         """Return the voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:
@@ -186,6 +178,17 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
 
     suppress_backend_output = _suppress_backend_output
 
+    @staticmethod
+    def _fix_checkpoint_tokenizer(model: DotsTtsRuntime) -> None:
+        """Reload dots.tts's tokenizer with Transformers' Mistral regex fix."""
+        tokenizer = AutoTokenizer.from_pretrained(
+            str(model.pretrained_path),
+            local_files_only=True,
+            fix_mistral_regex=True,
+        )
+        model.model.tokenizer = tokenizer
+        model.model.core.tokenizer = tokenizer
+
     def model_is_available_locally(
         self, model: str, lang: Optional[str] = None
     ) -> tuple[bool, Optional[str]]:
@@ -227,10 +230,11 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
 
         target = path if available and path is not None else model_id
         if target == model_id:
-            self.log("Downloading TTS model...", "info")
+            self.log(string("tts.model_download_start"), "info")
 
         with (
             local_hf_offline_mode(available and path is not None),
+            huggingface_progress(self.report_progress),
             self._suppress_backend_output(),
         ):
             self.model = DotsTtsRuntime.from_pretrained(
@@ -239,15 +243,11 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                 optimize=optimize,
                 max_generate_length=max_generate_length,
             )
+            self._fix_checkpoint_tokenizer(self.model)
 
         return self.model
 
-    @staticmethod
-    def _to_numpy_audio(chunk: torch.Tensor) -> AudioChunk:
-        """Convert one streamed torch chunk to a Celune-compatible audio array."""
-        audio = chunk.detach().float().cpu().numpy()
-        audio = np.asarray(audio, dtype=np.float32).reshape(-1)
-        return audio
+    _to_numpy_audio = staticmethod(normalize_streamed_audio)
 
     def generate_stream(
         self, model: DotsTtsRuntime, **kwargs
@@ -322,9 +322,12 @@ class DotsTtsMF(CeluneBackend[DotsTtsRuntime]):
                 first_chunk_time: Optional[float] = None
 
                 for chunk in stream:
+                    audio = self._to_numpy_audio(chunk)
+                    if audio.size == 0:
+                        continue
                     if first_chunk_time is None:
                         first_chunk_time = time.monotonic()
-                    batch.append(self._to_numpy_audio(chunk))
+                    batch.append(audio)
                     if len(batch) < chunk_size:
                         continue
 

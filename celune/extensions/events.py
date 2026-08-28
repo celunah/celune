@@ -1,56 +1,68 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Celune's internal extension event dispatcher and decorators."""
 
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Optional, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Literal, TypeVar, Optional, cast, overload
 
-from ..typing.aliases import DispatcherCallback
+from ..utils import format_error_message
+from ..typing.aliases import LogLevel, DispatcherCallback
 from ..typing.events import (
-    AudioEndEventCallback,
-    AudioStartEventCallback,
-    CharacterChangedEventCallback,
-    CharacterLoadedEventCallback,
-    CharacterUnloadedEventCallback,
-    ErrorEventCallback,
-    EventCallback,
     EventName,
     EventPayload,
+    EventCallback,
+    ErrorEventCallback,
     FatalEventCallback,
-    GenerationEndEventCallback,
-    GenerationErrorEventCallback,
-    GenerationStartEventCallback,
     ReadyEventCallback,
+    AudioEndEventCallback,
     ShutdownEventCallback,
+    AudioStartEventCallback,
     StateChangedEventCallback,
     VoiceChangedEventCallback,
+    GenerationEndEventCallback,
+    CharacterLoadedEventCallback,
+    GenerationErrorEventCallback,
+    GenerationStartEventCallback,
+    CharacterChangedEventCallback,
+    AgentTaskFinishedEventCallback,
+    CharacterUnloadedEventCallback,
+    AgentChoiceRequestedEventCallback,
+    AgentTaskStateChangedEventCallback,
+    AgentApprovalRequestedEventCallback,
 )
-from ..utils import format_error
 
 if TYPE_CHECKING:
     from ..dataclasses.events import (
-        AudioEndEvent,
-        AudioStartEvent,
-        CharacterChangedEvent,
-        CharacterLoadedEvent,
-        CharacterUnloadedEvent,
         ErrorEvent,
         FatalEvent,
-        GenerationEndEvent,
-        GenerationErrorEvent,
-        GenerationStartEvent,
         ReadyEvent,
+        AudioEndEvent,
         ShutdownEvent,
+        AudioStartEvent,
         StateChangedEvent,
         VoiceChangedEvent,
+        GenerationEndEvent,
+        CharacterLoadedEvent,
+        GenerationErrorEvent,
+        GenerationStartEvent,
+        CharacterChangedEvent,
+        AgentTaskFinishedEvent,
+        CharacterUnloadedEvent,
+        AgentChoiceRequestedEvent,
+        AgentTaskStateChangedEvent,
+        AgentApprovalRequestedEvent,
     )
 
 
 EVENT_NAMES: tuple[EventName, ...] = (
+    "agent_task_state_changed",
+    "agent_approval_requested",
+    "agent_choice_requested",
+    "agent_task_finished",
     "ready",
     "shutdown",
     "fatal",
@@ -95,13 +107,47 @@ class EventDispatcher:
         self,
         *,
         log_warning: Callable[[str, str], None],
-        dev: bool = False,
+        log_level: LogLevel = "info",
+        log_debug: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._log_warning = log_warning
-        self._dev = dev
+        self._log_level = log_level
+        self._log_debug = log_debug
         self._lock = threading.RLock()
         self._callbacks: dict[EventName, list[DispatcherCallback]] = defaultdict(list)
         self._owners: dict[tuple[EventName, DispatcherCallback], str] = {}
+
+    @overload
+    def subscribe(
+        self,
+        event_name: Literal["agent_task_state_changed"],
+        callback: AgentTaskStateChangedEventCallback,
+        owner_name: Optional[str] = None,
+    ) -> None: ...
+
+    @overload
+    def subscribe(
+        self,
+        event_name: Literal["agent_approval_requested"],
+        callback: AgentApprovalRequestedEventCallback,
+        owner_name: Optional[str] = None,
+    ) -> None: ...
+
+    @overload
+    def subscribe(
+        self,
+        event_name: Literal["agent_choice_requested"],
+        callback: AgentChoiceRequestedEventCallback,
+        owner_name: Optional[str] = None,
+    ) -> None: ...
+
+    @overload
+    def subscribe(
+        self,
+        event_name: Literal["agent_task_finished"],
+        callback: AgentTaskFinishedEventCallback,
+        owner_name: Optional[str] = None,
+    ) -> None: ...
 
     @overload
     def subscribe(
@@ -240,11 +286,39 @@ class EventDispatcher:
         with self._lock:
             callbacks = self._callbacks[event_name]
             typed_callback = cast(DispatcherCallback, callback)
+            resolved_owner = owner_name or self._describe_callback(typed_callback)
             if typed_callback not in callbacks:
                 callbacks.append(typed_callback)
-            self._owners[(event_name, typed_callback)] = (
-                owner_name or self._describe_callback(typed_callback)
-            )
+                self._owners[(event_name, typed_callback)] = resolved_owner
+            self._debug(f"[EVENT] subscribed name={event_name} owner={resolved_owner}")
+
+    @overload
+    def unsubscribe(
+        self,
+        event_name: Literal["agent_task_state_changed"],
+        callback: AgentTaskStateChangedEventCallback,
+    ) -> None: ...
+
+    @overload
+    def unsubscribe(
+        self,
+        event_name: Literal["agent_approval_requested"],
+        callback: AgentApprovalRequestedEventCallback,
+    ) -> None: ...
+
+    @overload
+    def unsubscribe(
+        self,
+        event_name: Literal["agent_choice_requested"],
+        callback: AgentChoiceRequestedEventCallback,
+    ) -> None: ...
+
+    @overload
+    def unsubscribe(
+        self,
+        event_name: Literal["agent_task_finished"],
+        callback: AgentTaskFinishedEventCallback,
+    ) -> None: ...
 
     @overload
     def unsubscribe(
@@ -375,6 +449,37 @@ class EventDispatcher:
             self._owners.pop((event_name, typed_callback), None)
             if not callbacks:
                 self._callbacks.pop(event_name, None)
+        self._debug(
+            f"[EVENT] unsubscribed name={event_name} callback={self._describe_callback(typed_callback)}"
+        )
+
+    @overload
+    def emit(
+        self,
+        event_name: Literal["agent_task_state_changed"],
+        event: AgentTaskStateChangedEvent,
+    ) -> None: ...
+
+    @overload
+    def emit(
+        self,
+        event_name: Literal["agent_approval_requested"],
+        event: AgentApprovalRequestedEvent,
+    ) -> None: ...
+
+    @overload
+    def emit(
+        self,
+        event_name: Literal["agent_choice_requested"],
+        event: AgentChoiceRequestedEvent,
+    ) -> None: ...
+
+    @overload
+    def emit(
+        self,
+        event_name: Literal["agent_task_finished"],
+        event: AgentTaskFinishedEvent,
+    ) -> None: ...
 
     @overload
     def emit(self, event_name: Literal["ready"], event: ReadyEvent) -> None: ...
@@ -468,18 +573,41 @@ class EventDispatcher:
                 for callback in callbacks
             }
 
+        self._debug(
+            f"[EVENT] dispatch name={event_name} callbacks={len(callbacks)} "
+            f"payload={type(event).__name__}"
+        )
+
         for callback in callbacks:
+            owner_name = owners.get(callback, self._describe_callback(callback))
+            self._debug(f"[EVENT] invoke name={event_name} owner={owner_name}")
             try:
                 callback(event)
             except Exception as exc:
-                owner_name = owners.get(callback, self._describe_callback(callback))
                 self._log_warning(
-                    (
+                    format_error_message(
                         f"[Core] Event callback failed for '{event_name}' in "
-                        f"'{owner_name}': {format_error(exc, self._dev)}"
+                        f"'{owner_name}'",
+                        exc,
+                        self._log_level,
                     ),
                     "warning",
                 )
+                self._debug(
+                    f"[EVENT] callback_error name={event_name} owner={owner_name} "
+                    f"error={type(exc).__name__}"
+                )
+            else:
+                self._debug(
+                    f"[EVENT] callback_complete name={event_name} owner={owner_name}"
+                )
+
+        self._debug(f"[EVENT] dispatch_complete name={event_name}")
+
+    def _debug(self, message: str) -> None:
+        """Emit a low-level dispatcher trace when one was configured."""
+        if self._log_debug is not None:
+            self._log_debug(message)
 
     @staticmethod
     def validate_event_name(event_name: EventName) -> None:
@@ -550,6 +678,38 @@ def iter_subscriptions(
                 EventSubscription(event_name=cast(EventName, item), enabled=True)
             )
     return tuple(normalized)
+
+
+@overload
+def subscribe(
+    event_name: Literal["agent_task_state_changed"],
+    *,
+    enabled: bool = True,
+) -> Callable[[_DecoratedCallback], _DecoratedCallback]: ...
+
+
+@overload
+def subscribe(
+    event_name: Literal["agent_approval_requested"],
+    *,
+    enabled: bool = True,
+) -> Callable[[_DecoratedCallback], _DecoratedCallback]: ...
+
+
+@overload
+def subscribe(
+    event_name: Literal["agent_choice_requested"],
+    *,
+    enabled: bool = True,
+) -> Callable[[_DecoratedCallback], _DecoratedCallback]: ...
+
+
+@overload
+def subscribe(
+    event_name: Literal["agent_task_finished"],
+    *,
+    enabled: bool = True,
+) -> Callable[[_DecoratedCallback], _DecoratedCallback]: ...
 
 
 @overload

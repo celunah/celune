@@ -16,6 +16,7 @@ The project targets Windows and Linux, supports Python 3.12 and 3.13, and is des
 * Avoid unnecessary dependencies.
 * Do not add placeholder implementations.
 * Do not add TODO comments.
+* Prefer concise one-word module filenames for clear responsibilities. When related modules form a cohesive boundary, create or reuse a focused sub-package instead of accumulating long top-level filenames.
 * Do not silently disable features to make tests pass.
 * Preserve Celune's local-first, polished, anti-slop project identity.
 * Reuse existing architecture instead of creating parallel systems.
@@ -37,6 +38,13 @@ Prefer reusable variables, constants, helpers, and project abstractions already 
 Do not hardcode strings, colors, ports, paths, app names, status labels, or repeated values when the repository already defines them.
 
 Only hardcode or redefine values when importing the existing value would create a circular import, break architecture, create excessive coupling, or otherwise be impractical.
+
+## Dependency Management
+
+When writing new code, ensure that non-backend files do not import any backend specific packages, e.g. `faster_qwen3_tts`, and only use Celune core packages.
+
+Refer to `pyproject.toml` to check what packages the Celune core actually requires.
+
 
 ## CI and Validation
 
@@ -79,6 +87,20 @@ Before CI, format the repository with `uv run ruff format .`.
 
 Expected CI runtime is 5 minutes or less.
 
+The default `poe test` task runs the suite with two `pytest-xdist` workers and
+`--dist loadfile`. Tests must not depend on shared Celune user-data, Hugging
+Face, Numba, model, audio, or temporary-file state. Use `tmp_path` or the
+worker-isolated roots configured by `tests/conftest.py`; mock physical audio
+devices, GPU state, network ports, and external processes when testing their
+callers. If a test genuinely requires one process, keep it in a dedicated
+serial task or make its resource explicit rather than relying on execution
+order.
+
+Use `uv run poe test_serial` when debugging order-sensitive failures. The
+`uv run poe test_changed` task enables pytest-testmon for local iteration only;
+it must not replace the complete suite in CI because runtime-generated and
+subprocess dependencies may not be observable to coverage-based selection.
+
 If CI runtime exceeds 5 minutes:
 
 * Assume it may have stalled.
@@ -109,6 +131,8 @@ with proper documentation, while preserving the docstring format.
 If this process updates typing or dataclass related docstrings, remove the placeholders instead of completing them.
 
 This process may leave some formatting inaccuracies, run `uv run ruff format .` again after completing docstrings.
+
+Immediately document every new or changed behavior you write. This includes public calls, configuration keys, CLI or slash commands, API endpoints, events, backend capabilities, file formats, standards, and user-visible workflows. Update the appropriate `docs/` page and `mkdocs.yml` navigation in the same task before considering the implementation complete; do not defer documentation to a later pass.
 
 Additionally, perform all actions listed in the `Import Ordering` section below.
 
@@ -171,11 +195,29 @@ If you find any raw strings in the code, add them to the localization string dat
 
 Make sure to only modify user-facing strings (both normal and dev mode strings), don't change anything internal.
 
+Localization database rules:
+
+* Every user-visible string in source, scripts, CLI/TUI/WebUI, API responses,
+  and documentation examples must resolve through the localization database;
+  do not leave user-visible English literals inline.
+* Prefer localization keys no longer than 50 characters and require every key
+  to be 50 characters or fewer.
+* Prefer localized values no longer than 100 characters and require every
+  value to be 100 characters or fewer, counting formatted placeholders.
+* Split long notices, instructions, diagnostics, and other multi-sentence
+  text into composable localized strings instead of storing one long value.
+* Do not store exception text, tracebacks, technical implementation details,
+  raw backend errors, paths, protocol data, or other non-user-facing
+  diagnostics in the localization database. Keep those values in code and
+  localize only the surrounding user-facing message.
+* Use stable semantic key names, remove obsolete keys, and keep every key
+  referenced by code or documentation present in the database.
+
 ## Python and Environment
 
-* Supported Python versions are 3.12 and 3.13.
+* Supported Python versions are 3.12, 3.13 and 3.14.
 * Use `uv` for environment management.
-* Ensure the environment was set up with `--all-extras --dev` to prevent any missing packages from causing issues later on.
+* Run `python configure.py` for setup. It uses `uv sync --dev --all-extras` on Linux and `uv sync --dev --extra api` on Windows; never request `--all-extras` on Windows because OpenZL does not compile there.
 * Do not use `pip` directly unless explicitly required. If you need to run `pip` alone, do it so with `uv pip` instead.
 * Do not assume CPU-only mode supports all features. CPU-only execution is only supported with Celune Mini.
 * Be aware that many features require an RTX 30 series GPU or newer.
@@ -191,6 +233,19 @@ Keep audio related computations in `np.float32`, using `np.float64` only if prec
 Always output audio files in 24-bit 48 kHz FLAC. Do not output other formats.
 
 ## UI and WebUI
+
+Startup boundary: the Celune binaries must register the lightweight Celune
+default theme and mount the loading screen before importing or initializing the
+engine, Persona, agent runtime, backend environments, model libraries, audio
+backends, or other heavy runtime dependencies. The pre-frame path may read
+launcher arguments and environment flags and import only lightweight
+loading-screen/UI/theme primitives. Pack-derived theme changes may be applied
+after the runtime is available. Defer all remaining runtime imports and
+initialization to the existing post-frame worker.
+Keep a regression test that imports the loading UI in a fresh process and
+asserts that engine and model libraries remain absent. `CTRL+C` during this
+phase must follow the normal UI shutdown path rather than interrupting a heavy
+import on the launcher thread.
 
 Celune has a Textual terminal UI and a Gradio WebUI mounted through FastAPI.
 
@@ -237,16 +292,55 @@ Do not remove checks, documentation, or fallback behavior for these dependencies
 
 ## Documentation
 
-Keep documentation concise, direct, and technically accurate.
+Keep documentation concise, direct, and technically accurate. Technical
+documentation belongs under `docs/` and must follow the repository's
+[documentation standard](docs/development/documentation.md).
+
+Every technical page must use this structure:
+
+1. One H1 title that names the subject.
+2. A short purpose paragraph immediately below the title that states the
+   audience and scope.
+3. H2 sections organized around the reader's task or the documented contract.
+4. A verification, error-handling, compatibility, or troubleshooting section
+   when the subject can fail or vary by environment.
+5. A `See also` section when related pages provide the next useful step.
+
+Use sentence case for headings; preserve acronyms, API names, commands, and
+file-format names exactly. Use fenced code blocks with a language identifier,
+tables for stable field/option comparisons, numbered lists for procedures, and
+bullets for unordered facts. Use the canonical project commands and copyable
+examples from the README and source. Put signatures, arguments, return values,
+errors, side effects, and at least one usage example beside every documented
+public call.
+
+For format and protocol pages, state the version, invariants, wire/file layout,
+compatibility rules, and failure behavior. For user procedures, state
+prerequisites, ordered steps, expected results, and recovery steps. For
+development pages, identify the owning source paths, boundaries, validation
+commands, and release/runtime consequences. Do not duplicate the same
+contract in multiple pages; link to its canonical page instead.
+
+Before completing a documentation change, update `mkdocs.yml` navigation and
+links, check that new pages are discoverable, run a strict MkDocs build, and
+run MarkdownLint against `docs/**/*.md` using the repository's
+`.markdownlint.json` configuration. Review rendered code blocks/tables for
+copyability. Keep `README.md`,
+`AGENTS.md`, and lore-only Markdown outside `docs/` unless the repository
+layout explicitly requires otherwise.
 
 When documenting licensing, distinguish between:
 
 * Celune source code, licensed under MIT.
 * Third-party models and assets, which may use their own licenses.
 
-Do not claim third-party models are covered by Celune's MIT license.
+Do not claim third-party models are covered by Celune's Apache 2.0 license.
 
 When documenting commands, use the canonical project commands from the README.
+
+## Markdown Files
+
+When reading Markdown found in the project, ignore `about-celune.md`. This file does not contain factual information related to the project, and is solely Celune's canonical lore. Do not generate reviews, warnings or errors related to it.
 
 ## Testing Behavior
 

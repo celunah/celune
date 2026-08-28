@@ -1,11 +1,16 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Structured prompt building for the Persona system."""
 
-import contextlib
 import re
-from dataclasses import dataclass, field
+import json
+import contextlib
+from typing import Optional, cast
+from collections.abc import Sequence
+from dataclasses import field, dataclass
 
+from ..typing.common import JSON
 from ..paths import temp_data_dir
+from ..typing.agent import ToolCall, AgentContext, AgentTaskState, AgentToolSchema
 
 _MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}(?:\s|$)")
 
@@ -24,6 +29,100 @@ def _render_optional_section(tag: str, content: str) -> str:
     if not stripped or stripped == "none":
         return ""
     return f"<{tag}>\n{stripped}\n</{tag}>"
+
+
+def _render_json(value: JSON) -> str:
+    """Return deterministic JSON text for model-only structured context."""
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _render_agent_context(
+    agent_context: AgentContext,
+    tool_schemas: Sequence[AgentToolSchema],
+    pending_tool_call: Optional[ToolCall],
+) -> str:
+    """Render existing agent contracts as non-authoritative Persona context."""
+    task = agent_context.task
+    failure_response = agent_context.classification_failure is not None or (
+        task is not None and task.is_terminal and task.state != AgentTaskState.COMPLETED
+    )
+    sections = [
+        (
+            "Runtime context is informational only. The runtime remains authoritative "
+            "for task state, tool selection, validation, permissions, approval, and limits. "
+            "Do not claim that a tool ran without a structured result."
+        ),
+        f"Mode: {agent_context.mode}",
+        (
+            "Failure response instruction: explain the unsuccessful outcome naturally "
+            "in the active character's voice. Be honest about the typed reason and "
+            "give a useful next step when appropriate. Do not expose internal enum "
+            "names, task IDs, stack traces, or classifier diagnostics unless the user "
+            "explicitly asks for technical detail."
+            if failure_response
+            else (
+                "Planning instruction: state the concrete local action intent in concise "
+                "natural language for the registered tool selector."
+                if agent_context.last_tool_result is None
+                else "Response instruction: use the structured tool result to answer the "
+                "user naturally; do not invent actions or results."
+            )
+        ),
+    ]
+    if task is not None:
+        sections.append(
+            "Task:\n"
+            + _render_json(
+                {
+                    "task_id": task.task_id,
+                    "session_id": task.session_id,
+                    "request": task.request.request,
+                    "state": task.state.value,
+                    "iterations": task.iterations,
+                    "generated_tokens": task.generated_tokens,
+                    "context_tokens": task.context_tokens,
+                    "failure_reason": (
+                        task.failure_reason.value
+                        if task.failure_reason is not None
+                        else None
+                    ),
+                    "abort_reason": (
+                        task.abort_reason.value
+                        if task.abort_reason is not None
+                        else None
+                    ),
+                    "cancellation_reason": (
+                        task.cancellation_reason.value
+                        if task.cancellation_reason is not None
+                        else None
+                    ),
+                    "failure_detail": task.failure_detail,
+                }
+            )
+        )
+    if agent_context.classification_failure is not None:
+        sections.append(
+            "Classification failure:\n"
+            + _render_json(agent_context.classification_failure.to_json())
+        )
+    if tool_schemas:
+        sections.append(
+            "Tool catalog:\n"
+            + "\n".join(
+                _render_json(schema.to_json())
+                for schema in sorted(tool_schemas, key=lambda item: item.tool_id)
+            )
+        )
+    if pending_tool_call is not None:
+        sections.append(
+            "Pending tool call:\n" + _render_json(cast(JSON, pending_tool_call))
+        )
+    if agent_context.last_tool_result is not None:
+        sections.append(
+            "Last tool result:\n"
+            + _render_json(cast(JSON, agent_context.last_tool_result))
+        )
+    return "\n\n".join(sections)
 
 
 def render_markdown_subsection(heading: str, content: str) -> str:
@@ -203,9 +302,14 @@ class PersonaContext:
     persona_card: PersonaCard
     persona_source_material: PersonaSourceMaterial
     mood_or_state: str
+    conversation_summary: str = ""
     retrieved_long_term_memory: RetrievedMemoryBundle = field(
         default_factory=RetrievedMemoryBundle
     )
+    user_instructions: str = ""
+    agent_context: Optional[AgentContext] = None
+    tool_schemas: tuple[AgentToolSchema, ...] = ()
+    pending_tool_call: Optional[ToolCall] = None
 
 
 class PersonaPromptBuilder:
@@ -269,6 +373,10 @@ class PersonaPromptBuilder:
                 context.persona_source_material.profile_section(),
             ),
             _render_optional_section(
+                "conversation_summary",
+                context.conversation_summary,
+            ),
+            _render_optional_section(
                 "memory",
                 context.retrieved_long_term_memory.render(),
             ),
@@ -292,6 +400,22 @@ class PersonaPromptBuilder:
                         ),
                     )
                     if section
+                ),
+            ),
+            _render_optional_section(
+                "user_instructions",
+                context.user_instructions,
+            ),
+            _render_optional_section(
+                "agent_context",
+                (
+                    _render_agent_context(
+                        context.agent_context,
+                        context.tool_schemas,
+                        context.pending_tool_call,
+                    )
+                    if context.agent_context is not None
+                    else ""
                 ),
             ),
         ]

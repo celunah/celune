@@ -1,30 +1,31 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Celune automatic update helpers."""
 
 from __future__ import annotations
 
-import ctypes
-import hashlib
-import json
 import os
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
+import json
+import stat
 import time
-import urllib.request
+import ctypes
+import shutil
+import hashlib
 import zipfile
+import tempfile
+import subprocess
+import urllib.request
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional, Union
+from typing import Union, Optional
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
+from .i18n import string
 from . import __version__
 from .constants import CELUNE_UA
 from .exceptions import UpdateError
-from .i18n import string
-from .paths import project_root, running_compiled
 from .typing.common import JSONSerializable
+from .paths import project_root, running_compiled
 
 REMOTE_URL = "https://github.com/celunah/celune.git"
 RELEASES_API_URL = "https://api.github.com/repos/celunah/celune/releases?per_page=100"
@@ -561,13 +562,48 @@ def check_for_update() -> Optional[UpdateInfo]:
 
 def _extract_artifact_root(zip_path: Path, destination: Path) -> Path:
     """Extract one artifact ZIP and return the directory containing the manifest."""
+    destination_root = destination.resolve()
     with zipfile.ZipFile(zip_path) as archive:
+        for member in archive.infolist():
+            _validate_zip_member(member, destination_root)
         archive.extractall(destination)
 
     for manifest in destination.rglob(UPDATE_MANIFEST_NAME):
         return manifest.parent
 
-    raise UpdateError("downloaded artifact is missing update metadata")
+    raise UpdateError(string("cli.update_missing_metadata"))
+
+
+def _validate_zip_member(member: zipfile.ZipInfo, destination: Path) -> None:
+    """Reject ZIP members that could escape the extraction destination."""
+    member_name = member.filename
+    normalized_name = member_name.replace("\\", "/")
+    member_path = PurePosixPath(normalized_name)
+    windows_path = PureWindowsPath(member_name)
+
+    if (
+        not member_name
+        or "\x00" in member_name
+        or member_path.is_absolute()
+        or windows_path.drive
+        or any(part == ".." for part in member_path.parts)
+    ):
+        raise UpdateError(
+            string("cli.update_unsafe_zip_member_path", member=repr(member_name))
+        )
+
+    if stat.S_ISLNK(member.external_attr >> 16):
+        raise UpdateError(
+            string("cli.update_unsafe_zip_symbolic_link", member=repr(member_name))
+        )
+
+    candidate = (destination / Path(*member_path.parts)).resolve()
+    try:
+        candidate.relative_to(destination)
+    except ValueError as exc:
+        raise UpdateError(
+            string("cli.update_zip_member_escape", member=repr(member_name))
+        ) from exc
 
 
 def _replace_path(source: Path, destination: Path) -> None:
@@ -599,9 +635,7 @@ def _apply_compiled_update(install_dir: Optional[Path] = None) -> None:
         try:
             _download_release_zip(release, zip_path)
         except OSError as exc:
-            raise UpdateError(
-                string("cli.update_download_failed", error=str(exc))
-            ) from exc
+            raise UpdateError(string("cli.update_download_failed")) from exc
 
         release_manifest = _manifest_from_zip(zip_path)
         if release_manifest is None or not _release_manifest_matches(
@@ -612,9 +646,7 @@ def _apply_compiled_update(install_dir: Optional[Path] = None) -> None:
         try:
             extracted_root = _extract_artifact_root(zip_path, temp_root / "artifact")
         except (OSError, zipfile.BadZipFile, UpdateError) as exc:
-            raise UpdateError(
-                string("cli.update_unpack_failed", error=str(exc))
-            ) from exc
+            raise UpdateError(string("cli.update_unpack_failed")) from exc
 
         for source in extracted_root.iterdir():
             _replace_path(source, bundle_dir / source.name)

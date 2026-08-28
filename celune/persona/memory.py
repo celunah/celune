@@ -1,27 +1,32 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Persistent long-term memory helpers for the Persona system."""
 
 from __future__ import annotations
 
-import datetime
-import json
 import re
+import json
 import uuid
-from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+import datetime
 from pathlib import Path
-from typing import Optional, Union, cast
+from collections.abc import Sequence
+from typing import Union, Optional, cast
+from dataclasses import asdict, dataclass
 
-import numpy as np
 import torch
 import torch.nn.functional as f
-from transformers import AutoModel, AutoTokenizer
+import numpy as np
+from transformers import (
+    AutoModel,
+    AutoTokenizer,
+    PreTrainedModel,
+    PreTrainedTokenizerBase,
+)
 
-from ..constants import PERSONA_MEMORY_EMBEDDING_MODEL
 from ..paths import persona_data_dir
-from ..typing.aliases import EmbeddingBackend, EmbeddingVector
-from ..typing.common import JSONSerializable
 from .paths import persona_character_slug
+from ..typing.common import JSON, JSONSerializable
+from ..constants import PERSONA_MEMORY_EMBEDDING_MODEL
+from ..typing.aliases import EmbeddingVector, EmbeddingBackend
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
 _STOPWORDS = {
@@ -54,6 +59,40 @@ _STOPWORDS = {
     "what",
     "you",
 }
+_EXPLICIT_MEMORY_PATTERNS = (
+    r"^(?:please\s+)?remember(?:\s+that)?\s+(.+)$",
+    r"^(?:please\s+)?(?:don't|do not)\s+forget(?:\s+that)?\s+(.+)$",
+    (
+        r"^(?:i\s+want|i'd\s+like|i\s+would\s+like)\s+you\s+to\s+"
+        r"(?:remember|know|keep\s+in\s+mind)(?:\s+that)?\s*[:,-]?\s*(.+)$"
+    ),
+    r"^(?:please\s+)?keep(?:\s+(?:this|that))?\s+in\s+mind(?:\s+that)?\s*[:,-]?\s*(.+)$",
+    r"^(?:please\s+)?bear\s+in\s+mind(?:\s+that)?\s*[:,-]?\s*(.+)$",
+    (
+        r"^(?:please\s+)?(?:make|take)\s+(?:a\s+)?note"
+        r"\b(?:\s+(?:that|of)(?:\s+(?:this|that))?|\s+(?:this|that))?"
+        r"\s*[:,-]?\s*(.+)$"
+    ),
+    r"^(?:please\s+)?note\b(?:\s+(?:that|of)(?:\s+(?:this|that))?|\s+(?:this|that))?\s*[:,-]?\s*(.+)$",
+    r"^(?:please\s+)?(?:save|store)\s+(?:this|that)(?:\s+(?:in|to)\s+(?:your\s+)?memory)?\s*[:,-]?\s*(.+)$",
+    r"^(?:please\s+)?add\s+(?:this|that)\s+to\s+(?:your\s+)?memory\s*[:,-]?\s*(.+)$",
+    r"^(?:please\s+)?keep(?:\s+(?:this|that))?\s+on\s+record\s*[:,-]?\s*(.+)$",
+    r"^(?:please\s+)?make\s+sure\s+you\s+remember(?:\s+that)?\s*[:,-]?\s*(.+)$",
+    (
+        r"^(?:for\s+(?:future|our\s+future)\s+conversations|for\s+next\s+time|"
+        r"going\s+forward|from\s+now\s+on)\s*[:,-]?\s*(.+)$"
+    ),
+    r"^(?:you\s+should|you\s+need\s+to)\s+know(?:\s+that)?\s*[:,-]?\s*(.+)$",
+    (
+        r"^(?:it(?:'s|\s+is)|this\s+is|that\s+is)\s+(?:a\s+)?"
+        r"(?:key|important)\s+(?:fact|detail)(?:\s+that)?\s*[:,-]?\s*(.+)$"
+    ),
+)
+_SENSITIVE_MEMORY_PATTERN = re.compile(
+    r"\b(?:password|passcode|secret|api[ -]?key|access token|private key|"
+    r"credit card|bank account|social security|\bssn\b)\b",
+    flags=re.IGNORECASE,
+)
 
 _EMBEDDING_BACKENDS: dict[str, EmbeddingBackend] = {}
 _FAILED_EMBEDDING_MODELS: set[str] = set()
@@ -117,14 +156,21 @@ def _load_transformer_text_embedder(model_name: str) -> Optional[EmbeddingBacken
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
-        model = AutoModel.from_pretrained(model_name, local_files_only=True)
+
+        if tokenizer is None:
+            raise RuntimeError("tokenizer not available")
+
+        model = cast(
+            PreTrainedModel,
+            AutoModel.from_pretrained(model_name, local_files_only=True),
+        )
         model.eval()
         model.to(torch.device("cpu"))
     except (RuntimeError, AssertionError, ValueError, OSError):
         _FAILED_EMBEDDING_MODELS.add(model_name)
         return None
 
-    backend = (tokenizer, model)
+    backend: EmbeddingBackend = (tokenizer, model)
     _EMBEDDING_BACKENDS[model_name] = backend
     return backend
 
@@ -139,6 +185,8 @@ def _compute_text_embeddings(
         return None
 
     tokenizer, model = backend
+    tokenizer = cast(PreTrainedTokenizerBase, tokenizer)
+
     try:
         encoded = tokenizer(
             list(texts),
@@ -181,6 +229,18 @@ class MemoryRecord:
     created_at: str
     updated_at: str
     last_used_at: str
+
+    def to_json(self) -> JSON:
+        """Serialize this memory record for typed agent and API results."""
+        return {
+            "id": self.id,
+            "content": self.content,
+            "importance": self.importance,
+            "explicit": self.explicit,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "last_used_at": self.last_used_at,
+        }
 
     @staticmethod
     def create(content: str, importance: int, explicit: bool) -> MemoryRecord:
@@ -485,6 +545,26 @@ class PersonaMemoryStore:
             for record in selected
         ]
 
+    def forget(self, character_name: str, record_id: str) -> bool:
+        """Remove one character-scoped memory by its stable record identifier.
+
+        Args:
+            character_name: Character whose memory should be changed.
+            record_id: Identifier of the memory record to remove.
+
+        Returns:
+            bool: Whether a matching record was removed.
+        """
+        normalized_id = record_id.strip()
+        if not normalized_id:
+            raise ValueError("memory record_id must not be empty")
+        records = self.load_records(character_name)
+        remaining = [record for record in records if record.id != normalized_id]
+        if len(remaining) == len(records):
+            return False
+        self.save_records(character_name, remaining)
+        return True
+
     def _embedding_cache_key(self, text: str) -> str:
         """Return the cache key used for one normalized text embedding."""
         return f"{self.embedding_model}\0{text.casefold()}"
@@ -577,11 +657,7 @@ class PersonaMemoryStore:
         if lowered.startswith(("do you remember", "what do you remember")):
             return None
 
-        patterns = (
-            r"^(?:please\s+)?remember(?:\s+that)?\s+(.+)$",
-            r"^(?:please\s+)?don't forget(?:\s+that)?\s+(.+)$",
-        )
-        for pattern in patterns:
+        for pattern in _EXPLICIT_MEMORY_PATTERNS:
             match = re.match(pattern, text, flags=re.IGNORECASE)
             if match is None:
                 continue
@@ -673,3 +749,82 @@ class PersonaMemoryStore:
                     )
 
         return candidates
+
+
+def classifier_memory_candidates(
+    payload: JSONSerializable,
+    *,
+    minimum_confidence: float = 0.82,
+    maximum_candidates: int = 3,
+) -> list[MemoryCandidate]:
+    """Parse safe long-term memory candidates from classifier JSON output.
+
+    Args:
+        payload: Classifier response text or decoded JSON payload.
+        minimum_confidence: Minimum classifier confidence required for storage.
+        maximum_candidates: Maximum number of candidates accepted from one turn.
+
+    Returns:
+        list[MemoryCandidate]: Validated, non-explicit memory candidates.
+    """
+    if maximum_candidates <= 0:
+        return []
+
+    raw_payload: JSONSerializable = payload
+    if isinstance(payload, str):
+        text = payload.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text).strip()
+        try:
+            raw_payload = cast(JSONSerializable, json.loads(text))
+        except (TypeError, ValueError):
+            return []
+
+    if isinstance(raw_payload, dict):
+        raw_candidates = raw_payload.get("memories")
+    elif isinstance(raw_payload, list):
+        raw_candidates = raw_payload
+    else:
+        return []
+
+    if not isinstance(raw_candidates, list):
+        return []
+
+    threshold = max(0.0, min(1.0, minimum_confidence))
+    candidates: list[MemoryCandidate] = []
+    seen: set[str] = set()
+    for item in raw_candidates:
+        if not isinstance(item, dict):
+            continue
+
+        content = item.get("content")
+        confidence = item.get("confidence")
+        importance = item.get("importance", 1)
+        if not isinstance(content, str) or not isinstance(confidence, (int, float)):
+            continue
+        if isinstance(confidence, bool) or float(confidence) < threshold:
+            continue
+
+        normalized = _normalize_text(content)
+        key = normalized.casefold()
+        if (
+            not normalized
+            or key in seen
+            or _SENSITIVE_MEMORY_PATTERN.search(normalized)
+        ):
+            continue
+
+        if isinstance(importance, bool) or not isinstance(importance, (int, float)):
+            importance = 1
+        candidates.append(
+            MemoryCandidate(
+                content=normalized,
+                importance=max(1, min(3, int(importance))),
+                explicit=False,
+            )
+        )
+        seen.add(key)
+        if len(candidates) >= maximum_candidates:
+            break
+
+    return candidates

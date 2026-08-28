@@ -1,41 +1,44 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """GPT-SoVITS backend implementation for Celune."""
 
-import contextlib
-import hashlib
-import importlib
 import os
-import secrets
-import shutil
-import subprocess
 import sys
-import tempfile
-import threading
 import time
-import urllib.request
+import shutil
+import socket
+import hashlib
+import secrets
 import zipfile
-from collections.abc import Callable, Generator, Iterator, Mapping
-from pathlib import Path
+import tempfile
+import importlib
+import threading
+import contextlib
+import subprocess
+import urllib.request
 from types import ModuleType
-from typing import Optional, Union, cast
+from typing import Union, Optional, cast
+from pathlib import Path
+from collections.abc import Mapping, Callable, Iterator, Generator
 
 import numpy as np
-import soundfile as sf
 import torch
+import soundfile as sf
 from huggingface_hub import snapshot_download
 
-from ...cevoice import CEVoiceLoader, default_loader
+from .base import CeluneBackend
 from ...i18n import string
 from ...paths import (
     app_data_dir,
-    huggingface_hub_cache_dir,
     project_root,
+    runtime_data_dir,
+    huggingface_progress,
+    huggingface_hub_cache_dir,
 )
-from ...typing.aliases import AudioChunk, AudioChunkNonNormalized, RuntimeValue
-from ...typing.backends import GPTSoVITSPipeline, _GPTSoVITSConfig
-from ...typing.common import JSONSerializable
 from ...utils import custom_assert
-from .base import CeluneBackend
+from ...cevoice import CEVoiceLoader, default_loader
+from ...typing.common import JSONSerializable
+from ...typing.aliases import AudioChunk, RuntimeValue, AudioChunkNonNormalized
+from ...typing.backends import GPTSoVITSPipeline, _GPTSoVITSConfig
 
 
 class _GPTSoVITSRuntime:
@@ -100,27 +103,24 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         "v2Pro",
     )
     _nltk_resources: Mapping[str, tuple[str, ...]] = {
-        "averaged_perceptron_tagger": (
-            "taggers/averaged_perceptron_tagger.zip",
-            "taggers/averaged_perceptron_tagger/",
-        ),
         "averaged_perceptron_tagger_eng": (
             "taggers/averaged_perceptron_tagger_eng/",
             "taggers/averaged_perceptron_tagger_eng.zip",
         ),
-        "cmudict": ("corpora/cmudict.zip", "corpora/cmudict/"),
     }
     _fast_langdetect_model_name: str = "lid.176.bin"
     _reference_frame_ms: int = 20
     _reference_silence_threshold: float = 0.01
     _reference_silence_padding_ms: int = 80
+    _nltk_download_timeout_seconds: float = 30.0
 
     _variant_order: tuple[str, ...] = (
         "v2ProPlus",
-        "v4",
         "v2Pro",
+        "v4",
         "v3",
     )
+    _fragment_streaming_variants: frozenset[str] = frozenset(("v3", "v4"))
     _variant_aliases: Mapping[str, str] = {
         "v2pro": "v2Pro",
         "v2proplus": "v2ProPlus",
@@ -207,7 +207,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
     @classmethod
     def _managed_source_root(cls, create: bool = False) -> Path:
         """Return the Celune-managed GPT-SoVITS source directory."""
-        return app_data_dir(create=create) / cls._managed_source_dir_name
+        return runtime_data_dir(create=create) / cls._managed_source_dir_name
 
     @staticmethod
     def _source_is_available(root: Path) -> bool:
@@ -279,7 +279,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                 ):
                     raise
                 raise RuntimeError(
-                    string("gpt_sovits.source_download_failed", error=str(error))
+                    string("gpt_sovits.source_download_failed")
                 ) from error
 
         return destination
@@ -384,7 +384,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             loader.materialize(name, "wav")
 
     @property
-    def default_model_id(self) -> str:  # noqa
+    def default_model_id(self) -> str:
         """Return the selected GPT-SoVITS variant identifier.
 
         Returns:
@@ -393,7 +393,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         return self.variant
 
     @property
-    def all_model_ids(self) -> list[str]:  # noqa
+    def all_model_ids(self) -> list[str]:
         """Return the selected GPT-SoVITS variant identifier.
 
         Returns:
@@ -402,7 +402,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         return [self.variant]
 
     @property
-    def voices(self) -> list[str]:  # noqa
+    def voices(self) -> list[str]:
         """Return voice names exposed by the active CEVOICE/CECHAR pack.
 
         Returns:
@@ -442,16 +442,17 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             snapshot = self._model_snapshot
             if snapshot is None:
                 try:
-                    snapshot = Path(
-                        snapshot_download(
-                            repo_id=self._model_repo_id,
-                            cache_dir=str(huggingface_hub_cache_dir(create=True)),
-                            allow_patterns=list(self._model_snapshot_patterns),
+                    with huggingface_progress(self.report_progress):
+                        snapshot = Path(
+                            snapshot_download(
+                                repo_id=self._model_repo_id,
+                                cache_dir=str(huggingface_hub_cache_dir(create=True)),
+                                allow_patterns=list(self._model_snapshot_patterns),
+                            )
                         )
-                    )
                 except Exception as error:
                     raise RuntimeError(
-                        string("gpt_sovits.model_download_failed", error=str(error))
+                        string("gpt_sovits.model_download_failed")
                     ) from error
                 self._model_snapshot = snapshot
 
@@ -472,45 +473,99 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             return True
         return False
 
+    @staticmethod
+    def _nltk_data_directories(
+        nltk_module: ModuleType, runtime_data_dir_path: Path
+    ) -> tuple[Path, ...]:
+        """Return the Celune and configured directories searched by NLTK."""
+        configured_paths = tuple(
+            Path(path)
+            for path in os.environ.get("NLTK_DATA", "").split(os.pathsep)
+            if path
+        )
+        candidates = (
+            runtime_data_dir_path,
+            app_data_dir() / "nltk_data",
+            *configured_paths,
+            *(Path(path) for path in nltk_module.data.path),
+        )
+        directories: list[Path] = []
+        seen: set[str] = set()
+        for directory in candidates:
+            normalized = os.path.normcase(os.path.abspath(os.fspath(directory)))
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            directories.append(directory)
+        return tuple(directories)
+
     def _ensure_nltk_data(self) -> None:
         """Download NLTK resources required by GPT-SoVITS English frontend."""
         import nltk
 
-        data_dir = app_data_dir(create=True) / "nltk_data"
-        data_dir.mkdir(parents=True, exist_ok=True)
-        data_path = str(data_dir)
-        if data_path not in nltk.data.path:
-            nltk.data.path.insert(0, data_path)
-        os.environ.setdefault("NLTK_DATA", data_path)
+        runtime_nltk_data_dir = runtime_data_dir(create=True) / "nltk_data"
+        runtime_nltk_data_dir.mkdir(parents=True, exist_ok=True)
+        data_directories = self._nltk_data_directories(nltk, runtime_nltk_data_dir)
+        nltk.data.path[:] = [str(directory) for directory in data_directories]
+        os.environ["NLTK_DATA"] = os.pathsep.join(
+            str(directory) for directory in data_directories
+        )
 
-        for package, paths in self._nltk_resources.items():
-            if self._nltk_resource_available(nltk, paths):
-                continue
-            if not nltk.download(
-                package,
-                download_dir=data_path,
-                quiet=True,
-            ) or not self._nltk_resource_available(nltk, paths):
-                raise RuntimeError(
-                    string("gpt_sovits.nltk_download_failed", package=package)
+        missing_resources = [
+            (package, paths)
+            for package, paths in self._nltk_resources.items()
+            if not self._nltk_resource_available(nltk, paths)
+        ]
+        if not missing_resources:
+            return
+
+        self.log(string("gpt_sovits.nltk_downloading"), "info")
+
+        total_resources = len(missing_resources)
+        for index, (package, paths) in enumerate(missing_resources):
+            self.report_progress(index, total_resources)
+            previous_socket_timeout = socket.getdefaulttimeout()
+            try:
+                socket.setdefaulttimeout(self._nltk_download_timeout_seconds)
+                downloaded = nltk.download(
+                    package,
+                    download_dir=str(runtime_nltk_data_dir),
+                    quiet=True,
                 )
+            except Exception as error:
+                raise RuntimeError(
+                    f"{string('gpt_sovits.nltk_download_failed')}: {error}"
+                ) from error
+            finally:
+                socket.setdefaulttimeout(previous_socket_timeout)
+            if not downloaded or not self._nltk_resource_available(nltk, paths):
+                raise RuntimeError(
+                    f"{string('gpt_sovits.nltk_download_failed')}: {package}"
+                )
+            self.report_progress(index + 1, total_resources)
 
     def _ensure_fast_langdetect_data(self) -> None:
         """Download the GPT-SoVITS language-detection model into Celune data."""
-        cache_dir = app_data_dir(create=True) / "fast_langdetect"
+        cache_dir = runtime_data_dir(create=True) / "fast_langdetect"
         cache_dir.mkdir(parents=True, exist_ok=True)
         model_path = cache_dir / self._fast_langdetect_model_name
 
         source_cache = self.root / "GPT_SoVITS/pretrained_models/fast_langdetect"
-        if (
-            source_cache.exists()
-            and source_cache.resolve() != cache_dir.resolve()
-            and not source_cache.is_symlink()
-        ):
+        if source_cache.is_symlink():
+            if source_cache.resolve() != cache_dir.resolve():
+                try:
+                    if source_cache.is_dir():
+                        source_cache.rmdir()
+                    else:
+                        source_cache.unlink()
+                except OSError as error:
+                    raise RuntimeError(
+                        string("gpt_sovits.cache_link_failed")
+                    ) from error
+        elif source_cache.exists():
             raise RuntimeError(
                 string("gpt_sovits.cache_path_occupied", path=source_cache)
             )
-        source_cache.unlink()
         if not source_cache.exists():
             source_cache.parent.mkdir(parents=True, exist_ok=True)
             try:
@@ -518,7 +573,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             except OSError as error:
                 if os.name != "nt":
                     raise RuntimeError(
-                        string("gpt_sovits.cache_link_failed", error=str(error))
+                        string("gpt_sovits.cache_link_failed")
                     ) from error
                 command = f'mklink /J "{source_cache}" "{cache_dir}"'
                 try:
@@ -548,7 +603,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             ModelDownloader().download(FASTTEXT_LARGE_MODEL_URL, model_path)
         except Exception as error:
             raise RuntimeError(
-                string("gpt_sovits.fast_langdetect_download_failed", error=str(error))
+                string("gpt_sovits.fast_langdetect_download_failed")
             ) from error
 
     def model_is_available_locally(
@@ -586,12 +641,17 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
         """
         self.log(string("gpt_sovits.models_downloading"), "info")
         snapshot = self._ensure_model_snapshot()
-        self.log(string("gpt_sovits.nltk_downloading"), "info")
         self._ensure_nltk_data()
         self._ensure_fast_langdetect_data()
         self.variant = self._select_variant(snapshot, self._requested_variant)
         self.model_name = self.variant
         self.log(string("gpt_sovits.variant_available", variant=self.variant), "info")
+
+    def prepare_model_loading(self) -> None:
+        """Import NLTK before request execution can begin."""
+        import nltk
+
+        del nltk
 
     @contextlib.contextmanager
     def _source_context(self) -> Generator[None, None, None]:
@@ -669,7 +729,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             except OSError as error:
                 if os.name != "nt":
                     raise RuntimeError(
-                        string("gpt_sovits.cache_link_failed", error=str(error))
+                        string("gpt_sovits.cache_link_failed")
                     ) from error
                 command = f'mklink /J "{link}" "{target}"'
                 try:
@@ -746,11 +806,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
                 module.TTS,
             )
             config = config_type(self._model_config(variant))
-            setattr(
-                config,
-                "configs_path",
-                str(self.root / "GPT_SoVITS/configs/tts_infer.yaml"),
-            )
+            config.configs_path = str(self.root / "GPT_SoVITS/configs/tts_infer.yaml")
             pipeline = pipeline_type(config)
 
         sample_rate = 48000 if variant == "v4" else 32000
@@ -874,7 +930,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
 
     @staticmethod
     def _to_numpy_audio(
-        audio: Union[AudioChunk, AudioChunkNonNormalized, torch.Tensor],  # noqa
+        audio: Union[AudioChunk, AudioChunkNonNormalized, torch.Tensor],
     ) -> AudioChunk:
         """Convert one GPT-SoVITS output chunk to mono float32 audio."""
         if isinstance(audio, torch.Tensor):
@@ -980,6 +1036,7 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             self.current_seed = secrets.randbits(32)
             self._apply_seed()
         seed = self.current_seed
+        fragment_streaming = model.variant in self._fragment_streaming_variants
         request: dict[str, JSONSerializable] = {
             "text": text,
             "text_lang": language,
@@ -996,11 +1053,11 @@ class GPTSoVITS(CeluneBackend[_GPTSoVITSRuntime]):
             "speed_factor": 1.0,
             "fragment_interval": 0.3,
             "seed": seed,
-            "parallel_infer": False,
+            "parallel_infer": True,
             "repetition_penalty": repetition_penalty,
             "sample_steps": 32,
-            "return_fragment": True,
-            "streaming_mode": False,
+            "return_fragment": fragment_streaming,
+            "streaming_mode": not fragment_streaming,
             "overlap_length": 2,
             "min_chunk_length": 16,
         }

@@ -1,26 +1,28 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for Persona character app-data paths and Markdown overrides."""
 
 import tempfile
 from pathlib import Path
-from unittest import TestCase, mock
+from unittest import mock
 
 from celune.persona.paths import (
+    persona_memory_dir,
     persona_character_dir,
     persona_character_slug,
-    persona_memory_dir,
     persona_override_files,
 )
 
+from .support import CeluneTestCase
 
-class PersonaPathTests(TestCase):
+
+class TestPersonaPath(CeluneTestCase):
     """Verify safe Persona character paths and supported override loading."""
 
     def test_character_names_use_stable_safe_slugs(self) -> None:
         """Verify character names become safe, stable directory identifiers."""
-        self.assertEqual(persona_character_slug("Celune"), "celune")
-        self.assertEqual(persona_character_slug("A/B: Test"), "a-b-test")
-        self.assertEqual(persona_character_slug("..."), "unknown")
+        assert persona_character_slug("Celune") == "celune"
+        assert persona_character_slug("A/B: Test") == "a-b-test"
+        assert persona_character_slug("...") == "unknown"
 
     def test_persona_character_directories_use_app_data_root(self) -> None:
         """Verify character and memory directories use the Persona app-data root."""
@@ -30,14 +32,8 @@ class PersonaPathTests(TestCase):
                 "celune.persona.paths.persona_data_dir",
                 return_value=root,
             ):
-                self.assertEqual(
-                    persona_character_dir("Celune"),
-                    root / "celune",
-                )
-                self.assertEqual(
-                    persona_memory_dir("Celune"),
-                    root / "celune" / "memory",
-                )
+                assert persona_character_dir("Celune") == root / "celune"
+                assert persona_memory_dir("Celune") == root / "celune" / "memory"
 
     def test_persona_override_files_only_reads_supported_non_empty_markdown(
         self,
@@ -57,7 +53,6 @@ class PersonaPathTests(TestCase):
                 "celune.persona.paths.persona_data_dir",
                 return_value=Path(temp_dir),
             ):
-                self.assertEqual(
-                    persona_override_files("Celune"),
-                    {"personality.md": "Override personality."},
-                )
+                assert persona_override_files("Celune") == {
+                    "personality.md": "Override personality."
+                }

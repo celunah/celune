@@ -1,13 +1,136 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Textual theme assets."""
-
-from ..colors import SEVERITY_COLORS
 
 # this CSS draws its palette from the currently loaded CEVOICE/CECHAR pack
 CELUNE_CSS = """
     Screen {
         layout: vertical;
+        layers: base menu loading;
         background: $background;
+    }
+
+    SelectMenuOverlay {
+        align: center middle;
+        background: transparent;
+    }
+
+    SelectMenuWidget {
+        position: relative;
+        width: auto;
+        max-width: 1fr;
+        height: auto;
+        max-height: 1fr;
+        padding: 1 2;
+        border: round $primary;
+        background: $background;
+        color: $foreground;
+        overflow-y: auto;
+    }
+
+    CeluneLoadingScreen {
+        layer: loading;
+        position: absolute;
+        width: 1fr;
+        height: 1fr;
+        offset: 0 0;
+        align: center middle;
+        background: $background;
+    }
+
+    #loading-center {
+        width: 1fr;
+        height: 1fr;
+        align: center middle;
+    }
+
+    #loading-content {
+        width: 1fr;
+        max-width: 70;
+        height: auto;
+        align: center middle;
+    }
+
+    #loading-brand {
+        width: 1fr;
+        height: 1;
+        color: $foreground;
+        text-align: center;
+        text-style: bold;
+    }
+
+    #loading-state-label {
+        width: 1fr;
+        height: 1;
+        color: $primary;
+        text-align: center;
+        margin-top: 2;
+    }
+
+    #loading-spinner {
+        width: 1fr;
+        height: 1;
+        color: $primary;
+        text-align: center;
+        margin-top: 2;
+    }
+
+    #loading-log {
+        width: 1fr;
+        min-width: 0;
+        height: auto;
+        border-top: solid $secondary;
+        border-bottom: solid $secondary;
+        margin-top: 2;
+        padding: 1 2;
+    }
+
+    #loading-diagnostics {
+        width: 1fr;
+        min-width: 0;
+        height: auto;
+        color: $secondary;
+        margin-bottom: 1;
+        display: none;
+    }
+
+    #loading-log-message {
+        width: 1fr;
+        min-width: 0;
+        height: auto;
+        color: $foreground;
+    }
+
+    #loading-wait {
+        width: 1fr;
+        height: 1;
+        color: $secondary;
+        text-align: center;
+        margin-top: 2;
+    }
+
+    #loading-footer {
+        dock: bottom;
+        width: auto;
+        height: 1;
+        margin: 0 0 1 0;
+        color: $secondary;
+        align: center middle;
+    }
+
+    #loading-footer-starting {
+        width: 1fr;
+        min-width: 0;
+        height: 1;
+        margin-left: 2;
+        content-align: left middle;
+    }
+
+    #loading-footer-quit {
+        width: auto;
+        min-width: 14;
+        height: 1;
+        margin-right: 2;
+        content-align: right middle;
     }
 
     #logs {
@@ -72,9 +195,19 @@ CELUNE_CSS = """
         tint: transparent;
     }
 
-    #logs, #controls, #bottom, #header-container, #progress {
+    #logs, #controls, #bottom, #header-container, #caption, #progress-container {
         margin-left: 2;
         margin-right: 2;
+    }
+
+    #caption {
+        display: none;
+        height: 1;
+        width: 1fr;
+        color: $primary;
+        text-align: center;
+        content-align: center middle;
+        overflow-x: hidden;
     }
 
     #bottom {
@@ -126,8 +259,22 @@ CELUNE_CSS = """
         height: auto;
     }
 
+    #progress-container {
+        height: 1;
+        layout: horizontal;
+    }
+
     #progress {
         width: 1fr;
+        padding-right: 1;
+    }
+
+    #progress-label {
+        width: 5;
+        height: 1;
+        color: $primary;
+        text-align: right;
+        content-align: right middle;
     }
 
     #progress > Bar {
@@ -164,5 +311,7 @@ def severity_color(theme_name: str, severity: str = "info") -> str:
     Returns:
         str: The configured UI severity color for this theme.
     """
+    from ..theme.colors import SEVERITY_COLORS
+
     palette = SEVERITY_COLORS.get(theme_name, SEVERITY_COLORS["celune"])
     return palette.get(severity, palette["info"])

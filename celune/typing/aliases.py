@@ -1,12 +1,12 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Shared type aliases moved out of runtime implementation modules."""
 
 from __future__ import annotations
 
 import unittest.mock
-from collections.abc import Callable, Generator, Hashable
 from enum import Enum
-from typing import TYPE_CHECKING, Optional, Protocol, Union
+from collections.abc import Callable, Hashable, Generator
+from typing import TYPE_CHECKING, Union, Literal, Optional, Protocol
 
 import numpy as np
 import numpy.typing as npt
@@ -15,12 +15,14 @@ import sounddevice as sd
 from .common import JSONSerializable
 
 if TYPE_CHECKING:
-    # noinspection PyPep8Naming
     from torch import Tensor
-    from torch import device as Device
+
+    # noinspection PyPep8Naming
     from torch import dtype as DType
-    from transformers.modeling_utils import PreTrainedModel  # noqa
-    from transformers.tokenization_utils_base import PreTrainedTokenizerBase  # noqa
+
+    # noinspection PyPep8Naming
+    from torch import device as Device
+    from transformers import PreTrainedModel, TokenizersBackend, SentencePieceBackend
 
     # noinspection PyUnresolvedReferences
     from .events import EventPayload
@@ -36,28 +38,43 @@ type RuntimeValue = Union[
     dict[Hashable, "RuntimeValue"],
     list["RuntimeValue"],
     set["RuntimeValue"],
-    tuple["RuntimeValue", ...],  # noqa
+    tuple["RuntimeValue", ...],
     "SupportsCloseHook",
     "SupportsUnloadHook",
     "SupportsRuntimeAttributes",
     unittest.mock.NonCallableMock,
 ]
 
-type AudioChunk = npt.NDArray[np.float32]  # noqa
-type AudioChunkNonNormalized = npt.NDArray[np.int16]  # noqa
-type AudioChunkBroad = npt.NDArray[np.floating]  # noqa
-type AudioChunks = list[AudioChunk]  # noqa
+type AudioChunk = npt.NDArray[np.float32]
+type AudioChunkNonNormalized = npt.NDArray[np.int16]
+type AudioChunkBroad = npt.NDArray[np.floating]
+type AudioChunks = list[AudioChunk]
 
 type SeedVCArgument = Union[str, int, float, bool]
-type SeedVCGenerator = Generator[
-    Optional[AudioChunk], None, AudioChunk  # noqa
-]
+type SeedVCGenerator = Generator[Optional[AudioChunk], None, AudioChunk]
 
-type DevLogCallback = Callable[[str, str], None]
+type LogLevel = Literal["info", "verbose", "debug"]
+
+
+class LogCallback(Protocol):
+    """Callback receiving a message and its display severity."""
+
+    def __call__(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
+        """Receive one log message."""
+
+
+type DevLogCallback = LogCallback
 type _DispatcherCallback = Callable[["EventPayload"], None]
 type DispatcherCallback = _DispatcherCallback
-type EmbeddingVector = npt.NDArray[np.float32]  # noqa
-type _EmbeddingBackend = tuple["PreTrainedTokenizerBase", "PreTrainedModel"]
+type EmbeddingVector = npt.NDArray[np.float32]
+type TokenizerBackend = Union[SentencePieceBackend, TokenizersBackend]
+type _EmbeddingBackend = tuple[TokenizerBackend, PreTrainedModel]
 type EmbeddingBackend = _EmbeddingBackend
 
 type _AudioDeviceScalar = Union[bool, int, float, str]
@@ -80,9 +97,9 @@ type _RecordedKwargValue = Optional[
         bool,
         bytes,
         list[bytes],
-        "Tensor",
-        "DType",
-        "Device",
+        Tensor,
+        DType,
+        Device,
     ]
 ]
 type RecordedKwargValue = _RecordedKwargValue

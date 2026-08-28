@@ -1,13 +1,13 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Create a character pack for use in Celune."""
 
-import argparse
 import io
 import sys
-from collections.abc import Mapping
+import argparse
 from math import gcd
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, TypedDict, Union, cast
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Union, Optional, TypedDict, cast
 
 import numpy as np
 import soundfile as sf
@@ -17,13 +17,13 @@ if TYPE_CHECKING:
     from celune.typing.cevoice import ManifestValue
 
 try:
-    from celune.cevoice import write_cevoice
     from celune.i18n import string
+    from celune.cevoice import write_cevoice
 except ModuleNotFoundError:
     PROJECT_ROOT = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(PROJECT_ROOT))
-    from celune.cevoice import write_cevoice
     from celune.i18n import string
+    from celune.cevoice import write_cevoice
 
 
 class ThemeMetadata(TypedDict, total=False):

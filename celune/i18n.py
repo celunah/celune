@@ -1,15 +1,15 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Celune internationalization helpers backed by JSON language files."""
 
-import contextlib
-import ctypes
-import json
-import locale as _locale  # else it gets shadowed
 import os
 import sys
+import json
+import ctypes
+import contextlib
 from pathlib import Path
-from types import SimpleNamespace
+import locale as _locale  # else it gets shadowed
 from typing import Optional
+from types import SimpleNamespace
 
 DEFAULT_LOCALE = "en"
 _LANG_DIR = Path(__file__).resolve().parent / "lang"
@@ -177,3 +177,23 @@ def string(key: str, locale: Optional[str] = None, **kwargs) -> str:
         return text.format(**kwargs)
 
     return text
+
+
+def tagged_string(
+    key: str,
+    tag: str,
+    locale: Optional[str] = None,
+    **kwargs,
+) -> str:
+    """Return a localized message with an engine-owned diagnostic tag.
+
+    Args:
+        key: The translation key to look up.
+        tag: The stable diagnostic tag to prepend to the translated message.
+        locale: An optional locale override.
+        kwargs: Optional format values interpolated into the translation.
+
+    Returns:
+        str: The tagged translated message.
+    """
+    return f"[{tag}] {string(key, locale=locale, **kwargs)}"

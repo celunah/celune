@@ -1,13 +1,13 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Recursively populate and convert docstrings to a unified format."""
 
-import ast
 import re
+import ast
 import textwrap
-from collections.abc import Iterable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union
+from dataclasses import dataclass
+from typing import Union, Optional
+from collections.abc import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = [
@@ -15,7 +15,7 @@ TARGETS = [
     ROOT / "tests",
     ROOT / "extensions",
     ROOT / "main.py",
-    ROOT / "setup.py",
+    ROOT / "configure.py",
 ]
 
 

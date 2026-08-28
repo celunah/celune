@@ -1,13 +1,16 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for the launcher-loss watchdog."""
 
 import os
-from unittest import TestCase, mock
+from unittest import mock
 
 from celune import watchdog
 from celune.constants import ExitCodes
 
+from .support import CeluneTestCase
 
-class WatchdogTests(TestCase):
+
+class TestWatchdog(CeluneTestCase):
     """Verify the launcher-loss watchdog's process-facing behavior."""
 
     def setUp(self) -> None:
@@ -16,20 +19,22 @@ class WatchdogTests(TestCase):
 
     def test_launcher_lost_exit_code_is_eight(self) -> None:
         """Verify launcher loss uses the reserved exit code eight."""
-        self.assertEqual(ExitCodes.EXIT_LAUNCHER_LOST.value, 8)
+        assert ExitCodes.EXIT_LAUNCHER_LOST.value == 8
 
     def test_posix_pipe_eof_exits_with_launcher_lost_code(self) -> None:
         """Verify EOF on the launcher pipe invokes the immediate exit path."""
         read_fd, write_fd = os.pipe()
         os.close(write_fd)
 
-        with mock.patch.object(
-            watchdog,
-            "_request_launcher_lost",
-            side_effect=RuntimeError("launcher lost"),
-        ) as exit_launcher_lost:
-            with self.assertRaisesRegex(RuntimeError, "launcher lost"):
-                watchdog._watch_posix_pipe(str(read_fd))
+        with (
+            mock.patch.object(
+                watchdog,
+                "_request_launcher_lost",
+                side_effect=RuntimeError("launcher lost"),
+            ) as exit_launcher_lost,
+            self.assertRaisesRegex(RuntimeError, "launcher lost"),
+        ):
+            watchdog._watch_posix_pipe(str(read_fd))
 
         exit_launcher_lost.assert_called_once_with()
 
@@ -40,7 +45,7 @@ class WatchdogTests(TestCase):
 
         watchdog._watch_posix_pipe(str(read_fd))
 
-        self.assertTrue(watchdog.launcher_loss_requested())
+        assert watchdog.launcher_loss_requested()
 
     @staticmethod
     def test_watchdog_starts_for_configured_posix_pipe() -> None:

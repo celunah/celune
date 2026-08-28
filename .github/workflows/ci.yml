@@ -11,9 +11,7 @@ on:
       - dev
 
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: read
 
 jobs:
   python-checks:
@@ -25,37 +23,37 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install portaudio19-dev
+        run: python3 scripts/ci_warnings.py -- bash -c "sudo apt-get update && sudo apt-get install portaudio19-dev"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
       - name: Sync dependencies
-        run: uv sync --dev --all-extras
+        run: python3 scripts/ci_warnings.py -- uv sync --dev --all-extras
 
       - name: Verify formatting
-        run: uv run ruff format --check .
+        run: python3 scripts/ci_warnings.py -- uv run ruff format --check .
 
       - name: Run lint
         run: |
-          uv run pylint celune tests main.py
+          python3 scripts/ci_warnings.py -- uv run pylint -j 0 celune tests main.py
 
       - name: Type check
         run: |
-          uv run pyrefly check celune tests main.py
+          python3 scripts/ci_warnings.py -- uv run pyrefly check
 
       - name: Check docstring coverage
         run: |
-          uv run docstr-coverage -i -P --fail-under 80 celune tests main.py || {
+          python3 scripts/ci_warnings.py -- uv run docstr-coverage -i -P --fail-under 80 celune tests main.py || {
             echo "::warning::Docstring coverage is below 80%. Try adding more missing docstrings."
           }
 
       - name: Run unit tests
-        run: uv run pytest -v tests
+        run: python3 scripts/ci_warnings.py -- uv run pytest -v tests -n 3 --dist loadfile
 
       - name: Import smoke test
         run: |
-          uv run python -c "import celune; print(dir(celune))"
+          python3 scripts/ci_warnings.py -- uv run python -c "import celune; print(dir(celune))"
 
   launcher-build-linux:
     name: Linux Launcher Build
@@ -74,20 +72,15 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Sync dependencies
-        run: uv sync --dev
-
-      - name: Install Nuitka into project environment
-        run: uv pip install --python .venv/bin/python Nuitka
+        run: python3 scripts/ci_warnings.py -- uv sync --dev
 
       - name: Install appimagetool
         run: |
-          wget -O /tmp/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x /tmp/appimagetool
-          sudo mv /tmp/appimagetool /usr/local/bin/appimagetool
+          python3 ./scripts/ci_warnings.py -- bash -c "wget -O /tmp/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage && chmod +x /tmp/appimagetool && sudo mv /tmp/appimagetool /usr/local/bin/appimagetool"
 
       - name: Build Linux launcher artifacts
         run: |
-          bash ./scripts/build_nuitka.sh
+          python3 ./scripts/ci_warnings.py -- bash ./scripts/build_nuitka.sh
           test -x bin/celune
           test -x bin/celune-bin
           test -f bin/celune.AppImage
@@ -112,16 +105,12 @@ jobs:
 
       - name: Sync dependencies
         shell: powershell
-        run: uv sync --dev
-
-      - name: Install Nuitka into project environment
-        shell: powershell
-        run: uv pip install --python .venv\Scripts\python.exe Nuitka
+        run: python .\scripts\ci_warnings.py -- uv sync --dev --extra api
 
       - name: Build Windows launcher artifacts
         shell: powershell
         run: |
-          powershell -ExecutionPolicy Bypass -File .\scripts\build_nuitka.ps1
+          python .\scripts\ci_warnings.py -- powershell -ExecutionPolicy Bypass -File .\scripts\build_nuitka.ps1
           if (!(Test-Path .\bin\celune.exe)) { throw "bin/celune.exe not found" }
           if (!(Test-Path .\bin\celune-bin.exe)) { throw "bin/celune-bin.exe not found" }
           if (!(Test-Path .\bin\Celune-win-x64.zip)) { throw "bin/Celune-win-x64.zip not found" }
@@ -134,12 +123,25 @@ jobs:
 
   notify-failure:
     name: Comment on CI Failure
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     needs:
       - python-checks
       - launcher-build-linux
       - launcher-build-windows
-    if: ${{ always() && contains(join(needs.*.result, ','), 'failure') }}
+
+    if: >-
+      ${{
+        always() &&
+        (
+          needs.python-checks.result != 'success' ||
+          needs.launcher-build-linux.result != 'success' ||
+          needs.launcher-build-windows.result != 'success'
+        )
+      }}
 
     steps:
       - name: Comment on pull request or commit
@@ -147,7 +149,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHA: ${{ github.sha }}
           EVENT_NAME: ${{ github.event_name }}
@@ -155,19 +156,41 @@ jobs:
           PYTHON_CHECKS_RESULT: ${{ needs.python-checks.result }}
           LINUX_BUILD_RESULT: ${{ needs.launcher-build-linux.result }}
           WINDOWS_BUILD_RESULT: ${{ needs.launcher-build-windows.result }}
+
         run: |
           failed_jobs=""
-          if [ "$PYTHON_CHECKS_RESULT" = "failure" ]; then
-            failed_jobs="${failed_jobs}- Anti AI Slop & Vibe Coding Checks failed"$'\n'
-          fi
-          if [ "$LINUX_BUILD_RESULT" = "failure" ]; then
-            failed_jobs="${failed_jobs}- Linux Launcher Build failed"$'\n'
-          fi
-          if [ "$WINDOWS_BUILD_RESULT" = "failure" ]; then
-            failed_jobs="${failed_jobs}- Windows Launcher Build failed"$'\n'
-          fi
+          successful_jobs=""
 
-          body="$(printf "Detected potential slop in commit \`%s\`.\n\nThe following jobs have failed:\n%s\nPlease check the logs and unslop your code: %s\n" "$SHA" "$failed_jobs" "$RUN_URL")"
+          add_result() {
+            name="$1"
+            result="$2"
+
+            if [ "$result" = "success" ]; then
+              successful_jobs="${successful_jobs}- ${name}: success"$'\n'
+            else
+              failed_jobs="${failed_jobs}- ${name}: ${result}"$'\n'
+            fi
+          }
+
+          add_result \
+            "Anti AI Slop & Vibe Coding Checks" \
+            "$PYTHON_CHECKS_RESULT"
+
+          add_result \
+            "Linux Launcher Build" \
+            "$LINUX_BUILD_RESULT"
+
+          add_result \
+            "Windows Launcher Build" \
+            "$WINDOWS_BUILD_RESULT"
+
+          body="$(printf \
+            "Detected potential slop or an incomplete CI run in commit \`%s\`.\n\nFailed or incomplete checks:\n%s\nSuccessful checks:\n%s\nPlease check the logs and unslop your code:\n%s\n" \
+            "$SHA" \
+            "$failed_jobs" \
+            "$successful_jobs" \
+            "$RUN_URL"
+          )"
 
           if [ "$EVENT_NAME" = "pull_request" ]; then
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$body"

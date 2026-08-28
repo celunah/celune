@@ -1,13 +1,13 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Speech pipeline dataclasses."""
 
 from __future__ import annotations
 
-import queue
 import time
-from dataclasses import dataclass
+import queue
 from pathlib import Path
-from typing import Optional, Union
+from dataclasses import dataclass
+from typing import Union, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -24,7 +24,7 @@ class SpeechRequest:
     display_text: str
     language: str = "Auto"
     save: bool = True
-    stream_queue: Optional[queue.Queue[Optional[Union[AudioChunk, Exception]]]] = None  # noqa
+    stream_queue: Optional[queue.Queue[Optional[Union[AudioChunk, Exception]]]] = None
     normalize: bool = False
     silent_retry_count: int = 0
     generation: int = 0

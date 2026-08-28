@@ -1,25 +1,25 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Celune Razer Chroma and OpenRGB-compatible RGB glow effect."""
 
 from __future__ import annotations
 
-import contextlib
-import datetime
 import os
-import threading
 import time
+import datetime
+import threading
+import contextlib
 from collections import deque
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Union, Optional
 
 import numpy as np
 import numpy.typing as npt
 from openrgb import OpenRGBClient
 from openrgb.utils import RGBColor
 
-from .colors import ERROR, RGB
+from .theme.colors import ERROR
+from .typing.common import RGB
 from .constants import BASE_SR
-from .dsp import split
-from .utils import discard, is_celune_day, lunar_info, range_interpolated, to_rgb
+from .utils import to_rgb, discard, lunar_info, is_celune_day, range_interpolated
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 
 class AudioRGBGlow:
     """OpenRGB-compatible speaking-aware glow effect."""
+
+    _celune_fatal_wrapped: bool = False
 
     def __init__(
         self,
@@ -56,6 +58,7 @@ class AudioRGBGlow:
 
         self._scheduled_chunks = deque()
         self.fps = 60
+        self._last_device_rgb: Optional[RGB] = None
 
         self.transition_rate = 0.02
         self.color_transition_rate = 0.08
@@ -94,6 +97,7 @@ class AudioRGBGlow:
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._worker = None
+        self.finished.set()
 
         self._current_brightness = 0.0
         self._target_brightness = self.idle_brightness
@@ -140,9 +144,20 @@ class AudioRGBGlow:
             return False
 
         self._stop_event.clear()
-        self._worker = threading.Thread(target=self._run, daemon=True)
+        self.finished.clear()
+        self._worker = threading.Thread(
+            target=self._run_with_completion,
+            daemon=True,
+        )
         self._worker.start()
         return True
+
+    def _run_with_completion(self) -> None:
+        """Run the glow worker and signal that it has stopped."""
+        try:
+            self._run()
+        finally:
+            self.finished.set()
 
     def stop(self, reset: bool = True, wait: bool = False) -> None:
         """Hard-stop the glow effect.
@@ -227,13 +242,13 @@ class AudioRGBGlow:
         if not self.start():
             return
 
-        chunk_seconds = 1.0 / float(self.fps)
-        chunks = split(audio, BASE_SR, chunk_seconds)
+        frames = max(1, round(BASE_SR / max(self.fps, 1)))
         now = time.monotonic()
         offset = 0.0
 
         with self._lock:
-            for chunk in chunks:
+            for start in range(0, len(audio), frames):
+                chunk = audio[start : start + frames]
                 duration = chunk.shape[0] / float(BASE_SR)
                 self._scheduled_chunks.append((now + offset, chunk))
                 offset += duration
@@ -316,7 +331,7 @@ class AudioRGBGlow:
         if audio.size == 0:
             return 0.0
 
-        rms = float(np.sqrt(np.mean(np.square(audio), dtype=np.float64)))
+        rms = float(np.sqrt(np.mean(np.square(audio), dtype=np.float32)))
         level = np.clip(rms * self.input_gain, 0.0, 1.0)
         level = float(np.log1p(6.0 * level) / np.log1p(6.0))
         level = level ** (1.0 / self.gamma)
@@ -325,7 +340,11 @@ class AudioRGBGlow:
     def _set_all_devices(self, rgb: Union[RGB, AudioChunkBroad]) -> None:
         """Apply color to all registered OpenRGB devices."""
         rgb = np.clip(rgb, 0, 255).astype(int)
-        color = RGBColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        current_rgb = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        if current_rgb == self._last_device_rgb:
+            return
+        self._last_device_rgb = current_rgb
+        color = RGBColor(*current_rgb)
         for device in self.devices:
             with contextlib.suppress(Exception):
                 device.set_color(color, fast=self.fast)

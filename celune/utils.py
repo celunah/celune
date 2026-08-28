@@ -1,19 +1,19 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Celune common utility functions."""
 
-import datetime
-import inspect
-import math
-import multiprocessing
 import os
-import random
 import re
-import subprocess
+import math
 import time
+import random
+import inspect
+import datetime
 import traceback
-from collections.abc import Callable, Iterator
+import subprocess
+import multiprocessing
 from pathlib import Path
-from typing import Any, Literal, Optional, TextIO, overload
+from collections.abc import Callable, Iterator
+from typing import Any, Union, TextIO, Literal, Optional, overload
 
 import psutil
 from lingua import (  # pylint: disable=E0611
@@ -21,10 +21,11 @@ from lingua import (  # pylint: disable=E0611
     LanguageDetectorBuilder,
 )
 
-from .constants import REFERENCE_NEW_MOON
 from .paths import traceback_path
-from .terminal import supports_ansi as terminal_supports_ansi
+from .typing.aliases import LogLevel
+from .constants import REFERENCE_NEW_MOON
 from .typing.utils import CallerInfo, LanguageResult
+from .terminal import supports_ansi as terminal_supports_ansi
 
 _LANGUAGE_DETECTOR = LanguageDetectorBuilder.from_all_spoken_languages().build()
 
@@ -269,24 +270,51 @@ def supports_ansi(stream: Optional[TextIO] = None) -> bool:
     return terminal_supports_ansi(stream)
 
 
-def format_error(e: Exception, dev: bool) -> str:
-    """Format an error message.
+def format_error(e: BaseException, log_level: Union[LogLevel, bool]) -> str:
+    """Format exception detail according to the active log level.
 
     Args:
         e: The exception to format.
-        dev: Whether developer mode is enabled.
+        log_level: The active log level, or the legacy developer flag.
 
     Returns:
-        str: Either the full traceback or the exception text.
+        str: An empty string at ``info``, the exception message at ``verbose``,
+            or the full traceback at ``debug``.
     """
-    if dev:
+    if log_level is True or log_level == "debug":
         trace = "".join(traceback.format_exception(type(e), e, e.__traceback__))
         with open(traceback_path(create_parent=True), "w", encoding="utf-8") as f:
             f.write(trace)
         return trace
 
+    if log_level != "verbose":
+        return ""
+
     details = str(e) or "no error description"
     return details
+
+
+def format_error_message(
+    message: str,
+    error: BaseException,
+    log_level: Union[LogLevel, bool],
+) -> str:
+    """Append level-appropriate exception detail to a user-facing message.
+
+    Args:
+        message: The concise message to display at every log level.
+        error: The exception that caused the failure.
+        log_level: The active log level, or the legacy developer flag.
+
+    Returns:
+        str: ``message`` at ``info``, ``message`` plus the exception message at
+            ``verbose``, or ``message`` plus a full traceback at ``debug``.
+    """
+    details = format_error(error, log_level)
+    if not details:
+        return message
+    separator = "\n" if log_level is True or log_level == "debug" else ": "
+    return f"{message}{separator}{details}"
 
 
 def indent(text: str, spaces: int, direction: Literal["left", "right"] = "left") -> str:
@@ -757,11 +785,12 @@ def raise_test() -> None:
     raise RuntimeError("testing exception")
 
 
-def normalize_special_characters(text: str) -> str:
-    """Normalize special characters in input string for TTS.
+def normalize_special_characters(text: str, *, for_tts: bool = False) -> str:
+    """Normalize special characters while optionally preparing text for TTS.
 
     Args:
         text: The text to normalize.
+        for_tts: Whether to apply speech-specific technical formatting.
 
     Returns:
         str: The normalized text.
@@ -774,12 +803,44 @@ def normalize_special_characters(text: str) -> str:
             "\u201e": '"',  # double low quote
             "\u2018": "'",  # left single quote
             "\u2019": "'",  # right single quote
-            "\u2013": " - ",  # en dash
-            "\u2014": " - ",  # em dash
+            "\u2013": "\x00",  # en dash
+            "\u2014": "\x00",  # em dash
             "\u2026": "...",  # ellipsis
             "*": "",  # emphasis asterisks
         }
     )
 
-    normalized = text.translate(special_char_mappings)
-    return re.sub(r"\s{2,}", " ", normalized)
+    normalized = text.translate(special_char_mappings).replace("\x00", ": ")
+    normalized = re.sub(r"\s{2,}", " ", normalized)
+    if not for_tts:
+        return normalized
+
+    normalized = re.sub(r"(?m)^[ \t]{0,3}#{1,6}[ \t]+", "", normalized)
+    normalized = re.sub(r"(?m)^[ \t]*>[ \t]?", "", normalized)
+    normalized = re.sub(r"(?<!\w)[*_~`]+|[*_~`]+(?!\w)", "", normalized)
+    normalized = re.sub(r'[{}\[\]()"]', " ", normalized)
+    normalized = re.sub(
+        r"(?<![A-Za-z0-9])([A-Za-z]):(?=\\)",
+        lambda match: f"{match.group(1)} drive, ",
+        normalized,
+    )
+    normalized = re.sub(r"\S+", _normalize_tts_token, normalized)
+    normalized = normalized.replace("\\", ", ")
+    normalized = normalized.replace("/", ", ")
+    normalized = normalized.replace(":", ", ")
+    normalized = normalized.replace("-", ", ")
+    normalized = re.sub(r"\s*,\s*", ", ", normalized)
+    normalized = re.sub(r"(?:,\s*){2,}", ", ", normalized)
+    return re.sub(r"\s{2,}", " ", normalized).strip()
+
+
+def _normalize_tts_token(match: re.Match[str]) -> str:
+    """Render technical token punctuation for speech without changing prose dots."""
+    token = match.group(0)
+    token_without_trailing = token.rstrip(",;:!?)]}")
+    is_technical = any(mark in token for mark in ("_", "\\", "/", ":")) or bool(
+        re.search(r"\.[A-Za-z0-9]{1,8}$", token_without_trailing)
+    )
+    if not is_technical:
+        return token
+    return token.replace("_", " underscore ").replace(".", " dot ")

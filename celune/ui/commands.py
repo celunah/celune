@@ -1,26 +1,30 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Slash command handling for the Textual UI."""
 
 from __future__ import annotations
 
-import asyncio
 import os
+import asyncio
 import threading
-from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, cast
 from urllib.parse import urlparse
+from collections.abc import Callable, Awaitable
+from typing import TYPE_CHECKING, Optional, cast
 
 import soundfile as sf
 
-from ..audio import restart_audio_server
-from ..backends.tts.qwen3 import Qwen3
-from ..cevoice import active_bundle_path, resolve_bundle_path
-from ..constants import APP_NAME
-from ..exceptions import InvalidExtensionError
-from ..i18n import string
+from ..i18n import string, tagged_string
 from ..paths import project_root
-from ..utils import format_error, format_number, replace_ipa
+from ..constants import APP_NAME
+from ..audio.server import restart_audio_server
+from ..exceptions import InvalidExtensionError
+from ..persona.capabilities import PersonaCapabilities
+from ..utils import (
+    replace_ipa,
+    format_number,
+    format_error_message,
+)
+from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..vc import (
     VC_PITCH_SHIFT_MAX,
     VC_PITCH_SHIFT_MIN,
@@ -28,8 +32,8 @@ from ..vc import (
 )
 
 if TYPE_CHECKING:
-    from ..celune import Celune
     from .app import CeluneUI
+    from ..celune import Celune
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".webm"}
@@ -142,9 +146,10 @@ def tutorial(ui: CeluneUI) -> None:
                     ui.celune.play(str(pth))
                 except Exception as exc:
                     ui.safe_log(
-                        string(
-                            "commands.tutorial_playback_failed",
-                            error=format_error(exc, ui.celune.dev),
+                        format_error_message(
+                            string("commands.tutorial_playback_failed"),
+                            exc,
+                            getattr(ui.celune, "log_level", "info"),
                         ),
                         "warning",
                     )
@@ -158,9 +163,10 @@ def tutorial(ui: CeluneUI) -> None:
             )
         except Exception as e:
             ui.safe_log(
-                string(
-                    "commands.tutorial_failed",
-                    error=format_error(e, ui.celune.dev),
+                format_error_message(
+                    string("commands.tutorial_failed"),
+                    e,
+                    getattr(ui.celune, "log_level", "info"),
                 ),
                 "warning",
             )
@@ -272,18 +278,24 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         ui.safe_log(string("commands.help_tutorial", app_name=APP_NAME))
         ui.safe_log(string("commands.help_stop"))
         ui.safe_log(string("commands.help_restart_audio"))
+        ui.safe_log(string("commands.help_settings"))
         ui.safe_log(string("commands.help_exit", app_name=APP_NAME))
         ui.safe_log(string("commands.help_help"))
+        return
+    if command == "settings":
+        open_settings = getattr(ui, "open_settings_menu", None)
+        if callable(open_settings):
+            open_settings()
+        else:
+            ui.safe_log(string("commands.settings_unavailable"), "warning")
         return
     if command == "restartaudio":
 
         def restart_audio() -> None:
             try:
                 restart_audio_server()
-            except RuntimeError as error:
-                ui.safe_log(
-                    string("commands.audio_restart_failed", error=error), "error"
-                )
+            except RuntimeError:
+                ui.safe_log(string("commands.audio_restart_failed"), "error")
                 return
 
             celune = getattr(ui, "celune", None)
@@ -338,8 +350,15 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.celune.extension_manager.invoke(name, *invoke_args)
         except InvalidExtensionError:
             ui.safe_log(string("commands.extension_not_found", name=name), "warning")
-        except Exception as e:
-            ui.safe_log(string("commands.extension_error", error=e), "error")
+        except Exception as error:
+            ui.safe_log(
+                format_error_message(
+                    tagged_string("commands.extension_error", "EXT ERROR"),
+                    error,
+                    getattr(ui.celune, "log_level", "info"),
+                ),
+                "error",
+            )
 
         return
     if command == "extensions":
@@ -460,9 +479,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     ui.safe_log(string("commands.backend_not_switched"), "warning")
             except Exception as exc:
                 ui.safe_log(
-                    string(
-                        "commands.backend_switch_failed",
-                        error=format_error(exc, ui.celune.dev),
+                    format_error_message(
+                        string("commands.backend_switch_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
                     ),
                     "error",
                 )
@@ -483,9 +503,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     ui.safe_log(string("commands.backend_not_switched"), "warning")
             except Exception as exc:
                 ui.safe_log(
-                    string(
-                        "commands.backend_switch_failed",
-                        error=format_error(exc, ui.celune.dev),
+                    format_error_message(
+                        string("commands.backend_switch_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
                     ),
                     "error",
                 )
@@ -523,9 +544,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     )
             except Exception as exc:
                 ui.safe_log(
-                    string(
-                        "commands.character_switch_failed",
-                        error=format_error(exc, ui.celune.dev),
+                    format_error_message(
+                        string("commands.character_switch_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
                     ),
                     "error",
                 )
@@ -546,9 +568,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     )
             except Exception as exc:
                 ui.safe_log(
-                    string(
-                        "commands.character_switch_failed",
-                        error=format_error(exc, ui.celune.dev),
+                    format_error_message(
+                        string("commands.character_switch_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
                     ),
                     "error",
                 )
@@ -586,9 +609,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 )
             except Exception as exc:
                 ui.safe_log(
-                    string(
-                        "commands.vc_decode_failed",
-                        error=format_error(exc, ui.celune.dev),
+                    format_error_message(
+                        string("commands.vc_decode_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
                     ),
                     "error",
                 )
@@ -665,7 +689,8 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         return
     if command == "xvectoronly":
         backend = ui.celune.backend
-        if not isinstance(backend, Qwen3):
+        # uses the backend's name, preventing a core dependency on Qwen
+        if backend.name != "qwen3":
             ui.safe_log(string("commands.xvectoronly_qwen3_only"), "warning")
             return
 
@@ -681,13 +706,16 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             )
             return
 
-        backend.x_vector_only = value == "true"
-        state = string(
-            "commands.state_enabled"
-            if backend.x_vector_only
-            else "commands.state_disabled"
-        )
-        ui.safe_log(string("commands.qwen3_identity_only_cloning", state=state))
+        if hasattr(backend, "x_vector_only"):
+            backend.x_vector_only = value == "true"
+            state = string(
+                "commands.state_enabled"
+                if backend.x_vector_only
+                else "commands.state_disabled"
+            )
+            ui.safe_log(string("commands.qwen3_identity_only_cloning", state=state))
+            return
+        ui.safe_log(string("commands.xvectoronly_unavailable"), "warning")
         return
     if command == "play":
         if not args:
@@ -727,9 +755,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                         )
                 except Exception as exc:
                     ui.safe_log(
-                        string(
-                            "commands.cannot_play_audio",
-                            error=format_error(exc, ui.celune.dev),
+                        format_error_message(
+                            string("commands.cannot_play_audio"),
+                            exc,
+                            getattr(ui.celune, "log_level", "info"),
                         ),
                         "error",
                     )
@@ -737,9 +766,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             threading.Thread(target=worker, daemon=True).start()
         except Exception as e:
             ui.safe_log(
-                string(
-                    "commands.cannot_play_file",
-                    error=format_error(e, ui.celune.dev),
+                format_error_message(
+                    string("commands.cannot_play_file"),
+                    e,
+                    getattr(ui.celune, "log_level", "info"),
                 ),
                 "error",
             )
@@ -762,6 +792,21 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 "warning",
             )
             return
+        get_capabilities = getattr(vision, "capabilities", None)
+        if callable(get_capabilities):
+            capabilities = get_capabilities()
+            if (
+                isinstance(capabilities, PersonaCapabilities)
+                and not capabilities.image_uploads
+            ):
+                ui.safe_log(
+                    string(
+                        "commands.attachments_speech_only_mode",
+                        app_name=APP_NAME,
+                    ),
+                    "warning",
+                )
+                return
 
         added: list[str] = []
         for raw_path in args:
@@ -834,17 +879,11 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
         if ui.celune.config.get("ipa") is False:
             ipa_decoded, unmatched = replace_ipa(raw_text, strict=True)
             if unmatched > 0:
-                safe_log_dev = getattr(ui, "safe_log_dev", None)
-                if callable(safe_log_dev):
-                    safe_log_dev(
-                        string("commands.unmatched_ipa", count=unmatched),
-                        "warning",
-                    )
-                else:
-                    ui.safe_log(
-                        string("commands.unmatched_ipa", count=unmatched),
-                        "warning",
-                    )
+                ui.safe_log(
+                    string("commands.unmatched_ipa", count=unmatched),
+                    "warning",
+                    loglevel="verbose",
+                )
 
             ui.celune.say(ipa_decoded, display_text=raw_text)
         else:
@@ -894,9 +933,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     ui.safe_log(string("commands.nothing_to_stop"))
             except Exception as exc:
                 ui.safe_log(
-                    string(
-                        "commands.stop_failed",
-                        error=format_error(exc, ui.celune.dev),
+                    format_error_message(
+                        string("commands.stop_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
                     ),
                     "error",
                 )
@@ -911,9 +951,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     ui.safe_log(string("commands.nothing_to_stop"))
             except Exception as exc:
                 ui.safe_log(
-                    string(
-                        "commands.stop_failed",
-                        error=format_error(exc, ui.celune.dev),
+                    format_error_message(
+                        string("commands.stop_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
                     ),
                     "error",
                 )

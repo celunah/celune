@@ -1,16 +1,18 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the CEVOICE creation helper script."""
 
 from __future__ import annotations
 
-import contextlib
-import importlib.util
 import io
 import sys
+import contextlib
+import importlib.util
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from types import ModuleType
-from unittest import TestCase, mock
+from tempfile import TemporaryDirectory
+from unittest import mock
+
+from .support import CeluneTestCase
 
 
 def _load_cac_module():
@@ -20,18 +22,18 @@ def _load_cac_module():
         raise RuntimeError("could not load scripts/cac.py")
     module = importlib.util.module_from_spec(spec)
     fake_numpy = ModuleType("numpy")
-    setattr(fake_numpy, "mean", mock.Mock())
-    setattr(fake_numpy, "asarray", mock.Mock())
+    setattr(fake_numpy, "mean", mock.Mock())  # noqa: B010
+    setattr(fake_numpy, "asarray", mock.Mock())  # noqa: B010
     fake_celune = ModuleType("celune")
     fake_cevoice = ModuleType("celune.cevoice")
     fake_soundfile = ModuleType("soundfile")
-    setattr(fake_soundfile, "read", mock.Mock())
-    setattr(fake_soundfile, "info", mock.Mock())
-    setattr(fake_soundfile, "write", mock.Mock())
+    setattr(fake_soundfile, "read", mock.Mock())  # noqa: B010
+    setattr(fake_soundfile, "info", mock.Mock())  # noqa: B010
+    setattr(fake_soundfile, "write", mock.Mock())  # noqa: B010
     fake_scipy = ModuleType("scipy")
     fake_scipy_signal = ModuleType("scipy.signal")
-    setattr(fake_scipy_signal, "resample_poly", mock.Mock())
-    setattr(fake_cevoice, "write_cevoice", mock.Mock())
+    setattr(fake_scipy_signal, "resample_poly", mock.Mock())  # noqa: B010
+    setattr(fake_cevoice, "write_cevoice", mock.Mock())  # noqa: B010
 
     with mock.patch.dict(
         sys.modules,
@@ -51,7 +53,7 @@ def _load_cac_module():
 cac = _load_cac_module()
 
 
-class CACScriptTests(TestCase):
+class TestCACScript(CeluneTestCase):
     """Verify the CEVOICE helper script supports simple and wizard modes."""
 
     def test_simple_mode_prompts_for_reference_text_when_not_provided(self) -> None:
@@ -74,7 +76,7 @@ class CACScriptTests(TestCase):
             ):
                 exit_code = cac.main(["Nova", str(wav_path)])
 
-        self.assertEqual(exit_code, 0)
+        assert exit_code == 0
         ask_required_text.assert_called_once_with(
             "Enter reference transcript for the WAV file",
             "A reference transcript is required.",
@@ -90,7 +92,7 @@ class CACScriptTests(TestCase):
             },
             {cac.DEFAULT_SIMPLE_VOICE_NAME: {"reference_text": "Hello from Nova."}},
         )
-        self.assertIn("Saved voice pack to Nova.cevoice", stdout.getvalue())
+        assert "Saved voice pack to Nova.cevoice" in stdout.getvalue()
 
     def test_simple_mode_accepts_reference_text_argument(self) -> None:
         """Verify simple mode can also take the reference transcript on the command line."""
@@ -110,7 +112,7 @@ class CACScriptTests(TestCase):
             ):
                 exit_code = cac.main(["Nova", str(wav_path), "Hello from Nova."])
 
-        self.assertEqual(exit_code, 0)
+        assert exit_code == 0
         ask_required_text.assert_not_called()
         normalize_reference_wav_asset.assert_called_once_with(wav_path)
         write_cevoice.assert_called_once_with(
@@ -129,8 +131,8 @@ class CACScriptTests(TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as stdout:
             exit_code = cac.main(["Nova", "missing.wav", "Hello from Nova."])
 
-        self.assertEqual(exit_code, 1)
-        self.assertIn("Error: File not found:", stdout.getvalue())
+        assert exit_code == 1
+        assert "Error: File not found:" in stdout.getvalue()
 
     def test_create_cevoice_normalizes_reference_wav_assets(self) -> None:
         """Verify CEVOICE creation normalizes WAV assets before bundling them."""
@@ -160,7 +162,7 @@ class CACScriptTests(TestCase):
         ):
             output_path = cac.create_cevoice(data)
 
-        self.assertEqual(output_path, Path("Nova.cevoice"))
+        assert output_path == Path("Nova.cevoice")
         normalize_reference_wav_asset.assert_called_once_with(wav_path)
         write_cevoice.assert_called_once_with(
             Path("Nova.cevoice"),
@@ -178,5 +180,5 @@ class CACScriptTests(TestCase):
         with mock.patch.object(cac, "wizard") as wizard:
             exit_code = cac.main([])
 
-        self.assertEqual(exit_code, 0)
+        assert exit_code == 0
         wizard.assert_called_once_with()

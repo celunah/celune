@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
 export CFLAGS="-O2 -DNDEBUG -fstack-protector-strong -D_FORTIFY_SOURCE=3"
@@ -79,6 +79,8 @@ if [[ "$repo_root" == /mnt/* ]]; then
     export UV_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/celune-uv"
 fi
 mkdir -p "$UV_CACHE_DIR"
+
+uv run python "$repo_root/scripts/root.py"
 
 mkdir -p "$output_dir"
 rm -rf \

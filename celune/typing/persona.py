@@ -1,12 +1,15 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Persona runtime protocols and type aliases."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
-from typing import TYPE_CHECKING, Literal, Optional, Protocol, TypedDict, Union
+from collections.abc import Mapping, Iterator, Sequence
+from typing import TYPE_CHECKING, Union, Literal, Optional, Protocol, TypedDict
 
 import torch
+import numpy as np
+import numpy.typing as npt
+from transformers import StoppingCriteriaList
 from transformers.tokenization_utils_base import BatchEncoding
 
 from .common import JSONSerializable, VideoMetadataScalar
@@ -15,14 +18,50 @@ if TYPE_CHECKING:
     from torch import Tensor
     from torch.nn import Parameter
 
-    from ..cevoice import CEVoicePersona
-    from .aliases import AudioChunk
     from .common import Config
+    from .aliases import AudioChunk
+    from ..cevoice import CEVoicePersona
 
 type Role = Literal["system", "user", "assistant"]
 type VisionInput = Union[JSONSerializable, torch.Tensor, bytes, memoryview]
-type ProcessorKwargValue = Union[VideoMetadataScalar, Sequence[VideoMetadataScalar]]
-type ModelGenerateKwargValue = Union[torch.Tensor, int, float, bool]
+type ProcessorKwargValue = Union[
+    VideoMetadataScalar,
+    Sequence[VideoMetadataScalar],
+    bool,
+    int,
+]
+type ModelGenerateKwargValue = Union[
+    torch.Tensor,
+    int,
+    float,
+    bool,
+    str,
+    StoppingCriteriaList,
+]
+type WhisperScalar = Union[int, float, np.number, torch.Tensor]
+type WhisperTokenValues = Union[Sequence[WhisperScalar], torch.Tensor, npt.NDArray]
+
+
+class WhisperTokenResult(TypedDict, total=False):
+    """Token-timestamp payload returned for one Whisper segment."""
+
+    token_timestamps: WhisperTokenValues
+
+
+class WhisperSegmentPayload(TypedDict, total=False):
+    """Raw timestamped segment payload returned by Whisper."""
+
+    start: WhisperScalar
+    end: WhisperScalar
+    tokens: WhisperTokenValues
+    idxs: Sequence[WhisperScalar]
+    result: WhisperTokenResult
+
+
+class WhisperGenerationPayload(TypedDict, total=False):
+    """Raw segmented generation payload returned by Whisper."""
+
+    segments: Sequence[Sequence[WhisperSegmentPayload]]
 
 
 class TextContentItem(TypedDict):
@@ -78,6 +117,8 @@ class ChatTemplateRenderer(Protocol):
         add_generation_prompt: bool = True,
         return_dict: bool = True,
         return_tensors: str = "pt",
+        truncation: bool = False,
+        max_length: Optional[int] = None,
     ) -> Union[str, BatchEncoding]:
         """Render or tokenize a chat conversation.
 
@@ -87,6 +128,8 @@ class ChatTemplateRenderer(Protocol):
             add_generation_prompt: Whether to append an assistant generation turn.
             return_dict: Whether structured tensor output should be returned.
             return_tensors: Tensor backend requested by the caller.
+            truncation: Whether to truncate tokenized input.
+            max_length: Maximum number of input tokens when truncating.
 
         Raises:
             NotImplementedError: If `NotImplementedError` needs to be raised.
@@ -99,7 +142,15 @@ class PersonaTokenizer(Protocol):
 
     eos_token_id: Optional[int]
 
-    def __call__(self, *, text: str, return_tensors: str) -> BatchEncoding:
+    def __call__(
+        self,
+        *,
+        text: Union[str, Sequence[str]],
+        return_tensors: str,
+        padding: bool = False,
+        truncation: bool = False,
+        max_length: Optional[int] = None,
+    ) -> BatchEncoding:
         """Tokenize text into a batch encoding."""
         raise NotImplementedError("protocol not defined")
 
@@ -167,7 +218,7 @@ class _WhisperProcessorOutput(Protocol):
     attention_mask: Optional[Tensor]
 
 
-class _WhisperProcessor(Protocol):
+class _WhisperProcessor(Protocol):  # noqa: PYI046
     """Protocol for the processor operations used by the transcriber."""
 
     def __call__(
@@ -194,13 +245,16 @@ class _WhisperProcessor(Protocol):
         """
 
 
-class _WhisperModel(Protocol):
+class _WhisperModel(Protocol):  # noqa: PYI046
     """Protocol for the model operations used by the transcriber."""
 
     def eval(self) -> None:
         """Switch the model to evaluation mode."""
 
-    def generate(self, **kwargs: Union[Tensor, str]) -> Tensor:
+    def generate(
+        self,
+        **kwargs: Union[Tensor, str, bool, float],
+    ) -> Union[Tensor, WhisperGenerationPayload]:
         """Generate token IDs from prepared Whisper inputs.
 
         Args:
@@ -215,7 +269,7 @@ class _WhisperModel(Protocol):
         """
 
 
-class _EmotionModelConfig(Protocol):
+class _EmotionModelConfig(Protocol):  # noqa: PYI046
     """Protocol for model configs that expose emotion label mappings."""
 
     id2label: Mapping[Union[int, str], str]
@@ -230,6 +284,7 @@ class PersonaEngineView(Protocol):
     voice_bundle_is_default: bool
     persona_history: list[dict[str, str]]
     persona_attachments: list[dict[str, str]]
+    persona_session_summary: str
 
 
 class PersonaClientResponse:

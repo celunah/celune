@@ -1,40 +1,72 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for Celune core behavior without real models or GPU work."""
 
-import contextlib
+import json
+import queue
+import weakref
 import tempfile
 import threading
-import weakref
+import contextlib
 from pathlib import Path
-from types import SimpleNamespace
-from typing import cast
-from unittest import IsolatedAsyncioTestCase, TestCase, mock
+from typing import Optional, cast
+from types import SimpleNamespace, MappingProxyType
+from unittest import mock
+from collections.abc import Callable
 
 import numpy as np
+import pytest
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-
-from celune import cevoice, i18n
-from celune.backends.tts.qwen3 import Qwen3
+from celune import i18n, cevoice
+from celune.utils import discard
 from celune.celune import Celune
 from celune.config import Config
-from celune.exceptions import BackendError, WarmupError
+from celune.typing.common import JSONSerializable
+from celune.typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
+from celune.pipeline import close as close_pipeline
 from celune.persona.impl import persona_quantization
+from celune.exceptions import WarmupError, BackendError, CEDTSTimeoutError
+from celune.persona.emotion import PersonaEmotionAnalyzer
+from celune.agent import (
+    AgentRequest,
+    AgentSession,
+    AgentTaskState,
+    AgentCancellationReason,
+)
 from celune.pipeline import (
-    convert_audio_input,
-    handle_audio_input,
     play_signal,
     release_pipeline,
+    handle_audio_input,
+    convert_audio_input,
 )
-from celune.typing.common import JSONSerializable
-from celune.utils import discard
-from celune.vram import QWEN3_0_6B_MODEL
+from celune.dataclasses.celune import (
+    CeluneAudioState,
+    CeluneModelState,
+    CeluneVoiceState,
+    CeluneBackendState,
+    CeluneRuntimeState,
+    CeluneCallbackState,
+    CelunePipelineState,
+)
 
-from .support import FakeBackend, FakeGlow, FakeVCBackend
+from .support import (
+    CeluneAsyncTestCase,
+    CeluneTestCase,
+    FakeBackend,
+    FakeGlow,
+    FakeVCBackend,
+)
 
 
-class CeluneCoreTests(TestCase):
+class TestCeluneCore(CeluneTestCase):
     """Tests for Celune orchestration without real model work."""
+
+    _cached_celune: Optional[Celune] = None
+    _cached_instance_keys: frozenset[str] = frozenset()
 
     @staticmethod
     def _close_celune(celune: Celune) -> None:
@@ -42,15 +74,129 @@ class CeluneCoreTests(TestCase):
         if Celune._instance is celune:
             celune.close()
 
-    def _make_celune(self, config: dict) -> Celune:
+    @classmethod
+    def _reset_cached_celune(cls, celune: Celune) -> None:
+        """Restore the reusable default test instance to constructor state."""
+        if celune._playback_thread is not None:
+            close_pipeline(celune)
+        if celune.vision is not None or celune._persona_load_thread is not None:
+            Celune._unload_persona_state(celune)
+
+        persona_thread = getattr(celune, "_persona_thread", None)
+        if (
+            persona_thread is not None
+            and persona_thread is not threading.current_thread()
+        ):
+            persona_thread.join(timeout=2)
+        persona_queue = getattr(celune, "_persona_queue", None)
+        if persona_queue is not None:
+            while True:
+                try:
+                    persona_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+        for name in set(celune.__dict__) - cls._cached_instance_keys:
+            delattr(celune, name)
+
+        backend = FakeBackend(log=celune._noop_message, fatal=celune.fatal)
+        celune._callbacks = CeluneCallbackState(
+            log_callback=celune._noop_message,
+            status_callback=celune._noop_message,
+            error_callback=lambda _error: None,
+            idle_callback=lambda: None,
+            queue_avail_callback=lambda: None,
+            voice_changed_callback=lambda _name: None,
+            change_input_state_callback=celune._noop_input_state,
+            change_voice_lock_state_callback=celune._noop_voice_lock_state,
+            progress_callback=celune._noop_progress,
+            caption_progress_callback=celune._noop_progress,
+            caption_callback=celune._noop_caption,
+            caption_timing_callback=celune._noop_caption_timing,
+        )
+        celune._backend_state = CeluneBackendState(
+            config={},
+            backend_spec=FakeBackend,
+            backend_kwargs={},
+            backend=backend,
+            tts_backend=backend.name,
+            input_mode="text_to_speech",
+            chunk_size=8,
+        )
+        celune._model_state = CeluneModelState()
+        celune._voice_state = CeluneVoiceState()
+        celune._pipeline_state = CelunePipelineState(audio_queue=queue.Queue(maxsize=8))
+        celune._audio_state = CeluneAudioState()
+        celune._runtime_state = CeluneRuntimeState()
+        celune._async_runtime_lock = threading.Lock()
+        celune._voice_reload_guard = threading.Lock()
+        celune._voice_reload_active = False
+        celune._event_dispatcher = type(celune._event_dispatcher)(
+            log_warning=celune.log,
+            log_level="info",
+        )
+        glow = FakeGlow("#cebaff", celune=celune)
+        setattr(celune, "glow", glow)  # noqa: B010
+        celune._wrap_fatal_glow()
+        glow.start()
+        celune._model_ready.set()
+        celune._playback_done.set()
+        Celune._instance = None
+
+    @classmethod
+    def _cache_celune(cls, celune: Celune) -> None:
+        """Install close tracking on one reusable default test instance."""
+        original_close = celune.close
+
+        def close_cached() -> None:
+            """Close and invalidate the reusable default test instance."""
+            if cls._cached_celune is celune:
+                cls._cached_celune = None
+            original_close()
+
+        celune.close = close_cached
+        cls._cached_celune = celune
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        """Close the cached default test instance after the core suite."""
+        if cls._cached_celune is not None:
+            cached_celune = cls._cached_celune
+            cls._cached_celune = None
+            cached_celune.close()
+
+    def _make_celune(
+        self,
+        config: dict,
+        startup_callback: Optional[Callable[[str], None]] = None,
+    ) -> Celune:
         """Build a Celune instance with lightweight fakes."""
+        if not config and startup_callback is None:
+            cached_celune = type(self)._cached_celune
+            if cached_celune is not None:
+                type(self)._reset_cached_celune(cached_celune)
+                type(self)._cache_celune(cached_celune)
+                return cached_celune
+
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
         ):
-            celune = Celune(config=config, tts_backend=FakeBackend)
-            self.addCleanup(self._close_celune, celune)
+            celune = Celune(
+                config=config,
+                tts_backend=FakeBackend,
+                startup_callback=startup_callback,
+            )
+            if not config and startup_callback is None:
+                owner = type(self)
+                owner._cached_instance_keys = frozenset(celune.__dict__)
+                owner._cache_celune(celune)
+                # Keep the cached harness available while constructor tests use the
+                # production singleton slot for their own temporary instances.
+                Celune._instance = None
+            else:
+                self.addCleanup(self._close_celune, celune)
             return celune
 
     @staticmethod
@@ -91,26 +237,44 @@ class CeluneCoreTests(TestCase):
             self.addCleanup(self._close_celune, celune)
 
         resolve.assert_called_once()
-        self.assertEqual(resolve.call_args.args[0], "mini")
-        self.assertNotIn("clone_model_id", resolve.call_args.kwargs)
+        assert resolve.call_args.args[0] == "mini"
+        assert "clone_model_id" not in resolve.call_args.kwargs
         celune.close()
 
         celune = self._make_celune({})
         self.assertEqual(celune.chunk_size, 8)
-        self.assertEqual(getattr(celune.glow, "started"), True)
+        self.assertEqual(getattr(celune.glow, "started"), True)  # noqa: B009
         celune.close()
 
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
-            self.assertRaisesRegex(BackendError, "invalid chunk length"),
+            pytest.raises(BackendError, match="invalid chunk length"),
         ):
             Celune(
                 config={},
                 tts_backend=FakeBackend,
                 target_chunk_length=0.65,
             )
+
+    def test_callback_registration_rejects_the_same_callback_twice(self) -> None:
+        """Verify Celune rejects duplicate callback registration attempts."""
+        celune = self._make_celune({})
+
+        def callback(
+            msg: str,
+            severity: str = "info",
+            *,
+            loglevel: str = "info",
+        ) -> None:
+            del msg, severity, loglevel
+
+        celune.log_callback = callback
+        with pytest.raises(ValueError, match="already registered"):
+            celune.log_callback = callback
+
+        celune.close()
 
     def test_constructor_accepts_backend_alias_for_tts_runtime(self) -> None:
         """Verify ``backend=`` can configure the TTS runtime directly."""
@@ -122,8 +286,8 @@ class CeluneCoreTests(TestCase):
             celune = Celune(config={}, backend=FakeBackend)
             self.addCleanup(self._close_celune, celune)
 
-        self.assertEqual(celune.backend.name, "fake")
-        self.assertEqual(celune.tts_backend, "fake")
+        assert celune.backend.name == "fake"
+        assert celune.tts_backend == "fake"
 
     def test_constructor_accepts_backend_alias_for_vc_runtime(self) -> None:
         """Verify ``backend=`` can configure the VC runtime in VC mode."""
@@ -139,10 +303,10 @@ class CeluneCoreTests(TestCase):
             celune = Celune(config={"mode": "voice_conversion"}, backend=FakeVCBackend)
             self.addCleanup(self._close_celune, celune)
 
-        self.assertEqual(celune.input_mode, "voice_conversion")
-        self.assertIsNotNone(celune.vc_backend)
+        assert celune.input_mode == "voice_conversion"
         assert celune.vc_backend is not None
-        self.assertEqual(celune.vc_backend.name, "fake-vc")
+        assert celune.vc_backend is not None
+        assert celune.vc_backend.name == "fake-vc"
 
     def test_constructor_accepts_backend_alias_string_for_vc_runtime(self) -> None:
         """Verify string backend aliases resolve to VC backends when selected."""
@@ -155,12 +319,12 @@ class CeluneCoreTests(TestCase):
                 return_value=FakeBackend(),
             ),
         ):
-            celune = Celune(config={"mode": "voice_conversion"}, backend="passthrough")
+            celune = Celune(config={"mode": "voice_conversion"}, backend="seed-vc")
             self.addCleanup(self._close_celune, celune)
 
-        self.assertIsNotNone(celune.vc_backend)
         assert celune.vc_backend is not None
-        self.assertEqual(celune.vc_backend.name, "passthrough")
+        assert celune.vc_backend is not None
+        assert celune.vc_backend.name == "seed-vc"
 
     def test_constructor_uses_explicit_locale_override_from_config(self) -> None:
         """Verify an explicit config locale wins over system auto-detection."""
@@ -175,7 +339,7 @@ class CeluneCoreTests(TestCase):
             self.addCleanup(self._close_celune, celune)
 
         self.addCleanup(i18n.set_locale, previous_locale)
-        self.assertEqual(i18n.get_locale(), "en-US")
+        assert i18n.get_locale() == "en-US"
 
     def test_constructor_uses_system_locale_when_no_override_is_configured(
         self,
@@ -192,7 +356,7 @@ class CeluneCoreTests(TestCase):
             self.addCleanup(self._close_celune, celune)
 
         self.addCleanup(i18n.set_locale, previous_locale)
-        self.assertEqual(i18n.get_locale(), "pl")
+        assert i18n.get_locale() == "pl"
 
     def test_constructor_rejects_duplicate_backend_alias_for_tts(self) -> None:
         """Verify ``backend=`` cannot be combined with ``tts_backend=``."""
@@ -200,8 +364,8 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
-            self.assertRaisesRegex(
-                BackendError, "cannot specify both 'backend' and 'tts_backend'"
+            pytest.raises(
+                BackendError, match="cannot specify both 'backend' and 'tts_backend'"
             ),
         ):
             Celune(config={}, backend=FakeBackend, tts_backend=FakeBackend)
@@ -212,8 +376,8 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
-            self.assertRaisesRegex(
-                BackendError, "cannot specify both 'backend' and 'vc_backend'"
+            pytest.raises(
+                BackendError, match="cannot specify both 'backend' and 'vc_backend'"
             ),
         ):
             Celune(
@@ -227,13 +391,28 @@ class CeluneCoreTests(TestCase):
         """Verify Celune seeds total savings history from existing outputs."""
         celune = self._make_celune({})
 
-        with mock.patch(
-            "celune.celune.saved_output_speech_seconds",
-            return_value=42.5,
+        with (
+            mock.patch(
+                "celune.celune.saved_output_speech_seconds",
+                return_value=42.5,
+            ),
+            mock.patch("celune.celune.play_signal", return_value=False),
         ):
-            self.assertEqual(celune.load(skip_runtime_check=True), True)
+            assert celune.load(skip_runtime_check=True)
 
-        self.assertEqual(celune.historical_generated_speech_seconds, 42.5)
+        assert celune.historical_generated_speech_seconds == 42.5
+
+    def test_load_reports_core_initialization_startup_checkpoint(self) -> None:
+        """Verify ``load`` reports its dedicated startup checkpoint once."""
+        startup_callback = mock.Mock()
+        celune = self._make_celune({}, startup_callback=startup_callback)
+
+        with mock.patch("celune.celune.play_signal", return_value=False):
+            assert celune.load(skip_runtime_check=True)
+
+        startup_callback.assert_called_once_with(
+            i18n.string("ui.startup_initializing_core")
+        )
 
     def test_voice_loading_uses_backend_and_bundle_defaults(self) -> None:
         """Verify backend voices and bundle metadata determine defaults.
@@ -242,9 +421,9 @@ class CeluneCoreTests(TestCase):
             AssertionError: Voice loading behavior changes unexpectedly.
         """
         celune = self._make_celune({})
-        self.assertEqual(celune.load_available_voices(), True)
-        self.assertEqual(celune.voices, ("balanced", "bold"))
-        self.assertEqual(celune.current_voice, "balanced")
+        assert celune.load_available_voices()
+        assert celune.voices == ("balanced", "bold")
+        assert celune.current_voice == "balanced"
 
         fake_bundle = mock.Mock()
         fake_bundle.path = Path("fixture.cevoice")
@@ -273,15 +452,12 @@ class CeluneCoreTests(TestCase):
                 return_value=False,
             ),
         ):
-            self.assertEqual(celune.load_voice_bundle(Path("fixture.cevoice")), True)
-        self.assertEqual(celune.current_voice, "bold")
-        self.assertEqual(celune.current_character, "Fixture")
-        self.assertIsNotNone(celune.current_character_persona)
+            assert celune.load_voice_bundle(Path("fixture.cevoice"))
+        assert celune.current_voice == "bold"
+        assert celune.current_character == "Fixture"
         assert celune.current_character_persona is not None
-        self.assertEqual(
-            celune.current_character_persona.speaking_style,
-            "Measured and calm.",
-        )
+        assert celune.current_character_persona is not None
+        assert celune.current_character_persona.speaking_style == "Measured and calm."
 
     def test_cleanup_residual_temp_data_removes_unprotected_temp_entries(self) -> None:
         """Verify shutdown temp cleanup removes every unprotected temp entry."""
@@ -310,12 +486,12 @@ class CeluneCoreTests(TestCase):
 
             celune._cleanup_residual_temp_data(temp_root)
 
-            self.assertFalse(extracted_dir.exists())
-            self.assertFalse(pocket_dir.exists())
-            self.assertFalse(rag_prompt.exists())
-            self.assertFalse(temporary_audio.exists())
-            self.assertFalse(bundle_file.exists())
-            self.assertFalse(memory_note.exists())
+            assert not extracted_dir.exists()
+            assert not pocket_dir.exists()
+            assert not rag_prompt.exists()
+            assert not temporary_audio.exists()
+            assert not bundle_file.exists()
+            assert not memory_note.exists()
 
         celune.log_callback.assert_any_call(
             "Celune found 6 residual temporary items.",
@@ -344,9 +520,9 @@ class CeluneCoreTests(TestCase):
             finally:
                 cevoice.unregister_protected_temp_path(protected_dir)
 
-            self.assertTrue(protected_dir.exists())
-            self.assertFalse(stale_dir.exists())
-            self.assertFalse(stale_file.exists())
+            assert protected_dir.exists()
+            assert not stale_dir.exists()
+            assert not stale_file.exists()
 
         celune.log_callback.assert_any_call(
             "Celune found 2 residual temporary items.",
@@ -370,9 +546,9 @@ class CeluneCoreTests(TestCase):
                 return_value=True,
             ),
         ):
-            self.assertEqual(celune.load_voice_bundle(Path("fixture.cevoice")), True)
+            assert celune.load_voice_bundle(Path("fixture.cevoice"))
 
-        self.assertEqual(celune.voice_bundle_is_default, True)
+        assert celune.voice_bundle_is_default
 
     def test_load_voice_bundle_rejects_named_celune_without_default_checksum(
         self,
@@ -393,10 +569,10 @@ class CeluneCoreTests(TestCase):
                 return_value=False,
             ),
         ):
-            self.assertEqual(celune.load_voice_bundle(Path("fixture.cevoice")), True)
+            assert celune.load_voice_bundle(Path("fixture.cevoice"))
 
-        self.assertEqual(celune.current_character, "Celune")
-        self.assertEqual(celune.voice_bundle_is_default, False)
+        assert celune.current_character == "Celune"
+        assert not celune.voice_bundle_is_default
 
     def test_persona_connection_uses_in_process_runtime(self) -> None:
         """Verify Celune connects to Persona through the local in-process runtime.
@@ -421,15 +597,15 @@ class CeluneCoreTests(TestCase):
             )
             self.addCleanup(self._close_celune, celune)
 
-            self.assertIs(celune.vision, client)
+            assert celune.vision is client
             create_client.assert_called_once()
-            self.assertEqual(
-                create_client.call_args.args[0],
-                {"vram": "high", "persona": {"enabled": True}},
-            )
-            log_dev = create_client.call_args.kwargs["log_dev"]
-            self.assertIs(getattr(log_dev, "__self__", None), celune)
-            self.assertIs(getattr(log_dev, "__func__", None), Celune.log_dev)
+            assert create_client.call_args.args[0] == {
+                "vram": "high",
+                "persona": {"enabled": True},
+            }
+            log = create_client.call_args.kwargs["log"]
+            assert getattr(log, "__self__", None) is celune
+            assert getattr(log, "__func__", None) is Celune.log
             available.assert_called_once_with()
             celune.close()
             client.close.assert_called_once_with()
@@ -447,13 +623,13 @@ class CeluneCoreTests(TestCase):
                 {"vram": "high", "persona": {"enabled": True}}
             )
 
-        self.assertIsNotNone(client)
         assert client is not None
-        self.assertEqual(persona.persona_model_id(), "Qwen/Qwen3-VL-4B-Instruct")
+        assert client is not None
+        assert persona.persona_model_id() == "Qwen/Qwen3-VL-4B-Instruct"
         client.close()
 
-    def test_load_preloads_persona_runtime_when_available(self) -> None:
-        """Verify Celune explicitly loads Persona during startup."""
+    def test_load_starts_persona_after_tts_is_ready(self) -> None:
+        """Verify TTS becomes ready before Persona starts downloading."""
         celune = self._make_celune({})
         celune.setup_extensions = mock.Mock()
         celune._warmup = mock.Mock(return_value=True)
@@ -463,18 +639,29 @@ class CeluneCoreTests(TestCase):
         celune.backend.model_id_for_voice = mock.Mock(return_value="fake/balanced")
         persona_client = mock.Mock()
         celune.vision = persona_client
+        progress_events: list[tuple[Optional[float], Optional[float]]] = []
+        celune.progress_callback = lambda progress, total: progress_events.append(
+            (progress, total)
+        )
         with (
             mock.patch("celune.celune.threading.Thread") as thread_cls,
             mock.patch("celune.celune.validate_runtime", return_value=True),
             mock.patch("celune.celune.play_signal", return_value=False),
         ):
             thread_cls.return_value.start = mock.Mock()
-            self.assertEqual(celune.load(), True)
+            assert celune.load()
 
+        persona_thread = thread_cls.call_args_list[-1]
+        assert not celune.persona_ready
+        assert celune.persona_loading
+        persona_thread.kwargs["target"](*persona_thread.kwargs["args"])
         persona_client.load.assert_called_once_with(
             "Qwen/Qwen3-VL-4B-Instruct",
             "4bit",
         )
+        assert celune.persona_ready
+        assert not celune.persona_loading
+        assert progress_events[-1] == (1, 1)
 
     def test_load_defers_temp_cleanup_until_shutdown(self) -> None:
         """Verify temp cleanup waits until runtime shutdown after initialization."""
@@ -503,11 +690,11 @@ class CeluneCoreTests(TestCase):
             mock.patch.object(celune, "load_available_voices", side_effect=load_voices),
             mock.patch("celune.celune.log_runtime_banner"),
         ):
-            self.assertEqual(celune.load(), False)
-            self.assertEqual(call_order, ["voices"])
+            assert not celune.load()
+            assert call_order == ["voices"]
             celune.close()
 
-        self.assertEqual(call_order, ["voices", "loader", "cleanup"])
+        assert call_order == ["voices", "loader", "cleanup"]
 
     def test_load_disables_persona_when_preload_fails(self) -> None:
         """Verify Persona preload failures fall back to speech-only mode."""
@@ -527,10 +714,28 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.play_signal", return_value=False),
         ):
             thread_cls.return_value.start = mock.Mock()
-            self.assertEqual(celune.load(), True)
+            assert celune.load()
 
+        celune._load_persona_background(persona_client)
         persona_client.close.assert_called_once_with()
-        self.assertIsNone(celune.vision)
+        assert celune.vision is None
+        assert not celune.persona_ready
+
+    def test_think_falls_back_to_speech_while_persona_loads(self) -> None:
+        """Verify queued text uses TTS while Persona is still downloading."""
+        celune = self._make_celune({})
+        celune.vision = mock.Mock()
+        celune.persona_loading = True
+        celune.locked = False
+        celune.cur_state = "idle"
+        celune._wait_for_persona_playback = mock.Mock(return_value=True)
+        celune.say = mock.Mock(return_value=True)
+        celune._persona_queue.put("hello while downloading")
+
+        celune._think_worker()
+
+        celune.say.assert_called_once_with("hello while downloading")
+        celune.vision.post.assert_not_called()
 
     def test_load_voice_conversion_mode_skips_tts_model_load_and_warmup(self) -> None:
         """Verify VC mode does not boot the TTS runtime during startup."""
@@ -560,16 +765,16 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.play_signal", return_value=False),
         ):
             thread_cls.return_value.start = mock.Mock()
-            self.assertEqual(celune.load(), True)
+            assert celune.load()
 
         celune.backend.preload_models.assert_not_called()
         celune.backend.load_default_model.assert_not_called()
         celune._warmup.assert_not_called()
         celune.vc_backend.preload_models.assert_called_once_with()
-        self.assertIsNone(celune.model)
-        self.assertEqual(celune.model_name, "")
-        self.assertEqual(celune._generation_thread, None)
-        self.assertEqual(thread_cls.call_count, 1)
+        assert celune.model is None
+        assert celune.model_name == ""
+        assert celune._generation_thread is None
+        assert thread_cls.call_count == 1
 
     def test_change_voice_returns_runtime_state_to_idle(self) -> None:
         """Verify successful voice reload leaves Celune in the idle state."""
@@ -581,18 +786,18 @@ class CeluneCoreTests(TestCase):
         celune.cur_state = "idle"
         celune.backend.model_id_for_voice = mock.Mock(return_value="shared-model")
         statuses: list[tuple[str, str]] = []
-        celune.status_callback = lambda msg, severity="info": statuses.append(
-            (msg, severity)
+        celune.status_callback = lambda msg, severity="info", *, loglevel="info": (
+            statuses.append((msg, severity))
         )
         celune.voice_changed_callback = mock.Mock()
 
         with mock.patch("celune.celune.play_signal", return_value=False):
             celune.change_voice("bold")
 
-        self.assertEqual(celune.current_voice, "bold")
-        self.assertEqual(celune.loaded, True)
-        self.assertEqual(celune.cur_state, "idle")
-        self.assertEqual(statuses[-1], ("Idle", "info"))
+        assert celune.current_voice == "bold"
+        assert celune.loaded
+        assert celune.cur_state == "idle"
+        assert statuses[-1] == ("Idle", "info")
         celune.voice_changed_callback.assert_called_once_with("bold")
 
     def test_change_voice_in_voice_conversion_mode_skips_tts_reload(self) -> None:
@@ -607,18 +812,18 @@ class CeluneCoreTests(TestCase):
         celune.backend.load_model = mock.Mock(return_value={"model": "unused"})
         celune._warmup = mock.Mock(return_value=True)
         statuses: list[tuple[str, str]] = []
-        celune.status_callback = lambda msg, severity="info": statuses.append(
-            (msg, severity)
+        celune.status_callback = lambda msg, severity="info", *, loglevel="info": (
+            statuses.append((msg, severity))
         )
         celune.voice_changed_callback = mock.Mock()
 
         with mock.patch("celune.celune.play_signal", return_value=False):
             celune.change_voice("bold")
 
-        self.assertEqual(celune.current_voice, "bold")
-        self.assertEqual(celune.loaded, True)
-        self.assertEqual(celune.cur_state, "idle")
-        self.assertEqual(statuses[-1], ("Idle", "info"))
+        assert celune.current_voice == "bold"
+        assert celune.loaded
+        assert celune.cur_state == "idle"
+        assert statuses[-1] == ("Idle", "info")
         celune.backend.model_id_for_voice.assert_not_called()
         celune.backend.load_model.assert_not_called()
         celune._warmup.assert_not_called()
@@ -648,18 +853,18 @@ class CeluneCoreTests(TestCase):
             target=lambda: result.append(celune._prepare_voice_change("bold"))
         )
         worker.start()
-        self.assertTrue(prepare_started.wait(timeout=1))
-        self.assertTrue(worker.is_alive())
+        assert prepare_started.wait(timeout=1)
+        assert worker.is_alive()
 
         celune.locked = False
         celune.playback_done.set()
         worker.join(timeout=1)
 
-        self.assertFalse(worker.is_alive())
-        self.assertEqual(result, [True])
+        assert not worker.is_alive()
+        assert result == [True]
         celune.force_stop_speech.assert_not_called()
-        self.assertFalse(celune.loaded)
-        self.assertFalse(celune.model_ready.is_set())
+        assert not celune.loaded
+        assert not celune.model_ready.is_set()
 
     def test_voice_change_does_not_wait_for_non_speech_playback(self) -> None:
         """Verify voice changes ignore active non-verbal playback."""
@@ -678,9 +883,9 @@ class CeluneCoreTests(TestCase):
             "played_frames": 0.0,
         }
 
-        self.assertEqual(celune._prepare_voice_change("bold"), True)
-        self.assertFalse(celune.loaded)
-        self.assertFalse(celune.model_ready.is_set())
+        assert celune._prepare_voice_change("bold")
+        assert not celune.loaded
+        assert not celune.model_ready.is_set()
 
     def test_fatal_glow_marks_runtime_error_state(self) -> None:
         """Verify fatal glow always stamps Celune into the error state."""
@@ -692,10 +897,10 @@ class CeluneCoreTests(TestCase):
 
         celune.glow.fatal()
 
-        self.assertEqual(celune.cur_state, "error")
-        self.assertEqual(celune.loaded, False)
-        self.assertEqual(celune.locked, True)
-        self.assertEqual(celune._ready_announced, False)
+        assert celune.cur_state == "error"
+        assert not celune.loaded
+        assert celune.locked
+        assert not celune._ready_announced
 
     def test_error_signal_does_not_leave_error_state(self) -> None:
         """Verify fatal error signals do not overwrite Celune's error state."""
@@ -707,8 +912,8 @@ class CeluneCoreTests(TestCase):
         with mock.patch("celune.celune.play_signal", wraps=play_signal):
             result = celune.try_play_signal("error")
 
-        self.assertEqual(result, True)
-        self.assertEqual(celune.cur_state, "error")
+        assert result
+        assert celune.cur_state == "error"
 
     def test_release_pipeline_keeps_error_state_sticky(self) -> None:
         """Verify cleanup does not revive Celune from a fatal error."""
@@ -718,33 +923,21 @@ class CeluneCoreTests(TestCase):
 
         release_pipeline(celune)
 
-        self.assertEqual(celune.cur_state, "error")
-        self.assertEqual(celune.locked, False)
+        assert celune.cur_state == "error"
+        assert not celune.locked
 
-    def test_persona_talkback_config_can_disable_persona_input_mode(self) -> None:
-        """Verify persona talkback can be disabled without disabling Persona."""
+    def test_persona_mode_controls_persona_input_mode(self) -> None:
+        """Verify the operation mode controls Persona without legacy switches."""
         from celune.persona.impl import persona_enabled, persona_talkback_enabled
 
-        persona_config: Config = {"enabled": True, "talkback": False}
-        config: Config = {"vram": "high", "persona": persona_config}
-        self.assertEqual(persona_enabled(config), True)
-        self.assertEqual(persona_talkback_enabled(config), False)
-        self.assertEqual(
-            persona_talkback_enabled({"vram": "high", "persona": {}}), True
-        )
-        self.assertEqual(
-            persona_talkback_enabled({"vram": "high", "pyop": {"talkback": False}}),
-            False,
-        )
-        self.assertEqual(
-            persona_enabled({"vram": "low", "persona": {"enabled": True}}), False
-        )
-        self.assertEqual(
-            persona_talkback_enabled({"vram": "low", "persona": {}}), False
-        )
+        config: Config = {"mode": "converse", "vram": "high", "persona": {}}
+        assert persona_enabled(config)
+        assert persona_talkback_enabled(config)
+        assert not persona_enabled({"mode": "speak", "vram": "high", "persona": {}})
+        assert not persona_talkback_enabled({"vram": "low", "persona": {}})
         with mock.patch("celune.vram.torch.cuda.is_available", return_value=False):
-            self.assertEqual(persona_quantization({"vram": "high"}), "4bit")
-            self.assertEqual(persona_quantization({"vram": "xhigh"}), "8bit")
+            assert persona_quantization({"vram": "high"}) == "4bit"
+            assert persona_quantization({"vram": "xhigh"}) == "8bit"
 
     def test_low_vram_restricts_heavy_backends_to_mini(self) -> None:
         """Verify low VRAM falls back to the supported mini preset."""
@@ -763,7 +956,7 @@ class CeluneCoreTests(TestCase):
             )
             self.addCleanup(self._close_celune, celune)
 
-        self.assertEqual(resolve.call_args.args[0], "mini")
+        assert resolve.call_args.args[0] == "mini"
 
     def test_low_vram_restricts_dotstts_to_mini(self) -> None:
         """Verify low VRAM falls back to mini when dots.tts is requested."""
@@ -782,20 +975,7 @@ class CeluneCoreTests(TestCase):
             )
             self.addCleanup(self._close_celune, celune)
 
-        self.assertEqual(resolve.call_args.args[0], "mini")
-
-    def test_voice_prompt_support_tracks_qwen3_0_6b_capability(self) -> None:
-        """Verify voice prompts are disabled for the low-tier Qwen3 clone model."""
-        celune = self._make_celune({})
-        with mock.patch.object(Qwen3, "_validate_refs"):
-            celune.backend = Qwen3(
-                log=lambda _msg, _severity="info": None,
-                clone_model_id=QWEN3_0_6B_MODEL,
-            )
-        celune.voice_prompt = "gentle"
-
-        self.assertEqual(celune.voice_prompt_supported(), False)
-        self.assertIsNone(celune.effective_voice_prompt())
+        assert resolve.call_args.args[0] == "mini"
 
     def test_low_vram_rejects_heavy_backend_types(self) -> None:
         """Verify low VRAM rejects explicitly requested heavy backend classes."""
@@ -809,60 +989,64 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
-            self.assertRaisesRegex(BackendError, "not available for VRAM tier 'low'"),
+            pytest.raises(BackendError, match="not available for VRAM tier 'low'"),
         ):
             Celune(config={"vram": "low"}, tts_backend=HeavyBackend)
 
-    def test_low_vram_rejects_qwen3_instances_with_invalid_model_size(self) -> None:
-        """Verify prebuilt Qwen3 instances cannot bypass the low-tier 0.6B lock."""
-        with mock.patch.object(Qwen3, "_validate_refs"):
-            backend = Qwen3(
-                log=lambda _msg, _severity="info": None,
-                clone_model_id=Qwen3.clone_model,
-            )
-
-        with (
-            mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
-            mock.patch("celune.celune.default_loader", return_value=None),
-            mock.patch("celune.celune.persona_is_available", return_value=False),
-            self.assertRaisesRegex(
-                BackendError,
-                "backend 'qwen3' is not available with model",
-            ),
-        ):
-            Celune(config={"vram": "low"}, tts_backend=backend)
-
-    def test_think_reconnects_to_persona_before_speech_fallback(self) -> None:
-        """Verify stale Celune instances reconnect to Persona on the next think call.
+    def test_think_reconnects_and_starts_persona_loading_before_speech_fallback(
+        self,
+    ) -> None:
+        """Verify stale Celune instances reconnect and start loading Persona on the next think call.
 
         Raises:
             AssertionError: Persona reconnect behavior changes unexpectedly.
         """
-        celune = self._make_celune({})
+        celune = self._make_celune({"mode": "converse", "vram": "high"})
         celune.vision = None
         celune.locked = False
         celune.cur_state = "idle"
         client = mock.Mock()
         celune._persona_conn = mock.Mock(return_value=client)
+        call_order: list[str] = []
+
+        def record_say(text: str) -> bool:
+            call_order.append("say")
+            discard(text)
+            return False
+
+        def record_start_load() -> None:
+            call_order.append("start_load")
+
         with (
-            mock.patch("celune.celune.think_pipeline", return_value=True) as think,
-            mock.patch.object(celune, "say", return_value=False) as say,
+            mock.patch("celune.celune.think_pipeline") as think,
+            mock.patch.object(celune, "say", side_effect=record_say) as say,
+            mock.patch.object(
+                celune,
+                "_start_persona_background_load",
+                side_effect=record_start_load,
+            ) as start_load,
         ):
-            self.assertEqual(celune.think("hello"), True)
+            assert celune.think("hello")
+
             persona_thread = celune._persona_thread
-            self.assertIsNotNone(persona_thread)
+            assert persona_thread is not None
             assert persona_thread is not None
             persona_thread.join(timeout=2)
+            assert not persona_thread.is_alive()
 
-        self.assertIs(celune.vision, client)
-        think.assert_called_once_with(celune, "hello")
-        say.assert_not_called()
+        assert celune.vision is client
+        celune._persona_conn.assert_called_once_with()
+        start_load.assert_called_once_with()
+        say.assert_called_once_with("hello")
+        assert call_order == ["start_load", "say"]
+        think.assert_not_called()
 
     def test_think_queues_requests_while_persona_is_speaking(self) -> None:
         """Verify Persona requests submitted during playback run after the active reply."""
-        celune = self._make_celune({})
+        celune = self._make_celune({"mode": "converse", "vram": "high"})
         celune.error_callback = mock.Mock()
         celune.vision = mock.Mock()
+        celune.persona_ready = True
         celune.locked = True
         celune.cur_state = "speaking"
         celune.playback_done.clear()
@@ -874,20 +1058,287 @@ class CeluneCoreTests(TestCase):
             return True
 
         with mock.patch("celune.celune.think_pipeline", side_effect=process_request):
-            self.assertEqual(celune.think("first queued"), True)
-            self.assertEqual(celune.think("second queued"), True)
-            self.assertEqual(celune.error_callback.call_count, 0)
+            assert celune.think("first queued")
+            assert celune.think("second queued")
+            assert celune.error_callback.call_count == 0
 
             celune.locked = False
             celune.cur_state = "idle"
             celune.playback_done.set()
             persona_thread = celune._persona_thread
+            assert persona_thread is not None
+            assert persona_thread is not None
+            persona_thread.join(timeout=2)
+
+        assert calls == ["first queued", "second queued"]
+        assert celune._persona_queue.empty()
+
+    def test_think_worker_keeps_task_like_input_in_converse_mode(self) -> None:
+        """Keep a valid task classification on the Persona path in converse mode."""
+        celune = self._make_celune({"mode": "converse", "vram": "high"})
+        celune.persona_ready = True
+        celune.locked = False
+        celune.cur_state = "idle"
+        celune.playback_done.set()
+        response = mock.Mock()
+        response.raise_for_status = mock.Mock()
+        response.json.return_value = {
+            "text": json.dumps(
+                {"classification": "task", "route": "task", "confidence": 0.99}
+            )
+        }
+        celune.vision = mock.Mock(post=mock.Mock(return_value=response))
+        with (
+            mock.patch.object(celune, "_wait_for_persona_playback", return_value=True),
+            mock.patch(
+                "celune.celune.think_pipeline", return_value=True
+            ) as think_pipeline,
+            mock.patch(
+                "celune.agent.routing.build_agent_classification_request",
+                return_value={"format": "test"},
+            ),
+        ):
+            self.assertTrue(celune.think("Delete the fixture."))
+            persona_thread = celune._persona_thread
             self.assertIsNotNone(persona_thread)
             assert persona_thread is not None
             persona_thread.join(timeout=2)
 
-        self.assertEqual(calls, ["first queued", "second queued"])
-        self.assertEqual(celune._persona_queue.empty(), True)
+        think_pipeline.assert_called_once_with(celune, "Delete the fixture.")
+        self.assertIsNone(celune.agent_runtime.get_active_task("default"))
+
+    def test_think_falls_back_to_speech_when_persona_vram_is_incompatible(
+        self,
+    ) -> None:
+        """Use direct speech when the selected preset cannot load Persona."""
+        celune = self._make_celune({"mode": "converse", "vram": "medium"})
+
+        with mock.patch.object(celune, "say", return_value=True) as say:
+            assert celune.think("Read this aloud.")
+
+        say.assert_called_once_with("Read this aloud.")
+
+    def test_think_in_speak_mode_does_not_invoke_persona_or_agent_routing(self) -> None:
+        """Send speak-mode input directly to speech without touching Persona."""
+        celune = self._make_celune({"mode": "speak"})
+        celune.vision = mock.Mock()
+        with mock.patch.object(celune, "say", return_value=True) as say:
+            self.assertTrue(celune.think("Speak this exactly."))
+
+        say.assert_called_once_with("Speak this exactly.")
+        celune.vision.post.assert_not_called()
+        self.assertIsNone(celune.agent_runtime.get_active_task("default"))
+
+    def test_classifier_failure_does_not_fall_through_to_persona_generation(
+        self,
+    ) -> None:
+        """Keep a Persona classifier transport error out of normal generation."""
+        celune = self._make_celune({"mode": "agent", "vram": "xhigh"})
+        celune.persona_ready = True
+        celune.locked = False
+        celune.cur_state = "idle"
+        celune.playback_done.set()
+        celune.vision = mock.Mock()
+        celune.vision.post.side_effect = RuntimeError("classifier transport failed")
+        with (
+            mock.patch("celune.vram.torch.cuda.is_available", return_value=False),
+            mock.patch("celune.celune.think_pipeline") as think_pipeline,
+            mock.patch.object(celune, "say", return_value=False) as say,
+        ):
+            self.assertTrue(celune.think("Delete the fixture."))
+            persona_thread = celune._persona_thread
+            self.assertIsNotNone(persona_thread)
+            assert persona_thread is not None
+            persona_thread.join(timeout=2)
+
+        think_pipeline.assert_not_called()
+        say.assert_called_once_with(i18n.string("agent.classifier_unavailable"))
+        self.assertIsNone(celune.agent_runtime.get_active_task("default"))
+
+    def test_think_interrupts_active_agent_and_speech_before_queueing_input(
+        self,
+    ) -> None:
+        """Invalidate active speech and agent work before accepting new input."""
+        celune = self._make_celune({"mode": "converse", "vram": "high"})
+        celune.locked = True
+        celune.cur_state = "speaking"
+        celune._persona_thread = mock.Mock()
+        celune._persona_thread.is_alive.return_value = True
+        task = celune.agent_runtime.create_task(
+            AgentRequest(
+                request="Check whether this process is running.",
+                session=AgentSession(session_id="default"),
+            ),
+            task_id="active-input-task",
+        )
+        celune.agent_runtime.start_task(task.task_id)
+        celune.agent_runtime.classify_task(task.task_id)
+        self.addCleanup(celune.agent_runtime.cancel_task, task.task_id)
+        celune.force_stop_speech = mock.Mock()
+
+        self.assertTrue(celune.think("Use the safer status check."))
+
+        celune.force_stop_speech.assert_called_once_with()
+        self.assertEqual(task.state, AgentTaskState.INTERRUPTED)
+        self.assertEqual(
+            celune._persona_queue.get_nowait(), "Use the safer status check."
+        )
+
+    def test_close_cancels_active_agent_before_runtime_teardown(self) -> None:
+        """Verify shutdown records runtime cancellation before closing resources."""
+        celune = self._make_celune({})
+        task = celune.agent_runtime.create_task(
+            AgentRequest(
+                request="Check the current status.",
+                session=AgentSession(session_id="default"),
+            ),
+            task_id="shutdown-task",
+        )
+        celune.agent_runtime.start_task(task.task_id)
+        celune.agent_runtime.classify_task(task.task_id)
+        backend_abort = mock.Mock()
+        celune._playback_thread = mock.Mock(is_alive=mock.Mock(return_value=True))
+
+        with (
+            mock.patch("celune.celune.close_pipeline"),
+            mock.patch.object(celune, "_unload_persona_state"),
+            mock.patch.object(celune, "unload_runtime_state"),
+            mock.patch.object(celune.backend, "abort", backend_abort, create=True),
+        ):
+            celune.close()
+
+        self.assertEqual(task.state, AgentTaskState.CANCELLED)
+        self.assertEqual(
+            task.cancellation_reason,
+            AgentCancellationReason.RUNTIME_SHUTDOWN,
+        )
+        backend_abort.assert_called_once_with()
+
+    def test_close_aborts_backends_even_when_pipeline_workers_are_cooperative(
+        self,
+    ) -> None:
+        """Verify shutdown aborts backend workers before pipeline cleanup."""
+        celune = self._make_celune({})
+        backend_abort = mock.Mock()
+        celune._playback_thread = mock.Mock(is_alive=mock.Mock(return_value=False))
+
+        with (
+            mock.patch("celune.celune.close_pipeline"),
+            mock.patch.object(celune, "_unload_persona_state"),
+            mock.patch.object(celune, "unload_runtime_state"),
+            mock.patch.object(celune.backend, "abort", backend_abort, create=True),
+        ):
+            celune.close()
+
+        backend_abort.assert_called_once_with()
+
+    def test_close_aborts_a_backend_candidate_stuck_during_reload(self) -> None:
+        """Verify shutdown aborts a candidate before it is published as active."""
+        celune = self._make_celune({})
+        candidate_abort = mock.Mock()
+        candidate = mock.Mock(abort=candidate_abort)
+        celune._reload_backend = candidate
+
+        with (
+            mock.patch("celune.celune.close_pipeline"),
+            mock.patch.object(celune, "_unload_persona_state"),
+            mock.patch.object(celune, "unload_runtime_state"),
+        ):
+            celune.close()
+
+        candidate_abort.assert_called_once_with()
+
+    def test_close_aborts_non_cooperative_pipeline_before_teardown(self) -> None:
+        """Verify bounded shutdown escalates work that remains active."""
+        celune = self._make_celune({})
+        backend_abort = mock.Mock()
+        celune._playback_thread = mock.Mock(is_alive=mock.Mock(return_value=True))
+        events: list[str] = []
+        backend_abort.side_effect = lambda: events.append("abort")
+
+        def record_pipeline_close(_engine: Celune) -> None:
+            """Record the graceful shutdown boundary for ordering assertions."""
+            events.append("graceful")
+
+        with (
+            mock.patch(
+                "celune.celune.close_pipeline", side_effect=record_pipeline_close
+            ),
+            mock.patch.object(celune, "_unload_persona_state"),
+            mock.patch.object(
+                celune,
+                "unload_runtime_state",
+                side_effect=lambda **_kwargs: events.append("teardown"),
+            ),
+            mock.patch.object(celune.backend, "abort", backend_abort, create=True),
+        ):
+            celune.close()
+
+        self.assertEqual(events, ["abort", "graceful", "teardown"])
+
+    def test_close_does_not_wait_for_reload_lock(self) -> None:
+        """Verify shutdown continues while a reload still owns its lock."""
+        celune = self._make_celune({})
+        backend_abort = mock.Mock()
+        close_done = threading.Event()
+        close_errors: list[BaseException] = []
+        celune._async_runtime_lock.acquire()
+
+        def close_engine() -> None:
+            """Close the engine from the simulated reload worker boundary."""
+            try:
+                celune.close()
+            except BaseException as error:  # pragma: no cover - assertion aid
+                close_errors.append(error)
+            finally:
+                close_done.set()
+
+        with (
+            mock.patch("celune.celune.close_pipeline"),
+            mock.patch.object(celune, "_unload_persona_state"),
+            mock.patch.object(celune, "unload_runtime_state"),
+            mock.patch.object(celune.backend, "abort", backend_abort, create=True),
+        ):
+            closer = threading.Thread(target=close_engine)
+            closer.start()
+            try:
+                self.assertTrue(close_done.wait(timeout=1))
+            finally:
+                celune._async_runtime_lock.release()
+            closer.join(timeout=1)
+
+        self.assertFalse(close_errors)
+        backend_abort.assert_called_once_with()
+
+    def test_unload_persona_state_clears_the_bound_emotion_analyzer(self) -> None:
+        """Verify Persona teardown does not retain VLM references through emotion analysis."""
+        celune = self._make_celune({})
+        celune.vision = mock.Mock()
+        analyzer = PersonaEmotionAnalyzer()
+        clear_vlm = mock.patch.object(analyzer, "clear_vlm", wraps=analyzer.clear_vlm)
+        clear_vlm_mock = clear_vlm.start()
+        self.addCleanup(clear_vlm.stop)
+        celune.persona_emotion_analyzer = analyzer
+
+        celune._unload_persona_state()
+
+        clear_vlm_mock.assert_called_once_with()
+        self.assertIsNone(getattr(celune, "persona_emotion_analyzer"))  # noqa: B009
+
+    def test_reset_persona_conversation_clears_history_summary_and_attachments(
+        self,
+    ) -> None:
+        """Verify a character transition cannot reuse old Persona context."""
+        celune = self._make_celune({})
+        celune.persona_history = [{"role": "user", "content": "old context"}]
+        celune.persona_session_summary = "old summary"
+        celune.persona_attachments = [{"path": "old.png", "kind": "image"}]
+
+        celune._reset_persona_conversation()
+
+        assert celune.persona_history == []
+        assert celune.persona_session_summary == ""
+        assert celune.persona_attachments == []
 
     def test_setup_extensions_exposes_think_to_extension_context(self) -> None:
         """Verify extension context receives Celune's think entrypoint.
@@ -900,14 +1351,14 @@ class CeluneCoreTests(TestCase):
         with mock.patch("celune.celune.CeluneExtensionManager.autoload"):
             celune.setup_extensions()
 
-        self.assertIsNotNone(celune.extension_manager)
+        assert celune.extension_manager is not None
         assert celune.extension_manager is not None
         think = celune.extension_manager.context.think
-        self.assertEqual(think("hello"), True)
+        assert think("hello")
         celune.think.assert_called_once_with("hello")
 
-    def test_logging_waiting_and_api_settings_cover_edge_cases(self) -> None:
-        """Verify logging gates, readiness checks, and API fallbacks.
+    def test_logging_levels_waiting_and_api_settings_cover_edge_cases(self) -> None:
+        """Verify log-level gates, readiness checks, and API fallbacks.
 
         Raises:
             AssertionError: Core utility behavior changes unexpectedly.
@@ -916,27 +1367,31 @@ class CeluneCoreTests(TestCase):
         celune = self._make_celune(
             {"api": {"port": "bad", "rate_limit_per_minute": "bad"}}
         )
-        celune.log_callback = lambda msg, severity="info": logs.append((msg, severity))
+        celune.log_callback = lambda msg, severity="info", *, loglevel="info": (
+            logs.append((msg, severity))
+        )
         celune.log("hello")
-        self.assertEqual(logs[-1], ("hello", "info"))
-        celune.log_dev("hidden")
-        self.assertEqual(len(logs), 1)
-        celune.dev = True
-        celune.log_dev("visible")
-        self.assertEqual(logs[-1], ("visible", "info"))
+        assert logs[-1] == ("hello", "info")
+        celune.log("hidden", loglevel="verbose")
+        assert len(logs) == 1
+        celune.log_level = "verbose"
+        celune.log("visible", loglevel="verbose")
+        assert logs[-1] == ("visible", "info")
+        celune.log("hidden debug", loglevel="debug")
+        assert logs[-1] == ("visible", "info")
+        celune.log_level = "debug"
+        celune.log("visible debug", loglevel="debug")
+        assert logs[-1] == ("visible debug", "info")
 
         celune.loaded = False
-        self.assertEqual(celune.wait_until_idle(timeout=0), False)
+        assert not celune.wait_until_idle(timeout=0)
         celune.loaded = True
         celune.locked = False
-        self.assertEqual(celune.wait_until_idle(timeout=0), True)
+        assert celune.wait_until_idle(timeout=0)
 
-        self.assertEqual(
-            celune.api_settings(),
-            (True, "127.0.0.1", 2060, None, 60),
-        )
-        self.assertEqual(logs[-2][1], "warning")
-        self.assertEqual(logs[-1][1], "warning")
+        assert celune.api_settings() == (True, "127.0.0.1", 2060, None, 60)
+        assert logs[-2][1] == "warning"
+        assert logs[-1][1] == "warning"
 
     def test_submit_audio_is_accepted_and_does_not_use_tts(self) -> None:
         """Verify audio input is accepted without disturbing the text/TTS path."""
@@ -947,15 +1402,15 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.handle_audio_input", return_value=True) as handle,
             mock.patch("celune.celune.say_pipeline", return_value=True) as say_pipeline,
         ):
-            self.assertEqual(celune.submit_audio(audio, 48000, label="fixture"), True)
-            self.assertEqual(celune.say("hello"), True)
+            assert celune.submit_audio(audio, 48000, label="fixture")
+            assert celune.say("hello")
 
         handle.assert_called_once()
         submitted_request = handle.call_args.args[1]
-        self.assertEqual(submitted_request.sample_rate, 48000)
-        self.assertEqual(submitted_request.label, "fixture")
-        self.assertEqual(submitted_request.audio.shape, (32, 2))
-        self.assertEqual(submitted_request.reset_ready_announcement, True)
+        assert submitted_request.sample_rate == 48000
+        assert submitted_request.label == "fixture"
+        assert submitted_request.audio.shape == (32, 2)
+        assert submitted_request.reset_ready_announcement
         say_pipeline.assert_called_once_with(
             celune,
             "hello",
@@ -979,7 +1434,7 @@ class CeluneCoreTests(TestCase):
             ) as queue_sfx,
             mock.patch("celune.celune.say_pipeline", return_value=True) as say_pipeline,
         ):
-            self.assertEqual(celune.submit_audio(audio, 44100, label="fixture"), True)
+            assert celune.submit_audio(audio, 44100, label="fixture")
 
         handle.assert_called_once()
         queue_sfx.assert_called_once()
@@ -1002,13 +1457,13 @@ class CeluneCoreTests(TestCase):
         ):
             output = celune.convert_audio(audio, 32000, label="fixture")
 
-        self.assertIsNotNone(output)
-        self.assertEqual(output.sample_rate, 32000)
-        self.assertEqual(output.label, "fixture")
-        self.assertEqual(output.audio.shape, (16, 2))
+        assert output is not None
+        assert output.sample_rate == 32000
+        assert output.label == "fixture"
+        assert output.audio.shape == (16, 2)
         convert_input.assert_called_once()
         submitted_request = convert_input.call_args.args[1]
-        self.assertEqual(submitted_request.pitch_shift, None)
+        assert submitted_request.pitch_shift is None
         queue_sfx.assert_not_called()
 
     def test_convert_audio_accepts_pitch_shift_override(self) -> None:
@@ -1024,7 +1479,7 @@ class CeluneCoreTests(TestCase):
             celune.convert_audio(audio, 32000, label="fixture", pitch_shift=7)
 
         submitted_request = convert_input.call_args.args[1]
-        self.assertEqual(submitted_request.pitch_shift, 7)
+        assert submitted_request.pitch_shift == 7
 
     def test_convert_audio_accepts_f0_condition_override(self) -> None:
         """Verify direct conversion forwards one f0 conditioning override."""
@@ -1039,43 +1494,37 @@ class CeluneCoreTests(TestCase):
             celune.convert_audio(audio, 32000, label="fixture", f0_condition=True)
 
         submitted_request = convert_input.call_args.args[1]
-        self.assertEqual(submitted_request.f0_condition, True)
+        assert submitted_request.f0_condition
 
-    def test_constructor_reads_configured_vc_pitch_shift(self) -> None:
-        """Verify VC pitch shift is read from config during startup."""
+    def test_constructor_uses_runtime_vc_pitch_shift_default(self) -> None:
+        """Verify VC pitch shift starts at its runtime default."""
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
         ):
             celune = Celune(
-                config={
-                    "mode": "voice_conversion",
-                    "voice_conversion_pitch_shift": -3,
-                },
+                config={"mode": "voice_conversion"},
                 tts_backend=FakeBackend,
             )
             self.addCleanup(self._close_celune, celune)
 
-        self.assertEqual(celune.vc_pitch_shift, -3)
+        assert celune.vc_pitch_shift == 0
 
-    def test_constructor_reads_configured_vc_f0_condition(self) -> None:
-        """Verify VC talk-vs-sing mode is read from config during startup."""
+    def test_constructor_uses_runtime_vc_f0_default(self) -> None:
+        """Verify F0 conditioning starts at its runtime default."""
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
         ):
             celune = Celune(
-                config={
-                    "mode": "voice_conversion",
-                    "voice_conversion_f0_condition": True,
-                },
+                config={"mode": "voice_conversion"},
                 tts_backend=FakeBackend,
             )
             self.addCleanup(self._close_celune, celune)
 
-        self.assertEqual(celune.vc_f0_condition, True)
+        assert not celune.vc_f0_condition
 
     def test_convert_audio_rejects_text_to_speech_mode(self) -> None:
         """Verify direct conversion stays unavailable outside VC mode."""
@@ -1085,7 +1534,7 @@ class CeluneCoreTests(TestCase):
         with mock.patch("celune.celune.convert_audio_input") as convert_input:
             output = celune.convert_audio(audio, 48000, label="fixture")
 
-        self.assertIsNone(output)
+        assert output is None
         convert_input.assert_not_called()
 
     def test_hot_backend_reload_failure_restores_previous_runtime(self) -> None:
@@ -1109,15 +1558,117 @@ class CeluneCoreTests(TestCase):
         celune.voices = ("balanced", "bold")
 
         with mock.patch("celune.celune.play_signal", return_value=False):
-            self.assertEqual(
-                celune._hot_reload_backend(FailingBackend, "balanced"), False
-            )
+            assert not celune._hot_reload_backend(FailingBackend, "balanced")
 
-        self.assertEqual(celune.tts_backend, "fake")
-        self.assertEqual(celune.current_voice, "balanced")
-        self.assertEqual(celune.model_name, "fake/balanced")
-        self.assertEqual(celune.loaded, True)
-        self.assertEqual(celune.cur_state, "idle")
+        assert celune.tts_backend == "fake"
+        assert celune.current_voice == "balanced"
+        assert celune.model_name == "fake/balanced"
+        assert celune.loaded
+        assert celune.cur_state == "idle"
+
+    def test_failed_reload_closes_aborted_candidate_without_unloading_it(self) -> None:
+        """Verify a timed-out remote candidate cannot mask the reload failure during cleanup."""
+
+        class AbortedBackend(FakeBackend):
+            """Backend fixture that models a worker already terminated by a timeout."""
+
+            name = "aborted"
+
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                self.close_calls = 0
+
+            def load_model(self, model_id: str, **kwargs: JSONSerializable):
+                """Simulate a timeout that has already terminated the worker."""
+                raise CEDTSTimeoutError("load_model", 180.0)
+
+            def unload_model(self, release_cuda_cache: bool = True) -> None:
+                """Simulate cleanup through a worker already terminated by abort."""
+                raise RuntimeError("backend worker is not running")
+
+            def close(self) -> None:
+                """Record direct candidate shutdown without touching the worker."""
+                self.close_calls += 1
+
+        celune = self._make_celune({})
+        celune.loaded = True
+        celune.cur_state = "idle"
+        celune.model = {"model_id": "fake/balanced", "kwargs": {}}
+        celune.backend.model = celune.model
+        celune.model_name = "fake/balanced"
+        celune.current_voice = "balanced"
+        celune.voices = ("balanced", "bold")
+
+        with mock.patch("celune.celune.play_signal", return_value=False):
+            assert not celune._hot_reload_backend(AbortedBackend, "balanced")
+
+        assert celune.tts_backend == "fake"
+        assert celune.loaded
+        assert celune.model is not None
+
+    def test_busy_backend_reload_restores_readiness_after_preparation(self) -> None:
+        """Verify a busy model-loading owner cannot strand a prepared reload."""
+        celune = self._make_celune({})
+        celune.change_input_state_callback = mock.Mock()
+        celune.change_voice_lock_state_callback = mock.Mock()
+        celune.voices = ("balanced", "bold")
+        celune._last_component_busy = mock.sentinel.stale_busy
+        owner = ComponentLockOwner(operation_id="runtime-unload")
+        acquisition, lease = celune.component_locks.try_acquire_lease(
+            (ComponentLockRequirement(ComponentLockName.MODEL_LOADING),),
+            owner,
+        )
+        self.assertTrue(acquisition.acquired)
+        self.assertIsNotNone(lease)
+        self.addCleanup(celune.component_locks.release_all)
+
+        with (
+            mock.patch.object(celune, "force_stop_speech"),
+            mock.patch.object(celune, "_try_play_signal", return_value=False),
+        ):
+            self.assertTrue(celune._prepare_backend_reload(FakeBackend))
+
+        self.assertFalse(celune._model_ready.is_set())
+        self.assertTrue(celune._reload_pending)
+        self.assertFalse(celune._hot_reload_backend(FakeBackend))
+        self.assertFalse(celune._reload_pending)
+        self.assertTrue(celune._model_ready.is_set())
+        self.assertIsNone(celune.last_component_busy)
+        celune.change_input_state_callback.assert_any_call(locked=False)
+        celune.change_voice_lock_state_callback.assert_any_call(locked=False)
+
+    def test_persona_loading_does_not_block_backend_reload(self) -> None:
+        """Verify Persona loading does not occupy the TTS model-loading resource."""
+        celune = self._make_celune({})
+        persona_client = mock.Mock()
+        celune.vision = persona_client
+        celune._hot_reload_backend_impl = mock.Mock(return_value=True)
+
+        def load_persona(*_args: JSONSerializable) -> None:
+            self.assertIsNotNone(
+                celune.component_locks.owner_for(ComponentLockName.VLM)
+            )
+            self.assertIsNone(
+                celune.component_locks.owner_for(ComponentLockName.MODEL_LOADING)
+            )
+            self.assertTrue(celune._hot_reload_backend(FakeBackend, "balanced"))
+
+        persona_client.load.side_effect = load_persona
+
+        celune._load_persona_background(persona_client)
+
+        persona_client.load.assert_called_once_with(
+            "Qwen/Qwen3-VL-4B-Instruct",
+            "4bit",
+        )
+        celune._hot_reload_backend_impl.assert_called_once_with(
+            FakeBackend,
+            "balanced",
+        )
+        self.assertIsNone(celune.component_locks.owner_for(ComponentLockName.VLM))
+        self.assertIsNone(
+            celune.component_locks.owner_for(ComponentLockName.MODEL_LOADING)
+        )
 
     def test_hot_backend_reload_failure_reports_restore_status(self) -> None:
         """Verify failed backend reloads announce the rollback phase."""
@@ -1126,7 +1677,7 @@ class CeluneCoreTests(TestCase):
             """Backend fixture whose warmup generation always fails."""
 
             name = "failingwarmup"
-            voice_models = {"storm": "warmup/storm"}
+            voice_models = MappingProxyType({"storm": "warmup/storm"})
             default_voice = "storm"
 
             def generate_stream(self, model, **kwargs: JSONSerializable):
@@ -1145,14 +1696,12 @@ class CeluneCoreTests(TestCase):
         celune.status_callback = mock.Mock()
 
         with mock.patch("celune.celune.play_signal", return_value=False):
-            self.assertEqual(
-                celune._hot_reload_backend(FailingWarmupBackend, "storm"), False
-            )
+            assert not celune._hot_reload_backend(FailingWarmupBackend, "storm")
 
         status_calls = [call.args[0] for call in celune.status_callback.call_args_list]
-        self.assertIn("Warming up", status_calls)
-        self.assertIn("Restoring backend", status_calls)
-        self.assertEqual(status_calls[-1], "Idle")
+        assert "Warming up" in status_calls
+        assert "Restoring backend" in status_calls
+        assert status_calls[-1] == "Idle"
 
     def test_hot_backend_reload_unloads_previous_runtime_before_loading_new_one(
         self,
@@ -1165,7 +1714,7 @@ class CeluneCoreTests(TestCase):
             """Alternative backend fixture used by unload-order tests."""
 
             name = "altfake"
-            voice_models = {"storm": "alt/storm"}
+            voice_models = MappingProxyType({"storm": "alt/storm"})
             default_voice = "storm"
 
             def load_model(self, model_id: str, **kwargs: JSONSerializable):
@@ -1190,9 +1739,9 @@ class CeluneCoreTests(TestCase):
         celune.backend.unload_model = mock.Mock(side_effect=record_unload)
 
         with mock.patch("celune.celune.play_signal", return_value=False):
-            self.assertEqual(celune._hot_reload_backend(AltFakeBackend, "storm"), True)
+            assert celune._hot_reload_backend(AltFakeBackend, "storm")
 
-        self.assertEqual(events[:2], ["unload:fake", "load:alt/storm"])
+        assert events[:2] == ["unload:fake", "load:alt/storm"]
 
     def test_set_backend_marks_reload_pending_before_playing_working_signal(
         self,
@@ -1214,15 +1763,15 @@ class CeluneCoreTests(TestCase):
         celune._try_play_signal = mock.Mock(side_effect=record_signal)
 
         with mock.patch("celune.celune.threading.Thread") as thread_cls:
-            self.assertEqual(celune.set_backend("mini"), True)
+            assert celune.set_backend("mini")
 
-        self.assertEqual(signal_states, [("working", "idle", True, True)])
+        assert signal_states == [("working", "idle", True, True)]
         celune.change_input_state_callback.assert_called_once_with(locked=True)
         celune.change_voice_lock_state_callback.assert_called_once_with(locked=True)
-        self.assertEqual(celune.cur_state, "idle")
-        self.assertEqual(celune.loaded, True)
-        self.assertEqual(celune._reload_pending, True)
-        self.assertEqual(celune._model_ready.is_set(), False)
+        assert celune.cur_state == "idle"
+        assert celune.loaded
+        assert celune._reload_pending
+        assert not celune._model_ready.is_set()
         thread_cls.return_value.start.assert_called_once_with()
 
     def test_set_backend_and_wait_failure_keeps_previous_runtime_loaded(self) -> None:
@@ -1251,14 +1800,14 @@ class CeluneCoreTests(TestCase):
             ),
             mock.patch("celune.celune.play_signal", return_value=False),
         ):
-            self.assertEqual(celune.set_backend_and_wait(FailingBackend), False)
+            assert not celune.set_backend_and_wait(FailingBackend)
 
-        self.assertEqual(celune.tts_backend, "fake")
-        self.assertEqual(celune.current_voice, "balanced")
-        self.assertEqual(celune.model_name, "fake/balanced")
-        self.assertEqual(celune.loaded, True)
-        self.assertIsNotNone(celune.model)
-        self.assertIs(celune.backend.model, celune.model)
+        assert celune.tts_backend == "fake"
+        assert celune.current_voice == "balanced"
+        assert celune.model_name == "fake/balanced"
+        assert celune.loaded
+        assert celune.model is not None
+        assert celune.backend.model is celune.model
 
     def test_set_backend_and_wait_recovers_when_reload_setup_crashes(self) -> None:
         """Verify backend reload setup failures still release the waiting caller."""
@@ -1281,14 +1830,14 @@ class CeluneCoreTests(TestCase):
                 side_effect=RuntimeError("setup blew up"),
             ),
         ):
-            self.assertEqual(celune.set_backend_and_wait("mini", timeout=0.1), False)
+            assert not celune.set_backend_and_wait("mini", timeout=0.1)
 
-        self.assertEqual(celune.cur_state, "idle")
-        self.assertEqual(celune.loaded, True)
-        self.assertEqual(celune._reload_pending, False)
-        self.assertEqual(celune._model_ready.is_set(), True)
-        self.assertEqual(celune.tts_backend, "fake")
-        self.assertEqual(celune.current_voice, "balanced")
+        assert celune.cur_state == "idle"
+        assert celune.loaded
+        assert not celune._reload_pending
+        assert celune._model_ready.is_set()
+        assert celune.tts_backend == "fake"
+        assert celune.current_voice == "balanced"
 
     def test_set_backend_rejects_reentrant_reload_requests(self) -> None:
         """Verify a second backend switch is refused while reloading is already active."""
@@ -1299,7 +1848,7 @@ class CeluneCoreTests(TestCase):
         celune.log_callback = mock.Mock()
 
         with mock.patch("celune.celune.threading.Thread") as thread_cls:
-            self.assertEqual(celune.set_backend("mini"), False)
+            assert not celune.set_backend("mini")
 
         thread_cls.assert_not_called()
         celune.change_input_state_callback.assert_not_called()
@@ -1317,7 +1866,7 @@ class CeluneCoreTests(TestCase):
         celune._model_ready.wait = mock.Mock(return_value=True)
         celune._active_runtime_backend_name = mock.Mock(return_value="mini")
 
-        self.assertEqual(celune.set_backend_and_wait("mini"), True)
+        assert celune.set_backend_and_wait("mini")
 
         celune.set_backend.assert_called_once_with("mini")
         celune._model_ready.wait.assert_called_once_with(timeout=None)
@@ -1335,9 +1884,9 @@ class CeluneCoreTests(TestCase):
                 super().__init__(*args, **kwargs)
                 self.unload_calls = 0
 
-            def unload_model(self) -> None:
+            def unload_model(self, release_cuda_cache: bool = True) -> None:
                 self.unload_calls += 1
-                super().unload_model()
+                super().unload_model(release_cuda_cache=release_cuda_cache)
 
         class CountingVCBackend(FakeVCBackend):
             """Fake VC backend that records preload and unload requests."""
@@ -1352,7 +1901,7 @@ class CeluneCoreTests(TestCase):
             def preload_models(self) -> None:
                 self.preload_calls += 1
 
-            def unload_model(self) -> None:
+            def unload_model(self, release_cuda_cache: bool = True) -> None:
                 self.unload_calls += 1
 
         with (
@@ -1375,24 +1924,24 @@ class CeluneCoreTests(TestCase):
             celune.current_voice = "balanced"
             celune.voices = ("balanced", "bold")
 
-            self.assertEqual(celune.set_backend_and_wait(CountingVCBackend), True)
+            assert celune.set_backend_and_wait(CountingVCBackend)
 
             switched_vc_backend = cast(CountingVCBackend, celune.vc_backend)
-            self.assertEqual(initial_backend.unload_calls, 1)
-            self.assertEqual(switched_vc_backend.preload_calls, 1)
-            self.assertEqual(celune.input_mode, "voice_conversion")
-            self.assertEqual(celune._active_runtime_backend_name(), "counting-vc")
-            self.assertIsNone(celune.model)
-            self.assertEqual(celune.model_name, "")
+            assert initial_backend.unload_calls == 1
+            assert switched_vc_backend.preload_calls == 1
+            assert celune.input_mode == "voice_conversion"
+            assert celune._active_runtime_backend_name() == "counting-vc"
+            assert celune.model is None
+            assert celune.model_name == ""
 
-            self.assertEqual(celune.set_backend_and_wait(FakeBackend), True)
+            assert celune.set_backend_and_wait(FakeBackend)
 
-            self.assertEqual(switched_vc_backend.unload_calls, 1)
-            self.assertEqual(celune.input_mode, "text_to_speech")
-            self.assertIsNone(celune.vc_backend)
-            self.assertEqual(celune._active_runtime_backend_name(), "fake")
-            self.assertEqual(celune.tts_backend, "fake")
-            self.assertIsNotNone(celune.model)
+            assert switched_vc_backend.unload_calls == 1
+            assert celune.input_mode == "text_to_speech"
+            assert celune.vc_backend is None
+            assert celune._active_runtime_backend_name() == "fake"
+            assert celune.tts_backend == "fake"
+            assert celune.model is not None
 
     def test_set_backend_and_wait_restores_vc_runtime_after_failed_tts_switch(
         self,
@@ -1412,7 +1961,7 @@ class CeluneCoreTests(TestCase):
             def preload_models(self) -> None:
                 self.preload_calls += 1
 
-            def unload_model(self) -> None:
+            def unload_model(self, release_cuda_cache: bool = True) -> None:
                 self.unload_calls += 1
 
         class FailingBackend(FakeBackend):
@@ -1435,18 +1984,18 @@ class CeluneCoreTests(TestCase):
             celune = Celune(config={}, tts_backend=FakeBackend)
             self.addCleanup(self._close_celune, celune)
 
-            self.assertEqual(celune.set_backend_and_wait(CountingVCBackend), True)
+            assert celune.set_backend_and_wait(CountingVCBackend)
             previous_vc_backend = cast(CountingVCBackend, celune.vc_backend)
 
-            self.assertEqual(celune.set_backend_and_wait(FailingBackend), False)
+            assert not celune.set_backend_and_wait(FailingBackend)
 
-            self.assertEqual(previous_vc_backend.unload_calls, 1)
-            self.assertEqual(celune.input_mode, "voice_conversion")
-            self.assertIsNotNone(celune.vc_backend)
-            self.assertIsInstance(celune.vc_backend, CountingVCBackend)
-            self.assertIsNot(celune.vc_backend, previous_vc_backend)
-            self.assertEqual(celune._active_runtime_backend_name(), "counting-vc")
-            self.assertEqual(celune.voice_conversion_backend, "counting-vc")
+            assert previous_vc_backend.unload_calls == 1
+            assert celune.input_mode == "voice_conversion"
+            assert celune.vc_backend is not None
+            assert isinstance(celune.vc_backend, CountingVCBackend)
+            assert celune.vc_backend is not previous_vc_backend
+            assert celune._active_runtime_backend_name() == "counting-vc"
+            assert celune.voice_conversion_backend == "counting-vc"
 
     def test_set_backend_rejects_unknown_backend_before_reload_side_effects(
         self,
@@ -1461,19 +2010,19 @@ class CeluneCoreTests(TestCase):
         celune._try_play_signal = mock.Mock()
 
         with mock.patch("celune.celune.threading.Thread") as thread_cls:
-            self.assertEqual(celune.set_backend("qwen"), False)
+            assert not celune.set_backend("qwen")
 
         thread_cls.assert_not_called()
         celune.change_input_state_callback.assert_not_called()
         celune.change_voice_lock_state_callback.assert_not_called()
         celune._try_play_signal.assert_not_called()
         celune.log_callback.assert_called_once_with(
-            "unknown backend: qwen (available: mini, qwen3, dotstts, voxcpm2, gpt-sovits, passthrough, seed-vc)",
+            "unknown backend: qwen (available: mini, qwen3, dotstts, voxcpm2, gpt-sovits, seed-vc)",
             "warning",
         )
-        self.assertEqual(celune.cur_state, "idle")
-        self.assertEqual(celune.loaded, True)
-        self.assertEqual(celune._reload_pending, False)
+        assert celune.cur_state == "idle"
+        assert celune.loaded
+        assert not celune._reload_pending
 
     def test_set_backend_unknown_name_keeps_previous_runtime_live(self) -> None:
         """Verify invalid backend names leave the previously loaded backend fully usable."""
@@ -1485,15 +2034,15 @@ class CeluneCoreTests(TestCase):
         celune.model_name = "fake/balanced"
         celune.current_voice = "balanced"
 
-        self.assertEqual(celune.set_backend_and_wait("qwen"), False)
+        assert not celune.set_backend_and_wait("qwen")
 
-        self.assertEqual(celune.backend.name, "fake")
-        self.assertEqual(celune.tts_backend, "fake")
-        self.assertEqual(celune.model_name, "fake/balanced")
-        self.assertEqual(celune.current_voice, "balanced")
-        self.assertEqual(celune.loaded, True)
-        self.assertIs(celune.backend.model, celune.model)
-        self.assertEqual(celune._reload_pending, False)
+        assert celune.backend.name == "fake"
+        assert celune.tts_backend == "fake"
+        assert celune.model_name == "fake/balanced"
+        assert celune.current_voice == "balanced"
+        assert celune.loaded
+        assert celune.backend.model is celune.model
+        assert not celune._reload_pending
 
     def test_set_cevoice_rejects_reentrant_reload_requests(self) -> None:
         """Verify a second character switch is refused while reloading is already active."""
@@ -1504,7 +2053,7 @@ class CeluneCoreTests(TestCase):
         celune.log_callback = mock.Mock()
 
         with mock.patch("celune.celune.threading.Thread") as thread_cls:
-            self.assertEqual(celune.set_cevoice("nova"), False)
+            assert not celune.set_cevoice("nova")
 
         thread_cls.assert_not_called()
         celune.change_input_state_callback.assert_not_called()
@@ -1526,7 +2075,7 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.active_bundle_path", return_value=target_bundle),
             mock.patch("celune.celune.resolve_bundle_path", return_value=target_bundle),
         ):
-            self.assertEqual(celune.set_cevoice_and_wait(target_bundle), True)
+            assert celune.set_cevoice_and_wait(target_bundle)
 
         celune.set_cevoice.assert_called_once_with(target_bundle)
         celune._model_ready.wait.assert_called_once_with(timeout=None)
@@ -1541,7 +2090,7 @@ class CeluneCoreTests(TestCase):
         celune.log_callback = mock.Mock()
 
         with mock.patch("celune.celune.threading.Thread") as thread_cls:
-            self.assertEqual(celune.set_cevoice("invalid_character"), False)
+            assert not celune.set_cevoice("invalid_character")
 
         thread_cls.assert_not_called()
         celune.change_input_state_callback.assert_not_called()
@@ -1550,7 +2099,7 @@ class CeluneCoreTests(TestCase):
             "Voice pack not found: invalid_character",
             "warning",
         )
-        self.assertEqual(celune._reload_pending, False)
+        assert not celune._reload_pending
 
     def test_hot_backend_reload_warmup_does_not_publish_candidate_backend_early(
         self,
@@ -1570,7 +2119,7 @@ class CeluneCoreTests(TestCase):
             """Backend fixture whose warmup generation fails after observing live state."""
 
             name = "failingwarmup"
-            voice_models = {"storm": "alt/storm"}
+            voice_models = MappingProxyType({"storm": "alt/storm"})
             default_voice = "storm"
 
             def generate_stream(self, model, **kwargs: JSONSerializable):
@@ -1580,13 +2129,11 @@ class CeluneCoreTests(TestCase):
                 raise RuntimeError("warmup blew up")
 
         with mock.patch("celune.celune.play_signal", return_value=False):
-            self.assertEqual(
-                celune._hot_reload_backend(FailingWarmupBackend, "storm"), False
-            )
+            assert not celune._hot_reload_backend(FailingWarmupBackend, "storm")
 
-        self.assertEqual(observed_backend_names, ["fake"])
-        self.assertEqual(celune.backend.name, "fake")
-        self.assertEqual(celune.loaded, True)
+        assert observed_backend_names == ["fake"]
+        assert celune.backend.name == "fake"
+        assert celune.loaded
 
     def test_with_backend_temporarily_switches_and_restores_backend(self) -> None:
         """Verify the backend context manager restores the original backend after use."""
@@ -1595,7 +2142,7 @@ class CeluneCoreTests(TestCase):
             """Alternative backend fixture used by context-manager tests."""
 
             name = "altfake"
-            voice_models = {"storm": "alt/storm", "calm": "alt/calm"}
+            voice_models = MappingProxyType({"storm": "alt/storm", "calm": "alt/calm"})
             default_voice = "storm"
 
         celune = self._make_celune({})
@@ -1616,13 +2163,13 @@ class CeluneCoreTests(TestCase):
                 mock.patch("celune.celune.play_signal", return_value=False)
             )
             with celune.with_backend(AltFakeBackend):
-                self.assertEqual(celune.tts_backend, "altfake")
-                self.assertEqual(celune.current_voice, "storm")
-                self.assertEqual(celune.model_name, "alt/storm")
+                assert celune.tts_backend == "altfake"
+                assert celune.current_voice == "storm"
+                assert celune.model_name == "alt/storm"
 
-        self.assertEqual(celune.tts_backend, "fake")
-        self.assertEqual(celune.current_voice, "balanced")
-        self.assertEqual(celune.model_name, "fake/balanced")
+        assert celune.tts_backend == "fake"
+        assert celune.current_voice == "balanced"
+        assert celune.model_name == "fake/balanced"
 
     def test_with_backend_does_not_pin_old_backend_instance_during_override(
         self,
@@ -1633,7 +2180,7 @@ class CeluneCoreTests(TestCase):
             """Alternative backend fixture used by backend lifetime tests."""
 
             name = "altfake"
-            voice_models = {"storm": "alt/storm"}
+            voice_models = MappingProxyType({"storm": "alt/storm"})
             default_voice = "storm"
 
         with (
@@ -1666,11 +2213,13 @@ class CeluneCoreTests(TestCase):
             import gc as _gc
 
             _gc.collect()
-            self.assertIsNone(backend_ref())
+            assert backend_ref() is None
 
     def test_hot_cevoice_reload_failure_restores_previous_bundle_state(self) -> None:
         """Verify failed CEVOICE reloads restore the previous bundle and voice state."""
         celune = self._make_celune({})
+        celune.log_level = "verbose"
+        celune.log_callback = mock.Mock()
         celune.backend.uses_voice_bundles = True
         celune.backend.validate_refs = mock.Mock()
         celune.backend.model_id_for_voice = mock.Mock(
@@ -1727,13 +2276,18 @@ class CeluneCoreTests(TestCase):
             ),
             mock.patch("celune.celune.play_signal", return_value=False),
         ):
-            self.assertEqual(celune._hot_reload_cevoice(Path("broken.cevoice")), False)
+            assert not celune._hot_reload_cevoice(Path("broken.cevoice"))
 
-        self.assertEqual(selected["path"], Path("celune.cevoice"))
-        self.assertEqual(celune.current_character, "Celune")
-        self.assertEqual(celune.current_voice, "balanced")
-        self.assertEqual(celune.model_name, "fake/balanced")
-        self.assertEqual(celune.loaded, True)
+        assert selected["path"] == Path("celune.cevoice")
+        assert celune.current_character == "Celune"
+        assert celune.current_voice == "balanced"
+        assert celune.model_name == "fake/balanced"
+        assert celune.loaded
+        assert any(
+            "no voices found" in str(call.args[0])
+            for call in celune.log_callback.call_args_list
+            if call.args
+        )
 
     def test_set_cevoice_and_wait_recovers_when_reload_setup_crashes(self) -> None:
         """Verify CEVOICE reload setup failures still release the waiting caller."""
@@ -1750,15 +2304,13 @@ class CeluneCoreTests(TestCase):
                 "celune.celune.default_loader", side_effect=RuntimeError("boom")
             ),
         ):
-            self.assertEqual(
-                celune.set_cevoice_and_wait(Path("broken.cevoice"), timeout=0.1), False
-            )
+            assert not celune.set_cevoice_and_wait(Path("broken.cevoice"), timeout=0.1)
 
-        self.assertEqual(celune.cur_state, "idle")
-        self.assertEqual(celune.loaded, True)
-        self.assertEqual(celune._reload_pending, False)
-        self.assertEqual(celune._model_ready.is_set(), True)
-        self.assertEqual(celune.current_voice, "balanced")
+        assert celune.cur_state == "idle"
+        assert celune.loaded
+        assert not celune._reload_pending
+        assert celune._model_ready.is_set()
+        assert celune.current_voice == "balanced"
 
     def test_voice_conversion_mode_rejects_text_input(self) -> None:
         """Verify VC mode rejects text input instead of using the TTS backend."""
@@ -1768,14 +2320,14 @@ class CeluneCoreTests(TestCase):
         with mock.patch(
             "celune.celune.say_pipeline", return_value=True
         ) as say_pipeline:
-            self.assertEqual(celune.say("hello"), False)
+            assert not celune.say("hello")
 
         say_pipeline.assert_not_called()
 
-    def test_constructor_accepts_passthrough_vc_backend_in_voice_conversion_mode(
+    def test_constructor_defaults_to_seedvc_vc_backend_in_voice_conversion_mode(
         self,
     ) -> None:
-        """Verify VC mode resolves the default passthrough backend cleanly."""
+        """Verify VC mode resolves the default Seed-VC backend cleanly."""
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
@@ -1786,8 +2338,8 @@ class CeluneCoreTests(TestCase):
             )
             self.addCleanup(self._close_celune, celune)
 
-        self.assertEqual(celune.input_mode, "voice_conversion")
-        self.assertEqual(celune.voice_conversion_backend, "passthrough")
+        assert celune.input_mode == "voice_conversion"
+        assert celune.voice_conversion_backend == "seed-vc"
 
     def test_constructor_rejects_unknown_vc_backend_cleanly(self) -> None:
         """Verify unsupported VC backends surface a readable backend error."""
@@ -1795,7 +2347,7 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
-            self.assertRaisesRegex(BackendError, "unknown voice-conversion backend"),
+            pytest.raises(BackendError, match="unknown voice-conversion backend"),
         ):
             Celune(
                 config={"mode": "voice_conversion"},
@@ -1824,7 +2376,7 @@ class CeluneCoreTests(TestCase):
             thread_cls.return_value.start = mock.Mock()
             self.assertEqual(celune.load(), True)
         self.assertEqual(celune.loaded, True)
-        self.assertEqual(getattr(celune.glow, "entered"), True)
+        self.assertEqual(getattr(celune.glow, "entered"), True)  # noqa: B009
         celune.close()
 
         failing = self._make_celune({})
@@ -1836,7 +2388,7 @@ class CeluneCoreTests(TestCase):
         with mock.patch("celune.celune.play_signal", return_value=False):
             self.assertEqual(failing.load(), False)
         self.assertEqual(errors, ["Default model failed to load"])
-        self.assertEqual(getattr(failing.glow, "fatal_called"), True)
+        self.assertEqual(getattr(failing.glow, "fatal_called"), True)  # noqa: B009
 
     def test_unload_runtime_state_clears_models_without_cuda(self) -> None:
         """Verify model references are cleared without touching CUDA.
@@ -1854,10 +2406,10 @@ class CeluneCoreTests(TestCase):
         celune.backend.model = mock.Mock()
         with mock.patch("celune.celune.torch.cuda.is_available", return_value=False):
             celune.unload_runtime_state(include_normalizer=True)
-        self.assertIsNone(celune.model)
-        self.assertIsNone(celune.llm)
-        self.assertIsNone(celune.tokenizer)
-        self.assertIsNone(celune.backend.model)
+        assert celune.model is None
+        assert celune.llm is None
+        assert celune.tokenizer is None
+        assert celune.backend.model is None
 
     def test_unload_runtime_state_runs_model_close_hooks(self) -> None:
         """Verify TTS and normalizer teardown calls object-level release hooks."""
@@ -1876,8 +2428,44 @@ class CeluneCoreTests(TestCase):
         tts_model.close.assert_called_once_with()
         llm.close.assert_called_once_with()
         tokenizer.close.assert_called_once_with()
-        self.assertIsNone(celune.model)
-        self.assertIsNone(celune.backend.model)
+        assert celune.model is None
+        assert celune.backend.model is None
+        assert celune.llm is None
+        assert celune.tokenizer is None
+
+    def test_sleep_transition_defers_cuda_cache_release(self) -> None:
+        """Verify automatic sleep unloads references without flushing the CUDA allocator."""
+        celune = self._make_celune(
+            {
+                "sleep": {
+                    "enabled": True,
+                    "unload": {"persona": False, "normalizer": True, "tts": True},
+                }
+            }
+        )
+        celune.locked = False
+        celune.loaded = True
+        celune.cur_state = "idle"
+        celune.current_voice = "balanced"
+        celune.voices = ("balanced",)
+        celune.model = {"model_id": "fake/balanced", "kwargs": {}}
+        celune.llm = cast(PreTrainedModel, mock.Mock(spec=PreTrainedModel))
+        celune.tokenizer = cast(
+            PreTrainedTokenizerBase,
+            mock.Mock(spec=PreTrainedTokenizerBase),
+        )
+
+        with (
+            mock.patch("celune.celune.play_signal", return_value=False),
+            mock.patch("celune.celune.torch.cuda.is_available", return_value=True),
+            mock.patch("celune.celune.torch.cuda.synchronize") as synchronize,
+            mock.patch("celune.celune.torch.cuda.empty_cache") as empty_cache,
+        ):
+            self.assertTrue(celune.enter_sleep_mode())
+
+        synchronize.assert_not_called()
+        empty_cache.assert_not_called()
+        self.assertTrue(celune.sleeping)
         self.assertIsNone(celune.llm)
         self.assertIsNone(celune.tokenizer)
 
@@ -1895,7 +2483,7 @@ class CeluneCoreTests(TestCase):
 
         def fake_load_components(*_args, **_kwargs):
             ready.set()
-            self.assertTrue(release.wait(timeout=2))
+            assert release.wait(timeout=2)
             finished.set()
             return fake_tokenizer, fake_llm
 
@@ -1907,13 +2495,13 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.torch.cuda.is_available", return_value=False),
         ):
             celune.load_normalizer()
-            self.assertTrue(ready.wait(timeout=2))
+            assert ready.wait(timeout=2)
             celune.unload_normalizer_state()
             release.set()
-            self.assertTrue(finished.wait(timeout=2))
+            assert finished.wait(timeout=2)
 
-        self.assertIsNone(celune.llm)
-        self.assertIsNone(celune.tokenizer)
+        assert celune.llm is None
+        assert celune.tokenizer is None
 
     def test_sleep_mode_unloads_configured_models_and_wakes(self) -> None:
         """Verify sleep mode honors unload settings and reloads on wake."""
@@ -1962,7 +2550,7 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(celune.sleeping, True)
         self.assertEqual(celune.loaded, False)
         self.assertEqual(celune.cur_state, "sleeping")
-        self.assertEqual(getattr(celune.glow, "sleep_called"), True)
+        self.assertEqual(getattr(celune.glow, "sleep_called"), True)  # noqa: B009
         self.assertIsNone(celune.model)
         self.assertEqual(celune.model_name, "")
         self.assertIsNone(celune.llm)
@@ -1976,9 +2564,9 @@ class CeluneCoreTests(TestCase):
         )
         wake_thread.start()
         wake_thread.join(timeout=1)
-        self.assertFalse(wake_thread.is_alive())
-        self.assertEqual(wake_result, [True])
-        self.assertTrue(persona_load_started.wait(timeout=2))
+        assert not wake_thread.is_alive()
+        assert wake_result == [True]
+        assert persona_load_started.wait(timeout=2)
         release_persona_load.set()
         background_thread = celune._wake_background_thread
         if background_thread is not None:
@@ -1988,7 +2576,7 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(celune.sleeping, False)
         self.assertEqual(celune.loaded, True)
         self.assertEqual(celune.cur_state, "idle")
-        self.assertEqual(getattr(celune.glow, "wake_called"), True)
+        self.assertEqual(getattr(celune.glow, "wake_called"), True)  # noqa: B009
         self.assertEqual(celune.model, {"model_id": "fake/balanced", "kwargs": {}})
         self.assertEqual(celune.model_name, "fake/balanced")
         celune._warmup.assert_called_once_with()
@@ -2014,7 +2602,7 @@ class CeluneCoreTests(TestCase):
             def preload_models(self) -> None:
                 self.preload_calls += 1
 
-            def unload_model(self) -> None:
+            def unload_model(self, release_cuda_cache: bool = True) -> None:
                 self.unload_calls += 1
 
         with (
@@ -2047,17 +2635,17 @@ class CeluneCoreTests(TestCase):
         original_vc_backend = cast(CountingVCBackend, celune.vc_backend)
 
         with mock.patch("celune.celune.play_signal", return_value=False):
-            self.assertEqual(celune.enter_sleep_mode(), True)
+            assert celune.enter_sleep_mode()
 
-        self.assertEqual(original_vc_backend.unload_calls, 1)
+        assert original_vc_backend.unload_calls == 1
         celune.backend.unload_model.assert_not_called()
 
         with mock.patch("celune.celune.play_signal", return_value=False):
-            self.assertEqual(celune.wake_from_sleep(), True)
+            assert celune.wake_from_sleep()
 
         restored_vc_backend = cast(CountingVCBackend, celune.vc_backend)
-        self.assertIsNot(restored_vc_backend, original_vc_backend)
-        self.assertEqual(restored_vc_backend.preload_calls, 1)
+        assert restored_vc_backend is not original_vc_backend
+        assert restored_vc_backend.preload_calls == 1
 
     def test_sleep_tts_unload_can_keep_vc_loaded_when_explicitly_disabled(
         self,
@@ -2073,7 +2661,7 @@ class CeluneCoreTests(TestCase):
                 super().__init__(*args, **kwargs)
                 self.unload_calls = 0
 
-            def unload_model(self) -> None:
+            def unload_model(self, release_cuda_cache: bool = True) -> None:
                 self.unload_calls += 1
 
         with (
@@ -2105,10 +2693,10 @@ class CeluneCoreTests(TestCase):
         vc_backend = cast(CountingVCBackend, celune.vc_backend)
 
         with mock.patch("celune.celune.play_signal", return_value=False):
-            self.assertEqual(celune.enter_sleep_mode(), True)
+            assert celune.enter_sleep_mode()
 
-        self.assertIs(celune.vc_backend, vc_backend)
-        self.assertEqual(vc_backend.unload_calls, 0)
+        assert celune.vc_backend is vc_backend
+        assert vc_backend.unload_calls == 0
 
     def test_sleep_mode_closes_persona_even_if_close_raises(self) -> None:
         """Verify sleep still clears Persona references when client shutdown fails."""
@@ -2121,8 +2709,8 @@ class CeluneCoreTests(TestCase):
         celune.vision = mock.Mock(close=mock.Mock(side_effect=RuntimeError("boom")))
 
         with mock.patch("celune.celune.play_signal", return_value=False):
-            self.assertEqual(celune.enter_sleep_mode(), True)
-        self.assertIsNone(celune.vision)
+            assert celune.enter_sleep_mode()
+        assert celune.vision is None
 
     def test_sleep_mode_plays_signal_after_releasing_pipeline_lock(self) -> None:
         """Verify the sleeping signal is not invoked while ``say_lock`` is still held."""
@@ -2134,13 +2722,13 @@ class CeluneCoreTests(TestCase):
         celune.cur_state = "idle"
 
         def play_sleep_signal(engine: Celune, signal_type: str) -> bool:
-            self.assertEqual(signal_type, "sleeping")
-            self.assertEqual(engine.say_lock.acquire(blocking=False), True)
+            assert signal_type == "sleeping"
+            assert engine.say_lock.acquire(blocking=False)
             engine.say_lock.release()
             return False
 
         with mock.patch("celune.celune.play_signal", side_effect=play_sleep_signal):
-            self.assertEqual(celune.enter_sleep_mode(), True)
+            assert celune.enter_sleep_mode()
 
     def test_wake_failure_switches_glow_to_fatal_color(self) -> None:
         """Verify wake failures trigger the fixed fatal OpenRGB glow state."""
@@ -2167,7 +2755,7 @@ class CeluneCoreTests(TestCase):
             mock.patch("celune.celune.play_signal", return_value=False),
         ):
             self.assertEqual(celune.wake_from_sleep(), False)
-        self.assertEqual(getattr(celune.glow, "fatal_called"), True)
+        self.assertEqual(getattr(celune.glow, "fatal_called"), True)  # noqa: B009
 
     def test_concurrent_wake_requests_only_recreate_backend_once(self) -> None:
         """Verify repeated wake requests cannot duplicate backend recreation."""
@@ -2195,7 +2783,7 @@ class CeluneCoreTests(TestCase):
 
         def blocking_load_model(model_id: str) -> dict[str, JSONSerializable]:
             load_started.set()
-            self.assertEqual(release_load.wait(timeout=1), True)
+            assert release_load.wait(timeout=1)
             return {"model_id": model_id, "kwargs": {}}
 
         recreated_backend.load_model = mock.Mock(side_effect=blocking_load_model)
@@ -2214,17 +2802,17 @@ class CeluneCoreTests(TestCase):
             first = threading.Thread(target=wake)
             second = threading.Thread(target=wake)
             first.start()
-            self.assertEqual(load_started.wait(timeout=1), True)
+            assert load_started.wait(timeout=1)
             second.start()
             release_load.set()
             first.join(timeout=1)
             second.join(timeout=1)
 
-        self.assertEqual(results, [True, True])
-        self.assertEqual(resolve_backend.call_count, 1)
+        assert results == [True, True]
+        assert resolve_backend.call_count == 1
         recreated_backend.load_model.assert_called_once_with("fake/balanced")
-        self.assertEqual(celune.sleeping, False)
-        self.assertEqual(celune.cur_state, "idle")
+        assert not celune.sleeping
+        assert celune.cur_state == "idle"
 
     def test_raise_warmup_error_preserves_original_cause(self) -> None:
         """Verify WarmupError keeps the underlying warmup failure as its cause."""
@@ -2232,10 +2820,10 @@ class CeluneCoreTests(TestCase):
         cause = RuntimeError("tensor mismatch")
         celune._last_warmup_error = cause
 
-        with self.assertRaises(WarmupError) as exc_info:
+        with pytest.raises(WarmupError) as exc_info:
             celune.raise_warmup_error("warmup failed after sleep")
 
-        self.assertIs(exc_info.exception.__cause__, cause)
+        assert exc_info.value.__cause__ is cause
 
     def test_nonfatal_warmup_failure_does_not_enter_fatal_error_state(self) -> None:
         """Verify rollback-scoped warmup failures stay non-fatal."""
@@ -2254,11 +2842,12 @@ class CeluneCoreTests(TestCase):
         self.assertEqual(result, False)
         self.assertEqual(celune.cur_state, "reloading")
         self.assertEqual(celune.loaded, True)
-        self.assertEqual(getattr(celune.glow, "fatal_called"), False)
+        self.assertEqual(getattr(celune.glow, "fatal_called"), False)  # noqa: B009
         celune.error_callback.assert_not_called()
 
 
-class CeluneAsyncRuntimeTests(IsolatedAsyncioTestCase):
+@pytest.mark.anyio
+class TestCeluneAsyncRuntime(CeluneAsyncTestCase):
     """Tests for async Celune runtime entry points."""
 
     @staticmethod
@@ -2291,10 +2880,10 @@ class CeluneAsyncRuntimeTests(IsolatedAsyncioTestCase):
         with mock.patch("celune.celune.asyncio.to_thread", to_thread):
             switched = await celune.set_backend_async("mini", timeout=12.0)
 
-        self.assertEqual(switched, True)
+        assert switched
         celune._prepare_backend_reload.assert_called_once_with("mini")
         celune._hot_reload_backend.assert_called_once_with("mini", "nova")
-        self.assertEqual(to_thread.await_count, 3)
+        assert to_thread.await_count == 3
 
     def test_set_backend_stops_active_speech_before_starting_reload(self) -> None:
         """Verify backend reload requests invalidate active speech before reloading."""
@@ -2307,12 +2896,12 @@ class CeluneAsyncRuntimeTests(IsolatedAsyncioTestCase):
 
         with mock.patch(
             "celune.celune.threading.Thread",
-            side_effect=CeluneCoreTests._immediate_thread,
+            side_effect=TestCeluneCore._immediate_thread,
         ):
             started = celune.set_backend("mini")
 
-        self.assertEqual(started, True)
-        self.assertEqual(order, ["stop", "reload"])
+        assert started
+        assert order == ["stop", "reload"]
 
     async def test_wake_from_sleep_async_uses_to_thread(self) -> None:
         """Verify waking from sleep moves the blocking reload path off the event loop."""
@@ -2323,6 +2912,6 @@ class CeluneAsyncRuntimeTests(IsolatedAsyncioTestCase):
         with mock.patch("celune.celune.asyncio.to_thread", to_thread):
             woke = await celune.wake_from_sleep_async()
 
-        self.assertEqual(woke, True)
+        assert woke
         celune.wake_from_sleep.assert_called_once_with()
-        self.assertEqual(to_thread.await_count, 2)
+        assert to_thread.await_count == 2

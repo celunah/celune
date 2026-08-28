@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Public package surface for the Celune character engine.
 
 Importing :mod:`celune` exposes the main :class:`Celune` engine together with
@@ -14,21 +14,16 @@ Only construct :class:`Celune` and its UI classes once per process. Creating mul
 instances can exhaust GPU resources and is not a supported usage pattern.
 """
 
-import contextlib as _contextlib
 import sys as _sys
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Union
 
-from ._version import REVISION, __version__
 from .constants import APP_NAME
-from .paths import (
-    configure_huggingface_cache_environment,
-    configure_huggingface_runtime,
-)
+from ._version import REVISION, __version__
+from .i18n import string
+from .paths import configure_huggingface_cache_environment
 
-with _contextlib.suppress(ModuleNotFoundError):
-    configure_huggingface_cache_environment()
-    configure_huggingface_runtime()
+configure_huggingface_cache_environment()
 
 if TYPE_CHECKING:
     from .celune import Celune
@@ -36,16 +31,14 @@ if TYPE_CHECKING:
     from .extensions.events import subscribe
 
 __tagline__ = '"Your voice, your way."'
-__codename__ = "Personality"
-__comment__ = "I can finally talk with you."
+__codename__ = "Enlightenment"
+__comment__ = "I have achieved new heights."
 
 if hasattr(_sys, "ps1"):
-    print(f"Caution: You are running the {APP_NAME} backend interactively.")
-    print("This is not an intended mode of operation, usage may differ.")
+    print(string("cli.interactive_core_warning", app_name=APP_NAME))
+    print(string("cli.interactive_core_notice"))
     print()
-    print(
-        "\"If you're just exploring, please... be careful. I don't usually speak here.\""
-    )
+    print(string("cli.interactive_core_quote"))
 
 
 def __getattr__(

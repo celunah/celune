@@ -1,13 +1,13 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the docstring update script."""
 
 import ast
-import importlib.util
 import sys
+import importlib.util
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest import TestCase
+from tempfile import TemporaryDirectory
+from .support import CeluneTestCase
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT / "scripts" / "update_docstrings.py"
@@ -18,7 +18,7 @@ sys.modules[SPEC.name] = UPDATE_DOCSTRINGS
 SPEC.loader.exec_module(UPDATE_DOCSTRINGS)
 
 
-class UpdateDocstringsTests(TestCase):
+class TestUpdateDocstrings(CeluneTestCase):
     """Verify nested docstring rewriting behavior."""
 
     def test_existing_docstrings_are_not_reformatted(self) -> None:
@@ -30,7 +30,7 @@ class UpdateDocstringsTests(TestCase):
 
         replacements = UPDATE_DOCSTRINGS.collect_replacements(source, ast.parse(source))
 
-        self.assertEqual(replacements, [])
+        assert replacements == []
 
     def test_placeholder_docstrings_are_rewritten(self) -> None:
         """Verify placeholder docstrings remain eligible for generation."""
@@ -45,7 +45,7 @@ class UpdateDocstringsTests(TestCase):
 
         replacements = UPDATE_DOCSTRINGS.collect_replacements(source, ast.parse(source))
 
-        self.assertEqual(len(replacements), 1)
+        assert len(replacements) == 1
 
     def test_rewrite_preserves_crlf_line_endings(self) -> None:
         """Verify a real placeholder rewrite does not normalize repository line endings."""
@@ -62,10 +62,10 @@ class UpdateDocstringsTests(TestCase):
             path = Path(temporary_directory) / "example.py"
             path.write_bytes(source.encode())
 
-            self.assertTrue(UPDATE_DOCSTRINGS.rewrite_file(path))
+            assert UPDATE_DOCSTRINGS.rewrite_file(path)
             updated = path.read_bytes()
 
-        self.assertNotIn(b"\n", updated.replace(b"\r\n", b""))
+        assert b"\n" not in updated.replace(b"\r\n", b"")
 
     def test_local_class_methods_keep_their_docstrings(self) -> None:
         """Verify methods on classes defined inside functions are preserved."""
@@ -109,22 +109,14 @@ class UpdateDocstringsTests(TestCase):
                 + updated[replacement.end :]
             )
 
-        self.assertIn(
-            'def raise_for_status() -> None:\n            """',
-            updated,
-        )
-        self.assertIn(
-            'def json() -> JSONSerializable:\n            """',
-            updated,
-        )
-        self.assertIn(
-            'def post(self, json: JSON) -> FakeResponse:\n            """',
-            updated,
-        )
-        self.assertNotIn("def raise_for_status() -> None:\n            pass", updated)
-        self.assertNotIn("def json() -> JSONSerializable:\n            pass", updated)
-        self.assertNotIn(
-            "def post(self, json: JSON) -> FakeResponse:\n            pass", updated
+        assert 'def raise_for_status() -> None:\n            """' in updated
+        assert 'def json() -> JSONSerializable:\n            """' in updated
+        assert 'def post(self, json: JSON) -> FakeResponse:\n            """' in updated
+        assert "def raise_for_status() -> None:\n            pass" not in updated
+        assert "def json() -> JSONSerializable:\n            pass" not in updated
+        assert (
+            "def post(self, json: JSON) -> FakeResponse:\n            pass"
+            not in updated
         )
 
     def test_public_docstring_wraps_generated_lines_to_max_width(self) -> None:
@@ -160,4 +152,4 @@ class UpdateDocstringsTests(TestCase):
 
         docstring = UPDATE_DOCSTRINGS.public_docstring(function, "    ", parsed)
 
-        self.assertTrue(all(len(line) <= 120 for line in docstring.splitlines()))
+        assert all(len(line) <= 120 for line in docstring.splitlines())

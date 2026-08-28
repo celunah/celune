@@ -1,8 +1,9 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Extension-facing protocols."""
 
 from typing import Optional, Protocol, runtime_checkable
 
+from .aliases import LogLevel
 from ..exceptions import IncompleteExtensionError
 
 
@@ -10,17 +11,14 @@ from ..exceptions import IncompleteExtensionError
 class LogCallable(Protocol):
     """Extension callable logging annotation."""
 
-    def __call__(self, msg: str, severity: str = "info") -> None:
+    def __call__(
+        self,
+        msg: str,
+        severity: str = "info",
+        *,
+        loglevel: LogLevel = "info",
+    ) -> None:
         """Emit a log message."""
-        raise IncompleteExtensionError("protocol not defined")
-
-
-@runtime_checkable
-class DevLogCallable(Protocol):
-    """Extension callable developer logging annotation."""
-
-    def __call__(self, msg: str, severity: str = "info") -> None:
-        """Emit a developer log message."""
         raise IncompleteExtensionError("protocol not defined")
 
 

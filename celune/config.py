@@ -1,25 +1,38 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Configuration helpers for Celune."""
 
 import os
-from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import Optional, cast
+from collections.abc import Mapping, Sequence
 
 import sounddevice as sd
 
-from .constants import APP_NAME
 from .i18n import string
+from .constants import APP_NAME
+from .typing.aliases import LogLevel
 from .typing.common import Config, JSONSerializable
 from .typing.config import (
+    AudioHostApi,
     AudioDeviceConfig,
     AudioDeviceDirection,
     AudioDeviceInfoValue,
     AudioDeviceQueryResult,
-    AudioHostApi,
 )
 
 ENABLED_ENV_VALUES = {"1", "true", "on", "yes", "enabled"}
+LOG_LEVELS: tuple[LogLevel, ...] = ("info", "verbose", "debug")
+
+
+def normalize_log_level(value: object, default: LogLevel = "info") -> LogLevel:
+    """Return one supported log level, falling back when the value is invalid."""
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in LOG_LEVELS:
+            return normalized  # type: ignore[return-value]
+    return default
+
+
 WINDOWS_AUDIO_HOSTAPIS: dict[str, str] = {
     "wasapi": "Windows WASAPI",
     "directsound": "Windows DirectSound",
@@ -81,6 +94,21 @@ def config_bool(
         bool: The resolved boolean setting.
     """
     return env_bool(env_name, bool(config_value(config, config_key, default)))
+
+
+def config_log_level(
+    config: Optional[Mapping[str, JSONSerializable]],
+    env_name: str = "CELUNE_LOG_LEVEL",
+    config_key: str = "log_level",
+    default: LogLevel = "info",
+) -> LogLevel:
+    """Resolve one configured Celune log level."""
+    raw_value = os.getenv(env_name)
+    if raw_value is None:
+        configured = config_value(config, config_key, default)
+        raw_value = configured if isinstance(configured, str) else default
+
+    return normalize_log_level(raw_value, default)
 
 
 def config_audio_device(
@@ -385,12 +413,16 @@ def resolve_audio_device_with_info(
     if len(matches) > 1:
         matches_text = "\n".join(f"- {label}" for _, label in matches)
         raise ValueError(
-            string(
-                "config.audio_device_multiple_matches",
-                device_kind=string(f"config.audio_device_kind_{query_kind}"),
-                device_name=configured_name,
-                matches=matches_text,
-                app_name=APP_NAME,
+            "\n".join(
+                (
+                    string(
+                        "config.audio_device_multiple",
+                        device_kind=string(f"config.audio_device_kind_{query_kind}"),
+                        device_name=configured_name,
+                    ),
+                    matches_text,
+                    string("config.audio_device_select", app_name=APP_NAME),
+                )
             )
         )
 

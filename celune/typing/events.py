@@ -1,29 +1,46 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Typed event names, payload protocols, and callback aliases for extensions."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Literal, Optional, Protocol, Union
+from typing import TYPE_CHECKING, Union, Literal, Optional, Protocol
 
+from .common import JSON
+from .agent import (
+    AgentTaskState,
+    AgentAbortReason,
+    AgentChoiceRequest,
+    AgentFailureReason,
+    AgentApprovalRequest,
+    AgentCancellationReason,
+)
 from ..dataclasses.events import (
-    AudioEndEvent,
-    AudioStartEvent,
-    CharacterChangedEvent,
-    CharacterLoadedEvent,
-    CharacterUnloadedEvent,
     ErrorEvent,
     FatalEvent,
-    GenerationEndEvent,
-    GenerationErrorEvent,
-    GenerationStartEvent,
     ReadyEvent,
+    AudioEndEvent,
     ShutdownEvent,
+    AudioStartEvent,
     StateChangedEvent,
     VoiceChangedEvent,
+    GenerationEndEvent,
+    CharacterLoadedEvent,
+    GenerationErrorEvent,
+    GenerationStartEvent,
+    CharacterChangedEvent,
+    AgentTaskFinishedEvent,
+    CharacterUnloadedEvent,
+    AgentChoiceRequestedEvent,
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
 )
 
 type EventName = Literal[
+    "agent_task_state_changed",
+    "agent_approval_requested",
+    "agent_choice_requested",
+    "agent_task_finished",
     "ready",
     "shutdown",
     "fatal",
@@ -110,10 +127,51 @@ class AudioEventProtocol(CeluneEventProtocol, Protocol):
     saved_path: Optional[str]
 
 
+class AgentTaskStateChangedEventProtocol(CeluneEventProtocol, Protocol):
+    """Protocol for agent task lifecycle transitions."""
+
+    task_id: str
+    session_id: str
+    old_state: AgentTaskState
+    new_state: AgentTaskState
+
+
+class AgentApprovalRequestedEventProtocol(CeluneEventProtocol, Protocol):
+    """Protocol for agent tool approval requests."""
+
+    task_id: str
+    session_id: str
+    request: AgentApprovalRequest
+
+
+class AgentChoiceRequestedEventProtocol(CeluneEventProtocol, Protocol):
+    """Protocol for agent user-choice requests."""
+
+    task_id: str
+    session_id: str
+    request: AgentChoiceRequest
+
+
+class AgentTaskFinishedEventProtocol(CeluneEventProtocol, Protocol):
+    """Protocol for terminal agent task outcomes."""
+
+    task_id: str
+    session_id: str
+    state: AgentTaskState
+    abort_reason: Optional[AgentAbortReason]
+    failure_reason: Optional[AgentFailureReason]
+    cancellation_reason: Optional[AgentCancellationReason]
+    completion_metadata: Optional[JSON]
+
+
 if TYPE_CHECKING:
     from ..celune import Celune
 
 
+type AgentTaskStateChangedEventCallback = Callable[[AgentTaskStateChangedEvent], None]
+type AgentApprovalRequestedEventCallback = Callable[[AgentApprovalRequestedEvent], None]
+type AgentChoiceRequestedEventCallback = Callable[[AgentChoiceRequestedEvent], None]
+type AgentTaskFinishedEventCallback = Callable[[AgentTaskFinishedEvent], None]
 type ReadyEventCallback = Callable[[ReadyEvent], None]
 type ShutdownEventCallback = Callable[[ShutdownEvent], None]
 type FatalEventCallback = Callable[[FatalEvent], None]
@@ -130,6 +188,10 @@ type CharacterLoadedEventCallback = Callable[[CharacterLoadedEvent], None]
 type CharacterUnloadedEventCallback = Callable[[CharacterUnloadedEvent], None]
 
 type EventPayload = Union[
+    AgentTaskStateChangedEvent,
+    AgentApprovalRequestedEvent,
+    AgentChoiceRequestedEvent,
+    AgentTaskFinishedEvent,
     ReadyEvent,
     ShutdownEvent,
     FatalEvent,
@@ -147,6 +209,10 @@ type EventPayload = Union[
 ]
 
 type EventCallback = Union[
+    AgentTaskStateChangedEventCallback,
+    AgentApprovalRequestedEventCallback,
+    AgentChoiceRequestedEventCallback,
+    AgentTaskFinishedEventCallback,
     ReadyEventCallback,
     ShutdownEventCallback,
     FatalEventCallback,
