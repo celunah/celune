@@ -225,6 +225,8 @@ The loader parses and validates the bundle, then lazily materializes assets into
 
 - Qwen3 clone mode reads `wav` assets as reference audio and requires per-voice `reference_text`.
 - VoxCPM2 reads `wav` assets as reference audio and uses per-voice `cfg_scale` when present.
+- Voice names are local to the pack; they are not required to match a backend's built-in voice names.
+- CEDTS synchronizes the active pack with its worker and resolves each voice to the shared backend model.
 - Analysis helpers read optional `pt` assets directly from the bundle.
 - `default_voice` controls the initial selected voice.
 - `voice_order` controls the user-facing order.

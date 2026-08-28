@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest import mock
 from contextlib import suppress
 from collections import OrderedDict, deque
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterator
 
 import numpy as np
 
@@ -41,7 +41,12 @@ from celune.typing.worker import (
     WorkerControlMessage,
     WorkerPayloadDescriptor,
 )
-from celune.typing.backends import BackendModel, BackendArgumentValue, _BackendRuntime
+from celune.typing.backends import (
+    BackendModel,
+    BackendGeneration,
+    BackendArgumentValue,
+    _BackendRuntime,
+)
 from celune.backends.environment import (
     BACKEND_MANIFESTS,
     BackendManifest,
@@ -116,6 +121,87 @@ class _ShutdownProcess:
 
 class TestBackendEnvironment(CeluneTestCase):
     """Verify backend environment paths and installation transactions."""
+
+    def test_remote_bundle_voice_uses_worker_model_for_custom_name(self) -> None:
+        """Verify pack-local voice names do not use the static model map."""
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy.uses_voice_bundles = True
+        proxy.clone_model_id = None
+        proxy.model_name = "shared-model"
+        proxy.voice_models = {"balanced": "shared-model"}
+        proxy.default_voice = "balanced"
+
+        self.assertEqual(proxy.model_id_for_voice("Standard"), "shared-model")
+
+    def test_remote_bundle_voice_switch_passes_active_pack_to_worker(self) -> None:
+        """Verify switching from a pack default voice to another voice keeps the worker on that pack."""
+        proxy = object.__new__(remote.RemoteBackendProxy)
+        proxy.uses_voice_bundles = True
+        proxy._stream_request = mock.Mock(return_value=iter(()))
+        model = remote.RemoteModelHandle(1)
+        bundle_path = Path("custom.cevoice")
+
+        with mock.patch(
+            "celune.cedts.remote.active_bundle_path", return_value=bundle_path
+        ):
+            list(proxy.generate_stream(model, text="A", voice="Standard"))
+            list(proxy.generate_stream(model, text="A", voice="Alternate"))
+
+        calls = proxy._stream_request.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0].kwargs["voice"], "Standard")
+        self.assertEqual(calls[1].kwargs["voice"], "Alternate")
+        self.assertEqual(calls[1].kwargs["voice_bundle"], str(bundle_path))
+        self.assertEqual(calls[1].kwargs["model_id"], 1)
+
+    def test_worker_switches_from_pack_default_to_non_default_voice(self) -> None:
+        """Verify the worker selects the active pack before each requested voice."""
+
+        class FakeBackend:
+            """Backend stand-in that records the requested pack voices."""
+
+            generated_voices: list[str]
+
+            def __init__(self) -> None:
+                self.generated_voices = []
+
+            def generate_stream(
+                self,
+                model: BackendModel,
+                **kwargs: BackendArgumentValue,
+            ) -> Iterator[BackendGeneration]:
+                """Record one voice request without generating audio."""
+                del model
+                self.generated_voices.append(cast(str, kwargs["voice"]))
+                yield from ()
+
+        backend = FakeBackend()
+        request_arguments = {
+            "model_id": 1,
+            "text": "A",
+            "voice_bundle": str(Path("custom.cevoice")),
+        }
+
+        with mock.patch("celune.cedts.worker.select_voice_bundle") as select_bundle:
+            for voice in ("Standard", "Alternate"):
+                arguments = dict(request_arguments, voice=voice)
+                response, _ = worker._run_request(
+                    cast(_BackendRuntime, backend),
+                    cast(
+                        WorkerRequest,
+                        {"operation": "generate_stream", "arguments": arguments},
+                    ),
+                    {1: cast(BackendModel, object())},
+                    2,
+                    io.BytesIO(),
+                )
+                self.assertTrue(response["done"])
+
+        self.assertEqual(backend.generated_voices, ["Standard", "Alternate"])
+        self.assertEqual(
+            select_bundle.call_args_list,
+            [mock.call("custom.cevoice"), mock.call("custom.cevoice")],
+        )
 
     def _make_shutdown_proxy(
         self,

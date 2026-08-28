@@ -54,6 +54,7 @@ from ..typing.backends import (
 )
 from ..dataclasses.pipeline import VoiceConversionRequest
 from ..paths import configure_numba_cache
+from ..cevoice import select_voice_bundle
 
 _WORKER_STDERR = sys.stderr
 # Retain recent packet IDs to reject replayed packets without growing state for
@@ -562,6 +563,13 @@ def _run_request(
             raise ValueError(f"backend worker has no loaded model ID: {model_id}")
         stream_arguments = dict(arguments)
         del stream_arguments["model_id"]
+        voice_bundle = stream_arguments.pop("voice_bundle", None)
+        if voice_bundle is not None:
+            if not isinstance(voice_bundle, str):
+                raise _worker_protocol_error(
+                    "backend_worker_voice_bundle_argument_is_invalid"
+                )
+            select_voice_bundle(voice_bundle)
         if cancellation_event is not None and cancellation_event.is_set():
             return {"ok": False, "cancelled": True, "done": True}, next_model_id
         generator = backend.generate_stream(

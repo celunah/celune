@@ -18,6 +18,7 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass
 from collections.abc import Callable, Iterator
 
+from ..cevoice import active_bundle_path
 from ..paths import (
     configure_numba_cache,
     huggingface_home_dir,
@@ -1562,6 +1563,32 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
         """Return voice names reported by the worker backend."""
         return list(self._remote_voices)
 
+    def model_id_for_voice(self, voice: str) -> str:
+        """Resolve a voice name without treating pack voices as model names.
+
+        Voice-bundle backends use the same backend model for every voice in a
+        CEVOICE/CECHAR pack. The worker description provides that model as
+        ``clone_model_id`` or ``model_name``; the pack-local voice name is
+        only used to select the reference audio in the generation request.
+
+        Args:
+            voice: The voice name to resolve.
+
+        Returns:
+            str: The model identifier associated with the requested voice.
+
+        Raises:
+            ValueError: The proxy cannot resolve a model for the voice.
+            KeyError: The voice name is not defined by a non-bundle backend.
+        """
+        if self.uses_voice_bundles:
+            if self.clone_model_id is not None:
+                return self.clone_model_id
+            if self.model_name is not None:
+                return self.model_name
+
+        return super().model_id_for_voice(voice)
+
     def load_model(
         self,
         model_id: str,
@@ -1608,6 +1635,8 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
     ) -> Iterator[BackendGeneration]:
         """Generate audio by streaming worker results through the proxy."""
         arguments = dict(kwargs)
+        if self.uses_voice_bundles:
+            arguments["voice_bundle"] = str(active_bundle_path())
         arguments["model_id"] = model.identifier
         for value in self._stream_request("generate_stream", **arguments):
             yield cast(BackendGeneration, value)
