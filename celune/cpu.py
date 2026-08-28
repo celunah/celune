@@ -138,7 +138,7 @@ def _windows_cpuid_features() -> Optional[frozenset[str]]:
     kernel32: Optional[ctypes.CDLL] = None
     address: Optional[int] = None
     try:
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = ctypes.CDLL("kernel32", use_last_error=True)
         kernel32.VirtualAlloc.restype = ctypes.c_void_p
         kernel32.VirtualAlloc.argtypes = [
             ctypes.c_void_p,
