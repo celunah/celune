@@ -19,7 +19,11 @@ from ..constants import APP_NAME
 from ..audio.server import restart_audio_server
 from ..exceptions import InvalidExtensionError
 from ..persona.capabilities import PersonaCapabilities
-from ..utils import replace_ipa, format_error, format_number
+from ..utils import (
+    replace_ipa,
+    format_number,
+    format_error_message,
+)
 from ..cevoice import active_bundle_path, resolve_bundle_path
 from ..vc import (
     VC_PITCH_SHIFT_MAX,
@@ -142,11 +146,10 @@ def tutorial(ui: CeluneUI) -> None:
                     ui.celune.play(str(pth))
                 except Exception as exc:
                     ui.safe_log(
-                        string(
-                            "commands.tutorial_playback_failed",
-                            error=format_error(
-                                exc, getattr(ui.celune, "log_level", "info")
-                            ),
+                        format_error_message(
+                            string("commands.tutorial_playback_failed"),
+                            exc,
+                            getattr(ui.celune, "log_level", "info"),
                         ),
                         "warning",
                     )
@@ -160,9 +163,10 @@ def tutorial(ui: CeluneUI) -> None:
             )
         except Exception as e:
             ui.safe_log(
-                string(
-                    "commands.tutorial_failed",
-                    error=format_error(e, getattr(ui.celune, "log_level", "info")),
+                format_error_message(
+                    string("commands.tutorial_failed"),
+                    e,
+                    getattr(ui.celune, "log_level", "info"),
                 ),
                 "warning",
             )
@@ -346,9 +350,13 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             ui.celune.extension_manager.invoke(name, *invoke_args)
         except InvalidExtensionError:
             ui.safe_log(string("commands.extension_not_found", name=name), "warning")
-        except Exception:
+        except Exception as error:
             ui.safe_log(
-                tagged_string("commands.extension_error", "EXT ERROR"),
+                format_error_message(
+                    tagged_string("commands.extension_error", "EXT ERROR"),
+                    error,
+                    getattr(ui.celune, "log_level", "info"),
+                ),
                 "error",
             )
 
@@ -471,11 +479,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     ui.safe_log(string("commands.backend_not_switched"), "warning")
             except Exception as exc:
                 ui.safe_log(
-                    string(
-                        "commands.backend_switch_failed",
-                        error=format_error(
-                            exc, getattr(ui.celune, "log_level", "info")
-                        ),
+                    format_error_message(
+                        string("commands.backend_switch_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
                     ),
                     "error",
                 )
@@ -496,11 +503,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     ui.safe_log(string("commands.backend_not_switched"), "warning")
             except Exception as exc:
                 ui.safe_log(
-                    string(
-                        "commands.backend_switch_failed",
-                        error=format_error(
-                            exc, getattr(ui.celune, "log_level", "info")
-                        ),
+                    format_error_message(
+                        string("commands.backend_switch_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
                     ),
                     "error",
                 )
@@ -538,11 +544,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     )
             except Exception as exc:
                 ui.safe_log(
-                    string(
-                        "commands.character_switch_failed",
-                        error=format_error(
-                            exc, getattr(ui.celune, "log_level", "info")
-                        ),
+                    format_error_message(
+                        string("commands.character_switch_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
                     ),
                     "error",
                 )
@@ -563,11 +568,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     )
             except Exception as exc:
                 ui.safe_log(
-                    string(
-                        "commands.character_switch_failed",
-                        error=format_error(
-                            exc, getattr(ui.celune, "log_level", "info")
-                        ),
+                    format_error_message(
+                        string("commands.character_switch_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
                     ),
                     "error",
                 )
@@ -605,8 +609,11 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                 )
             except Exception as exc:
                 ui.safe_log(
-                    f"{string('commands.vc_decode_failed')}: "
-                    f"{format_error(exc, getattr(ui.celune, 'log_level', 'info'))}",
+                    format_error_message(
+                        string("commands.vc_decode_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
+                    ),
                     "error",
                 )
                 return
@@ -748,11 +755,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                         )
                 except Exception as exc:
                     ui.safe_log(
-                        string(
-                            "commands.cannot_play_audio",
-                            error=format_error(
-                                exc, getattr(ui.celune, "log_level", "info")
-                            ),
+                        format_error_message(
+                            string("commands.cannot_play_audio"),
+                            exc,
+                            getattr(ui.celune, "log_level", "info"),
                         ),
                         "error",
                     )
@@ -760,9 +766,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
             threading.Thread(target=worker, daemon=True).start()
         except Exception as e:
             ui.safe_log(
-                string(
-                    "commands.cannot_play_file",
-                    error=format_error(e, getattr(ui.celune, "log_level", "info")),
+                format_error_message(
+                    string("commands.cannot_play_file"),
+                    e,
+                    getattr(ui.celune, "log_level", "info"),
                 ),
                 "error",
             )
@@ -926,11 +933,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     ui.safe_log(string("commands.nothing_to_stop"))
             except Exception as exc:
                 ui.safe_log(
-                    string(
-                        "commands.stop_failed",
-                        error=format_error(
-                            exc, getattr(ui.celune, "log_level", "info")
-                        ),
+                    format_error_message(
+                        string("commands.stop_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
                     ),
                     "error",
                 )
@@ -945,11 +951,10 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
                     ui.safe_log(string("commands.nothing_to_stop"))
             except Exception as exc:
                 ui.safe_log(
-                    string(
-                        "commands.stop_failed",
-                        error=format_error(
-                            exc, getattr(ui.celune, "log_level", "info")
-                        ),
+                    format_error_message(
+                        string("commands.stop_failed"),
+                        exc,
+                        getattr(ui.celune, "log_level", "info"),
                     ),
                     "error",
                 )
