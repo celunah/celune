@@ -314,6 +314,19 @@ class TestChroma(CeluneTestCase):
         assert glow.speech_level(np.zeros((0, 2), dtype=np.float32)) == 0.0
         assert glow.speech_level(stereo) > 0.0
 
+    def test_glow_worker_signals_completion(self) -> None:
+        """Verify shutdown can observe a glow worker that exits promptly."""
+        glow = AudioRGBGlow(celune=None, color="#ffffff")
+        glow.connect = mock.Mock(return_value=True)
+        glow._run = mock.Mock()
+
+        assert glow.finished.is_set()
+        assert glow.start()
+        assert glow._worker is not None
+        glow._worker.join(timeout=1)
+
+        assert glow.finished.is_set()
+
     def test_sleep_and_wake_preserve_prior_brightness_target(self) -> None:
         """Verify sleep dimming stores and restores the earlier brightness target."""
         glow = AudioRGBGlow(celune=None, color="#ffffff")

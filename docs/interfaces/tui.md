@@ -37,11 +37,13 @@ timed status, theme, marquee, and resource-page updates through the CEDTS
 frontend channel so the browser does not maintain an independent timer state;
 browser polling is only a reconnect fallback.
 
-When Celune requests an exit, the mounted Textual screen fades out as one
-surface, hides any mounted scrollbars, paints a final fully transparent frame,
-and only then does Textual unmount it. Runtime teardown completes during the
-exit transition, and unmounted or early-startup exits retain an immediate
-fallback.
+When Celune requests an exit, including a settings-confirmed restart, the
+mounted Textual screen fades out as one surface, hides any mounted scrollbars,
+paints a final fully transparent frame, and only then does Textual unmount it.
+Runtime teardown completes during the exit transition, and unmounted or
+early-startup exits retain an immediate fallback. The optional OpenRGB glow
+worker signals its completion during teardown so a restart does not wait for a
+fixed shutdown timeout when the worker has already stopped.
 
 The TUI playback bar has a separate progress readout. During active audio
 playback it shows elapsed time as `MM:SS`; during loading and other determinate
@@ -128,9 +130,11 @@ not automatically change screens.
 The main log panel retains the current session's log history while the loading
 screen transitions to the ready state and while the UI repaints. Background
 runtime messages are appended on the Textual application thread, so a backend
-worker cannot directly corrupt the panel. Switching themes repaints existing
-entries with the selected severity colors. The same entries are also appended
-to Celune's persisted `celune.log` file for troubleshooting.
+worker cannot directly corrupt the panel. Each background notification
+reconciles retained history with the rendered entries, so messages are not lost
+if a repaint or loading transition overlaps delivery. Switching themes repaints
+existing entries with the selected severity colors. The same entries are also
+appended to Celune's persisted `celune.log` file for troubleshooting.
 
 ## Startup failures
 

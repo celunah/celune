@@ -74,7 +74,8 @@ class TestRuntime(CeluneTestCase):
 
     def test_ui_error_formatter_remains_available_after_lazy_import(self) -> None:
         """Verify deferred UI imports retain the formatter used by error paths."""
-        assert ui_app.format_error(RuntimeError("startup"), "info") == "startup"
+        assert ui_app.format_error(RuntimeError("startup"), "info") == ""
+        assert ui_app.format_error(RuntimeError("startup"), "verbose") == "startup"
 
     def test_ui_terminal_title_remains_available_before_runtime_import(self) -> None:
         """Verify early shutdown can update the terminal title before runtime loading."""
@@ -640,6 +641,7 @@ class TestUICommand(CeluneTestCase):
     def test_vc_command_reports_decode_failure(self) -> None:
         """Verify /vc surfaces decode errors cleanly."""
         self.ui.celune.input_mode = "voice_conversion"
+        self.ui.celune.log_level = "verbose"
 
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "broken.wav"
@@ -979,7 +981,7 @@ class TestUIStartup(CeluneTestCase):
                 mock.patch.object(ui_app, "yaml", create=True) as yaml_module,
                 mock.patch.object(ui, "_run_shutdown_step") as shutdown_step,
                 mock.patch.object(ui, "_set_terminal_status") as set_status,
-                mock.patch.object(ui, "exit") as exit_app,
+                mock.patch.object(ui, "_graceful_exit") as graceful_exit,
             ):
                 ui._save_settings(menu)
                 shutdown_step.call_args_list[0].args[0]()
@@ -993,7 +995,53 @@ class TestUIStartup(CeluneTestCase):
             assert ui.celune.config["persona"]["context_size"] == 16384
             assert ui.cur_state == "restarting"
             ui.safe_log.assert_not_called()
-            exit_app.assert_called_once_with(return_code=7)
+            shutdown_step.assert_called_once()
+            graceful_exit.assert_called_once_with(return_code=7)
+
+    def test_settings_restart_preserves_restart_state_through_graceful_exit(
+        self,
+    ) -> None:
+        """Verify a settings restart uses the normal fade while retaining its exit code."""
+        ui = CeluneUI()
+        self.addCleanup(setattr, CeluneUI, "_instance", None)
+        ui.cur_state = "restarting"
+        ui.exit = mock.Mock()
+        ui._shutdown_runtime = mock.Mock()
+        screen = SimpleNamespace(
+            styles=SimpleNamespace(opacity=1.0),
+            refresh=mock.Mock(),
+            query=mock.Mock(return_value=()),
+        )
+        fade_complete: list[Callable[[], None]] = []
+
+        def capture_fade(*_args, on_complete=None, **_kwargs) -> None:
+            if on_complete is not None:
+                fade_complete.append(on_complete)
+
+        with (
+            mock.patch.object(
+                CeluneUI,
+                "screen",
+                new_callable=mock.PropertyMock,
+                return_value=screen,
+            ),
+            mock.patch.object(ui, "_animate_opacity", side_effect=capture_fade),
+            mock.patch.object(
+                ui,
+                "call_after_refresh",
+                side_effect=lambda callback: callback(),
+            ),
+        ):
+            ui._graceful_exit(return_code=ExitCodes.EXIT_PENDING_RESTART.value)
+
+            assert ui.cur_state == "restarting"
+            assert len(fade_complete) == 1
+            fade_complete[0]()
+
+        ui._shutdown_runtime.assert_called_once_with()
+        ui.exit.assert_called_once_with(
+            return_code=ExitCodes.EXIT_PENDING_RESTART.value
+        )
 
     def test_loading_screen_mounts_with_canonical_textual_css(self) -> None:
         """Verify the loading screen composes and updates in a real Textual app."""
@@ -2142,6 +2190,23 @@ class TestUIStartup(CeluneTestCase):
         logs.write.assert_called_once()
         self.assertEqual(ui._rendered_log_count, 1)
 
+    def test_queued_log_reconciles_stale_render_cursor(self) -> None:
+        """Verify a queued log is restored when the render cursor got ahead of the widget."""
+        ui = CeluneUI()
+        logs = mock.Mock()
+        logs.lines = []
+        logs._size_known = True
+        logs.auto_scroll = True
+        ui.logs = cast(RichLog, logs)
+        ui.log_history = [("Backend ready", "info")]
+        ui._rendered_log_count = 1
+
+        ui.on_uilog_message(UILogMessage("Backend ready", "info"))
+
+        logs.clear.assert_called_once_with()
+        logs.write.assert_called_once()
+        self.assertEqual(ui._rendered_log_count, 1)
+
     def test_log_refresh_preserves_rendered_history(self) -> None:
         """Verify a layout refresh does not clear already rendered log entries."""
         ui = CeluneUI()
@@ -3218,8 +3283,8 @@ class TestUIStartup(CeluneTestCase):
         ui.exit = mock.Mock()
 
         with mock.patch(
-            "celune.ui.app.format_error",
-            side_effect=["pipeline close failed", "traceback text"],
+            "celune.ui.app.format_error_message",
+            return_value="An internal error occurred: pipeline close failed",
         ):
             ui._graceful_exit()
 
@@ -3240,8 +3305,10 @@ class TestUIStartup(CeluneTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             ui._log_file_path = Path(temp_dir) / "celune.log"
             with mock.patch(
-                "celune.ui.app.format_error",
-                side_effect=["pipeline close failed", "traceback text"],
+                "celune.ui.app.format_error_message",
+                return_value=(
+                    "An internal error occurred: pipeline close failed\ntraceback text"
+                ),
             ):
                 ui._report_shutdown_error(RuntimeError("pipeline close failed"))
 

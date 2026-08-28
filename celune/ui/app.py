@@ -182,6 +182,17 @@ def format_error(error: BaseException, log_level: Union[LogLevel, bool]) -> str:
     return format_error_helper(error, log_level)
 
 
+def format_error_message(
+    message: str,
+    error: BaseException,
+    log_level: Union[LogLevel, bool],
+) -> str:
+    """Append level-appropriate exception detail without eager runtime imports."""
+    from ..utils import format_error_message as format_error_message_helper
+
+    return format_error_message_helper(message, error, log_level)
+
+
 class VoiceButton(Button):
     """Button with independent click and held-release actions."""
 
@@ -1586,9 +1597,13 @@ class CeluneUI(App):
             return
         try:
             callback(self.celune, success, detail)
-        except Exception:
+        except Exception as error:
             self.safe_log(
-                string("test.callback_failed"),
+                format_error_message(
+                    string("test.callback_failed"),
+                    error,
+                    getattr(self.celune, "log_level", self._startup_log_level),
+                ),
                 "error",
             )
         self._run_on_ui_thread(self._apply_test_finished_state)
@@ -1906,6 +1921,7 @@ class CeluneUI(App):
         self.progress_label = self.query_one("#progress-label", ProgressLabel)
         self.header = self.query_one("#header", Label)
         self.header_lines = tuple(cast(Label, widget) for widget in self.query(".line"))
+        self._refresh_logs()
 
         self.set_focus(None)
         self._prepare_loading_theme()
@@ -2027,7 +2043,11 @@ class CeluneUI(App):
             terminal_action,
         )
         self._write_terminal_title(self._terminal_status)
-        message = tagged_string("ui.init_error", "INIT ERROR")
+        message = format_error_message(
+            tagged_string("ui.init_error", "INIT ERROR"),
+            error,
+            self._startup_log_level,
+        )
         self._show_loading_error(
             message,
             status_message=string("status.early_initialization_failed"),
@@ -2749,14 +2769,18 @@ class CeluneUI(App):
                 )
         except Exception as e:
             self.cur_state = "error"
-            error_message = tagged_string("ui.init_error", "INIT ERROR")
+            error_message = format_error_message(
+                tagged_string("ui.init_error", "INIT ERROR"),
+                e,
+                getattr(self.celune, "log_level", self._startup_log_level),
+            )
             self.safe_log(error_message, "error")
             self.celune.fatal()
             self.change_input_state(locked=True)
             self.change_voice_lock_state(locked=True)
             self.error(string("ui.app_could_not_start", app_name=APP_NAME))
             self._show_loading_error(error_message)
-            self._finish_test_startup(False, str(e))
+            self._finish_test_startup(False, error_message)
 
     @staticmethod
     def _caption_word_timing_ranges(
@@ -2878,7 +2902,15 @@ class CeluneUI(App):
                     )
                     self._caption_transcriber = transcriber
                 segments = transcriber.transcribe_segments(audio_copy, sample_rate)
-            except Exception:
+            except Exception as error:
+                self.safe_log(
+                    format_error_message(
+                        string("ui.caption_transcription_failed"),
+                        error,
+                        getattr(self.celune, "log_level", self._startup_log_level),
+                    ),
+                    "warning",
+                )
                 return
             word_timings = self._caption_word_timing_ranges(
                 self._caption_words,
@@ -3542,19 +3574,13 @@ class CeluneUI(App):
             self.post_message(UILogMessage(msg, severity))
 
     def on_uilog_message(self, message: UILogMessage) -> None:
-        """Write a background log message on Textual's application thread.
+        """Reconcile background log history on Textual's application thread.
 
         Args:
-            message: Background log message to write to the UI.
+            message: Background log message that woke the reconciliation handler.
         """
-        with self._log_history_lock:
-            history_length = len(self.log_history)
-        if self.logs is None or self._rendered_log_count >= history_length:
-            return
-        self.logs.write(
-            Text(message.message, style=self._severity_color(message.severity))
-        )
-        self._rendered_log_count += 1
+        del message
+        self._refresh_logs()
 
     def safe_log_dev(self, msg: str, severity: str = "info") -> None:
         """Log a message.
@@ -3779,11 +3805,10 @@ class CeluneUI(App):
         """Submit the final Persona transcript or report its transcription error."""
         if error is not None and not error_already_reported:
             self.safe_log(
-                string(
-                    "ui.persona_transcription_failed",
-                    error=format_error(
-                        error, getattr(self.celune, "log_level", "info")
-                    ),
+                format_error_message(
+                    string("ui.persona_transcription_failed"),
+                    error,
+                    getattr(self.celune, "log_level", "info"),
                 ),
                 "error",
             )
@@ -3834,11 +3859,10 @@ class CeluneUI(App):
             ):
                 partial_error_reported = True
                 self.safe_log(
-                    string(
-                        "ui.persona_transcription_failed",
-                        error=format_error(
-                            error, getattr(self.celune, "log_level", "info")
-                        ),
+                    format_error_message(
+                        string("ui.persona_transcription_failed"),
+                        error,
+                        getattr(self.celune, "log_level", "info"),
                     ),
                     "warning",
                 )
@@ -3932,9 +3956,10 @@ class CeluneUI(App):
             )
         except Exception as exc:
             self.safe_log(
-                string(
-                    "ui.recording_open_input_failed",
-                    error=format_error(exc, getattr(self.celune, "log_level", "info")),
+                format_error_message(
+                    string("ui.recording_open_input_failed"),
+                    exc,
+                    getattr(self.celune, "log_level", "info"),
                 ),
                 "error",
             )
@@ -4082,10 +4107,13 @@ class CeluneUI(App):
             if worker is not None and worker.is_alive():
                 worker.join(timeout=2.0)
             self.safe_log(
-                string(
-                    "ui.recording_start_failed",
-                    label=string("ui.audio_input_label"),
-                    error=format_error(exc, getattr(self.celune, "log_level", "info")),
+                format_error_message(
+                    string(
+                        "ui.recording_start_failed",
+                        label=string("ui.audio_input_label"),
+                    ),
+                    exc,
+                    getattr(self.celune, "log_level", "info"),
                 ),
                 "error",
             )
@@ -4582,9 +4610,10 @@ class CeluneUI(App):
             )
         except Exception as e:
             self.safe_log(
-                string(
-                    "ui.recording_open_input_failed",
-                    error=format_error(e, getattr(self.celune, "log_level", "info")),
+                format_error_message(
+                    string("ui.recording_open_input_failed"),
+                    e,
+                    getattr(self.celune, "log_level", "info"),
                 ),
                 "error",
             )
@@ -4644,9 +4673,17 @@ class CeluneUI(App):
                     )
                     if live_source_id is None:
                         live_playback_generation = None
-                except Exception:
+                except Exception as error:
                     self.safe_log(
-                        string("ui.recording_stream_submit_failed"),
+                        format_error_message(
+                            string("ui.recording_stream_submit_failed"),
+                            error,
+                            getattr(
+                                self.celune,
+                                "log_level",
+                                self._startup_log_level,
+                            ),
+                        ),
                         "warning",
                     )
                     return
@@ -4705,12 +4742,13 @@ class CeluneUI(App):
                     if self.celune is None:
                         continue
                     self.safe_log(
-                        string(
-                            "ui.recording_stream_chunk_failed",
-                            label=queued_label,
-                            error=format_error(
-                                exc, getattr(self.celune, "log_level", "info")
+                        format_error_message(
+                            string(
+                                "ui.recording_stream_chunk_failed",
+                                label=queued_label,
                             ),
+                            exc,
+                            getattr(self.celune, "log_level", "info"),
                         ),
                         "warning",
                     )
@@ -4864,10 +4902,10 @@ class CeluneUI(App):
             if component_lease is not None:
                 component_lease.release()
             self.safe_log(
-                string(
-                    "ui.recording_start_failed",
-                    label=label,
-                    error=format_error(e, getattr(self.celune, "log_level", "info")),
+                format_error_message(
+                    string("ui.recording_start_failed", label=label),
+                    e,
+                    getattr(self.celune, "log_level", "info"),
                 ),
                 "error",
             )
@@ -5340,8 +5378,15 @@ class CeluneUI(App):
             self.celune.config = updated
             with config_path(create_parent=True).open("w", encoding="utf-8") as file:
                 yaml.safe_dump(updated, file, sort_keys=False)
-        except OSError:
-            self.safe_log(string("ui.settings_save_failed"), "error")
+        except OSError as error:
+            self.safe_log(
+                format_error_message(
+                    string("ui.settings_save_failed"),
+                    error,
+                    getattr(self.celune, "log_level", self._startup_log_level),
+                ),
+                "error",
+            )
             return
 
         self.cur_state = "restarting"
@@ -5351,8 +5396,7 @@ class CeluneUI(App):
                 string("osc.action_restarting"),
             )
         )
-        self._run_shutdown_step(self._shutdown_runtime)
-        self.exit(return_code=ExitCodes.EXIT_PENDING_RESTART.value)
+        self._graceful_exit(return_code=ExitCodes.EXIT_PENDING_RESTART.value)
 
     @staticmethod
     def _set_config_value(
@@ -5414,8 +5458,15 @@ class CeluneUI(App):
             self.style_index = self.celune_styles.index(entry)
             self.tts_voice_changed(entry)
             self.change_voice_lock_state(locked=len(self.celune_styles) < 2)
-        except Exception:
-            self.safe_log(string("ui.voice_change_failed_error"), "error")
+        except Exception as error:
+            self.safe_log(
+                format_error_message(
+                    string("ui.voice_change_failed_error"),
+                    error,
+                    getattr(self.celune, "log_level", self._startup_log_level),
+                ),
+                "error",
+            )
 
     def consume_buffer(self, text_len: int) -> None:
         """Consume a sentence from live input and say it.
@@ -5616,11 +5667,10 @@ class CeluneUI(App):
                     asyncio.run(self.celune.force_stop_speech_async())
                 except Exception as exc:
                     self.safe_log(
-                        string(
-                            "ui.tutorial_stop_failed",
-                            error=format_error(
-                                exc, getattr(self.celune, "log_level", "info")
-                            ),
+                        format_error_message(
+                            string("ui.tutorial_stop_failed"),
+                            exc,
+                            getattr(self.celune, "log_level", "info"),
                         ),
                         "error",
                     )
@@ -6017,7 +6067,8 @@ class CeluneUI(App):
         """
         if self.cur_state == "exiting":
             return
-        self.cur_state = "exiting"
+        if self.cur_state != "restarting":
+            self.cur_state = "exiting"
 
         def finish_exit() -> None:
             """Finish shutdown after the visible UI has faded away."""
@@ -6068,15 +6119,18 @@ class CeluneUI(App):
 
     def _report_shutdown_error(self, error: Exception) -> None:
         """Write a shutdown error to both the log and original terminal stream."""
-        detail = format_error(error, "info")
-        message = string("celune.internal_error")
-        if detail:
-            message = f"{message}: {detail}"
+        log_level = getattr(
+            self.celune,
+            "log_level",
+            self._startup_log_level,
+        )
+        message = format_error_message(
+            string("celune.internal_error"),
+            error,
+            log_level,
+        )
         with contextlib.suppress(Exception):
             self._persist_log_entry(message, "error")
-            trace = format_error(error, "debug").rstrip()
-            if trace:
-                self._persist_log_entry(trace, "error")
 
         stream = self._old_stderr or sys.__stderr__
         if stream is None:

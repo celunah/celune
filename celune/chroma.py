@@ -97,6 +97,7 @@ class AudioRGBGlow:
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._worker = None
+        self.finished.set()
 
         self._current_brightness = 0.0
         self._target_brightness = self.idle_brightness
@@ -143,9 +144,20 @@ class AudioRGBGlow:
             return False
 
         self._stop_event.clear()
-        self._worker = threading.Thread(target=self._run, daemon=True)
+        self.finished.clear()
+        self._worker = threading.Thread(
+            target=self._run_with_completion,
+            daemon=True,
+        )
         self._worker.start()
         return True
+
+    def _run_with_completion(self) -> None:
+        """Run the glow worker and signal that it has stopped."""
+        try:
+            self._run()
+        finally:
+            self.finished.set()
 
     def stop(self, reset: bool = True, wait: bool = False) -> None:
         """Hard-stop the glow effect.
