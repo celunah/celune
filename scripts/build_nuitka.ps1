@@ -16,7 +16,6 @@ $launcherSources = @(
     (Join-Path $launcherDir "windows\terminal.c")
 )
 $launcherRes = Join-Path $repoRoot "resources\celune.res"
-$launcherCompatibilityScript = Join-Path $repoRoot "scripts\celune-bin.cmd"
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 $projectVersion = Select-String -Path (Join-Path $repoRoot "pyproject.toml") -Pattern '^version = "([^"]+)"' | Select-Object -First 1
 $copyrightText = [char]0x00A9 + " celunah - Under Apache 2.0 license."
@@ -74,7 +73,8 @@ $staleBuildArtifacts = @(
     (Join-Path $outputDir "voices"),
     (Join-Path $outputDir "resources"),
     (Join-Path $outputDir "assets"),
-    (Join-Path $outputDir "vcruntime140.dll")
+    (Join-Path $outputDir "vcruntime140.dll"),
+    (Join-Path $outputDir "celune-bin.cmd")
 )
 foreach ($stalePath in $staleBuildArtifacts) {
     if (Test-Path $stalePath) {
@@ -125,10 +125,6 @@ foreach ($launcherSource in $launcherSources) {
     }
 }
 
-if (-not (Test-Path $launcherCompatibilityScript)) {
-    throw "The launcher compatibility script was not found."
-}
-
 $launcherExe = Join-Path $outputDir "celune.exe"
 $launcherObjects = @(
     (Join-Path $outputDir "launcher_main.obj"),
@@ -164,8 +160,6 @@ if ($LASTEXITCODE -ne 0) {
     throw "Failed to compile the Windows launcher."
 }
 
-Copy-Item -LiteralPath $launcherCompatibilityScript -Destination (Join-Path $outputDir "celune-bin.cmd") -Force
-
 $revision = (& git -C $repoRoot rev-parse HEAD).Trim()
 if (-not $revision) {
     throw "Could not determine the Git revision for update metadata."
@@ -199,7 +193,6 @@ Push-Location $outputDir
 try {
     Compress-Archive -Path @(
         "celune.exe",
-        "celune-bin.cmd",
         "celune-bin.exe",
         "vcruntime140.dll",
         "celune-update.json"

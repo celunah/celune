@@ -31,7 +31,14 @@ Typical output files are:
 | Windows | `bin/celune.exe`, `bin/celune-bin.exe`, `bin/vcruntime140.dll`, `bin/celune-update.json`, `bin/Celune-win-x64.zip` |
 | Linux | `bin/celune`, `bin/celune-bin`, `bin/celune.AppImage`, `bin/celune-update.json`, `bin/Celune-linux-x64.zip` |
 
-The launcher sets the compiled environment, owns update handoff, and preserves
+The Windows archive contains `celune.exe`, `celune-bin.exe`,
+`vcruntime140.dll`, and `celune-update.json`. It does not contain the legacy
+`celune-bin.cmd` compatibility wrapper; the native launcher owns the runtime
+environment setup. The launcher checks for AVX in native C before starting
+Python on x86-64,
+consistently on Windows and Linux. The `doctor`, help, and version commands
+remain available so a missing AVX capability can be diagnosed. The launcher
+sets the compiled environment, owns update handoff, and preserves
 process-loss behavior. Its terminal cleanup restores modes without scrolling
 the cursor through the console buffer, so returning to the shell does not leave
 a large blank region. If startup fails, the launcher preserves the visible
