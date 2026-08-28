@@ -554,7 +554,7 @@ class Celune(CeluneStateAccessors):
             self._agent_tool_schemas = production_agent_tool_schemas(
                 include_local_management=local_management,
             )
-            if local_management:
+            if local_management and config.get("mode") == "agent":
                 self.log(
                     "\n".join(
                         (
