@@ -40,7 +40,14 @@ from .modes import (
     resolve_operation_mode,
 )
 from .paths import project_root, temp_data_dir, huggingface_progress
-from .utils import discard, format_error, custom_assert, format_number, is_port_usable
+from .utils import (
+    discard,
+    format_error,
+    format_number,
+    custom_assert,
+    format_error_message,
+    is_port_usable,
+)
 from .chroma import AudioRGBGlow
 from .config import Config, config_bool, config_value, normalize_log_level
 from .cevoice import (
@@ -714,7 +721,11 @@ class Celune(CeluneStateAccessors):
             ) from e
         except Exception as e:
             raise BackendError(
-                f"internal backend error: {format_error(e, log_level)}"
+                format_error_message(
+                    string("celune.internal_backend_error"),
+                    e,
+                    log_level,
+                )
             ) from e
 
         if vc_backend is None and self.input_mode == "voice_conversion":
@@ -756,7 +767,11 @@ class Celune(CeluneStateAccessors):
             ) from e
         except Exception as e:
             raise BackendError(
-                f"internal voice-conversion backend error: {format_error(e, log_level)}"
+                format_error_message(
+                    string("celune.internal_vc_backend_error"),
+                    e,
+                    log_level,
+                )
             ) from e
 
         if chunk_size:
@@ -874,7 +889,13 @@ class Celune(CeluneStateAccessors):
             try:
                 callback()
             except Exception as exc:
-                cleanup_errors.append(str(exc))
+                cleanup_errors.append(
+                    format_error_message(
+                        string("test.cleanup_failed"),
+                        exc,
+                        self.log_level,
+                    )
+                )
         clear_queue(self.persona_queue)
 
         active_task = self.agent_runtime.get_active_task("default")
@@ -929,12 +950,24 @@ class Celune(CeluneStateAccessors):
                 self.text_queue.put(self.sentinel)
                 self.audio_queue.put(self.sentinel)
         except Exception as exc:
-            errors.append(str(exc))
+            errors.append(
+                format_error_message(
+                    string("test.cleanup_failed"),
+                    exc,
+                    self.log_level,
+                )
+            )
 
         try:
             close_stream(self, abort=True)
         except Exception as exc:
-            errors.append(str(exc))
+            errors.append(
+                format_error_message(
+                    string("test.cleanup_failed"),
+                    exc,
+                    self.log_level,
+                )
+            )
 
         current_thread = threading.current_thread()
         for worker in (self.generation_thread, self.playback_thread):
@@ -942,19 +975,37 @@ class Celune(CeluneStateAccessors):
                 try:
                     worker.join(timeout=2)
                 except Exception as exc:
-                    errors.append(str(exc))
+                    errors.append(
+                        format_error_message(
+                            string("test.cleanup_failed"),
+                            exc,
+                            self.log_level,
+                        )
+                    )
 
         persona_thread = self._persona_thread
         if persona_thread is not None and persona_thread is not current_thread:
             try:
                 persona_thread.join(timeout=2)
             except Exception as exc:
-                errors.append(str(exc))
+                errors.append(
+                    format_error_message(
+                        string("test.cleanup_failed"),
+                        exc,
+                        self.log_level,
+                    )
+                )
 
         try:
             self._close_agent_tool_selector()
         except Exception as exc:
-            errors.append(str(exc))
+            errors.append(
+                format_error_message(
+                    string("test.cleanup_failed"),
+                    exc,
+                    self.log_level,
+                )
+            )
 
         try:
             self.component_locks.release_all()
@@ -962,13 +1013,25 @@ class Celune(CeluneStateAccessors):
             self.locked = True
             self.playback_done.set()
         except Exception as exc:
-            errors.append(str(exc))
+            errors.append(
+                format_error_message(
+                    string("test.cleanup_failed"),
+                    exc,
+                    self.log_level,
+                )
+            )
 
         try:
             self.glow.leave()
             self.glow.finished.wait(timeout=5)
         except Exception as exc:
-            errors.append(str(exc))
+            errors.append(
+                format_error_message(
+                    string("test.cleanup_failed"),
+                    exc,
+                    self.log_level,
+                )
+            )
         return errors
 
     @staticmethod
@@ -1252,7 +1315,14 @@ class Celune(CeluneStateAccessors):
         except Exception as e:
             self.log(string("celune.persona_not_initialized"), "warning")
             self.log(string("celune.speech_only_mode"), "warning")
-            self.log(format_error(e, self.log_level), "warning")
+            self.log(
+                format_error_message(
+                    string("celune.persona_init_failed"),
+                    e,
+                    self.log_level,
+                ),
+                "warning",
+            )
             self.progress_callback(0, 1)
             with self._model_lock:
                 if self.vision is vision:
@@ -1424,6 +1494,7 @@ class Celune(CeluneStateAccessors):
         """Resolve one named TTS backend through its CEDTS worker manifest."""
         backend = resolve_backend(backend_spec, **backend_kwargs)
         backend.bind_progress(self.progress_callback)
+        backend.log_level = getattr(self, "log_level", "info")
         return backend
 
     def _recreate_vc_backend(self) -> bool:
@@ -1454,6 +1525,7 @@ class Celune(CeluneStateAccessors):
         """Resolve one VC backend from the active application environment."""
         backend = resolve_vc_backend(backend_spec, log=log)
         backend.bind_progress(self.progress_callback)
+        backend.log_level = getattr(self, "log_level", "info")
         return backend
 
     def _restorable_vc_backend_spec(
@@ -1871,9 +1943,13 @@ class Celune(CeluneStateAccessors):
             self.cur_state = "idle"
             self.status_callback(string("status.idle"))
             return True
-        except Exception:
+        except Exception as error:
             self.log(
-                tagged_string("celune.reload_error", "RELOAD ERROR"),
+                format_error_message(
+                    tagged_string("celune.reload_error", "RELOAD ERROR"),
+                    error,
+                    self.log_level,
+                ),
                 "error",
             )
             if self.exit_requested:
@@ -1920,9 +1996,10 @@ class Celune(CeluneStateAccessors):
                 except Exception as restore_error:
                     rollback_succeeded = False
                     self.log(
-                        string(
-                            "celune.backend_restore_error",
-                            error=format_error(restore_error, self.log_level),
+                        format_error_message(
+                            string("celune.backend_restore_error"),
+                            restore_error,
+                            self.log_level,
                         ),
                         "error",
                     )
@@ -2088,9 +2165,13 @@ class Celune(CeluneStateAccessors):
             self.cur_state = "idle"
             self.status_callback(string("status.idle"))
             return True
-        except Exception:
+        except Exception as error:
             self.log(
-                tagged_string("celune.reload_error", "RELOAD ERROR"),
+                format_error_message(
+                    tagged_string("celune.reload_error", "RELOAD ERROR"),
+                    error,
+                    self.log_level,
+                ),
                 "error",
             )
             if (
@@ -2346,10 +2427,14 @@ class Celune(CeluneStateAccessors):
                 if not is_voice_conversion:
                     self._start_wake_background_jobs(unload)
                 return True
-            except Exception:
+            except Exception as error:
                 self.fatal()
                 self.log(
-                    tagged_string("celune.wake_error", "WAKE ERROR"),
+                    format_error_message(
+                        tagged_string("celune.wake_error", "WAKE ERROR"),
+                        error,
+                        self.log_level,
+                    ),
                     "error",
                 )
                 self.status_callback(
@@ -2407,7 +2492,14 @@ class Celune(CeluneStateAccessors):
                     self.persona_loading = True
                 self._load_persona_background(vision)
         except Exception as e:
-            self.log(format_error(e, self.log_level), "error")
+            self.log(
+                format_error_message(
+                    string("celune.wake_error"),
+                    e,
+                    self.log_level,
+                ),
+                "error",
+            )
         finally:
             if self._wake_background_thread is threading.current_thread():
                 self._wake_background_thread = None
@@ -3242,10 +3334,14 @@ class Celune(CeluneStateAccessors):
             self.progress_callback(1, 1)
             self.cur_state = "idle"
             self.status_callback(string("status.idle"))
-        except Exception:
+        except Exception as error:
             self.fatal()
             self.log(
-                tagged_string("celune.reload_error", "RELOAD ERROR"),
+                format_error_message(
+                    tagged_string("celune.reload_error", "RELOAD ERROR"),
+                    error,
+                    self.log_level,
+                ),
                 "error",
             )
             self.status_callback(
@@ -3396,10 +3492,13 @@ class Celune(CeluneStateAccessors):
             except Exception as e:
                 self.fatal()
                 self.log(
-                    string("celune.default_model_load_failed", app_name=APP_NAME),
+                    format_error_message(
+                        string("celune.default_model_load_failed", app_name=APP_NAME),
+                        e,
+                        self.log_level,
+                    ),
                     "error",
                 )
-                self.log(format_error(e, self.log_level), "error")
                 self.error_callback(string("celune.default_model_failed_short"))
                 self.progress_callback(0, 1)
                 if raise_on_error:
@@ -3555,9 +3654,10 @@ class Celune(CeluneStateAccessors):
             return
         except Exception as e:
             self.log(
-                string(
-                    "celune.package_import_failed",
-                    error=format_error(e, self.log_level),
+                format_error_message(
+                    string("celune.package_import_failed"),
+                    e,
+                    self.log_level,
                 ),
                 "warning",
             )
@@ -3572,9 +3672,13 @@ class Celune(CeluneStateAccessors):
                 token=token,
                 requests_per_minute=requests_per_minute,
             )
-        except Exception:
+        except Exception as error:
             self.log(
-                string("celune.internal_error"),
+                format_error_message(
+                    string("celune.internal_error"),
+                    error,
+                    self.log_level,
+                ),
                 "warning",
             )
             self.log(string("celune.api_unavailable", app_name=APP_NAME), "warning")
@@ -3624,7 +3728,11 @@ class Celune(CeluneStateAccessors):
                 self.progress_callback(1, 1)
             except Exception as e:
                 self.log(
-                    f"[NORMALIZER ERROR] {format_error(e, self.log_level)}",
+                    format_error_message(
+                        "[NORMALIZER ERROR]",
+                        e,
+                        self.log_level,
+                    ),
                     "error",
                 )
                 self.log(string("celune.normalizer_failed"), "warning")
@@ -3700,7 +3808,11 @@ class Celune(CeluneStateAccessors):
         except Exception as e:
             self._last_warmup_error = e
             self.log(
-                tagged_string("celune.warmup_error", "WARMUP ERROR"),
+                format_error_message(
+                    tagged_string("celune.warmup_error", "WARMUP ERROR"),
+                    e,
+                    self.log_level,
+                ),
                 "error",
             )
             self.progress_callback(0, 1)
@@ -3819,7 +3931,11 @@ class Celune(CeluneStateAccessors):
 
             except Exception as e:
                 self.log(
-                    f"[NORMALIZATION ERROR] {format_error(e, self.log_level)}",
+                    format_error_message(
+                        "[NORMALIZATION ERROR]",
+                        e,
+                        self.log_level,
+                    ),
                     "error",
                 )
                 return None
@@ -4088,6 +4204,15 @@ class Celune(CeluneStateAccessors):
                 )
         except Exception as exc:
             self._agent_needle_error = str(exc)
+            self.log(
+                format_error_message(
+                    string("agent.needle_loading_failed"),
+                    exc,
+                    self.log_level,
+                ),
+                "error",
+                loglevel="verbose",
+            )
             raise NeedleSelectionError(
                 "Needle selector is unavailable for the agent runtime"
             ) from exc
@@ -4128,6 +4253,15 @@ class Celune(CeluneStateAccessors):
         try:
             return cast(ToolExecutionResult, tool.execute(call, _context))
         except Exception as exc:
+            self.log(
+                format_error_message(
+                    f"[AGENT] tool_failed tool={call['name']}",
+                    exc,
+                    self.log_level,
+                ),
+                "error",
+                loglevel="verbose",
+            )
             return {
                 "tool_call_id": call["id"],
                 "output": None,
@@ -4175,7 +4309,11 @@ class Celune(CeluneStateAccessors):
                         raise RuntimeError("agent failure response could not be queued")
                 except Exception as exc:
                     self.log(
-                        f"[AGENT] failure_response_generation_failed error={exc}",
+                        format_error_message(
+                            "[AGENT] failure_response_generation_failed",
+                            exc,
+                            self.log_level,
+                        ),
                         "warning",
                         loglevel="verbose",
                     )
@@ -4241,7 +4379,11 @@ class Celune(CeluneStateAccessors):
                 return deliver_persona_response(self, request, response)
         except Exception as exc:
             self.log(
-                f"[AGENT] failure_response_generation_failed error={exc}",
+                format_error_message(
+                    "[AGENT] failure_response_generation_failed",
+                    exc,
+                    self.log_level,
+                ),
                 "warning",
                 loglevel="verbose",
             )

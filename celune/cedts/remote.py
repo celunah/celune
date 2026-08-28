@@ -49,6 +49,7 @@ from ..typing.worker import (
     WorkerPayloadDescriptor,
 )
 from ..typing.aliases import LogLevel, LogCallback
+from ..utils import format_error_message
 from .protocol import (
     CEDTS_VERSION,
     CORE_CAPABILITIES,
@@ -499,6 +500,7 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 traceback_active = True
             if traceback_active and not explicit:
                 severity = "error"
+                loglevel = "debug"
             if traceback_active and self._is_traceback_exception_line(text):
                 traceback_active = False
             _emit_log(log, message, severity, loglevel)
@@ -732,7 +734,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                             with suppress(Exception):
                                 _emit_log(
                                     cast(Callable[..., None], log_callback),
-                                    f"[IPC] worker packet reader failed: {error}",
+                                    format_error_message(
+                                        "[IPC] worker packet reader failed",
+                                        error,
+                                        getattr(self, "log_level", "info"),
+                                    ),
                                     "error",
                                 )
                         threading.Thread(
@@ -874,7 +880,11 @@ class RemoteBackendProxy(CeluneBackend[RemoteModelHandle]):
                 if log_callback is not None:
                     _emit_log(
                         log_callback,
-                        f"[IPC] worker event callback failed: {error}",
+                        format_error_message(
+                            "[IPC] worker event callback failed",
+                            error,
+                            getattr(self, "log_level", "info"),
+                        ),
                         severity="error",
                     )
 

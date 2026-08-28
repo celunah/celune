@@ -10,7 +10,10 @@ import torch
 
 from . import __comment__, __version__, __codename__
 from .i18n import string
-from .utils import format_number, cuda_architecture
+from .utils import (
+    format_number,
+    cuda_architecture,
+)
 from ._version import DEVELOPMENT
 from .constants import APP_NAME, NVIDIA_DEVICE_KEYWORDS
 from .backends.vc import CeluneVCBackend
@@ -135,6 +138,14 @@ def validate_runtime(
     cuda_version = torch.version.cuda
     _, separator, torch_variant = torch.__version__.partition("+")
 
+    def format_runtime_error(message: str, error: Exception) -> str:
+        """Attach the configured runtime exception detail to one message."""
+        details = format_error(error, log_level)
+        if not details:
+            return message
+        separator = "\n" if log_level == "debug" else ": "
+        return f"{message}{separator}{details}"
+
     if sys.version_info < (3, 12) or sys.version_info >= (3, 15):
         log(
             f"{APP_NAME} does not currently support Python "
@@ -222,7 +233,7 @@ def validate_runtime(
             major, minor = torch.cuda.get_device_capability(i)
         except Exception as exc:
             log(
-                f"Could not query GPU {i} capability: {format_error(exc, log_level)}",
+                format_runtime_error(f"Could not query GPU {i} capability", exc),
                 "error",
             )
             set_state("error")
@@ -264,7 +275,7 @@ def validate_runtime(
                 log(f"Compute test for GPU {i} succeeded", "info")
         except Exception as e:
             log(
-                f"Compute test for GPU {i} failed: {format_error(e, log_level)}",
+                format_runtime_error(f"Compute test for GPU {i} failed", e),
                 "warning",
             )
 

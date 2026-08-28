@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Optional
 
 from .i18n import string
 from .typing.common import JSON
+from .utils import format_error
 from .typing.agent import (
     AgentRoute,
     AgentTaskState,
@@ -156,9 +157,13 @@ def run_agent_test(
             detail=f"tool={tool_id} status={status_value}",
         )
     except Exception as exc:
+        log_level = getattr(engine, "log_level", "info")
+        detail = str(exc) or string("test.agent_failed")
+        if log_level == "debug":
+            detail = format_error(exc, log_level)
         return engine.finish_test_mode(
             "agent",
             False,
             task_state=_task_state(engine, task_id),
-            detail=str(exc),
+            detail=detail,
         )

@@ -937,8 +937,9 @@ def main() -> int:
             response_kind = "error"
             _worker_log(
                 "[IPC] response operation="
-                f"{request.get('operation')} ok=False error={type(error).__name__}",
+                f"{request.get('operation')} ok=False error={error}",
                 "error",
+                loglevel="verbose",
             )
         else:
             _worker_log(
@@ -1132,8 +1133,9 @@ def main() -> int:
                 except Exception as error:
                     shutdown_error = error
                     _worker_log(
-                        f"[IPC] shutdown cleanup failed error={type(error).__name__}",
+                        f"[IPC] shutdown cleanup failed error={error}",
                         "error",
+                        loglevel="verbose",
                     )
                 _release_worker_models(models)
             try:

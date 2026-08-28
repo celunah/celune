@@ -37,6 +37,7 @@ from ..typing.agent import (
     AgentClassificationFailure,
     AgentClassificationFailureKind,
 )
+from ..utils import format_error_message
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -333,24 +334,28 @@ class AgentInputRouter:
             return self._classifier_failure(
                 AgentClassificationFailureKind.MALFORMED_OUTPUT,
                 str(exc),
+                error=exc,
                 task=task,
             )
         except _EmptyClassifierOutput as exc:
             return self._classifier_failure(
                 AgentClassificationFailureKind.EMPTY_OUTPUT,
                 str(exc),
+                error=exc,
                 task=task,
             )
         except (TypeError, ValueError) as exc:
             return self._classifier_failure(
                 AgentClassificationFailureKind.INVALID_SCHEMA,
                 str(exc),
+                error=exc,
                 task=task,
             )
         except Exception as exc:
             return self._classifier_failure(
                 AgentClassificationFailureKind.TRANSPORT,
                 str(exc),
+                error=exc,
                 task=task,
             )
         finally:
@@ -552,6 +557,7 @@ class AgentInputRouter:
         kind: AgentClassificationFailureKind,
         detail: str,
         *,
+        error: Optional[BaseException] = None,
         task: Optional[AgentTask] = None,
     ) -> AgentClassificationResult:
         """Return an observable fail-closed classifier result."""
@@ -564,7 +570,13 @@ class AgentInputRouter:
             log_level = getattr(self.engine, "log_level", "info")
             if log_level in {"verbose", "debug"}:
                 log(
-                    f"{string('agent.classifier_failed')}: {detail or kind.value}",
+                    format_error_message(
+                        string("agent.classifier_failed"),
+                        error,
+                        log_level,
+                    )
+                    if error is not None
+                    else f"{string('agent.classifier_failed')}: {detail or kind.value}",
                     "warning",
                     loglevel="verbose",
                 )

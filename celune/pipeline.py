@@ -47,8 +47,8 @@ from .utils import (
     discard,
     run_async,
     rng_replace,
-    format_error,
     format_number,
+    format_error_message,
     is_april_fools,
     detect_language,
     normalize_special_characters,
@@ -1812,8 +1812,11 @@ def _classify_persona_memories(engine: Celune, request: str) -> None:
         log = getattr(engine, "log", None)
         if callable(log):
             log(
-                f"Persona memory classification failed: "
-                f"{format_error(error, engine.log_level)}",
+                format_error_message(
+                    "Persona memory classification failed",
+                    error,
+                    engine.log_level,
+                ),
                 loglevel="verbose",
             )
 
@@ -2284,9 +2287,10 @@ def think(engine: Celune, request: str) -> bool:
         spoken_text = _extract_persona_text(response.json())
     except Exception as e:
         engine.log(
-            string(
-                "pipeline.persona_request_failed",
-                error=format_error(e, engine.log_level),
+            format_error_message(
+                string("pipeline.persona_request_failed"),
+                e,
+                engine.log_level,
             ),
             "warning",
         )
@@ -2466,9 +2470,10 @@ def convert_audio_input(
                 target_references = (loader.materialize(current_voice, "wav"),)
             except Exception as e:
                 engine.log(
-                    string(
-                        "pipeline.vc_reference_load_failed",
-                        error=format_error(e, getattr(engine, "log_level", "info")),
+                    format_error_message(
+                        string("pipeline.vc_reference_load_failed"),
+                        e,
+                        getattr(engine, "log_level", "info"),
                     ),
                     "warning",
                 )
@@ -3642,9 +3647,10 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                             output_dir.mkdir(parents=True)
                         except OSError as e:
                             engine.log(
-                                string(
-                                    "pipeline.outputs_create_failed",
-                                    error=format_error(e, engine.log_level),
+                                format_error_message(
+                                    string("pipeline.outputs_create_failed"),
+                                    e,
+                                    engine.log_level,
                                 ),
                                 "warning",
                             )
@@ -3675,9 +3681,10 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                             )
                         except Exception as e:
                             engine.log(
-                                string(
-                                    "pipeline.flac_save_failed",
-                                    error=format_error(e, engine.log_level),
+                                format_error_message(
+                                    string("pipeline.flac_save_failed"),
+                                    e,
+                                    engine.log_level,
                                 ),
                                 "warning",
                             )
@@ -3700,10 +3707,10 @@ def _process_generation_request(engine: Celune, item: SpeechRequest) -> None:
                 break
 
             engine.log(
-                tagged_string(
-                    "pipeline.gen_error",
-                    "GEN ERROR",
-                    error=format_error(e, engine.log_level),
+                format_error_message(
+                    tagged_string("pipeline.gen_error", "GEN ERROR"),
+                    e,
+                    engine.log_level,
                 ),
                 "error",
             )
@@ -3826,10 +3833,14 @@ def _ensure_playback_stream_unlocked(engine: Celune, sample_rate: int) -> bool:
             engine.error_callback(string("pipeline.no_audio_devices_short"))
         engine._audio_unavailable = True
         return False
-    except sd.PortAudioError:
+    except sd.PortAudioError as error:
         if not getattr(engine, "audio_unavailable", False):
             engine.log(
-                string("pipeline.audio_stream_init_failed", app_name=APP_NAME),
+                format_error_message(
+                    string("pipeline.audio_stream_init_failed", app_name=APP_NAME),
+                    error,
+                    getattr(engine, "log_level", "info"),
+                ),
                 "error",
             )
             engine.log(string("pipeline.no_audio_device"), "error")
@@ -4166,7 +4177,11 @@ async def playback_worker_job(engine: Celune) -> None:
                 _update_playback_progress(engine, source_buffers)
             except Exception as e:
                 engine.log(
-                    f"[PLAY ERROR] {format_error(e, engine.log_level)}",
+                    format_error_message(
+                        "[PLAY ERROR]",
+                        e,
+                        engine.log_level,
+                    ),
                     "error",
                 )
                 engine.error_callback(string("pipeline.playback_error"))

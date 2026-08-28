@@ -9,7 +9,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal, TypeVar, Optional, cast, overload
 
-from ..utils import format_error
+from ..utils import format_error_message
 from ..typing.aliases import LogLevel, DispatcherCallback
 from ..typing.events import (
     EventName,
@@ -585,9 +585,11 @@ class EventDispatcher:
                 callback(event)
             except Exception as exc:
                 self._log_warning(
-                    (
+                    format_error_message(
                         f"[Core] Event callback failed for '{event_name}' in "
-                        f"'{owner_name}': {format_error(exc, self._log_level)}"
+                        f"'{owner_name}'",
+                        exc,
+                        self._log_level,
                     ),
                     "warning",
                 )

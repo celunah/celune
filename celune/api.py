@@ -63,7 +63,7 @@ from .vc import VC_PITCH_SHIFT_MAX, VC_PITCH_SHIFT_MIN
 from .i18n import string, tagged_string
 from .paths import project_root, main_window_log_path
 from .theme import colors
-from .utils import format_error
+from .utils import format_error_message
 from .celune import Celune
 from .ui.app import CeluneUI
 from .cevoice import default_loader
@@ -1338,6 +1338,24 @@ def _append_webui_log(msg: str, severity: str = "info") -> None:
     webui_log_lines.append((msg, severity))
 
 
+def _append_webui_error(
+    message: str,
+    error: BaseException,
+    severity: str = "error",
+    celune: Optional[Celune] = None,
+) -> None:
+    """Store a WebUI error with detail selected by the active log level."""
+    runtime = celune or bound_celune
+    _append_webui_log(
+        format_error_message(
+            message,
+            error,
+            getattr(runtime, "log_level", "info"),
+        ),
+        severity,
+    )
+
+
 def _set_webui_status(
     msg: str,
     severity: str = "info",
@@ -1962,7 +1980,15 @@ def _collect_speech_job(job_id: str, chunks: SpeechStreamQueue) -> None:
         if _task_status(job_id) == "cancelled":
             _set_active_speech_task(None)
             return
-        _update_speech_job(job_id, status="failed", error=str(e))
+        _update_speech_job(
+            job_id,
+            status="failed",
+            error=format_error_message(
+                string("pipeline.gen_error"),
+                e,
+                getattr(bound_celune, "log_level", "info"),
+            ),
+        )
         _publish_task_event(
             job_id,
             TaskEvent(
@@ -2533,13 +2559,11 @@ def _webui_speak(
             audio_value = None
         snapshot = _webui_submit_snapshot("")
         yield snapshot[0], audio_value, *snapshot[1:]
-    except Exception:
-        _append_webui_log(
-            tagged_string(
-                "webui.error",
-                "WEBUI ERROR",
-            ),
-            "error",
+    except Exception as error:
+        _append_webui_error(
+            tagged_string("webui.error", "WEBUI ERROR"),
+            error,
+            celune=celune,
         )
         snapshot = _webui_submit_snapshot("")
         yield snapshot[0], None, *snapshot[1:]
@@ -2608,13 +2632,11 @@ def _webui_convert_audio(
             pitch_shift=round(pitch_shift),
             f0_condition=conversion_mode.strip().lower() == "sing",
         )
-    except Exception:
-        _append_webui_log(
-            tagged_string(
-                "webui.error",
-                "WEBUI ERROR",
-            ),
-            "error",
+    except Exception as error:
+        _append_webui_error(
+            tagged_string("webui.error", "WEBUI ERROR"),
+            error,
+            celune=celune,
         )
         logs_html, status_html, resources_html, voice_update, send_update, _input = (
             _webui_snapshot()
@@ -3212,7 +3234,15 @@ async def _cancel_speech_job(job_id: str) -> bool:
     # noinspection PyBroadException
     try:
         stopped = await celune.force_stop_speech_async()
-    except Exception:
+    except Exception as error:
+        celune.log(
+            format_error_message(
+                string("api.speech_cancel_failed"),
+                error,
+                getattr(celune, "log_level", "info"),
+            ),
+            "warning",
+        )
         return False
     if not stopped:
         return False
@@ -3629,7 +3659,15 @@ async def sfx(
     try:
         audio, sr = _decode_uploaded_audio(data)
         audio = resample_audio(audio, sr)
-    except Exception:
+    except Exception as error:
+        celune.log(
+            format_error_message(
+                string("api.invalid_input"),
+                error,
+                getattr(celune, "log_level", "info"),
+            ),
+            "warning",
+        )
         return JSONResponse(
             status_code=400,
             content={
@@ -3696,7 +3734,15 @@ async def convert_audio(
     # noinspection PyBroadException
     try:
         audio, sample_rate = _decode_uploaded_audio(data)
-    except Exception:
+    except Exception as error:
+        celune.log(
+            format_error_message(
+                string("api.invalid_input"),
+                error,
+                getattr(celune, "log_level", "info"),
+            ),
+            "warning",
+        )
         return JSONResponse(
             status_code=400,
             content={
@@ -3715,7 +3761,15 @@ async def convert_audio(
             pitch_shift=pitch_shift,
             f0_condition=f0_condition,
         )
-    except Exception:
+    except Exception as error:
+        celune.log(
+            format_error_message(
+                string("api.could_not_convert"),
+                error,
+                getattr(celune, "log_level", "info"),
+            ),
+            "error",
+        )
         return JSONResponse(
             status_code=500,
             content={
@@ -3864,8 +3918,11 @@ def start_api(
                 celune.log(f"API port {port} is already in use.", "warning")
             else:
                 celune.log(
-                    "Could not start the API: "
-                    f"{format_error(e, getattr(celune, 'log_level', 'info'))}",
+                    format_error_message(
+                        "Could not start the API",
+                        e,
+                        getattr(celune, "log_level", "info"),
+                    ),
                     "warning",
                 )
 

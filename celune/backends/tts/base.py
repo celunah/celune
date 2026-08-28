@@ -29,7 +29,7 @@ from ...paths import temp_data_dir, huggingface_progress, huggingface_hub_cache_
 from ...utils import discard
 from ...cevoice import CEVoiceLoader, default_loader
 from ...constants import N_A_NUMERIC
-from ...typing.aliases import AudioChunk, RuntimeValue
+from ...typing.aliases import AudioChunk, LogLevel, RuntimeValue
 from ...typing.backends import BackendModel
 
 __all__ = [
@@ -231,6 +231,7 @@ class CeluneBackend[ModelT](ABC):
     uses_voice_bundles: bool = False
     max_new_tokens: int = 512
     is_fake: bool = False
+    log_level: LogLevel = "info"
 
     def __init__(
         self,

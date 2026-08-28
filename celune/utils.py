@@ -271,23 +271,50 @@ def supports_ansi(stream: Optional[TextIO] = None) -> bool:
 
 
 def format_error(e: BaseException, log_level: Union[LogLevel, bool]) -> str:
-    """Format an error message.
+    """Format exception detail according to the active log level.
 
     Args:
         e: The exception to format.
         log_level: The active log level, or the legacy developer flag.
 
     Returns:
-        str: Either the full traceback or the exception text.
+        str: An empty string at ``info``, the exception message at ``verbose``,
+            or the full traceback at ``debug``.
     """
-    if log_level is True or log_level in {"verbose", "debug"}:
+    if log_level is True or log_level == "debug":
         trace = "".join(traceback.format_exception(type(e), e, e.__traceback__))
         with open(traceback_path(create_parent=True), "w", encoding="utf-8") as f:
             f.write(trace)
         return trace
 
+    if log_level != "verbose":
+        return ""
+
     details = str(e) or "no error description"
     return details
+
+
+def format_error_message(
+    message: str,
+    error: BaseException,
+    log_level: Union[LogLevel, bool],
+) -> str:
+    """Append level-appropriate exception detail to a user-facing message.
+
+    Args:
+        message: The concise message to display at every log level.
+        error: The exception that caused the failure.
+        log_level: The active log level, or the legacy developer flag.
+
+    Returns:
+        str: ``message`` at ``info``, ``message`` plus the exception message at
+            ``verbose``, or ``message`` plus a full traceback at ``debug``.
+    """
+    details = format_error(error, log_level)
+    if not details:
+        return message
+    separator = "\n" if log_level is True or log_level == "debug" else ": "
+    return f"{message}{separator}{details}"
 
 
 def indent(text: str, spaces: int, direction: Literal["left", "right"] = "left") -> str:

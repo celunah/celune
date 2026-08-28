@@ -30,11 +30,18 @@ file and `celune config edit` opens it in the system editor.
 change runtime behavior. Backend-specific settings should stay in their
 documented namespace instead of being duplicated at the top level.
 
+`log_level` controls exception detail as well as ordinary diagnostics. `info`
+keeps handled failures concise, `verbose` appends the exception message, and
+`debug` appends the full traceback and writes it to Celune's runtime traceback
+file. Public API responses continue to use safe, localized summaries; the
+additional detail is written to the configured runtime logs instead.
+
 In the Textual interface, `/settings` opens the configuration manager. Nested
 YAML values are shown with human-readable labels that preserve names such as
 API, T2S, GPT-SoVITS, and Persona. ENTER writes the edited values to the active
-`config.yaml` before requesting a silent launcher-managed restart; the terminal
-title changes to `Restarting`. ESC leaves the file unchanged.
+`config.yaml`, fades the interface through the normal shutdown transition, and
+then requests a silent launcher-managed restart; the terminal title changes to
+`Restarting`. ESC leaves the file unchanged.
 
 ## Speech buffering and playback
 

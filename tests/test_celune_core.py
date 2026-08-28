@@ -2218,6 +2218,8 @@ class TestCeluneCore(CeluneTestCase):
     def test_hot_cevoice_reload_failure_restores_previous_bundle_state(self) -> None:
         """Verify failed CEVOICE reloads restore the previous bundle and voice state."""
         celune = self._make_celune({})
+        celune.log_level = "verbose"
+        celune.log_callback = mock.Mock()
         celune.backend.uses_voice_bundles = True
         celune.backend.validate_refs = mock.Mock()
         celune.backend.model_id_for_voice = mock.Mock(
@@ -2281,6 +2283,11 @@ class TestCeluneCore(CeluneTestCase):
         assert celune.current_voice == "balanced"
         assert celune.model_name == "fake/balanced"
         assert celune.loaded
+        assert any(
+            "no voices found" in str(call.args[0])
+            for call in celune.log_callback.call_args_list
+            if call.args
+        )
 
     def test_set_cevoice_and_wait_recovers_when_reload_setup_crashes(self) -> None:
         """Verify CEVOICE reload setup failures still release the waiting caller."""

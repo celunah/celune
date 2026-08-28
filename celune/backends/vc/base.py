@@ -6,6 +6,7 @@ from typing import Optional
 from collections.abc import Callable
 
 from ...dataclasses.pipeline import AudioOutput, VoiceConversionRequest
+from ...typing.aliases import LogLevel
 
 __all__ = ["CeluneVCBackend"]
 
@@ -17,6 +18,7 @@ class CeluneVCBackend(ABC):
     is_fake: bool = False
     pitch_shift: int
     f0_condition: bool
+    log_level: LogLevel = "info"
 
     def __init__(self, log: Callable[[str, str], None]) -> None:
         self.log = log

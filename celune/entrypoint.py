@@ -1608,15 +1608,25 @@ def start(
             sys.stdout = stdout
             sys.stderr = stderr
 
-            print(string("cli.internal_error_running", app_name=APP_NAME))
-            if active_log_level != "info":
+            if active_log_level == "debug":
                 with contextlib.suppress(ModuleNotFoundError):
                     from rich.traceback import install
 
                     install()
 
                 raise
-            print(str(exc) or string("cli.no_error_description"))
+            if active_log_level == "verbose":
+                from celune.utils import format_error_message
+
+                print(
+                    format_error_message(
+                        string("cli.internal_error_running", app_name=APP_NAME),
+                        exc,
+                        active_log_level,
+                    )
+                )
+                sys.exit(runtime.ExitCodes.EXIT_FAILURE.value)
+            print(string("cli.internal_error_running", app_name=APP_NAME))
             print(string("cli.full_traceback_title"))
             if os.name == "nt":
                 print(string("cli.traceback_cmd_set_dev"))
@@ -1684,11 +1694,13 @@ def main(argv: Optional[list[str]] = None) -> None:
         try:
             sys.exit(apply_update_and_restart(parent_pid, launcher_path, args[3:]))
         except Exception as exc:
+            from celune.utils import format_error_message
+
             print(
-                string(
-                    "cli.apply_launcher_update_failed",
-                    app_name=APP_NAME,
-                    error=exc,
+                format_error_message(
+                    string("cli.apply_launcher_update_failed", app_name=APP_NAME),
+                    exc,
+                    INITIAL_LOG_LEVEL,
                 )
             )
             sys.exit(EXIT_CODES.EXIT_FAILURE.value)

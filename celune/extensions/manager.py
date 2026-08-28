@@ -4,7 +4,6 @@
 import sys
 import inspect
 import threading
-import traceback
 import importlib.util
 from types import ModuleType
 from typing import Optional, cast
@@ -14,7 +13,7 @@ from collections.abc import Callable
 
 from .base import CeluneContext, CeluneExtension
 from ..i18n import string
-from ..utils import format_error
+from ..utils import format_error_message
 from .events import (
     EventDispatcher,
     RegisteredEventHandler,
@@ -151,8 +150,11 @@ class CeluneExtensionManager:
                 ext.invoke(*args, **kwargs)
             except Exception as ex:
                 self.context.log(
-                    f"[Core] Failed to invoke '{name}': "
-                    f"{format_error(ex, self.context.log_level)}",
+                    format_error_message(
+                        f"[Core] Failed to invoke '{name}'",
+                        ex,
+                        self.context.log_level,
+                    ),
                     "warning",
                 )
 
@@ -212,13 +214,12 @@ class CeluneExtensionManager:
                 sys.modules[module_name] = module
                 spec.loader.exec_module(module)
             except Exception as e:
-                detail = (
-                    traceback.format_exc()
-                    if self.context.log_level != "info"
-                    else format_error(e, self.context.log_level)
-                )
                 self.context.log(
-                    f"[Core] Failed to import '{file_path.name}': {detail}",
+                    format_error_message(
+                        f"[Core] Failed to import '{file_path.name}'",
+                        e,
+                        self.context.log_level,
+                    ),
                     "warning",
                 )
                 continue
@@ -243,14 +244,13 @@ class CeluneExtensionManager:
                     self.register(obj)
                     found_any = True
                 except Exception as e:
-                    detail = (
-                        traceback.format_exc()
-                        if self.context.log_level != "info"
-                        else format_error(e, self.context.log_level)
-                    )
                     self.context.log(
-                        f"[Core] Failed to register '{obj.__name__}' from "
-                        f"'{file_path.name}': {detail}",
+                        format_error_message(
+                            f"[Core] Failed to register '{obj.__name__}' from "
+                            f"'{file_path.name}'",
+                            e,
+                            self.context.log_level,
+                        ),
                         "warning",
                     )
 

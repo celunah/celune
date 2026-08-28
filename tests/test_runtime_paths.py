@@ -39,6 +39,21 @@ from .support import CeluneTestCase
 class TestRuntimePath(CeluneTestCase):
     """Verify runtime files are written into the user data directory."""
 
+    def test_format_error_uses_log_level_detail_tiers(self) -> None:
+        """Verify info is concise, verbose shows the message, and debug traces."""
+        error = RuntimeError("tiered failure")
+
+        assert format_error(error, log_level="info") == ""
+        assert format_error(error, log_level="verbose") == "tiered failure"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            trace_path = Path(temp_dir) / f"{APP_SLUG}_traceback.txt"
+            with mock.patch("celune.utils.traceback_path", return_value=trace_path):
+                output = format_error(error, log_level="debug")
+
+            assert "RuntimeError: tiered failure" in output
+            assert trace_path.exists()
+
     @staticmethod
     def _compiled_root_layout(root_parts: tuple[str, ...]) -> tuple[Path, Path]:
         """Return a platform-native fake app root and compiled executable path."""

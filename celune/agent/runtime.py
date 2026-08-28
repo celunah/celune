@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Optional, cast
 
 from ..i18n import string
+from ..utils import format_error_message
 from ..typing.aliases import LogLevel
 from ..typing.modes import OperationMode
 from ..extensions.events import EventDispatcher
@@ -1035,9 +1036,13 @@ class AgentRuntime:
             if task.is_terminal:
                 return self._terminal_output(task, callback)
             self._log(
-                f"[AGENT] run_error task={task.task_id} "
-                f"reason={failure_reason.value} error={exc}",
-                loglevel="debug",
+                format_error_message(
+                    f"[AGENT] run_error task={task.task_id} "
+                    f"reason={failure_reason.value}",
+                    exc,
+                    getattr(self._celune, "log_level", "info"),
+                ),
+                loglevel="verbose",
             )
             self.fail_task(task.task_id, failure_reason, str(exc))
             return self._terminal_output(task, callback)
@@ -1273,6 +1278,14 @@ class AgentRuntime:
         try:
             compacted = self._compactor(self.get_context(task.task_id))
         except Exception as exc:
+            self._log(
+                format_error_message(
+                    f"[AGENT] compactor failed task={task.task_id}",
+                    exc,
+                    getattr(self._celune, "log_level", "info"),
+                ),
+                loglevel="verbose",
+            )
             self.fail_task(task.task_id, AgentFailureReason.INTERNAL_ERROR, str(exc))
             return False
         if not isinstance(compacted, AgentContext) or compacted.task is not task:
@@ -1334,6 +1347,14 @@ class AgentRuntime:
             try:
                 callback(output)
             except Exception as exc:
+                self._log(
+                    format_error_message(
+                        f"[AGENT] output callback failed task={task.task_id}",
+                        exc,
+                        getattr(self._celune, "log_level", "info"),
+                    ),
+                    loglevel="verbose",
+                )
                 self.fail_task(
                     task.task_id, AgentFailureReason.INTERNAL_ERROR, str(exc)
                 )
@@ -1827,8 +1848,12 @@ class AgentRuntime:
             self._event_dispatcher.emit(event_name, event)
         except Exception as exc:
             self._log(
-                f"[AGENT] emit_error name={event_name} error={exc}",
-                loglevel="debug",
+                format_error_message(
+                    f"[AGENT] emit_error name={event_name}",
+                    exc,
+                    getattr(self._celune, "log_level", "info"),
+                ),
+                loglevel="verbose",
             )
             return
         self._log(

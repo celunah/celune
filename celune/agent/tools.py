@@ -30,6 +30,7 @@ from ..typing.agent import (
     AgentToolArgumentSchema,
     AgentToolExecutionStatus,
 )
+from ..utils import format_error_message
 
 if TYPE_CHECKING:
     from ..celune import Celune
@@ -142,6 +143,17 @@ class OfflineAgentTool:
         try:
             output = self._spec.handler(self._engine, call, context)
         except LocalManagementError as exc:
+            log = getattr(self._engine, "log", None)
+            if callable(log):
+                log(
+                    format_error_message(
+                        f"[AGENT] tool_failed tool={self.name}",
+                        exc,
+                        getattr(self._engine, "log_level", "info"),
+                    ),
+                    "error",
+                    loglevel="verbose",
+                )
             return _failure(
                 call,
                 self.name,
@@ -149,6 +161,17 @@ class OfflineAgentTool:
                 output=exc.to_json(),
             )
         except Exception as exc:
+            log = getattr(self._engine, "log", None)
+            if callable(log):
+                log(
+                    format_error_message(
+                        f"[AGENT] tool_failed tool={self.name}",
+                        exc,
+                        getattr(self._engine, "log_level", "info"),
+                    ),
+                    "error",
+                    loglevel="verbose",
+                )
             return _failure(call, self.name, str(exc))
         return {
             "tool_call_id": call["id"],
