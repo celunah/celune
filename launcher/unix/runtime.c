@@ -38,6 +38,14 @@ static int search_status_ansi = 0;
 static int search_status_level = 0;
 static enum search_limit_reason search_limit = SEARCH_LIMIT_NONE;
 
+int launcher_cpu_supports_avx(void) {
+#if defined(__x86_64__) || defined(__amd64__)
+    return __builtin_cpu_supports("avx") != 0;
+#else
+    return 1;
+#endif
+}
+
 static int file_exists(const char *path) {
     return access(path, F_OK) == 0;
 }
@@ -975,7 +983,7 @@ void launcher_report_failure(int return_code) {
         return;
     }
 
-    if (!launcher_child_failed) {
+    if (!launcher_child_failed && return_code != CELUNE_EXIT_UNSUPPORTED_CPU) {
         return;
     }
 

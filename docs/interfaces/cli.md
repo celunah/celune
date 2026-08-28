@@ -45,9 +45,23 @@ smoke test where possible. It distinguishes a missing prerequisite from an
 accelerator that is present but unusable. `--fix` does not promise to repair
 third-party GPU drivers or arbitrary backend environments.
 
+## CPU compatibility
+
+The compiled Windows and Linux launchers check for AVX before starting Python.
+On x86-64, AVX is a consistent startup requirement on both platforms. The
+Python-side `doctor` report also checks the x86-64-v2 baseline used by Celune's
+native dependencies: SSE3, SSSE3, SSE4.1, SSE4.2, POPCNT, CMPXCHG16B, and
+LAHF/SAHF. ARM64 uses its native instruction-set baseline because AVX is an
+x86 instruction set.
+
+If AVX is unavailable, the launcher exits with code `9` and does not start the
+Python runtime. Run `celune doctor` to inspect the complete CPU compatibility
+report on a system where the feature probe is available.
+
 ## Exit behavior
 
 The launcher uses typed exit codes for success, generic failure, unknown
 arguments, already-running instances, no ANSI-capable terminal, launcher loss,
-and pending updates. A normal interactive start should use the launcher so
-process-loss and update handoff behavior is preserved.
+pending updates, and an unsupported CPU. A normal interactive start should use
+the launcher so process-loss, CPU compatibility, and update handoff behavior
+are preserved.

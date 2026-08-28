@@ -197,6 +197,25 @@ def _display_version() -> tuple[str, str]:
     return __version__, REVISION
 
 
+_CPU_FEATURE_LABELS = {
+    "sse3": "SSE3",
+    "ssse3": "SSSE3",
+    "sse4.1": "SSE4.1",
+    "sse4.2": "SSE4.2",
+    "popcnt": "POPCNT",
+    "cx16": "CMPXCHG16B",
+    "lahf_lm": "LAHF/SAHF",
+    "avx": "AVX",
+    "avx2": "AVX2",
+    "avx512f": "AVX-512F",
+}
+
+
+def _format_cpu_features(features: tuple[str, ...]) -> str:
+    """Return canonical CPU feature names for user-facing diagnostics."""
+    return ", ".join(_CPU_FEATURE_LABELS.get(feature, feature) for feature in features)
+
+
 def _print_dependency_setup_help(package_name: str) -> None:
     """Print the shared missing-dependency guidance used by startup paths."""
     print(string("cli.dependency_missing", package_name=package_name))
@@ -750,6 +769,33 @@ def _doctor_checks() -> list[DoctorCheck]:
         system_name in {"Windows", "Linux"},
         f"{distro_name} ({platform.machine()})",
         hint=f"{APP_NAME} currently supports Windows and Linux only.",
+    )
+
+    from celune.cpu import check_cpu_features
+
+    cpu_check = check_cpu_features()
+    required_cpu = _format_cpu_features(cpu_check.required)
+    if cpu_check.supported:
+        cpu_detail = string(
+            "cli.doctor_cpu_supported",
+            features=required_cpu or string("cli.doctor_cpu_none"),
+        )
+        cpu_hint = None
+    elif cpu_check.detectable:
+        cpu_detail = string(
+            "cli.doctor_cpu_missing",
+            features=_format_cpu_features(cpu_check.missing),
+        )
+        cpu_hint = string("cli.doctor_cpu_required", features=required_cpu)
+    else:
+        cpu_detail = string("cli.doctor_cpu_unavailable")
+        cpu_hint = string("cli.doctor_cpu_required", features=required_cpu)
+    _doctor_add(
+        checks,
+        string("cli.doctor_cpu_label"),
+        cpu_check.supported,
+        cpu_detail,
+        hint=cpu_hint,
     )
 
     python_ok = (3, 12) <= sys.version_info < (3, 15)

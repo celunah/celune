@@ -4,6 +4,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+static int launcher_cpu_check_is_bypassed(int argc, char **argv) {
+    for (int index = 1; index < argc; index++) {
+        if (strcmp(argv[index], "doctor") == 0 ||
+            strcmp(argv[index], "help") == 0 ||
+            strcmp(argv[index], "--help") == 0 ||
+            strcmp(argv[index], "-h") == 0 ||
+            strcmp(argv[index], "version") == 0 ||
+            strcmp(argv[index], "--version") == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 static int copy_launcher_text(char *dest, size_t size, const char *src) {
     size_t length = strlen(src);
     if (length >= size) {
@@ -77,6 +92,8 @@ const char *launcher_exit_reason(int return_code) {
             return NULL;
         case CELUNE_EXIT_LAUNCHER_LOST:
             return NULL;
+        case CELUNE_EXIT_UNSUPPORTED_CPU:
+            return "Celune requires AVX instructions, but this CPU does not provide them.";
         case CELUNE_EXIT_CELINE_DAY_SIX_SEVEN:
         case CELUNE_EXIT_CELINE_DAY:
             return NULL;
@@ -87,6 +104,16 @@ const char *launcher_exit_reason(int return_code) {
 
 int main(int argc, char **argv) {
     launcher_setup_terminal();
+
+    if (!launcher_cpu_check_is_bypassed(argc, argv) &&
+        !launcher_cpu_supports_avx()) {
+        launcher_reset_terminal_state();
+        launcher_prepare_failure_output();
+        launcher_report_failure(CELUNE_EXIT_UNSUPPORTED_CPU);
+        launcher_wait_after_failure();
+        return CELUNE_EXIT_UNSUPPORTED_CPU;
+    }
+
     int return_code = launcher_run(argc, argv);
 
     if (return_code != 0 || launcher_startup_was_interrupted()) {

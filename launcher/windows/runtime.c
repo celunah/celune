@@ -33,6 +33,17 @@ static int search_status_level = 0;
 static COORD search_status_origin;
 static enum search_limit_reason search_limit = SEARCH_LIMIT_NONE;
 
+int launcher_cpu_supports_avx(void) {
+#if defined(_M_X64) || defined(_M_IX86)
+#ifndef PF_AVX_INSTRUCTIONS_AVAILABLE
+#define PF_AVX_INSTRUCTIONS_AVAILABLE 39
+#endif
+    return IsProcessorFeaturePresent(PF_AVX_INSTRUCTIONS_AVAILABLE) != 0;
+#else
+    return 1;
+#endif
+}
+
 static const char *windows_exit_detail(DWORD exit_code) {
     switch (exit_code) {
         case 0xC0000005UL:
@@ -1349,7 +1360,7 @@ void launcher_report_failure(int return_code) {
         return;
     }
 
-    if (!launcher_child_failed) {
+    if (!launcher_child_failed && return_code != CELUNE_EXIT_UNSUPPORTED_CPU) {
         return;
     }
 

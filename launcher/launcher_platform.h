@@ -12,10 +12,12 @@
 #define CELUNE_EXIT_BAD_PYTHON 6
 #define CELUNE_EXIT_PENDING_RESTART 7
 #define CELUNE_EXIT_LAUNCHER_LOST 8
+#define CELUNE_EXIT_UNSUPPORTED_CPU 9
 #define CELUNE_EXIT_CELINE_DAY_SIX_SEVEN 67
 #define CELUNE_EXIT_CELINE_DAY 103
 
 int launcher_run(int argc, char **argv);
+int launcher_cpu_supports_avx(void);
 int launcher_read_root_override(
     int *argc,
     char **argv,

@@ -242,6 +242,7 @@ class ExitCodes(Enum):
     EXIT_BAD_PYTHON = 6  # Celune is trying to run on an unsupported Python interpreter.
     EXIT_PENDING_RESTART = 7  # Celune requests a launcher-managed restart.
     EXIT_LAUNCHER_LOST = 8  # Celune lost the connection to her launcher.
+    EXIT_UNSUPPORTED_CPU = 9  # Celune found unsupported native CPU features.
 
     # the following exit codes may be disabled by the end user
     EXIT_CELINE_DAY_SIX_SEVEN = 67  # Celune refuses to run on Celine Day.
