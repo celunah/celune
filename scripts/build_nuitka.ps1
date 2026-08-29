@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $outputDir = Join-Path $repoRoot "bin"
 $buildPython = "3.13"
+$pythonRuntimeSource = Join-Path ((& uv run --quiet --python $buildPython python -c "import sys; print(sys.base_prefix)").Trim()) "python313.dll"
 $archivePath = Join-Path $outputDir "Celune-win-x64.zip"
 $launcherDir = Join-Path $repoRoot "launcher"
 $manifestScript = Join-Path $repoRoot "scripts\write_update_manifest.py"
@@ -54,6 +55,10 @@ if (-not (Test-Path $vcruntimeAsset)) {
     throw "resources\vcruntime140.dll was not found."
 }
 
+if (-not (Test-Path $pythonRuntimeSource)) {
+    throw "The Python 3.13 runtime DLL was not found: $pythonRuntimeSource"
+}
+
 $env:UV_CACHE_DIR = Join-Path $repoRoot ".uv-cache"
 
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
@@ -65,6 +70,7 @@ $staleBuildArtifacts = @(
     (Join-Path $outputDir "resources"),
     (Join-Path $outputDir "assets"),
     (Join-Path $outputDir "vcruntime140.dll"),
+    (Join-Path $outputDir "python313.dll"),
     (Join-Path $outputDir "celune-bin.cmd")
 )
 foreach ($stalePath in $staleBuildArtifacts) {
@@ -110,6 +116,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Copy-Item -LiteralPath $vcruntimeAsset -Destination (Join-Path $outputDir "vcruntime140.dll") -Force
+Copy-Item -LiteralPath $pythonRuntimeSource -Destination (Join-Path $outputDir "python313.dll") -Force
 
 foreach ($launcherSource in $launcherSources) {
     if (-not (Test-Path $launcherSource)) {
@@ -175,6 +182,8 @@ $manifestArguments = @(
     "celune-bin.exe",
     "--file",
     "vcruntime140.dll"
+    ,
+    "python313.dll"
 )
 & uv @manifestArguments
 if ($LASTEXITCODE -ne 0) {
@@ -187,6 +196,7 @@ try {
         "celune.exe",
         "celune-bin.exe",
         "vcruntime140.dll",
+        "python313.dll",
         "celune-update.json"
     ) -DestinationPath $archivePath -Force
 }
