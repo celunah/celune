@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -18,6 +19,14 @@ def _repository_root() -> Path:
 
 def _git_value(root: Path, *arguments: str) -> str:
     """Return one trimmed value from Git in ``root``."""
+    if arguments == ("rev-parse", "--short", "HEAD"):
+        revision = os.environ.get("CELUNE_REVISION")
+        if revision:
+            return revision[:7]
+    if arguments == ("log", "-1", "--format=%cs"):
+        commit_date = os.environ.get("CELUNE_COMMIT_DATE")
+        if commit_date:
+            return commit_date
     result = subprocess.run(
         ["git", *arguments],
         cwd=root,
