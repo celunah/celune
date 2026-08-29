@@ -2,6 +2,9 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $outputDir = Join-Path $repoRoot "bin"
+$buildPython = "3.13"
+$archivePath = Join-Path $outputDir "Celune-win-x64.zip"
+$vcruntimeAsset = Join-Path $repoRoot "resources\vcruntime140.dll"
 $templateExe = Join-Path $repoRoot "celune.exe"
 $iconIco = Join-Path $repoRoot "resources\celune.ico"
 $launcherSources = @(
@@ -40,15 +43,21 @@ if (-not (Test-Path (Join-Path $repoRoot "resources\celune.res"))) {
     throw "resources\celune.res was not found."
 }
 
+if (-not (Test-Path $vcruntimeAsset)) {
+    throw "resources\vcruntime140.dll was not found."
+}
+
 $env:UV_CACHE_DIR = Join-Path $repoRoot ".uv-cache"
 
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
 $staleBuildArtifacts = @(
+    $archivePath,
     (Join-Path $outputDir "default_config.yaml"),
     (Join-Path $outputDir "voices"),
     (Join-Path $outputDir "resources"),
-    (Join-Path $outputDir "assets")
+    (Join-Path $outputDir "assets"),
+    (Join-Path $outputDir "vcruntime140.dll")
 )
 foreach ($stalePath in $staleBuildArtifacts) {
     if (Test-Path $stalePath) {
@@ -58,6 +67,8 @@ foreach ($stalePath in $staleBuildArtifacts) {
 
 $arguments = @(
     "run",
+    "--python",
+    $buildPython,
     "python",
     "-m",
     "nuitka",
@@ -89,6 +100,8 @@ elseif (Test-Path $templateExe) {
 if ($LASTEXITCODE -ne 0) {
     throw "Nuitka build failed with exit code $LASTEXITCODE."
 }
+
+Copy-Item -LiteralPath $vcruntimeAsset -Destination (Join-Path $outputDir "vcruntime140.dll") -Force
 
 foreach ($launcherSource in $launcherSources) {
     if (-not (Test-Path $launcherSource)) {
@@ -141,11 +154,25 @@ $manifest = [ordered]@{
     files = [ordered]@{
         "celune.exe" = (Get-FileHash -Algorithm SHA256 $launcherExe).Hash.ToLowerInvariant()
         "celune-bin.exe" = (Get-FileHash -Algorithm SHA256 (Join-Path $outputDir "celune-bin.exe")).Hash.ToLowerInvariant()
+        "vcruntime140.dll" = (Get-FileHash -Algorithm SHA256 (Join-Path $outputDir "vcruntime140.dll")).Hash.ToLowerInvariant()
     }
 }
 
 $manifestPath = Join-Path $outputDir "celune-update.json"
 $manifest | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 $manifestPath
+
+Push-Location $outputDir
+try {
+    Compress-Archive -Path @(
+        "celune.exe",
+        "celune-bin.exe",
+        "vcruntime140.dll",
+        "celune-update.json"
+    ) -DestinationPath $archivePath -Force
+}
+finally {
+    Pop-Location
+}
 
 $buildDir = Join-Path $outputDir "nuitka_main.build"
 if (Test-Path $buildDir) {
