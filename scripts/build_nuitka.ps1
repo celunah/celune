@@ -3,18 +3,19 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $outputDir = Join-Path $repoRoot "bin"
+$buildPython = "3.13"
 $archivePath = Join-Path $outputDir "Celune-win-x64.zip"
 $launcherDir = Join-Path $repoRoot "launcher"
 $manifestScript = Join-Path $repoRoot "scripts\write_update_manifest.py"
 $templateExe = Join-Path $repoRoot "celune.exe"
 $iconIco = Join-Path $repoRoot "resources\celune.ico"
+$vcruntimeAsset = Join-Path $repoRoot "resources\vcruntime140.dll"
 $launcherSources = @(
     (Join-Path $launcherDir "launcher.c"),
     (Join-Path $launcherDir "windows\runtime.c"),
     (Join-Path $launcherDir "windows\terminal.c")
 )
 $launcherRes = Join-Path $repoRoot "resources\celune.res"
-$launcherCompatibilityScript = Join-Path $repoRoot "scripts\celune-bin.cmd"
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 $projectVersion = Select-String -Path (Join-Path $repoRoot "pyproject.toml") -Pattern '^version = "([^"]+)"' | Select-Object -First 1
 $copyrightText = [char]0x00A9 + " celunah - Under MIT license."
@@ -50,6 +51,10 @@ if (-not (Test-Path $manifestScript)) {
     throw "The update manifest script was not found."
 }
 
+if (-not (Test-Path $vcruntimeAsset)) {
+    throw "resources\vcruntime140.dll was not found."
+}
+
 $env:UV_CACHE_DIR = Join-Path $repoRoot ".uv-cache"
 
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
@@ -59,7 +64,9 @@ $staleBuildArtifacts = @(
     (Join-Path $outputDir "default_config.yaml"),
     (Join-Path $outputDir "voices"),
     (Join-Path $outputDir "resources"),
-    (Join-Path $outputDir "assets")
+    (Join-Path $outputDir "assets"),
+    (Join-Path $outputDir "vcruntime140.dll"),
+    (Join-Path $outputDir "celune-bin.cmd")
 )
 foreach ($stalePath in $staleBuildArtifacts) {
     if (Test-Path $stalePath) {
@@ -69,6 +76,8 @@ foreach ($stalePath in $staleBuildArtifacts) {
 
 $arguments = @(
     "run",
+    "--python",
+    $buildPython,
     "python",
     "-m",
     "nuitka",
@@ -101,14 +110,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "Nuitka build failed with exit code $LASTEXITCODE."
 }
 
+Copy-Item -LiteralPath $vcruntimeAsset -Destination (Join-Path $outputDir "vcruntime140.dll") -Force
+
 foreach ($launcherSource in $launcherSources) {
     if (-not (Test-Path $launcherSource)) {
         throw "Launcher source was not found: $launcherSource"
     }
-}
-
-if (-not (Test-Path $launcherCompatibilityScript)) {
-    throw "The launcher compatibility script was not found."
 }
 
 $launcherExe = Join-Path $outputDir "celune.exe"
@@ -146,8 +153,6 @@ if ($LASTEXITCODE -ne 0) {
     throw "Failed to compile the Windows launcher."
 }
 
-Copy-Item -LiteralPath $launcherCompatibilityScript -Destination (Join-Path $outputDir "celune-bin.cmd") -Force
-
 $revision = (& git -C $repoRoot rev-parse HEAD).Trim()
 if (-not $revision) {
     throw "Could not determine the Git revision for update metadata."
@@ -168,7 +173,9 @@ $manifestArguments = @(
     "--file",
     "celune.exe",
     "--file",
-    "celune-bin.exe"
+    "celune-bin.exe",
+    "--file",
+    "vcruntime140.dll"
 )
 & uv @manifestArguments
 if ($LASTEXITCODE -ne 0) {
@@ -179,8 +186,8 @@ Push-Location $outputDir
 try {
     Compress-Archive -Path @(
         "celune.exe",
-        "celune-bin.cmd",
         "celune-bin.exe",
+        "vcruntime140.dll",
         "celune-update.json"
     ) -DestinationPath $archivePath -Force
 }
