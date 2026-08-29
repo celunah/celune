@@ -4,7 +4,6 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $outputDir = Join-Path $repoRoot "bin"
 $buildPython = "3.13"
-$pythonRuntimeSource = Join-Path ((& uv run --quiet --python $buildPython python -c "import sys; print(sys.base_prefix)").Trim()) "python313.dll"
 $archivePath = Join-Path $outputDir "Celune-win-x64.zip"
 $launcherDir = Join-Path $repoRoot "launcher"
 $manifestScript = Join-Path $repoRoot "scripts\write_update_manifest.py"
@@ -56,10 +55,6 @@ elseif (-not (Test-Path -LiteralPath $vcruntimeAsset -PathType Leaf)) {
     throw "The required Visual C++ runtime DLL was not found at the Visual Studio source or in the repository: $vcruntimeSource"
 }
 
-if (-not (Test-Path -LiteralPath $pythonRuntimeSource -PathType Leaf)) {
-    throw "The Python 3.13 runtime DLL was not found: $pythonRuntimeSource"
-}
-
 if (-not (Test-Path $manifestScript)) {
     throw "The update manifest script was not found."
 }
@@ -80,7 +75,6 @@ $staleBuildArtifacts = @(
     (Join-Path $outputDir "resources"),
     (Join-Path $outputDir "assets"),
     (Join-Path $outputDir "vcruntime140.dll"),
-    (Join-Path $outputDir "python313.dll"),
     (Join-Path $outputDir "celune-bin.cmd")
 )
 foreach ($stalePath in $staleBuildArtifacts) {
@@ -127,7 +121,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Copy-Item -LiteralPath $vcruntimeAsset -Destination (Join-Path $outputDir "vcruntime140.dll") -Force
-Copy-Item -LiteralPath $pythonRuntimeSource -Destination (Join-Path $outputDir "python313.dll") -Force
 
 foreach ($launcherSource in $launcherSources) {
     if (-not (Test-Path $launcherSource)) {
@@ -192,9 +185,7 @@ $manifestArguments = @(
     "--file",
     "celune-bin.exe",
     "--file",
-    "vcruntime140.dll",
-    "--file",
-    "python313.dll"
+    "vcruntime140.dll"
 )
 & uv @manifestArguments
 if ($LASTEXITCODE -ne 0) {
@@ -207,7 +198,6 @@ try {
         "celune.exe",
         "celune-bin.exe",
         "vcruntime140.dll",
-        "python313.dll",
         "celune-update.json"
     ) -DestinationPath $archivePath -Force
 }
