@@ -7,6 +7,7 @@ export LDFLAGS="-Wl,-z,relro,-z,now"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="$repo_root/bin"
+build_python="3.13"
 archive_path="$output_dir/Celune-linux-x64.zip"
 manifest_script="$repo_root/scripts/write_update_manifest.py"
 app_dir="$output_dir/Celune.AppDir"
@@ -87,7 +88,7 @@ rm -rf \
     "$output_dir/resources" \
     "$output_dir/assets"
 
-uv run python -m nuitka \
+uv run --python "$build_python" python -m nuitka \
     --deployment \
     --follow-import-to=celune \
     --include-package-data=celune \
