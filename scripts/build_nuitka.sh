@@ -142,7 +142,7 @@ esac
 ARCH="$appimage_arch" appimagetool "$app_dir" "$output_dir/celune.AppImage"
 rm -rf "$app_dir"
 
-revision="$(git -C "$repo_root" rev-parse HEAD)"
+revision="${CELUNE_REVISION:-$(git -C "$repo_root" rev-parse HEAD)}"
 if [[ -z "$revision" ]]; then
     echo "Could not determine the Git revision for update metadata." >&2
     exit 1
