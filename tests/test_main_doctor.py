@@ -2,10 +2,13 @@
 """Tests for the lightweight `celune doctor` CLI path."""
 
 import io
+import sys
 import contextlib
+import subprocess
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from unittest import mock
-from pathlib import Path, PureWindowsPath
+
 import pytest
 
 import main
@@ -17,6 +20,42 @@ entrypoint = main.load_entrypoint_module()
 
 class TestDoctorCommand(CeluneTestCase):
     """Verify `celune doctor` works without booting the full app."""
+
+    def test_non_core_commands_work_without_installed_runtime_packages(self) -> None:
+        """Verify lightweight commands do not import Celune's core contract."""
+        project_root = Path(__file__).resolve().parents[1]
+        commands = (
+            (["--version"], 0),
+            (["help"], 0),
+            (["test"], 0),
+        )
+
+        for arguments, expected_code in commands:
+            check = subprocess.run(
+                [sys.executable, "-S", "main.py", *arguments],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            assert check.returncode == expected_code, check.stderr
+            assert check.stderr == ""
+
+    def test_config_reports_its_single_missing_path_dependency(self) -> None:
+        """Verify config commands do not require the full runtime dependency set."""
+        project_root = Path(__file__).resolve().parents[1]
+        check = subprocess.run(
+            [sys.executable, "-S", "main.py", "config", "view"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert check.returncode == entrypoint.EXIT_CODES.EXIT_MISSING_DEPENDENCIES.value
+        assert "platformdirs" in check.stdout
+        assert check.stderr == ""
 
     def test_auto_headless_mode_selects_platform_and_session(self) -> None:
         """Verify nullable headless mode follows the terminal environment."""

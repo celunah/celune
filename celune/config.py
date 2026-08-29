@@ -6,8 +6,6 @@ from copy import deepcopy
 from typing import Optional, cast
 from collections.abc import Mapping, Sequence
 
-import sounddevice as sd
-
 from .i18n import string
 from .constants import APP_NAME
 from .typing.aliases import LogLevel
@@ -202,6 +200,8 @@ def _hostapi_name(
     if hostapis is None:
         # noinspection PyBroadException
         try:
+            import sounddevice as sd
+
             queried = sd.query_hostapis()
         except Exception:
             return None
@@ -331,11 +331,16 @@ def resolve_audio_device_with_info(
         "max_input_channels" if direction == "input" else "max_output_channels"
     )
     query_kind = "input" if direction == "input" else "output"
+    sd = None
     try:
+        import sounddevice as sd
+
         direct_info = sd.query_devices(device=configured_name, kind=query_kind)
     except ValueError:
         # noinspection PyUnusedLocal
         direct_info = None
+    except ImportError:
+        pass
     else:
         if (
             isinstance(direct_info, Mapping)
@@ -362,6 +367,9 @@ def resolve_audio_device_with_info(
             # PortAudio already resolved this selector successfully, so reuse the
             # returned device info and avoid a second global device scan.
             return configured_name, direct_info
+
+    if sd is None:
+        return configured_name, None
 
     hostapis = sd.query_hostapis()
     matches: list[tuple[int, str]] = []

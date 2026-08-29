@@ -1,18 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Runtime filesystem paths and global Hugging Face runtime setup for Celune."""
 
-import contextlib
 import os
-from pathlib import Path
-import shutil
 import sys
-import sysconfig
-import threading
 import time
+import shutil
+import sysconfig
+import contextlib
+import threading
+from pathlib import Path
 from collections.abc import Callable, Generator
-from typing import Optional
-
-from platformdirs import user_data_dir
+from typing import Literal, Optional, Union
 
 from .constants import APP_NAME, APP_SLUG
 
@@ -27,6 +25,27 @@ _LEGACY_APP_DATA_MIGRATIONS = (
     ("gpt_sovits", ("runtime", "gpt_sovits")),
     ("nltk_data", ("runtime", "nltk_data")),
 )
+
+
+def user_data_dir(
+    appname: Optional[str] = None,
+    appauthor: Optional[Union[str, Literal[False]]] = None,
+    version: Optional[str] = None,
+    roaming: bool = False,
+    ensure_exists: bool = False,
+    use_site_for_root: bool = False,
+) -> str:
+    """Resolve a platform-specific user-data directory on demand."""
+    from platformdirs import user_data_dir as resolve_user_data_dir
+
+    return resolve_user_data_dir(
+        appname=appname,
+        appauthor=appauthor,
+        version=version,
+        roaming=roaming,
+        ensure_exists=ensure_exists,
+        use_site_for_root=use_site_for_root,
+    )
 
 
 def running_compiled() -> bool:

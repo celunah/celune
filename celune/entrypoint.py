@@ -6,9 +6,9 @@ import sys
 import time
 import random
 import shutil
-import datetime
 import platform
 import warnings
+import datetime
 import importlib
 import importlib.util
 import contextlib
@@ -16,22 +16,19 @@ import subprocess
 from pathlib import Path
 from dataclasses import dataclass
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Optional
 from types import ModuleType, SimpleNamespace
+from typing import TYPE_CHECKING, NoReturn, Optional
 
 from celune.i18n import string
 from celune.typing.common import Config
 from celune.terminal import set_terminal_title
-from celune.updater import apply_update_and_restart
 from celune import REVISION, __tagline__, __version__
 from celune.config import config_log_level, normalize_log_level
-from celune.watchdog import start_watchdog, launcher_loss_requested
 from celune.constants import APP_NAME, APP_SLUG, NVIDIA_DEVICE_KEYWORDS, ExitCodes
 from celune.paths import (
     project_root,
     running_compiled,
     migrate_legacy_app_data,
-    configure_huggingface_runtime,
 )
 
 if TYPE_CHECKING:
@@ -110,8 +107,6 @@ _STARTUP_DIAGNOSTIC_SINK: Optional[Callable[[str], None]] = None
 _CELUNE_PROCESS_NAMES = frozenset(
     {"celune", "celune-bin", "celune-bin.exe", "celune.appimage", "celune.exe"}
 )
-
-start_watchdog()
 
 
 def _load_ui_test_backend() -> type:
@@ -268,19 +263,10 @@ def _load_runtime() -> SimpleNamespace:
         from celune.updater import check_for_update, update_to_latest
         from celune.namedays import has_name_day
         from celune.exceptions import No, UpdateError
+
+        config_path()
     except ModuleNotFoundError as package:
-        if package.name is not None:
-            _print_dependency_setup_help(package.name)
-
-        if INITIAL_LOG_LEVEL != "info":
-            with contextlib.suppress(ModuleNotFoundError):
-                from rich.traceback import install
-
-                install()
-
-            raise
-
-        sys.exit(EXIT_CODES.EXIT_MISSING_DEPENDENCIES.value)
+        _handle_missing_dependency(package)
 
     _RUNTIME = SimpleNamespace(
         yaml=yaml,
@@ -311,6 +297,39 @@ def _load_runtime() -> SimpleNamespace:
     return _RUNTIME
 
 
+def _handle_missing_dependency(package: ModuleNotFoundError) -> NoReturn:
+    """Report one unavailable CLI dependency and terminate the command."""
+    if package.name is not None:
+        _print_dependency_setup_help(package.name)
+
+    if INITIAL_LOG_LEVEL != "info":
+        with contextlib.suppress(ModuleNotFoundError):
+            from rich.traceback import install
+
+            install()
+
+        raise package
+
+    sys.exit(EXIT_CODES.EXIT_MISSING_DEPENDENCIES.value)
+
+
+def _load_config_runtime() -> SimpleNamespace:
+    """Import only the services needed by configuration commands."""
+    try:
+        import webbrowser
+
+        from celune.paths import config_path
+
+        config_path()
+    except ModuleNotFoundError as package:
+        _handle_missing_dependency(package)
+
+    return SimpleNamespace(
+        config_path=config_path,
+        webbrowser=webbrowser,
+    )
+
+
 def _load_core_runtime(*, defer_missing_dependency: bool = False) -> SimpleNamespace:
     """Import the engine and full UI runtime when it is needed.
 
@@ -330,6 +349,12 @@ def _load_core_runtime(*, defer_missing_dependency: bool = False) -> SimpleNames
         return runtime
 
     try:
+        from celune.paths import (
+            configure_huggingface_cache_environment,
+            configure_huggingface_runtime,
+        )
+
+        configure_huggingface_cache_environment()
         configure_huggingface_runtime()
         from celune.ui import (
             CeluneUI,
@@ -1106,7 +1131,7 @@ def handle_config(command_args: list[str], prog_name: str) -> None:
         command_args: Current command's arguments.
         prog_name: The name of the program.
     """
-    runtime = _load_runtime()
+    runtime = _load_config_runtime()
 
     if len(command_args) == 1:
         if command_args[0] == "view":
@@ -1291,6 +1316,9 @@ def start(
     global _FORCE_STARTUP_DIAGNOSTICS
     global _STARTUP_DIAGNOSTIC_SINK
 
+    from celune.watchdog import launcher_loss_requested, start_watchdog
+
+    start_watchdog()
     _FORCE_STARTUP_DIAGNOSTICS = log_level not in {None, "info"}
     _STARTUP_DIAGNOSTICS.clear()
     _print_startup_diagnostic(string("ui.startup_checking_dependencies"))
@@ -1692,6 +1720,8 @@ def main(argv: Optional[list[str]] = None) -> None:
 
         launcher_path = Path(args[2]).resolve()
         try:
+            from celune.updater import apply_update_and_restart
+
             sys.exit(apply_update_and_restart(parent_pid, launcher_path, args[3:]))
         except Exception as exc:
             from celune.utils import format_error_message

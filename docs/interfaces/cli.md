@@ -3,6 +3,12 @@
 `main.py` is the lightweight launcher. It rejects unsupported Python versions
 before importing the heavy runtime, then dispatches to `celune.entrypoint`.
 
+Commands that do not start the core keep that boundary: help, version, the
+doctor report, and the test-mode listing use lightweight command dependencies.
+Configuration commands load only the configuration-path and system-browser
+helpers. The full Celune dependency contract is loaded by the default start,
+explicit start/run commands, and the UI or agent test modes.
+
 ## Commands
 
 | Command | Behavior |

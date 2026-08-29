@@ -287,16 +287,21 @@ min-severity = "warn"
 
 [tool.poe.tasks]
 start = "python main.py"
-test = "pytest -v tests -n 3 --dist loadfile"
-test_serial = "pytest -v tests"
+test_mt = "pytest -v tests -n 3 --dist loadfile"
+test = "pytest -v tests"
 test_changed = "pytest -v tests --testmon"
 types = "pyrefly check"
 ruff = "ruff check"
 format = "ruff format --check"
-lint = "pylint -j 0 celune tests main.py"
+lint_mt = "pylint -j 0 celune tests main.py"
+lint = "pylint celune tests main.py"
 lines = "pygount --format=summary"
 
 [tool.poe.tasks.ci]
+sequence = ["ruff", "format", "lint_mt", "types", "test_mt"]
+ignore_fail = "return_non_zero"
+
+[tool.poe.tasks.ci_basic]
 sequence = ["ruff", "format", "lint", "types", "test"]
 ignore_fail = "return_non_zero"
 

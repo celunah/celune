@@ -310,6 +310,8 @@ class TestCeluneCore(CeluneTestCase):
 
     def test_constructor_accepts_backend_alias_string_for_vc_runtime(self) -> None:
         """Verify string backend aliases resolve to VC backends when selected."""
+        fake_vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
+        fake_vc_backend.name = "seed-vc"
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
@@ -318,10 +320,15 @@ class TestCeluneCore(CeluneTestCase):
                 "celune.celune.resolve_backend",
                 return_value=FakeBackend(),
             ),
+            mock.patch(
+                "celune.celune.resolve_vc_backend",
+                return_value=fake_vc_backend,
+            ) as resolve_vc_backend,
         ):
             celune = Celune(config={"mode": "voice_conversion"}, backend="seed-vc")
             self.addCleanup(self._close_celune, celune)
 
+        resolve_vc_backend.assert_called_once_with("seed-vc", log=celune.log_callback)
         assert celune.vc_backend is not None
         assert celune.vc_backend is not None
         assert celune.vc_backend.name == "seed-vc"
@@ -1506,6 +1513,7 @@ class TestCeluneCore(CeluneTestCase):
             celune = Celune(
                 config={"mode": "voice_conversion"},
                 tts_backend=FakeBackend,
+                vc_backend=FakeVCBackend,
             )
             self.addCleanup(self._close_celune, celune)
 
@@ -1521,6 +1529,7 @@ class TestCeluneCore(CeluneTestCase):
             celune = Celune(
                 config={"mode": "voice_conversion"},
                 tts_backend=FakeBackend,
+                vc_backend=FakeVCBackend,
             )
             self.addCleanup(self._close_celune, celune)
 
@@ -2328,16 +2337,23 @@ class TestCeluneCore(CeluneTestCase):
         self,
     ) -> None:
         """Verify VC mode resolves the default Seed-VC backend cleanly."""
+        fake_vc_backend = FakeVCBackend(log=lambda _msg, _severity="info": None)
+        fake_vc_backend.name = "seed-vc"
         with (
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
+            mock.patch(
+                "celune.celune.resolve_vc_backend",
+                return_value=fake_vc_backend,
+            ) as resolve_vc_backend,
         ):
             celune = Celune(
                 config={"mode": "voice_conversion"}, tts_backend=FakeBackend
             )
             self.addCleanup(self._close_celune, celune)
 
+        resolve_vc_backend.assert_called_once_with("seed-vc", log=celune.log_callback)
         assert celune.input_mode == "voice_conversion"
         assert celune.voice_conversion_backend == "seed-vc"
 

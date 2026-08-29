@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import os
 import sys
+import math
 import time
 import ctypes
 import signal
+import psutil
 import subprocess
 from ctypes import wintypes
 from contextlib import suppress
@@ -16,7 +18,13 @@ from collections.abc import Callable
 
 TIMEOUT = 600
 GRACE_PERIOD = 2.0
-POE_COMMAND = ["uv", "run", "poe", "ci"]
+POE_TARGETS = {"basic": "ci_basic", "mt": "ci"}
+
+if math.ceil(psutil.virtual_memory().total / 1024**3) >= 16:
+    POE_COMMAND = ["uv", "run", "poe", POE_TARGETS["mt"]]
+else:
+    POE_COMMAND = ["uv", "run", "poe", POE_TARGETS["basic"]]
+
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 _JOB_HANDLE_ATTRIBUTE = "_celune_ci_job_handle"

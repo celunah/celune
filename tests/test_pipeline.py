@@ -1199,7 +1199,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine.audio_queue.put(engine.sentinel)
 
         with mock.patch(
-            "celune.pipeline.sd.OutputStream",
+            "sounddevice.OutputStream",
             return_value=fake_stream,
         ) as mock_stream:
             await self._run_playback_worker(cast(Celune, engine))

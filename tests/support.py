@@ -475,7 +475,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.config = {}
     engine.input_mode = "text_to_speech"
     engine.language = "Auto"
-    engine.log_level = "info"
+    engine.log_level = "debug"
     engine.current_voice = "balanced"
     engine.current_character = None
     engine.persona_attachments = []
