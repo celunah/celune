@@ -3,7 +3,6 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $outputDir = Join-Path $repoRoot "bin"
 $buildPython = "3.13"
-$pythonRuntimeSource = Join-Path ((& uv run --quiet --python $buildPython python -c "import sys; print(sys.base_prefix)").Trim()) "python313.dll"
 $archivePath = Join-Path $outputDir "Celune-win-x64.zip"
 $vcruntimeAsset = Join-Path $repoRoot "resources\vcruntime140.dll"
 $templateExe = Join-Path $repoRoot "celune.exe"
@@ -38,10 +37,6 @@ if (-not (Test-Path $vcruntimeAsset)) {
     throw "resources\vcruntime140.dll was not found."
 }
 
-if (-not (Test-Path $pythonRuntimeSource)) {
-    throw "The Python 3.13 runtime DLL was not found: $pythonRuntimeSource"
-}
-
 $env:UV_CACHE_DIR = Join-Path $repoRoot ".uv-cache"
 
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
@@ -52,8 +47,7 @@ $staleBuildArtifacts = @(
     (Join-Path $outputDir "voices"),
     (Join-Path $outputDir "resources"),
     (Join-Path $outputDir "assets"),
-    (Join-Path $outputDir "vcruntime140.dll"),
-    (Join-Path $outputDir "python313.dll")
+    (Join-Path $outputDir "vcruntime140.dll")
 )
 foreach ($stalePath in $staleBuildArtifacts) {
     if (Test-Path $stalePath) {
@@ -96,7 +90,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Copy-Item -LiteralPath $vcruntimeAsset -Destination (Join-Path $outputDir "vcruntime140.dll") -Force
-Copy-Item -LiteralPath $pythonRuntimeSource -Destination (Join-Path $outputDir "python313.dll") -Force
 
 if (-not (Test-Path $launcherSource)) {
     throw "launcher.c was not found."
@@ -140,7 +133,6 @@ $manifest = [ordered]@{
         "celune.exe" = (Get-FileHash -Algorithm SHA256 $launcherExe).Hash.ToLowerInvariant()
         "celune-bin.exe" = (Get-FileHash -Algorithm SHA256 (Join-Path $outputDir "celune-bin.exe")).Hash.ToLowerInvariant()
         "vcruntime140.dll" = (Get-FileHash -Algorithm SHA256 (Join-Path $outputDir "vcruntime140.dll")).Hash.ToLowerInvariant()
-        "python313.dll" = (Get-FileHash -Algorithm SHA256 (Join-Path $outputDir "python313.dll")).Hash.ToLowerInvariant()
     }
 }
 
@@ -153,7 +145,6 @@ try {
         "celune.exe",
         "celune-bin.exe",
         "vcruntime140.dll",
-        "python313.dll",
         "celune-update.json"
     ) -DestinationPath $archivePath -Force
 }
