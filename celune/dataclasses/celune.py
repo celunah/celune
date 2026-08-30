@@ -155,6 +155,9 @@ class CeluneAudioState:
     speed: float = 1.0
     smart_buffer_generation_speed: Optional[float] = None
     smart_buffer_target_seconds: float = 0.0
+    playback_buffer_seconds: float = 0.0
+    playback_contention_level: float = 0.0
+    playback_underflows: int = 0
     total_generated_speech_seconds: float = 0.0
     historical_generated_speech_seconds: float = 0.0
     reverb: StreamingPedalboardReverb = field(default_factory=StreamingPedalboardReverb)
@@ -385,6 +388,21 @@ CELUNE_FORWARDED_PROPERTIES = (
         "smart_buffer_target_seconds",
         "_audio_state",
         "smart_buffer_target_seconds",
+    ),
+    ForwardedPropertySpec(
+        "playback_buffer_seconds",
+        "_audio_state",
+        "playback_buffer_seconds",
+    ),
+    ForwardedPropertySpec(
+        "playback_contention_level",
+        "_audio_state",
+        "playback_contention_level",
+    ),
+    ForwardedPropertySpec(
+        "playback_underflows",
+        "_audio_state",
+        "playback_underflows",
     ),
     ForwardedPropertySpec(
         "total_generated_speech_seconds",

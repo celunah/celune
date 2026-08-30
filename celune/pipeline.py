@@ -8,6 +8,7 @@ import re
 import sys
 import json
 import time
+import ctypes
 import queue
 import random
 import asyncio
@@ -21,12 +22,13 @@ from uuid import uuid4
 from typing import TYPE_CHECKING, Union, Optional, cast
 from importlib import util as importlib_util
 from collections import deque
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from urllib.parse import urlparse, urlencode
 from urllib.request import urlopen
 from collections.abc import Mapping, Callable  # pylint: disable=ungrouped-imports
 
 import numpy as np
+import psutil
 import torch
 import soundfile as sf
 import sounddevice as sd
@@ -184,6 +186,301 @@ async def _run_in_daemon_thread[PipelineResult](
     return await result
 
 
+@dataclass(frozen=True)
+class _PlaybackWriteItem:
+    """Describe one mixed block waiting for the persistent output writer."""
+
+    audio: AudioChunk
+    source_ids: tuple[int, ...]
+    duration_seconds: float
+
+
+class _PlaybackContentionMonitor:
+    """Estimate playback contention from CPU pressure and output timing."""
+
+    def __init__(self, engine: Celune) -> None:
+        self._engine = engine
+        self._lock = threading.Lock()
+        self._process = psutil.Process(os.getpid())
+        self._last_sample_at = 0.0
+        self._level = 0.0
+        self._underflows = 0
+        with contextlib.suppress(psutil.Error, OSError):
+            self._process.cpu_percent(interval=None)
+
+    @staticmethod
+    def _pressure(value: float, start: float, critical: float) -> float:
+        """Normalize one observed pressure value to the inclusive 0..1 range."""
+        if value <= start:
+            return 0.0
+        if value >= critical:
+            return 1.0
+        return (value - start) / (critical - start)
+
+    def _publish_locked(self) -> None:
+        """Publish lightweight diagnostics for logs and status views."""
+        self._engine.playback_contention_level = self._level
+        self._engine.playback_underflows = self._underflows
+
+    def sample_cpu(self, now: float) -> None:
+        """Sample system and process CPU without blocking the playback loop."""
+        with self._lock:
+            if now - self._last_sample_at < _PLAYBACK_CONTENTION_SAMPLE_SECONDS:
+                return
+            self._last_sample_at = now
+
+        try:
+            cpu_percent = psutil.cpu_percent(interval=None)
+        except (psutil.Error, OSError, TypeError, ValueError):
+            cpu_percent = 0.0
+
+        try:
+            process_percent = self._process.cpu_percent(interval=None)
+        except (psutil.Error, OSError, TypeError, ValueError):
+            process_percent = 0.0
+
+        logical_cpus = max(1, psutil.cpu_count(logical=True) or 1)
+        normalized_process_percent = process_percent / logical_cpus
+        pressure = max(
+            self._pressure(
+                cpu_percent,
+                _PLAYBACK_CONTENTION_CPU_START,
+                _PLAYBACK_CONTENTION_CPU_CRITICAL,
+            ),
+            self._pressure(
+                normalized_process_percent,
+                _PLAYBACK_CONTENTION_CPU_START,
+                _PLAYBACK_CONTENTION_CPU_CRITICAL,
+            ),
+        )
+
+        with self._lock:
+            if pressure > 0.0:
+                self._level = max(self._level * 0.9, pressure)
+            else:
+                self._level *= _PLAYBACK_CONTENTION_STABLE_DECAY
+            self._publish_locked()
+
+    def observe_scheduler_lag(self, delay_seconds: float) -> None:
+        """Record a delayed playback-loop wakeup as contention evidence."""
+        self._observe_pressure(
+            self._pressure(
+                delay_seconds,
+                _PLAYBACK_CONTENTION_LAG_START_SECONDS,
+                _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
+            )
+        )
+
+    def _observe_pressure(self, pressure: float) -> None:
+        """Update the smoothed contention level from one pressure sample."""
+        pressure = max(0.0, min(1.0, pressure))
+        with self._lock:
+            if pressure > 0.0:
+                self._level = max(self._level * 0.9, pressure)
+            else:
+                self._level *= _PLAYBACK_CONTENTION_STABLE_DECAY
+            self._publish_locked()
+
+    def observe_write(
+        self,
+        elapsed_seconds: float,
+        block_seconds: float,
+        underflowed: bool,
+    ) -> None:
+        """Record one output write and any PortAudio-reported underflow."""
+        with self._lock:
+            if underflowed:
+                self._underflows += 1
+                self._level = 1.0
+            else:
+                write_pressure = self._pressure(
+                    max(0.0, elapsed_seconds - block_seconds),
+                    _PLAYBACK_CONTENTION_LAG_START_SECONDS,
+                    _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS,
+                )
+                if write_pressure > 0.0:
+                    self._level = max(self._level * 0.9, write_pressure)
+                else:
+                    self._level *= _PLAYBACK_CONTENTION_STABLE_DECAY
+            self._publish_locked()
+
+    def target_seconds(self) -> float:
+        """Return the current reserve target, rising as contention increases."""
+        with self._lock:
+            max_seconds = _PLAYBACK_BUFFER_MAX_SECONDS + (
+                (_PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS - _PLAYBACK_BUFFER_MAX_SECONDS)
+                * self._level
+            )
+            return _PLAYBACK_BUFFER_MIN_SECONDS + (
+                (max_seconds - _PLAYBACK_BUFFER_MIN_SECONDS) * self._level
+            )
+
+    def capacity_seconds(self) -> float:
+        """Return the maximum reserve allowed at the current contention level."""
+        with self._lock:
+            return _PLAYBACK_BUFFER_MAX_SECONDS + (
+                (_PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS - _PLAYBACK_BUFFER_MAX_SECONDS)
+                * self._level
+            )
+
+    def requires_rebuffer(self) -> bool:
+        """Return whether contention is high enough to pause for more reserve."""
+        with self._lock:
+            return self._level >= _PLAYBACK_CONTENTION_REBUFFER_LEVEL
+
+
+def _prioritize_playback_thread() -> None:
+    """Raise the output writer above normal priority on supported Windows hosts."""
+    if os.name != "nt":
+        return
+
+    try:
+        win_dll = ctypes.WinDLL("kernel32", use_last_error=True)
+        current_thread = win_dll.GetCurrentThread()
+        if not win_dll.SetThreadPriority(current_thread, 1):
+            return
+    except (AttributeError, OSError, TypeError):
+        return
+
+
+class _PlaybackWriter:
+    """Write mixed audio on one persistent thread with reserve accounting."""
+
+    def __init__(self, engine: Celune, monitor: _PlaybackContentionMonitor) -> None:
+        self._engine = engine
+        self._monitor = monitor
+        self._queue: queue.Queue[Optional[_PlaybackWriteItem]] = queue.Queue()
+        self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
+        self._pending_seconds = 0.0
+        self._pending_sources: dict[int, int] = {}
+        self._error: Optional[BaseException] = None
+
+    def start(self) -> None:
+        """Start the persistent writer when it is not already running."""
+        if self._thread is not None and self._thread.is_alive():
+            return
+        with self._lock:
+            if self._error is not None:
+                raise self._error
+        self._thread = threading.Thread(
+            target=self._run,
+            name="CelunePlaybackWriter",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _decrement_pending(self, item: _PlaybackWriteItem) -> None:
+        """Remove one completed or discarded item from reserve accounting."""
+        with self._lock:
+            self._pending_seconds = max(
+                0.0,
+                self._pending_seconds - item.duration_seconds,
+            )
+            for source_id in item.source_ids:
+                count = self._pending_sources.get(source_id, 0) - 1
+                if count > 0:
+                    self._pending_sources[source_id] = count
+                else:
+                    self._pending_sources.pop(source_id, None)
+
+    def _discard_pending(self) -> None:
+        """Discard queued blocks after a forced stop or writer failure."""
+        while True:
+            try:
+                item = self._queue.get_nowait()
+            except queue.Empty:
+                return
+            if item is not None:
+                self._decrement_pending(item)
+            self._queue.task_done()
+
+    def _run(self) -> None:
+        """Consume the output queue until a stop marker is received."""
+        _prioritize_playback_thread()
+        while True:
+            item = self._queue.get()
+            if item is None:
+                self._queue.task_done()
+                return
+
+            started_at = time.monotonic()
+            underflowed = False
+            failed: Optional[BaseException] = None
+            try:
+                underflowed = bool(_write_playback_block(self._engine, item.audio))
+            except BaseException as error:  # pylint: disable=broad-exception-caught
+                failed = error
+                with self._lock:
+                    self._error = error
+            finally:
+                self._decrement_pending(item)
+                self._monitor.observe_write(
+                    time.monotonic() - started_at,
+                    item.duration_seconds,
+                    underflowed,
+                )
+                self._queue.task_done()
+
+            if failed is not None:
+                self._discard_pending()
+                return
+
+    def submit(self, audio: AudioChunk, source_ids: tuple[int, ...]) -> None:
+        """Queue one mixed block and account for its playback reserve."""
+        with self._lock:
+            if self._error is not None:
+                raise self._error
+            duration_seconds = len(audio) / BASE_SR
+            self._pending_seconds += duration_seconds
+            for source_id in source_ids:
+                self._pending_sources[source_id] = (
+                    self._pending_sources.get(source_id, 0) + 1
+                )
+        self._queue.put(
+            _PlaybackWriteItem(
+                audio=np.asarray(audio, dtype=np.float32),
+                source_ids=source_ids,
+                duration_seconds=duration_seconds,
+            )
+        )
+
+    def wait_empty(self) -> None:
+        """Wait until all submitted audio has reached the output stream."""
+        self._queue.join()
+
+    def stop(self, clear: bool = False) -> None:
+        """Stop the writer, optionally discarding queued audio first."""
+        thread = self._thread
+        if thread is None:
+            return
+        if clear:
+            self._discard_pending()
+            with self._lock:
+                self._error = None
+        self._queue.put(None)
+        thread.join(timeout=2.0)
+        if not thread.is_alive():
+            self._thread = None
+
+    def has_pending_source(self, source_id: int) -> bool:
+        """Return whether output still contains audio for one source."""
+        with self._lock:
+            return self._pending_sources.get(source_id, 0) > 0
+
+    @property
+    def pending_seconds(self) -> float:
+        """Return the seconds queued for the output writer."""
+        with self._lock:
+            return self._pending_seconds
+
+    @property
+    def error(self) -> Optional[BaseException]:
+        """Return the first asynchronous output error, if any."""
+        with self._lock:
+            return self._error
+
+
 _FLAC_MAGIC = b"fLaC"
 _FLAC_STREAMINFO_BLOCK = 0
 _FLAC_VORBIS_COMMENT_BLOCK = 4
@@ -266,8 +563,19 @@ Do not include assistant statements, temporary requests, jokes, guesses, passwor
 tokens, financial details, medical details, or unrelated conversation. If there is no durable
 fact, return {"memories":[]}.
 """
-_PIPELINE_CPU_MAX_BUFFER_SECONDS = 4.0
-_PIPELINE_CPU_MAX_DRAIN_ITEMS = 1
+_PLAYBACK_BUFFER_MIN_SECONDS = 2.0
+_PLAYBACK_BUFFER_MAX_SECONDS = 12.0
+_PLAYBACK_BUFFER_CRITICAL_MAX_SECONDS = 30.0
+_PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS = 0.25
+_PLAYBACK_CONTENTION_SAMPLE_SECONDS = 0.25
+_PLAYBACK_CONTENTION_CPU_START = 75.0
+_PLAYBACK_CONTENTION_CPU_CRITICAL = 95.0
+_PLAYBACK_CONTENTION_LAG_START_SECONDS = 0.015
+_PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS = 0.1
+_PLAYBACK_CONTENTION_STABLE_DECAY = 0.96
+_PLAYBACK_CONTENTION_REBUFFER_LEVEL = 0.5
+_PIPELINE_CPU_MAX_BUFFER_SECONDS = _PLAYBACK_BUFFER_MAX_SECONDS
+_PIPELINE_CPU_MAX_DRAIN_ITEMS = 4
 _PIPELINE_CPU_YIELD_SECONDS = 0.001
 
 
@@ -617,23 +925,25 @@ def _close_stream_unlocked(engine: Celune, abort: bool = False) -> None:
     engine._current_sr = None
 
 
-def _write_playback_block(engine: Celune, audio: AudioChunk) -> None:
+def _write_playback_block(engine: Celune, audio: AudioChunk) -> Optional[bool]:
     """Write one playback block while serialized against stream teardown."""
     stream_lock = getattr(engine, "stream_lock", None)
     if stream_lock is None:
-        _write_playback_block_unlocked(engine, audio)
-        return
+        return _write_playback_block_unlocked(engine, audio)
 
     with stream_lock:
-        _write_playback_block_unlocked(engine, audio)
+        return _write_playback_block_unlocked(engine, audio)
 
 
-def _write_playback_block_unlocked(engine: Celune, audio: AudioChunk) -> None:
+def _write_playback_block_unlocked(
+    engine: Celune,
+    audio: AudioChunk,
+) -> Optional[bool]:
     """Write one playback block while the stream lifecycle lock is held."""
     stream = engine.stream
     if stream is None:
         raise NotAvailableError("audio stream is not available")
-    stream.write(audio)
+    return stream.write(audio)
 
 
 def _reset_glow_audio_reactivity(engine: Celune) -> None:
@@ -982,7 +1292,10 @@ def _queue_playback_chunk(
     engine.log(
         "[QUEUE] playback chunk "
         f"source={source_id} samples={len(audio)} sample_rate={sample_rate} "
-        f"generation={expected_generation} audio_queue={engine.audio_queue.qsize()}",
+        f"generation={expected_generation} audio_queue={engine.audio_queue.qsize()} "
+        f"reserve={float(getattr(engine, 'playback_buffer_seconds', 0.0)):.2f}s "
+        f"contention={float(getattr(engine, 'playback_contention_level', 0.0)):.2f} "
+        f"underflows={int(getattr(engine, 'playback_underflows', 0))}",
         loglevel="debug",
     )
     return True
@@ -1528,7 +1841,7 @@ def _smart_buffer_config(
 
 
 def _pipeline_cpu_config(engine: Celune) -> tuple[bool, float, int, float]:
-    """Return Celune's fixed cooperative CPU-pressure controls."""
+    """Return Celune's bounded cooperative playback-pressure controls."""
     del engine
     return (
         True,
@@ -3860,6 +4173,7 @@ def _ensure_playback_stream_unlocked(engine: Celune, sample_rate: int) -> bool:
             channels=2,
             dtype="float32",
             blocksize=0,
+            latency="high",
             device=output_device,
         )
         if engine.stream is None:
@@ -4011,9 +4325,44 @@ async def playback_worker_job(engine: Celune) -> None:
         yield_seconds,
     ) = _pipeline_cpu_config(engine)
     buffered_seconds = 0.0
+    contention = _PlaybackContentionMonitor(engine)
+    writer = _PlaybackWriter(engine, contention)
+    last_monitor_at = _monotonic_time()
+    buffering_started_at: Optional[float] = None
+
+    def publish_buffered_seconds() -> None:
+        """Publish the complete application-side output reserve."""
+        engine.playback_buffer_seconds = max(
+            0.0,
+            buffered_seconds + writer.pending_seconds,
+        )
+
+    async def handle_playback_error(error: BaseException) -> None:
+        """Report an output failure and clear the playback pipeline."""
+        nonlocal buffered_seconds, buffering_started_at
+        engine.log(
+            format_error_message(
+                "[PLAY ERROR]",
+                error,
+                engine.log_level,
+            ),
+            "error",
+        )
+        engine.error_callback(string("pipeline.playback_error"))
+        await _run_in_daemon_thread(lambda: writer.stop(clear=True))
+        await _run_in_daemon_thread(lambda: close_stream(engine, True))
+        engine._stream = None
+        engine._current_sr = None
+        source_buffers.clear()
+        source_done.clear()
+        buffered_seconds = 0.0
+        buffering_started_at = None
+        publish_buffered_seconds()
+        _playback_source_statuses(engine).clear()
+        _playback_source_meta(engine).clear()
 
     async def force_stop_playback() -> None:
-        nonlocal buffered_seconds, stop_cleanup_generation
+        nonlocal buffered_seconds, buffering_started_at, stop_cleanup_generation
         current_generation = getattr(engine, "_playback_generation", 0)
         if stop_cleanup_generation == current_generation:
             return
@@ -4021,6 +4370,9 @@ async def playback_worker_job(engine: Celune) -> None:
         source_buffers.clear()
         source_done.clear()
         buffered_seconds = 0.0
+        buffering_started_at = None
+        await _run_in_daemon_thread(lambda: writer.stop(clear=True))
+        publish_buffered_seconds()
         _playback_source_statuses(engine).clear()
         _playback_source_meta(engine).clear()
         _reset_glow_audio_reactivity(engine)
@@ -4035,13 +4387,24 @@ async def playback_worker_job(engine: Celune) -> None:
             engine.idle_callback()
 
     async def drain_pending_items() -> bool:
-        nonlocal buffered_seconds, stop_requested
+        nonlocal buffered_seconds, buffering_started_at, last_monitor_at, stop_requested
 
+        now = _monotonic_time()
+        contention.sample_cpu(now)
+        if source_buffers or writer.pending_seconds > 0.0:
+            contention.observe_scheduler_lag(
+                max(0.0, now - last_monitor_at - _PIPELINE_CPU_YIELD_SECONDS)
+            )
+        last_monitor_at = now
         drained_items = 0
         while drained_items < max_drain_items:
+            buffer_capacity_seconds = max(
+                max_buffer_seconds,
+                contention.capacity_seconds(),
+            )
             if (
                 cpu_guard_enabled
-                and buffered_seconds >= max_buffer_seconds
+                and buffered_seconds + writer.pending_seconds >= buffer_capacity_seconds
                 and not engine.utterance_force_stop.is_set()
             ):
                 break
@@ -4069,10 +4432,14 @@ async def playback_worker_job(engine: Celune) -> None:
                         blocking
                     )
                     buffered_seconds += len(pending.audio) / max(1, pending.sample_rate)
+                    if buffering_started_at is None:
+                        buffering_started_at = _monotonic_time()
             elif isinstance(pending, PlaybackSourceDone):
                 if pending.generation != getattr(engine, "_playback_generation", 0):
                     continue
                 source_done[pending.source_id] = pending
+
+            publish_buffered_seconds()
 
         if yield_seconds > 0.0 and not engine.audio_queue.empty():
             await asyncio.sleep(yield_seconds)
@@ -4083,7 +4450,9 @@ async def playback_worker_job(engine: Celune) -> None:
             with engine.queue_lock:
                 clear_queue(engine.audio_queue)
 
+            await _run_in_daemon_thread(lambda: writer.stop(clear=True))
             await _run_in_daemon_thread(lambda: close_stream(engine, True))
+            publish_buffered_seconds()
             release_pipeline(engine)
             if engine.cur_state not in {"error", "stopped"} and not getattr(
                 engine, "test_finished", False
@@ -4092,7 +4461,11 @@ async def playback_worker_job(engine: Celune) -> None:
             return
 
         try:
-            timeout = 0.01 if source_buffers else None
+            timeout = (
+                0.01
+                if source_buffers or source_done or writer.pending_seconds > 0.0
+                else None
+            )
             if timeout is None:
                 item = await _run_in_daemon_thread(engine.audio_queue.get)
             else:
@@ -4103,7 +4476,8 @@ async def playback_worker_job(engine: Celune) -> None:
             item = None
 
         if item is engine.sentinel:
-            break
+            stop_requested = True
+            item = None
 
         if item is engine.force_stop_marker:
             await force_stop_playback()
@@ -4117,6 +4491,8 @@ async def playback_worker_job(engine: Celune) -> None:
             if blocks:
                 source_buffers.setdefault(item.source_id, deque()).extend(blocks)
                 buffered_seconds += len(item.audio) / max(1, item.sample_rate)
+                if buffering_started_at is None:
+                    buffering_started_at = _monotonic_time()
         elif isinstance(item, PlaybackSourceDone):
             if item.generation != getattr(engine, "_playback_generation", 0):
                 continue
@@ -4126,12 +4502,42 @@ async def playback_worker_job(engine: Celune) -> None:
         if not await drain_pending_items():
             continue
 
+        if (writer_error := writer.error) is not None:
+            await handle_playback_error(writer_error)
+            continue
+
         if engine.exit_requested:
             continue
 
         while source_buffers:
             if not await drain_pending_items():
                 break
+
+            if (writer_error := writer.error) is not None:
+                await handle_playback_error(writer_error)
+                break
+
+            contention.sample_cpu(_monotonic_time())
+            if (
+                not source_done
+                and contention.requires_rebuffer()
+                and buffered_seconds + writer.pending_seconds
+                < contention.target_seconds()
+            ):
+                await asyncio.sleep(0.01)
+                continue
+
+            if (
+                buffered_seconds + writer.pending_seconds < contention.target_seconds()
+                and not source_done
+                and buffering_started_at is not None
+                and _monotonic_time() - buffering_started_at
+                < _PLAYBACK_BUFFER_STARTUP_GRACE_SECONDS
+            ):
+                await asyncio.sleep(0.005)
+                continue
+
+            buffering_started_at = None
 
             if not await _run_in_daemon_thread(
                 lambda: _ensure_playback_stream(engine, BASE_SR)
@@ -4147,6 +4553,8 @@ async def playback_worker_job(engine: Celune) -> None:
                 ):
                     engine.idle_callback()
                 break
+
+            writer.start()
 
             ready_ids = [
                 source_id for source_id, blocks in source_buffers.items() if blocks
@@ -4164,7 +4572,6 @@ async def playback_worker_job(engine: Celune) -> None:
             )
             mixed = np.zeros((block_len, 2), dtype=np.float32)
             timing_to_log: Optional[SpeechTiming] = None
-            completed_now: list[int] = []
 
             for source_id in ready_ids:
                 block, timing = source_buffers[source_id][0]
@@ -4195,14 +4602,13 @@ async def playback_worker_job(engine: Celune) -> None:
                     ) + float(block_len)
 
                 if not source_buffers[source_id]:
-                    if source_id in source_done:
-                        completed_now.append(source_id)
                     del source_buffers[source_id]
 
             buffered_seconds = max(
                 0.0,
                 buffered_seconds - (block_len / BASE_SR) * len(ready_ids),
             )
+            publish_buffered_seconds()
 
             mixed = np.clip(mixed, -1.0, 1.0)
 
@@ -4212,28 +4618,10 @@ async def playback_worker_job(engine: Celune) -> None:
                     break
                 log_first_playback(engine, timing_to_log)
                 engine.glow.schedule(mixed)
-                await _run_in_daemon_thread(
-                    lambda mixed=mixed: _write_playback_block(engine, mixed)
-                )
+                writer.submit(mixed, tuple(ready_ids))
                 _update_playback_progress(engine, source_buffers)
             except Exception as e:
-                engine.log(
-                    format_error_message(
-                        "[PLAY ERROR]",
-                        e,
-                        engine.log_level,
-                    ),
-                    "error",
-                )
-                engine.error_callback(string("pipeline.playback_error"))
-                await _run_in_daemon_thread(lambda: close_stream(engine, True))
-                engine._stream = None
-                engine._current_sr = None
-                source_buffers.clear()
-                source_done.clear()
-                buffered_seconds = 0.0
-                _playback_source_statuses(engine).clear()
-                _playback_source_meta(engine).clear()
+                await handle_playback_error(e)
                 break
 
             while True:
@@ -4241,6 +4629,7 @@ async def playback_worker_job(engine: Celune) -> None:
                     source_id
                     for source_id, marker in source_done.items()
                     if source_id not in source_buffers
+                    and not writer.has_pending_source(source_id)
                 ]
                 if not newly_complete:
                     break
@@ -4254,13 +4643,15 @@ async def playback_worker_job(engine: Celune) -> None:
                             engine,
                             playback_idle=not source_buffers
                             and engine.audio_queue.empty()
-                            and engine.text_queue.empty(),
+                            and engine.text_queue.empty()
+                            and writer.pending_seconds <= 0.0,
                         )
                     if (
                         marker.notify_idle
                         and not source_buffers
                         and engine.audio_queue.empty()
                         and engine.text_queue.empty()
+                        and writer.pending_seconds <= 0.0
                     ):
                         _finalize_playback_idle(
                             engine,
@@ -4271,6 +4662,7 @@ async def playback_worker_job(engine: Celune) -> None:
                         not source_buffers
                         and engine.audio_queue.empty()
                         and engine.text_queue.empty()
+                        and writer.pending_seconds <= 0.0
                     ):
                         engine.playback_done.set()
                         _reset_glow_audio_reactivity(engine)
@@ -4281,6 +4673,7 @@ async def playback_worker_job(engine: Celune) -> None:
                 source_id
                 for source_id, marker in source_done.items()
                 if source_id not in source_buffers
+                and not writer.has_pending_source(source_id)
             ]
             if not orphaned:
                 break
@@ -4294,13 +4687,15 @@ async def playback_worker_job(engine: Celune) -> None:
                         engine,
                         playback_idle=not source_buffers
                         and engine.audio_queue.empty()
-                        and engine.text_queue.empty(),
+                        and engine.text_queue.empty()
+                        and writer.pending_seconds <= 0.0,
                     )
                 if (
                     marker.notify_idle
                     and not source_buffers
                     and engine.audio_queue.empty()
                     and engine.text_queue.empty()
+                    and writer.pending_seconds <= 0.0
                 ):
                     _finalize_playback_idle(
                         engine,
@@ -4311,10 +4706,19 @@ async def playback_worker_job(engine: Celune) -> None:
                     not source_buffers
                     and engine.audio_queue.empty()
                     and engine.text_queue.empty()
+                    and writer.pending_seconds <= 0.0
                 ):
                     engine.playback_done.set()
                     _reset_glow_audio_reactivity(engine)
                     engine.progress_callback(1, 1)
 
-        if stop_requested and not source_buffers and not source_done:
+        publish_buffered_seconds()
+        if (
+            stop_requested
+            and not source_buffers
+            and not source_done
+            and writer.pending_seconds <= 0.0
+        ):
+            await _run_in_daemon_thread(writer.wait_empty)
+            await _run_in_daemon_thread(writer.stop)
             break

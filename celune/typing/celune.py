@@ -300,6 +300,9 @@ class CeluneStateAccessors:
     speed: float
     smart_buffer_generation_speed: Optional[float]
     smart_buffer_target_seconds: float
+    playback_buffer_seconds: float
+    playback_contention_level: float
+    playback_underflows: int
     total_generated_speech_seconds: float
     historical_generated_speech_seconds: float
     reverb: StreamingPedalboardReverb
