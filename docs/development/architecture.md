@@ -74,6 +74,10 @@ status and diagnostic text stays in the loading screen or main log.
 
 Cancellation travels through the same queue and worker boundary. It does not
 create a second “stop” path that could leave a backend generation alive.
+Playback completion is source-aware: speech completion closes speech captions
+without waiting for unrelated SFX overlays, while the global idle transition
+still waits for every source. Output failures clear the source maps, mark
+playback complete, and release any held pipeline lease.
 
 ## Component locks
 

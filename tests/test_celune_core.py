@@ -1363,25 +1363,25 @@ class TestCeluneCore(CeluneTestCase):
         Raises:
             AssertionError: Core utility behavior changes unexpectedly.
         """
-        logs: list[tuple[str, str]] = []
+        logs: list[tuple[str, str, str]] = []
         celune = self._make_celune(
             {"api": {"port": "bad", "rate_limit_per_minute": "bad"}}
         )
         celune.log_callback = lambda msg, severity="info", *, loglevel="info": (
-            logs.append((msg, severity))
+            logs.append((msg, severity, loglevel))
         )
         celune.log("hello")
-        assert logs[-1] == ("hello", "info")
+        assert logs[-1] == ("hello", "info", "info")
         celune.log("hidden", loglevel="verbose")
         assert len(logs) == 1
         celune.log_level = "verbose"
         celune.log("visible", loglevel="verbose")
-        assert logs[-1] == ("visible", "info")
+        assert logs[-1] == ("visible", "info", "verbose")
         celune.log("hidden debug", loglevel="debug")
-        assert logs[-1] == ("visible", "info")
+        assert logs[-1] == ("visible", "info", "verbose")
         celune.log_level = "debug"
         celune.log("visible debug", loglevel="debug")
-        assert logs[-1] == ("visible debug", "info")
+        assert logs[-1] == ("visible debug", "info", "debug")
 
         celune.loaded = False
         assert not celune.wait_until_idle(timeout=0)

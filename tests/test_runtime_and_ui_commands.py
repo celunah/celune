@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from typing import Optional, cast
 from pathlib import Path
 from unittest import mock
-from collections.abc import Callable, Awaitable
+from collections.abc import Callable, Awaitable, Coroutine
 
 import numpy as np
 import pytest
@@ -188,6 +188,39 @@ class TestRuntime(CeluneTestCase):
         assert ui.celune_styles == ("balanced", "bold")
         assert ui.style_index == 1
         ui.tts_voice_changed.assert_called_once_with("bold")
+
+    def test_wake_resets_playback_widgets_before_persona_reinitializes(self) -> None:
+        """Verify waking clears transient playback UI before wake work completes."""
+        wake_started = asyncio.Event()
+        release_wake = asyncio.Event()
+
+        async def wake() -> bool:
+            fake_celune.sleeping = False
+            wake_started.set()
+            await release_wake.wait()
+            return True
+
+        fake_celune = SimpleNamespace(sleeping=True, wake_from_sleep_async=wake)
+        ui = SimpleNamespace(
+            celune=fake_celune,
+            cur_state="active",
+            _reset_playback_widgets=mock.Mock(),
+            _schedule_sleep_timer=mock.Mock(),
+            safe_status=mock.Mock(),
+        )
+        wake_from_sleep = cast(
+            Callable[[CeluneUI], Coroutine[None, None, None]],
+            getattr(CeluneUI.wake_from_sleep, "__wrapped__", CeluneUI.wake_from_sleep),
+        )
+
+        async def exercise_wake() -> None:
+            wake_task = asyncio.create_task(wake_from_sleep(cast(CeluneUI, ui)))
+            await wake_started.wait()
+            cast(mock.Mock, ui._reset_playback_widgets).assert_called_once_with()
+            release_wake.set()
+            await wake_task
+
+        asyncio.run(exercise_wake())
 
     def test_entrypoint_runtime_loader_keeps_heavy_imports_deferred(self) -> None:
         """Verify the pre-UI entrypoint import path stays torch-free."""
@@ -1509,6 +1542,9 @@ class TestUIStartup(CeluneTestCase):
 
             def __init__(self) -> None:
                 self.updates: list[dict[str, Optional[float]]] = []
+                self.display = True
+                self.parent = None
+                self.styles = SimpleNamespace(opacity=1.0)
 
             def update(self, **values: Optional[float]) -> None:
                 """Capture progress updates."""
@@ -3774,6 +3810,9 @@ class TestUIStartup(CeluneTestCase):
                 self.styles = SimpleNamespace(opacity=1.0)
                 self.parent = parent
 
+            def update(self, **_kwargs: object) -> None:
+                """Accept progress updates without rendering a real Textual widget."""
+
         ui = CeluneUI()
         caption = FakeCaption()
         progress_row = SimpleNamespace(display=True)
@@ -3791,6 +3830,7 @@ class TestUIStartup(CeluneTestCase):
         assert caption.rendered == "One two"
         ui.safe_caption_progress(3, 3)
         assert caption.rendered == "One two three"
+        assert not ui._caption_active
 
         ui.tts_idle()
         assert not ui._caption_active
@@ -3802,6 +3842,61 @@ class TestUIStartup(CeluneTestCase):
         with mock.patch.object(ui, "_animate_opacity") as animate_opacity:
             ui.tts_idle()
         animate_opacity.assert_not_called()
+        assert cast(FakeProgressBar, ui.progress_bar).styles.opacity == 1.0
+
+        ui.tts_caption("Overlap")
+        caption.is_attached = True
+        cast(FakeProgressBar, ui.progress_bar).is_attached = True
+        transition_callbacks: list[Optional[Callable[[], None]]] = []
+
+        def capture_transition(
+            _widget: Widget,
+            _opacity: float,
+            on_complete: Optional[Callable[[], None]] = None,
+            **_kwargs: object,
+        ) -> None:
+            transition_callbacks.append(on_complete)
+
+        with mock.patch.object(ui, "_animate_opacity", side_effect=capture_transition):
+            ui.safe_caption_progress(1, 1)
+            ui.safe_progress(1, 1)
+
+        assert ui._caption_transitioning
+        assert caption.display
+        assert not progress_row.display
+        assert transition_callbacks[0] is not None
+        transition_callbacks[0]()
+        assert not ui._caption_transitioning
+        assert not caption.display
+        assert progress_row.display
+        ui._reset_playback_widgets()
+
+        caption.is_attached = False
+        cast(FakeProgressBar, ui.progress_bar).is_attached = False
+        ui.tts_caption("Fade")
+        caption.is_attached = True
+        cast(FakeProgressBar, ui.progress_bar).is_attached = True
+        transition_callbacks = []
+        with mock.patch.object(ui, "_animate_opacity", side_effect=capture_transition):
+            ui._hide_caption_widgets()
+            ui.tts_idle()
+
+        assert caption.display
+        assert not progress_row.display
+        assert transition_callbacks[0] is not None
+        transition_callbacks[0]()
+        assert not caption.display
+        assert progress_row.display
+        ui._reset_playback_widgets()
+
+        ui.tts_caption("Wake me")
+        ui.safe_progress(1, 1)
+        assert not progress_row.display
+        ui._reset_playback_widgets()
+        assert not ui._caption_active
+        assert not caption.display
+        assert progress_row.display
+        assert cast(FakeProgressBar, ui.progress_bar).display
         assert cast(FakeProgressBar, ui.progress_bar).styles.opacity == 1.0
 
         attached_progress = FakeProgressBar()

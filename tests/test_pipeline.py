@@ -1605,6 +1605,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
         engine.text_queue = queue.Queue()
         engine.audio_queue = queue.Queue()
+        engine.caption_progress_callback = mock.Mock()
 
         class InjectingStream(FakeStream):
             """A fake injecting stream."""
@@ -1617,6 +1618,9 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 super().write(audio)
                 if not self.injected:
                     self.injected = True
+                    pipeline.register_playback_source(
+                        cast(Celune, engine), 2, kind="speech"
+                    )
                     pipeline.set_playback_source_status(
                         cast(Celune, engine), 2, "Speaking"
                     )
@@ -1650,6 +1654,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert "Speaking" in statuses
         speaking_index = statuses.index("Speaking")
         assert "Playing loop.wav" in statuses[speaking_index + 1 :]
+        engine.caption_progress_callback.assert_called_with(2400.0, 2400.0)
 
     async def test_playback_worker_ducks_sfx_to_quarter_and_restores_with_fades(
         self,
@@ -1805,6 +1810,47 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         engine.idle_callback.assert_called_once_with()
         assert not engine.locked
         assert stop_results == [True]
+
+    async def test_playback_error_releases_pipeline_after_sfx_output_failure(
+        self,
+    ) -> None:
+        """Verify an output failure cannot leave an SFX pipeline lease held."""
+        engine = make_pipeline_engine()
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+        assert pipeline.acquire_pipeline(cast(Celune, engine), "sfx")
+        pipeline.register_playback_source(cast(Celune, engine), 1, kind="sfx")
+        pipeline.queue_playback_chunk(
+            cast(Celune, engine),
+            1,
+            np.zeros((2400, 2), dtype=np.float32),
+            48000,
+        )
+        pipeline.queue_playback_done(cast(Celune, engine), 1)
+        engine.audio_queue.put(engine.sentinel)
+
+        class FailingStream(FakeStream):
+            """Raise when the playback worker writes the SFX block."""
+
+            def write(self, audio: npt.NDArray[np.float32]) -> bool:
+                del audio
+                raise RuntimeError("simulated SFX output failure")
+
+        with mock.patch(
+            "celune.pipeline.sd.OutputStream", return_value=FailingStream()
+        ):
+            await self._run_playback_worker(cast(Celune, engine))
+
+        assert not engine.locked
+        assert engine._pipeline_lock_owner is None
+        assert engine.playback_done.is_set()
 
     def test_finalize_playback_idle_resets_glow_audio_reactivity(self) -> None:
         """Verify normal playback completion restores the resting glow."""

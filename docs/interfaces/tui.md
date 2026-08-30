@@ -49,7 +49,11 @@ The TUI playback bar has a separate progress readout. During active audio
 playback it shows elapsed time as `MM:SS`; during loading and other determinate
 operations it shows a right-aligned percentage. When progress is indeterminate
 or unavailable, the readout is hidden and the bar expands into its space. The
-WebUI has no corresponding progress bar or percentage label.
+WebUI has no corresponding progress bar or percentage label. Captions are
+scoped to speech playback: they fade out when speech ends even if an SFX
+overlay continues. The caption and bar share one reserved line, so the bar is
+not restored until the caption transition completes; the normal bar/readout
+state is also restored immediately when wake begins.
 
 ## Value-aware selection menus
 

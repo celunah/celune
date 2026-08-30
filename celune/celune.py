@@ -3153,7 +3153,15 @@ class Celune(CeluneStateAccessors):
         levels = {"info": 0, "verbose": 1, "debug": 2}
         if levels.get(self.log_level, 0) < levels.get(loglevel, 0):
             return
-        self.log_callback(msg, severity)
+        if loglevel == "info":
+            self.log_callback(msg, severity)
+            return
+        try:
+            self.log_callback(msg, severity, loglevel=loglevel)
+        except TypeError as error:
+            if "loglevel" not in str(error):
+                raise
+            self.log_callback(msg, severity)
 
     def _buffer_startup_log(
         self,

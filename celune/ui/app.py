@@ -713,6 +713,7 @@ class CeluneUIInteractionState:
     caption_visible_words: int = 0
     caption_progress: float = 0.0
     caption_active: bool = False
+    caption_transitioning: bool = False
     caption_transition_token: int = 0
     caption_timers: list[Timer] = field(default_factory=list)
     sleep_timer: Optional[Timer] = None
@@ -1015,6 +1016,9 @@ class CeluneUI(App):
     )
     _caption_progress = _forward_ui_property("_interaction_state", "caption_progress")
     _caption_active = _forward_ui_property("_interaction_state", "caption_active")
+    _caption_transitioning = _forward_ui_property(
+        "_interaction_state", "caption_transitioning"
+    )
     _caption_transition_token = _forward_ui_property(
         "_interaction_state", "caption_transition_token"
     )
@@ -2589,6 +2593,8 @@ class CeluneUI(App):
     @work(exclusive=True)
     async def wake_from_sleep(self) -> None:
         """Wake the app after the user types into the sleeping UI."""
+        if self.cur_state != "exiting":
+            self._run_on_ui_thread(self._reset_playback_widgets)
         try:
             if (
                 await self.celune.wake_from_sleep_async()
@@ -3026,6 +3032,8 @@ class CeluneUI(App):
                 )
                 if self._caption_active:
                     self.progress_label.display = False
+            if not self._caption_active and not self._caption_transitioning:
+                self._restore_progress_bar()
 
         self._run_on_ui_thread(update)
 
@@ -3036,6 +3044,33 @@ class CeluneUI(App):
         progress_row = getattr(self.progress_bar, "parent", None)
         if progress_row is not None:
             progress_row.display = visible
+
+    def _restore_progress_bar(self, *, force: bool = False) -> None:
+        """Restore the progress row and bar after a transient caption state."""
+        if (
+            self.progress_bar is None
+            or self._caption_active
+            or (self._caption_transitioning and not force)
+        ):
+            return
+        self._set_progress_row_display(True)
+        self.progress_bar.display = True
+        self.progress_bar.styles.opacity = 1.0
+
+    def _reset_playback_widgets(self) -> None:
+        """Clear transient caption state and restore the normal playback bar."""
+        self._clear_caption_timers()
+        self._caption_transition_token += 1
+        self._caption_active = False
+        self._caption_transitioning = False
+        if self.caption is not None:
+            self.caption.display = False
+            self.caption.styles.height = 0
+            self.caption.styles.opacity = 0.0
+        if self.progress_label is not None:
+            self.progress_label.set_progress(None, None)
+        self._clear_caption_state()
+        self._restore_progress_bar(force=True)
 
     def safe_caption_progress(
         self, progress: Optional[float], total: Optional[float] = None
@@ -3049,6 +3084,7 @@ class CeluneUI(App):
                 return
             current = 0.0 if progress is None else progress
             fraction = max(0.0, min(1.0, current / total))
+            caption_finished = fraction >= 1.0
             self._caption_progress = fraction
             visible_sentence, visible_words = self._caption_words_for_progress(
                 self._caption_progress
@@ -3058,11 +3094,15 @@ class CeluneUI(App):
                 visible_words == self._caption_visible_words
                 and rendered_text == self._caption_rendered_text
             ):
+                if caption_finished:
+                    self._hide_caption_widgets()
                 return
             self._caption_visible_words = visible_words
             self._caption_rendered_text = rendered_text
             if self.caption is not None:
                 self.caption.update(rendered_text)
+            if caption_finished:
+                self._hide_caption_widgets()
 
         self._run_on_ui_thread(update_caption)
 
@@ -3113,6 +3153,17 @@ class CeluneUI(App):
             timer.stop()
         self._caption_timers.clear()
 
+    def _clear_caption_state(self) -> None:
+        """Clear caption content and its progress bookkeeping."""
+        self._caption_text = ""
+        self._caption_words = ()
+        self._caption_sentences = ()
+        self._caption_word_timings = ()
+        self._caption_audio_duration = 0.0
+        self._caption_rendered_text = ""
+        self._caption_visible_words = 0
+        self._caption_progress = 0.0
+
     def _show_caption_widgets(self) -> None:
         """Fade the caption in while fading the playback bar out."""
         if self.caption is None or self.progress_bar is None:
@@ -3150,36 +3201,29 @@ class CeluneUI(App):
                 self.call_from_thread(self._hide_caption_widgets)
             return
 
+        caption_active = self._caption_active
+        if not caption_active and self._caption_transitioning:
+            return
         self._clear_caption_timers()
         self._caption_transition_token += 1
+        self._caption_transitioning = True
         self._set_progress_row_display(False)
         if self.progress_label is not None:
             self.progress_label.set_progress(None, None)
-        caption_active = self._caption_active
         self._caption_active = False
         if self.caption is None or self.progress_bar is None:
             self._caption_active = False
-            self._caption_text = ""
-            self._caption_words = ()
-            self._caption_sentences = ()
-            self._caption_word_timings = ()
-            self._caption_audio_duration = 0.0
-            self._caption_rendered_text = ""
+            self._caption_transitioning = False
+            self._clear_caption_state()
             return
 
         if not caption_active:
             self.caption.display = False
             self.caption.styles.height = 0
             self.caption.styles.opacity = 0.0
-            self._set_progress_row_display(True)
-            self.progress_bar.display = True
-            self.progress_bar.styles.opacity = 1.0
-            self._caption_text = ""
-            self._caption_words = ()
-            self._caption_sentences = ()
-            self._caption_word_timings = ()
-            self._caption_audio_duration = 0.0
-            self._caption_rendered_text = ""
+            self._caption_transitioning = False
+            self._restore_progress_bar(force=True)
+            self._clear_caption_state()
             return
 
         token = self._caption_transition_token
@@ -3191,18 +3235,11 @@ class CeluneUI(App):
             self.caption.display = False
             self.caption.styles.height = 0
             self.caption.styles.opacity = 0.0
-            self._set_progress_row_display(True)
-            self.progress_bar.display = True
+            self._caption_transitioning = False
+            self._restore_progress_bar(force=True)
             self.progress_bar.styles.opacity = 0.0
             self._animate_opacity(self.progress_bar, 1.0, token=token)
-            self._caption_text = ""
-            self._caption_words = ()
-            self._caption_sentences = ()
-            self._caption_word_timings = ()
-            self._caption_audio_duration = 0.0
-            self._caption_rendered_text = ""
-            self._caption_visible_words = 0
-            self._caption_progress = 0.0
+            self._clear_caption_state()
 
         self._animate_opacity(
             self.caption,
@@ -3244,6 +3281,7 @@ class CeluneUI(App):
             self._caption_visible_words = 0
             self._caption_progress = 0.0
             self._caption_active = True
+            self._caption_transitioning = False
             if self.caption is not None:
                 self.caption.update("")
             self._show_caption_widgets()

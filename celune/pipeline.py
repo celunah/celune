@@ -1377,6 +1377,18 @@ def _clear_playback_source_status(engine: Celune, source_id: int) -> None:
     _playback_source_meta(engine).pop(source_id, None)
 
 
+def _notify_speech_playback_finished(engine: Celune, source_id: int) -> None:
+    """Complete caption progress when one speech source drains independently."""
+    source_meta = _playback_source_meta(engine).get(source_id)
+    if not isinstance(source_meta, dict) or source_meta.get("kind") != "speech":
+        return
+
+    caption_progress_callback = getattr(engine, "caption_progress_callback", None)
+    if callable(caption_progress_callback):
+        total_frames = max(1.0, float(source_meta.get("total_frames", 0.0)))
+        caption_progress_callback(total_frames, total_frames)
+
+
 def _queue_playback_chunk(
     engine: Celune,
     source_id: int,
@@ -4547,8 +4559,12 @@ async def playback_worker_job(engine: Celune) -> None:
         buffered_seconds = 0.0
         buffering_started_at = None
         publish_buffered_seconds()
+        for source_id in tuple(_playback_source_meta(engine)):
+            _notify_speech_playback_finished(engine, source_id)
         _playback_source_statuses(engine).clear()
         _playback_source_meta(engine).clear()
+        engine.playback_done.set()
+        release_pipeline(engine)
 
     async def force_stop_playback() -> None:
         nonlocal buffered_seconds, buffering_started_at, stop_cleanup_generation
@@ -4843,6 +4859,7 @@ async def playback_worker_job(engine: Celune) -> None:
                 for source_id in newly_complete:
                     marker = source_done.pop(source_id)
                     engine.recently_saved = marker.saved_path
+                    _notify_speech_playback_finished(engine, source_id)
                     _clear_playback_source_status(engine, source_id)
                     if marker.release_pipeline:
                         release_pipeline(
@@ -4887,6 +4904,7 @@ async def playback_worker_job(engine: Celune) -> None:
             for source_id in orphaned:
                 marker = source_done.pop(source_id)
                 engine.recently_saved = marker.saved_path
+                _notify_speech_playback_finished(engine, source_id)
                 _clear_playback_source_status(engine, source_id)
                 if marker.release_pipeline:
                     release_pipeline(
@@ -4927,6 +4945,8 @@ async def playback_worker_job(engine: Celune) -> None:
             and writer.pending_seconds <= 0.0
         ):
             await _run_in_daemon_thread(writer.wait_empty)
+            if (writer_error := writer.error) is not None:
+                await handle_playback_error(writer_error)
             await _run_in_daemon_thread(writer.stop)
             input_reader.stop()
             break
