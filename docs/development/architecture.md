@@ -60,9 +60,11 @@ status and diagnostic text stays in the loading screen or main log.
 2. The engine validates the current mode and component locks.
 3. Text is normalized/segmented and placed in the bounded text queue.
 4. The backend generates chunks, locally or through a CEDTS worker.
-5. The smart buffer decides when to start and how to protect playback.
+5. The smart buffer and contention monitor decide when to start and how much
+   output reserve to maintain.
 6. Audio is resampled/normalized, optionally pitch-shifted or reverberated.
-7. The audio worker writes to the sounddevice stream and emits lifecycle events.
+7. A persistent audio writer drains mixed blocks to the sounddevice stream and
+   emits lifecycle events without creating a thread per block.
 8. The final 48 kHz stereo FLAC is saved when requested.
 
 Cancellation travels through the same queue and worker boundary. It does not

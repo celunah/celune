@@ -85,8 +85,19 @@ guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
 
 Smart buffering starts playback after a minimum amount of audio, adapts the
 playback speed while generation catches up, and protects already-buffered audio
-from aggressive changes. Playback CPU protection is an engine-owned policy and
-is not user-configurable.
+from aggressive changes. Playback also uses a persistent output writer and an
+adaptive reserve. The reserve starts at 2 seconds and can grow to 30 seconds
+when Celune detects high system/process CPU usage, delayed scheduling, slow
+output writes, or a PortAudio underflow. The output stream requests high
+latency device buffering to add a second hardware-side reserve; this may add
+latency but prevents short CPU spikes from becoming audible gaps.
+
+Playback contention is an engine-owned policy and is not user-configurable.
+The `Celune.playback_buffer_seconds`, `Celune.playback_contention_level`, and
+`Celune.playback_underflows` properties expose live diagnostics for integrations
+and troubleshooting.
+Debug trace lines for queued playback include the current reserve seconds,
+contention level, and cumulative output-underflow count.
 
 Runtime speech controls are also exposed as `/speed`, `/reverb`, `/seed`, and
 Python properties on `Celune`. The command values are deliberately narrower

@@ -131,6 +131,9 @@ call a backend's generator directly from application code.
 | `play_audio(audio, sample_rate, label="uploaded SFX", keep=False) -> bool` | Queue decoded SFX data. |
 | `speed` | Get/set playback speed. |
 | `reverb.strength` | Get/set DSP reverb strength from 0 through 1. |
+| `playback_buffer_seconds` | Read the application-side seconds currently reserved for output. |
+| `playback_contention_level` | Read smoothed output contention from 0 through 1. |
+| `playback_underflows` | Read the cumulative PortAudio output-underflow count for this runtime. |
 | `vc_pitch_shift`, `vc_f0_condition` | Read/write VC controls. |
 
 Arrays passed to audio calls should be numeric mono/stereo data; Celune converts
