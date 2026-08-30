@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $outputDir = Join-Path $repoRoot "bin"
+$buildPython = "3.13"
 $archivePath = Join-Path $outputDir "Celune-win-x64.zip"
 $launcherDir = Join-Path $repoRoot "launcher"
 $manifestScript = Join-Path $repoRoot "scripts\write_update_manifest.py"
@@ -84,6 +85,8 @@ foreach ($stalePath in $staleBuildArtifacts) {
 
 $arguments = @(
     "run",
+    "--python",
+    $buildPython,
     "python",
     "-m",
     "nuitka",

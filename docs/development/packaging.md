@@ -15,6 +15,17 @@ powershell -ExecutionPolicy Bypass -File scripts\build_nuitka.ps1
 bash scripts/build_nuitka.sh
 ```
 
+## Python build target
+
+Celune source installations support Python 3.12 through 3.14. Compiled
+artifacts use Python 3.13 deliberately so v4 and v5 releases share one
+CPython ABI. Both build scripts pin the Nuitka invocation to Python 3.13.
+
+The compiled build remains a deployment build rather than a fully standalone
+bundle, so its `.venv` must use the matching Python 3.13 runtime. Python 3.14
+remains available for source development and source-based launches; a Python
+3.14 `.venv` cannot run the compiled 3.13 executable.
+
 Windows builds use Nuitka, Visual Studio C++ tools, the launcher C sources,
 the project icon/resource, and `scripts/write_update_manifest.py`. The Windows
 script refreshes `resources/vcruntime140.dll` from the configured Visual Studio
