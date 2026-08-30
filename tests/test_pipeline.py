@@ -73,28 +73,44 @@ class TestPipeline(CeluneTestCase):
 
         assert pipeline._pipeline_cpu_config(cast(Celune, engine)) == (
             True,
-            4.0,
-            1,
+            12.0,
+            4,
             0.001,
         )
 
         engine.config = {}
         assert pipeline._pipeline_cpu_config(cast(Celune, engine)) == (
             True,
-            4.0,
-            1,
+            12.0,
+            4,
             0.001,
         )
 
+    def test_playback_contention_grows_reserve_after_lag_and_underflow(self) -> None:
+        """Verify contention evidence expands the playback reserve target."""
+        engine = make_pipeline_engine()
+        monitor = pipeline._PlaybackContentionMonitor(cast(Celune, engine))
+
+        assert monitor.target_seconds() == 2.0
+        monitor.observe_scheduler_lag(0.2)
+        assert monitor.target_seconds() > 2.0
+
+        monitor.observe_write(0.05, 0.05, underflowed=True)
+        assert engine.playback_underflows == 1
+        assert engine.playback_contention_level == 1.0
+        assert monitor.target_seconds() == 30.0
+        assert monitor.capacity_seconds() == 30.0
+        assert monitor.requires_rebuffer()
+
     def test_pipeline_cpu_config_ignores_removed_user_configuration(self) -> None:
-        """Verify playback protection remains fixed regardless of engine config."""
+        """Verify playback protection remains bounded regardless of engine config."""
         engine = make_pipeline_engine()
         engine.config = {"pipeline_cpu": {"enabled": False}}
 
         assert pipeline._pipeline_cpu_config(cast(Celune, engine)) == (
             True,
-            4.0,
-            1,
+            12.0,
+            4,
             0.001,
         )
 
@@ -240,6 +256,25 @@ class TestPipeline(CeluneTestCase):
 
         assert not queued
         assert engine.audio_queue.empty()
+
+    def test_playback_queue_trace_includes_reserve_state(self) -> None:
+        """Verify playback queue traces expose current reserve diagnostics."""
+        engine = make_pipeline_engine()
+        engine.playback_buffer_seconds = 3.25
+        engine.playback_contention_level = 0.75
+        engine.playback_underflows = 2
+
+        assert pipeline._queue_playback_chunk(
+            cast(Celune, engine),
+            1,
+            np.zeros((8, 2), dtype=np.float32),
+            48000,
+        )
+
+        message = engine.messages[-1][0]
+        assert "reserve=3.25s" in message
+        assert "contention=0.75" in message
+        assert "underflows=2" in message
 
     def test_force_stop_queues_worker_stop_and_invalidates_old_sources(
         self,
@@ -1264,6 +1299,48 @@ class TestPipelineAsync(CeluneAsyncTestCase):
             await self._run_playback_worker(cast(Celune, engine))
 
         assert mock_stream.call_args.kwargs["device"] == "VB-Cable Output"
+        assert mock_stream.call_args.kwargs["latency"] == "high"
+
+    async def test_playback_worker_records_output_underflow(self) -> None:
+        """Verify PortAudio underflows raise the adaptive reserve target."""
+        engine = make_pipeline_engine()
+        engine.stream = None
+        engine._stream = None
+        engine._current_sr = None
+        engine.current_sr = None
+        engine.dev = False
+        engine.current_voice = "balanced"
+        engine.idle_callback = mock.Mock()
+        engine.glow = SimpleNamespace(schedule=mock.Mock())
+        engine.text_queue = queue.Queue()
+        engine.audio_queue = queue.Queue()
+        engine.sentinel = PipelineStates.TERMINATE
+        engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
+
+        class UnderflowStream(FakeStream):
+            """Output stream fake that reports one inserted underflow."""
+
+            def write(self, audio: npt.NDArray[np.float32]) -> bool:
+                super().write(audio)
+                return True
+
+        pipeline.queue_playback_chunk(
+            cast(Celune, engine),
+            1,
+            np.full((2400, 2), 0.2, dtype=np.float32),
+            48000,
+        )
+        pipeline.queue_playback_done(cast(Celune, engine), 1)
+        engine.audio_queue.put(engine.sentinel)
+
+        with mock.patch(
+            "celune.pipeline.sd.OutputStream",
+            return_value=UnderflowStream(),
+        ):
+            await self._run_playback_worker(cast(Celune, engine))
+
+        assert engine.playback_underflows == 1
+        assert engine.playback_contention_level == 1.0
 
     async def test_playback_worker_logs_friendly_output_device_match_warnings(
         self,
@@ -1425,7 +1502,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 super().__init__()
                 self.injected = False
 
-            def write(self, audio: npt.NDArray[np.float32]) -> None:
+            def write(self, audio: npt.NDArray[np.float32]) -> bool:
                 super().write(audio)
                 if not self.injected:
                     self.injected = True
@@ -1441,6 +1518,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                         release_pipeline_when_finished=True,
                     )
                     engine.audio_queue.put(engine.sentinel)
+                return False
 
         fake_stream = InjectingStream()
         pipeline.queue_playback_chunk(
@@ -1483,7 +1561,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 super().__init__()
                 self.injected = False
 
-            def write(self, audio: npt.NDArray[np.float32]) -> None:
+            def write(self, audio: npt.NDArray[np.float32]) -> bool:
                 super().write(audio)
                 if not self.injected:
                     self.injected = True
@@ -1502,6 +1580,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                         release_pipeline_when_finished=True,
                     )
                     engine.audio_queue.put(engine.sentinel)
+                return False
 
         fake_stream = InjectingStream()
         assert pipeline.queue_sfx_audio(
@@ -1544,7 +1623,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 super().__init__()
                 self.injected = False
 
-            def write(self, audio: npt.NDArray[np.float32]) -> None:
+            def write(self, audio: npt.NDArray[np.float32]) -> bool:
                 super().write(audio)
                 if not self.injected:
                     self.injected = True
@@ -1567,6 +1646,7 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                         release_pipeline_when_finished=True,
                     )
                     engine.audio_queue.put(engine.sentinel)
+                return False
 
         fake_stream = InjectingStream()
         assert pipeline.queue_sfx_audio(
@@ -1646,12 +1726,13 @@ class TestPipelineAsync(CeluneAsyncTestCase):
                 super().__init__()
                 self.stop_requested = False
 
-            def write(self, audio: npt.NDArray[np.float32]) -> None:
+            def write(self, audio: npt.NDArray[np.float32]) -> bool:
                 super().write(audio)
                 if not self.stop_requested:
                     self.stop_requested = True
                     self.assert_stop()
                     engine.audio_queue.put(engine.sentinel)
+                return False
 
             def assert_stop(self) -> None:
                 """Request the same stop that the UI command uses."""

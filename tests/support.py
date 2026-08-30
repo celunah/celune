@@ -450,13 +450,17 @@ class FakeStream:
         """Record stream closure."""
         self.closed = True
 
-    def write(self, audio: npt.NDArray[np.float32]) -> None:
+    def write(self, audio: npt.NDArray[np.float32]) -> bool:
         """Record one written audio chunk.
 
         Args:
             audio: The audio chunk written by the caller.
+
+        Returns:
+            bool: ``False`` because the fake stream never underflows.
         """
         self.written.append(audio)
+        return False
 
 
 def make_pipeline_engine() -> SimpleNamespace:
@@ -501,6 +505,9 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine._audio_unavailable = False
     engine.smart_buffer_generation_speed = None
     engine.smart_buffer_target_seconds = 0.0
+    engine.playback_buffer_seconds = 0.0
+    engine.playback_contention_level = 0.0
+    engine.playback_underflows = 0
     engine.total_generated_speech_seconds = 0.0
     engine.historical_generated_speech_seconds = 0.0
     engine.text_queue = queue.Queue()
