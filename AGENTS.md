@@ -81,7 +81,7 @@ If for any reason any `uv` command exits with `Access is denied.` or `Permission
 
 Do not modify the execution environment to work around failures.
 
-To satisfy CI, prefer solutions that work on both Linux and Windows. When platform-specific code cannot be avoided, make sure CI only checks or runs it on the supported platform.
+To satisfy CI, prefer solutions that work on both Linux and Windows. When platform-specific code cannot be avoided, guard it at runtime and make the guard static-analysis-safe: do not directly reference APIs that are absent from another supported platform's type surface. Use guarded attribute lookup with an appropriate cast, or an equivalent portable abstraction, so CI can analyze the module on every supported platform.
 
 Before CI, format the repository with `uv run ruff format .`.
 
