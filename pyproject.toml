@@ -56,7 +56,7 @@ dependencies = [
     # Used to detect language of input.
     "lingua-language-detector>=2.2.0,<3.0.0",
     "iso639-lang>=2.0.0,<3.0.0",
-    "yt-dlp",
+    "yt-dlp[default]>=2026.08.19",
 ]
 
 [project.urls]

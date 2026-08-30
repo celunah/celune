@@ -43,6 +43,44 @@ API, T2S, GPT-SoVITS, and Persona. ENTER writes the edited values to the active
 then requests a silent launcher-managed restart; the terminal title changes to
 `Restarting`. ESC leaves the file unchanged.
 
+## YouTube downloads
+
+Celune uses `yt-dlp` for YouTube URLs supplied to audio playback and upgrades
+it with the default EJS support group. YouTube extraction may also need a
+supported JavaScript runtime; configure its executable when it is not on
+`PATH`. These values are passed to the downloader only for YouTube playback.
+
+```yaml
+youtube:
+  cookies_file: null
+  cookies_from_browser: null
+  po_token: null
+  player_client: null
+  js_runtimes: null
+  remote_components: null
+  extractor_args: []
+```
+
+| Key | Values | Purpose |
+| --- | --- | --- |
+| `youtube.cookies_file` | Path or `null` | Netscape-format cookies file. |
+| `youtube.cookies_from_browser` | Browser selector or `null` | Read cookies from a local browser, for example `chrome` or `edge`. |
+| `youtube.po_token` | Token spec or list | Passes one or more `yt-dlp` PO-token specs, such as `web.gvs+TOKEN`. |
+| `youtube.player_client` | Client name or list | Selects YouTube clients such as `web_embedded`. |
+| `youtube.js_runtimes` | Runtime spec or list | Enables runtimes such as `deno` or `node:C:/path/node.exe`. |
+| `youtube.remote_components` | Component or list | Allows components such as `ejs:npm` when supported by the runtime. |
+| `youtube.extractor_args` | List of `IE_KEY:ARGS` values | Supplies advanced `yt-dlp` extractor arguments. |
+
+Use either `cookies_file` or `cookies_from_browser`; when both are present,
+Celune uses `cookies_file`. Keep cookie files and PO tokens private. Browser
+cookies can expire or rotate, and using an account with `yt-dlp` may trigger
+provider security checks. PO tokens are client- and session-specific, so
+refresh them when YouTube rejects an otherwise valid media URL.
+
+For current runtime and token requirements, see the upstream [`yt-dlp` EJS
+guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS) and [PO-token
+guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
+
 ## Speech buffering and playback
 
 Smart buffering starts playback after a minimum amount of audio, adapts the

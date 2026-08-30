@@ -817,6 +817,65 @@ class TestPipelineAsync(CeluneAsyncTestCase):
         assert command[0] == expected_python
         assert command[1:3] == ["-m", "yt_dlp"]
 
+    def test_download_youtube_sfx_passes_optional_authentication_settings(self) -> None:
+        """Verify optional YouTube cookies, tokens, and runtime settings reach yt-dlp."""
+        engine = make_pipeline_engine()
+        engine.config = {
+            "youtube": {
+                "cookies_file": "C:/private/youtube-cookies.txt",
+                "cookies_from_browser": "chrome",
+                "po_token": ["web.gvs+gvs-token", "web.player+player-token"],
+                "player_client": ["web_embedded", "android_vr"],
+                "js_runtimes": "node:C:/Program Files/nodejs/node.exe",
+                "remote_components": ["ejs:npm"],
+                "extractor_args": ["youtube:player_skip=webpage"],
+            }
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            expected = temp_root / "temp" / "temporary_audio.wav"
+
+            def fake_run(*args, **kwargs):
+                discard(args)
+                discard(kwargs)
+                expected.write_bytes(b"RIFFdemoWAVE")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with (
+                mock.patch(
+                    "celune.pipeline.temp_data_dir", return_value=temp_root / "temp"
+                ),
+                mock.patch(
+                    "celune.pipeline.importlib_util.find_spec",
+                    return_value=ModuleSpec("yt_dlp", loader=None),
+                ),
+                mock.patch(
+                    "celune.pipeline._youtube_sfx_title",
+                    return_value="Fixture Video Title",
+                ),
+                mock.patch(
+                    "celune.pipeline.subprocess.run", side_effect=fake_run
+                ) as run,
+            ):
+                resolved = pipeline.download_youtube_sfx(
+                    cast(Celune, engine),
+                    "https://youtu.be/demo",
+                )
+
+        assert resolved == (expected, "Fixture Video Title")
+        command = run.call_args.args[0]
+        assert (
+            command[command.index("--cookies") + 1] == "C:/private/youtube-cookies.txt"
+        )
+        assert "--cookies-from-browser" not in command
+        assert command[command.index("--js-runtimes") + 1] == (
+            "node:C:/Program Files/nodejs/node.exe"
+        )
+        assert command[command.index("--remote-components") + 1] == "ejs:npm"
+        assert "youtube:po_token=web.gvs+gvs-token,web.player+player-token" in command
+        assert "youtube:player_client=web_embedded,android_vr" in command
+        assert "youtube:player_skip=webpage" in command
+
     def test_download_youtube_sfx_logs_missing_file_state(self) -> None:
         """Verify missing yt-dlp output uses the current no-file warning messages."""
         engine = make_pipeline_engine()

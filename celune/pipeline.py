@@ -1370,6 +1370,7 @@ def _download_youtube_sfx(
         "--no-playlist",
         "--no-progress",
         "--force-overwrites",
+        *_youtube_download_options(engine),
         "--output",
         out_tmpl,
         url,
@@ -1427,7 +1428,11 @@ def _config_text(engine: Celune, key: str, default: str) -> str:
 
 def _config_lines(engine: Celune, key: str) -> tuple[str, ...]:
     """Read a text or text-list configuration value as non-empty lines."""
-    value = engine.config.get(key)
+    return _config_value_lines(engine.config.get(key))
+
+
+def _config_value_lines(value: JSONSerializable) -> tuple[str, ...]:
+    """Normalize one scalar or list configuration value into text lines."""
     if isinstance(value, str):
         stripped = value.strip()
         return (stripped,) if stripped else ()
@@ -1437,6 +1442,42 @@ def _config_lines(engine: Celune, key: str) -> tuple[str, ...]:
         ]
         return tuple(lines)
     return ()
+
+
+def _youtube_download_options(engine: Celune) -> list[str]:
+    """Build optional yt-dlp arguments from the nested YouTube configuration."""
+    value = engine.config.get("youtube")
+    if not isinstance(value, dict):
+        return []
+
+    options: list[str] = []
+    cookies_file = _config_value_lines(value.get("cookies_file"))
+    cookies_from_browser = _config_value_lines(value.get("cookies_from_browser"))
+    if cookies_file:
+        options.extend(("--cookies", cookies_file[0]))
+    elif cookies_from_browser:
+        options.extend(("--cookies-from-browser", cookies_from_browser[0]))
+
+    for key, option in (
+        ("js_runtimes", "--js-runtimes"),
+        ("remote_components", "--remote-components"),
+    ):
+        for configured_value in _config_value_lines(value.get(key)):
+            options.extend((option, configured_value))
+
+    po_tokens = _config_value_lines(value.get("po_token"))
+    if po_tokens:
+        options.extend(("--extractor-args", f"youtube:po_token={','.join(po_tokens)}"))
+
+    player_clients = _config_value_lines(value.get("player_client"))
+    if player_clients:
+        options.extend(
+            ("--extractor-args", f"youtube:player_client={','.join(player_clients)}")
+        )
+
+    for extractor_arg in _config_value_lines(value.get("extractor_args")):
+        options.extend(("--extractor-args", extractor_arg))
+    return options
 
 
 def _config_float(
