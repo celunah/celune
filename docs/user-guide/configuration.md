@@ -92,12 +92,26 @@ output writes, or a PortAudio underflow. The output stream requests high
 latency device buffering to add a second hardware-side reserve; this may add
 latency but prevents short CPU spikes from becoming audible gaps.
 
-Playback contention is an engine-owned policy and is not user-configurable.
+Playback contention is an engine-owned policy and is not user-configurable. A
+persistent queue reader and output writer keep queue waits and stream writes
+off the mixer polling path; the mixer yields briefly between blocks so the
+writer can continue draining during CPU spikes. Debug timing traces are
+sampled at a low rate instead of being written for every block.
+
 The `Celune.playback_buffer_seconds`, `Celune.playback_contention_level`, and
 `Celune.playback_underflows` properties expose live diagnostics for integrations
-and troubleshooting.
-Debug trace lines for queued playback include the current reserve seconds,
-contention level, and cumulative output-underflow count.
+and troubleshooting. Stage timing properties identify where contention is being
+felt: `playback_queue_wait_seconds` measures producer backpressure,
+`playback_generation_gap_seconds` measures per-source chunk gaps,
+`playback_writer_wait_seconds` measures application-side writer delay,
+`playback_writer_gap_seconds` measures gaps between output writes,
+`playback_writer_write_seconds` measures the stream call, and
+`playback_rebuffer_wait_seconds` measures cumulative reserve-gate waiting.
+Debug traces include these values as `queue_wait`, `generation_gap`,
+`rebuffer_wait`, `writer_wait`, `writer_gap`, and `writer_write` fields. A large
+queue or generation gap points upstream; a large writer wait or writer gap
+points to thread scheduling; a large writer-write value points to the audio
+device or driver.
 
 Runtime speech controls are also exposed as `/speed`, `/reverb`, `/seed`, and
 Python properties on `Celune`. The command values are deliberately narrower

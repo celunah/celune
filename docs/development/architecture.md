@@ -63,8 +63,13 @@ status and diagnostic text stays in the loading screen or main log.
 5. The smart buffer and contention monitor decide when to start and how much
    output reserve to maintain.
 6. Audio is resampled/normalized, optionally pitch-shifted or reverberated.
-7. A persistent audio writer drains mixed blocks to the sounddevice stream and
-   emits lifecycle events without creating a thread per block.
+7. A persistent playback input reader feeds the mixer, and a persistent audio
+   writer drains mixed blocks to the sounddevice stream. The mixer yields
+   briefly after each submitted block so the writer can keep its reserve moving
+   during CPU contention. Playback traces are sampled rather than written for
+   every block, separating bounded-queue backpressure, per-source generation
+   gaps, writer scheduling gaps, stream-write duration, and adaptive rebuffer
+   waiting without adding file I/O to the audio clock.
 8. The final 48 kHz stereo FLAC is saved when requested.
 
 Cancellation travels through the same queue and worker boundary. It does not
