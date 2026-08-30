@@ -130,6 +130,8 @@ class CelunePipelineState:
     playback_source_meta: dict[int, dict[str, Union[str, float]]] = field(
         default_factory=dict
     )
+    playback_chunk_last_queued_at: dict[int, float] = field(default_factory=dict)
+    playback_trace_last_logged_at: float = 0.0
     playback_progress_last_emit_at: float = 0.0
     playback_progress_last_source_id: int = 0
     model_ready: threading.Event = field(default_factory=threading.Event)
@@ -158,6 +160,12 @@ class CeluneAudioState:
     playback_buffer_seconds: float = 0.0
     playback_contention_level: float = 0.0
     playback_underflows: int = 0
+    playback_queue_wait_seconds: float = 0.0
+    playback_generation_gap_seconds: float = 0.0
+    playback_writer_wait_seconds: float = 0.0
+    playback_writer_gap_seconds: float = 0.0
+    playback_writer_write_seconds: float = 0.0
+    playback_rebuffer_wait_seconds: float = 0.0
     total_generated_speech_seconds: float = 0.0
     historical_generated_speech_seconds: float = 0.0
     reverb: StreamingPedalboardReverb = field(default_factory=StreamingPedalboardReverb)
@@ -344,6 +352,16 @@ CELUNE_FORWARDED_PROPERTIES = (
         "_playback_source_meta", "_pipeline_state", "playback_source_meta"
     ),
     ForwardedPropertySpec(
+        "_playback_chunk_last_queued_at",
+        "_pipeline_state",
+        "playback_chunk_last_queued_at",
+    ),
+    ForwardedPropertySpec(
+        "_playback_trace_last_logged_at",
+        "_pipeline_state",
+        "playback_trace_last_logged_at",
+    ),
+    ForwardedPropertySpec(
         "_playback_progress_last_emit_at",
         "_pipeline_state",
         "playback_progress_last_emit_at",
@@ -403,6 +421,36 @@ CELUNE_FORWARDED_PROPERTIES = (
         "playback_underflows",
         "_audio_state",
         "playback_underflows",
+    ),
+    ForwardedPropertySpec(
+        "playback_queue_wait_seconds",
+        "_audio_state",
+        "playback_queue_wait_seconds",
+    ),
+    ForwardedPropertySpec(
+        "playback_generation_gap_seconds",
+        "_audio_state",
+        "playback_generation_gap_seconds",
+    ),
+    ForwardedPropertySpec(
+        "playback_writer_wait_seconds",
+        "_audio_state",
+        "playback_writer_wait_seconds",
+    ),
+    ForwardedPropertySpec(
+        "playback_writer_gap_seconds",
+        "_audio_state",
+        "playback_writer_gap_seconds",
+    ),
+    ForwardedPropertySpec(
+        "playback_writer_write_seconds",
+        "_audio_state",
+        "playback_writer_write_seconds",
+    ),
+    ForwardedPropertySpec(
+        "playback_rebuffer_wait_seconds",
+        "_audio_state",
+        "playback_rebuffer_wait_seconds",
     ),
     ForwardedPropertySpec(
         "total_generated_speech_seconds",

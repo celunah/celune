@@ -193,6 +193,7 @@ class _PlaybackWriteItem:
     audio: AudioChunk
     source_ids: tuple[int, ...]
     duration_seconds: float
+    submitted_at: float
 
 
 class _PlaybackContentionMonitor:
@@ -355,6 +356,7 @@ class _PlaybackWriter:
         self._pending_seconds = 0.0
         self._pending_sources: dict[int, int] = {}
         self._error: Optional[BaseException] = None
+        self._last_write_finished_at: Optional[float] = None
 
     def start(self) -> None:
         """Start the persistent writer when it is not already running."""
@@ -405,6 +407,13 @@ class _PlaybackWriter:
                 return
 
             started_at = time.monotonic()
+            writer_wait = max(0.0, started_at - item.submitted_at)
+            if self._last_write_finished_at is None:
+                writer_gap = 0.0
+            else:
+                writer_gap = max(0.0, started_at - self._last_write_finished_at)
+            self._engine.playback_writer_wait_seconds = writer_wait
+            self._engine.playback_writer_gap_seconds = writer_gap
             underflowed = False
             failed: Optional[BaseException] = None
             try:
@@ -414,12 +423,18 @@ class _PlaybackWriter:
                 with self._lock:
                     self._error = error
             finally:
+                finished_at = time.monotonic()
                 self._decrement_pending(item)
                 self._monitor.observe_write(
-                    time.monotonic() - started_at,
+                    finished_at - started_at,
                     item.duration_seconds,
                     underflowed,
                 )
+                self._engine.playback_writer_write_seconds = max(
+                    0.0,
+                    finished_at - started_at,
+                )
+                self._last_write_finished_at = finished_at
                 self._queue.task_done()
 
             if failed is not None:
@@ -428,6 +443,7 @@ class _PlaybackWriter:
 
     def submit(self, audio: AudioChunk, source_ids: tuple[int, ...]) -> None:
         """Queue one mixed block and account for its playback reserve."""
+        submitted_at = time.monotonic()
         with self._lock:
             if self._error is not None:
                 raise self._error
@@ -442,6 +458,7 @@ class _PlaybackWriter:
                 audio=np.asarray(audio, dtype=np.float32),
                 source_ids=source_ids,
                 duration_seconds=duration_seconds,
+                submitted_at=submitted_at,
             )
         )
 
@@ -479,6 +496,116 @@ class _PlaybackWriter:
         """Return the first asynchronous output error, if any."""
         with self._lock:
             return self._error
+
+
+class _PlaybackInputReader:
+    """Move playback queue waits onto one persistent daemon thread."""
+
+    def __init__(self, engine: Celune) -> None:
+        self._engine = engine
+        source_maxsize = getattr(engine.audio_queue, "maxsize", 0)
+        self._queue: queue.Queue[object] = queue.Queue(
+            maxsize=source_maxsize if source_maxsize > 0 else 8
+        )
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._event: Optional[asyncio.Event] = None
+
+    def start(self) -> None:
+        """Start the one queue reader used for the lifetime of playback."""
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._loop = asyncio.get_running_loop()
+        self._event = asyncio.Event()
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="CelunePlaybackInput",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _notify(self) -> None:
+        """Wake the playback coroutine after a queue item is forwarded."""
+        event = self._event
+        if event is not None:
+            event.set()
+
+    def _run(self) -> None:
+        """Forward source items without creating a thread per polling cycle."""
+        while not self._stop.is_set():
+            try:
+                item = self._engine.audio_queue.get(True, 0.1)
+            except queue.Empty:
+                continue
+
+            while not self._stop.is_set():
+                try:
+                    self._queue.put(item, True, 0.1)
+                    break
+                except queue.Full:
+                    continue
+            else:
+                return
+
+            loop = self._loop
+            if loop is not None:
+                with contextlib.suppress(RuntimeError):
+                    loop.call_soon_threadsafe(self._notify)
+
+            if item is self._engine.sentinel:
+                return
+
+    async def get(self) -> object:
+        """Wait for one forwarded item without blocking the event loop."""
+        event = self._event
+        if event is None:
+            raise RuntimeError("playback input reader has not started")
+
+        while True:
+            try:
+                return self._queue.get_nowait()
+            except queue.Empty:
+                event.clear()
+                try:
+                    return self._queue.get_nowait()
+                except queue.Empty:
+                    await event.wait()
+
+    def get_nowait(self) -> object:
+        """Remove one already-forwarded item for priority-aware draining."""
+        return self._queue.get_nowait()
+
+    @property
+    def queue(self) -> queue.Queue[object]:
+        """Return the forwarded queue for priority-aware playback draining."""
+        return self._queue
+
+    def empty(self) -> bool:
+        """Return whether the forwarded playback queue has no pending item."""
+        return self._queue.empty()
+
+    def qsize(self) -> int:
+        """Return the number of items waiting in the forwarded queue."""
+        return self._queue.qsize()
+
+    def clear(self) -> None:
+        """Discard forwarded items after a generation force-stop."""
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                return
+
+    def stop(self) -> None:
+        """Stop the persistent input reader and release its thread."""
+        self._stop.set()
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=1.0)
+        if thread is None or not thread.is_alive():
+            self._thread = None
 
 
 _FLAC_MAGIC = b"fLaC"
@@ -574,6 +701,7 @@ _PLAYBACK_CONTENTION_LAG_START_SECONDS = 0.015
 _PLAYBACK_CONTENTION_LAG_CRITICAL_SECONDS = 0.1
 _PLAYBACK_CONTENTION_STABLE_DECAY = 0.96
 _PLAYBACK_CONTENTION_REBUFFER_LEVEL = 0.5
+_PLAYBACK_TRACE_INTERVAL_SECONDS = 0.5
 _PIPELINE_CPU_MAX_BUFFER_SECONDS = _PLAYBACK_BUFFER_MAX_SECONDS
 _PIPELINE_CPU_MAX_DRAIN_ITEMS = 4
 _PIPELINE_CPU_YIELD_SECONDS = 0.001
@@ -1280,6 +1408,7 @@ def _queue_playback_chunk(
                 len(audio)
             )
 
+    queue_wait_started_at = _monotonic_time()
     engine.audio_queue.put(
         PlaybackChunk(
             source_id=source_id,
@@ -1289,34 +1418,42 @@ def _queue_playback_chunk(
             generation=expected_generation,
         )
     )
-    engine.log(
-        "[QUEUE] playback chunk "
-        f"source={source_id} samples={len(audio)} sample_rate={sample_rate} "
-        f"generation={expected_generation} audio_queue={engine.audio_queue.qsize()} "
-        f"reserve={float(getattr(engine, 'playback_buffer_seconds', 0.0)):.2f}s "
-        f"contention={float(getattr(engine, 'playback_contention_level', 0.0)):.2f} "
-        f"underflows={int(getattr(engine, 'playback_underflows', 0))}",
-        loglevel="debug",
-    )
+    enqueued_at = _monotonic_time()
+    queue_wait_seconds = max(0.0, enqueued_at - queue_wait_started_at)
+    with engine.queue_lock:
+        last_queued_by_source = engine._playback_chunk_last_queued_at
+        last_queued_at = last_queued_by_source.get(source_id)
+        if last_queued_at is None:
+            generation_gap_seconds = 0.0
+        else:
+            generation_gap_seconds = max(0.0, enqueued_at - last_queued_at)
+        last_queued_by_source[source_id] = enqueued_at
+        engine.playback_queue_wait_seconds = queue_wait_seconds
+        engine.playback_generation_gap_seconds = generation_gap_seconds
+    _playback_trace(engine, enqueued_at)
     return True
 
 
 def _dequeue_playback_item(
     engine: Celune,
     prioritize_speech: bool = False,
+    audio_queue: Optional[queue.Queue[object]] = None,
 ) -> Union[PlaybackChunk, PlaybackSourceDone, PipelineStates]:
     """Remove one playback item, prioritizing speech overlays when requested."""
-    audio_queue = engine.audio_queue
+    playback_queue = engine.audio_queue if audio_queue is None else audio_queue
     if not prioritize_speech:
-        return audio_queue.get_nowait()
+        return cast(
+            Union[PlaybackChunk, PlaybackSourceDone, PipelineStates],
+            playback_queue.get_nowait(),
+        )
 
-    with audio_queue.mutex:
-        if not audio_queue.queue:
+    with playback_queue.mutex:
+        if not playback_queue.queue:
             raise queue.Empty
 
         speech_chunk_index: Optional[int] = None
         speech_done_index: Optional[int] = None
-        for index, pending in enumerate(audio_queue.queue):
+        for index, pending in enumerate(playback_queue.queue):
             if isinstance(pending, PlaybackChunk):
                 source_meta = _playback_source_meta(engine).get(pending.source_id)
                 if (
@@ -1341,11 +1478,34 @@ def _dequeue_playback_item(
             if speech_done_index is not None
             else 0
         )
-        audio_queue.queue.rotate(-selected_index)
-        pending = audio_queue.queue.popleft()
-        audio_queue.queue.rotate(selected_index)
-        audio_queue.not_full.notify()
+        playback_queue.queue.rotate(-selected_index)
+        pending = playback_queue.queue.popleft()
+        playback_queue.queue.rotate(selected_index)
+        playback_queue.not_full.notify()
         return pending
+
+
+def _playback_trace(engine: Celune, now: Optional[float] = None) -> None:
+    """Emit the consolidated playback timing trace at a safe low frequency."""
+    timestamp = _monotonic_time() if now is None else now
+    last_trace_at = float(getattr(engine, "_playback_trace_last_logged_at", 0.0))
+    if timestamp - last_trace_at < _PLAYBACK_TRACE_INTERVAL_SECONDS:
+        return
+
+    engine._playback_trace_last_logged_at = timestamp
+    engine.log(
+        "[PLAY] playback timing "
+        f"reserve={float(getattr(engine, 'playback_buffer_seconds', 0.0)):.2f}s "
+        f"contention={float(getattr(engine, 'playback_contention_level', 0.0)):.2f} "
+        f"underflows={int(getattr(engine, 'playback_underflows', 0))} "
+        f"queue_wait={float(getattr(engine, 'playback_queue_wait_seconds', 0.0)):.3f}s "
+        f"generation_gap={float(getattr(engine, 'playback_generation_gap_seconds', 0.0)):.3f}s "
+        f"writer_wait={float(getattr(engine, 'playback_writer_wait_seconds', 0.0)):.3f}s "
+        f"writer_gap={float(getattr(engine, 'playback_writer_gap_seconds', 0.0)):.3f}s "
+        f"writer_write={float(getattr(engine, 'playback_writer_write_seconds', 0.0)):.3f}s "
+        f"rebuffer_wait={float(getattr(engine, 'playback_rebuffer_wait_seconds', 0.0)):.3f}s",
+        loglevel="debug",
+    )
 
 
 def _update_playback_progress(
@@ -1496,6 +1656,10 @@ def _queue_playback_done(
             generation=expected_generation,
         )
     )
+    with engine.queue_lock:
+        last_queued_at = getattr(engine, "_playback_chunk_last_queued_at", None)
+        if isinstance(last_queued_at, dict):
+            last_queued_at.pop(source_id, None)
     engine.log(
         "[QUEUE] playback done "
         f"source={source_id} generation={expected_generation} "
@@ -4327,8 +4491,15 @@ async def playback_worker_job(engine: Celune) -> None:
     buffered_seconds = 0.0
     contention = _PlaybackContentionMonitor(engine)
     writer = _PlaybackWriter(engine, contention)
+    input_reader = _PlaybackInputReader(engine)
+    input_reader.start()
     last_monitor_at = _monotonic_time()
     buffering_started_at: Optional[float] = None
+    rebuffer_wait_started_at: Optional[float] = None
+
+    def playback_queue_empty() -> bool:
+        """Return whether both stages of the playback input queue are empty."""
+        return engine.audio_queue.empty() and input_reader.empty()
 
     def publish_buffered_seconds() -> None:
         """Publish the complete application-side output reserve."""
@@ -4337,9 +4508,22 @@ async def playback_worker_job(engine: Celune) -> None:
             buffered_seconds + writer.pending_seconds,
         )
 
+    def finish_rebuffer_wait(now: Optional[float] = None) -> None:
+        """Record the active reserve-gate wait, if one is in progress."""
+        nonlocal rebuffer_wait_started_at
+        if rebuffer_wait_started_at is None:
+            return
+        finished_at = _monotonic_time() if now is None else now
+        engine.playback_rebuffer_wait_seconds += max(
+            0.0,
+            finished_at - rebuffer_wait_started_at,
+        )
+        rebuffer_wait_started_at = None
+
     async def handle_playback_error(error: BaseException) -> None:
         """Report an output failure and clear the playback pipeline."""
         nonlocal buffered_seconds, buffering_started_at
+        finish_rebuffer_wait()
         engine.log(
             format_error_message(
                 "[PLAY ERROR]",
@@ -4355,6 +4539,7 @@ async def playback_worker_job(engine: Celune) -> None:
         engine._current_sr = None
         source_buffers.clear()
         source_done.clear()
+        input_reader.clear()
         buffered_seconds = 0.0
         buffering_started_at = None
         publish_buffered_seconds()
@@ -4363,6 +4548,7 @@ async def playback_worker_job(engine: Celune) -> None:
 
     async def force_stop_playback() -> None:
         nonlocal buffered_seconds, buffering_started_at, stop_cleanup_generation
+        finish_rebuffer_wait()
         current_generation = getattr(engine, "_playback_generation", 0)
         if stop_cleanup_generation == current_generation:
             return
@@ -4409,7 +4595,11 @@ async def playback_worker_job(engine: Celune) -> None:
             ):
                 break
             try:
-                pending = _dequeue_playback_item(engine, prioritize_speech=True)
+                pending = _dequeue_playback_item(
+                    engine,
+                    prioritize_speech=True,
+                    audio_queue=input_reader.queue,
+                )
             except queue.Empty:
                 break
 
@@ -4441,18 +4631,21 @@ async def playback_worker_job(engine: Celune) -> None:
 
             publish_buffered_seconds()
 
-        if yield_seconds > 0.0 and not engine.audio_queue.empty():
+        if yield_seconds > 0.0 and not input_reader.empty():
             await asyncio.sleep(yield_seconds)
         return True
 
     while True:
         if engine.exit_requested:
+            finish_rebuffer_wait()
             with engine.queue_lock:
                 clear_queue(engine.audio_queue)
+            input_reader.clear()
 
             await _run_in_daemon_thread(lambda: writer.stop(clear=True))
             await _run_in_daemon_thread(lambda: close_stream(engine, True))
             publish_buffered_seconds()
+            input_reader.stop()
             release_pipeline(engine)
             if engine.cur_state not in {"error", "stopped"} and not getattr(
                 engine, "test_finished", False
@@ -4467,11 +4660,12 @@ async def playback_worker_job(engine: Celune) -> None:
                 else None
             )
             if timeout is None:
-                item = await _run_in_daemon_thread(engine.audio_queue.get)
+                item = await input_reader.get()
             else:
-                item = await _run_in_daemon_thread(
-                    lambda timeout=timeout: engine.audio_queue.get(True, timeout)
-                )
+                try:
+                    item = await asyncio.wait_for(input_reader.get(), timeout)
+                except TimeoutError:
+                    raise queue.Empty from None
         except queue.Empty:
             item = None
 
@@ -4518,14 +4712,19 @@ async def playback_worker_job(engine: Celune) -> None:
                 break
 
             contention.sample_cpu(_monotonic_time())
+            now = _monotonic_time()
             if (
                 not source_done
                 and contention.requires_rebuffer()
                 and buffered_seconds + writer.pending_seconds
                 < contention.target_seconds()
             ):
+                if rebuffer_wait_started_at is None:
+                    rebuffer_wait_started_at = now
                 await asyncio.sleep(0.01)
                 continue
+
+            finish_rebuffer_wait(now)
 
             if (
                 buffered_seconds + writer.pending_seconds < contention.target_seconds()
@@ -4545,6 +4744,7 @@ async def playback_worker_job(engine: Celune) -> None:
                 source_buffers.clear()
                 source_done.clear()
                 buffered_seconds = 0.0
+                finish_rebuffer_wait()
                 _playback_source_statuses(engine).clear()
                 _playback_source_meta(engine).clear()
                 release_pipeline(engine)
@@ -4620,6 +4820,8 @@ async def playback_worker_job(engine: Celune) -> None:
                 engine.glow.schedule(mixed)
                 writer.submit(mixed, tuple(ready_ids))
                 _update_playback_progress(engine, source_buffers)
+                if yield_seconds > 0.0:
+                    await asyncio.sleep(yield_seconds)
             except Exception as e:
                 await handle_playback_error(e)
                 break
@@ -4642,14 +4844,14 @@ async def playback_worker_job(engine: Celune) -> None:
                         release_pipeline(
                             engine,
                             playback_idle=not source_buffers
-                            and engine.audio_queue.empty()
+                            and playback_queue_empty()
                             and engine.text_queue.empty()
                             and writer.pending_seconds <= 0.0,
                         )
                     if (
                         marker.notify_idle
                         and not source_buffers
-                        and engine.audio_queue.empty()
+                        and playback_queue_empty()
                         and engine.text_queue.empty()
                         and writer.pending_seconds <= 0.0
                     ):
@@ -4660,7 +4862,7 @@ async def playback_worker_job(engine: Celune) -> None:
                         )
                     elif (
                         not source_buffers
-                        and engine.audio_queue.empty()
+                        and playback_queue_empty()
                         and engine.text_queue.empty()
                         and writer.pending_seconds <= 0.0
                     ):
@@ -4686,14 +4888,14 @@ async def playback_worker_job(engine: Celune) -> None:
                     release_pipeline(
                         engine,
                         playback_idle=not source_buffers
-                        and engine.audio_queue.empty()
+                        and playback_queue_empty()
                         and engine.text_queue.empty()
                         and writer.pending_seconds <= 0.0,
                     )
                 if (
                     marker.notify_idle
                     and not source_buffers
-                    and engine.audio_queue.empty()
+                    and playback_queue_empty()
                     and engine.text_queue.empty()
                     and writer.pending_seconds <= 0.0
                 ):
@@ -4704,7 +4906,7 @@ async def playback_worker_job(engine: Celune) -> None:
                     )
                 elif (
                     not source_buffers
-                    and engine.audio_queue.empty()
+                    and playback_queue_empty()
                     and engine.text_queue.empty()
                     and writer.pending_seconds <= 0.0
                 ):
@@ -4713,6 +4915,7 @@ async def playback_worker_job(engine: Celune) -> None:
                     engine.progress_callback(1, 1)
 
         publish_buffered_seconds()
+        finish_rebuffer_wait()
         if (
             stop_requested
             and not source_buffers
@@ -4721,4 +4924,5 @@ async def playback_worker_job(engine: Celune) -> None:
         ):
             await _run_in_daemon_thread(writer.wait_empty)
             await _run_in_daemon_thread(writer.stop)
+            input_reader.stop()
             break

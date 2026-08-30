@@ -282,6 +282,8 @@ class CeluneStateAccessors:
     _next_playback_source_id: int
     _playback_source_statuses: dict[int, str]
     _playback_source_meta: dict[int, dict[str, Union[str, float]]]
+    _playback_chunk_last_queued_at: dict[int, float]
+    _playback_trace_last_logged_at: float
     _playback_progress_last_emit_at: float
     _playback_progress_last_source_id: int
     _model_ready: threading.Event
@@ -303,6 +305,12 @@ class CeluneStateAccessors:
     playback_buffer_seconds: float
     playback_contention_level: float
     playback_underflows: int
+    playback_queue_wait_seconds: float
+    playback_generation_gap_seconds: float
+    playback_writer_wait_seconds: float
+    playback_writer_gap_seconds: float
+    playback_writer_write_seconds: float
+    playback_rebuffer_wait_seconds: float
     total_generated_speech_seconds: float
     historical_generated_speech_seconds: float
     reverb: StreamingPedalboardReverb
