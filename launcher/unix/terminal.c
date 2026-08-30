@@ -41,21 +41,19 @@ void launcher_reset_terminal_state(void) {
         "\033[?1003l"
         "\033[?1006l"
         "\033[?1015l"
-        "\033[?1049l"
         "\033[?2004l";
 
     if (!saved_terminal_state_valid) {
         return;
     }
 
-    if (isatty(STDOUT_FILENO)) {
-        if (write(STDOUT_FILENO, reset_sequences, sizeof(reset_sequences) - 1) < 0) {
+    if (isatty(STDERR_FILENO)) {
+        if (write(STDERR_FILENO, reset_sequences, sizeof(reset_sequences) - 1) < 0) {
             /* Terminal cleanup is best effort. */
         }
     }
 
     tcsetattr(STDIN_FILENO, TCSANOW, &saved_terminal_state);
-    tcflush(STDIN_FILENO, TCIFLUSH);
 }
 
 void launcher_prepare_failure_output(void) {
