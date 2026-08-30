@@ -275,6 +275,43 @@ class TestPipeline(CeluneTestCase):
         assert "reserve=3.25s" in message
         assert "contention=0.75" in message
         assert "underflows=2" in message
+        assert "queue_wait=" in message
+        assert "generation_gap=0.000s" in message
+        assert "rebuffer_wait=0.000s" in message
+
+    def test_playback_queue_trace_records_generation_and_queue_wait(self) -> None:
+        """Verify playback traces record producer timing around the bounded queue."""
+        engine = make_pipeline_engine()
+        audio = np.zeros((8, 2), dtype=np.float32)
+
+        assert pipeline._queue_playback_chunk(cast(Celune, engine), 1, audio, 48000)
+        assert pipeline._queue_playback_chunk(cast(Celune, engine), 1, audio, 48000)
+
+        assert engine.playback_queue_wait_seconds >= 0.0
+        assert engine.playback_generation_gap_seconds >= 0.0
+        assert "generation_gap=" in engine.messages[-1][0]
+
+    def test_playback_writer_records_wait_gap_and_write_duration(self) -> None:
+        """Verify the persistent writer exposes each application-side timing stage."""
+        engine = make_pipeline_engine()
+        monitor = pipeline._PlaybackContentionMonitor(cast(Celune, engine))
+        writer = pipeline._PlaybackWriter(cast(Celune, engine), monitor)
+
+        with mock.patch(
+            "celune.pipeline._write_playback_block",
+            side_effect=lambda _engine, _audio: False,
+        ):
+            writer.start()
+            writer.submit(np.zeros((8, 2), dtype=np.float32), (1,))
+            writer.wait_empty()
+            writer.stop()
+
+        assert engine.playback_writer_wait_seconds >= 0.0
+        assert engine.playback_writer_gap_seconds == 0.0
+        assert engine.playback_writer_write_seconds >= 0.0
+        assert not any(
+            "[PLAY] playback write" in message for message, _ in engine.messages
+        )
 
     def test_force_stop_queues_worker_stop_and_invalidates_old_sources(
         self,
@@ -404,6 +441,21 @@ class TestPipelineAsync(CeluneAsyncTestCase):
     async def _run_playback_worker(engine: Celune) -> None:
         """Run the async playback worker directly inside the test loop."""
         await pipeline.playback_worker_job(engine)
+
+    async def test_playback_input_reader_reuses_one_persistent_thread(self) -> None:
+        """Verify playback input waits do not create one thread per timeout."""
+        engine = make_pipeline_engine()
+        engine.sentinel = PipelineStates.TERMINATE
+        reader = pipeline._PlaybackInputReader(cast(Celune, engine))
+        reader.start()
+        reader_thread = reader._thread
+
+        engine.audio_queue.put("first")
+        assert await reader.get() == "first"
+        assert reader._thread is reader_thread
+
+        reader.stop()
+        assert reader._thread is None
 
     async def test_queue_speech_async_waits_for_model_readiness_in_daemon_thread(
         self,

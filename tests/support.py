@@ -508,6 +508,13 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.playback_buffer_seconds = 0.0
     engine.playback_contention_level = 0.0
     engine.playback_underflows = 0
+    engine.playback_queue_wait_seconds = 0.0
+    engine.playback_generation_gap_seconds = 0.0
+    engine.playback_writer_wait_seconds = 0.0
+    engine.playback_writer_gap_seconds = 0.0
+    engine.playback_writer_write_seconds = 0.0
+    engine.playback_rebuffer_wait_seconds = 0.0
+    engine._playback_trace_last_logged_at = 0.0
     engine.total_generated_speech_seconds = 0.0
     engine.historical_generated_speech_seconds = 0.0
     engine.text_queue = queue.Queue()
@@ -520,6 +527,7 @@ def make_pipeline_engine() -> SimpleNamespace:
     engine.utterance_force_stop = threading.Event()
     engine.speech_generation = 0
     engine._playback_generation = 0
+    engine._playback_chunk_last_queued_at = {}
     engine.kept_sfx_audio = None
     engine.force_stop_marker = PipelineStates.UTTERANCE_FORCE_END
     engine.log = lambda msg, severity="info", **kwargs: messages.append((msg, severity))
