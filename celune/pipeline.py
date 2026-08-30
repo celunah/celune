@@ -336,7 +336,11 @@ def _prioritize_playback_thread() -> None:
         return
 
     try:
-        win_dll = ctypes.WinDLL("kernel32", use_last_error=True)
+        windll = getattr(ctypes, "WinDLL", None)
+        if not callable(windll):
+            return
+        windll = cast(Callable[..., ctypes.CDLL], windll)
+        win_dll = windll("kernel32", use_last_error=True)
         current_thread = win_dll.GetCurrentThread()
         if not win_dll.SetThreadPriority(current_thread, 1):
             return
