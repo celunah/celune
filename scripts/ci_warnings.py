@@ -12,10 +12,17 @@ _WARNING_LINE = re.compile(
     r"(?:\b\w*warn(?:ing)?\b|\bdeprecated\b|\bW\d{4}\b)",
     re.IGNORECASE,
 )
+_CELTEST_STATUS_LINE = re.compile(r"^\s*(?:⚙️|✅|❌|⚠️)\s")
+_CELTEST_SUMMARY_LINE = re.compile(
+    r"^\s*passed\s+\d+/\d+\s+time\s+\S+\s+warnings\s+\d+\s*$",
+    re.IGNORECASE,
+)
 
 
 def _is_warning_line(line: str) -> bool:
     """Return whether one command-output line describes a warning."""
+    if _CELTEST_STATUS_LINE.match(line) or _CELTEST_SUMMARY_LINE.match(line):
+        return False
     return bool(_WARNING_LINE.search(line))
 
 
@@ -45,6 +52,8 @@ def main(arguments: Optional[list[str]] = None) -> int:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
     )
     assert process.stdout is not None

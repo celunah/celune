@@ -26,6 +26,14 @@ class TestCIWarnings:
         assert CI_WARNINGS._is_warning_line("DeprecationWarning: old API")
         assert CI_WARNINGS._is_warning_line("celune/file.py:12: W0611")
         assert not CI_WARNINGS._is_warning_line("All checks passed")
+        assert not CI_WARNINGS._is_warning_line(
+            "⚙️ verify warning-only doctor results do not masquerade as a clean pass"
+        )
+        assert not CI_WARNINGS._is_warning_line(
+            "✅ verify warning-only doctor results do not masquerade as a clean pass"
+        )
+        assert not CI_WARNINGS._is_warning_line("⚠️ warnings")
+        assert not CI_WARNINGS._is_warning_line("passed 2/3 time 0:01 warnings 1")
 
     def test_annotation_messages_escape_github_command_delimiters(self) -> None:
         """Escape percent and line delimiters before emitting annotations."""
@@ -46,3 +54,26 @@ class TestCIWarnings:
 
         assert status == 7
         assert "::warning::warning" in output.getvalue()
+
+    def test_main_does_not_annotate_celtest_status_descriptions(self) -> None:
+        """Do not annotate Celtest descriptions that contain warning terminology."""
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            status = CI_WARNINGS.main(
+                [
+                    "--",
+                    sys.executable,
+                    "-c",
+                    (
+                        "import sys; "
+                        "sys.stdout.buffer.write("
+                        "('\\u2699\\ufe0f verify warning-only doctor results\\n'"
+                        "'passed 2/3 time 0:01 warnings 1\\n').encode()"
+                        ")"
+                    ),
+                ]
+            )
+
+        assert status == 0
+        assert "⚙️ verify warning-only doctor results" in output.getvalue()
+        assert "::warning::" not in output.getvalue()
