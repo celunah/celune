@@ -29,6 +29,14 @@ passed 2/3 time 0:01 warnings 1
 [a concise assertion or exception explanation]
 ```
 
+If CTRL+C interrupts a run after collection, Celtest keeps any completed test
+results already shown and ends with a simple `interrupted` message. It omits
+the interruption hint, totals, and all incomplete or skipped test entries:
+
+```text
+interrupted
+```
+
 The header uses `project.version` and `tool.celtest.display_name` from the
 active project's `pyproject.toml`, falling back to `project.name` when no
 display name is configured. The processing line is replaced with a raw
@@ -40,7 +48,9 @@ including when it also produces warnings. Skipped tests are omitted from the
 final list, count, and summary. Fallback descriptions preserve common Celune
 acronyms such as `UI`, `TTS`, and `VRAM`. Parallel runs label worker startup as
 `setting up parallel test harness`. Collection and other fatal errors use a
-separate `test collection failed` block with module names and a concise hint.
+separate failure block with module names and a concise hint. The
+`test collection failed` block is reserved for actual collection failures;
+interruptions use `interrupted`.
 
 Decorate tests with a friendly description, and optionally provide a stable
 failure explanation:
@@ -75,15 +85,15 @@ test module on one worker:
 uv run poe test
 ```
 
-Use the serial task when debugging a failure or investigating process-global
-state:
+Use the basic serial task when debugging a failure or investigating
+process-global state:
 
 ```bash
-uv run poe test_serial
+uv run poe test_basic
 ```
 
-The serial task runs the complete `tests/` collection without xdist. Both
-tasks return pytest's exit status and include all collected tests.
+The basic task runs the complete `tests/` collection without xdist. Both
+tasks return pytest's exit status and include all selected tests.
 
 ## Keep tests parallel-safe
 
@@ -100,6 +110,8 @@ Tests should follow these rules:
   process handles during teardown;
 - bound asynchronous synchronization waits so a broken test fails instead of
   waiting indefinitely;
+- pass fake TTS and voice-conversion backends, or patch backend resolution, in
+  orchestration tests so named backends cannot provision model environments;
 - keep tests within one module when they intentionally share class or module
   fixtures, because `--dist loadfile` does not split a module across workers.
 
@@ -130,13 +142,14 @@ original failure representation immediately after the failed test's `❌`
 line. It derives the final hint from pytest's assertion or exception message,
 without stack frames; a decorator `hint=` overrides that derived text.
 
-Collection failures and fatal pytest errors retain pytest's non-zero exit
-status and are reported with module names and a concise explanation instead
-of a second terminal traceback.
+Collection failures, fatal pytest errors, and interruptions retain pytest's
+non-zero exit status and are reported with a concise explanation instead of a
+second terminal traceback. Interruptions omit incomplete and skipped test
+entries as well as the normal totals summary.
 
 When parallel execution fails:
 
-1. Re-run the affected node with `uv run poe test_serial` or a focused pytest
+1. Re-run the affected node with `uv run poe test_basic` or a focused pytest
    invocation.
 2. Check for fixed paths, environment mutations, open worker processes,
    singleton state, physical-device access, or shared cache writes.
