@@ -8,6 +8,7 @@ import sys
 import time
 import ctypes
 import signal
+import psutil
 import subprocess
 from ctypes import wintypes
 from contextlib import suppress
@@ -16,7 +17,13 @@ from collections.abc import Callable
 
 TIMEOUT = 600
 GRACE_PERIOD = 2.0
-POE_COMMAND = ["uv", "run", "poe", "ci"]
+MEMORY = psutil.virtual_memory().total >> 30
+
+if MEMORY >= 16:
+    POE_COMMAND = ["uv", "run", "poe", "ci"]
+else:
+    POE_COMMAND = ["uv", "run", "poe", "ci_basic"]
+
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 _JOB_HANDLE_ATTRIBUTE = "_celune_ci_job_handle"
