@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
-from types import SimpleNamespace
-from pathlib import Path
+import time
+import signal
+import subprocess
 from typing import cast
+from pathlib import Path
+from types import SimpleNamespace
 
 import tests.celtest as celtest_plugin
 from tests.celtest import CeltestMetadata, celtest
@@ -231,3 +233,79 @@ def test_failure():
         assert "SyntaxError" in output
         assert "Traceback" not in output
         assert "Interrupted" not in output
+
+    def test_celtest_ends_interrupted_runs_without_incomplete_tests(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Verify CTRL+C does not turn incomplete tests into passes or collection errors."""
+        marker = tmp_path / "started"
+        test_file = tmp_path / "test_interrupt.py"
+        test_file.write_text(
+            """
+import os
+import time
+from pathlib import Path
+
+from tests.celtest import celtest
+
+@celtest("completed test")
+def test_completed():
+    pass
+
+@celtest("interrupted test")
+def test_interrupted():
+    Path(os.environ["CELTEST_MARKER"]).write_text("started", encoding="utf-8")
+    time.sleep(30)
+
+@celtest("unstarted test")
+def test_unstarted():
+    pass
+""",
+            encoding="utf-8",
+        )
+        environment = os.environ.copy()
+        project_root = str(Path(__file__).resolve().parents[1])
+        environment["PYTHONPATH"] = project_root
+        environment["PYTHONIOENCODING"] = "utf-8"
+        environment["CELTEST_MARKER"] = str(marker)
+        with subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-p",
+                "tests.celtest",
+                "-q",
+                str(test_file),
+            ],
+            cwd=project_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            env=environment,
+        ) as process:
+            try:
+                deadline = time.monotonic() + 15
+                while not marker.exists() and time.monotonic() < deadline:
+                    if process.poll() is not None:
+                        break
+                    time.sleep(0.05)
+                assert marker.exists(), "the interrupted test did not start"
+                process.send_signal(signal.SIGINT)
+                output, _ = process.communicate(timeout=15)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
+
+        assert process.returncode != 0
+        assert output.rstrip().endswith("interrupted")
+        assert "test collection failed" not in output
+        assert "✅ interrupted test" not in output
+        assert "✅ unstarted test" not in output
+        assert "ℹ️ interruption hint" not in output
+        assert "False" not in output
+        assert "passed " not in output
+        assert "not run " not in output

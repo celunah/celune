@@ -29,18 +29,17 @@ is absent. The plugin has no dependency on the host project's package.
 
 from __future__ import annotations
 
-import ast
 import re
-import tomllib
+import ast
 import time
+import tomllib
 import warnings
-from collections.abc import Callable, Generator, Mapping
-from dataclasses import dataclass, field
 from pathlib import Path
+from dataclasses import dataclass, field
+from collections.abc import Callable, Generator, Mapping
 from typing import Optional, ParamSpec, Protocol, TypeVar, cast
 
 import pytest
-
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -514,6 +513,9 @@ def _finish_record(record: _TestRecord) -> None:
         record.failure_report = failures[0]
     elif any(report.skipped for report in record.reports.values()):
         record.status = "skipped"
+    elif not {"setup", "call", "teardown"}.issubset(record.reports):
+        record.status = "not_run"
+        return
     else:
         record.status = "warning" if record.warning_lines else "passed"
 
@@ -587,6 +589,12 @@ def pytest_collection_modifyitems(
             hint=metadata.hint,
             known_skipped=_is_known_skip(item),
         )
+
+
+def pytest_deselected(items: list[pytest.Item]) -> None:
+    """Remove items filtered out by pytest before the run starts."""
+    for item in items:
+        _state.records.pop(item.nodeid, None)
 
 
 def pytest_runtest_logstart(nodeid: str, location: tuple[str, int, str]) -> None:
@@ -751,11 +759,7 @@ def _render_summary(
     for record in _state.records.values():
         _finish_record(record)
 
-    fatal_exit = exitstatus not in {
-        pytest.ExitCode.OK,
-        pytest.ExitCode.TESTS_FAILED,
-    }
-    if _state.collection_errors or _state.internal_errors or fatal_exit:
+    if _state.collection_errors:
         _write_line("")
         _write_line("test collection failed")
         module_names = [
@@ -776,16 +780,50 @@ def _render_summary(
         _write_line(hints[0] if hints else "Pytest stopped before tests could run.")
         return
 
+    fatal_exit = exitstatus not in {
+        pytest.ExitCode.OK,
+        pytest.ExitCode.TESTS_FAILED,
+        pytest.ExitCode.INTERRUPTED,
+    }
+    if _state.internal_errors or fatal_exit:
+        _write_line("")
+        _write_line("pytest run failed")
+        module_names = [
+            _collection_name(record.nodeid) for record in _state.records.values()
+        ] or ["pytest internal error"]
+        for nodeid in dict.fromkeys(module_names):
+            _write_line(f"❌ {nodeid}")
+        _write_line("")
+        _write_line("ℹ️ pytest failure hint")
+        hints = list(_state.internal_errors)
+        if fatal_hint:
+            hints.append(fatal_hint)
+        _write_line(hints[0] if hints else "Pytest stopped before the run completed.")
+        return
+
+    interrupted = exitstatus == pytest.ExitCode.INTERRUPTED
+    if interrupted:
+        _write_line("")
+        _write_line("interrupted")
+        return
+
     runnable = [
         record for record in _state.records.values() if record.status != "skipped"
     ]
     passed = sum(record.status in {"passed", "warning"} for record in runnable)
+    not_run = [record for record in runnable if record.status == "not_run"]
     elapsed = time.monotonic() - _state.started_at
     _write_line("")
     _write_line(
         f"passed {passed}/{len(runnable)} time {_format_duration(elapsed)} "
         f"warnings {len(_state.warning_lines)}"
     )
+
+    if not_run:
+        _write_line("")
+        _write_line(f"not run {len(not_run)}")
+        for record in not_run:
+            _write_line(f"⏭️ {record.description}")
 
     if _state.warning_lines:
         _write_line("")
@@ -809,7 +847,8 @@ def pytest_sessionfinish(
 ) -> Generator[None, object, object]:
     """Suppress pytest's terminal summary and print Celtest's summary."""
     result = yield
-    fatal_hint = str(session.shouldstop or session.shouldfail) or None
+    stop_reason = session.shouldstop or session.shouldfail
+    fatal_hint = str(stop_reason) if stop_reason else None
     session.shouldfail = ""
     session.shouldstop = ""
     session.config.option.no_summary = True
