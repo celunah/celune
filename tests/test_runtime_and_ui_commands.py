@@ -205,6 +205,7 @@ class TestRuntime(CeluneTestCase):
             celune=fake_celune,
             cur_state="active",
             _reset_playback_widgets=mock.Mock(),
+            _run_on_ui_thread=lambda callback: callback(),
             _schedule_sleep_timer=mock.Mock(),
             safe_status=mock.Mock(),
         )
@@ -215,10 +216,10 @@ class TestRuntime(CeluneTestCase):
 
         async def exercise_wake() -> None:
             wake_task = asyncio.create_task(wake_from_sleep(cast(CeluneUI, ui)))
-            await wake_started.wait()
+            await asyncio.wait_for(wake_started.wait(), timeout=1.0)
             cast(mock.Mock, ui._reset_playback_widgets).assert_called_once_with()
             release_wake.set()
-            await wake_task
+            await asyncio.wait_for(wake_task, timeout=1.0)
 
         asyncio.run(exercise_wake())
 
@@ -808,6 +809,25 @@ class TestUICommand(CeluneTestCase):
 
         self.ui.celune.play.assert_called_once_with("tone.wav", volume=0.4)
         assert self.logs[-1] == ("Playing tone.wav at 40% volume", "info")
+
+    def test_play_command_reports_youtube_before_play_returns(self) -> None:
+        """Verify the YouTube status can be emitted during the playback setup."""
+
+        def play(_path: str, *, volume: float, on_started) -> bool:
+            assert volume == 0.4
+            on_started()
+            return True
+
+        self.ui.celune.play.side_effect = play
+
+        with mock.patch(
+            "celune.ui.commands.threading.Thread",
+            side_effect=self._thread_runs_immediately,
+        ):
+            self._process_command("play", ["https://youtu.be/demo", "0.4"])
+
+        self.ui.celune.play.assert_called_once()
+        assert self.logs[-1] == ("Playing YouTube audio at 40% volume", "info")
 
     def test_play_command_rejects_invalid_volume(self) -> None:
         """Verify /play validates a numeric optional volume argument."""
@@ -3828,6 +3848,9 @@ class TestUIStartup(CeluneTestCase):
         assert caption.rendered == "One"
         ui.safe_caption_progress(2, 3)
         assert caption.rendered == "One two"
+        ui.safe_caption_progress(1, 3)
+        assert caption.rendered == "One two"
+        assert ui._caption_progress == 2 / 3
         ui.safe_caption_progress(3, 3)
         assert caption.rendered == "One two three"
         assert not ui._caption_active
@@ -3865,7 +3888,8 @@ class TestUIStartup(CeluneTestCase):
         assert caption.display
         assert not progress_row.display
         assert transition_callbacks[0] is not None
-        transition_callbacks[0]()
+        with mock.patch.object(ui, "set_timer", return_value=None):
+            transition_callbacks[0]()
         assert not ui._caption_transitioning
         assert not caption.display
         assert progress_row.display
@@ -3884,12 +3908,14 @@ class TestUIStartup(CeluneTestCase):
         assert caption.display
         assert not progress_row.display
         assert transition_callbacks[0] is not None
-        transition_callbacks[0]()
+        with mock.patch.object(ui, "set_timer", return_value=None):
+            transition_callbacks[0]()
         assert not caption.display
         assert progress_row.display
         ui._reset_playback_widgets()
 
-        ui.tts_caption("Wake me")
+        with mock.patch.object(ui, "set_timer", return_value=None):
+            ui.tts_caption("Wake me")
         ui.safe_progress(1, 1)
         assert not progress_row.display
         ui._reset_playback_widgets()
@@ -3956,6 +3982,73 @@ class TestUIStartup(CeluneTestCase):
         )
 
         self.assertEqual(normalized_timings, ((0.0, 2.8),))
+
+        mismatched_timing_words = CeluneUI._caption_word_timing_ranges(
+            ("One", "two"),
+            (
+                WhisperSegment(
+                    text="alpha beta gamma delta epsilon",
+                    start=0.0,
+                    end=5.0,
+                    words=tuple(
+                        WhisperWord(word, index, index + 0.5)
+                        for index, word in enumerate(
+                            ("alpha", "beta", "gamma", "delta", "epsilon")
+                        )
+                    ),
+                ),
+            ),
+            5.0,
+            ("first", "second", "third", "fourth", "fifth"),
+        )
+
+        assert len(mismatched_timing_words) == 2
+        assert mismatched_timing_words[0][0] == 0.0
+        assert mismatched_timing_words[-1][1] == 4.5
+
+        fewer_timing_words = CeluneUI._caption_word_timing_ranges(
+            ("One", "two", "three"),
+            (
+                WhisperSegment(
+                    text="alpha",
+                    start=0.0,
+                    end=1.0,
+                    words=(WhisperWord("alpha", 0.0, 1.0),),
+                ),
+            ),
+            1.0,
+            ("alpha",),
+        )
+
+        assert len(fewer_timing_words) == 3
+
+    def test_speech_caption_timing_refinement_does_not_hide_words(self) -> None:
+        """Verify late word timings cannot regress an already rendered caption."""
+        ui = CeluneUI()
+
+        class FakeCaption:
+            """Small caption widget test double."""
+
+            def __init__(self) -> None:
+                self.display = False
+                self.styles = SimpleNamespace(opacity=1.0, height=0)
+                self.rendered = ""
+
+            def update(self, value: str) -> None:
+                """Capture the visible caption words."""
+                self.rendered = value
+
+        ui.caption = cast(Label, FakeCaption())
+        ui.tts_caption("One two three")
+        ui.safe_caption_progress(2, 3)
+        assert cast(FakeCaption, ui.caption).rendered == "One two"
+
+        ui._caption_word_timings = ((2.5, 2.8), (2.9, 3.0), (3.1, 3.2))
+        ui._caption_audio_duration = 3.2
+        visible_sentence, visible_words = ui._caption_words_for_progress(2 / 3)
+
+        assert visible_words == 2
+        assert visible_sentence == ("One", "two")
 
     def test_status_ticker_recovers_active_playback_status(self) -> None:
         """Verify the TUI ticker displays the active playback-source status."""

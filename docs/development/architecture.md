@@ -78,6 +78,8 @@ Playback completion is source-aware: speech completion closes speech captions
 without waiting for unrelated SFX overlays, while the global idle transition
 still waits for every source. Output failures clear the source maps, mark
 playback complete, and release any held pipeline lease.
+Automatic sleep also waits for every registered playback source, including SFX
+overlays, before unloading runtime state.
 
 ## Component locks
 

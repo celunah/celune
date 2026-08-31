@@ -2304,7 +2304,11 @@ class Celune(CeluneStateAccessors):
             return False
 
         with self.say_lock:
-            if self.locked or self.cur_state in {"generating", "speaking", "reloading"}:
+            if (
+                self.locked
+                or self.cur_state in {"generating", "speaking", "reloading"}
+                or self._any_playback_active()
+            ):
                 return False
             self.sleeping = True
             self.loaded = False
@@ -3031,6 +3035,10 @@ class Celune(CeluneStateAccessors):
             isinstance(metadata, dict) and metadata.get("kind") == "speech"
             for metadata in self._playback_source_meta.values()
         )
+
+    def _any_playback_active(self) -> bool:
+        """Return whether any registered audio source is still draining."""
+        return bool(getattr(self, "_playback_source_meta", {}))
 
     def _wait_until_idle(
         self,
@@ -4623,20 +4631,33 @@ class Celune(CeluneStateAccessors):
         """Reset any state held by the active live voice-conversion backend."""
         stop_live_audio_input(self)
 
-    def play(self, sound_path: str, keep: bool = False, volume: float = 1.0) -> bool:
+    def play(
+        self,
+        sound_path: str,
+        keep: bool = False,
+        volume: float = 1.0,
+        on_started: Optional[Callable[[], None]] = None,
+    ) -> bool:
         """Play a sound via Celune's pipeline.
 
         Args:
             sound_path: The path to the audio file to play.
             keep: Whether to prepend this SFX to the next saved utterance.
             volume: How loud should the SFX be played at.
+            on_started: Optional callback invoked immediately before SFX is queued.
 
         Returns:
             bool: ``True`` when playback was queued successfully, otherwise ``False``.
         """
         if self.test_finished or self.backend_mode == "agent_test":
             return False
-        return play_pipeline(self, sound_path, keep=keep, volume=volume)
+        return play_pipeline(
+            self,
+            sound_path,
+            keep=keep,
+            volume=volume,
+            on_started=on_started,
+        )
 
     def play_audio(
         self,

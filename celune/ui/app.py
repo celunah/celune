@@ -2811,7 +2811,7 @@ class CeluneUI(App):
         def normalize(value: str) -> str:
             return re.sub(r"[^\w]+", "", value.casefold())
 
-        matching_words = timing_words if timing_words is not None else words
+        matching_words = timing_words if timing_words else words
         caption_keys = [normalize(word) for word in matching_words]
         whisper_keys = [normalize(word.text) for word in whisper_words]
         assigned: list[Optional[int]] = [None] * len(matching_words)
@@ -2832,8 +2832,9 @@ class CeluneUI(App):
         for index, assigned_index in enumerate(assigned):
             if assigned_index is None:
                 assigned_index = round(
-                    index * (len(whisper_words) - 1) / max(len(words) - 1, 1)
+                    index * (len(whisper_words) - 1) / max(len(matching_words) - 1, 1)
                 )
+            assigned_index = max(0, min(len(whisper_words) - 1, assigned_index))
             word = whisper_words[assigned_index]
             start = max(0.0, min(audio_duration, word.start))
             end = max(start, min(audio_duration, word.end))
@@ -2851,8 +2852,11 @@ class CeluneUI(App):
 
         displayed_ranges: list[tuple[float, float]] = []
         for index in range(len(words)):
-            start_index = round(index * len(normalized_ranges) / len(words))
-            end_index = round((index + 1) * len(normalized_ranges) / len(words))
+            start_index = min(
+                len(normalized_ranges) - 1,
+                math.floor(index * len(normalized_ranges) / len(words)),
+            )
+            end_index = math.ceil((index + 1) * len(normalized_ranges) / len(words))
             end_index = max(start_index + 1, end_index)
             end_index = min(end_index, len(normalized_ranges))
             displayed_ranges.append(
@@ -2908,6 +2912,12 @@ class CeluneUI(App):
                     )
                     self._caption_transcriber = transcriber
                 segments = transcriber.transcribe_segments(audio_copy, sample_rate)
+                word_timings = self._caption_word_timing_ranges(
+                    self._caption_words,
+                    segments,
+                    duration,
+                    timing_words,
+                )
             except Exception as error:
                 self.safe_log(
                     format_error_message(
@@ -2918,12 +2928,6 @@ class CeluneUI(App):
                     "warning",
                 )
                 return
-            word_timings = self._caption_word_timing_ranges(
-                self._caption_words,
-                segments,
-                duration,
-                timing_words,
-            )
             if not word_timings:
                 return
 
@@ -2964,6 +2968,7 @@ class CeluneUI(App):
             revealed_words = sum(
                 elapsed >= start for start, _end in self._caption_word_timings
             )
+            revealed_words = max(self._caption_visible_words, revealed_words)
             remaining_words = revealed_words
             for sentence in self._caption_sentences:
                 if remaining_words <= len(sentence):
@@ -2978,6 +2983,7 @@ class CeluneUI(App):
             len(self._caption_words),
             math.ceil(fraction * len(self._caption_words)),
         )
+        visible_words = max(self._caption_visible_words, visible_words)
         remaining_words = visible_words
         visible_sentence: tuple[str, ...] = ()
         for sentence in self._caption_sentences:
@@ -3084,6 +3090,8 @@ class CeluneUI(App):
                 return
             current = 0.0 if progress is None else progress
             fraction = max(0.0, min(1.0, current / total))
+            if fraction < self._caption_progress:
+                return
             caption_finished = fraction >= 1.0
             self._caption_progress = fraction
             visible_sentence, visible_words = self._caption_words_for_progress(

@@ -736,16 +736,27 @@ def process_command(ui: CeluneUI, command: str, args: list[str]) -> None:
 
             def worker() -> None:
                 try:
-                    if not ui.celune.play(args[0], volume=volume):
-                        return
-                    if args[0].startswith("https://"):
-                        ui.safe_log(
-                            string(
-                                "commands.playing_youtube_audio",
-                                volume=format_number(volume * 100),
+                    is_youtube = args[0].startswith("https://")
+
+                    def report_playback_started() -> None:
+                        if is_youtube:
+                            ui.safe_log(
+                                string(
+                                    "commands.playing_youtube_audio",
+                                    volume=format_number(volume * 100),
+                                )
                             )
-                        )
-                    else:
+
+                    if is_youtube:
+                        if not ui.celune.play(
+                            args[0],
+                            volume=volume,
+                            on_started=report_playback_started,
+                        ):
+                            return
+                    elif not ui.celune.play(args[0], volume=volume):
+                        return
+                    if not is_youtube:
                         ui.safe_log(
                             string(
                                 "commands.playing_audio",

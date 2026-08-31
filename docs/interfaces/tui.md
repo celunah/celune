@@ -50,10 +50,12 @@ playback it shows elapsed time as `MM:SS`; during loading and other determinate
 operations it shows a right-aligned percentage. When progress is indeterminate
 or unavailable, the readout is hidden and the bar expands into its space. The
 WebUI has no corresponding progress bar or percentage label. Captions are
-scoped to speech playback: they fade out when speech ends even if an SFX
-overlay continues. The caption and bar share one reserved line, so the bar is
-not restored until the caption transition completes; the normal bar/readout
-state is also restored immediately when wake begins.
+scoped to speech playback and only advance: delayed progress callbacks and late
+word-timing refinement cannot hide words that have already appeared. They fade
+out when speech ends even if an SFX overlay continues. The caption and bar
+share one reserved line, so the bar is not restored until the caption transition
+completes; the normal bar/readout state is also restored immediately when wake
+begins.
 
 ## Value-aware selection menus
 
@@ -178,7 +180,7 @@ Commands are entered in the input box and start with `/`.
 | <code>/vcmode talk&#124;sing</code> | Select ordinary speech or F0-conditioned singing. |
 | <code>/vcpitch SEMITONES&#124;clear</code> | Set -12 through +12 semitones or reset to 0. |
 | <code>/xvectoronly true&#124;false</code> | Toggle Qwen3 identity-only cloning. Qwen3 only. |
-| `/play PATH [VOLUME]` | Play a local/remote sound effect. |
+| `/play PATH [VOLUME]` | Play a local/remote sound effect. Remote playback reports its playing status as soon as the audio is ready to queue. |
 | `/attach FILE...` | Add vision attachments; `/attach clear` removes them. |
 | `/say TEXT` | Send a direct Persona/vision prompt when vision is available. |
 | <code>/seed NUMBER&#124;random</code> | Set a backend seed or restore random seeds. |

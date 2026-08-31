@@ -3458,7 +3458,11 @@ def prepare_playback_audio(
 
 
 def play(
-    engine: Celune, sound_path: str, keep: bool = False, volume: float = 1.0
+    engine: Celune,
+    sound_path: str,
+    keep: bool = False,
+    volume: float = 1.0,
+    on_started: Optional[Callable[[], None]] = None,
 ) -> bool:
     """Play a sound via Celune's pipeline.
 
@@ -3467,6 +3471,7 @@ def play(
         sound_path: The path to the audio file to play.
         keep: Whether to prepend this SFX to the next saved utterance.
         volume: How loud should the SFX be played at, limited to half of max volume to protect headphone users.
+        on_started: Optional callback invoked after the audio is decoded and immediately before it is queued.
 
     Returns:
         bool: ``True`` when playback was queued successfully, otherwise ``False``.
@@ -3508,6 +3513,9 @@ def play(
         return False
 
     audio, sr = sf.read(sound_path, dtype="float32")
+
+    if on_started is not None:
+        on_started()
 
     queued = queue_sfx_audio(
         engine,

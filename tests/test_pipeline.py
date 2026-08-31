@@ -1180,6 +1180,36 @@ class TestPipelineAsync(CeluneAsyncTestCase):
 
         assert engine.statuses[-1] == ("Playing Fixture Video Title", "info")
 
+    def test_play_calls_started_callback_before_queueing_audio(self) -> None:
+        """Verify callers can report playback before synchronous SFX enqueueing."""
+        engine = make_pipeline_engine()
+        downloaded = Path("C:/Users/user/AppData/Local/Celune/temporary_audio.wav")
+        events: list[str] = []
+
+        def queue_audio(*_args, **_kwargs) -> bool:
+            events.append("queued")
+            return True
+
+        with (
+            mock.patch(
+                "celune.pipeline._download_youtube_sfx",
+                return_value=(downloaded, "Fixture Video Title"),
+            ),
+            mock.patch("celune.pipeline.os.path.exists", return_value=True),
+            mock.patch(
+                "celune.pipeline.sf.read",
+                return_value=(np.ones((8, 2), dtype=np.float32), 48000),
+            ),
+            mock.patch("celune.pipeline.queue_sfx_audio", side_effect=queue_audio),
+        ):
+            assert pipeline.play(
+                cast(Celune, engine),
+                "https://www.youtube.com/watch?v=demo",
+                on_started=lambda: events.append("started"),
+            )
+
+        assert events == ["started", "queued"]
+
     def test_queue_sfx_audio_allows_overlay_while_speech_pipeline_is_locked(
         self,
     ) -> None:

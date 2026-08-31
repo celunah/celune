@@ -2730,6 +2730,22 @@ class TestCeluneCore(CeluneTestCase):
         with mock.patch("celune.celune.play_signal", side_effect=play_sleep_signal):
             assert celune.enter_sleep_mode()
 
+    def test_sleep_mode_waits_for_active_sfx_playback(self) -> None:
+        """Verify sleep does not unload runtime state while an SFX source drains."""
+        celune = self._make_celune(
+            {"sleep": {"enabled": True, "unload": {"persona": False, "tts": False}}}
+        )
+        celune.locked = False
+        celune.loaded = True
+        celune.cur_state = "idle"
+        celune._playback_source_meta[1] = {"kind": "sfx"}
+
+        with mock.patch("celune.celune.play_signal") as play_signal_mock:
+            assert not celune.enter_sleep_mode()
+
+        play_signal_mock.assert_not_called()
+        assert not celune.sleeping
+
     def test_wake_failure_switches_glow_to_fatal_color(self) -> None:
         """Verify wake failures trigger the fixed fatal OpenRGB glow state."""
         celune = self._make_celune(
