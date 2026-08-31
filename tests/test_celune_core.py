@@ -7,9 +7,9 @@ import weakref
 import tempfile
 import threading
 import contextlib
-from pathlib import Path
-from typing import Optional, cast
 from types import SimpleNamespace, MappingProxyType
+from typing import Optional, cast
+from pathlib import Path
 from unittest import mock
 from collections.abc import Callable
 
@@ -17,32 +17,33 @@ import numpy as np
 import pytest
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+
 from celune import i18n, cevoice
-from celune.utils import discard
-from celune.celune import Celune
-from celune.config import Config
-from celune.typing.common import JSONSerializable
-from celune.typing.locks import (
-    ComponentLockName,
-    ComponentLockOwner,
-    ComponentLockRequirement,
-)
-from celune.pipeline import close as close_pipeline
-from celune.persona.impl import persona_quantization
-from celune.exceptions import WarmupError, BackendError, CEDTSTimeoutError
-from celune.persona.emotion import PersonaEmotionAnalyzer
 from celune.agent import (
     AgentRequest,
     AgentSession,
     AgentTaskState,
     AgentCancellationReason,
 )
+from celune.utils import discard
+from celune.celune import Celune
+from celune.config import Config
+from celune.pipeline import close as close_pipeline
 from celune.pipeline import (
     play_signal,
     release_pipeline,
     handle_audio_input,
     convert_audio_input,
 )
+from celune.exceptions import WarmupError, BackendError, CEDTSTimeoutError
+from celune.persona.impl import persona_quantization
+from celune.typing.locks import (
+    ComponentLockName,
+    ComponentLockOwner,
+    ComponentLockRequirement,
+)
+from celune.typing.common import JSONSerializable
+from celune.persona.emotion import PersonaEmotionAnalyzer
 from celune.dataclasses.celune import (
     CeluneAudioState,
     CeluneModelState,
@@ -54,11 +55,11 @@ from celune.dataclasses.celune import (
 )
 
 from .support import (
-    CeluneAsyncTestCase,
-    CeluneTestCase,
-    FakeBackend,
     FakeGlow,
+    FakeBackend,
     FakeVCBackend,
+    CeluneTestCase,
+    CeluneAsyncTestCase,
 )
 
 
@@ -318,13 +319,21 @@ class TestCeluneCore(CeluneTestCase):
                 "celune.celune.resolve_backend",
                 return_value=FakeBackend(),
             ),
+            mock.patch(
+                "celune.celune.resolve_vc_backend",
+                return_value=FakeVCBackend(
+                    log=lambda _msg, _severity="info": None,
+                ),
+            ) as resolve_vc,
         ):
             celune = Celune(config={"mode": "voice_conversion"}, backend="seed-vc")
             self.addCleanup(self._close_celune, celune)
 
+        resolve_vc.assert_called_once()
+        assert resolve_vc.call_args.args[0] == "seed-vc"
         assert celune.vc_backend is not None
         assert celune.vc_backend is not None
-        assert celune.vc_backend.name == "seed-vc"
+        assert celune.vc_backend.name == "fake-vc"
 
     def test_constructor_uses_explicit_locale_override_from_config(self) -> None:
         """Verify an explicit config locale wins over system auto-detection."""
@@ -1502,6 +1511,12 @@ class TestCeluneCore(CeluneTestCase):
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
+            mock.patch(
+                "celune.celune.resolve_vc_backend",
+                return_value=FakeVCBackend(
+                    log=lambda _msg, _severity="info": None,
+                ),
+            ) as resolve_vc,
         ):
             celune = Celune(
                 config={"mode": "voice_conversion"},
@@ -1509,6 +1524,8 @@ class TestCeluneCore(CeluneTestCase):
             )
             self.addCleanup(self._close_celune, celune)
 
+        resolve_vc.assert_called_once()
+        assert resolve_vc.call_args.args[0] == "seed-vc"
         assert celune.vc_pitch_shift == 0
 
     def test_constructor_uses_runtime_vc_f0_default(self) -> None:
@@ -1517,6 +1534,12 @@ class TestCeluneCore(CeluneTestCase):
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
+            mock.patch(
+                "celune.celune.resolve_vc_backend",
+                return_value=FakeVCBackend(
+                    log=lambda _msg, _severity="info": None,
+                ),
+            ) as resolve_vc,
         ):
             celune = Celune(
                 config={"mode": "voice_conversion"},
@@ -1524,6 +1547,8 @@ class TestCeluneCore(CeluneTestCase):
             )
             self.addCleanup(self._close_celune, celune)
 
+        resolve_vc.assert_called_once()
+        assert resolve_vc.call_args.args[0] == "seed-vc"
         assert not celune.vc_f0_condition
 
     def test_convert_audio_rejects_text_to_speech_mode(self) -> None:
@@ -2332,14 +2357,23 @@ class TestCeluneCore(CeluneTestCase):
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
+            mock.patch(
+                "celune.celune.resolve_vc_backend",
+                return_value=FakeVCBackend(
+                    log=lambda _msg, _severity="info": None,
+                ),
+            ) as resolve_vc,
         ):
             celune = Celune(
                 config={"mode": "voice_conversion"}, tts_backend=FakeBackend
             )
             self.addCleanup(self._close_celune, celune)
 
+        resolve_vc.assert_called_once()
+        assert resolve_vc.call_args.args[0] == "seed-vc"
         assert celune.input_mode == "voice_conversion"
-        assert celune.voice_conversion_backend == "seed-vc"
+        assert celune.vc_backend is not None
+        assert celune.vc_backend.name == "fake-vc"
 
     def test_constructor_rejects_unknown_vc_backend_cleanly(self) -> None:
         """Verify unsupported VC backends surface a readable backend error."""
@@ -2347,6 +2381,10 @@ class TestCeluneCore(CeluneTestCase):
             mock.patch("celune.celune.AudioRGBGlow", FakeGlow),
             mock.patch("celune.celune.default_loader", return_value=None),
             mock.patch("celune.celune.persona_is_available", return_value=False),
+            mock.patch(
+                "celune.celune.resolve_vc_backend",
+                side_effect=ValueError("unknown voice-conversion backend: 'missing'"),
+            ) as resolve_vc,
             pytest.raises(BackendError, match="unknown voice-conversion backend"),
         ):
             Celune(
@@ -2354,6 +2392,8 @@ class TestCeluneCore(CeluneTestCase):
                 tts_backend=FakeBackend,
                 vc_backend="missing",
             )
+
+        resolve_vc.assert_called_once()
 
     def test_load_success_and_model_failure_paths_are_stubbed(self) -> None:
         """Verify successful startup and default-model failure handling.
