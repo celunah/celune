@@ -498,19 +498,15 @@ class TestUtils(CeluneTestCase):
             AssertionError: Utility behavior changes unexpectedly.
         """
         utils.custom_assert(True, RuntimeError("unused"))
-        assert True
 
         with pytest.raises(RuntimeError, match="failed"):
             utils.custom_assert(False, RuntimeError("failed"))
-            assert False
 
         with pytest.raises(AssertionError):
             utils.custom_assert(False, None)
-            assert False
 
         with pytest.raises(TypeError):
             utils.custom_assert(False, "invalid")  # type: ignore[arg-type]
-            assert False
 
         result = utils.detect_language("Hello, how are you today?", ["en"])
         assert result["language"] == "en"

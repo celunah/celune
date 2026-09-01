@@ -120,7 +120,6 @@ class TestCEVoice(CeluneTestCase):
         assert bundle.voices["balanced"]["reference_text"] == "Balanced reference."
         persona = cevoice.persona_metadata_from_manifest(bundle.metadata)
         assert persona is not None
-        assert persona is not None
         assert persona.identity.name == "Fixture"
         assert persona.identity.profile == "A watchful archivist with a dry wit."
         assert persona.speaking_style == "Measured, observant, and slightly playful."
@@ -132,7 +131,6 @@ class TestCEVoice(CeluneTestCase):
         assert cevoice.persona_files_from_bundle(bundle) == {}
         assert persona.style.warmth == "high"
         voice_persona = cevoice.persona_metadata_from_voice(bundle, "bold")
-        assert voice_persona is not None
         assert voice_persona is not None
         assert voice_persona.speaking_style == "More playful and energetic."
         assert voice_persona.style.enthusiasm == "high"

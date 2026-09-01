@@ -306,7 +306,6 @@ class TestCeluneCore(CeluneTestCase):
 
         assert celune.input_mode == "voice_conversion"
         assert celune.vc_backend is not None
-        assert celune.vc_backend is not None
         assert celune.vc_backend.name == "fake-vc"
 
     def test_constructor_accepts_backend_alias_string_for_vc_runtime(self) -> None:
@@ -331,7 +330,6 @@ class TestCeluneCore(CeluneTestCase):
 
         resolve_vc.assert_called_once()
         assert resolve_vc.call_args.args[0] == "seed-vc"
-        assert celune.vc_backend is not None
         assert celune.vc_backend is not None
         assert celune.vc_backend.name == "fake-vc"
 
@@ -464,7 +462,6 @@ class TestCeluneCore(CeluneTestCase):
             assert celune.load_voice_bundle(Path("fixture.cevoice"))
         assert celune.current_voice == "bold"
         assert celune.current_character == "Fixture"
-        assert celune.current_character_persona is not None
         assert celune.current_character_persona is not None
         assert celune.current_character_persona.speaking_style == "Measured and calm."
 
@@ -632,7 +629,6 @@ class TestCeluneCore(CeluneTestCase):
                 {"vram": "high", "persona": {"enabled": True}}
             )
 
-        assert client is not None
         assert client is not None
         assert persona.persona_model_id() == "Qwen/Qwen3-VL-4B-Instruct"
         client.close()
@@ -1039,7 +1035,6 @@ class TestCeluneCore(CeluneTestCase):
 
             persona_thread = celune._persona_thread
             assert persona_thread is not None
-            assert persona_thread is not None
             persona_thread.join(timeout=2)
             assert not persona_thread.is_alive()
 
@@ -1075,7 +1070,6 @@ class TestCeluneCore(CeluneTestCase):
             celune.cur_state = "idle"
             celune.playback_done.set()
             persona_thread = celune._persona_thread
-            assert persona_thread is not None
             assert persona_thread is not None
             persona_thread.join(timeout=2)
 
@@ -1360,7 +1354,6 @@ class TestCeluneCore(CeluneTestCase):
         with mock.patch("celune.celune.CeluneExtensionManager.autoload"):
             celune.setup_extensions()
 
-        assert celune.extension_manager is not None
         assert celune.extension_manager is not None
         think = celune.extension_manager.context.think
         assert think("hello")

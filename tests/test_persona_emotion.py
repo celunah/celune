@@ -213,7 +213,6 @@ class TestPersonaEmotion(CeluneTestCase):
         analyses = analyzer.analyze_texts(("The user is curious.",))
 
         assert analyses is not None
-        assert analyses is not None
         assert model.calls == 1
         assert round(abs(float(np.linalg.norm(analyses[0].embedding)) - 1.0), 5) == 0
         assert analyzer._prototype_embeddings() is not None

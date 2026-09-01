@@ -1888,8 +1888,6 @@ class TestUIStartup(CeluneTestCase):
             assert ui._old_stderr is terminal
             assert ui._log_stdout is not None
             assert ui._log_stderr is not None
-            assert ui._log_stdout is not None
-            assert ui._log_stderr is not None
             assert ui._log_stdout.underlying_stdout is terminal
             assert ui._log_stdout.underlying_stderr is terminal
             assert ui._log_stderr.underlying_stdout is terminal

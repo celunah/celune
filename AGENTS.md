@@ -134,9 +134,19 @@ This process may leave some formatting inaccuracies, run `uv run ruff format .` 
 
 Immediately document every new or changed behavior you write. This includes public calls, configuration keys, CLI or slash commands, API endpoints, events, backend capabilities, file formats, standards, and user-visible workflows. Update the appropriate `docs/` page and `mkdocs.yml` navigation in the same task before considering the implementation complete; do not defer documentation to a later pass.
 
-Additionally, perform all actions listed in the `Import Ordering` section below.
+Always perform all actions listed in the `Import Ordering` section at the end of a given task.
 
 Make sure to remove all `__pycache__` directories. Celune code is compiled and does not use said cache files.
+
+## Testing Discipline
+
+Write only the minimal set of assertions needed to verify intended behavior.
+Keep assertions focused on public behavior and essential state transitions.
+
+Never add assertions for removed, deprecated, or superseded behavior merely
+because it existed previously. Update or remove obsolete assertions instead.
+
+Avoid repetitive defensive `assert not` checks and duplicate coverage.
 
 ## Import Ordering
 
